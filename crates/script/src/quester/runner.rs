@@ -3709,16 +3709,20 @@ impl Script for QueuedQuester {
             match &flow {
                 ScriptFlow::Continue => return Ok(ScriptFlow::Continue),
                 ScriptFlow::Blocked(failure)
-                    if !self.skip_requested
-                        && matches!(failure.code.as_ref(), "manual-movement" | "max-deaths") =>
+                    if matches!(failure.code.as_ref(), "manual-movement" | "max-deaths") =>
                 {
+                    self.skip_requested = false;
                     return Ok(flow);
                 }
                 ScriptFlow::Complete | ScriptFlow::Blocked(_) => {
                     let active = self.active.take().expect("active quest");
                     let index = self.active_index.expect("active queue row");
                     self.deaths = self.deaths.saturating_add(active.deaths);
+                    let skip_requested = std::mem::take(&mut self.skip_requested);
                     match flow {
+                        ScriptFlow::Complete if skip_requested => {
+                            self.queue.mark_parked(index, Arc::from("skipped by operator"));
+                        }
                         ScriptFlow::Complete => {
                             self.queue.mark_done(index);
                             self.completed = self.completed.saturating_add(1);
@@ -3727,7 +3731,7 @@ impl Script for QueuedQuester {
                         }
                         ScriptFlow::Blocked(failure) => self.queue.mark_parked(
                             index,
-                            if self.skip_requested {
+                            if skip_requested {
                                 Arc::from("skipped by operator")
                             } else {
                                 failure.message
@@ -3737,7 +3741,7 @@ impl Script for QueuedQuester {
                     }
                     self.refresh_fields();
                     self.sync_retained(tick);
-                    if std::mem::take(&mut self.skip_requested) {
+                    if skip_requested {
                         self.active_index = None;
                         self.publish(tick.output, NativePhase::Working);
                         return Ok(ScriptFlow::Continue);

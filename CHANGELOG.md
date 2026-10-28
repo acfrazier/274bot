@@ -15,9 +15,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   native clue rewrite, although Sherlock itself creates no V8 isolate.
 - The terminal app's script pane now marks the selected compiled (native)
   script card with `>` the same way as a selected JavaScript card.
-- **Skip quest** now parks the active Quester quest without Stop/Start.
-  The queue continues with the next quest. The parked row shows
-  `skipped by operator` and stays parked until a new Start.
+- **Skip quest** is available with `X` in the terminal Script pane. It parks the
+  active Quester quest without Stop/Start, including when that quest would
+  complete on the same tick; the parked row is never counted complete and the
+  next quest waits for a later tick. `max-deaths` and `manual-movement` stops
+  still end the run. The row shows `skipped by operator` until a new Start.
 
 ### Combat
 

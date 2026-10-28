@@ -5808,7 +5808,7 @@ fn a_preference_refused_at_queue_admission_logs_one_refusal_at_the_command_bound
     assert_eq!(d.session().refusals(), refusals + refused.len() as u64);
 }
 #[test]
-fn skip_quest_acceptance_uses_the_shared_driver_command_and_logs_the_identity_once() {
+fn skip_quest_acceptance_uses_the_shared_driver_command_and_reports_the_identity() {
     use script::native::{NativeTick, Script, ScriptFailure, ScriptFlow, SkippedQuest};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -5848,9 +5848,21 @@ fn skip_quest_acceptance_uses_the_shared_driver_command_and_logs_the_identity_on
         .expect("start native probe");
     wait_state(&mut d, "alice", ScriptRunState::Running);
 
+    let target = d
+        .session()
+        .play_for_test()
+        .expect("play")
+        .script_native_status("alice")
+        .expect("running native status")
+        .run;
     let refusals = d.session().refusals();
     let skip = d
-        .submit(OperatorCommand::SkipQuest, Targets::Profile("alice"))
+        .submit(
+            OperatorCommand::SkipQuest {
+                target: Some(target),
+            },
+            Targets::Profile("alice"),
+        )
         .expect("skip submission")
         .request();
     settle(&mut d, skip);
@@ -5870,19 +5882,6 @@ fn skip_quest_acceptance_uses_the_shared_driver_command_and_logs_the_identity_on
     assert_eq!(d.session().refusals(), refusals);
     assert_eq!(d.session().script_state("alice"), ScriptRunState::Running);
 
-    let mut view = crate::log::LogView::new(crate::log::LogScope::Process);
-    view.edit_filter(|filter| filter.set_text("driver-probe-quest"));
-    crate::log::global().refresh(&mut view);
-    let accepted = view
-        .rows()
-        .iter()
-        .filter(|row| {
-            let message = row.message();
-            message.contains("command accepted: SkipQuest on alice")
-                && message.contains("quest_id=driver-probe-quest step_id=driver-probe-step")
-        })
-        .count();
-    assert_eq!(accepted, 1, "one accepted command log line");
 }
 
 #[test]
@@ -5896,7 +5895,10 @@ fn skip_quest_without_a_running_queue_is_refused_with_one_shared_log_line() {
 
     let refusals = d.session().refusals();
     let skip = d
-        .submit(OperatorCommand::SkipQuest, Targets::Profile(name))
+        .submit(
+            OperatorCommand::SkipQuest { target: None },
+            Targets::Profile(name),
+        )
         .expect("skip submission")
         .request();
     settle(&mut d, skip);

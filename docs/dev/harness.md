@@ -42,6 +42,9 @@ Cells behind Cargo features do not build without them. `quester_dev_paths_live`,
 other `*_live*` modules) run under `cargo test`. Each cell file's header lists
 its own environment.
 
+The `quester_skip_active_cook_parks_then_sheep_completes` cell in
+`quester_queue_live` also needs `--features "live-harness test-support live-probe"`.
+
 The expected-combat Quester cell seeds Tourist Trap (`desertrescue`) at stage
 3. The loc-dialogue cell seeds Priest in Peril (`priestperil`) at stage 1.
 These permanent server variables are not transmitted to the client. After
@@ -226,8 +229,8 @@ scenario cells, besides the `host-play` live tests that seed a bank:
 `jive_dragons_mixed_food_restock`, `jive_dragons_potion_restock`,
 `jive_enchanter`, `jive_kbd`, `jive_kq_four`,
 `moss_giant_bank`, `moss_giant_bank_start`, `moss_giant_dart`, `mule_crafter`,
-`potion_maker`, `potion_maker_named`, `quester_queue`, `ranging_guild_bank`,
-`ranging_guild_full`, `rune_crafter`, `rune_crafter_earth`, `smelter_bot`,
+`potion_maker`, `potion_maker_named`, `quester_queue`, `quester_skip`,
+`ranging_guild_bank`,
 `smelter_bot_steel`, `superheater`, `superheater_fire_battlestaff`,
 `superheater_mithril`, `superheater_silver_low_natures`, `superheater_steel`,
 `tanner_bot`, `tanner_bot_hard`, `thiever_diagonal_door_trap`, `vial_filler`,

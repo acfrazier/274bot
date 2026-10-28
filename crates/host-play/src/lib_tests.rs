@@ -30908,6 +30908,13 @@ mod skip_quest_tests {
         tick(&slot, 1);
         slot
     }
+    fn run_key(slot: &ScriptSlot) -> api::selected::RunKey {
+        slot.lock()
+            .unwrap()
+            .native_status()
+            .expect("running native status")
+            .run
+    }
 
     fn assert_not_quester(failure: &ScriptFailure) {
         assert_eq!(failure.code.as_ref(), "not-quester");
@@ -30929,26 +30936,67 @@ mod skip_quest_tests {
             false,
         );
 
-        let skipped = play.script_skip_quest("alice").unwrap();
+        let skipped = play
+            .script_skip_quest("alice", Some(run_key(&slot)))
+            .unwrap();
         assert_eq!(skipped.quest_id.as_ref(), "cook");
         assert_eq!(skipped.step_id.as_ref(), "cook-bank");
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         assert_eq!(slot.lock().unwrap().state(), script::RunState::Running);
 
         slot.lock().unwrap().pause();
-        let paused_skip = play.script_skip_quest("alice").unwrap();
+        let paused_skip = play
+            .script_skip_quest("alice", Some(run_key(&slot)))
+            .unwrap();
         assert_eq!(paused_skip, skipped);
         assert_eq!(calls.load(Ordering::Relaxed), 2);
         assert_eq!(slot.lock().unwrap().state(), script::RunState::Paused);
     }
 
     #[test]
+    fn play_skip_quest_refuses_a_stale_run_identity() {
+        let play = play();
+        let old_calls = Arc::new(AtomicUsize::new(0));
+        let old_slot = start_probe(
+            &play,
+            script::CompiledId("Quester"),
+            Arc::clone(&old_calls),
+            Arc::new(AtomicBool::new(false)),
+            false,
+        );
+        let stale = run_key(&old_slot);
+        play.script_stop("alice");
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let slot = start_probe(
+            &play,
+            script::CompiledId("Quester"),
+            Arc::clone(&calls),
+            Arc::new(AtomicBool::new(false)),
+            false,
+        );
+        let current = run_key(&slot);
+        assert_ne!(stale, current);
+
+        let failure = play
+            .script_skip_quest("alice", Some(stale))
+            .unwrap_err();
+        assert_eq!(failure.code.as_ref(), "skip-quest-refused");
+        assert_eq!(failure.message.as_ref(), "stale native run");
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        assert_eq!(slot.lock().unwrap().state(), script::RunState::Running);
+
+        play.script_skip_quest("alice", Some(current)).unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert_eq!(old_calls.load(Ordering::Relaxed), 0);
+    }
+    #[test]
     fn play_skip_quest_refuses_missing_and_idle_scripts() {
         let play = play();
         let _idle = script_slot_or_insert(&play.scripts, "idle");
 
         for name in ["missing", "idle"] {
-            let failure = play.script_skip_quest(name).unwrap_err();
+            let failure = play.script_skip_quest(name, None).unwrap_err();
             assert_not_quester(&failure);
         }
     }
@@ -30969,7 +31017,7 @@ mod skip_quest_tests {
             .unwrap();
         assert_eq!(slot.lock().unwrap().state(), script::RunState::Starting);
 
-        let failure = play.script_skip_quest("alice").unwrap_err();
+        let failure = play.script_skip_quest("alice", None).unwrap_err();
         assert_not_quester(&failure);
         assert_eq!(slot.lock().unwrap().state(), script::RunState::Starting);
         play.script_stop("alice");
@@ -30987,7 +31035,9 @@ mod skip_quest_tests {
             false,
         );
 
-        let failure = play.script_skip_quest("alice").unwrap_err();
+        let failure = play
+            .script_skip_quest("alice", Some(run_key(&slot)))
+            .unwrap_err();
         assert_not_quester(&failure);
         assert_eq!(calls.load(Ordering::Relaxed), 0);
         assert_eq!(slot.lock().unwrap().state(), script::RunState::Running);
@@ -31005,6 +31055,7 @@ mod skip_quest_tests {
             Arc::clone(&complete),
             false,
         );
+        let target = run_key(&slot);
         complete.store(true, Ordering::Relaxed);
         tick(&slot, 2);
         assert_eq!(
@@ -31013,7 +31064,9 @@ mod skip_quest_tests {
         );
         assert_eq!(slot.lock().unwrap().state(), script::RunState::Idle);
 
-        let failure = play.script_skip_quest("alice").unwrap_err();
+        let failure = play
+            .script_skip_quest("alice", Some(target))
+            .unwrap_err();
         assert_not_quester(&failure);
         assert_eq!(calls.load(Ordering::Relaxed), 0);
         let slot = slot.lock().unwrap();
@@ -31032,7 +31085,9 @@ mod skip_quest_tests {
             true,
         );
 
-        let failure = play.script_skip_quest("alice").unwrap_err();
+        let failure = play
+            .script_skip_quest("alice", Some(run_key(&slot)))
+            .unwrap_err();
         assert_eq!(failure.code.as_ref(), "skip-quest-panic");
         assert_eq!(failure.message.as_ref(), "skip callback panicked");
         let slot = slot.lock().expect("panic fence must keep the slot usable");

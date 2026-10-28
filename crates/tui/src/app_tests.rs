@@ -1854,6 +1854,7 @@ fn script_commands_are_reachable_at_80x24() {
     assert_eq!(app.on_key(ch('f')), AppAction::None);
 }
 
+/// With `TUI_CAPTURE_DIR` set, record the control at both reference terminal sizes.
 #[test]
 fn running_quester_skip_control_is_clickable_at_both_terminal_sizes_and_in_help() {
     let id = CompiledCardId::QUESTER;
@@ -1864,24 +1865,62 @@ fn running_quester_skip_control_is_clickable_at_both_terminal_sizes_and_in_help(
     detail.row_mut().set_script(ScriptRunState::Running);
     app.detail = Some(NativeStatus::working(id).attach_to(detail));
 
-    for (width, height) in [(120, 40), (80, 24)] {
-        let rows = draw(&mut app, width, height);
-        let (x, y) = find(&rows, "[Skip quest k]").expect("running Quester button");
-        assert_eq!(
-            app.on_click(x + 1, y),
-            AppAction::ScriptSkipQuest,
-            "{width}x{height}: click"
-        );
-        assert_eq!(
-            app.on_key(ch('k')),
-            AppAction::ScriptSkipQuest,
-            "{width}x{height}: key"
-        );
+    let capture_dir = std::env::var_os("TUI_CAPTURE_DIR").map(std::path::PathBuf::from);
+    if let Some(dir) = capture_dir.as_deref() {
+        std::fs::create_dir_all(dir).unwrap();
     }
 
+    for (width, height) in [(120, 40), (80, 24)] {
+        let rows = draw(&mut app, width, height);
+        let footer = rows.last().expect("footer row");
+        assert!(
+            footer.contains("X skip"),
+            "{width}x{height}: missing skip hint: {footer}"
+        );
+        #[cfg(feature = "js")]
+        for key in ["f load", "v params", "R reload"] {
+            assert!(
+                footer.contains(key),
+                "{width}x{height}: missing {key:?}: {footer}"
+            );
+        }
+        if let Some(dir) = capture_dir.as_deref() {
+            crate::bin::manual_click_live_tests::capture(
+                &mut app,
+                width,
+                height,
+                dir,
+                &format!("{width}x{height}"),
+                "quester-skip-control",
+                &serde_json::json!({
+                    "card": "Quester",
+                    "state": "running",
+                    "skip_key": "X",
+                    "skip_hint": footer.contains("X skip"),
+                    "load_hint": footer.contains("f load"),
+                    "params_hint": footer.contains("v params"),
+                    "reload_hint": footer.contains("R reload"),
+                }),
+            )
+            .unwrap();
+        }
+        let (x, y) = find(&rows, "[Skip quest X]").expect("running Quester button");
+        assert!(
+            matches!(
+                app.on_click(x + 1, y),
+                AppAction::ScriptSkipQuest(Some(_))
+            ),
+            "{width}x{height}: click"
+        );
+        assert!(
+            matches!(app.on_key(ch('X')), AppAction::ScriptSkipQuest(Some(_))),
+            "{width}x{height}: key"
+        );
+        assert_eq!(app.on_key(ch('k')), AppAction::None, "{width}x{height}: k");
+    }
     assert!(crate::help::help_rows(&app)
         .iter()
-        .any(|row| row.context == "Script" && row.keys == "k" && row.what == "Skip quest"));
+        .any(|row| row.context == "Script" && row.keys == "X" && row.what == "Skip quest"));
 }
 
 #[test]

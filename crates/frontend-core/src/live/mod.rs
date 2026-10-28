@@ -65,22 +65,6 @@ pub enum FixtureMode {
     Prepare,
     RunPrepared,
 }
-const QUESTER_SKIP_SCENARIO: &str = "quester_skip";
-const QUESTER_SKIP_QUESTS: &[&str] = &["cook", "sheep"];
-const QUESTER_SKIP_SETTINGS: &[scenario::ScriptSettingInject] = &[
-    scenario::ScriptSettingInject {
-        id: "quests",
-        value: scenario::ScriptInjectValue::StrList(QUESTER_SKIP_QUESTS),
-    },
-    scenario::ScriptSettingInject {
-        id: "order_override",
-        value: scenario::ScriptInjectValue::StrList(QUESTER_SKIP_QUESTS),
-    },
-    scenario::ScriptSettingInject {
-        id: "skip",
-        value: scenario::ScriptInjectValue::StrList(&[]),
-    },
-];
 
 /// An owned fixture identity. Its adapter representation remains private.
 pub struct FixtureIdentity(Box<scenario::FixtureIdentity>);
@@ -1575,46 +1559,19 @@ fn proof_gate(gate: host_play::live_gate::CoreGate) -> ProofGate {
 impl Scenario {
     /// Resolve a registered scenario by name.
     pub fn get(name: &str) -> Option<Self> {
-        if name == QUESTER_SKIP_SCENARIO {
-            return Self::quester_skip_fixture();
-        }
         scenario::get(name).map(|scenario| Self(Box::new(scenario)))
     }
 
     /// Resolve a scenario without converting unknown-name errors to absence.
     pub fn try_get(name: &str) -> Result<Option<Self>, String> {
-        if name == QUESTER_SKIP_SCENARIO {
-            return Ok(Self::quester_skip_fixture());
-        }
         scenario::try_get(name).map(|scenario| scenario.map(|scenario| Self(Box::new(scenario))))
     }
 
     /// Whether `name` identifies a registered scenario.
     pub fn is_registered(name: &str) -> bool {
-        name == QUESTER_SKIP_SCENARIO || scenario::is_registered(name)
+        scenario::is_registered(name)
     }
 
-    fn quester_skip_fixture() -> Option<Self> {
-        let mut scenario = scenario::get("quester_queue")?;
-        let start = scenario
-            .steps
-            .iter()
-            .position(|step| step.name == "start the compiled card")?;
-        let sheep = scenario
-            .steps
-            .iter()
-            .position(|step| step.name == "watch the queued Sheep completion")?;
-        let sheep_step = scenario.steps.remove(sheep);
-        scenario.steps.truncate(start + 1);
-        scenario.steps.push(sheep_step);
-        scenario.name = QUESTER_SKIP_SCENARIO;
-        scenario.proof = scenario::Proof::QuestDone {
-            name: "Sheep Shearer",
-        };
-        scenario.settings.script_settings_inject = Some(QUESTER_SKIP_SETTINGS);
-        scenario.settings.terminal_shot = Some("quester_skip");
-        Some(Self(Box::new(scenario)))
-    }
 
     #[cfg(feature = "js")]
     /// Create the external-loader prerequisite scenario.

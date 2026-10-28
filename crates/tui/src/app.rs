@@ -319,7 +319,7 @@ pub enum AppAction {
     /// / [`Play::script_resume`], like the panel's `script_toggle_pause`).
     ScriptPause,
     /// Skip the active row in the focused Quester queue.
-    ScriptSkipQuest,
+    ScriptSkipQuest(Option<api::selected::RunKey>),
     /// Stop the focused slot's script (`Play::script_stop`).
     ScriptStop,
     /// Open the script Browse picker (registry cards).
@@ -2030,7 +2030,11 @@ impl TuiApp {
                 }),
             },
             Command::ScriptPause => AppAction::ScriptPause,
-            Command::ScriptSkipQuest => AppAction::ScriptSkipQuest,
+            Command::ScriptSkipQuest => AppAction::ScriptSkipQuest(
+                self.focused_detail()
+                    .and_then(|detail| detail.native_status())
+                    .map(|native| native.run()),
+            ),
             Command::ScriptStop => AppAction::ScriptStop,
             #[cfg(feature = "js")]
             Command::ScriptLoad => {

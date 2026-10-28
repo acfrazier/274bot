@@ -588,7 +588,12 @@ impl Command {
             }
             Command::ScriptPause => OperatorCommand::PauseScript,
             Command::ScriptStop => OperatorCommand::StopScript,
-            Command::ScriptSkipQuest => OperatorCommand::SkipQuest,
+            Command::ScriptSkipQuest => OperatorCommand::SkipQuest {
+                target: app
+                    .focused_detail()
+                    .and_then(|detail| detail.native_status())
+                    .map(|native| native.run()),
+            },
             #[cfg(feature = "js")]
             Command::ScriptReload if app.reload_confirm => OperatorCommand::ConfirmReload,
             #[cfg(feature = "js")]

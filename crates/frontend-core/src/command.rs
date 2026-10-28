@@ -46,6 +46,7 @@ use api::lifecycle::{
     Intent, IntentCommand, IntentGeneration, IntentSnapshot, MailboxError, MemoryMode, ParkReason,
     PostReceipt, SessionEventOut, WorldChoice,
 };
+use api::selected::RunKey;
 use api::process_condition::{
     ConditionId, ProcessCapability, ProcessConditions, ProcessServiceCondition, UnavailableTerminal,
 };
@@ -146,9 +147,9 @@ pub enum OperatorCommand {
     /// Pause the running script (`OperatorSession::toggle_pause`,
     /// `session.rs:1728-1750`).
     PauseScript,
-    /// Request that the active Quester queue row be skipped at its next
-    /// eligible tick; the shared script host accepts or refuses at dispatch.
-    SkipQuest,
+    /// Request a skip for the active Quester run at its next eligible tick.
+    /// `target` fences the command against a stale native status view.
+    SkipQuest { target: Option<RunKey> },
     /// Resume a paused script through the same operator row.
     ResumeScript,
     /// Stop the script (`OperatorSession::{stop_script, stop_scripts}`,
@@ -739,7 +740,7 @@ impl OperatorCommand {
         Self::StartScript,
         Self::PauseScript,
         Self::ResumeScript,
-        Self::SkipQuest,
+        Self::SkipQuest { target: None },
         Self::StopScript,
         Self::CancelQueuedStart,
         Self::PickBrowseCard,
@@ -1025,7 +1026,7 @@ impl OperatorCommand {
             | Self::ReturnToProfileImportPath
             | Self::SetProfileImportDeletePrompt(_)
             | Self::DeleteProfileImportExport
-            | Self::SkipQuest
+            | Self::SkipQuest { .. }
             | Self::CancelQueuedStart
             | Self::CancelSettingsSync
             | Self::DeferSettingsRestart

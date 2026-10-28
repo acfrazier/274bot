@@ -9449,11 +9449,11 @@ fn unavailable_quester_skip_shows_and_expires_the_tui_refusal() {
         AppAction::None
     );
     let before = session.core.refusals();
-    let action = app.on_key(settings_key(KeyCode::Char('k')));
+    let action = app.on_key(settings_key(KeyCode::Char('X')));
     assert!(matches!(
         &action,
         AppAction::Refused(refusal)
-            if refusal.command == Some(OperatorCommand::SkipQuest)
+            if refusal.command == Some(OperatorCommand::SkipQuest { target: None })
     ));
     dispatch(&mut session, &mut app, action);
 
