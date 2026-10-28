@@ -7,6 +7,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Panel and terminal app
 
+- In the panel, **Copy settings** now follows a bot if you rename it in
+  **Profiles** before **Confirm**. The copy is still cancelled if the
+  target is deleted or the vault becomes unavailable.
+
 - Source builds can now omit the JavaScript runtime with
   `--no-default-features`. These builds keep Gatherer, Grinch and Quester,
   their settings, and native Start, Pause, Stop and paint controls. They do
