@@ -287,18 +287,11 @@ fn stale_route_terminal_cannot_complete_a_native_walk_with_the_same_request_id()
         let previous_generation = bot.route_generation.wrapping_sub(1);
         // Compatibility walks and native actions have separate request-id
         // sequences. A retained compatibility terminal can reuse this id.
-        bot.note_route_end(
-            previous_generation,
-            request_id,
-            WorldTile {
-                x: 0,
-                z: 0,
-                level: 0,
-            },
-            0,
-            false,
-            false,
-        );
+        bot.walk_outcome_seq = bot.walk_outcome_seq.wrapping_add(1);
+        bot.walk_outcome_generation = previous_generation;
+        bot.walk_outcome_request_id = request_id;
+        bot.walk_outcome_failed = false;
+        bot.walk_outcome_blocked = false;
     }
 
     rig.observe(2);
