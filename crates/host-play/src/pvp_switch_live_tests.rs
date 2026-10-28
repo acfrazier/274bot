@@ -361,15 +361,15 @@ fn partner_step(
                 } else {
                     max_z - 1
                 };
-                let tile = |z| api::snapshot::WorldTile {
-                    x,
-                    z,
-                    level: own.2,
-                };
+                let tile = |z| api::snapshot::WorldTile { x, z, level: own.2 };
                 (tile(own.1), tile(z))
             });
             let arrived = (own.0 - first.x).abs().max((own.1 - first.z).abs()) <= 1;
-            let far = if arrived || state.at_second { second } else { first };
+            let far = if arrived || state.at_second {
+                second
+            } else {
+                first
+            };
             state.at_second |= arrived;
             if !pace(&state.walked_tick, 12) || (arrived && state.sent != Some(far)) {
                 state.walked_tick = Some(tick);
