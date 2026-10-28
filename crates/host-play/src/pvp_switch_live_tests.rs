@@ -58,6 +58,8 @@ struct TraceRow {
     switch: String,
     switches: u8,
     failures: u8,
+    /// Wear refusals counted for the right hand and the quiver.
+    refusals: (u8, u8),
     /// `(slot, obj id)` worn by the machine's account.
     worn: Vec<(i32, i32)>,
     /// The partner's head icon bits (bit 3 melee, 4 ranged, 5 magic).
@@ -83,7 +85,7 @@ struct Shared {
     begin_error: Option<String>,
     begun_tick: Option<u64>,
     failure: Option<String>,
-    last: Option<(Style, SwitchState, u8, u8)>,
+    last: Option<(Style, SwitchState, u8, u8, u8, u8)>,
     quiet: u32,
 }
 
@@ -186,6 +188,8 @@ impl Script for SwitchFight {
                     combat.switch_state(),
                     combat.switches(),
                     combat.switch_failures(),
+                    combat.wear_refusals(3),
+                    combat.wear_refusals(13),
                 )
             })
         });
@@ -217,6 +221,7 @@ impl Script for SwitchFight {
                 switch: format!("{:?}", state.1),
                 switches: state.2,
                 failures: state.3,
+                refusals: (state.4, state.5),
                 worn: snapshot
                     .map(|snapshot| {
                         snapshot

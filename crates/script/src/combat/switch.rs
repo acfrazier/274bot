@@ -173,6 +173,11 @@ impl Combat {
     pub fn switch_failures(&self) -> u8 {
         self.switch_failed
     }
+    /// Refusals counted against the wear of `slot` (0 to 3): the budget a
+    /// switch's `Failed` is judged by.
+    pub fn wear_refusals(&self, slot: u8) -> u8 {
+        ((self.prep_failures >> (u32::from(slot) * 3)) & 3) as u8
+    }
 
     /// The `StyleState` of `style` (the one `Box` of a switch lives here).
     /// `ammo_pick` is the ranged ammunition the state starts with, `local_update`
