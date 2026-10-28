@@ -9,6 +9,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use api::identity::{RequestId, Settlement};
 use host_play::local_state::{QueuedUpdate, Update};
@@ -21,6 +22,7 @@ use crate::command::{
 use crate::map_bake::MapBakeChoice;
 use crate::nav_prefs::NavPreference;
 use crate::quester_paths::QuesterPathsView;
+use crate::setting::{Setting, SettingStatus};
 use crate::surface::SlotSurface;
 use crate::walk_permissions::{DangerLevel, WalkGlobalsView};
 use crate::OperatorSession;
@@ -227,6 +229,27 @@ impl DrawPolicy {
         };
         std::mem::replace(slot, on) != on
     }
+
+    /// The current value of a saved `switch`; `None` for one that is not
+    /// saved.
+    fn value(&self, switch: DrawSwitch) -> Option<bool> {
+        match switch {
+            DrawSwitch::CaptureInput => Some(self.capture),
+            DrawSwitch::SidecarFullRate => Some(self.sidecar_50),
+            DrawSwitch::FocusedFullRate => Some(self.focused_50),
+            DrawSwitch::GameRenderer | DrawSwitch::LiveFullRate => None,
+        }
+    }
+
+    /// The value `document` holds for a saved `switch` (absent keys take
+    /// their defaults: capture on, sidecar 50 fps off, focused 50 fps on).
+    fn saved_in(document: &serde_json::Map<String, serde_json::Value>, switch: DrawSwitch) -> bool {
+        let default = !matches!(switch, DrawSwitch::SidecarFullRate);
+        Self::key(switch)
+            .and_then(|key| document.get(key))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(default)
+    }
 }
 
 impl<Io> OperatorSession<Io> {
@@ -264,26 +287,19 @@ impl<Io> OperatorSession<Io> {
         self.commands.stage_quester_game_data(selected);
     }
 
-    /// Startup: project the bound operator preferences onto the session
-    /// (the durable walk globals and their store, the manual-movement
-    /// pause) and return the walk-permission view the front end shows.
+    /// Startup: bind the operator preferences to the session (the durable
+    /// walk globals' store) and return the walk-permission view the front
+    /// end shows. A readable store is adopted at once; a cold one adopts
+    /// from [`Self::poll_preferences`] when its first snapshot is ready,
+    /// and the view shown until then is provisional.
     pub fn adopt_operator_preferences(&mut self) -> WalkGlobalsView {
         let Some(preferences) = self.preferences() else {
             return WalkGlobalsView::default();
         };
+        self.set_walk_globals_store(preferences.share());
+        self.sync_snapshot();
         let view = WalkGlobalsView::read(&preferences);
         self.set_walk_globals(view.globals());
-        self.set_walk_globals_store(preferences.share());
-        let pause = crate::nav_prefs::nav_preference(
-            &preferences,
-            NavPreference::PauseScriptOnManualWalkAbort,
-        )
-        .unwrap_or(true);
-        self.set_pause_script_on_manual_walk_abort(pause);
-        if preferences.ready() && !self.preferences_adopted {
-            self.preferences_adopted = true;
-            self.adopt_profile_order(&preferences);
-        }
         view
     }
 
@@ -308,11 +324,181 @@ impl<Io> OperatorSession<Io> {
         view
     }
 
-    /// The walk view a queued Nav or danger write adopted when it settled
-    /// since the last call, for the headless driver's lent model (the
-    /// panel and the TUI re-read the durable view each frame).
-    pub(crate) fn take_settled_walk_globals(&mut self) -> Option<WalkGlobalsView> {
-        self.commands.take_settled_walk_globals()
+    /// What a front end shows beside `setting`: saved, pending (an
+    /// accepted write has no terminal result yet) or the retained failure.
+    /// Core state: closing and reopening a window or popup reconstructs it.
+    pub fn setting_status(&self, setting: Setting) -> SettingStatus<'_> {
+        self.settings.status(setting)
+    }
+
+    /// The retained failure text of `setting`, if any.
+    pub fn setting_failure(&self, setting: Setting) -> Option<&str> {
+        self.settings.failure(setting)
+    }
+
+    /// Clear the retained failure of `setting`: the action that resolves it
+    /// happened (the operator closed the notice that showed it, or fixed
+    /// its cause). Otherwise it expires by itself after
+    /// [`crate::ERROR_MESSAGE_TIMEOUT`].
+    pub fn dismiss_setting_failure(&mut self, setting: Setting) {
+        let had_failure = self.settings.failure(setting).is_some();
+        self.settings.clear_failure(setting);
+        if had_failure {
+            self.note_setting(setting, SettingEventState::Cleared);
+        }
+    }
+
+    /// When the earliest retained setting failure expires, for a front end
+    /// that sleeps between frames.
+    pub fn next_setting_expiry(&self) -> Option<Instant> {
+        self.settings.next_expiry()
+    }
+
+    /// The one reconciliation owner of saved settings. Call it once per
+    /// frame or tick, after [`Self::poll`] (or [`Self::poll_host`]) and
+    /// before the front end reads its models, with the surface that lends
+    /// them. It settles every accepted preference write by its own request
+    /// (retaining a failure at its setting), then lets every model follow
+    /// the latest durable snapshot once per durable version: the first
+    /// readable snapshot is the startup adoption (nothing is saved over a
+    /// cold store), a later one carries another process's change or this
+    /// session's own write landing. A saved setting never takes effect from
+    /// a submit: a draw switch, the bake gate, the Quester source, the walk
+    /// grants, the manual-walk pause and the session file change here, from
+    /// the durable value, so a pending or failed write changes nothing.
+    pub fn poll_preferences<S: SlotSurface<Io = Io>>(&mut self, surface: &mut S) {
+        self.poll_preferences_at(surface, Instant::now());
+    }
+
+    /// [`Self::poll_preferences`] at `now`.
+    pub fn poll_preferences_at<S: SlotSurface<Io = Io>>(&mut self, surface: &mut S, now: Instant) {
+        self.settle_pref_writes();
+        self.poll_order_writes();
+        if self.commands.watching_setting_events() {
+            let settings = Setting::ALL;
+            let failures = settings.map(|setting| self.settings.failure(setting).is_some());
+            self.settings.expire(now);
+            for (setting, had_failure) in settings.into_iter().zip(failures) {
+                if had_failure && self.settings.failure(setting).is_none() {
+                    self.note_setting(setting, SettingEventState::Cleared);
+                }
+            }
+        } else {
+            self.settings.expire(now);
+        }
+        let Some(snapshot) = self.sync_snapshot() else {
+            return;
+        };
+        if self.models_version != Some(snapshot.version()) {
+            let first = self.models_version.is_none();
+            self.models_version = Some(snapshot.version());
+            self.follow_models(&snapshot, first, surface);
+        }
+        self.poll_session_sink(now);
+    }
+
+    /// The session-owned state follows a new durable snapshot: the walk
+    /// grants and their play projection, the manual-walk pause, the Load
+    /// order and the session file.
+    pub(super) fn follow_snapshot(
+        &mut self,
+        preferences: &crate::UiPreferences,
+        snapshot: &crate::prefs::PreferenceSnapshot,
+        first: bool,
+    ) {
+        let view = WalkGlobalsView::read(preferences);
+        self.set_walk_globals(view.globals());
+        let pause = crate::nav_prefs::nav_preference(
+            preferences,
+            NavPreference::PauseScriptOnManualWalkAbort,
+        )
+        .unwrap_or(true);
+        self.set_pause_script_on_manual_walk_abort(pause);
+        self.follow_profile_order(snapshot, first);
+        self.follow_session_log(snapshot);
+        self.preferences_adopted = true;
+    }
+
+    /// Open or close the session file when the durable preference says so.
+    /// A sink that is off at startup is left alone.
+    fn follow_session_log(&mut self, snapshot: &crate::prefs::PreferenceSnapshot) {
+        let wanted = snapshot
+            .document()
+            .get(crate::log_file::SESSION_LOG_KEY)
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let first = self.session_log_wanted.is_none();
+        if self.session_log_wanted == Some(wanted) {
+            return;
+        }
+        self.session_log_wanted = Some(wanted);
+        self.session_sink_reported = false;
+        if first && !wanted {
+            return;
+        }
+        crate::log_file::apply_session_log(wanted);
+    }
+
+    /// A saved choice to write the session file is not yet a file that
+    /// writes: the sink opens on its own thread. A failure to open it is a
+    /// runtime-effect failure of a durable choice, and says so (once per
+    /// choice; the preference itself stays saved).
+    fn poll_session_sink(&mut self, now: Instant) {
+        if self.session_log_wanted != Some(true) || self.session_sink_reported {
+            return;
+        }
+        if let Some(cause) = crate::log_file::global_file_failure() {
+            self.session_sink_reported = true;
+            let error =
+                format!("Saved, but the session file could not be opened or written: {cause}");
+            self.settings
+                .fail_now(Setting::SessionLog, error.clone(), now);
+            self.note_setting_failed(Setting::SessionLog, &error);
+        }
+    }
+
+    /// Every lent model follows the durable snapshot: the draw policy (a
+    /// changed saved switch tells the surface and wakes the slots), the
+    /// bake gate, the Quester source and the walk view. A model that is
+    /// absent is skipped; a draw policy that does not persist (a live
+    /// harness run) never follows the file.
+    fn follow_models<S: SlotSurface<Io = Io>>(
+        &mut self,
+        snapshot: &crate::prefs::PreferenceSnapshot,
+        first: bool,
+        surface: &mut S,
+    ) {
+        let document = snapshot.document();
+        for switch in [
+            DrawSwitch::CaptureInput,
+            DrawSwitch::SidecarFullRate,
+            DrawSwitch::FocusedFullRate,
+        ] {
+            let saved = DrawPolicy::saved_in(document, switch);
+            let differs = surface
+                .models()
+                .draw
+                .as_deref()
+                .is_some_and(|draw| draw.persist && draw.value(switch) != Some(saved));
+            if differs {
+                self.apply_draw(switch, saved, surface);
+            }
+        }
+        let choice = crate::map_bake::choice_in(document);
+        if let Some(desk) = surface.models().map.as_deref_mut() {
+            if desk.bake_gate().choice() != choice {
+                desk.bake_gate_mut().set_choice(choice);
+            }
+        }
+        if let Some(paths) = surface.models().quester.as_deref_mut() {
+            paths.adopt_durable(QuesterPathsView::read_document(document), first);
+        }
+        if let Some(preferences) = self.preferences() {
+            let view = WalkGlobalsView::read(&preferences);
+            if let Some(lent) = surface.models().walk_globals.as_deref_mut() {
+                *lent = view;
+            }
+        }
     }
 
     /// Whether an accepted preferences save still awaits its terminal result.
@@ -335,18 +521,20 @@ impl<Io> OperatorSession<Io> {
         self.commands.take_setting_events()
     }
 
-    /// Record that `setting`'s write entered `state` (no error text).
-    pub(super) fn note_setting(&mut self, setting: &str, state: SettingEventState) {
-        self.commands.note_setting_event(setting, state, None);
+    pub(super) fn note_setting(&mut self, setting: Setting, state: SettingEventState) {
+        self.commands
+            .note_setting_event(setting.identity(), state, None);
     }
 
-    /// Record that `setting`'s write failed with `error`. The text is
-    /// formatted only while a front end watches.
-    pub(super) fn note_setting_failed(&mut self, setting: &str, error: &dyn std::fmt::Display) {
+    /// Record a failed setting write with its stable identity.
+    pub(super) fn note_setting_failed(&mut self, setting: Setting, error: &dyn std::fmt::Display) {
         if self.commands.watching_setting_events() {
             let text = error.to_string();
-            self.commands
-                .note_setting_event(setting, SettingEventState::Failed, Some(text));
+            self.commands.note_setting_event(
+                setting.identity(),
+                SettingEventState::Failed,
+                Some(text),
+            );
         }
     }
     /// A handle on the running write of the SaveLog command `request`, for
@@ -422,12 +610,10 @@ impl<Io> OperatorSession<Io> {
         }
         let applied = match row {
             PrefRow::Draw(switch, on) => self.set_draw(request, switch, on, surface),
-            PrefRow::Nav(preference, on) => {
-                self.set_nav_preference(request, preference, on, surface)
-            }
-            PrefRow::Danger(level) => self.set_danger_level(request, level, surface),
+            PrefRow::Nav(preference, on) => self.set_nav_preference(request, preference, on),
+            PrefRow::Danger(level) => self.set_danger_level(request, level),
             PrefRow::SessionLog(on) => self.set_session_log(request, on),
-            PrefRow::MapBake(choice) => self.set_map_bake_choice(request, choice, surface),
+            PrefRow::MapBake(choice) => self.set_map_bake_choice(request, choice),
             PrefRow::QuesterPaths => self.set_quester_paths(request, surface),
             PrefRow::ReloadQuesterPaths => self.reload_quester_paths(request, surface),
             PrefRow::AcknowledgeNotice => self.acknowledge_notice(request, surface),
@@ -436,37 +622,40 @@ impl<Io> OperatorSession<Io> {
         self.settle_app(request, command, applied, submitted);
     }
 
-    /// The terminal of a preference write that did not fail: `Done` with
-    /// `effect` applied when it is durable; when the bounded wait ended
-    /// with it still queued, the member stays pending and settles from
-    /// the writer's terminal ([`Self::settle_pref_writes`]). Either way
-    /// this is now the newest command for its setting, so an older queued
-    /// write of that setting no longer applies its value when it settles.
+    /// The terminal of a saved-setting write that was accepted: `Done` for
+    /// a write with nothing to wait for; otherwise the setting is pending
+    /// and its command settles from the writer's terminal
+    /// ([`Self::settle_pref_writes`]). Nothing is applied here: a saved
+    /// setting takes effect from the latest durable snapshot
+    /// ([`Self::poll_preferences`]), never from the submit.
     fn after_write(
         &mut self,
         request: RequestId,
+        setting: Setting,
         write: Update,
-        setting: &'static str,
         what: &'static str,
-        effect: PrefEffect,
     ) -> Applied {
-        for older in self.commands.pref_writes().iter_mut() {
-            older.effect = older.effect.superseded_by(effect);
-        }
         match write {
             Update::Durable => {
-                self.apply_pref_effect(effect);
+                let had_failure = self.settings.failure(setting).is_some();
+                self.settings.clear_failure(setting);
+                if had_failure {
+                    self.note_setting(setting, SettingEventState::Cleared);
+                }
                 self.note_setting(setting, SettingEventState::Saved);
                 Applied::Done
             }
             Update::Queued(queued) => {
+                let had_failure = self.settings.failure(setting).is_some();
+                self.settings.begin(setting);
+                if had_failure {
+                    self.note_setting(setting, SettingEventState::Cleared);
+                }
                 self.commands.watch_pref_write(PrefWriteWatch {
                     request,
                     queued,
                     setting,
                     what,
-                    effect,
-                    order: None,
                 });
                 self.note_setting(setting, SettingEventState::Pending);
                 Applied::Later
@@ -474,32 +663,25 @@ impl<Io> OperatorSession<Io> {
         }
     }
 
-    /// What a durable preference write changes in this session beyond the
-    /// file (the effects that need no lent model). Returns the walk view a
-    /// walk effect adopted.
-    fn apply_pref_effect(&mut self, effect: PrefEffect) -> Option<WalkGlobalsView> {
-        match effect {
-            PrefEffect::None => None,
-            PrefEffect::Walk(pause) => {
-                if let Some(on) = pause {
-                    self.set_pause_script_on_manual_walk_abort(on);
-                }
-                Some(self.refresh_walk_globals())
-            }
-            PrefEffect::SessionLog(on) => {
-                crate::log_file::apply_session_log(on);
-                None
-            }
-            PrefEffect::ProfileOrder => None,
+    /// A write for `setting` was refused before it was accepted: the
+    /// command's own failure, and the failure the setting shows.
+    fn refused(&mut self, setting: Setting, applied: Applied) -> Applied {
+        if let Applied::Failed(_, Some(text)) | Applied::Rejected(_, Some(text)) = &applied {
+            self.settings
+                .fail_now(setting, format!("Not saved: {text}"), Instant::now());
+            self.note_setting_failed(setting, text);
         }
+        applied
     }
 
-    /// Poll every preference write still queued on the writer thread and
-    /// settle the command of each one that ended: `Done` (its effect
-    /// applied) when durable, `Failed(WriteFailed)` with the reason
-    /// otherwise. Nothing to do, and nothing allocated, while none is
-    /// queued.
+    /// Poll every saved-setting write still queued on the writer thread and
+    /// settle the command of each one that ended: `Done` when durable,
+    /// `Failed(WriteFailed)` with the reason otherwise. A failure stays on
+    /// its setting ([`Self::setting_status`]) until an action resolves it
+    /// or the error timeout passes. Nothing to do, and nothing allocated,
+    /// while none is queued.
     pub(super) fn settle_pref_writes(&mut self) {
+        let now = Instant::now();
         let mut index = 0;
         while index < self.commands.pref_writes().len() {
             let Some(outcome) = self.commands.pref_writes()[index].queued.poll() else {
@@ -509,24 +691,27 @@ impl<Io> OperatorSession<Io> {
             let watch = self.commands.pref_writes().swap_remove(index);
             let (terminal, detail) = match outcome {
                 Ok(()) => {
+                    let had_failure = self.settings.failure(watch.setting).is_some();
+                    self.settings.succeed(watch.setting);
+                    if had_failure {
+                        self.note_setting(watch.setting, SettingEventState::Cleared);
+                    }
                     self.note_setting(watch.setting, SettingEventState::Saved);
-                    if let Some(view) = self.apply_pref_effect(watch.effect) {
-                        self.commands.settle_walk_globals(view);
-                    }
-                    if let Some(order) = watch.order {
-                        if order.seq > self.durable_order_seq {
-                            self.durable_order_seq = order.seq;
-                            self.durable_order = order.order;
-                        }
-                    }
                     (Settlement::Completed(Completion::Done), None)
                 }
                 Err(error) => {
+                    self.settings
+                        .fail(watch.setting, format!("Not saved: {error}"), now);
                     self.note_setting_failed(watch.setting, &error);
-                    // The newest reorder's write failed: show the last
-                    // durable order. An older one's failure changes
-                    // nothing (a newer write carries the current order).
-                    if matches!(watch.effect, PrefEffect::ProfileOrder) {
+                    // A reorder whose write failed shows the stored order
+                    // again, unless a newer reorder is still pending: it
+                    // carries the current order.
+                    if watch.setting == Setting::ProfileOrder
+                        && !matches!(
+                            self.settings.status(Setting::ProfileOrder),
+                            SettingStatus::Pending
+                        )
+                    {
                         self.revert_profile_order();
                     }
                     (
@@ -544,6 +729,41 @@ impl<Io> OperatorSession<Io> {
         }
     }
 
+    /// Apply `switch` to the lent draw policy and tell the surface; the
+    /// slots wake so a parked worker re-reads its draw state within a
+    /// frame. `false` when this front end holds no draw model.
+    fn apply_draw<S: SlotSurface<Io = Io>>(
+        &mut self,
+        switch: DrawSwitch,
+        on: bool,
+        surface: &mut S,
+    ) -> bool {
+        {
+            let mut models = surface.models();
+            let Some(draw) = models.draw.as_deref_mut() else {
+                return false;
+            };
+            draw.set(switch, on);
+        }
+        surface.draw_changed(switch, on);
+        match switch {
+            DrawSwitch::GameRenderer | DrawSwitch::CaptureInput => {
+                if let Some(name) = self.selected.clone() {
+                    self.wake_slot(&name);
+                }
+            }
+            DrawSwitch::SidecarFullRate
+            | DrawSwitch::FocusedFullRate
+            | DrawSwitch::LiveFullRate => self.wake_all_slots(),
+        }
+        true
+    }
+
+    /// A saved draw switch is durable-only: the write is accepted and the
+    /// policy changes when the latest snapshot holds the value. A run-only
+    /// switch (the per-member renderer, this run's full rate) and every
+    /// switch of a run that does not persist (a live harness run) apply at
+    /// once.
     fn set_draw<S: SlotSurface<Io = Io>>(
         &mut self,
         request: RequestId,
@@ -556,192 +776,136 @@ impl<Io> OperatorSession<Io> {
             let Some(draw) = models.draw.as_deref_mut() else {
                 return no_model("draw policy");
             };
-            draw.set(switch, on);
             draw.persist
         };
-        let write = match (persist, DrawPolicy::key(switch)) {
-            (true, Some(key)) => Some((
-                key,
-                self.write_preference(key, serde_json::Value::Bool(on), key),
-            )),
-            _ => None,
-        };
-        surface.draw_changed(switch, on);
-        match switch {
-            DrawSwitch::GameRenderer | DrawSwitch::CaptureInput => {
-                if let Some(name) = self.selected.clone() {
-                    self.wake_slot(&name);
+        match (persist, DrawPolicy::key(switch)) {
+            (true, Some(key)) => {
+                let setting = Setting::Draw(switch);
+                match self.write_preference(key, serde_json::Value::Bool(on)) {
+                    Ok(write) => self.after_write(request, setting, write, key),
+                    Err(applied) => self.refused(setting, applied),
                 }
             }
-            DrawSwitch::SidecarFullRate
-            | DrawSwitch::FocusedFullRate
-            | DrawSwitch::LiveFullRate => self.wake_all_slots(),
-        }
-        match write {
-            Some((_, Err(applied))) => applied,
-            Some((key, Ok(write))) => self.after_write(request, write, key, key, PrefEffect::None),
-            None => Applied::Done,
+            _ => {
+                self.apply_draw(switch, on, surface);
+                Applied::Done
+            }
         }
     }
 
-    fn set_nav_preference<S: SlotSurface<Io = Io>>(
+    fn set_nav_preference(
         &mut self,
         request: RequestId,
         preference: NavPreference,
         on: bool,
-        surface: &mut S,
     ) -> Applied {
+        let setting = Setting::Nav(preference);
         let Some(preferences) = self.preferences() else {
-            return no_store();
+            return self.refused(setting, no_store());
         };
-        let setting = preference.setting_identity();
-        let write = match crate::nav_prefs::write_nav_preference(&preferences, preference, on) {
-            Ok(write) => write,
-            Err(error) => {
-                self.note_setting_failed(setting, &error);
-                return write_failed("navigation preference", &error);
-            }
-        };
-        let pause = (preference == NavPreference::PauseScriptOnManualWalkAbort).then_some(on);
-        let durable = matches!(write, Update::Durable);
-        let applied = self.after_write(
-            request,
-            write,
-            setting,
-            "navigation preference",
-            PrefEffect::Walk(pause),
-        );
-        if durable {
-            self.adopt_walk_globals(&preferences, surface);
+        match crate::nav_prefs::write_nav_preference(&preferences, preference, on) {
+            Ok(write) => self.after_write(request, setting, write, "navigation preference"),
+            Err(error) => self.refused(setting, not_accepted("navigation preference", &error)),
         }
-        applied
     }
 
-    fn set_danger_level<S: SlotSurface<Io = Io>>(
-        &mut self,
-        request: RequestId,
-        level: DangerLevel,
-        surface: &mut S,
-    ) -> Applied {
+    fn set_danger_level(&mut self, request: RequestId, level: DangerLevel) -> Applied {
+        let setting = Setting::DangerRouting;
         let Some(preferences) = self.preferences() else {
-            return no_store();
+            return self.refused(setting, no_store());
         };
-        let write = match WalkGlobalsView::persist_danger(&preferences, level) {
-            Ok(write) => write,
-            Err(error) => {
-                self.note_setting_failed("danger routing", &error);
-                return write_failed("danger routing", &error);
-            }
-        };
-        let durable = matches!(write, Update::Durable);
-        let applied = self.after_write(
-            request,
-            write,
-            "danger routing",
-            "danger routing",
-            PrefEffect::Walk(None),
-        );
-        if durable {
-            self.adopt_walk_globals(&preferences, surface);
-        }
-        applied
-    }
-
-    /// Read the durable walk globals back and hand them to the play
-    /// session and the front end's lent view.
-    fn adopt_walk_globals<S: SlotSurface<Io = Io>>(
-        &mut self,
-        preferences: &crate::UiPreferences,
-        surface: &mut S,
-    ) {
-        let view = WalkGlobalsView::read(preferences);
-        self.set_walk_globals(view.globals());
-        if let Some(lent) = surface.models().walk_globals.as_deref_mut() {
-            *lent = view;
+        match WalkGlobalsView::persist_danger(&preferences, level) {
+            Ok(write) => self.after_write(request, setting, write, "danger routing"),
+            Err(error) => self.refused(setting, not_accepted("danger routing", &error)),
         }
     }
 
     fn set_session_log(&mut self, request: RequestId, on: bool) -> Applied {
+        let setting = Setting::SessionLog;
         let Some(preferences) = self.preferences() else {
-            return no_store();
+            return self.refused(setting, no_store());
         };
         match crate::log_file::persist_session_log_setting(&preferences, on) {
-            Ok(write) => self.after_write(
-                request,
-                write,
-                "session file setting",
-                "session file setting",
-                PrefEffect::SessionLog(on),
-            ),
-            Err(error) => {
-                self.note_setting_failed("session file setting", &error);
-                write_failed("session file setting", &error)
-            }
+            Ok(write) => self.after_write(request, setting, write, "session file setting"),
+            Err(error) => self.refused(setting, not_accepted("session file setting", &error)),
         }
     }
 
-    /// The bake gate (a lent model) takes the choice once the write is
-    /// accepted, durable or still queued: the gate is this run's consent,
-    /// and the command's terminal reports the save.
-    fn set_map_bake_choice<S: SlotSurface<Io = Io>>(
-        &mut self,
-        request: RequestId,
-        choice: MapBakeChoice,
-        surface: &mut S,
-    ) -> Applied {
+    /// The bake gate (a lent model) takes the choice from the durable
+    /// snapshot; the command's terminal reports the save.
+    fn set_map_bake_choice(&mut self, request: RequestId, choice: MapBakeChoice) -> Applied {
+        let setting = Setting::MapBake;
         let Some(preferences) = self.preferences() else {
-            return no_store();
+            return self.refused(setting, no_store());
         };
-        let write = match crate::map_bake::persist_map_bake_choice(&preferences, choice) {
-            Ok(write) => write,
-            Err(error) => {
-                self.note_setting_failed("map bake choice", &error);
-                return write_failed("map bake choice", &error);
-            }
-        };
-        if let Some(desk) = surface.models().map.as_deref_mut() {
-            desk.bake_gate_mut().set_choice(choice);
+        match crate::map_bake::persist_map_bake_choice(&preferences, choice) {
+            Ok(write) => self.after_write(request, setting, write, "map bake choice"),
+            Err(error) => self.refused(setting, not_accepted("map bake choice", &error)),
         }
-        self.after_write(
-            request,
-            write,
-            "map bake choice",
-            "map bake choice",
-            PrefEffect::None,
-        )
     }
 
+    /// The Quester source is durable-only: the folder members are written,
+    /// and the controller applies and reloads the source when the latest
+    /// snapshot holds it. A failed write leaves the prior source active. A
+    /// run that does not persist applies the source at once.
     fn set_quester_paths<S: SlotSurface<Io = Io>>(
         &mut self,
         request: RequestId,
         surface: &mut S,
     ) -> Applied {
+        let setting = Setting::QuesterPaths;
         let Some((after, persist)) = self.commands.take_quester_paths() else {
             return not_staged("Quest Paths settings");
         };
-        let Some(preferences) = self.preferences() else {
-            return no_store();
-        };
-        let selected = self.commands.take_quester_game_data();
-        let applied = {
-            let mut models = surface.models();
-            let Some(paths) = models.quester.as_deref_mut() else {
+        let _ = self.commands.take_quester_game_data();
+        let active = {
+            let models = surface.models();
+            let Some(paths) = models.quester.as_deref() else {
                 return no_model("Quest Paths settings");
             };
-            paths.apply_changed(&preferences, &after, selected, persist)
+            QuesterPathsView::new(paths.settings().enabled(), paths.settings().folder().into())
         };
-        match applied {
-            Ok(write) => self.after_write(
-                request,
-                write,
-                "Quest Paths settings",
-                "Quest Paths settings",
-                PrefEffect::None,
-            ),
-            Err(reason) => {
-                self.note_setting_failed("Quest Paths settings", &reason);
-                Applied::Failed(FailureKind::WriteFailed, Some(reason))
+        if !persist {
+            if let Some(paths) = surface.models().quester.as_deref_mut() {
+                paths.apply_unsaved(&after);
             }
+            return Applied::Done;
+        }
+        let Some(preferences) = self.preferences() else {
+            return self.refused(setting, no_store());
+        };
+        // The saved source is what becomes active: a folder the document
+        // cannot hold (not valid UTF-8) would come back as another path.
+        if after.folder().to_str().is_none() {
+            return self.refused(
+                setting,
+                Applied::Rejected(
+                    Rejection::NotApplicable,
+                    Some(
+                        "Quest Paths settings: the folder is not valid UTF-8 and cannot be saved"
+                            .into(),
+                    ),
+                ),
+            );
+        }
+        // The change is made against what the last accepted write asked
+        // for while it is pending, so toggling back and forth never skips a
+        // write the durable value still needs.
+        let before = match self.quester_intent.take() {
+            Some(intent) if matches!(self.settings.status(setting), SettingStatus::Pending) => {
+                intent
+            }
+            _ => active,
+        };
+        match crate::QuesterPathsController::submit_changed(&preferences, &before, &after) {
+            Ok(write) => {
+                self.quester_intent = Some(after);
+                self.after_write(request, setting, write, "Quest Paths settings")
+            }
+            Err(error) => self.refused(
+                setting,
+                write_refused(format!("Quest Paths settings: {error}")),
+            ),
         }
     }
 
@@ -767,6 +931,9 @@ impl<Io> OperatorSession<Io> {
         }
     }
 
+    /// A notice's "don't show again" is durable-only: the front end hides
+    /// the notice when the snapshot holds the acknowledgement, so a write
+    /// that is pending or failed never dismisses it for good.
     fn acknowledge_notice<S: SlotSurface<Io = Io>>(
         &mut self,
         request: RequestId,
@@ -775,40 +942,26 @@ impl<Io> OperatorSession<Io> {
         let Some(notice) = self.commands.take_notice() else {
             return not_staged("notice");
         };
+        let setting = Setting::Notice(notice);
         match notice {
             Notice::BackgroundBots => {
                 let Some(preferences) = self.preferences() else {
-                    return no_store();
+                    return self.refused(setting, no_store());
                 };
                 match host_play::begin_persist_background_bots_ack(preferences.inner()) {
-                    Ok(write) => self.after_write(
-                        request,
-                        write,
-                        "background bots",
-                        "background bots",
-                        PrefEffect::None,
+                    Ok(write) => self.after_write(request, setting, write, "background bots"),
+                    Err(error) => self.refused(
+                        setting,
+                        write_refused(host_play::background_bots_ack_error(&error)),
                     ),
-                    Err(error) => {
-                        let text = host_play::background_bots_ack_error(&error);
-                        self.note_setting_failed("background bots", &text);
-                        Applied::Failed(FailureKind::WriteFailed, Some(text))
-                    }
                 }
             }
             Notice::RenderAllWarning => {
-                match self.write_preference(
-                    RENDER_ALL_WARNING_ACK_KEY,
-                    true.into(),
-                    RENDER_ALL_WARNING_ACK_KEY,
-                ) {
-                    Ok(write) => self.after_write(
-                        request,
-                        write,
-                        RENDER_ALL_WARNING_ACK_KEY,
-                        RENDER_ALL_WARNING_ACK_KEY,
-                        PrefEffect::None,
-                    ),
-                    Err(applied) => applied,
+                match self.write_preference(RENDER_ALL_WARNING_ACK_KEY, true.into()) {
+                    Ok(write) => {
+                        self.after_write(request, setting, write, RENDER_ALL_WARNING_ACK_KEY)
+                    }
+                    Err(applied) => self.refused(setting, applied),
                 }
             }
             Notice::QuesterPaths => match surface.models().quester.as_deref_mut() {
@@ -833,65 +986,37 @@ impl<Io> OperatorSession<Io> {
     /// Write one top-level preference; the failure as the member's
     /// terminal.
     fn write_preference(
-        &mut self,
+        &self,
         key: &str,
         value: serde_json::Value,
-        setting: &str,
     ) -> Result<Update, Applied> {
         let preferences = self.preferences().ok_or_else(no_store)?;
-        preferences.begin_set(key, value).map_err(|error| {
-            self.note_setting_failed(setting, &error);
-            write_failed(key, &error)
-        })
+        preferences
+            .begin_set(key, value)
+            .map_err(|error| not_accepted(key, &error))
     }
 
-    /// Write the saved Load order.
-    /// `Done` once durable; a queued write keeps the member pending
-    /// ([`Self::settle_pref_writes`]). A refused or failed write restores
-    /// the last durable order, never a failed preview.
+    /// Write the saved Load order. `Done` when nothing waits; a queued
+    /// write keeps the member pending ([`Self::settle_pref_writes`]). A
+    /// refused or failed write shows the stored order again, never a failed
+    /// preview.
     pub(super) fn write_profile_order(&mut self, request: RequestId) -> Applied {
         let write = match self.write_preference(
             crate::profile_order::PROFILE_ORDER_KEY,
             self.profile_order.to_value(),
-            "profile order",
         ) {
             Ok(write) => write,
             Err(refused) => {
                 self.revert_profile_order();
-                return refused;
+                return self.refused(Setting::ProfileOrder, refused);
             }
         };
-        for older in self.commands.pref_writes().iter_mut() {
-            older.effect = older.effect.superseded_by(PrefEffect::ProfileOrder);
-        }
-        self.order_write_seq += 1;
-        match write {
-            Update::Durable => {
-                self.durable_order_seq = self.order_write_seq;
-                self.durable_order.assign_from(&self.profile_order);
-                self.note_setting("profile order", SettingEventState::Saved);
-                Applied::Done
-            }
-            Update::Queued(queued) => {
-                self.commands.watch_pref_write(PrefWriteWatch {
-                    request,
-                    queued,
-                    setting: "profile order",
-                    what: "profile order",
-                    effect: PrefEffect::ProfileOrder,
-                    order: Some(OrderWrite {
-                        seq: self.order_write_seq,
-                        order: self.profile_order.snapshot(),
-                    }),
-                });
-                self.note_setting("profile order", SettingEventState::Pending);
-                Applied::Later
-            }
-        }
+        self.order_saved = true;
+        self.after_write(request, Setting::ProfileOrder, write, "profile order")
     }
 
-    /// Put back the last durable saved Load order (a reorder whose write
-    /// failed), reconciled with the vault.
+    /// Put back the stored Load order (a reorder whose write failed),
+    /// reconciled with the vault.
     fn revert_profile_order(&mut self) {
         self.profile_order.assign_from(&self.durable_order);
         self.order_reconciled_at = None;
@@ -921,59 +1046,83 @@ fn not_staged(what: &str) -> Applied {
     )
 }
 
-/// What a durable preference write changes in the session beyond the
-/// file, applied when the write is durable (at once, or when a queued
-/// write settles).
-#[derive(Debug, Clone, Copy)]
-pub(super) enum PrefEffect {
-    None,
-    /// Re-adopt the durable walk globals; with `Some`, also the manual-walk
-    /// pause.
-    Walk(Option<bool>),
-    /// Open or close the session file.
-    SessionLog(bool),
-    /// The saved Load order: on a failure, put back the order the file
-    /// holds.
-    ProfileOrder,
-}
-
-impl PrefEffect {
-    /// This queued effect once `newer`, a later command's effect, was
-    /// accepted: the value it would set for the same setting is dropped,
-    /// so the newest command for a setting wins. Re-adopting the durable
-    /// walk globals stays, because it reads the file and not a captured
-    /// value.
-    fn superseded_by(self, newer: Self) -> Self {
-        match (self, newer) {
-            (Self::Walk(Some(_)), Self::Walk(Some(_))) => Self::Walk(None),
-            (Self::SessionLog(_), Self::SessionLog(_)) => Self::None,
-            (Self::ProfileOrder, Self::ProfileOrder) => Self::None,
-            (effect, _) => effect,
-        }
-    }
-}
-
-/// A preference command whose write is still queued on the writer
+/// A saved-setting command whose write is still queued on the writer
 /// thread.
 pub(super) struct PrefWriteWatch {
     pub(super) request: RequestId,
     pub(super) queued: QueuedUpdate,
-    /// Stable sidecar identity for the setting.
-    pub(super) setting: &'static str,
-    /// Descriptive label for the write's failure detail.
+    /// The setting that shows this write's pending and failed state.
+    pub(super) setting: Setting,
+    /// What the write saves, for a failure's detail.
     pub(super) what: &'static str,
-    pub(super) effect: PrefEffect,
-    /// durable order, unless a newer write already is) when it is durable.
-    pub(super) order: Option<OrderWrite>,
 }
 
-/// The Load order one reorder writes.
-pub(super) struct OrderWrite {
-    /// The write's number: a higher one began later.
-    seq: u64,
-    order: crate::profile_order::ProfileOrder,
+/// A saved-setting write the preference queue refused before accepting it:
+/// the command is refused (one `info` line at the command boundary), not
+/// failed.
+fn write_refused(text: String) -> Applied {
+    Applied::Rejected(Rejection::WriteRefused, Some(text))
 }
 
-fn write_failed(what: &str, error: &crate::prefs::PreferenceError) -> Applied {
-    Applied::Failed(FailureKind::WriteFailed, Some(format!("{what}: {error}")))
+fn not_accepted(what: &str, error: &crate::prefs::PreferenceError) -> Applied {
+    write_refused(format!("{what}: {error}"))
+}
+#[cfg(test)]
+mod setting_event_outcome_tests {
+    use super::*;
+    use crate::launch::InstancePermit;
+
+    fn session() -> OperatorSession<u32> {
+        OperatorSession::new(InstancePermit::SkipLock)
+    }
+
+    #[test]
+    fn an_immediate_durable_write_emits_saved() {
+        let mut session = session();
+        session.watch_setting_events(true);
+
+        assert!(matches!(
+            session.after_write(
+                RequestId::from_raw(7).unwrap(),
+                Setting::ProfileOrder,
+                Update::Durable,
+                "profile order",
+            ),
+            Applied::Done
+        ));
+        let (events, incomplete) = session.take_setting_events();
+        assert!(!incomplete);
+        assert_eq!(
+            events.iter().map(SettingEvent::state).collect::<Vec<_>>(),
+            [SettingEventState::Saved]
+        );
+        assert_eq!(events[0].setting(), "profile order");
+    }
+
+    #[test]
+    fn an_immediate_durable_retry_emits_cleared_then_saved() {
+        let mut session = session();
+        let setting = Setting::ProfileOrder;
+        session
+            .settings
+            .fail_now(setting, "old failure".into(), Instant::now());
+        session.watch_setting_events(true);
+
+        assert!(matches!(
+            session.after_write(
+                RequestId::from_raw(8).unwrap(),
+                setting,
+                Update::Durable,
+                "profile order",
+            ),
+            Applied::Done
+        ));
+        let (events, incomplete) = session.take_setting_events();
+        assert!(!incomplete);
+        assert_eq!(
+            events.iter().map(SettingEvent::state).collect::<Vec<_>>(),
+            [SettingEventState::Cleared, SettingEventState::Saved]
+        );
+        assert!(events.iter().all(|event| event.setting() == "profile order"));
+    }
 }

@@ -196,11 +196,35 @@ pub fn load(preferences: &Preferences) -> PanelUiState {
 pub(crate) fn load_snapshot(document: &Map<String, Value>) -> PanelUiState {
     #[cfg(test)]
     {
+        if DOCUMENT_READER.with(std::cell::Cell::get) {
+            return from_document(document);
+        }
         let stand_in = TEST_STATE.with(|state| state.borrow().clone());
         with_core_owned_keys(stand_in, document)
     }
     #[cfg(not(test))]
     from_document(document)
+}
+
+/// Test seam: while the returned guard lives, this test thread reads the
+/// panel's own members from the preferences document, as the product does,
+/// instead of the per-thread stand-in (so another process's saved value
+/// reaches it).
+#[cfg(test)]
+pub(crate) fn read_documents_for_test() -> DocumentReader {
+    DOCUMENT_READER.with(|reader| reader.set(true));
+    DocumentReader
+}
+
+/// Ends [`read_documents_for_test`] when dropped (test threads are reused).
+#[cfg(test)]
+pub(crate) struct DocumentReader;
+
+#[cfg(test)]
+impl Drop for DocumentReader {
+    fn drop(&mut self) {
+        DOCUMENT_READER.with(|reader| reader.set(false));
+    }
 }
 
 /// `state` with the [`CORE_OWNED_KEYS`] the store holds: their command rows
@@ -266,9 +290,11 @@ pub(crate) fn from_document(document: &Map<String, Value>) -> PanelUiState {
     }
 }
 
-pub(crate) fn apply_pending_members(
+/// `state` with the previews of the requests still pending laid over it,
+/// oldest first, so the newest request of a member decides its value.
+pub(crate) fn apply_pending_members<'a>(
     mut state: PanelUiState,
-    members: &HashMap<Vec<String>, Option<Value>>,
+    members: impl IntoIterator<Item = (&'a [String], &'a Option<Value>)>,
 ) -> PanelUiState {
     let Ok(mut serialized) = serde_json::to_value(&state) else {
         return state;
@@ -284,6 +310,73 @@ pub(crate) fn apply_pending_members(
         state = updated;
     }
     state
+}
+
+/// Whether the member at `path` is a remembered launch choice: the server
+/// revision and the Game-pane raster and low-memory modes. Such a choice
+/// takes effect only when its own write is durable (its owner applies it
+/// then), so a pending preview never lays over it.
+pub(crate) fn is_launch_choice(path: &[String]) -> bool {
+    matches!(
+        path.first().map(String::as_str),
+        Some("raster" | "lowmem" | "server_revision")
+    )
+}
+
+/// The panel view of the preferences after a change: the latest durable
+/// `document` with the previews of the requests still `pending` laid over
+/// it (oldest first, so the newest of a member wins). What the panel does
+/// not read from the document stays as `current` has it: the saved choices
+/// the core owns (draw switches, bake choice, notices, session file, walk
+/// grants, the special-areas overlay and the manual-walk pause) and the
+/// server revision (its owner follows it). The remembered raster and memory
+/// mode follow the document while no bot is focused (`bot_focused` false);
+/// with a bot focused the controls show that bot's own saved modes, so they
+/// stay. A member this does not name follows the document, so a new
+/// panel-owned member is rebased by default.
+pub(crate) fn rebased<'a>(
+    current: &PanelUiState,
+    document: &Map<String, Value>,
+    pending: impl IntoIterator<Item = (&'a [String], &'a Option<Value>)>,
+    bot_focused: bool,
+) -> PanelUiState {
+    let next = apply_pending_members(
+        load_snapshot(document),
+        pending
+            .into_iter()
+            .filter(|(path, _)| !is_launch_choice(path)),
+    );
+    let nav = NavSettings {
+        allow_teleports: current.nav.allow_teleports,
+        allow_wilderness: current.nav.allow_wilderness,
+        allow_bank_fetch: current.nav.allow_bank_fetch,
+        allow_danger_zones: current.nav.allow_danger_zones,
+        survivable_routing: current.nav.survivable_routing,
+        script_scope_notice_ack: current.nav.script_scope_notice_ack,
+        survivable_routing_notice_ack: current.nav.survivable_routing_notice_ack,
+        show_special_areas: current.nav.show_special_areas,
+        pause_script_on_manual_walk_abort: current.nav.pause_script_on_manual_walk_abort,
+        ..next.nav
+    };
+    let (raster, lowmem) = if bot_focused {
+        (current.raster, current.lowmem)
+    } else {
+        (next.raster, next.lowmem)
+    };
+    PanelUiState {
+        capture: current.capture,
+        sidecar_50: current.sidecar_50,
+        focused_50: current.focused_50,
+        map_bake: current.map_bake,
+        session_log_file: current.session_log_file,
+        background_bots_ack: current.background_bots_ack,
+        render_all_warning_ack: current.render_all_warning_ack,
+        raster,
+        lowmem,
+        server_revision: current.server_revision,
+        nav,
+        ..next
+    }
 }
 
 fn apply_json_member(root: &mut Map<String, Value>, path: &[String], value: &Option<Value>) {
@@ -460,6 +553,7 @@ pub fn save_to_checked(preferences: &Preferences, state: &PanelUiState) -> io::R
 thread_local! {
     static TEST_STATE: std::cell::RefCell<PanelUiState> =
         std::cell::RefCell::new(PanelUiState::default());
+    static DOCUMENT_READER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[cfg(test)]

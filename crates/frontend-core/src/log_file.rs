@@ -13,7 +13,7 @@ use std::io::{self, BufWriter, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::log::{global, logs_dir, LocalTime};
 use api::hostlog::{Level, Source};
@@ -42,6 +42,9 @@ pub const DEFAULT_ROTATION: Rotation = Rotation {
 /// Lines queued for the writer before new ones are dropped.
 const QUEUE_LINES: usize = 4_096;
 
+/// How many session files this process has started ([`session_file_generation`]).
+static SESSION_FILE_GENERATION: AtomicU64 = AtomicU64::new(0);
+
 /// Handle to a running session writer. Dropping it closes the queue; the
 /// writer flushes what it holds and exits without being joined.
 #[derive(Debug)]
@@ -49,6 +52,29 @@ pub struct SessionLogFile {
     tx: SyncSender<Box<str>>,
     path: PathBuf,
     dropped: Arc<AtomicU64>,
+    state: Arc<Mutex<SinkState>>,
+}
+
+/// Where the session file's writer stands. The open happens on the writer
+/// thread, so "the preference is on" does not yet say "the file is
+/// writing": a front end reads this to tell a saved choice from a sink that
+/// could not start.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SinkState {
+    /// The writer thread has not opened the file yet.
+    Opening,
+    /// The file is open and lines are written to it.
+    Open,
+    /// The directory, the file or a later write failed; the cause.
+    Failed(String),
+}
+
+impl SinkState {
+    fn set(state: &Mutex<Self>, next: Self) {
+        *state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = next;
+    }
 }
 
 impl SessionLogFile {
@@ -57,6 +83,7 @@ impl SessionLogFile {
     /// and the open happen on the writer thread; a failure is reported to
     /// the process log.
     pub fn start(dir: PathBuf, rotation: Rotation) -> Self {
+        SESSION_FILE_GENERATION.fetch_add(1, Ordering::Relaxed);
         let name = format!(
             "session-{}-{}.log",
             LocalTime::now().stamp(),
@@ -65,16 +92,19 @@ impl SessionLogFile {
         let path = dir.join(name);
         let (tx, rx) = mpsc::sync_channel(QUEUE_LINES);
         let dropped = Arc::new(AtomicU64::new(0));
+        let state = Arc::new(Mutex::new(SinkState::Opening));
         let writer = Writer {
             dir,
             path: path.clone(),
             rotation,
             dropped: Arc::clone(&dropped),
+            state: Arc::clone(&state),
         };
         let spawned = std::thread::Builder::new()
             .name("session-log".into())
             .spawn(move || {
                 if let Err(e) = writer.run(rx) {
+                    SinkState::set(&writer.state, SinkState::Failed(e.to_string()));
                     global().process_line(
                         Source::Host,
                         Level::Error,
@@ -83,13 +113,47 @@ impl SessionLogFile {
                 }
             });
         if let Err(e) = spawned {
+            SinkState::set(&state, SinkState::Failed(format!("writer thread: {e}")));
             global().process_line(
                 Source::Host,
                 Level::Error,
                 &format!("session log: writer thread: {e}"),
             );
         }
-        Self { tx, path, dropped }
+        Self {
+            tx,
+            path,
+            dropped,
+            state,
+        }
+    }
+
+    /// Where the writer stands now.
+    pub(crate) fn state(&self) -> SinkState {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Where the writer stands now, without the failure's text (nothing is
+    /// copied: a front end asks this every frame).
+    pub(crate) fn phase(&self) -> SessionFilePhase {
+        match &*self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        {
+            SinkState::Opening => SessionFilePhase::Opening,
+            SinkState::Open => SessionFilePhase::Writing,
+            SinkState::Failed(_) => SessionFilePhase::Failed,
+        }
+    }
+
+    /// Fixture seam: the writer failed with `cause`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn fail_for_test(&self, cause: &str) {
+        SinkState::set(&self.state, SinkState::Failed(cause.to_owned()));
     }
 
     pub fn path(&self) -> &Path {
@@ -112,6 +176,7 @@ struct Writer {
     path: PathBuf,
     rotation: Rotation,
     dropped: Arc<AtomicU64>,
+    state: Arc<Mutex<SinkState>>,
 }
 
 impl Writer {
@@ -119,6 +184,7 @@ impl Writer {
         create_private_dir(&self.dir)?;
         prune_sessions(&self.dir, self.rotation.sessions.saturating_sub(1))?;
         let mut out = BufWriter::new(open_private(&self.path)?);
+        SinkState::set(&self.state, SinkState::Open);
         let mut size = 0u64;
         loop {
             let line = match rx.try_recv() {
@@ -276,6 +342,86 @@ pub fn session_log_path() -> Option<PathBuf> {
     global().file_path()
 }
 
+/// The cause the open session file's writer failed with, if it failed
+/// (allocates only then).
+pub(crate) fn global_file_failure() -> Option<String> {
+    global().file_failure()
+}
+
+/// Which stage the session file is at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionFilePhase {
+    /// No file is open.
+    Off,
+    /// The writer has not opened the file yet.
+    Opening,
+    /// Lines are written to the file.
+    Writing,
+    /// The file could not be opened or written.
+    Failed,
+}
+
+/// What the session file actually does now, for a front end's status line.
+/// The saved preference being on says what the operator chose; this says
+/// whether the sink opened.
+#[derive(Debug, PartialEq, Eq)]
+pub struct SessionFileStatus {
+    phase: SessionFilePhase,
+    path: Option<PathBuf>,
+    cause: Option<String>,
+}
+
+impl SessionFileStatus {
+    /// Which stage the file is at.
+    pub fn phase(&self) -> SessionFilePhase {
+        self.phase
+    }
+
+    /// The file's path, while one is open or failed.
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    /// Why the file could not be opened or written.
+    pub fn cause(&self) -> Option<&str> {
+        self.cause.as_deref()
+    }
+}
+
+/// The session file's current status.
+pub fn session_file_status() -> SessionFileStatus {
+    let (phase, path, cause) = match global().file_state() {
+        None => (SessionFilePhase::Off, None, None),
+        Some((path, SinkState::Opening)) => (SessionFilePhase::Opening, Some(path), None),
+        Some((path, SinkState::Open)) => (SessionFilePhase::Writing, Some(path), None),
+        Some((path, SinkState::Failed(cause))) => {
+            (SessionFilePhase::Failed, Some(path), Some(cause))
+        }
+    };
+    SessionFileStatus { phase, path, cause }
+}
+
+/// Which stage the session file is at, without its path or failure text:
+/// nothing is copied, so a front end may ask every frame. Ask
+/// [`session_file_status`] when the phase changed.
+pub fn session_file_phase() -> SessionFilePhase {
+    global().file_phase().unwrap_or(SessionFilePhase::Off)
+}
+
+/// Which session file the process has had open: a count that moves each time
+/// a file is started, so a front end that keeps a label for the file asks
+/// this (and the phase) every frame and builds the label only when one moved.
+pub fn session_file_generation() -> u64 {
+    SESSION_FILE_GENERATION.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Fixture seam: the open session file's writer fails with `cause`, as a
+/// write that stopped after the file opened does.
+#[cfg(any(test, feature = "test-support"))]
+pub fn fail_session_sink_for_test(cause: &str) {
+    global().fail_file_for_test(cause);
+}
+
 /// Fixture seam: [`apply_session_log`] for integration tests.
 #[cfg(any(test, feature = "test-support"))]
 pub fn apply_session_log_for_test(on: bool) -> Option<PathBuf> {
@@ -304,6 +450,14 @@ pub(crate) fn apply_session_log(on: bool) -> Option<PathBuf> {
             None
         }
     }
+}
+
+/// Serializes the tests that open or close the process-wide session file.
+#[cfg(test)]
+pub(crate) fn sink_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[cfg(test)]

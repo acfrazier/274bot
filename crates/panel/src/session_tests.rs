@@ -2805,8 +2805,9 @@ fn sidecar_cadence_sync_raises_members_not_focus() {
     s.sync_sidecar_cadence();
     assert!(!a_in.full_rate(), "sidecar must not raise the Game pane");
     assert!(b_in.full_rate(), "the sidecar pref raises a drawing member");
-    // Pref off returns the 1 fps watch cadence.
-    s.set_sidecar_50(false);
+    // Pref off returns the 1 fps watch cadence. The saved switch reaches
+    // the render mirror when its durable value does (the surface callback).
+    s.focus.lock().unwrap().sidecar_50 = false;
     s.sync_sidecar_cadence();
     assert!(!b_in.full_rate());
 }
@@ -3706,7 +3707,7 @@ fn quest_paths_checkbox_keeps_saved_folder_after_failed_folder_save() {
 
 #[cfg(unix)]
 #[test]
-fn quest_paths_checkbox_does_not_persist_lossy_non_utf8_folder() {
+fn quest_paths_refuses_a_non_utf8_folder_instead_of_saving_it_lossy() {
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
 
@@ -3718,27 +3719,31 @@ fn quest_paths_checkbox_does_not_persist_lossy_non_utf8_folder() {
     bytes.extend_from_slice(b"/paths-\xff");
     let folder = PathBuf::from(OsString::from_vec(bytes));
     let mut session = Session::new();
-    session
+    hydrate_panel_preferences(&mut session);
+    let saved = session.quester_paths.settings().folder().to_path_buf();
+    // The saved source is what becomes active, and a JSON document cannot
+    // hold this folder: it is refused at its setting, never saved as another
+    // path, and the prior source stays active.
+    assert!(session
         .persist_quester_paths(frontend_core::QuesterPathsView::new(false, folder.clone()))
-        .expect("non-UTF-8 folder can be held in memory");
-    assert_eq!(session.quester_paths.settings().folder(), folder.as_path());
-    let lossy = folder.to_string_lossy().into_owned();
-    assert_ne!(
-        PathBuf::from(lossy.as_str()),
-        folder,
-        "lossy UTF-8 must differ from the saved folder"
-    );
-    assert_eq!(session.quester_paths_folder_edit, lossy);
+        .is_err());
+    assert!(session
+        .core
+        .setting_failure(frontend_core::Setting::QuesterPaths)
+        .is_some_and(|text| text.starts_with("Not saved: ") && text.contains("UTF-8")));
+    assert_eq!(session.quester_paths.settings().folder(), saved.as_path());
 
+    // The checkbox then saves only its switch, with the saved folder.
     session
         .persist_quester_paths_change(true, false)
         .expect("checkbox toggle");
-    assert!(session.quester_paths.settings().enabled());
-    assert_eq!(
-        session.quester_paths.settings().folder(),
-        folder.as_path(),
-        "checkbox must not replace a non-UTF-8 saved folder with the lossy edit buffer"
+    await_preference(
+        &mut session,
+        "quester_paths",
+        serde_json::json!({"enabled": true}),
     );
+    assert!(session.quester_paths.settings().enabled());
+    assert_eq!(session.quester_paths.settings().folder(), saved.as_path());
     frontend_core::test_support::scripts::reset_quester_registry();
 }
 
@@ -6354,7 +6359,9 @@ fn closing_game_pane_releases_a_captured_mouse_hold() {
     );
     s.set_focus_for_test("alice");
     s.set_game_pane_open(true);
-    s.set_capture(true);
+    // The devices follow the saved capture preference (on by default); this
+    // test starts from the attached state they reach.
+    s.capture_on("alice");
     let sender = s
         .map_desk
         .duplicate_input_sender()
@@ -7670,9 +7677,11 @@ fn music_sfx_persists_lowmem_false() {
     s.select("alice");
     assert!(s.focused_lowmem(), "fresh profile defaults to lowmem");
     assert!(s.set_focused_lowmem(false));
+    settle_panel_writes(&mut s);
     assert!(!s.core.profile("alice").unwrap().lowmem());
     assert!(!s.focused_lowmem(), "focused profile reflects the setting");
     assert!(s.set_focused_lowmem(true));
+    settle_panel_writes(&mut s);
     assert!(s.core.profile("alice").unwrap().lowmem());
 }
 
@@ -7732,12 +7741,14 @@ fn raster_persists_and_off_keeps_prefer_cpu_until_cpu() {
     assert_eq!(s.focused_raster(), frontend_core::command::RasterMode::Gpu);
     assert!(!s.core.slot_io("alice").unwrap().input.prefer_cpu());
     assert!(s.set_focused_lowmem(false));
+    settle_panel_writes(&mut s);
     s.core.flush_writes();
     assert!(
         !s.core.profile("alice").unwrap().lowmem(),
         "the memory switch is persisted before an unrelated raster write"
     );
     assert!(s.set_focused_raster(frontend_core::command::RasterMode::Off));
+    settle_panel_writes(&mut s);
     assert_eq!(s.focused_raster(), frontend_core::command::RasterMode::Off);
     assert_eq!(
         s.focus.lock().unwrap().renderer_by.get("alice").copied(),
@@ -7748,6 +7759,7 @@ fn raster_persists_and_off_keeps_prefer_cpu_until_cpu() {
         "Off must not flip the GPU/CPU latch"
     );
     assert!(s.set_focused_raster(frontend_core::command::RasterMode::Cpu));
+    settle_panel_writes(&mut s);
     assert_eq!(s.focused_raster(), frontend_core::command::RasterMode::Cpu);
     assert!(s.core.slot_io("alice").unwrap().input.prefer_cpu());
     assert_eq!(
@@ -7785,12 +7797,14 @@ fn request_raster_cpu_on_spawned_slot_applies_immediately() {
     vault_upsert(&mut s.core, profile("alice", "pw", 42));
     s.select("alice");
     s.request_focused_raster(frontend_core::command::RasterMode::Cpu);
+    settle_panel_writes(&mut s);
     assert_eq!(
         s.focused_raster(),
         frontend_core::command::RasterMode::Cpu,
         "GPU→CPU applies at once: drop+reattach, never a logout"
     );
     s.request_focused_raster(frontend_core::command::RasterMode::Off);
+    settle_panel_writes(&mut s);
     assert_eq!(s.focused_raster(), frontend_core::command::RasterMode::Off);
     assert!(
         s.core.slots().contains_key("alice"),
@@ -7812,8 +7826,10 @@ fn raster_switch_keeps_slot_frame_buf_and_input() {
     let buf = Arc::clone(&slot.pixels);
     let inp = Arc::clone(&slot.input);
     assert!(s.set_focused_raster(frontend_core::command::RasterMode::Cpu));
+    settle_panel_writes(&mut s);
     assert!(inp.prefer_cpu(), "GPU→CPU sets the slot's prefer_cpu latch");
     assert!(s.set_focused_raster(frontend_core::command::RasterMode::Gpu));
+    settle_panel_writes(&mut s);
     assert!(!inp.prefer_cpu(), "CPU→GPU clears the prefer_cpu latch");
     let slot = s.core.slot_io("alice").expect("GPU↔CPU must keep the slot");
     assert!(
@@ -9485,11 +9501,17 @@ fn failed_ack_persist_then_success_clears_only_that_error() {
         "persist failure must keep the acknowledgement visible"
     );
     assert!(
-        s.error
-            .as_deref()
-            .is_some_and(|e| e.starts_with("background bots:")),
-        "got {:?}",
-        s.error
+        s.core
+            .setting_failure(frontend_core::Setting::Notice(
+                frontend_core::OperatorNotice::BackgroundBots
+            ))
+            .is_some_and(
+                |text| text.starts_with("Not saved: ") && text.contains("background bots:")
+            ),
+        "the failure is shown at the notice's setting: {:?}",
+        s.core.setting_failure(frontend_core::Setting::Notice(
+            frontend_core::OperatorNotice::BackgroundBots
+        ))
     );
     assert!(!frontend_core::resources::background_bots_acked(
         &s.preferences
@@ -9706,6 +9728,7 @@ fn memory_toggle_reports_login_divergence_through_the_shared_command() {
     assert!(!clean.differs());
 
     assert!(s.set_focused_lowmem(false));
+    settle_panel_writes(&mut s);
     assert_eq!(
         s.audio.owner(),
         None,
@@ -10090,47 +10113,96 @@ fn a_still_saving_refusal_clears_when_the_save_finishes() {
 }
 
 #[test]
-fn panel_setting_retry_clears_only_when_owner_reports_success() {
-    let _iso = IsolatedStores::enter("panel-setting-retry-clear");
+fn panel_setting_events_follow_pending_failed_retry_clear_and_saved_owner_outcomes() {
+    let _iso = IsolatedStores::enter("panel-setting-event-owner-outcomes");
     let mut session = Session::new();
+    hydrate_panel_preferences(&mut session);
     session.watch_setting_events();
-    let member = PanelPreferenceMember {
-        path: vec!["chrome".into(), "accent".into()],
-        value: Some(serde_json::json!("#AABBCC")),
-    };
-    session.set_preference_write_error(Some(&member), "preferences is busy".into());
-    let (events, incomplete) = session.take_panel_setting_events();
-    assert!(!incomplete);
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].state(), frontend_core::SettingEventState::Failed);
-    assert_eq!(events[0].error(), Some("preferences is busy"));
+    let path = ["chrome", "accent"];
+    let disk = PanelDisk::install(&session);
 
     session
-        .pending_panel_members
-        .insert(member.path.clone(), member.value.clone());
-    session.note_panel_setting(&member, frontend_core::SettingEventState::Pending, None);
+        .persist_panel_member(&path, Some(serde_json::json!("#AABBCC")))
+        .expect("the first write is accepted");
     let (events, incomplete) = session.take_panel_setting_events();
     assert!(!incomplete);
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].state(), frontend_core::SettingEventState::Pending);
-    assert!(
-        session.panel_preference_write_error().is_some(),
-        "an accepted retry does not clear the owner's retained error"
+    assert_eq!(
+        events.iter().map(|event| event.state()).collect::<Vec<_>>(),
+        [frontend_core::SettingEventState::Pending]
     );
+    assert_eq!(events[0].setting(), "chrome.accent");
 
-    session.clear_succeeded_panel_members(std::slice::from_ref(&member));
-    session.note_panel_setting(&member, frontend_core::SettingEventState::Saved, None);
-    assert!(session.panel_preference_write_error().is_none());
-    assert!(!session.pending_panel_members.contains_key(&member.path));
+    let failing = disk.release();
+    settle_panel_writes(&mut session);
+    let (events, incomplete) = session.take_panel_setting_events();
+    assert!(!incomplete);
+    assert_eq!(
+        events.iter().map(|event| event.state()).collect::<Vec<_>>(),
+        [frontend_core::SettingEventState::Failed]
+    );
+    assert_eq!(events[0].setting(), "chrome.accent");
+    assert!(
+        events[0]
+            .error()
+            .is_some_and(|error| error.contains("preferences is busy")),
+        "{events:?}"
+    );
+    assert!(session.panel_member_error(&["chrome", "accent"]).is_some());
+
+    failing.store(false, Ordering::SeqCst);
+    session
+        .persist_panel_member(&path, Some(serde_json::json!("#DDEEFF")))
+        .expect("the retry is accepted");
     let (events, incomplete) = session.take_panel_setting_events();
     assert!(!incomplete);
     assert_eq!(
         events.iter().map(|event| event.state()).collect::<Vec<_>>(),
         [
             frontend_core::SettingEventState::Cleared,
-            frontend_core::SettingEventState::Saved,
+            frontend_core::SettingEventState::Pending,
         ]
     );
+    assert_eq!(events[0].setting(), "chrome.accent");
+    assert_eq!(events[1].setting(), "chrome.accent");
+    assert!(session.panel_member_error(&["chrome", "accent"]).is_none());
+
+    settle_panel_writes(&mut session);
+    let (events, incomplete) = session.take_panel_setting_events();
+    assert!(!incomplete);
+    assert_eq!(
+        events.iter().map(|event| event.state()).collect::<Vec<_>>(),
+        [frontend_core::SettingEventState::Saved]
+    );
+    assert_eq!(events[0].setting(), "chrome.accent");
+    assert_eq!(
+        session.preferences.document().unwrap()["chrome"]["accent"],
+        "#DDEEFF"
+    );
+    struct RejectSerialization;
+    impl serde::Serialize for RejectSerialization {
+        fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            Err(<S::Error as serde::ser::Error>::custom(
+                "serialization refused",
+            ))
+        }
+    }
+    assert_eq!(
+        session
+            .persist_panel_serializable(&path, &RejectSerialization)
+            .unwrap_err(),
+        "serialization refused"
+    );
+    let (events, incomplete) = session.take_panel_setting_events();
+    assert!(!incomplete);
+    assert_eq!(
+        events.iter().map(|event| event.state()).collect::<Vec<_>>(),
+        [frontend_core::SettingEventState::Failed]
+    );
+    assert_eq!(events[0].setting(), "chrome.accent");
+    assert_eq!(events[0].error(), Some("serialization refused"));
 }
 
 #[test]
@@ -10139,8 +10211,10 @@ fn panel_setting_event_overflow_marks_the_drained_batch_incomplete() {
     let mut session = Session::new();
     session.watch_setting_events();
     let member = PanelPreferenceMember {
+        request: 1,
         path: vec!["chrome".into(), "accent".into()],
         value: Some(serde_json::json!("#AABBCC")),
+        owner: FeedbackOwner::Panel,
     };
     for _ in 0..PANEL_SETTING_EVENTS_CAP {
         session.note_panel_setting(&member, frontend_core::SettingEventState::Pending, None);
@@ -10161,5 +10235,1123 @@ fn panel_setting_event_overflow_marks_the_drained_batch_incomplete() {
         session.take_panel_setting_events(),
         (Vec::new(), false),
         "draining clears the queue and its overflow flag"
+    );
+}
+
+// --- T5.3-S3: saved settings follow the durable snapshot, and a failed save
+// shows at its setting ---
+use frontend_core::MapBakeChoice;
+
+/// A disk for one panel session's service: every file write waits at its
+/// start until [`PanelDisk::release`], and fails while `failing` is set.
+struct PanelDisk {
+    release: std::sync::mpsc::Sender<()>,
+    failing: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl PanelDisk {
+    fn install(session: &Session) -> Self {
+        let service = session
+            .core
+            .local_state_for_test()
+            .expect("the panel owns its process state service");
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        let gate = Mutex::new(gate);
+        service.set_write_stall_for_test(Arc::new(move || {
+            let _ = gate.lock().unwrap().recv();
+        }));
+        let failing = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let refusing = Arc::clone(&failing);
+        service.set_write_fault_for_test(Arc::new(move || refusing.load(Ordering::SeqCst)));
+        Self { release, failing }
+    }
+
+    /// Let every held write (and every later one) run.
+    fn release(self) -> Arc<std::sync::atomic::AtomicBool> {
+        drop(self.release);
+        self.failing
+    }
+}
+
+/// Pump the session until no core or panel write is pending.
+fn settle_panel_writes(s: &mut Session) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        s.pump_status();
+        s.poll_panel_preferences();
+        if !s.preferences_pending() {
+            return;
+        }
+        assert!(Instant::now() < deadline, "the writes never settled");
+        thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// Every saved operational choice of the panel while its write is held, then
+/// failed: the control shows the choice while the write is pending, the
+/// applied state (draw mirror, bake gate, Quester source) never moves, and
+/// when the write fails the control shows the saved value again with the
+/// failure at that setting.
+#[test]
+fn settings_feedback_held_then_failed_operational_choices_show_the_saved_value_and_the_failure() {
+    use frontend_core::command::DrawSwitch;
+    use frontend_core::{OperatorNotice, Setting, SettingStatus};
+    let _iso = IsolatedStores::enter("panel-s3-held-failed");
+    let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
+    let disk = PanelDisk::install(&s);
+    let capture = s.draw_shown(DrawSwitch::CaptureInput);
+    let sidecar = s.draw_shown(DrawSwitch::SidecarFullRate);
+    let focused = s.draw_shown(DrawSwitch::FocusedFullRate);
+    let quester = s.quester_enabled_shown();
+    let logging = s.session_log_shown();
+    let bake = s.map_bake_shown();
+    let source = s.quester_paths.settings().folder().to_path_buf();
+
+    s.set_capture(!capture);
+    s.set_sidecar_50(!sidecar);
+    s.set_focused_50(!focused);
+    s.persist_quester_paths_change(!quester, false).unwrap();
+    s.set_session_log(!logging);
+    s.set_map_bake_choice(MapBakeChoice::Always);
+    let settings = [
+        Setting::Draw(DrawSwitch::CaptureInput),
+        Setting::Draw(DrawSwitch::SidecarFullRate),
+        Setting::Draw(DrawSwitch::FocusedFullRate),
+        Setting::QuesterPaths,
+        Setting::SessionLog,
+        Setting::MapBake,
+    ];
+    for _ in 0..3 {
+        s.pump_status();
+        s.poll_panel_preferences();
+        for setting in settings {
+            assert!(
+                matches!(s.core.setting_status(setting), SettingStatus::Pending),
+                "{setting:?} says it is saving"
+            );
+        }
+        assert_eq!(s.draw_shown(DrawSwitch::CaptureInput), !capture);
+        assert_eq!(s.draw_shown(DrawSwitch::SidecarFullRate), !sidecar);
+        assert_eq!(s.draw_shown(DrawSwitch::FocusedFullRate), !focused);
+        assert_eq!(s.quester_enabled_shown(), !quester);
+        assert_eq!(s.session_log_shown(), !logging);
+        assert_eq!(s.map_bake_shown(), MapBakeChoice::Always);
+        // Nothing is applied: the render mirror, the bake gate and the
+        // source are what they were.
+        let focus = s.focus.lock().unwrap();
+        assert_eq!(focus.capture, capture);
+        assert_eq!(focus.sidecar_50, sidecar);
+        assert_eq!(focus.focused_50, focused);
+        drop(focus);
+        assert_eq!(s.map_desk.bake_gate().choice(), bake);
+        assert_eq!(s.quester_paths.settings().enabled(), quester);
+    }
+
+    disk.release();
+    settle_panel_writes(&mut s);
+    for setting in settings {
+        assert!(
+            s.core
+                .setting_failure(setting)
+                .is_some_and(|text| text.starts_with("Not saved: ")),
+            "{setting:?}: the failure is retained at its setting"
+        );
+    }
+    assert_eq!(s.draw_shown(DrawSwitch::CaptureInput), capture);
+    assert_eq!(s.draw_shown(DrawSwitch::SidecarFullRate), sidecar);
+    assert_eq!(s.draw_shown(DrawSwitch::FocusedFullRate), focused);
+    assert_eq!(s.quester_enabled_shown(), quester);
+    assert_eq!(s.session_log_shown(), logging);
+    assert_eq!(s.map_bake_shown(), bake);
+    assert_eq!(s.quester_paths.settings().folder(), source.as_path());
+    assert!(!s.preferences.document().unwrap().contains_key("capture"));
+    // The failures name nothing else: the notice settings are untouched.
+    assert!(matches!(
+        s.core
+            .setting_status(Setting::Notice(OperatorNotice::BackgroundBots)),
+        SettingStatus::Saved
+    ));
+    frontend_core::test_support::scripts::reset_quester_registry();
+}
+
+/// A "Got it, don't show again" that failed stays at the notice, and the
+/// failure survives the panel pumping on; the resolving action (a new
+/// attempt) clears it, and the durable acknowledgement closes the window.
+#[test]
+fn settings_feedback_a_failed_dont_show_again_stays_at_the_notice_until_retried() {
+    use frontend_core::{OperatorNotice, Setting, SettingStatus};
+    let (mut s, _iso) = two_live_session("panel-s3-notice");
+    hydrate_panel_preferences(&mut s);
+    s.select("bob");
+    assert!(s.background_ack_open);
+    let disk = PanelDisk::install(&s);
+    let notice = Setting::Notice(OperatorNotice::BackgroundBots);
+    s.ack_background_bots();
+    assert!(matches!(
+        s.core.setting_status(notice),
+        SettingStatus::Pending
+    ));
+    assert!(s.background_ack_open, "the window stays while it saves");
+    let failing = disk.release();
+    settle_panel_writes(&mut s);
+    assert!(s.background_ack_open, "a failed save keeps the window");
+    assert!(!s.ui.background_bots_ack);
+    assert!(s
+        .core
+        .setting_failure(notice)
+        .is_some_and(|text| text.starts_with("Not saved: ")));
+    for _ in 0..3 {
+        s.pump_status();
+        s.poll_panel_preferences();
+    }
+    assert!(s.core.setting_failure(notice).is_some());
+
+    // A new attempt resolves it.
+    failing.store(false, Ordering::SeqCst);
+    s.ack_background_bots();
+    assert_eq!(s.core.setting_failure(notice), None);
+    settle_panel_writes(&mut s);
+    assert!(s.ui.background_bots_ack);
+    assert!(!s.background_ack_open, "the durable ack closes the window");
+    assert_eq!(s.core.setting_failure(notice), None);
+}
+
+/// Headed defect 3 (2026-10-27): "Don't show again" in the render-all
+/// warning renders every wall member only once its save is durable. While
+/// another program holds the real preferences lock, the box and the render
+/// policy stay at "only render focused"; after the failure, and after the
+/// lock is released, they still do, and nothing the panel reported as not
+/// saved (this acknowledgement and the background-bots one) is written
+/// later without a new action.
+#[test]
+fn settings_feedback_render_all_waits_for_a_durable_dont_show_again_and_a_failure_changes_nothing()
+{
+    use frontend_core::{OperatorNotice, Setting, SettingStatus};
+    let (mut s, _iso) = two_live_session("panel-s3-r5-render-all");
+    s.select("bob");
+    assert!(s.background_ack_open);
+    assert!(s.focus.lock().unwrap().only_render_selected);
+    let lock = crate::test_support::hold_preferences_lock(&s.preferences);
+    s.ack_background_bots();
+    s.wall.render_all_warn_open = true;
+    s.wall.render_all_understood = true;
+    s.confirm_render_all(true);
+    let notices = [
+        Setting::Notice(OperatorNotice::BackgroundBots),
+        Setting::Notice(OperatorNotice::RenderAllWarning),
+    ];
+    for _ in 0..3 {
+        s.pump_status();
+        s.poll_panel_preferences();
+        assert!(matches!(
+            s.core.setting_status(notices[1]),
+            SettingStatus::Pending
+        ));
+        assert!(
+            s.focus.lock().unwrap().only_render_selected,
+            "nothing renders all while the save is pending"
+        );
+    }
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while notices
+        .iter()
+        .any(|notice| s.core.setting_failure(*notice).is_none())
+    {
+        s.pump_status();
+        s.poll_panel_preferences();
+        assert!(Instant::now() < deadline, "the held writes never failed");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        s.focus.lock().unwrap().only_render_selected,
+        "after the failure the box and the rendering stay at only render focused"
+    );
+    assert!(
+        s.wall.render_all_warn_open,
+        "the warning stays open with its failure"
+    );
+
+    drop(lock);
+    let until = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < until || s.preferences_pending() {
+        s.pump_status();
+        s.poll_panel_preferences();
+        assert!(
+            Instant::now() < until + Duration::from_secs(30),
+            "a write never ended"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        s.focus.lock().unwrap().only_render_selected,
+        "the released lock changes nothing without a new action"
+    );
+    let saved = crate::test_support::preferences_on_disk(&s.preferences);
+    for key in ["render_all_warning_ack", "background_bots_ack"] {
+        assert_eq!(
+            saved.get(key),
+            None,
+            "{key} was written after the lock was released, without a user action"
+        );
+    }
+}
+
+/// Panel-owned presentation choices (palette, layout): the preview shows at
+/// once, and a failed write drops only that preview, shows the durable value
+/// again, and reports at the setting. The remembered launch choices are not
+/// previews: see `settings_feedback_launch_choices_take_effect_only_from_the_durable_value`.
+#[test]
+fn settings_feedback_held_then_failed_presentation_choices_revert_to_the_durable_value() {
+    let _iso = IsolatedStores::enter("panel-s3-presentation");
+    let saved = crate::ui_state::PanelUiState {
+        show_parameters_rail: true,
+        chrome: crate::theme::ChromeColors {
+            accent: "#112233".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    seed_ui_state(&saved);
+    let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
+    s.watch_setting_events();
+    let saved_accent = s.ui.chrome.accent.clone();
+    assert_eq!(saved_accent, "#112233");
+    let disk = PanelDisk::install(&s);
+
+    s.persist_panel_member(
+        &["show_parameters_rail"],
+        Some(serde_json::Value::Bool(false)),
+    )
+    .unwrap();
+    s.persist_panel_serializable(&["chrome", "accent"], "#445566")
+        .unwrap();
+    s.ui.chrome.accent = "#445566".into();
+    s.ui.show_parameters_rail = false;
+    for _ in 0..3 {
+        s.pump_status();
+        s.poll_panel_preferences();
+        assert_eq!(s.ui.chrome.accent, "#445566");
+        assert!(!s.ui.show_parameters_rail);
+    }
+    let (events, incomplete) = s.take_panel_setting_events();
+    assert!(!incomplete);
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| (event.setting(), event.state()))
+            .collect::<Vec<_>>(),
+        [
+            ("show_parameters_rail", frontend_core::SettingEventState::Pending),
+            ("chrome.accent", frontend_core::SettingEventState::Pending),
+        ]
+    );
+
+    disk.release();
+    settle_panel_writes(&mut s);
+    let (events, incomplete) = s.take_panel_setting_events();
+    assert!(!incomplete);
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| (event.setting(), event.state()))
+            .collect::<Vec<_>>(),
+        [
+            ("show_parameters_rail", frontend_core::SettingEventState::Failed),
+            ("chrome.accent", frontend_core::SettingEventState::Failed),
+        ]
+    );
+    assert_eq!(s.ui.chrome.accent, saved_accent);
+    assert!(s.ui.show_parameters_rail);
+    for path in [&["show_parameters_rail"][..], &["chrome"]] {
+        assert!(
+            s.panel_member_error(path)
+                .is_some_and(|text| text.starts_with("Preferences not saved: ")),
+            "{path:?}: the failure shows at its setting"
+        );
+    }
+    let document = s.preferences.document().unwrap();
+    assert!(!document.contains_key("chrome"), "chrome was never stored");
+
+    // The failure leaves by itself after the error timeout.
+    s.expire_panel_write_errors(Instant::now() + frontend_core::ERROR_MESSAGE_TIMEOUT);
+    assert_eq!(s.panel_member_error(&["chrome"]), None);
+    let (events, incomplete) = s.take_panel_setting_events();
+    assert!(!incomplete);
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| (event.setting(), event.state()))
+            .collect::<Vec<_>>(),
+        [
+            ("show_parameters_rail", frontend_core::SettingEventState::Cleared),
+            ("chrome.accent", frontend_core::SettingEventState::Cleared),
+        ]
+    );
+}
+
+/// A typed Quest Paths folder survives any number of refresh frames, whether
+/// or not another process saved in between, and a held operational choice
+/// keeps showing the operator's choice across them.
+#[test]
+fn settings_feedback_a_typed_pending_draft_survives_refresh_frames_and_a_second_process_version() {
+    use frontend_core::command::DrawSwitch;
+    let _iso = IsolatedStores::enter("panel-s3-draft");
+    let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
+    let capture = s.draw_shown(DrawSwitch::CaptureInput);
+    let peer = crate::test_support::thread_preferences();
+    s.quester_paths_folder_edit = "typed-but-not-committed".into();
+    s.quester_paths_folder_dirty = true;
+    let disk = PanelDisk::install(&s);
+    s.set_capture(!capture);
+    for frame in 0..5 {
+        crate::test_support::set_patiently(&peer, "peer_marker", serde_json::json!(frame));
+        // A frame's re-read; it may find the held writer busy.
+        let _ = s.preferences.reload();
+        s.pump_status();
+        s.poll_panel_preferences();
+        assert_eq!(s.quester_paths_folder_edit, "typed-but-not-committed");
+        assert_eq!(s.draw_shown(DrawSwitch::CaptureInput), !capture);
+    }
+    disk.release().store(false, Ordering::SeqCst);
+    settle_panel_writes(&mut s);
+    assert_eq!(s.draw_shown(DrawSwitch::CaptureInput), !capture);
+    assert_eq!(s.quester_paths_folder_edit, "typed-but-not-committed");
+}
+
+/// A cold panel (preferences not yet read) adopts every saved choice when
+/// the read is released and writes no default over the file meanwhile.
+#[test]
+fn settings_feedback_a_cold_panel_adopts_every_saved_choice_when_released_and_writes_no_default() {
+    let iso = IsolatedStores::enter("panel-s3-cold");
+    let state = iso.dir().join("cold-state");
+    let saved: &[u8] = br##"{"capture":false,"sidecar_50":true,"focused_50":true,"map_bake":"always","quester_paths":{"enabled":false,"folder":"saved-source"}}"##;
+    let path = host_play::local_state::StateRoot::new(state.clone()).preferences_file();
+    crate::test_support::write_private_fixture(&path, saved).unwrap();
+    let mut s = Session::new();
+    s.core.set_spawn_workers(false);
+    let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    let first = std::sync::atomic::AtomicBool::new(true);
+    let service = host_play::local_state::LocalStateService::open_process_with_read_stall_for_test(
+        host_play::local_state::StateRoot::new(state),
+        Arc::new(move || {
+            if first.swap(false, Ordering::SeqCst) {
+                let _ = entered.send(());
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        }),
+    );
+    entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    s.core.bind_local_state(service);
+    s.preferences = s.core.preferences().unwrap();
+    s.preferences_ready = false;
+    for _ in 0..4 {
+        s.pump_status();
+        s.poll_panel_preferences();
+        assert!(!s.panel_preferences_ready());
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            saved,
+            "no default is written"
+        );
+    }
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !s.panel_preferences_ready() && Instant::now() < deadline {
+        s.pump_status();
+        s.poll_panel_preferences();
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(s.panel_preferences_ready());
+    s.poll_panel_preferences();
+    {
+        let focus = s.focus.lock().unwrap();
+        assert!(!focus.capture);
+        assert!(focus.sidecar_50);
+        assert!(focus.focused_50);
+    }
+    assert_eq!(s.map_desk.bake_gate().choice(), MapBakeChoice::Always);
+    // The panel's own presentation members are the stand-in's under test;
+    // their cold adoption is `ui_state::from_document`.
+    assert_eq!(
+        s.quester_paths.settings().folder(),
+        std::path::Path::new("saved-source")
+    );
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        saved,
+        "no default is written"
+    );
+    frontend_core::test_support::scripts::reset_quester_registry();
+}
+
+// --- T5.3-S3 round 2: a panel write owns its preview until its own result ---
+
+/// A disk for one panel session's service that holds every file write at its
+/// start until [`SeqDisk::release_one`] lets the oldest go, and fails every
+/// write numbered above the count set by [`SeqDisk::fail_after`] (the first
+/// write is number 1; counting starts when the disk is installed).
+struct SeqDisk {
+    release: std::sync::mpsc::Sender<()>,
+    fail_after: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl SeqDisk {
+    fn install(session: &Session) -> Self {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        let service = session
+            .core
+            .local_state_for_test()
+            .expect("the panel owns its process state service");
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        let gate = Mutex::new(gate);
+        let writes = Arc::new(AtomicUsize::new(0));
+        let fail_after = Arc::new(AtomicUsize::new(usize::MAX));
+        let started = Arc::clone(&writes);
+        service.set_write_stall_for_test(Arc::new(move || {
+            started.fetch_add(1, SeqCst);
+            let _ = gate.lock().unwrap().recv();
+        }));
+        let counted = Arc::clone(&writes);
+        let limit = Arc::clone(&fail_after);
+        service
+            .set_write_fault_for_test(Arc::new(move || counted.load(SeqCst) > limit.load(SeqCst)));
+        Self {
+            release,
+            fail_after,
+        }
+    }
+
+    /// Let the oldest held write run.
+    fn release_one(&self) {
+        self.release.send(()).expect("a write waits at the gate");
+    }
+
+    /// Writes numbered above `n` fail.
+    fn fail_after(&self, n: usize) {
+        self.fail_after
+            .store(n, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// A panel-owned member is a request: A (`X` to `Y`) and B (`Y` back to `X`,
+/// the value the document held before A) are accepted behind a held writer.
+/// While both are held the preview is B's; when A becomes durable and B fails
+/// the control shows the durable `Y`, not B's `X`, and B's failure is
+/// reported at the setting (it is not mistaken for the already stored `X`).
+/// Two requests of the same value are two requests: the first landing does
+/// not end the second, and its failure shows.
+#[test]
+fn settings_feedback_panel_requests_own_their_preview_and_failure_by_identity() {
+    let _iso = IsolatedStores::enter("panel-s3-request-owner");
+    let _reader = crate::ui_state::read_documents_for_test();
+    let colors = |accent: &str| {
+        serde_json::to_value(crate::theme::ChromeColors {
+            accent: accent.into(),
+            ..Default::default()
+        })
+        .unwrap()
+    };
+    crate::test_support::set_patiently(
+        &crate::test_support::thread_preferences(),
+        "chrome",
+        colors("#AA0000"),
+    );
+    let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
+    assert_eq!(s.ui.chrome.accent, "#AA0000");
+    let disk = SeqDisk::install(&s);
+    disk.fail_after(1);
+
+    s.persist_panel_serializable(&["chrome", "accent"], "#112233")
+        .unwrap();
+    s.ui.chrome.accent = "#112233".into();
+    s.persist_panel_serializable(&["chrome", "accent"], "#AA0000")
+        .unwrap();
+    s.ui.chrome.accent = "#AA0000".into();
+    for _ in 0..3 {
+        s.pump_status();
+        s.poll_panel_preferences();
+        assert_eq!(
+            s.ui.chrome.accent, "#AA0000",
+            "B's preview shows while both are held"
+        );
+        assert_eq!(s.panel_member_error(&["chrome"]), None);
+    }
+
+    // A lands, B fails.
+    disk.release_one();
+    disk.release_one();
+    settle_panel_writes(&mut s);
+    assert_eq!(
+        s.ui.chrome.accent, "#112233",
+        "B failed: the control shows the durable value A saved"
+    );
+    assert!(
+        s.panel_member_error(&["chrome"])
+            .is_some_and(|text| text.starts_with("Preferences not saved: ")),
+        "B's failure is reported at its setting"
+    );
+    assert_eq!(
+        s.preferences.document().unwrap()["chrome"]["accent"],
+        "#112233"
+    );
+
+    // Two requests of one value: the first landing does not end the second.
+    disk.fail_after(3);
+    for _ in 0..2 {
+        s.persist_panel_serializable(&["chrome", "accent"], "#334455")
+            .unwrap();
+    }
+    s.ui.chrome.accent = "#334455".into();
+    disk.release_one();
+    // The first write is durable (the document now holds the value): the
+    // second request is still pending and still previews it.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while s.preferences.document().unwrap()["chrome"]["accent"] != "#334455" {
+        s.pump_status();
+        s.poll_panel_preferences();
+        assert!(Instant::now() < deadline, "the first request never landed");
+        thread::sleep(Duration::from_millis(2));
+    }
+    s.poll_panel_preferences();
+    assert_eq!(s.panel_preference_writes_pending(), 1, "B is still pending");
+    assert_eq!(s.ui.chrome.accent, "#334455");
+    disk.release_one();
+    settle_panel_writes(&mut s);
+    assert_eq!(s.ui.chrome.accent, "#334455");
+    assert!(
+        s.panel_member_error(&["chrome"]).is_some(),
+        "the second request failed and says so"
+    );
+
+    // Three requests end before one poll sees them: A and B land, the newest
+    // (C) fails. The control shows B's durable value, and an older success
+    // never ends C's failure, whatever order the poll meets them in.
+    s.expire_panel_write_errors(Instant::now() + frontend_core::ERROR_MESSAGE_TIMEOUT);
+    assert_eq!(s.panel_member_error(&["chrome"]), None);
+    disk.fail_after(6);
+    for accent in ["#0A0A0A", "#0B0B0B", "#0C0C0C"] {
+        s.persist_panel_serializable(&["chrome", "accent"], accent)
+            .unwrap();
+        s.ui.chrome.accent = accent.into();
+    }
+    for _ in 0..3 {
+        disk.release_one();
+    }
+    await_panel_terminals(&s);
+    s.poll_panel_preferences();
+    assert_eq!(s.panel_preference_writes_pending(), 0);
+    assert_eq!(
+        s.preferences.document().unwrap()["chrome"]["accent"],
+        "#0B0B0B"
+    );
+    assert_eq!(s.ui.chrome.accent, "#0B0B0B", "B's durable value shows");
+    assert!(
+        s.panel_member_error(&["chrome"])
+            .is_some_and(|text| text.starts_with("Preferences not saved: ")),
+        "the newest request failed; an older success must not clear its error"
+    );
+}
+
+/// Wait at the service, without polling the panel, until every queued panel
+/// write has its terminal result, so that the next poll meets them all
+/// completed at once.
+fn await_panel_terminals(s: &Session) {
+    let service = s
+        .core
+        .local_state_for_test()
+        .expect("the panel owns its process state service");
+    for write in &s.panel_preference_writes {
+        if let frontend_core::prefs::Update::Queued(update) = &write.update {
+            assert_ne!(
+                service.wait_request(update.request_id(), Duration::from_secs(30)),
+                host_play::local_state::RequestState::Pending,
+                "a held write never ended"
+            );
+        }
+    }
+}
+
+/// Three remembered raster choices (CPU, Off, GPU) end before one poll sees
+/// them: what takes effect (the panel's applied raster and the profile's
+/// saved raster) is the newest durable choice, GPU, as the document holds.
+#[test]
+fn settings_feedback_completed_launch_writes_take_effect_in_request_order() {
+    use frontend_core::command::RasterMode;
+    let _iso = IsolatedStores::enter("panel-s3-r3-launch-order");
+    let path = tmp_vault("launch-order.vault");
+    let mut s = Session::new();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    hydrate_panel_preferences(&mut s);
+    s.select("alice");
+    assert_eq!(s.focused_raster(), RasterMode::Gpu);
+    // The selection's own saves end before the disk holds writes, so that
+    // each release below lets one raster write go.
+    settle_panel_writes(&mut s);
+    s.core.flush_writes();
+    let disk = SeqDisk::install(&s);
+    for raster in [RasterMode::Cpu, RasterMode::Off, RasterMode::Gpu] {
+        assert!(s.set_focused_raster(raster));
+    }
+    // All three run (and every later write runs unheld); the panel does not
+    // poll until each has its result.
+    drop(disk);
+    await_panel_terminals(&s);
+    s.poll_panel_preferences();
+    s.core.flush_writes();
+    let durable = s.preferences.document().unwrap()["raster"].clone();
+    assert_eq!(durable, "gpu");
+    assert_eq!(
+        (
+            s.focused_raster(),
+            s.core.profile("alice").unwrap().raster()
+        ),
+        (RasterMode::Gpu, RasterMode::Gpu),
+        "all writes completed before one panel poll; durable raster={durable}"
+    );
+    assert_eq!(s.ui.raster, RasterMode::Gpu);
+}
+
+/// A second process's later saved values reach every panel-owned control, not
+/// only the first read: the palette, layout, folds, remembered folders,
+/// order members and, while no bot is focused, the remembered raster and
+/// memory mode follow each new durable version.
+#[test]
+fn settings_feedback_a_second_process_version_reaches_every_panel_control_after_hydration() {
+    let _iso = IsolatedStores::enter("panel-s3-second-process-panel");
+    let _reader = crate::ui_state::read_documents_for_test();
+    let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
+    let peer = crate::test_support::thread_preferences();
+    let column = crate::fleet_columns::FleetColumn::Idle;
+    let flipped = !column.default_on();
+    let refresh = |s: &mut Session| {
+        s.preferences.reload().unwrap();
+        s.pump_status();
+        s.poll_panel_preferences();
+    };
+    let peer_set = |key: &str, value: serde_json::Value| {
+        crate::test_support::set_patiently(&peer, key, value);
+    };
+
+    peer_set("fleet_columns", serde_json::json!({ column.id(): flipped }));
+    peer_set("section_order", serde_json::json!(["log", "status"]));
+    peer_set(
+        "script_category_order",
+        serde_json::json!(["Zeta", "Alpha"]),
+    );
+    peer_set(
+        "collapsed",
+        serde_json::json!({ "alice": { "status": true } }),
+    );
+    peer_set("script_load_last_dir", serde_json::json!("/peer/load"));
+    peer_set("show_parameters_rail", serde_json::Value::Bool(true));
+    peer_set(
+        "nav",
+        serde_json::json!({ "show_nav_path": true, "color_path": "#0A0B0C" }),
+    );
+    refresh(&mut s);
+    assert_eq!(
+        s.ui.fleet_columns.get(column.id()),
+        Some(&flipped),
+        "the Fleet column choice follows the other process"
+    );
+    assert_eq!(s.ui.section_order, ["log", "status"]);
+    assert_eq!(s.ui.script_category_order, ["Zeta", "Alpha"]);
+    assert!(s.ui.collapsed["alice"]["status"]);
+    assert_eq!(
+        s.ui.script_load_last_dir.as_deref(),
+        Some(std::path::Path::new("/peer/load"))
+    );
+    assert!(s.ui.show_parameters_rail);
+    assert!(s.ui.nav.show_nav_path);
+    assert_eq!(s.ui.nav.color_path, "#0A0B0C");
+
+    // The remembered launch choices follow too: no bot is focused, so the
+    // raster and memory controls show the saved choice.
+    use frontend_core::command::RasterMode;
+    assert_eq!(
+        (s.focused_raster(), s.focused_lowmem()),
+        (RasterMode::Gpu, true)
+    );
+    peer_set("raster", serde_json::json!("cpu"));
+    peer_set("lowmem", serde_json::Value::Bool(false));
+    refresh(&mut s);
+    assert_eq!(
+        (s.focused_raster(), s.focused_lowmem()),
+        (RasterMode::Cpu, false),
+        "later durable document: raster={} lowmem={}",
+        s.preferences.document().unwrap()["raster"],
+        s.preferences.document().unwrap()["lowmem"]
+    );
+
+    // A later version of the palette arrives too, and this panel's own
+    // pending request keeps previewing until its result.
+    let colors = |accent: &str| {
+        serde_json::to_value(crate::theme::ChromeColors {
+            accent: accent.into(),
+            ..Default::default()
+        })
+        .unwrap()
+    };
+    peer_set("chrome", colors("#998877"));
+    refresh(&mut s);
+    assert_eq!(s.ui.chrome.accent, "#998877");
+    let disk = PanelDisk::install(&s);
+    s.persist_panel_serializable(&["chrome", "accent"], "#112233")
+        .unwrap();
+    s.ui.chrome.accent = "#112233".into();
+    for _ in 0..3 {
+        s.pump_status();
+        s.poll_panel_preferences();
+        assert_eq!(
+            s.ui.chrome.accent, "#112233",
+            "the pending request previews"
+        );
+    }
+    disk.release().store(false, Ordering::SeqCst);
+    settle_panel_writes(&mut s);
+    assert_eq!(s.ui.chrome.accent, "#112233");
+    assert_eq!(s.ui.section_order, ["log", "status"], "nothing else moved");
+}
+
+/// When focus ends (here the last focused bot is removed), the raster and
+/// memory controls show the shared saved value at once, also a value another
+/// process saved while the bot was focused. No later saved-file version is
+/// necessary. While the bot is focused, they show its own saved modes.
+#[test]
+fn settings_feedback_focus_loss_shows_the_saved_launch_choices_without_a_new_version() {
+    use frontend_core::command::RasterMode;
+    let _iso = IsolatedStores::enter("panel-s3-r4-focus-loss");
+    let _reader = crate::ui_state::read_documents_for_test();
+    let path = tmp_vault("focus-loss.vault");
+    let mut s = Session::new();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    hydrate_panel_preferences(&mut s);
+    s.load("alice");
+    assert_eq!(s.focused_name().as_deref(), Some("alice"));
+    settle_panel_writes(&mut s);
+    s.core.flush_writes();
+    assert_eq!(
+        (s.focused_raster(), s.focused_lowmem()),
+        (RasterMode::Gpu, true)
+    );
+
+    let peer = crate::test_support::thread_preferences();
+    crate::test_support::set_patiently(&peer, "raster", serde_json::json!("cpu"));
+    crate::test_support::set_patiently(&peer, "lowmem", serde_json::Value::Bool(false));
+    s.preferences.reload().unwrap();
+    s.pump_status();
+    s.poll_panel_preferences();
+    assert_eq!(
+        (s.focused_raster(), s.focused_lowmem()),
+        (RasterMode::Gpu, true),
+        "the focused bot's controls show its own saved modes"
+    );
+    let version = s.preferences.snapshot().unwrap().version();
+
+    s.rail_remove("alice");
+    assert!(s.focused_name().is_none());
+    // The next frame's poll; the saved file has no new version.
+    s.poll_panel_preferences();
+    assert_eq!(s.preferences.snapshot().unwrap().version(), version);
+    let document = s.preferences.document().unwrap();
+    assert_eq!(
+        (s.focused_raster(), s.focused_lowmem()),
+        (RasterMode::Cpu, false),
+        "no bot is focused: the controls show the saved file (raster={} lowmem={})",
+        document["raster"],
+        document["lowmem"]
+    );
+}
+
+/// The Quest Paths folder field follows another process's saved folder while
+/// it is clean, and keeps what the operator is typing.
+#[test]
+fn settings_feedback_the_quester_folder_field_follows_a_second_process_unless_typed_in() {
+    let _iso = IsolatedStores::enter("panel-s3-quester-field");
+    let _reader = crate::ui_state::read_documents_for_test();
+    let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
+    let peer = crate::test_support::thread_preferences();
+    let quester = |folder: &str| serde_json::json!({ "enabled": true, "folder": folder });
+    let refresh = |s: &mut Session| {
+        s.preferences.reload().unwrap();
+        s.pump_status();
+        s.poll_panel_preferences();
+    };
+    crate::test_support::set_patiently(&peer, "quester_paths", quester("peer-folder-one"));
+    refresh(&mut s);
+    assert_eq!(
+        s.quester_paths.settings().folder(),
+        std::path::Path::new("peer-folder-one")
+    );
+    assert_eq!(
+        s.quester_paths_folder_edit, "peer-folder-one",
+        "a clean field shows the saved folder"
+    );
+
+    s.quester_paths_folder_edit = "typed-not-committed".into();
+    s.quester_paths_folder_dirty = true;
+    crate::test_support::set_patiently(&peer, "quester_paths", quester("peer-folder-two"));
+    refresh(&mut s);
+    assert_eq!(
+        s.quester_paths.settings().folder(),
+        std::path::Path::new("peer-folder-two")
+    );
+    assert_eq!(
+        s.quester_paths_folder_edit, "typed-not-committed",
+        "what the operator is typing stays"
+    );
+    frontend_core::test_support::scripts::reset_quester_registry();
+}
+
+// --- T5.3-S3 round 2: remembered launch choices take effect only when durable ---
+
+/// The remembered Game-pane raster and memory mode are saved choices: while
+/// their write is held the control shows the choice, but the profile's saved
+/// raster and memory mode, the slot's GPU/CPU latch and the panel's applied
+/// values stay what they were; when the write fails nothing was applied and
+/// the control shows the applied value again with the failure at the setting;
+/// when it is durable the effects follow.
+#[test]
+fn settings_feedback_launch_choices_take_effect_only_from_the_durable_value() {
+    use frontend_core::command::RasterMode;
+    let _iso = IsolatedStores::enter("panel-s3-launch-choices");
+    let path = tmp_vault("launch-choices.vault");
+    let mut s = Session::new();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    hydrate_panel_preferences(&mut s);
+    s.select("alice");
+    assert_eq!(s.focused_raster(), RasterMode::Gpu);
+    assert!(s.focused_lowmem());
+    let applied = |s: &mut Session| {
+        s.core.flush_writes();
+        let profile = s.core.profile("alice").unwrap();
+        (
+            profile.lowmem(),
+            profile.raster(),
+            s.core.slot_io("alice").unwrap().input.prefer_cpu(),
+            s.ui.lowmem,
+            s.ui.raster,
+        )
+    };
+    let before = applied(&mut s);
+    assert_eq!(
+        before,
+        (true, RasterMode::Gpu, false, true, RasterMode::Gpu)
+    );
+    let disk = PanelDisk::install(&s);
+
+    assert!(s.set_focused_lowmem(false));
+    assert!(s.set_focused_raster(RasterMode::Cpu));
+    for _ in 0..3 {
+        s.pump_status();
+        s.poll_panel_preferences();
+        assert!(!s.focused_lowmem(), "the control shows the choice");
+        assert_eq!(s.focused_raster(), RasterMode::Cpu);
+        assert_eq!(
+            applied(&mut s),
+            before,
+            "nothing is applied while the write is held"
+        );
+    }
+
+    // The write fails: nothing was applied, the control shows the applied
+    // value, and the failure is at the setting.
+    let failing = disk.release();
+    settle_panel_writes(&mut s);
+    assert_eq!(applied(&mut s), before, "a failed write applied nothing");
+    assert!(s.focused_lowmem());
+    assert_eq!(s.focused_raster(), RasterMode::Gpu);
+    for member in [&["lowmem"][..], &["raster"]] {
+        assert!(
+            s.panel_member_error(member)
+                .is_some_and(|text| text.starts_with("Preferences not saved: ")),
+            "{member:?}: the failure shows at its setting"
+        );
+    }
+
+    // The retry lands: the effects follow the durable value.
+    failing.store(false, Ordering::SeqCst);
+    assert!(s.set_focused_lowmem(false));
+    assert!(s.set_focused_raster(RasterMode::Cpu));
+    settle_panel_writes(&mut s);
+    assert_eq!(
+        applied(&mut s),
+        (false, RasterMode::Cpu, true, false, RasterMode::Cpu)
+    );
+    assert!(!s.focused_lowmem());
+    assert_eq!(s.focused_raster(), RasterMode::Cpu);
+    assert_eq!(s.panel_member_error(&["lowmem"]), None);
+    assert_eq!(s.panel_member_error(&["raster"]), None);
+}
+
+/// The server revision is a saved choice too: while its write is held the
+/// revision control shows the choice, but the preparation and the binding
+/// read the durable revision, so a profile bound meanwhile binds with it
+/// (whatever the write does later), and a failed write leaves the failure
+/// at the setting.
+#[test]
+fn settings_feedback_a_held_server_revision_binds_the_durable_revision_and_shows_the_choice() {
+    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
+    let mut s = Session::new();
+    configure_isolated_profile(
+        &mut s,
+        ProfileOptions {
+            revision: None,
+            cache_dir: Some(cache),
+            cache_manifest: Some(manifest),
+            unpack_dir: Some(unpack),
+            http_port: Some(server.port()),
+            ..ProfileOptions::default()
+        },
+        &root,
+    )
+    .unwrap();
+    hydrate_panel_preferences(&mut s);
+    assert_eq!(s.effective_revision_label().unwrap(), "274");
+    let disk = PanelDisk::install(&s);
+
+    s.set_server_revision(289).unwrap();
+    for _ in 0..3 {
+        s.pump_status();
+        s.poll_panel_preferences();
+        assert_eq!(
+            s.revision_choice_label().unwrap(),
+            "289",
+            "the control shows the choice"
+        );
+        assert_eq!(
+            s.effective_revision_label().unwrap(),
+            "274",
+            "the revision the launch reads is the durable one"
+        );
+        assert_eq!(s.ui.server_revision, 274);
+    }
+    s.bind_profile().unwrap();
+    assert_eq!(
+        s.effective_revision_label().unwrap(),
+        "274",
+        "the profile bound with the durable revision"
+    );
+
+    disk.release();
+    settle_panel_writes(&mut s);
+    assert!(s
+        .panel_member_error(&["server_revision"])
+        .is_some_and(|text| text.starts_with("Preferences not saved: ")));
+    assert_eq!(s.effective_revision_label().unwrap(), "274");
+    assert_eq!(s.revision_choice_label().unwrap(), "274");
+    assert!(
+        s.set_server_revision(289).is_err(),
+        "a bound session refuses"
+    );
+}
+
+// --- T5.3-S3 round 3: a pending launch choice belongs to its profile ---
+
+/// A pending raster or memory choice belongs to the bot that was focused
+/// when it was made. Another focused bot's controls show that bot's own
+/// values, say nothing about the first bot's save, and accept a choice of
+/// their own. The first bot's controls show its pending choice again when
+/// it is focused again, and each failure shows at the bot it belongs to.
+#[test]
+fn settings_feedback_a_pending_launch_choice_stays_with_its_profile() {
+    use frontend_core::command::RasterMode;
+    let _iso = IsolatedStores::enter("panel-s3-r3-launch-owner");
+    let path = tmp_vault("launch-owner.vault");
+    let mut s = Session::new();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    vault_upsert(&mut s.core, profile("bob", "pw", 43));
+    hydrate_panel_preferences(&mut s);
+    s.select("alice");
+    assert_eq!(
+        (s.focused_raster(), s.focused_lowmem()),
+        (RasterMode::Gpu, true)
+    );
+    let disk = PanelDisk::install(&s);
+    s.request_focused_raster(RasterMode::Cpu);
+    s.request_focused_lowmem(false);
+    assert_eq!(
+        (s.focused_raster(), s.focused_lowmem()),
+        (RasterMode::Cpu, false)
+    );
+    assert!(s.panel_member_pending(&["raster"]) && s.panel_member_pending(&["lowmem"]));
+
+    s.select("bob");
+    assert_eq!(
+        (s.focused_raster(), s.core.profile("bob").unwrap().raster()),
+        (RasterMode::Gpu, RasterMode::Gpu),
+        "Alice owns the pending CPU choice, not Bob"
+    );
+    assert!(s.focused_lowmem(), "Alice owns the pending memory choice");
+    assert!(
+        !s.panel_member_pending(&["raster"]) && !s.panel_member_pending(&["lowmem"]),
+        "Bob's controls are not saving"
+    );
+    // A choice for Bob is a choice of its own: it is submitted.
+    let before = s.panel_preference_writes_pending();
+    s.request_focused_raster(RasterMode::Cpu);
+    assert_eq!(
+        s.panel_preference_writes_pending(),
+        before + 1,
+        "Bob's choice is submitted"
+    );
+    assert_eq!(s.focused_raster(), RasterMode::Cpu);
+    assert!(s.panel_member_pending(&["raster"]));
+    assert!(!s.panel_member_pending(&["lowmem"]));
+
+    s.select("alice");
+    assert_eq!(
+        (s.focused_raster(), s.focused_lowmem()),
+        (RasterMode::Cpu, false),
+        "Alice's pending choices show again"
+    );
+    assert!(s.panel_member_pending(&["raster"]) && s.panel_member_pending(&["lowmem"]));
+
+    // Every held write fails: each failure shows at the bot it belongs to.
+    disk.release();
+    settle_panel_writes(&mut s);
+    assert_eq!(
+        (s.focused_raster(), s.focused_lowmem()),
+        (RasterMode::Gpu, true)
+    );
+    assert!(s.panel_member_error(&["raster"]).is_some());
+    assert!(s.panel_member_error(&["lowmem"]).is_some());
+    s.select("bob");
+    assert_eq!(
+        (s.focused_raster(), s.focused_lowmem()),
+        (RasterMode::Gpu, true)
+    );
+    assert!(
+        s.panel_member_error(&["raster"]).is_some(),
+        "Bob's own raster choice failed"
+    );
+    assert_eq!(
+        s.panel_member_error(&["lowmem"]),
+        None,
+        "Alice's memory failure is not Bob's"
     );
 }

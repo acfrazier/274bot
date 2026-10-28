@@ -629,6 +629,26 @@ pub(super) fn write_preference_path(path: &[&str], output: &mut String) {
     }
 }
 
+/// The preference document and the durable version it was published under.
+/// A clone is one reference count: the document is immutable and shared.
+#[derive(Debug, Clone)]
+pub struct PreferenceSnapshot {
+    version: StoreVersion,
+    document: Arc<Map<String, Value>>,
+}
+
+impl PreferenceSnapshot {
+    /// The durable version the document was published under.
+    pub fn version(&self) -> StoreVersion {
+        self.version
+    }
+
+    /// The immutable document.
+    pub fn document(&self) -> &Arc<Map<String, Value>> {
+        &self.document
+    }
+}
+
 /// The operator preferences shared by the panel, the TUI and the
 /// composition (walk permissions, the quester Path folder, the session log
 /// switch, ...), through the process service. One top-level member of the
@@ -693,6 +713,18 @@ impl Preferences {
         self.shared
             .service
             .preferences_document(&self.shared.identity, PREFERENCES_FRESHNESS)
+    }
+
+    /// The cached immutable document and the durable version it was
+    /// published under, in one read. The version moves only when the
+    /// document's bytes changed (this service's write or another writer's),
+    /// so a reader applies a snapshot once per version. Same cold, refused
+    /// and stale behaviour as [`Self::document`].
+    pub fn snapshot(&self) -> Result<PreferenceSnapshot, PreferenceError> {
+        self.shared
+            .service
+            .preferences_snapshot(&self.shared.identity, PREFERENCES_FRESHNESS)
+            .map(|(version, document)| PreferenceSnapshot { version, document })
     }
 
     /// The worker-projected, cached walk permission view.

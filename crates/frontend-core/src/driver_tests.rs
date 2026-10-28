@@ -81,26 +81,33 @@ fn cold_preferences_adopt_saved_startup_models_without_writing_defaults() {
         .recv_timeout(std::time::Duration::from_secs(10))
         .unwrap();
     driver.session.bind_local_state(service);
-    driver.preferences_adopted = false;
     driver.models.walk_globals = driver.session.adopt_operator_preferences();
+    let ready = |driver: &HeadlessDriver| driver.session.preferences().unwrap().ready();
     for _ in 0..4 {
         driver.poll();
-        assert!(!driver.preferences_adopted);
+        assert!(!ready(&driver));
         assert!(!driver.models.walk_globals.globals().allow_teleports());
         assert_eq!(std::fs::read(&path).unwrap(), saved);
     }
     release.send(()).unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while !driver.preferences_adopted && std::time::Instant::now() < deadline {
+    while !(ready(&driver) && driver.models.walk_globals.globals().allow_teleports())
+        && std::time::Instant::now() < deadline
+    {
         driver.poll();
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    assert!(driver.preferences_adopted);
+    assert!(ready(&driver));
     assert!(driver.models.walk_globals.globals().allow_teleports());
     assert!(!driver.session.running_pause_script_on_manual_walk_abort());
     assert!(!driver.models.draw.capture());
     assert!(driver.models.draw.sidecar_50());
     assert!(!driver.models.draw.focused_50());
+    assert_eq!(
+        driver.models.draw_changes(),
+        3,
+        "the surface is told each saved switch that differs from the provisional default"
+    );
     assert_eq!(
         driver.models.map.bake_gate().choice(),
         crate::MapBakeChoice::Always
@@ -567,6 +574,7 @@ fn a_vault_row_with_nothing_staged_is_refused_not_done() {
 #[test]
 fn preference_rows_write_the_file_and_a_new_session_reads_them_back() {
     use crate::nav_prefs::NavPreference;
+    let _sink = crate::log_file::sink_test_lock();
     let dir = scratch("prefs");
     let mut d = driver_in(&dir, &["alice"]);
     let rows = [
@@ -811,14 +819,18 @@ fn watched_setting_events_report_pending_failed_then_saved() {
     assert_eq!(settled_app(&mut d, submitted.request()), Some(done()));
     let (events, incomplete) = d.session_mut().take_setting_events();
     assert!(!incomplete);
-    assert!(
-        events.iter().any(|event| {
-            event.setting() == "nav.allow_teleports"
-                && event.state() == SettingEventState::Saved
-                && event.error().is_none()
-        }),
-        "the retry reports saved: {events:?}"
+    assert_eq!(
+        events.iter().map(|event| event.state()).collect::<Vec<_>>(),
+        [
+            SettingEventState::Cleared,
+            SettingEventState::Pending,
+            SettingEventState::Saved,
+        ],
+        "retry clears the retained failure, then reports its own write: {events:?}"
     );
+    assert!(events.iter().all(|event| {
+        event.setting() == "nav.allow_teleports" && event.error().is_none()
+    }));
 
     // Watching off drops anything undrained and records nothing more.
     d.session_mut().watch_setting_events(false);
@@ -1523,6 +1535,8 @@ fn a_failed_order_write_reports_failure_and_restores_the_durable_order() {
     d.poll();
     let op = move_op(&d, "carol", "alice", false);
     assert_eq!(reorder(&mut d, op), Some(done()));
+    use crate::SettingEventState;
+    d.session_mut().watch_setting_events(true);
     let path = d.session().preferences().expect("prefs").path();
     std::fs::write(
         &path,
@@ -1535,6 +1549,15 @@ fn a_failed_order_write_reports_failure_and_restores_the_durable_order() {
     assert!(
         matches!(terminal, Some(Settlement::Failed(_))),
         "the write is refused: {terminal:?}"
+    );
+    let (events, incomplete) = d.session_mut().take_setting_events();
+    assert!(!incomplete);
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].setting(), "profile order");
+    assert_eq!(events[0].state(), SettingEventState::Failed);
+    assert!(
+        events[0].error().is_some_and(|error| !error.is_empty()),
+        "the refusal carries its reason: {events:?}"
     );
     d.poll();
     assert_eq!(
@@ -5208,4 +5231,579 @@ fn logout_retry_fleet_still_refuses_bots_that_never_logged_in() {
         Some("Log out: no bot to act on (alice: not logged in, bob: not logged in)")
     );
     assert!(d.session().fleet_plan().is_none());
+}
+
+// --- T5.3-S3: saved settings take effect from the latest durable snapshot ---
+
+/// A disk for one driver's service: it holds the first `held` file writes
+/// at their start until [`Disk::release`], and fails every write numbered
+/// above the count set by [`Disk::fail_after`] (the counting starts when
+/// the disk is installed).
+struct Disk {
+    release: std::sync::mpsc::Sender<()>,
+    fail_after: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl Disk {
+    fn install(d: &HeadlessDriver, held: usize) -> Self {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        let gate = std::sync::Mutex::new(gate);
+        let writes = std::sync::Arc::new(AtomicUsize::new(0));
+        let fail_after = std::sync::Arc::new(AtomicUsize::new(usize::MAX));
+        let service = d
+            .session()
+            .local_state()
+            .expect("the driver binds the process service");
+        let stalled = std::sync::Arc::clone(&writes);
+        service.set_write_stall_for_test(std::sync::Arc::new(move || {
+            if stalled.fetch_add(1, SeqCst) < held {
+                let _ = gate.lock().unwrap().recv();
+            }
+        }));
+        let counted = std::sync::Arc::clone(&writes);
+        let limit = std::sync::Arc::clone(&fail_after);
+        service.set_write_fault_for_test(std::sync::Arc::new(move || {
+            counted.load(SeqCst) > limit.load(SeqCst)
+        }));
+        Self {
+            release,
+            fail_after,
+        }
+    }
+
+    /// Let the oldest held write run.
+    fn release(&self) {
+        self.release.send(()).expect("the writer waits at the gate");
+    }
+
+    /// Writes numbered above `n` fail (the first write is number 1).
+    fn fail_after(&self, n: usize) {
+        self.fail_after
+            .store(n, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn pass_all(&self) {
+        self.fail_after(usize::MAX);
+    }
+}
+
+/// One saved setting a command changes: how to stage and submit it, and
+/// what the session shows before the write is durable and after.
+struct Saved {
+    name: &'static str,
+    setting: crate::Setting,
+    stage: fn(&mut HeadlessDriver),
+    command: OperatorCommand,
+    /// The default, nothing changed.
+    unchanged: fn(&HeadlessDriver) -> bool,
+    /// The value the command asks for, applied.
+    changed: fn(&HeadlessDriver) -> bool,
+}
+
+fn nothing_staged(_: &mut HeadlessDriver) {}
+
+const FIXTURE_SOURCE: &str = "s3-durable-source";
+
+fn saved_settings() -> Vec<Saved> {
+    use crate::nav_prefs::NavPreference as N;
+    use crate::walk_permissions::DangerLevel;
+    use crate::Setting as S;
+    vec![
+        Saved {
+            name: "sidecar",
+            setting: S::Draw(DrawSwitch::SidecarFullRate),
+            stage: nothing_staged,
+            command: OperatorCommand::SetDraw(DrawSwitch::SidecarFullRate, true),
+            unchanged: |d| !d.models().draw().sidecar_50() && d.models().draw_changes() == 0,
+            changed: |d| d.models().draw().sidecar_50() && d.models().draw_changes() == 1,
+        },
+        Saved {
+            name: "capture",
+            setting: S::Draw(DrawSwitch::CaptureInput),
+            stage: nothing_staged,
+            command: OperatorCommand::SetDraw(DrawSwitch::CaptureInput, false),
+            unchanged: |d| d.models().draw().capture() && d.models().draw_changes() == 0,
+            changed: |d| !d.models().draw().capture() && d.models().draw_changes() == 1,
+        },
+        Saved {
+            name: "focused",
+            setting: S::Draw(DrawSwitch::FocusedFullRate),
+            stage: nothing_staged,
+            command: OperatorCommand::SetDraw(DrawSwitch::FocusedFullRate, false),
+            unchanged: |d| d.models().draw().focused_50() && d.models().draw_changes() == 0,
+            changed: |d| !d.models().draw().focused_50() && d.models().draw_changes() == 1,
+        },
+        Saved {
+            name: "teleports",
+            setting: S::Nav(N::AllowTeleports),
+            stage: nothing_staged,
+            command: OperatorCommand::SetNavPreference(N::AllowTeleports, true),
+            unchanged: |d| {
+                !d.models().walk_globals().globals().allow_teleports()
+                    && !d
+                        .session()
+                        .play()
+                        .expect("play")
+                        .walk_globals()
+                        .allow_teleports
+            },
+            changed: |d| {
+                d.models().walk_globals().globals().allow_teleports()
+                    && d.session()
+                        .play()
+                        .expect("play")
+                        .walk_globals()
+                        .allow_teleports
+            },
+        },
+        Saved {
+            name: "danger",
+            setting: S::DangerRouting,
+            stage: nothing_staged,
+            command: OperatorCommand::SetDangerLevel(DangerLevel::Always),
+            unchanged: |d| d.models().walk_globals().danger_level() != DangerLevel::Always,
+            changed: |d| d.models().walk_globals().danger_level() == DangerLevel::Always,
+        },
+        Saved {
+            name: "pause",
+            setting: S::Nav(N::PauseScriptOnManualWalkAbort),
+            stage: nothing_staged,
+            command: OperatorCommand::SetNavPreference(N::PauseScriptOnManualWalkAbort, false),
+            unchanged: |d| d.session().running_pause_script_on_manual_walk_abort(),
+            changed: |d| !d.session().running_pause_script_on_manual_walk_abort(),
+        },
+        Saved {
+            name: "map-bake",
+            setting: S::MapBake,
+            stage: nothing_staged,
+            command: OperatorCommand::SetMapBakeChoice(crate::MapBakeChoice::Always),
+            unchanged: |d| d.models().map().bake_gate().choice() == crate::MapBakeChoice::Ask,
+            changed: |d| d.models().map().bake_gate().choice() == crate::MapBakeChoice::Always,
+        },
+        Saved {
+            name: "quester",
+            setting: S::QuesterPaths,
+            stage: |d| {
+                d.session_mut().stage_quester_paths(
+                    crate::QuesterPathsView::new(true, PathBuf::from(FIXTURE_SOURCE)),
+                    true,
+                    None,
+                );
+            },
+            command: OperatorCommand::SetQuesterPaths,
+            unchanged: |d| {
+                d.models().quester().settings().folder() != Path::new(FIXTURE_SOURCE)
+                    && script::quester::registry::source_for_preparation().folder
+                        != Path::new(FIXTURE_SOURCE)
+            },
+            changed: |d| {
+                d.models().quester().settings().folder() == Path::new(FIXTURE_SOURCE)
+                    && script::quester::registry::source_for_preparation().folder
+                        == Path::new(FIXTURE_SOURCE)
+            },
+        },
+        Saved {
+            name: "render-all-ack",
+            setting: S::Notice(crate::OperatorNotice::RenderAllWarning),
+            stage: |d| {
+                d.session_mut()
+                    .stage_notice(crate::OperatorNotice::RenderAllWarning)
+            },
+            command: OperatorCommand::AcknowledgeNotice,
+            unchanged: |d| {
+                d.session()
+                    .preferences()
+                    .expect("prefs")
+                    .value("render_all_warning_ack")
+                    .is_none()
+            },
+            changed: |d| {
+                d.session()
+                    .preferences()
+                    .expect("prefs")
+                    .value("render_all_warning_ack")
+                    == Some(serde_json::Value::Bool(true))
+            },
+        },
+        Saved {
+            name: "background-ack",
+            setting: S::Notice(crate::OperatorNotice::BackgroundBots),
+            stage: |d| {
+                d.session_mut()
+                    .stage_notice(crate::OperatorNotice::BackgroundBots)
+            },
+            command: OperatorCommand::AcknowledgeNotice,
+            unchanged: |d| {
+                !crate::resources::background_bots_acked(&d.session().preferences().expect("prefs"))
+            },
+            changed: |d| {
+                crate::resources::background_bots_acked(&d.session().preferences().expect("prefs"))
+            },
+        },
+    ]
+}
+
+/// Every saved operational setting, held and then failed: nothing is
+/// applied while its write is pending or after it failed, the callback
+/// and the play never see the value, the command settles once as failed,
+/// and the failure stays at the setting. A retry (the action that resolves
+/// it) clears the failure at once and the value then takes effect from the
+/// durable snapshot.
+#[test]
+fn a_held_then_failed_saved_setting_changes_nothing_and_fails_at_its_setting() {
+    for case in saved_settings() {
+        let mut d = driver(&format!("s3-held-failed-{}", case.name), &["alice"]);
+        // The Quester source is process-wide: hold it across its own case,
+        // after the driver (whose open takes the same lock) exists.
+        let _source =
+            (case.name == "quester").then(crate::quester_paths::registry_source_test_lock);
+        d.poll();
+        assert!((case.unchanged)(&d), "{}: starts at its default", case.name);
+        let disk = Disk::install(&d, 1);
+        disk.fail_after(0);
+        (case.stage)(&mut d);
+        let request = d
+            .submit(case.command, Targets::Application)
+            .expect("admitted")
+            .request();
+        for _ in 0..3 {
+            d.poll();
+            assert_eq!(terminal_app(&d, request), None, "{}: pending", case.name);
+            assert!(
+                matches!(
+                    d.session().setting_status(case.setting),
+                    crate::SettingStatus::Pending
+                ),
+                "{}: the setting says it is saving",
+                case.name
+            );
+            assert!((case.unchanged)(&d), "{}: nothing applied yet", case.name);
+        }
+        disk.release();
+        let terminal = settled_app(&mut d, request).expect("settled");
+        assert!(
+            matches!(
+                terminal,
+                Settlement::Failed(CommandFailure::Failed(
+                    crate::command::FailureKind::WriteFailed
+                ))
+            ),
+            "{}: one failed terminal, not applied: {terminal:?}",
+            case.name
+        );
+        d.poll();
+        assert!(
+            (case.unchanged)(&d),
+            "{}: a failed write changes nothing",
+            case.name
+        );
+        let failure = d
+            .session()
+            .setting_failure(case.setting)
+            .unwrap_or_else(|| panic!("{}: the failure stays at its setting", case.name))
+            .to_owned();
+        assert!(
+            failure.starts_with("Not saved: "),
+            "{}: {failure}",
+            case.name
+        );
+        assert!(
+            d.report(request).is_some_and(|report| report.is_settled()),
+            "{}: the report settled",
+            case.name
+        );
+
+        // The retry resolves the failure, then the durable value applies.
+        disk.pass_all();
+        (case.stage)(&mut d);
+        let retry = d
+            .submit(case.command, Targets::Application)
+            .expect("admitted")
+            .request();
+        assert_eq!(
+            d.session().setting_failure(case.setting),
+            None,
+            "{}: the retry clears the failure",
+            case.name
+        );
+        assert_eq!(settled_app(&mut d, retry), Some(done()), "{}", case.name);
+        d.poll();
+        assert!((case.changed)(&d), "{}: durable, so applied", case.name);
+        assert!(matches!(
+            d.session().setting_status(case.setting),
+            crate::SettingStatus::Saved
+        ));
+    }
+}
+
+/// The saved session file is a durable choice and a sink: nothing opens
+/// while the write is pending or after it failed, and the file opens from
+/// the durable value.
+#[test]
+fn a_held_then_failed_session_log_choice_opens_nothing_until_it_is_durable() {
+    let _sink = crate::log_file::sink_test_lock();
+    crate::log_file::apply_session_log_for_test(false);
+    let mut d = driver("s3-session-log", &["alice"]);
+    d.poll();
+    let disk = Disk::install(&d, 1);
+    disk.fail_after(0);
+    let request = d
+        .submit(OperatorCommand::SetSessionLog(true), Targets::Application)
+        .expect("admitted")
+        .request();
+    d.poll();
+    assert!(
+        crate::log_file::session_log_path().is_none(),
+        "pending: no file"
+    );
+    disk.release();
+    assert!(matches!(
+        settled_app(&mut d, request),
+        Some(Settlement::Failed(_))
+    ));
+    d.poll();
+    assert!(
+        crate::log_file::session_log_path().is_none(),
+        "failed: no file opened"
+    );
+    assert!(d
+        .session()
+        .setting_failure(crate::Setting::SessionLog)
+        .is_some_and(|text| text.starts_with("Not saved: ")));
+
+    disk.pass_all();
+    let retry = d
+        .submit(OperatorCommand::SetSessionLog(true), Targets::Application)
+        .expect("admitted")
+        .request();
+    assert_eq!(settled_app(&mut d, retry), Some(done()));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while crate::log_file::session_log_path().is_none() && std::time::Instant::now() < deadline {
+        d.poll();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(
+        crate::log_file::session_log_path().is_some(),
+        "durable: file opens"
+    );
+    d.submit(OperatorCommand::SetSessionLog(false), Targets::Application)
+        .expect("admitted");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while crate::log_file::session_log_path().is_some() && std::time::Instant::now() < deadline {
+        d.poll();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(crate::log_file::session_log_path().is_none());
+}
+
+/// A retained failure is a UI message: it leaves by itself after the
+/// error timeout when nothing resolved it first.
+#[test]
+fn a_retained_setting_failure_expires_by_itself() {
+    let mut d = driver("s3-failure-expires", &["alice"]);
+    d.poll();
+    let disk = Disk::install(&d, 0);
+    disk.fail_after(0);
+    let setting = crate::Setting::Draw(DrawSwitch::SidecarFullRate);
+    let request = d
+        .submit(
+            OperatorCommand::SetDraw(DrawSwitch::SidecarFullRate, true),
+            Targets::Application,
+        )
+        .expect("admitted")
+        .request();
+    assert!(matches!(
+        settled_app(&mut d, request),
+        Some(Settlement::Failed(_))
+    ));
+    let now = std::time::Instant::now();
+    d.poll_at(now);
+    assert!(d.session().setting_failure(setting).is_some());
+    d.poll_at(now + crate::ERROR_MESSAGE_TIMEOUT - std::time::Duration::from_secs(1));
+    assert!(d.session().setting_failure(setting).is_some(), "not yet");
+    d.poll_at(now + crate::ERROR_MESSAGE_TIMEOUT + std::time::Duration::from_secs(1));
+    assert_eq!(d.session().setting_failure(setting), None, "expired");
+    assert_eq!(
+        d.session().next_setting_expiry(),
+        None,
+        "nothing left to wake for"
+    );
+}
+
+/// A is held, B is accepted behind it, a second process changes another
+/// member, A becomes durable and B fails: after both settled once the
+/// active value is A's (not the value before A, and not failed B's), the
+/// other process's change reached the models, and each command has one
+/// terminal.
+#[test]
+fn a_durable_then_b_failed_leaves_a_active_with_a_second_process_between() {
+    let mut d = driver("s3-a-b-second", &["alice"]);
+    d.poll();
+    let disk = Disk::install(&d, 1);
+    disk.fail_after(1);
+    let a = d
+        .submit(
+            OperatorCommand::SetDraw(DrawSwitch::SidecarFullRate, true),
+            Targets::Application,
+        )
+        .expect("A admitted")
+        .request();
+    let b = d
+        .submit(
+            OperatorCommand::SetDraw(DrawSwitch::SidecarFullRate, false),
+            Targets::Application,
+        )
+        .expect("B admitted")
+        .request();
+    d.poll();
+    assert!(
+        !d.models().draw().sidecar_50(),
+        "A is held: nothing applied"
+    );
+    // A second process over the same root writes another member while A waits.
+    let root = d
+        .session()
+        .preferences()
+        .expect("prefs")
+        .path()
+        .parent()
+        .expect("state root")
+        .to_path_buf();
+    {
+        let other = crate::UiPreferences::open_for_test(root);
+        other
+            .set("focused_50", serde_json::Value::Bool(false))
+            .expect("the second process writes");
+    }
+    disk.release();
+    assert_eq!(settled_app(&mut d, a), Some(done()), "A is durable");
+    assert!(
+        matches!(settled_app(&mut d, b), Some(Settlement::Failed(_))),
+        "B fails"
+    );
+    d.poll();
+    assert!(
+        d.models().draw().sidecar_50(),
+        "active equals A, not the value before A and not failed B"
+    );
+    assert!(
+        !d.models().draw().focused_50(),
+        "the second process's version reached the model"
+    );
+    let file = preferences_file(&d);
+    assert_eq!(file["sidecar_50"], serde_json::Value::Bool(true));
+    assert_eq!(file["focused_50"], serde_json::Value::Bool(false));
+    assert!(d
+        .session()
+        .setting_failure(crate::Setting::Draw(DrawSwitch::SidecarFullRate))
+        .is_some());
+    for request in [a, b] {
+        assert!(d.report(request).is_some_and(|report| report.is_settled()));
+    }
+}
+
+/// Another process's saved change (no request of this session behind it)
+/// reaches every model once its durable version is read, and calls the
+/// surface back.
+#[test]
+fn a_second_process_version_reaches_the_models_and_calls_the_surface_back() {
+    let mut d = driver("s3-second-process", &["alice"]);
+    d.poll();
+    assert_eq!(d.models().draw_changes(), 0);
+    let root = d
+        .session()
+        .preferences()
+        .expect("prefs")
+        .path()
+        .parent()
+        .expect("state root")
+        .to_path_buf();
+    {
+        let other = crate::UiPreferences::open_for_test(root);
+        other
+            .set("sidecar_50", serde_json::Value::Bool(true))
+            .expect("the second process writes");
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !d.models().draw().sidecar_50() && std::time::Instant::now() < deadline {
+        d.poll();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(d.models().draw().sidecar_50());
+    assert_eq!(d.models().draw_changes(), 1, "one callback for one change");
+    for _ in 0..5 {
+        d.poll();
+    }
+    assert_eq!(
+        d.models().draw_changes(),
+        1,
+        "an unchanged version calls nothing back"
+    );
+}
+
+/// A saved-setting command the preference queue refuses before accepting it
+/// (the writer's queue is full) is a refused command, not a failed write:
+/// one `info` line at the shared command boundary names it, the refusal is
+/// counted, and the setting shows the reason. An accepted write that fails
+/// later is a different result and logs no refusal.
+#[test]
+fn a_preference_refused_at_queue_admission_logs_one_refusal_at_the_command_boundary() {
+    use crate::nav_prefs::NavPreference as N;
+    let mut d = driver("s3-queue-refusal", &["alice"]);
+    d.poll();
+    let disk = Disk::install(&d, 1);
+    let refusals = d.session().refusals();
+    let setting = crate::Setting::Nav(N::AllowTeleports);
+    let mut refused = Vec::new();
+    let mut accepted = Vec::new();
+    for index in 0..24 {
+        let on = index % 2 == 0;
+        let request = d
+            .submit(
+                OperatorCommand::SetNavPreference(N::AllowTeleports, on),
+                Targets::Application,
+            )
+            .expect("the command is admitted")
+            .request();
+        match terminal_app(&d, request) {
+            Some(Settlement::Failed(CommandFailure::Rejected(
+                crate::command::Rejection::WriteRefused,
+            ))) => refused.push(request),
+            None => accepted.push(request),
+            other => panic!("neither accepted nor refused by the queue: {other:?}"),
+        }
+    }
+    assert!(
+        !refused.is_empty() && !accepted.is_empty(),
+        "the queue accepted some and refused the rest ({} / {})",
+        accepted.len(),
+        refused.len()
+    );
+    assert_eq!(
+        d.session().refusals(),
+        refusals + refused.len() as u64,
+        "one refusal counted per refused command, none for the accepted ones"
+    );
+    let mut view = crate::log::LogView::new(crate::log::LogScope::Process);
+    view.edit_filter(|filter| filter.set_text("command refused: SetNavPreference"));
+    crate::log::global().refresh(&mut view);
+    let lines = view
+        .rows()
+        .iter()
+        .filter(|row| row.message().contains("WriteRefused"))
+        .count();
+    assert_eq!(lines, refused.len(), "one info line per refused command");
+    assert!(
+        d.session()
+            .setting_failure(setting)
+            .is_some_and(|text| text.starts_with("Not saved: ")),
+        "the setting shows the reason"
+    );
+    // The accepted writes settle on their own: no further refusal line.
+    drop(disk);
+    for request in accepted {
+        assert_eq!(settled_app(&mut d, request), Some(done()));
+    }
+    assert_eq!(d.session().refusals(), refusals + refused.len() as u64);
 }

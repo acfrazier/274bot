@@ -282,6 +282,22 @@
       "reason": "F0 baseline seam classification."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/log_file.rs|SessionFilePhase",
+      "path": "crates/frontend-core/src/log_file.rs",
+      "symbol": "SessionFilePhase",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T5.3-S3 stage of the session file the log status line reads; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/log_file.rs|SessionFileStatus",
+      "path": "crates/frontend-core/src/log_file.rs",
+      "symbol": "SessionFileStatus",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T5.3-S3 what the session file actually does now (phase, path, cause); register in the introducing commit, no allowance."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/log_file.rs|SessionLogFile",
       "path": "crates/frontend-core/src/log_file.rs",
       "symbol": "SessionLogFile",
@@ -1440,6 +1456,14 @@
       "classification": "owning",
       "owner": "T3",
       "reason": "T5.3-S2 changed-member intent accepted by the process writer."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/prefs.rs|PreferenceSnapshot",
+      "path": "crates/frontend-core/src/prefs.rs",
+      "symbol": "PreferenceSnapshot",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T5.3-S3 immutable preference document with the durable version it was published under; a clone is one reference count."
     },
     {
       "id": "seam_type|crates/frontend-core/src/prefs.rs|UiPreferences",
@@ -2760,6 +2784,22 @@
       "classification": "scalar",
       "owner": "T3",
       "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/setting.rs|Setting",
+      "path": "crates/frontend-core/src/setting.rs",
+      "symbol": "Setting",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T5.3-S3 saved-setting identity a front end reads pending and failed state by; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/setting.rs|SettingStatus",
+      "path": "crates/frontend-core/src/setting.rs",
+      "symbol": "SettingStatus",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T5.3-S3 saved, pending or failed state of one setting, borrowing the core's retained failure text; register in the introducing commit, no allowance."
     }
   ],
   "violations": [

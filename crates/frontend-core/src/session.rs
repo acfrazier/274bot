@@ -603,7 +603,9 @@ pub use commands::{GuardianEdit, SubmitError, Submitted, SurvivalEdit, Targets};
 pub use map::{GameInputEvent, MapDesk};
 pub(crate) use native_settings::NativeCopyCancellation;
 use native_settings::{PendingDelivery, PendingPreparation};
-pub use prefs::{DrawPolicy, Notice, SettingEvent, SettingEventState};
+pub use prefs::{
+    DrawPolicy, Notice, RENDER_ALL_WARNING_ACK_KEY, SettingEvent, SettingEventState,
+};
 
 pub struct OperatorSession<Io> {
     vault: Option<Vault>,
@@ -687,6 +689,9 @@ pub struct OperatorSession<Io> {
     /// opened; every `Play` this session adopts uses it, so the process has
     /// one writer for its state files.
     local_state: Option<Arc<host_play::local_state::LocalStateService>>,
+    /// The preferences handle the per-frame snapshot read uses, made when
+    /// the service is bound.
+    preference_reader: Option<crate::prefs::UiPreferences>,
     preferences_adopted: bool,
     preference_error: Option<String>,
     initial_preference_failure: Option<crate::prefs::PreferenceError>,
@@ -710,14 +715,30 @@ pub struct OperatorSession<Io> {
     /// The preferences hold a saved order (the operator reordered, or a
     /// rename kept a place): reconcile changes are written back.
     order_saved: bool,
-    /// The last saved Load order known durable: a reorder whose write
-    /// fails goes back to it.
+    /// The saved Load order the latest durable snapshot holds: a reorder
+    /// whose write fails goes back to it.
     durable_order: crate::profile_order::ProfileOrder,
-    /// The number of the last reorder write begun, and of the newest one
-    /// known durable: writes can be polled out of order, so an older
-    /// write that lands after a newer one never replaces the durable order.
-    order_write_seq: u64,
-    durable_order_seq: u64,
+    /// The stored order member the last snapshot held (`None`: absent), to
+    /// tell when the stored order moved.
+    durable_order_doc: Option<serde_json::Value>,
+    /// Pending and failed state of every saved setting
+    /// ([`Self::setting_status`]).
+    settings: crate::setting::SettingBook,
+    /// The durable preference version the session-owned state (walk
+    /// grants, the manual-walk pause, the Load order, the session file)
+    /// last followed.
+    core_version: Option<api::local_state::StoreVersion>,
+    /// The durable preference version the lent models (draw policy, bake
+    /// gate, Quester source, walk view) last followed.
+    models_version: Option<api::local_state::StoreVersion>,
+    /// The session file state the durable preference last asked for.
+    session_log_wanted: Option<bool>,
+    /// Whether a failure of the session file sink was already reported
+    /// for the current durable choice.
+    session_sink_reported: bool,
+    /// The Quester source the last accepted (still pending) write asked
+    /// for, the baseline the next change is made against.
+    quester_intent: Option<crate::quester_paths::QuesterPathsView>,
     /// The profiles generation the order was last reconciled at.
     order_reconciled_at: Option<u64>,
     /// Order writes that are not commands (a rename or a reconcile), still
@@ -797,6 +818,7 @@ impl<Io> OperatorSession<Io> {
             walk_globals: crate::walk_permissions::WalkGlobals::default(),
             walk_globals_store: None,
             local_state: None,
+            preference_reader: None,
             preferences_adopted: false,
             preference_error: None,
             initial_preference_failure: None,
@@ -810,8 +832,13 @@ impl<Io> OperatorSession<Io> {
             profile_order: crate::profile_order::ProfileOrder::default(),
             order_saved: false,
             durable_order: crate::profile_order::ProfileOrder::default(),
-            order_write_seq: 0,
-            durable_order_seq: 0,
+            durable_order_doc: None,
+            settings: crate::setting::SettingBook::default(),
+            core_version: None,
+            models_version: None,
+            session_log_wanted: None,
+            session_sink_reported: false,
+            quester_intent: None,
             order_reconciled_at: None,
             order_writes: Vec::new(),
             commands: commands::CommandDesk::default(),
@@ -992,10 +1019,16 @@ impl<Io> OperatorSession<Io> {
     /// root opened, before any `Play` starts: [`Self::start`] hands it to
     /// each `Play`, so slots and forms write through one service.
     pub fn bind_local_state(&mut self, service: Arc<host_play::local_state::LocalStateService>) {
+        self.preference_reader = Some(crate::prefs::UiPreferences::new(service.preferences()));
         self.local_state = Some(service);
         self.preferences_adopted = false;
         self.preference_error = None;
         self.initial_preference_failure = None;
+        self.core_version = None;
+        self.models_version = None;
+        self.session_log_wanted = None;
+        self.durable_order_doc = None;
+        self.session_sink_reported = false;
     }
 
     /// Open the process local-state service over the operator's state
@@ -1020,26 +1053,36 @@ impl<Io> OperatorSession<Io> {
         self.preference_error.as_deref()
     }
 
-    fn poll_initial_preferences(&mut self) {
-        if self.preferences_adopted {
-            return;
-        }
-        let Some(preferences) = self.preferences() else {
-            return;
-        };
-        match preferences.document() {
-            Ok(_) => {
+    /// Read the latest durable preference snapshot and let the
+    /// session-owned state follow it once per durable version: the walk
+    /// grants, the manual-walk pause, the Load order and the session file.
+    /// A cold store returns `None` (the shown state is provisional and
+    /// nothing is saved over it); a refused store keeps its diagnostic until
+    /// it reads again. The lent models follow the same snapshot in
+    /// [`Self::poll_preferences`].
+    pub(crate) fn sync_snapshot(&mut self) -> Option<crate::prefs::PreferenceSnapshot> {
+        // The handle is made once at the bind: a per-poll handle would
+        // allocate on every frame of a steady session.
+        let preferences = self.preference_reader.as_ref()?.share();
+        match preferences.snapshot() {
+            Ok(snapshot) => {
                 if self.initial_preference_failure.take().is_some() {
                     self.preference_error = None;
                 }
-                self.adopt_operator_preferences();
+                if self.core_version != Some(snapshot.version()) {
+                    let first = self.core_version.is_none();
+                    self.core_version = Some(snapshot.version());
+                    self.follow_snapshot(&preferences, &snapshot, first);
+                }
+                Some(snapshot)
             }
-            Err(error) if error.is_not_ready() => {}
+            Err(error) if error.is_not_ready() => None,
             Err(error) => {
                 if self.initial_preference_failure.as_ref() != Some(&error) {
                     self.preference_error = Some(error.to_string());
                     self.initial_preference_failure = Some(error);
                 }
+                None
             }
         }
     }
@@ -1048,7 +1091,7 @@ impl<Io> OperatorSession<Io> {
     /// Both front ends use this gate before consuming a deferred request.
     /// A cold or failed preference store is not an empty saved order.
     pub fn prepare_startup(&mut self) -> bool {
-        self.poll_initial_preferences();
+        self.sync_snapshot();
         if self.vault.is_none() || (self.local_state.is_some() && !self.preferences_adopted) {
             return false;
         }
@@ -1395,16 +1438,42 @@ impl<Io> OperatorSession<Io> {
         self.profile_order.position(name)
     }
 
-    /// Adopt the saved Load order from `preferences` (startup) and
-    /// reconcile it with the vault.
-    pub(crate) fn adopt_profile_order(&mut self, preferences: &crate::UiPreferences) {
-        let value = preferences.value(crate::profile_order::PROFILE_ORDER_KEY);
-        self.order_saved = value.is_some();
-        self.profile_order
-            .replace(crate::profile_order::ProfileOrder::from_value(
-                value.as_ref(),
-            ));
-        self.durable_order.assign_from(&self.profile_order);
+    /// Follow the saved Load order of the latest durable snapshot. When the
+    /// stored order moved (the first adoption, another process, or this
+    /// session's own write landing) the durable copy becomes it, and so does
+    /// the shown order unless a write of the shown order is still pending: a
+    /// pending reorder keeps its preview until it settles, and a failed one
+    /// goes back to the durable copy ([`Self::revert_profile_order`]).
+    pub(crate) fn follow_profile_order(
+        &mut self,
+        snapshot: &crate::prefs::PreferenceSnapshot,
+        first: bool,
+    ) {
+        let value = snapshot
+            .document()
+            .get(crate::profile_order::PROFILE_ORDER_KEY);
+        if value.is_some() {
+            self.order_saved = true;
+        } else if first {
+            self.order_saved = false;
+        }
+        if !first && self.durable_order_doc.as_ref() == value {
+            return;
+        }
+        self.durable_order_doc = value.cloned();
+        let loaded = crate::profile_order::ProfileOrder::from_value(value);
+        let pending = !self.order_writes.is_empty()
+            || matches!(
+                self.settings.status(crate::Setting::ProfileOrder),
+                crate::SettingStatus::Pending
+            );
+        if first || !pending {
+            self.profile_order.replace(loaded);
+            self.durable_order.assign_from(&self.profile_order);
+            self.profiles_generation = self.profiles_generation.wrapping_add(1);
+        } else {
+            self.durable_order.replace(loaded);
+        }
         self.order_reconciled_at = None;
         self.reconcile_profile_order();
     }
@@ -1490,22 +1559,35 @@ impl<Io> OperatorSession<Io> {
             crate::profile_order::PROFILE_ORDER_KEY,
             self.profile_order.to_value(),
         ) {
+            // Nothing to wait for; the durable copy follows the snapshot.
             Ok(host_play::local_state::Update::Durable) => {
-                self.order_write_seq += 1;
-                self.durable_order_seq = self.order_write_seq;
-                self.durable_order.assign_from(&self.profile_order);
-                self.note_setting("profile order", prefs::SettingEventState::Saved);
+                let setting = crate::Setting::ProfileOrder;
+                let had_failure = self.settings.failure(setting).is_some();
+                self.settings.clear_failure(setting);
+                if had_failure {
+                    self.note_setting(setting, prefs::SettingEventState::Cleared);
+                }
+                self.note_setting(setting, prefs::SettingEventState::Saved);
             }
             Ok(host_play::local_state::Update::Queued(queued)) => {
+                let setting = crate::Setting::ProfileOrder;
+                let had_failure = self.settings.failure(setting).is_some();
+                self.settings.begin(setting);
+                if had_failure {
+                    self.note_setting(setting, prefs::SettingEventState::Cleared);
+                }
                 self.order_writes.push(queued);
-                self.note_setting("profile order", prefs::SettingEventState::Pending);
+                self.note_setting(setting, prefs::SettingEventState::Pending);
             }
-            Err(error) => self.retain_order_write_error(&error),
+            Err(error) => self.fail_order_write(&error, false),
         }
     }
 
-    /// Poll the order writes that are not commands.
-    fn poll_order_writes(&mut self) {
+    /// Poll the order writes that are not commands. A failure stays on the
+    /// Load order setting ([`Self::setting_status`]); the shown order keeps
+    /// the vault's truth and the durable copy stays the last stored order,
+    /// so a later reorder that fails goes back to what is stored.
+    pub(crate) fn poll_order_writes(&mut self) {
         let mut index = 0;
         while index < self.order_writes.len() {
             match self.order_writes[index].poll() {
@@ -1514,19 +1596,43 @@ impl<Io> OperatorSession<Io> {
                     self.order_writes.swap_remove(index);
                     match outcome {
                         Ok(()) => {
-                            self.note_setting("profile order", prefs::SettingEventState::Saved)
+                            let setting = crate::Setting::ProfileOrder;
+                            let had_failure = self.settings.failure(setting).is_some();
+                            self.settings.succeed(setting);
+                            if had_failure {
+                                self.note_setting(setting, prefs::SettingEventState::Cleared);
+                            }
+                            self.note_setting(setting, prefs::SettingEventState::Saved);
                         }
-                        Err(error) => self.retain_order_write_error(&error),
+                        Err(error) => self.fail_order_write(&error, true),
                     }
                 }
             }
         }
     }
 
-    fn retain_order_write_error(&mut self, error: &crate::prefs::PreferenceError) {
+    fn fail_order_write(&mut self, error: &crate::prefs::PreferenceError, was_pending: bool) {
         order_write_failed(error);
-        self.note_setting_failed("profile order", error);
-        self.preference_error = Some(format!("profile order: {error}"));
+        let text = format!("Load order not saved: {error}");
+        let event_error = self
+            .commands
+            .watching_setting_events()
+            .then(|| text.clone());
+        let now = Instant::now();
+        if was_pending {
+            self.settings
+                .fail(crate::Setting::ProfileOrder, text, now);
+        } else {
+            self.settings
+                .fail_now(crate::Setting::ProfileOrder, text, now);
+        }
+        if let Some(error) = event_error {
+            self.commands.note_setting_event(
+                crate::Setting::ProfileOrder.identity(),
+                prefs::SettingEventState::Failed,
+                Some(error),
+            );
+        }
     }
 
     /// Live slots other than the selected one.
@@ -2374,7 +2480,7 @@ impl<Io> OperatorSession<Io> {
     }
 
     fn poll_host_at(&mut self, now: Instant) {
-        self.poll_initial_preferences();
+        self.sync_snapshot();
         // The saved Load order follows the vault before anything reads it
         // (both halves of a split poll reach here).
         self.reconcile_profile_order();
