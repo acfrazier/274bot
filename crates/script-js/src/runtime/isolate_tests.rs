@@ -3180,3 +3180,6 @@ fn paint_controls_helper_keeps_collected_v8_heap_flat() {
          (hint rows {hint_growth}, slack {SLACK})"
     );
 }
+
+#[path = "isolate_seat_page_tests.rs"]
+mod seat_page;

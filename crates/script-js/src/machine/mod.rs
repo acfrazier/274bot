@@ -4098,10 +4098,6 @@ fn drive_in_pass(
     at: &mut usize,
     snapshot: bool,
 ) -> Option<Outcome> {
-    // Every pass that steps a row has read what a seat page left for it.
-    row.seat_changed = false;
-    #[cfg(feature = "test-hooks")]
-    TEST_STEPS.with(|steps| *steps.borrow_mut().entry(row.handle).or_insert(0) += 1);
     if row.rebaseline_on_resume {
         // Pause and reconnect holds produce no runnable observations. Refresh
         // on the first eligible resumed step, after its Running snapshot.
@@ -4130,6 +4126,11 @@ fn drive_inner(row: &mut Row, js: &mut impl Js, at: &mut usize, snapshot: bool) 
         if row.calls == CALLS_PER_TICK {
             return None;
         }
+        // A pass that steps a row has read what a seat page left for it. A
+        // row that the callback budget halts was not stepped and keeps it.
+        row.seat_changed = false;
+        #[cfg(feature = "test-hooks")]
+        TEST_STEPS.with(|steps| *steps.borrow_mut().entry(row.handle).or_insert(0) += 1);
         let mut ops = Vec::new();
         let context = row.start_context();
         let mut cx = Cx {
