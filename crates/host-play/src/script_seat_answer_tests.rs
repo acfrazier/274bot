@@ -140,7 +140,11 @@ impl Frames {
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_tick(1);
-        snapshot.seed_tile(tile(HERE.0, HERE.1));
+        snapshot.seed_tile(WorldTile {
+            x: HERE.0,
+            z: HERE.1,
+            level: HERE.2,
+        });
         snapshot.seed_inventory(
             side.iter()
                 .cloned()
