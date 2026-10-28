@@ -586,16 +586,6 @@ pub(crate) mod seam {
         }
     }
 
-    /// Restore preferences under the same process-global registry guard.
-    /// This nests safely when a session already owns the guard.
-    pub(crate) fn restore_preferences(
-        app: &mut TuiApp,
-        preferences: frontend_core::UiPreferences,
-    ) {
-        let _guard = lock_quester_paths_test_state();
-        app.restore_preferences(preferences);
-    }
-
     pub(crate) struct Seam {
         session: TuiSession,
     }
