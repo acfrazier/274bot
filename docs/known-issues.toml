@@ -393,6 +393,7 @@ text = """If you use **Copy settings** for a built-in card and rename one of the
   the rename. Found by code reading; not yet seen in a running app."""
 first = "0.2.0"
 listed = "0.2.7"
+fixed = "0.2.8"
 target = "none"
 severity = "low"
 owner = "panel"
