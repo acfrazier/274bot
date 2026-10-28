@@ -349,11 +349,11 @@ impl Combat {
     /// Whether the refusal budget of the style's mandatory ammunition slot is
     /// spent (two refusals, the budget `ranged_prepare` aborts on).
     fn ranged_ammo_refused(&self, frame: &Frame<'_>) -> bool {
-        let slot = match self.pending_ranged_need(Style::Ranged, frame) {
+        let slot: u32 = match self.pending_ranged_need(Style::Ranged, frame) {
             Some(RangedNeed::Thrown { .. }) => 3,
             _ => 13,
         };
-        (self.prep_failures >> (u32::from(slot) * 3)) & 3 >= 2
+        (self.prep_failures >> (slot * 3)) & 3 >= 2
     }
 
     /// §4.3: whether `style` can attack now: its weapon is held or worn and its

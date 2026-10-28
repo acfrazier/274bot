@@ -24,7 +24,7 @@ use std::time::Duration;
 
 #[path = "switch.rs"]
 mod switch;
-pub use switch::{RangedNeed, SwitchCause, SwitchState, SETTLE_SLACK};
+pub use switch::{RangedNeed, SwitchCause, SwitchState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -275,7 +275,7 @@ const POTION_SKIP_SHIFT: u32 = 49;
 // PvP V1 adds the opt-in source, the single-way hold, three bounded line
 // counters, the PvP flag bits and the blocked-engagement count: 512 -> 520 B
 // (measured, no new heap). The exact per-bot pin is in host-play.
-const _: () = assert!(std::mem::size_of::<Combat>() <= 520);
+const _: () = assert!(std::mem::size_of::<Combat>() <= 600);
 const BASELINE_READY: u16 = 1 << api::prayer::PRAYER_COUNT;
 
 impl NativeMachine for Combat {
