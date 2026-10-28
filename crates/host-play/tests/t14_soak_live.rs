@@ -41,8 +41,8 @@ const GATHERER_RELOG_STEP: &str = "relog successfully so the inventory tab binds
 // The offline audit checks complete production routes, their replan closure,
 // all resource/return/bank access alternatives, and actual hazard retreats.
 const NORMAL_STARTS: [(i32, i32); 10] = [
-    (2690, 3475),
-    (2691, 3479),
+    (2692, 3475),
+    (2693, 3479),
     (2693, 3454),
     (2694, 3473),
     (2697, 3452),
@@ -946,7 +946,11 @@ fn bank_settings(site: &BankSite) -> Map<String, Value> {
     settings.insert("site".into(), json!(site.id));
     settings.insert(
         "radius".into(),
-        json!(if site.resource == "normal" { NORMAL_RADIUS } else { 12 }),
+        json!(if site.resource == "normal" {
+            NORMAL_RADIUS
+        } else {
+            12
+        }),
     );
     settings.insert("disposition".into(), json!("Bank"));
     settings.insert("bank".into(), json!(site.bank));

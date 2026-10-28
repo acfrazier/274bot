@@ -2580,6 +2580,86 @@ mod tests {
     use std::mem::size_of;
 
     #[test]
+    fn single_tree_idle_wait_reproduces_soak_resource_unavailable() {
+        use crate::quester::families::tests::with_tick;
+        use api::selected::{EntityId, FamilyPreparation};
+
+        let (config, mut snapshot) = FamilyPreparation::run(|families| {
+            let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+            let mut cx = crate::native::PrepareContext {
+                pin: selected.selected_pin().unwrap(),
+                selected,
+                banks: Arc::default(),
+                families,
+            };
+            super::super::test_full_pack_fixture(&mut cx).unwrap()
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+        snapshot.seed_inventory(vec![], 28);
+        let mut tree = snapshot.locs()[0].clone();
+        let mut gatherer = Gatherer::new(
+            RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            Arc::clone(&config),
+            Arc::clone(config.get::<Arc<Prepared>>().unwrap()),
+            GatherRetained::default(),
+        );
+        gatherer.area = Some(WorkArea {
+            mode: super::super::area::AreaMode::Start,
+            anchor: tree.tile,
+            radius: 0,
+        });
+        gatherer.needs_validate = false;
+        gatherer.last_gameplay_tick = 1213;
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1213, |tick| {
+            gatherer.begin_idle(tick, false);
+        });
+        let target = gatherer.target.clone().expect("the single tree is live");
+        let method = &gatherer.prepared.catalog.methods()[usize::from(target.method_index)];
+        tree.id = api::gather_methods::known_rows(&method.targets)
+            .iter()
+            .find_map(|target| match (target.class, target.entity) {
+                (api::gather_methods::TargetClass::Depleted, EntityId::Loc(id)) => Some(id),
+                _ => None,
+            })
+            .expect("normal trees publish their depleted stage");
+        gatherer.active = Active::None;
+        with_tick(&snapshot, &mut ledger, 1248, |tick| {
+            gatherer.handle_gather(
+                GatherResult {
+                    end: GatherEnd::Idle,
+                    gained: 0,
+                    xp: 0,
+                },
+                tick,
+            );
+            gatherer.needs_validate = false;
+            gatherer.begin_idle(tick, false);
+        });
+        assert_eq!(gatherer.wait_until, Some(1308));
+        snapshot.seed_locs(vec![tree]);
+        with_tick(&snapshot, &mut ledger, 1307, |tick| {
+            gatherer.begin_idle(tick, false);
+        });
+        assert!(gatherer.failure.is_none());
+        with_tick(&snapshot, &mut ledger, 1308, |tick| {
+            gatherer.begin_idle(tick, false);
+        });
+        // This records the separate product finding. It is not the intended policy.
+        assert_eq!(
+            gatherer.failure.as_ref().unwrap().code.as_ref(),
+            "resource-unavailable"
+        );
+        assert!(1308 - gatherer.last_gameplay_tick < WAIT_GAMEPLAY_TICKS);
+    }
+
+    #[test]
     fn gatherer_resource_validation_uses_effective_level() {
         use crate::quester::families::tests::{local_player, with_tick};
         use api::snapshot::{GameSnapshot, WorldStateView};
