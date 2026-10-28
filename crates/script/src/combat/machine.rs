@@ -395,11 +395,6 @@ impl NativeMachine for Combat {
         let Some(frame) = Frame::borrow(snapshot) else {
             return Poll::Pending;
         };
-        // begin can lack a complete frame. Resolve the weapon choice before
-        // Prep, even when the target is not yet in engage range.
-        if self.rhand_pick < 0 {
-            self.pick_weapon(&frame);
-        }
         let Some(chat) = snapshot.chat_lines(self.chat_since) else {
             return Poll::Pending;
         };
@@ -413,6 +408,11 @@ impl NativeMachine for Combat {
         // overwrite its plan until every receipt is available.
         if !self.receipts(cx) {
             return Poll::Pending;
+        }
+        // begin may have no frame; choose the weapon on the first complete
+        // observation so Prep knows the wear request before it can drink.
+        if self.flags & OBSERVED == 0 && self.rhand_pick < 0 {
+            self.pick_weapon(&frame);
         }
         self.capture_prayer_baseline(&prayer_observation(&frame));
         let tick = evidence.tick as u16;
