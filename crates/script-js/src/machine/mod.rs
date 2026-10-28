@@ -5398,6 +5398,7 @@ pub(crate) mod tests {
             settle_seat_result(
                 &mut host.borrow_mut(),
                 replacement_id,
+                1,
                 Outcome::Refused("Busy".into()),
             );
         });
@@ -5416,6 +5417,7 @@ pub(crate) mod tests {
             settle_seat_result(
                 &mut host.borrow_mut(),
                 old_id,
+                2,
                 Outcome::Aborted(AbortReason::Superseded),
             );
         });
