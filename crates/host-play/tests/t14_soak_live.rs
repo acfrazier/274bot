@@ -37,21 +37,20 @@ const GATHERER_SITE_STEP: &str = "stand at the live Draynor normal tree before S
 const GATHERER_TREE_PROOF_STEP: &str = "confirm the selected-289 normal tree is live before Start";
 const GATHERER_RELOG_STEP: &str = "relog successfully so the inventory tab binds before Start";
 
-// Ten resource-disjoint radius-two patches in content/maps/m43_54.jm2.
-// Resource rows: 6765, 6883, 7027, 6833, 6999, 7147, 6838, 6968,
-// 6789 and 6939. Starts are outside the authored tree footprints.
-// Each account retains its own Start anchor across bank trips.
-const CATHERBY_STARTS: [(i32, i32); 10] = [
-    (2799, 3459),
-    (2805, 3459),
-    (2808, 3460),
-    (2801, 3463),
-    (2807, 3463),
-    (2813, 3464),
-    (2803, 3465),
-    (2809, 3466),
-    (2802, 3469),
-    (2805, 3469),
+// Ten resource-disjoint radius-two normal-tree patches west of Seers.
+// tools/t14_soak_routes.py checks authored resources, all access alternatives,
+// bank return goals, and replans from every tile in NORMAL_SAFE_WALK.
+const NORMAL_STARTS: [(i32, i32); 10] = [
+    (2683, 3452),
+    (2692, 3452),
+    (2698, 3452),
+    (2682, 3465),
+    (2685, 3468),
+    (2691, 3475),
+    (2695, 3473),
+    (2705, 3465),
+    (2711, 3456),
+    (2711, 3466),
 ];
 
 #[derive(Clone, Copy)]
@@ -70,29 +69,15 @@ impl SafeWalk {
     }
 }
 
-// The bank detour uses the southern rectangle. The northern patches use the
-// western rectangle, outside the pack wolf's wander + hunt + size envelope
-// at (2836,3495): content/maps/m44_54.jm2:5700, all.npc:3585-3605.
-// The eastern sentry at (2842,3450) has wander 3, hunt 2 and size 2:
-// content/maps/m44_53.jm2:5567, scripts/_unpack/225/all.npc:2405-2433.
-// The southern eastern edge stays eight tiles from that seven-tile envelope.
-// The northern work route reached (2811,3473) at candidate soak tick 6197.
-// x=2811 is the last column beyond the pack wolf's envelope: 2836-24-1.
-// x=2812 touches that envelope and remains excluded above the bank corridor.
-const CATHERBY_SAFE_WALK: &[SafeWalk] = &[
-    SafeWalk {
-        min_x: 2788,
-        max_x: 2834,
-        min_z: 3436,
-        max_z: 3468,
-    },
-    SafeWalk {
-        min_x: 2788,
-        max_x: 2811,
-        min_z: 3436,
-        max_z: 3476,
-    },
-];
+// This area excludes every authored hunter envelope, independently of combat
+// level. It is not route evidence by itself. The offline router audit checks
+// complete paths and every alternative resource, return, and bank stand.
+const NORMAL_SAFE_WALK: &[SafeWalk] = &[SafeWalk {
+    min_x: 2680,
+    max_x: 2740,
+    min_z: 3448,
+    max_z: 3506,
+}];
 
 fn safe_walk_contains(areas: &[SafeWalk], tile: (i32, i32, i32)) -> bool {
     areas.iter().any(|area| area.contains(tile))
@@ -107,49 +92,42 @@ fn work_route_guard_distinguishes_random_event_travel_from_escape() {
     // Attempt 10, tick 8227: the server selected maze spawn 0.
     // macro_events.enum:73–79 and macro_event_maze.rs2:14–22.
     for tile in [(2891, 4597, 0), (31 * 64, 74 * 64, 0)] {
-        assert!(!safe_walk_contains(CATHERBY_SAFE_WALK, tile));
-        assert!(!work_route_escape(CATHERBY_SAFE_WALK, tile));
-        assert!(work_route_escape(CATHERBY_SAFE_WALK, (tile.0, tile.1, 1)));
+        assert!(!safe_walk_contains(NORMAL_SAFE_WALK, tile));
+        assert!(!work_route_escape(NORMAL_SAFE_WALK, tile));
+        assert!(work_route_escape(NORMAL_SAFE_WALK, (tile.0, tile.1, 1)));
     }
-    assert!(!work_route_escape(CATHERBY_SAFE_WALK, (2809, 3441, 0)));
-    assert!(work_route_escape(CATHERBY_SAFE_WALK, (2842, 3450, 0)));
-    assert!(work_route_escape(CATHERBY_SAFE_WALK, (2804, 3507, 0)));
+    assert!(!work_route_escape(NORMAL_SAFE_WALK, (2724, 3493, 0)));
+    assert!(work_route_escape(NORMAL_SAFE_WALK, (2735, 3521, 0)));
+    assert!(work_route_escape(NORMAL_SAFE_WALK, (2813, 3477, 0)));
 }
 
 #[test]
-fn catherby_safe_walk_accepts_worksites_and_bank_return_detour() {
-    for (x, z) in CATHERBY_STARTS {
+fn safe_walk_accepts_worksites_and_seers_bank() {
+    for (x, z) in NORMAL_STARTS {
         for dx in -2..=2 {
             for dz in -2..=2 {
-                assert!(safe_walk_contains(CATHERBY_SAFE_WALK, (x + dx, z + dz, 0)));
+                assert!(safe_walk_contains(NORMAL_SAFE_WALK, (x + dx, z + dz, 0)));
             }
         }
     }
-    assert!(safe_walk_contains(CATHERBY_SAFE_WALK, (2809, 3441, 0)));
-    // Baseline attempt 5, tick 4732: a valid return route east of the patches.
-    assert!(safe_walk_contains(CATHERBY_SAFE_WALK, (2816, 3447, 0)));
-    // Baseline attempt 6, tick 4651: bank return outside the old fixture guard.
-    assert!(safe_walk_contains(CATHERBY_SAFE_WALK, (2821, 3449, 0)));
-    assert!(safe_walk_contains(CATHERBY_SAFE_WALK, (2834, 3450, 0)));
-    // Candidate attempt 1, tick 6197: northern work route, outside wolf reach.
-    assert!(safe_walk_contains(CATHERBY_SAFE_WALK, (2811, 3473, 0)));
+    assert!(safe_walk_contains(NORMAL_SAFE_WALK, (2724, 3493, 0)));
+    assert!(safe_walk_contains(NORMAL_SAFE_WALK, (2727, 3501, 0)));
 }
 
 #[test]
-fn catherby_safe_walk_rejects_every_boundary_and_mountain_spawns() {
+fn safe_walk_rejects_every_boundary_and_old_unsafe_route() {
     for tile in [
-        (2787, 3450, 0),
-        (2835, 3450, 0),
-        (2800, 3435, 0),
-        (2800, 3477, 0),
-        (2800, 3450, 1),
-        (2812, 3473, 0),
-        (2820, 3476, 0),
-        (2842, 3450, 0),
-        (2846, 3477, 0),
-        (2804, 3507, 0),
+        (2679, 3480, 0),
+        (2741, 3480, 0),
+        (2700, 3447, 0),
+        (2700, 3507, 0),
+        (2700, 3480, 1),
+        (2735, 3521, 0),
+        (2811, 3473, 0),
+        (2813, 3477, 0),
+        (2836, 3495, 0),
     ] {
-        assert!(!safe_walk_contains(CATHERBY_SAFE_WALK, tile), "{tile:?}");
+        assert!(!safe_walk_contains(NORMAL_SAFE_WALK, tile), "{tile:?}");
     }
 }
 
@@ -573,7 +551,7 @@ fn select_sites(root: &Value) -> Result<[BankSite; 2], String> {
             .gather_site("woodcutting", &name)
             .ok_or_else(|| format!("selected 289 content lacks woodcutting site {name:?}"))?;
         match site.id.as_str() {
-            "woodcutting.catherby" if site_has_key(site, "normal") => {
+            "woodcutting.seers_village" if site_has_key(site, "normal") => {
                 normal = Some(make_site(site, "normal")?);
             }
             "woodcutting.seers" if site_has_key(site, "maple") => {
@@ -599,20 +577,17 @@ fn select_sites(root: &Value) -> Result<[BankSite; 2], String> {
 fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite, String> {
     let (start, product_id, level, bank, bank_prefix, safe_walk) =
         match (site.id.as_str(), resource) {
-            ("woodcutting.catherby", "normal") => (
+            ("woodcutting.seers_village", "normal") => (
                 WorldTile {
-                    x: CATHERBY_STARTS[0].0,
-                    z: CATHERBY_STARTS[0].1,
+                    x: NORMAL_STARTS[0].0,
+                    z: NORMAL_STARTS[0].1,
                     level: 0,
                 },
                 NORMAL_LOG_ID,
                 1,
-                "Catherby",
-                "Catherby; Reachable;",
-                // Independent eastern patches avoid the separated western
-                // route and give each normal-tree account its own resource.
-                // The bank is (2809,3441), south of the resource patches.
-                Some(CATHERBY_SAFE_WALK),
+                "Seers",
+                "Seers; Reachable;",
+                Some(NORMAL_SAFE_WALK),
             ),
             ("woodcutting.seers", "maple") => (
                 WorldTile {
@@ -624,7 +599,7 @@ fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite
                 45,
                 "Seers",
                 "Seers; Reachable;",
-                None,
+                Some(NORMAL_SAFE_WALK),
             ),
             _ => {
                 return Err(format!(
@@ -916,7 +891,7 @@ fn scenario_for(site: &BankSite, duration: Duration) -> Result<Scenario, String>
 #[test]
 fn soak_seed_proves_rune_axe_without_inherited_bronze_equipment() {
     let sites = select_sites(&json!({
-        "workload": {"site_names": ["woodcutting.catherby", "woodcutting.seers"]}
+        "workload": {"site_names": ["woodcutting.seers_village", "woodcutting.seers"]}
     }))
     .expect("selected content sites");
     for site in sites {
@@ -966,7 +941,7 @@ fn bank_settings(site: &BankSite) -> Map<String, Value> {
     settings.insert("site".into(), json!(site.id));
     settings.insert(
         "radius".into(),
-        json!(if site.id == "woodcutting.catherby" {
+        json!(if site.resource == "normal" {
             2
         } else {
             12
@@ -1279,7 +1254,7 @@ fn drive_frame(
                 run_started,
                 "site-walk-boundary",
                 &format!(
-                    "Catherby bank/oak route left the audited non-aggressive area at {tile:?}"
+                    "work/bank route left the audited non-aggressive area at {tile:?}"
                 ),
             );
         }
@@ -1667,7 +1642,7 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
     for (index, account) in names.iter().enumerate() {
         let mut site = config.sites[index % config.sites.len()].clone();
         if site.resource == "normal" {
-            let (x, z) = CATHERBY_STARTS[index / config.sites.len()];
+            let (x, z) = NORMAL_STARTS[index / config.sites.len()];
             site.start = WorldTile { x, z, level: 0 };
         }
         let actor = make_actor(

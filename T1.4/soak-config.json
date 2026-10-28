@@ -43,7 +43,7 @@
     "limits.rss_final_baseline_extra_percent": "Main soak-values.md:23",
     "limits.fixed_threads": "Main soak-values.md:24; T1-GATE/r7e/T1-GATE.md:333-348 (F ≤ 14)",
     "limits.max_request_threads": "Main soak-values.md:25, F0 ADR 0007 amendment 7: R ≤ 64 accepted-job slots",
-    "workload.site_names": "Main soak-values.md:15; Main-approved correction after Draynor jail-guard death (smoke-candidate-289144-m/events.jsonl:33-39) and Catherby oak unreachable-resource route (smoke-baseline-289144-r/summary.json:95-105). Engine content/maps/m43_54.jm2 normal-tree cluster and Catherby bank; second site Seers maple; runbook proves NPC aggression and spawn separation"
+    "workload.site_names": "T14-SOAK-ROUTE: ten independent normal-tree Start patches in woodcutting.seers_village, Seers bank, and the unchanged woodcutting.seers maple Site. tools/t14_soak_routes.py checks actual v17 routes and every authored hunter envelope."
   },
   "run": {
     "slots": 20,
@@ -104,6 +104,6 @@
     "max_request_threads": 64
   },
   "workload": {
-    "site_names": ["woodcutting.catherby", "woodcutting.seers"]
+    "site_names": ["woodcutting.seers_village", "woodcutting.seers"]
   }
 }
