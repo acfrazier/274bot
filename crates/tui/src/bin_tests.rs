@@ -6801,7 +6801,6 @@ fn screen_text(app: &mut TuiApp, w: u16, h: u16) -> String {
         .join("\n")
 }
 
-#[cfg(feature = "js")]
 /// The screen's words at `w`x`h`: borders and padding collapse to single
 /// spaces, so a prompt that wraps across rows still reads as one line.
 fn screen_words(app: &mut TuiApp, w: u16, h: u16) -> String {
