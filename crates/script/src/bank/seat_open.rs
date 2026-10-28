@@ -2300,7 +2300,7 @@ fn selected_bank(facts: &NamedBankFacts, selected: SelectedBank) -> Option<Selec
 mod tests {
     use super::*;
     use crate::native::{ledger, HostEffect};
-    use crate::quester::families::tests::with_tick;
+    use crate::quester::families::tests::{local_player, with_tick};
     use api::snapshot::GameSnapshot;
 
     fn duel_chest(open: bool) -> LocView {
@@ -2457,7 +2457,7 @@ mod tests {
             let bank = catalog_bank("Falador East");
             let mut snapshot = GameSnapshot::new();
             snapshot.seed_ingame(2);
-            snapshot.seed_tile(tile(3015, 3294));
+            snapshot.seed_local_player(local_player(tile(3015, 3294)));
             let mut ledger = None;
             let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
                 let handle = tick
