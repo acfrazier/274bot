@@ -2743,18 +2743,19 @@ mod tests {
         snapshot: &GameSnapshot,
         ledger: &mut PickLedger,
         handle: &PickHandle,
+        tick: u64,
         active: Duration,
-        wall: std::time::Instant,
     ) -> Poll<Result<SelectedBank, ActionError>> {
-        with_tick(snapshot, ledger, 2, |frame| {
+        with_tick(snapshot, ledger, tick, |frame| {
             frame.cx.active_now = active;
-            frame.cx.wall_now = wall;
             frame.actions.poll(handle, &mut frame.cx)
         })
     }
 
+    /// The waiter began at observed tick 1, so its fallback bound is 9 ticks
+    /// (the former 5 s, rounded up to whole server ticks).
     #[test]
-    fn select_only_dropped_request_settles_at_five_active_seconds_without_access() {
+    fn select_only_dropped_request_settles_at_nine_observed_ticks_without_access() {
         for allow_air_fallback in [false, true] {
             let (mut snapshot, mut ledger, handle) = select_waiter(allow_air_fallback);
             snapshot.seed_tile(WorldTile {
@@ -2762,21 +2763,20 @@ mod tests {
                 z: 5,
                 level: 0,
             });
-            let wall = std::time::Instant::now();
             assert!(poll_select_waiter(
                 &snapshot,
                 &mut ledger,
                 &handle,
-                Duration::from_millis(4_999),
-                wall,
+                1 + SELECT_FALLBACK_TICKS - 1,
+                Duration::ZERO,
             )
             .is_pending());
             let result = poll_select_waiter(
                 &snapshot,
                 &mut ledger,
                 &handle,
-                Duration::from_secs(5),
-                wall,
+                1 + SELECT_FALLBACK_TICKS,
+                Duration::ZERO,
             );
             if allow_air_fallback {
                 let Poll::Ready(Ok(selected)) = result else {
@@ -2802,56 +2802,35 @@ mod tests {
         }
     }
 
+    /// No clock decides the fallback: an hour of active time with too few
+    /// observed ticks keeps waiting, and the bound tick settles with no
+    /// active time at all.
     #[test]
-    fn select_only_waiter_clock_freezes_through_pause_and_hold() {
-        for boundary in ["pause", "hold"] {
-            let (snapshot, mut ledger, handle) = select_waiter(true);
-            let start = std::time::Instant::now();
-            let mut clock = api::identity::ActiveClock::new();
-            clock.observe(start, true);
-            clock.observe(start + Duration::from_secs(2), false);
-            let resume = start + Duration::from_secs(30);
-            assert!(
-                poll_select_waiter(
-                    &snapshot,
-                    &mut ledger,
-                    &handle,
-                    clock.now(resume).as_duration(),
-                    resume,
-                )
+    fn select_only_waiter_counts_observed_ticks_not_elapsed_time() {
+        let (snapshot, mut ledger, handle) = select_waiter(true);
+        assert!(
+            poll_select_waiter(&snapshot, &mut ledger, &handle, 2, Duration::from_secs(3_600))
                 .is_pending(),
-                "{boundary} does not consume the remaining three active seconds"
-            );
-            clock.observe(resume, true);
-            let before = resume + Duration::from_millis(2_999);
-            assert!(poll_select_waiter(
-                &snapshot,
-                &mut ledger,
-                &handle,
-                clock.now(before).as_duration(),
-                before,
-            )
-            .is_pending());
-            let due = resume + Duration::from_secs(3);
-            let result = poll_select_waiter(
-                &snapshot,
-                &mut ledger,
-                &handle,
-                clock.now(due).as_duration(),
-                due,
-            );
-            assert!(
-                matches!(
-                    result,
-                    Poll::Ready(Ok(SelectedBank {
-                        kind: PickKind::AirFallback,
-                        access: None,
-                        ..
-                    }))
-                ),
-                "{boundary}: exactly five eligible seconds settle the captured fallback"
-            );
-        }
+            "an hour of active time does not settle a wait of eight observed ticks"
+        );
+        let result = poll_select_waiter(
+            &snapshot,
+            &mut ledger,
+            &handle,
+            1 + SELECT_FALLBACK_TICKS,
+            Duration::ZERO,
+        );
+        assert!(
+            matches!(
+                result,
+                Poll::Ready(Ok(SelectedBank {
+                    kind: PickKind::AirFallback,
+                    access: None,
+                    ..
+                }))
+            ),
+            "the bound tick settles the captured fallback with no elapsed time: {result:?}"
+        );
     }
 
     fn fishing(base: i32) -> [StatView; 1] {
@@ -4800,7 +4779,7 @@ mod tests {
     }
 
     #[test]
-    fn note_mode_dispatch_requires_tick_and_time_bounds() {
+    fn note_mode_dispatch_expires_on_the_eighth_observed_tick_whatever_the_elapsed_time() {
         let id = 314;
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -4842,19 +4821,20 @@ mod tests {
                     HostEffect::Interaction(InteractReq::SetNoteMode { on: false })
                 )
         ));
-        for tick_number in 2..=9 {
+        for tick_number in 2..=8 {
             let poll = with_tick(&snapshot, &mut ledger, tick_number, |tick| {
-                tick.cx.active_now =
-                    Duration::from_millis(600 + tick_number.saturating_sub(1) * 125);
+                // Two hours of active time do not expire the wait.
+                tick.cx.active_now = Duration::from_secs(7_200);
                 tick.actions.poll(&handle, &mut tick.cx)
             });
             assert!(
                 poll.is_pending(),
-                "catch-up tick {tick_number} is not a server opportunity"
+                "observed tick {tick_number} is inside the eight-tick bound"
             );
         }
         let expired = with_tick(&snapshot, &mut ledger, 9, |tick| {
-            tick.cx.active_now = Duration::from_millis(5_400);
+            // No active time at all: the eighth observed tick alone expires it.
+            tick.cx.active_now = Duration::ZERO;
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(matches!(
@@ -4864,7 +4844,7 @@ mod tests {
         ));
     }
     #[test]
-    fn withdraw_timeout_ignores_eight_catch_up_ticks_in_one_second() {
+    fn withdraw_timeout_is_independent_of_elapsed_time() {
         let item_id = 314;
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -4878,21 +4858,28 @@ mod tests {
         let mut ledger = None;
         let handle = begin_withdraw_after_item_mode(&snapshot, &mut ledger, item_id);
 
-        for tick_number in 3..=10 {
+        for tick_number in 3..=9 {
             let pending = with_tick(&snapshot, &mut ledger, tick_number, |tick| {
-                tick.cx.active_now =
-                    Duration::from_millis(1_200 + tick_number.saturating_sub(2) * 125);
+                tick.cx.active_now = Duration::from_secs(7_200);
                 tick.actions.poll(&handle, &mut tick.cx)
             });
             assert!(
                 pending.is_pending(),
-                "withdraw backlog tick {tick_number} is not a server opportunity"
+                "observed tick {tick_number} is inside the eight-tick bound"
             );
         }
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 10, |tick| {
+                tick.cx.active_now = Duration::ZERO;
+                tick.actions.poll(&handle, &mut tick.cx)
+            }),
+            Poll::Ready(Err(ActionError::Failed(message)))
+                if message.as_ref() == "bank transfer did not settle"
+        ));
     }
 
     #[test]
-    fn withdraw_without_a_server_response_times_out_after_both_bounds() {
+    fn withdraw_without_a_server_response_times_out_after_eight_observed_ticks() {
         let item_id = 314;
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -5761,17 +5748,17 @@ mod tests {
         })
         .is_pending());
 
-        for tick_number in 3..=10 {
+        for tick_number in 3..=9 {
             let pending = with_tick(&snapshot, &mut ledger, tick_number, |tick| {
-                tick.cx.active_now =
-                    Duration::from_millis(1_000 + tick_number.saturating_sub(2) * 200);
+                // A slow host: hours of active time never expire the wait.
+                tick.cx.active_now = Duration::from_secs(7_200);
                 tick.actions.poll(&handle, &mut tick.cx)
             });
             assert!(pending.is_pending());
         }
         assert!(matches!(
             with_tick(&snapshot, &mut ledger, 10, |tick| {
-                tick.cx.active_now = Duration::from_millis(5_800);
+                tick.cx.active_now = Duration::ZERO;
                 tick.actions.poll(&handle, &mut tick.cx)
             }),
             Poll::Ready(Err(ActionError::Failed(message)))
