@@ -5618,7 +5618,7 @@ fn memory_stress50_full_keeps_mainland_seed_and_full_rate_rendering() {
     use frontend_core::bench::RenderPolicy;
 
     let names = vec!["memory0".to_string(), "memory1".to_string()];
-    let mut session = Session::new();
+    let session = Session::new();
     session.scatter.store(true, Ordering::Relaxed);
     {
         let mut focus = session.focus.lock().unwrap();
