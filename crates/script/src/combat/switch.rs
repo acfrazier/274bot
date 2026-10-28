@@ -141,9 +141,7 @@ pub(super) fn best_melee_weapon(tables: &CombatTables, frame: &Frame<'_>) -> i32
         let Some(tier) = tables.melee_weapon_tier(row.def.id) else {
             continue;
         };
-        if tier.quest_gated
-            || i32::from(tier.tier) > attack
-            || i32::from(tier.strength) > strength
+        if tier.quest_gated || i32::from(tier.tier) > attack || i32::from(tier.strength) > strength
         {
             continue;
         }
@@ -602,7 +600,13 @@ impl Combat {
         if refused(3) >= 2 || !self.style_usable(to, frame) {
             return true;
         }
-        if to == Style::Ranged && matches!(self.pending_ranged_need(to, frame), Some(RangedNeed::Quiver { .. })) && refused(13) >= 2 {
+        if to == Style::Ranged
+            && matches!(
+                self.pending_ranged_need(to, frame),
+                Some(RangedNeed::Quiver { .. })
+            )
+            && refused(13) >= 2
+        {
             return true;
         }
         let set = self.wear_set(to, frame);

@@ -208,13 +208,19 @@ impl Script for SwitchFight {
         let (active, switches) = (state.0, state.2);
         let waited = now.saturating_sub(shared.phase_since);
         match shared.phase {
-            Phase::Hold if switches >= 1 && active == Style::Ranged && shared.quiet >= QUIET_TICKS => {
+            Phase::Hold
+                if switches >= 1 && active == Style::Ranged && shared.quiet >= QUIET_TICKS =>
+            {
                 shared.advance(Phase::Drop, now)
             }
-            Phase::Drop if switches >= 2 && active == Style::Melee && shared.quiet >= QUIET_TICKS => {
+            Phase::Drop
+                if switches >= 2 && active == Style::Melee && shared.quiet >= QUIET_TICKS =>
+            {
                 shared.advance(Phase::Away, now)
             }
-            Phase::Away if switches >= 3 && active == Style::Ranged && shared.quiet >= QUIET_TICKS => {
+            Phase::Away
+                if switches >= 3 && active == Style::Ranged && shared.quiet >= QUIET_TICKS =>
+            {
                 shared.advance(Phase::Done, now)
             }
             Phase::Hold | Phase::Drop | Phase::Away if waited > PHASE_TICKS => {
@@ -285,7 +291,10 @@ fn partner_step(
                 let result = Interactions::new(&snapshot, client).set_run(true);
                 shared.lock().expect("shared lock").actions.push(ActionRow {
                     tick,
-                    what: format!("run on: {}", matches!(result, api::interact::SendResult::Sent { .. })),
+                    what: format!(
+                        "run on: {}",
+                        matches!(result, api::interact::SendResult::Sent { .. })
+                    ),
                 });
                 return;
             }
@@ -479,8 +488,12 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
                 return;
             };
             let mut state = hook_observed[*index].lock().expect("observed lock");
-            let ready: &(dyn Fn(&api::snapshot::GameSnapshot) -> bool + Send + Sync) =
-                if *is_holder { &holder_ready } else { &fighter_ready };
+            let ready: &(dyn Fn(&api::snapshot::GameSnapshot) -> bool + Send + Sync) = if *is_holder
+            {
+                &holder_ready
+            } else {
+                &fighter_ready
+            };
             frame(client, &mut state, cheats, &[protect_varp], ready, anchor);
             if state.ready {
                 duel_step(
@@ -516,13 +529,41 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
         .expect("spawn fresh pvp account");
     }
     let deadline = started + CELL_DEADLINE;
-    wait_until("both accounts ready", deadline, || {
-        observed.iter().all(|observed| {
+    let states = || {
+        json!({
+            "holder": observed[0].lock().expect("observed lock").clone(),
+            "fighter": observed[1].lock().expect("observed lock").clone(),
+            "drives": drives
+                .iter()
+                .map(|drive| drive.lock().expect("duel drive lock").clone())
+                .collect::<Vec<_>>(),
+        })
+    };
+    let mut announced = Instant::now();
+    loop {
+        let ready = observed.iter().all(|observed| {
             let state = observed.lock().expect("observed lock");
             assert!(state.error.is_none(), "fixture error: {:?}", state.error);
             state.ready
-        })
-    });
+        });
+        if ready {
+            break;
+        }
+        if announced.elapsed() > Duration::from_secs(20) {
+            announced = Instant::now();
+            let both = states();
+            println!(
+                "fixture: holder step {} ready {}, fighter step {} ready {}",
+                both["holder"]["step"], both["holder"]["ready"], both["fighter"]["step"], both["fighter"]["ready"]
+            );
+        }
+        assert!(
+            Instant::now() < deadline,
+            "both accounts ready: cell deadline passed: {}",
+            states()
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
     wait_until(
         "the duel reaches FIGHT!",
         Instant::now() + Duration::from_secs(180),
@@ -593,30 +634,26 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
     // Let the last frames land, then write the receipt.
     thread::sleep(Duration::from_secs(2));
     let shared = shared.lock().expect("shared lock");
-    let refusals = partner_state
-        .lock()
-        .expect("partner lock")
-        .refusals
-        .clone();
+    let refusals = partner_state.lock().expect("partner lock").refusals.clone();
     let rows = &shared.trace;
     let first = |predicate: &dyn Fn(&TraceRow) -> bool| rows.iter().find(|row| predicate(row));
-    let t2 = first(&|row| {
-        row.phase == Phase::Hold && row.switches >= 1 && row.active == "Ranged"
-    });
+    let t2 = first(&|row| row.phase == Phase::Hold && row.switches >= 1 && row.active == "Ranged");
     let t2_start = first(&|row| {
-        row.phase == Phase::Hold && row.switch.starts_with("Converging") && row.switch.contains("Protect")
+        row.phase == Phase::Hold
+            && row.switch.starts_with("Converging")
+            && row.switch.contains("Protect")
     });
-    let t3 = first(&|row| {
-        row.phase == Phase::Drop && row.switches >= 2 && row.active == "Melee"
-    });
+    let t3 = first(&|row| row.phase == Phase::Drop && row.switches >= 2 && row.active == "Melee");
     let t3_start = first(&|row| {
-        row.phase == Phase::Drop && row.switch.starts_with("Converging") && row.switch.contains("Prefer")
+        row.phase == Phase::Drop
+            && row.switch.starts_with("Converging")
+            && row.switch.contains("Prefer")
     });
-    let t4 = first(&|row| {
-        row.phase == Phase::Away && row.switches >= 3 && row.active == "Ranged"
-    });
+    let t4 = first(&|row| row.phase == Phase::Away && row.switches >= 3 && row.active == "Ranged");
     let t4_start = first(&|row| {
-        row.phase == Phase::Away && row.switch.starts_with("Converging") && row.switch.contains("Reach")
+        row.phase == Phase::Away
+            && row.switch.starts_with("Converging")
+            && row.switch.contains("Reach")
     });
     let bow = id("maple_shortbow");
     let sword = id("rune_scimitar");
@@ -666,6 +703,12 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
         serde_json::to_vec_pretty(&receipt).expect("receipt json"),
     )
     .expect("write receipt");
-    println!("{}", serde_json::to_string_pretty(&receipt["verdict"]).unwrap());
-    assert!(passed, "the live smoke failed: see pvp-switch-receipt.json: {receipt}");
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&receipt["verdict"]).unwrap()
+    );
+    assert!(
+        passed,
+        "the live smoke failed: see pvp-switch-receipt.json: {receipt}"
+    );
 }

@@ -8,8 +8,8 @@ use std::sync::Arc;
 use super::request::MeleeMode;
 use crate::native::ActionError;
 use api::game_data::{
-    ConsumptionFact, MeleeWeaponTier, NpcNameRow, PrayerFact, SelectedGameData,
-    StyleSpotanimFact, WeaponStyleFact,
+    ConsumptionFact, MeleeWeaponTier, NpcNameRow, PrayerFact, SelectedGameData, StyleSpotanimFact,
+    WeaponStyleFact,
 };
 
 const STYLE_BITS: u8 = 0x0f;

@@ -62,10 +62,7 @@ fn sword_and_bow() -> (Scene, StyleKits) {
     give(&mut scene, "iron_arrow", 30);
     scene.refresh();
     let kits = StyleKits::default()
-        .with(
-            Style::Melee,
-            kit(&[(3, id(&scene, "rune_scimitar"))], &[]),
-        )
+        .with(Style::Melee, kit(&[(3, id(&scene, "rune_scimitar"))], &[]))
         .with(
             Style::Ranged,
             kit(
@@ -261,10 +258,25 @@ fn t2_needs_two_protected_frames_then_converges_and_restyles() {
     assert_eq!(harness.machine.switch_state(), SwitchState::Idle);
     // The second protected frame starts the switch; `active` has not moved.
     let batch = step(&mut harness, &mut scene, 4);
-    assert_eq!(converging_to(&harness), Some(Style::Ranged), "{:?}", rows(&batch));
+    assert_eq!(
+        converging_to(&harness),
+        Some(Style::Ranged),
+        "{:?}",
+        rows(&batch)
+    );
     assert_eq!(harness.machine.active_style(), Style::Melee);
-    assert_eq!(wear_names(&batch), ["Maple shortbow", "Iron arrow"], "{:?}", rows(&batch));
-    assert_eq!(batch.len(), 3, "[Wear bow, Wear arrows, Attack]: {:?}", rows(&batch));
+    assert_eq!(
+        wear_names(&batch),
+        ["Maple shortbow", "Iron arrow"],
+        "{:?}",
+        rows(&batch)
+    );
+    assert_eq!(
+        batch.len(),
+        3,
+        "[Wear bow, Wear arrows, Attack]: {:?}",
+        rows(&batch)
+    );
     assert!(has_attack(&batch));
     // Both observed worn on the next frame: complete on that tick.
     let batch = step(&mut harness, &mut scene, 5);
@@ -289,7 +301,11 @@ fn t2_needs_two_protected_frames_then_converges_and_restyles() {
     scene.combat_tab(scene.tables.combat_tab_root(tab).unwrap());
     let batch = step(&mut harness, &mut scene, 6);
     assert!(has_button(&batch, rapid), "{:?}", rows(&batch));
-    assert!(has_attack(&batch), "[Style rapid, Attack]: {:?}", rows(&batch));
+    assert!(
+        has_attack(&batch),
+        "[Style rapid, Attack]: {:?}",
+        rows(&batch)
+    );
 }
 
 #[test]
@@ -350,15 +366,13 @@ fn switch_zero_wear_completes_same_tick() {
     give(&mut scene, "mindrune", 50);
     give(&mut scene, "airrune", 50);
     scene.refresh();
-    let kits = StyleKits::default()
-        .with(Style::Melee, kit(&[], &[]))
-        .with(
-            Style::Mage,
-            kit(
-                &[],
-                &[(id(&scene, "mindrune"), 50), (id(&scene, "airrune"), 50)],
-            ),
-        );
+    let kits = StyleKits::default().with(Style::Melee, kit(&[], &[])).with(
+        Style::Mage,
+        kit(
+            &[],
+            &[(id(&scene, "mindrune"), 50), (id(&scene, "airrune"), 50)],
+        ),
+    );
     let mut req = request(kits);
     req.allow.locked_slots = 1 << 3;
     let mut harness = start(&mut scene, req);
@@ -384,7 +398,10 @@ fn switch_zero_wear_completes_same_tick() {
         assert!(wear_names(&batch).is_empty());
         cast |= has_cast(&batch);
     }
-    assert!(cast, "the manual cast follows the zero-wear switch: {all:?}");
+    assert!(
+        cast,
+        "the manual cast follows the zero-wear switch: {all:?}"
+    );
 }
 
 #[test]
@@ -489,7 +506,10 @@ fn switch_settle_covers_old_cooldown() {
     give(&mut scene, "iron_arrow", 30);
     scene.refresh();
     let kits = StyleKits::default()
-        .with(Style::Melee, kit(&[(3, id(&scene, "bronze_2h_sword"))], &[]))
+        .with(
+            Style::Melee,
+            kit(&[(3, id(&scene, "bronze_2h_sword"))], &[]),
+        )
         .with(
             Style::Ranged,
             kit(
@@ -511,7 +531,10 @@ fn switch_settle_covers_old_cooldown() {
     let since = tick - 1;
     assert_eq!(
         harness.machine.switch_state(),
-        SwitchState::Settling { since: since as u16, rate_old: 7 }
+        SwitchState::Settling {
+            since: since as u16,
+            rate_old: 7
+        }
     );
     // The opponent protects against the new style on frames since + 3 and since + 4
     // and keeps it: no own swing is observed.
@@ -790,7 +813,10 @@ fn switch_refused_mandatory_ammo_fails() {
         // The sword is only worn again once the switch has failed.
         rewore_scimitar |= wear_names(&batch).contains(&scimitar);
         tick += 1;
-        assert!(tick < 60, "two refusals of the iron arrows must fail the switch");
+        assert!(
+            tick < 60,
+            "two refusals of the iron arrows must fail the switch"
+        );
     }
     // The bow is worn, the quiver never was: a bow with no arrows must not be a completion.
     assert_eq!(harness.machine.active_style(), Style::Melee);
@@ -889,7 +915,11 @@ fn a_full_armour_change_wears_the_right_hand_first_over_two_plans() {
             item_name(&scene, "rune_platelegs")
         ]
     );
-    assert_eq!(harness.machine.switches(), 0, "not before the last slot is observed");
+    assert_eq!(
+        harness.machine.switches(),
+        0,
+        "not before the last slot is observed"
+    );
     step(&mut harness, &mut scene, 7);
     assert_eq!(harness.machine.active_style(), Style::Ranged);
     assert_eq!(harness.machine.switches(), 1);
@@ -957,7 +987,12 @@ fn t4_switches_after_two_attack_intervals_out_of_reach() {
         assert_eq!(converging_to(&harness), None, "tick {tick}");
     }
     let batch = step(&mut harness, &mut scene, 10);
-    assert_eq!(converging_to(&harness), Some(Style::Ranged), "{:?}", rows(&batch));
+    assert_eq!(
+        converging_to(&harness),
+        Some(Style::Ranged),
+        "{:?}",
+        rows(&batch)
+    );
     assert!(matches!(
         harness.machine.switch_state(),
         SwitchState::Converging {
@@ -1073,7 +1108,10 @@ fn upkeep_shares_the_budget_so_a_wear_set_completes_only_after_its_last_slot() {
         }
     }
     assert_eq!(harness.machine.switches(), 1, "{plans:?}");
-    let wearing: Vec<_> = plans.iter().filter(|(_, wears, _)| !wears.is_empty()).collect();
+    let wearing: Vec<_> = plans
+        .iter()
+        .filter(|(_, wears, _)| !wears.is_empty())
+        .collect();
     assert!(
         wearing.len() >= 2,
         "three wears do not fit one plan beside the upkeep rows: {plans:?}"
@@ -1082,10 +1120,16 @@ fn upkeep_shares_the_budget_so_a_wear_set_completes_only_after_its_last_slot() {
         wearing[0].1.len() < 3,
         "the first plan carries a proper prefix: {plans:?}"
     );
-    assert_eq!(wearing[0].1[0], "Maple shortbow", "right hand first: {plans:?}");
+    assert_eq!(
+        wearing[0].1[0], "Maple shortbow",
+        "right hand first: {plans:?}"
+    );
     let completed_at = plans.last().unwrap().0;
     let last_wear = wearing.last().unwrap().0;
-    assert!(completed_at > last_wear, "complete only after the last wear: {plans:?}");
+    assert!(
+        completed_at > last_wear,
+        "complete only after the last wear: {plans:?}"
+    );
 }
 
 #[test]
@@ -1109,7 +1153,11 @@ fn a_drink_on_the_trigger_tick_admits_no_wear_and_starts_nothing() {
         if has_held(&batch, "Drink") {
             drank = true;
             assert!(wear_names(&batch).is_empty(), "no wear in a drink plan");
-            assert_eq!(converging_to(&harness), None, "no switch under a drink plan");
+            assert_eq!(
+                converging_to(&harness),
+                None,
+                "no switch under a drink plan"
+            );
             // The sip lands: points are back, the vial is gone.
             scene.stat(5, 30, 50);
             let vial = id(&scene, "1doseprayerrestore");
@@ -1120,7 +1168,10 @@ fn a_drink_on_the_trigger_tick_admits_no_wear_and_starts_nothing() {
         }
     }
     assert!(drank, "the scene must have a drink due");
-    assert!(started.is_some(), "the switch starts once the drink is out of the way");
+    assert!(
+        started.is_some(),
+        "the switch starts once the drink is out of the way"
+    );
 }
 
 // --- Case 8: exhaustion (T1) -----------------------------------------------
@@ -1151,10 +1202,7 @@ fn ranged_opening(with_melee_kit: bool) -> (Scene, CombatRequest) {
     scene.combat_tab(scene.tables.combat_tab_root(tab).unwrap());
     let mut kits = StyleKits::default().with(
         Style::Ranged,
-        kit(
-            &[(3, bow), (13, id(&scene, "iron_arrow"))],
-            &[],
-        ),
+        kit(&[(3, bow), (13, id(&scene, "iron_arrow"))], &[]),
     );
     if with_melee_kit {
         kits = kits.with(Style::Melee, kit(&[(3, id(&scene, "rune_scimitar"))], &[]));
@@ -1174,7 +1222,12 @@ fn exhausted_arrows_switch_to_melee_instead_of_aborting() {
     scene.equipment.retain(|row| row.slot != 13);
     scene.refresh();
     let batch = step(&mut harness, &mut scene, 3);
-    assert_eq!(converging_to(&harness), Some(Style::Melee), "{:?}", rows(&batch));
+    assert_eq!(
+        converging_to(&harness),
+        Some(Style::Melee),
+        "{:?}",
+        rows(&batch)
+    );
     assert!(matches!(
         harness.machine.switch_state(),
         SwitchState::Converging {
@@ -1205,7 +1258,9 @@ fn exhausted_arrows_with_no_alternative_abort_as_before() {
     }
     assert_eq!(
         ended,
-        Some(CombatEnd::Aborted(AbortReason::Unprotected(Unprotected::NoAmmo)))
+        Some(CombatEnd::Aborted(AbortReason::Unprotected(
+            Unprotected::NoAmmo
+        )))
     );
 }
 
@@ -1301,18 +1356,16 @@ fn a_locked_right_hand_is_never_worn_and_the_switch_completes_on_the_other_slots
     give(&mut scene, "mindrune", 100);
     give(&mut scene, "airrune", 100);
     scene.refresh();
-    let kits = StyleKits::default()
-        .with(Style::Melee, kit(&[], &[]))
-        .with(
-            Style::Mage,
-            kit(
-                &[
-                    (3, id(&scene, "air_battlestaff")),
-                    (0, id(&scene, "rune_full_helm")),
-                ],
-                &[(id(&scene, "mindrune"), 100), (id(&scene, "airrune"), 100)],
-            ),
-        );
+    let kits = StyleKits::default().with(Style::Melee, kit(&[], &[])).with(
+        Style::Mage,
+        kit(
+            &[
+                (3, id(&scene, "air_battlestaff")),
+                (0, id(&scene, "rune_full_helm")),
+            ],
+            &[(id(&scene, "mindrune"), 100), (id(&scene, "airrune"), 100)],
+        ),
+    );
     let mut req = request(kits);
     req.allow.locked_slots = 1 << 3;
     let mut harness = start(&mut scene, req);
@@ -1345,8 +1398,14 @@ fn melee_pick(harness: &Harness, scene_alias: &str) -> bool {
 #[test]
 fn the_melee_pick_is_the_highest_tier_the_attack_level_allows() {
     let steel_and_rune = ["steel_scimitar", "rune_scimitar"];
-    assert!(melee_pick(&pick_scene(30, &steel_and_rune), "steel_scimitar"));
-    assert!(melee_pick(&pick_scene(40, &steel_and_rune), "rune_scimitar"));
+    assert!(melee_pick(
+        &pick_scene(30, &steel_and_rune),
+        "steel_scimitar"
+    ));
+    assert!(melee_pick(
+        &pick_scene(40, &steel_and_rune),
+        "rune_scimitar"
+    ));
 }
 
 #[test]
@@ -1414,7 +1473,10 @@ fn the_kit_less_style_is_never_opened_when_kits_are_declared() {
     scene.refresh();
     let kits = StyleKits::default().with(
         Style::Mage,
-        kit(&[], &[(id(&scene, "mindrune"), 50), (id(&scene, "airrune"), 50)]),
+        kit(
+            &[],
+            &[(id(&scene, "mindrune"), 50), (id(&scene, "airrune"), 50)],
+        ),
     );
     let mut req = request(kits);
     req.allow.locked_slots = 1 << 3;

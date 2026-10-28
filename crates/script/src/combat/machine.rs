@@ -549,9 +549,7 @@ impl NativeMachine for Combat {
             }
             if self.phase != Phase::WindDown {
                 let failure = if self.flags & FAILED_WEAPON != 0 {
-                    Some(AbortReason::PrepFailed(weapon_prep_item(
-                        self.active,
-                    )))
+                    Some(AbortReason::PrepFailed(weapon_prep_item(self.active)))
                 } else if self.flags & FAILED_SHIELD != 0 {
                     Some(AbortReason::PrepFailed(PrepItem::Shield))
                 } else if self.flags & FAILED_ATTACK != 0 {
@@ -2870,7 +2868,9 @@ impl Combat {
             return None;
         };
         if ammo_id < 0
-            || self.active_desired(3, frame).is_some_and(|id| id != weapon.def.id)
+            || self
+                .active_desired(3, frame)
+                .is_some_and(|id| id != weapon.def.id)
             || !frame.equipment.iter().any(|row| {
                 row.def.id == ammo_id && row.count > 0 && (row.slot == 3 || row.slot == 13)
             })
