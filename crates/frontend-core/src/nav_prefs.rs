@@ -42,8 +42,23 @@ impl NavPreference {
             Self::SurvivableRoutingNoticeAck => ("survivable_routing_notice_ack", false),
         }
     }
-}
 
+    /// Stable recorder identity for this shared navigation setting.
+    pub(crate) const fn setting_identity(self) -> &'static str {
+        match self {
+            Self::ShowSpecialAreas => "nav.show_special_areas",
+            Self::PauseScriptOnManualWalkAbort => "nav.pause_script_on_manual_walk_abort",
+            Self::AllowTeleports => "nav.allow_teleports",
+            Self::AllowWilderness => "nav.allow_wilderness",
+            Self::AllowBankFetch => "nav.allow_bank_fetch",
+            Self::AllowDangerZones => "nav.allow_danger_zones",
+            Self::SurvivableRouting => "nav.survivable_routing",
+            Self::ScriptScopeNoticeAck => "nav.script_scope_notice_ack",
+            Self::SurvivableRoutingNoticeAck => "nav.survivable_routing_notice_ack",
+        }
+    }
+
+}
 /// Read one shared nested nav boolean through the process service's
 /// preferences, with its legacy default. (Changing it is the
 /// `SetNavPreference` command.)

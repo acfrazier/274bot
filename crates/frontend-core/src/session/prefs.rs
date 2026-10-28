@@ -79,31 +79,30 @@ pub enum Notice {
     QuesterPaths,
 }
 
-/// The most saved-setting transitions kept for a watching front end that
-/// has not drained them yet. Transitions are operator-paced, so a front
-/// end that drains each frame never nears the cap.
+/// Maximum saved-setting transitions kept for a watching front end. If a
+/// producer reaches this bound, the drained batch reports that it is
+/// incomplete.
 pub const SETTING_EVENTS_CAP: usize = 256;
 
-/// The save state one [`SettingEvent`] reports for its setting. The
-/// states are the ones a front end shows beside a saved setting: an
-/// accepted write still in flight, a write that failed, and a write that
-/// became durable. A retained failure that a later action resolves is
-/// visible as the next `Pending` or `Saved` for the same setting.
+/// The save state one [`SettingEvent`] reports for its setting. Owners
+/// report accepted writes, durable writes, failures, and explicit failure
+/// removal. A failure that still belongs to its owner stays failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingEventState {
     /// An accepted write has not reached its terminal result.
     Pending,
     /// A write failed; the event's error text says why.
     Failed,
+    /// The owner removed a retained failure, including by expiry.
+    Cleared,
     /// A write became durable.
     Saved,
 }
 
 /// One saved-setting transition, recorded only while a front end watches
 /// ([`OperatorSession::watch_setting_events`]) and drained with
-/// [`OperatorSession::take_setting_events`]. `setting` is the write's own
-/// name (the `what` a failure's detail uses: a preference key such as
-/// `capture`, or `navigation preference`, `profile order`, and friends).
+/// [`OperatorSession::take_setting_events`]. `setting` is a stable identity,
+/// separate from the descriptive `what` used in command failure details.
 #[derive(Debug, PartialEq, Eq)]
 pub struct SettingEvent {
     setting: String,
@@ -329,15 +328,22 @@ impl<Io> OperatorSession<Io> {
         self.commands.set_watch_setting_events(watch);
     }
 
-    /// The saved-setting transitions recorded since the last call, in the
-    /// order they happened. Empty while watching is off.
-    pub fn take_setting_events(&mut self) -> Vec<SettingEvent> {
+    /// Drain saved-setting transitions and report whether the bounded
+    /// queue dropped any transitions before this call. Empty while watching
+    /// is off.
+    pub fn take_setting_events(&mut self) -> (Vec<SettingEvent>, bool) {
         self.commands.take_setting_events()
     }
 
     /// Record that `setting`'s write entered `state` (no error text).
     pub(super) fn note_setting(&mut self, setting: &str, state: SettingEventState) {
         self.commands.note_setting_event(setting, state, None);
+    }
+
+    /// Record that the owner removed `setting`'s retained failure.
+    pub(super) fn note_setting_cleared(&mut self, setting: &str) {
+        self.commands
+            .note_setting_event(setting, SettingEventState::Cleared, None);
     }
 
     /// Record that `setting`'s write failed with `error`. The text is
@@ -446,6 +452,7 @@ impl<Io> OperatorSession<Io> {
         &mut self,
         request: RequestId,
         write: Update,
+        setting: &'static str,
         what: &'static str,
         effect: PrefEffect,
     ) -> Applied {
@@ -455,18 +462,19 @@ impl<Io> OperatorSession<Io> {
         match write {
             Update::Durable => {
                 self.apply_pref_effect(effect);
-                self.note_setting(what, SettingEventState::Saved);
+                self.note_setting(setting, SettingEventState::Saved);
                 Applied::Done
             }
             Update::Queued(queued) => {
                 self.commands.watch_pref_write(PrefWriteWatch {
                     request,
                     queued,
+                    setting,
                     what,
                     effect,
                     order: None,
                 });
-                self.note_setting(what, SettingEventState::Pending);
+                self.note_setting(setting, SettingEventState::Pending);
                 Applied::Later
             }
         }
@@ -507,7 +515,7 @@ impl<Io> OperatorSession<Io> {
             let watch = self.commands.pref_writes().swap_remove(index);
             let (terminal, detail) = match outcome {
                 Ok(()) => {
-                    self.note_setting(watch.what, SettingEventState::Saved);
+                    self.note_setting(watch.setting, SettingEventState::Saved);
                     if let Some(view) = self.apply_pref_effect(watch.effect) {
                         self.commands.settle_walk_globals(view);
                     }
@@ -520,9 +528,9 @@ impl<Io> OperatorSession<Io> {
                     (Settlement::Completed(Completion::Done), None)
                 }
                 Err(error) => {
-                    self.note_setting_failed(watch.what, &error);
+                    self.note_setting_failed(watch.setting, &error);
                     // The newest reorder's write failed: show the last
-                    // durable order again. An older one's failure changes
+                    // durable order. An older one's failure changes
                     // nothing (a newer write carries the current order).
                     if matches!(watch.effect, PrefEffect::ProfileOrder) {
                         self.revert_profile_order();
@@ -577,7 +585,7 @@ impl<Io> OperatorSession<Io> {
         }
         match write {
             Some((_, Err(applied))) => applied,
-            Some((key, Ok(write))) => self.after_write(request, write, key, PrefEffect::None),
+            Some((key, Ok(write))) => self.after_write(request, write, key, key, PrefEffect::None),
             None => Applied::Done,
         }
     }
@@ -592,10 +600,11 @@ impl<Io> OperatorSession<Io> {
         let Some(preferences) = self.preferences() else {
             return no_store();
         };
+        let setting = preference.setting_identity();
         let write = match crate::nav_prefs::write_nav_preference(&preferences, preference, on) {
             Ok(write) => write,
             Err(error) => {
-                self.note_setting_failed("navigation preference", &error);
+                self.note_setting_failed(setting, &error);
                 return write_failed("navigation preference", &error);
             }
         };
@@ -604,6 +613,7 @@ impl<Io> OperatorSession<Io> {
         let applied = self.after_write(
             request,
             write,
+            setting,
             "navigation preference",
             PrefEffect::Walk(pause),
         );
@@ -630,7 +640,13 @@ impl<Io> OperatorSession<Io> {
             }
         };
         let durable = matches!(write, Update::Durable);
-        let applied = self.after_write(request, write, "danger routing", PrefEffect::Walk(None));
+        let applied = self.after_write(
+            request,
+            write,
+            "danger routing",
+            "danger routing",
+            PrefEffect::Walk(None),
+        );
         if durable {
             self.adopt_walk_globals(&preferences, surface);
         }
@@ -659,6 +675,7 @@ impl<Io> OperatorSession<Io> {
             Ok(write) => self.after_write(
                 request,
                 write,
+                "session file setting",
                 "session file setting",
                 PrefEffect::SessionLog(on),
             ),
@@ -691,7 +708,7 @@ impl<Io> OperatorSession<Io> {
         if let Some(desk) = surface.models().map.as_deref_mut() {
             desk.bake_gate_mut().set_choice(choice);
         }
-        self.after_write(request, write, "map bake choice", PrefEffect::None)
+        self.after_write(request, write, "map bake choice", "map bake choice", PrefEffect::None)
     }
 
     fn set_quester_paths<S: SlotSurface<Io = Io>>(
@@ -714,7 +731,13 @@ impl<Io> OperatorSession<Io> {
             paths.apply_changed(&preferences, &after, selected, persist)
         };
         match applied {
-            Ok(write) => self.after_write(request, write, "Quest Paths settings", PrefEffect::None),
+            Ok(write) => self.after_write(
+                request,
+                write,
+                "Quest Paths settings",
+                "Quest Paths settings",
+                PrefEffect::None,
+            ),
             Err(reason) => {
                 self.note_setting_failed("Quest Paths settings", &reason);
                 Applied::Failed(FailureKind::WriteFailed, Some(reason))
@@ -759,7 +782,13 @@ impl<Io> OperatorSession<Io> {
                 };
                 match host_play::begin_persist_background_bots_ack(preferences.inner()) {
                     Ok(write) => {
-                        self.after_write(request, write, "background bots", PrefEffect::None)
+                        self.after_write(
+                            request,
+                            write,
+                            "background bots",
+                            "background bots",
+                            PrefEffect::None,
+                        )
                     }
                     Err(error) => {
                         let text = host_play::background_bots_ack_error(&error);
@@ -777,6 +806,7 @@ impl<Io> OperatorSession<Io> {
                     Ok(write) => self.after_write(
                         request,
                         write,
+                        RENDER_ALL_WARNING_ACK_KEY,
                         RENDER_ALL_WARNING_ACK_KEY,
                         PrefEffect::None,
                     ),
@@ -848,6 +878,7 @@ impl<Io> OperatorSession<Io> {
                 self.commands.watch_pref_write(PrefWriteWatch {
                     request,
                     queued,
+                    setting: "profile order",
                     what: "profile order",
                     effect: PrefEffect::ProfileOrder,
                     order: Some(OrderWrite {
@@ -929,10 +960,11 @@ impl PrefEffect {
 pub(super) struct PrefWriteWatch {
     pub(super) request: RequestId,
     pub(super) queued: QueuedUpdate,
-    /// What the write saves, for a failure's detail.
+    /// Stable sidecar identity for the setting.
+    pub(super) setting: &'static str,
+    /// Descriptive label for the write's failure detail.
     pub(super) what: &'static str,
     pub(super) effect: PrefEffect,
-    /// The Load order a reorder's write carries, logged (and made the
     /// durable order, unless a newer write already is) when it is durable.
     pub(super) order: Option<OrderWrite>,
 }

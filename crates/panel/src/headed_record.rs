@@ -55,6 +55,19 @@ pub const RECORD_SIDECAR_NAME: &str = "record.txt";
 /// Settings-state sidecar next to `record.txt`: one line per state change.
 pub const RECORD_SETTINGS_NAME: &str = "settings.txt";
 
+const SETTINGS_INCOMPLETE_MARKER: &str =
+    "# incomplete: one or more setting transitions were dropped from a bounded event queue";
+
+/// Send a recorder diagnostic through the host log's category, level,
+/// session sink, and redaction.
+pub(crate) fn log_diagnostic(level: api::hostlog::Level, message: impl std::fmt::Display) {
+    api::host_log!(
+        api::hostlog::Category::Lifecycle,
+        level,
+        "{message}"
+    );
+}
+
 /// Enabled switch + cadence, read once from the environment.
 #[derive(Debug, Clone)]
 pub struct HeadedRecordConfig {
@@ -192,9 +205,8 @@ pub fn format_sidecar_header(scenario: &str, fps: f64) -> String {
 /// One saved-setting state in the settings sidecar. `Pending`, `Failed`
 /// and `Saved` are the states the settings owners report for a write
 /// (frontend-core's preference writes and the panel's own preference
-/// members); `Cleared` is a retained failure leaving, derived by
-/// [`SettingsTracker`] when a failed setting's next write is accepted or
-/// becomes durable, or reported directly by an owner that clears one.
+/// members). `Cleared` is reported directly by an owner that removes a
+/// retained failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingState {
     /// An accepted write has not reached its terminal result.
@@ -267,11 +279,9 @@ pub struct SettingsTracker {
 }
 
 impl SettingsTracker {
-    /// The lines one reported transition writes: a `cleared` line first
-    /// when a retained failure leaves (the setting's next write is
-    /// pending or saved), then the new state's line. Either may be
-    /// absent: a repeat of the current state writes nothing, and a
-    /// `cleared` report with no failure retained writes nothing.
+    /// The lines one reported transition writes. An owner-reported
+    /// `Cleared` state is written before the next state. The recorder does
+    /// not infer a clear from a pending or saved write.
     pub fn lines_for(
         &mut self,
         t_secs: f64,
@@ -292,11 +302,7 @@ impl SettingsTracker {
         if previous == Some((state, error)) {
             return [None, None];
         }
-        let was_failed = matches!(previous, Some((SettingState::Failed, _)));
-        if state == SettingState::Cleared && !was_failed {
-            return [None, None];
-        }
-        let cleared = (was_failed && state != SettingState::Failed)
+        let cleared = (state == SettingState::Cleared)
             .then(|| format_settings_line(t_secs, setting, SettingState::Cleared, ""));
         let line = (state != SettingState::Cleared)
             .then(|| format_settings_line(t_secs, setting, state, error));
@@ -335,6 +341,8 @@ struct ActiveRecording {
     settings_file: Option<BufWriter<File>>,
     /// Last settings state per setting, for change-only lines.
     settings: SettingsTracker,
+    /// The settings queue dropped one or more transitions.
+    settings_incomplete: bool,
     queued: u64,
     dropped: u64,
     size_mismatch: u64,
@@ -399,6 +407,7 @@ impl ActiveRecording {
             started: Instant::now(),
             settings_file: None,
             settings: SettingsTracker::default(),
+            settings_incomplete: false,
             queued: 0,
             dropped: 0,
             size_mismatch: 0,
@@ -479,7 +488,34 @@ impl HeadedRecord {
             written = false;
         }
         if !written {
-            eprintln!("[panel] headed record: settings sidecar write failed; closing it");
+            log_diagnostic(
+                api::hostlog::Level::Warn,
+                "headed record: settings sidecar write failed; closing it",
+            );
+            active.settings_file = None;
+        }
+    }
+
+    /// Mark the settings sidecar incomplete after an event queue overflow.
+    /// Called only when evidence was lost, never on an idle frame.
+    pub fn note_settings_incomplete(&mut self) {
+        let Some(active) = self.active.as_mut() else {
+            return;
+        };
+        if active.settings_incomplete {
+            return;
+        }
+        active.settings_incomplete = true;
+        let write_failed = active.settings_file.as_mut().is_some_and(|writer| {
+            writeln!(writer, "{SETTINGS_INCOMPLETE_MARKER}")
+                .and_then(|_| writer.flush())
+                .is_err()
+        });
+        if write_failed {
+            log_diagnostic(
+                api::hostlog::Level::Warn,
+                "headed record: settings sidecar incomplete marker write failed; closing it",
+            );
             active.settings_file = None;
         }
     }
@@ -500,16 +536,18 @@ impl HeadedRecord {
         // fixes the rawvideo geometry (dims are unknown until then).
         let binary = ffmpeg_candidate();
         if which_ffmpeg(&binary).is_none() {
-            eprintln!(
-                "[panel] headed record: ffmpeg not found ({binary}); \
-                 continuing without recording"
+            log_diagnostic(
+                api::hostlog::Level::Warn,
+                format_args!(
+                    "headed record: ffmpeg not found ({binary}); continuing without recording"
+                ),
             );
             self.config.enabled = false;
             return;
         }
-        eprintln!(
-            "[panel] headed record: {scenario} -> {} @ {fps} fps",
-            mp4_path.display()
+        log_diagnostic(
+            api::hostlog::Level::Info,
+            format_args!("headed record: {scenario} -> {} @ {fps} fps", mp4_path.display()),
         );
         let (sender, receiver) = sync_channel::<Vec<u8>>(RECORD_QUEUE);
         let lines = vec![format_sidecar_header(scenario, fps)];
@@ -521,18 +559,24 @@ impl HeadedRecord {
                 match writeln!(writer, "{header}").and_then(|_| writer.flush()) {
                     Ok(()) => Some(writer),
                     Err(error) => {
-                        eprintln!(
-                            "[panel] headed record: settings sidecar {}: {error}",
-                            settings_path.display()
+                        log_diagnostic(
+                            api::hostlog::Level::Warn,
+                            format_args!(
+                                "headed record: settings sidecar {}: {error}",
+                                settings_path.display()
+                            ),
                         );
                         None
                     }
                 }
             }
             Err(error) => {
-                eprintln!(
-                    "[panel] headed record: settings sidecar {}: {error}",
-                    settings_path.display()
+                log_diagnostic(
+                    api::hostlog::Level::Warn,
+                    format_args!(
+                        "headed record: settings sidecar {}: {error}",
+                        settings_path.display()
+                    ),
                 );
                 None
             }
@@ -550,6 +594,7 @@ impl HeadedRecord {
             started: Instant::now(),
             settings_file,
             settings: SettingsTracker::default(),
+            settings_incomplete: false,
             queued: 0,
             dropped: 0,
             size_mismatch: 0,
@@ -652,20 +697,26 @@ impl HeadedRecord {
         active.lines.push(trailer);
         let sidecar = active.lines.join("\n") + "\n";
         if let Err(error) = std::fs::write(&active.txt_path, sidecar) {
-            eprintln!(
-                "[panel] headed record: sidecar {}: {error}",
-                active.txt_path.display()
+            log_diagnostic(
+                api::hostlog::Level::Warn,
+                format_args!("headed record: sidecar {}: {error}", active.txt_path.display()),
             );
         }
         if let Some(error) = outcome.error.as_deref() {
-            eprintln!("[panel] headed record: encode error: {error}");
+            log_diagnostic(
+                api::hostlog::Level::Error,
+                format_args!("headed record: encode error: {error}"),
+            );
         }
-        eprintln!(
-            "[panel] headed record: {} ({} frames, {} dropped, {} resized)",
-            active.mp4_path.display(),
-            active.queued,
-            active.dropped,
-            active.size_mismatch
+        log_diagnostic(
+            api::hostlog::Level::Info,
+            format_args!(
+                "headed record: {} ({} frames, {} dropped, {} resized)",
+                active.mp4_path.display(),
+                active.queued,
+                active.dropped,
+                active.size_mismatch
+            ),
         );
     }
 }
@@ -694,7 +745,10 @@ fn which_ffmpeg(binary: &str) -> Option<PathBuf> {
 /// loop never touches this thread except through the bounded queue.
 fn spawn_encoder(active: &mut ActiveRecording, receiver: Option<Receiver<Vec<u8>>>) {
     let Some(receiver) = receiver else {
-        eprintln!("[panel] headed record: encoder queue missing; stopping");
+        log_diagnostic(
+            api::hostlog::Level::Error,
+            "headed record: encoder queue missing; stopping",
+        );
         return;
     };
     let binary = ffmpeg_candidate();
@@ -737,14 +791,20 @@ fn spawn_encoder(active: &mut ActiveRecording, receiver: Option<Receiver<Vec<u8>
     {
         Ok(child) => child,
         Err(error) => {
-            eprintln!("[panel] headed record: ffmpeg spawn failed: {error}; stopping");
+            log_diagnostic(
+                api::hostlog::Level::Error,
+                format_args!("headed record: ffmpeg spawn failed: {error}; stopping"),
+            );
             return;
         }
     };
     let stdin: ChildStdin = match child.stdin.take() {
         Some(stdin) => stdin,
         None => {
-            eprintln!("[panel] headed record: ffmpeg stdin unavailable; stopping");
+            log_diagnostic(
+                api::hostlog::Level::Error,
+                "headed record: ffmpeg stdin unavailable; stopping",
+            );
             return;
         }
     };
@@ -1025,52 +1085,50 @@ mod tests {
     }
 
     #[test]
-    fn settings_tracker_failed_then_saved_clears_first() {
+    fn settings_tracker_failed_then_saved_does_not_invent_a_clear() {
         let mut tracker = SettingsTracker::default();
         tracker.lines_for(1.0, "capture", SettingState::Pending, "");
-        assert_eq!(
-            tracker.lines_for(6.0, "capture", SettingState::Failed, "preferences is busy"),
-            [
-                None,
-                Some(
-                    "t=6.000 setting=\"capture\" state=failed \
-                     error=\"preferences is busy\""
-                        .to_string()
-                )
-            ]
-        );
-        // The retry's durable write clears the retained failure, then saves.
+        tracker.lines_for(6.0, "capture", SettingState::Failed, "preferences is busy");
         assert_eq!(
             tracker.lines_for(9.0, "capture", SettingState::Saved, ""),
             [
-                Some("t=9.000 setting=\"capture\" state=cleared error=\"\"".to_string()),
+                None,
                 Some("t=9.000 setting=\"capture\" state=saved error=\"\"".to_string())
-            ]
+            ],
+            "a saved report does not prove that the owner cleared its failure"
         );
     }
 
     #[test]
-    fn settings_tracker_failed_then_pending_clears_first() {
+    fn settings_tracker_failed_then_pending_does_not_invent_a_clear() {
         let mut tracker = SettingsTracker::default();
         tracker.lines_for(1.0, "capture", SettingState::Failed, "disk full");
-        // A new accepted write is the action that clears the failure.
-        let lines = tracker.lines_for(3.0, "capture", SettingState::Pending, "");
         assert_eq!(
-            lines,
+            tracker.lines_for(3.0, "capture", SettingState::Pending, ""),
             [
-                Some("t=3.000 setting=\"capture\" state=cleared error=\"\"".to_string()),
+                None,
                 Some("t=3.000 setting=\"capture\" state=pending error=\"\"".to_string())
-            ]
+            ],
+            "an accepted retry does not prove that the owner cleared its failure"
         );
     }
 
     #[test]
     fn settings_tracker_cleared_reports_and_repeated_failures() {
         let mut tracker = SettingsTracker::default();
-        // Clearing with nothing retained writes nothing.
+        // An explicit owner clear remains evidence if recording starts
+        // after the failure entered the owner's state.
         assert_eq!(
             tracker.lines_for(1.0, "capture", SettingState::Cleared, ""),
-            [None, None]
+            [
+                Some("t=1.000 setting=\"capture\" state=cleared error=\"\"".to_string()),
+                None
+            ]
+        );
+        assert_eq!(
+            tracker.lines_for(1.5, "capture", SettingState::Cleared, ""),
+            [None, None],
+            "a repeated explicit clear is not a new transition"
         );
         tracker.lines_for(2.0, "capture", SettingState::Failed, "one");
         // A second failure with new text is a change of its own.
@@ -1094,6 +1152,61 @@ mod tests {
                 Some("t=20.000 setting=\"capture\" state=cleared error=\"\"".to_string()),
                 None
             ]
+        );
+        assert_eq!(
+            tracker.lines_for(21.0, "capture", SettingState::Pending, ""),
+            [
+                None,
+                Some("t=21.000 setting=\"capture\" state=pending error=\"\"".to_string())
+            ],
+            "expiry clears the retained failure once; a later retry adds no inferred clear"
+        );
+    }
+
+    #[test]
+    fn recorder_diagnostics_reach_the_redacted_host_log() {
+        use frontend_core::log::{global, LogScope, LogView};
+
+        let log = global();
+        let secret = "headed_record_log_secret";
+        api::hostlog::register_secret(secret);
+        let message = format!("headed record diagnostic route {secret}");
+        log_diagnostic(api::hostlog::Level::Warn, &message);
+
+        let mut view = LogView::new(LogScope::Process);
+        view.edit_filter(|filter| filter.set_text("headed record diagnostic route"));
+        log.refresh(&mut view);
+        assert_eq!(view.len(), 1, "{}", view.to_text());
+        let row = &view.rows()[0];
+        assert_eq!(row.level(), api::hostlog::Level::Warn);
+        assert_eq!(row.source(), api::hostlog::Source::Host);
+        assert!(row.message().contains(api::hostlog::REDACTED));
+        assert!(!row.message().contains(secret));
+    }
+
+    #[test]
+    fn overflow_writes_an_incomplete_settings_sidecar_marker_once() {
+        let dir = crate::test_support::TestDir::new("record-settings-incomplete");
+        let path = dir.join(RECORD_SETTINGS_NAME);
+        let file = File::create(&path).expect("settings sidecar");
+        let (sender, _receiver) = sync_channel::<Vec<u8>>(RECORD_QUEUE);
+        let mut record = HeadedRecord {
+            config: HeadedRecordConfig {
+                enabled: true,
+                fps: DEFAULT_FPS,
+            },
+            pacer: RecordPacer::new(Duration::from_millis(500)),
+            active: Some(ActiveRecording::for_test(sender, DEFAULT_FPS)),
+            done: false,
+        };
+        record.active.as_mut().unwrap().settings_file = Some(BufWriter::new(file));
+
+        record.note_settings_incomplete();
+        record.note_settings_incomplete();
+
+        assert_eq!(
+            std::fs::read_to_string(path).expect("read settings sidecar"),
+            format!("{SETTINGS_INCOMPLETE_MARKER}\n")
         );
     }
 }

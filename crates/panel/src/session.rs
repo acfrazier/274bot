@@ -63,6 +63,9 @@ use frontend_core::{
     Targets,
 };
 
+/// Maximum panel-owned setting events retained between drains.
+const PANEL_SETTING_EVENTS_CAP: usize = 256;
+
 /// The refusal a native panel gives for a card that only the JavaScript
 /// runtime can run: the core's own text, so the panel and the core refuse in
 /// the same words. It is exactly what
@@ -969,6 +972,8 @@ pub struct Session {
     /// `watch_setting_events`); it drains them each frame. Always empty
     /// while not watching.
     setting_events: Vec<frontend_core::SettingEvent>,
+    /// Set when the bounded queue drops at least one transition.
+    setting_events_overflowed: bool,
     /// Whether `setting_events` is recorded.
     record_setting_events: bool,
     /// Shared Quester Paths settings and reload lifecycle.
@@ -1654,6 +1659,7 @@ impl Session {
             pending_nav_members,
             preference_write_error: None,
             setting_events: Vec::new(),
+            setting_events_overflowed: false,
             record_setting_events: false,
             quester_paths,
             quester_paths_folder_edit,
@@ -1778,6 +1784,7 @@ impl Session {
             let write = self.panel_preference_writes.swap_remove(index);
             match outcome {
                 Ok(()) => {
+                    self.clear_succeeded_panel_members(&write.members);
                     for member in &write.members {
                         self.note_panel_setting(
                             member,
@@ -1785,7 +1792,6 @@ impl Session {
                             None,
                         );
                     }
-                    self.clear_succeeded_panel_members(&write.members);
                 }
                 Err(error) => {
                     self.set_preference_write_error(write.members.first(), error.to_string())
@@ -1837,20 +1843,30 @@ impl Session {
         self.core.watch_setting_events(true);
     }
 
-    /// The panel-owned members' transitions recorded since the last call.
-    pub(crate) fn take_panel_setting_events(&mut self) -> Vec<frontend_core::SettingEvent> {
-        std::mem::take(&mut self.setting_events)
+    /// The panel-owned members' transitions and overflow status since the
+    /// last call.
+    pub(crate) fn take_panel_setting_events(
+        &mut self,
+    ) -> (Vec<frontend_core::SettingEvent>, bool) {
+        (
+            std::mem::take(&mut self.setting_events),
+            std::mem::take(&mut self.setting_events_overflowed),
+        )
     }
 
     /// Record one panel-owned member's transition. The queue is bounded
-    /// like the core's; the recorder drains it each frame.
+    /// like the core's; overflow is reported with the next drained batch.
     fn note_panel_setting(
         &mut self,
         member: &PanelPreferenceMember,
         state: frontend_core::SettingEventState,
         error: Option<String>,
     ) {
-        if !self.record_setting_events || self.setting_events.len() >= 256 {
+        if !self.record_setting_events {
+            return;
+        }
+        if self.setting_events.len() >= PANEL_SETTING_EVENTS_CAP {
+            self.setting_events_overflowed = true;
             return;
         }
         self.setting_events.push(frontend_core::SettingEvent::new(
@@ -1889,8 +1905,8 @@ impl Session {
         }
         match self.preferences.begin_patch(patch) {
             Ok(Update::Durable) => {
+                self.clear_succeeded_panel_members(std::slice::from_ref(&member));
                 self.note_panel_setting(&member, frontend_core::SettingEventState::Saved, None);
-                self.clear_succeeded_panel_members(&[member]);
                 Ok(())
             }
             Ok(update @ Update::Queued(_)) => {
@@ -2007,6 +2023,7 @@ impl Session {
                 .is_some_and(|(path, _)| path == &member.path)
             {
                 self.preference_write_error = None;
+                self.note_panel_setting(member, frontend_core::SettingEventState::Cleared, None);
             }
         }
     }

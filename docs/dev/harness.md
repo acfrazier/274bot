@@ -500,8 +500,8 @@ its scenario step and runner game tick (`t=<s> frame=<n> step=<i>/<total>
 tick=<ticks> name="<step>"`), so the video lines up with the step trace.
 An interactive session has no harness shot dir of its own, so the
 recorder creates one when it arms (`~/.274bot/smoke/<runId>/` in the
-session's HOME) and names the scenario `interactive`; the shot dir is on
-the `[panel] headed record:` start line. The mp4 is finalized on PASS,
+session's HOME) and names the scenario `interactive`. The recorder start
+message in the host log names the shot dir. The mp4 is finalized on PASS,
 FAIL and window close, so it is always playable. Resizing the window
 mid-run drops the mismatched frames (counted) because the encoder pipe
 has fixed geometry. `ffmpeg` is resolved from `HEADED_RECORD_FFMPEG`,
@@ -516,23 +516,33 @@ save states by script instead of reading frames:
 ```text
 t=3.120 setting="capture" state=pending error=""
 t=8.204 setting="capture" state=failed error="preferences is busy"
+t=9.120 setting="capture" state=pending error=""
 t=12.010 setting="capture" state=cleared error=""
-t=12.010 setting="capture" state=pending error=""
 t=12.180 setting="capture" state=saved error=""
 ```
 
-`t` is the seconds since the recording armed. `setting` is the write's
-own name from the code that owns it: a preference key for the core's draw
-switches (`capture`, `sidecar_50`, `focused_50`), the core rows'
-`what` (`navigation preference`, `danger routing`,
-`session file setting`, `map bake choice`, `Quest Paths settings`,
-`background bots`, `profile order`), or a panel-owned member's dotted
-path. The states are the settings model's: `pending` (an accepted write
-is still in flight), `failed` (the write failed; the reason is in
-`error`), and `saved` (the write became durable). A retained failure
-that the next action on the same setting resolves writes a `cleared`
-line first. Repeated reports of the same state write nothing. Verify a check with,
-for example, `grep 'setting="capture"' settings.txt`.
+`t` is the seconds since the recording armed. `setting` is a stable
+identity from the setting owner. Draw preferences use their preference
+key, such as `capture` or `sidecar_50`. Navigation preferences use a
+separate `nav.*` key for each member. Other core rows keep their `what`
+name, such as `danger routing`, `session file setting`, `map bake choice`,
+`Quest Paths settings`, `background bots`, or `profile order`. Panel-owned
+members use their dotted path.
+
+The states are `pending` (an accepted write is in flight), `failed` (the
+write failed, with the reason in `error`), `cleared` (the owner removed a
+retained failure), and `saved` (the write became durable). A pending or
+saved event does not imply that the owner cleared a failure. Repeated
+reports of the same state write nothing.
+
+If a bounded event queue overflows, the recorder writes this marker:
+
+```text
+# incomplete: one or more setting transitions were dropped from a bounded event queue
+```
+
+A checker must reject a recording that contains this marker. Verify a
+check with, for example, `grep 'setting="capture"' settings.txt`.
 
 ### Catalog scenario notes
 
