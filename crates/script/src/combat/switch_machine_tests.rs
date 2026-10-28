@@ -981,9 +981,8 @@ fn t4_waits_out_a_swing_onset_inside_the_window() {
 
 /// `bob` swings at us in melee while wearing Protect from Melee, we are hurt, hold
 /// food and have prayer points: the arbiter has rows of its own every tick.
-fn upkeep_scene() -> (Scene, StyleKits) {
-    let (mut scene, kits) = sword_and_bow();
-    give(&mut scene, "lobster", 5);
+fn upkeep(scene: &mut Scene) {
+    give(scene, "lobster", 5);
     let lobster = scene.inventory.len() - 1;
     scene.inventory[lobster].actions = vec![Some("Eat".into())];
     scene.stat(3, 12, 40);
@@ -995,7 +994,6 @@ fn upkeep_scene() -> (Scene, StyleKits) {
     scene.players[0].actor.animation = scene.melee_seq();
     scene.players[0].actor.in_combat = true;
     scene.refresh();
-    (scene, kits)
 }
 
 fn has_held(batch: &DrainedBatch, verb: &str) -> bool {
@@ -1009,8 +1007,9 @@ fn has_held(batch: &DrainedBatch, verb: &str) -> bool {
 
 #[test]
 fn an_emergency_eat_and_a_protect_leave_room_for_one_wear() {
-    let (mut scene, kits) = upkeep_scene();
+    let (mut scene, kits) = sword_and_bow();
     let mut harness = start(&mut scene, request(kits));
+    upkeep(&mut scene);
     protect(&mut scene, MELEE_PROTECT);
     let mut tick = 3;
     let mut first_wear = None;
@@ -1051,6 +1050,7 @@ fn an_emergency_eat_and_a_protect_leave_room_for_one_wear() {
 #[test]
 fn a_drink_on_the_trigger_tick_admits_no_wear_and_starts_nothing() {
     let (mut scene, kits) = sword_and_bow();
+    let mut harness = start(&mut scene, request(kits));
     give(&mut scene, "1doseprayerrestore", 1);
     scene.stat(5, 0, 50);
     scene.players[0].actor.target = Some(ActorTargetView {
@@ -1060,7 +1060,6 @@ fn a_drink_on_the_trigger_tick_admits_no_wear_and_starts_nothing() {
     scene.players[0].actor.animation = scene.melee_seq();
     scene.players[0].actor.in_combat = true;
     scene.refresh();
-    let mut harness = start(&mut scene, request(kits));
     protect(&mut scene, MELEE_PROTECT);
     let mut drank = false;
     let mut started = None;
@@ -1422,8 +1421,9 @@ fn the_machine_layout_stays_inside_its_tripwires() {
     assert!(std::mem::size_of::<CombatReport>() <= 80);
 }
 
-/// Bytes of an idle `Combat` after V2 (measured; the exact per-bot pin is in `host-play`).
-const MACHINE_BYTES: usize = 600;
+/// Bytes of an idle `Combat` after V2 (measured: 520 + 24); the exact per-bot pin
+/// is in `host-play`.
+const MACHINE_BYTES: usize = 544;
 
 #[test]
 fn a_steady_pvp_fight_with_kits_allocates_nothing_for_two_hundred_ticks() {

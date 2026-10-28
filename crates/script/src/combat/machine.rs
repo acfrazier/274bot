@@ -275,7 +275,12 @@ const POTION_SKIP_SHIFT: u32 = 49;
 // PvP V1 adds the opt-in source, the single-way hold, three bounded line
 // counters, the PvP flag bits and the blocked-engagement count: 512 -> 520 B
 // (measured, no new heap). The exact per-bot pin is in host-play.
-const _: () = assert!(std::mem::size_of::<Combat>() <= 600);
+// PvP V2 adds the executable style, the switch state (a `Converging` variant
+// with the pending style, its cause, two ticks and a mask), the switch and
+// failure counts, the failed-style bits, the opponent's protect bits on two
+// frames and at the last switch, the reach counter, and grows the right-hand
+// pick to one per style (+8 B): 520 -> 544 B (measured, no new heap).
+const _: () = assert!(std::mem::size_of::<Combat>() <= 544);
 const BASELINE_READY: u16 = 1 << api::prayer::PRAYER_COUNT;
 
 impl NativeMachine for Combat {

@@ -448,14 +448,22 @@ impl Combat {
     }
 
     /// §4.3: the first trigger that fires, with its target. Only in `Fight`,
-    /// only from `Idle`.
-    pub(super) fn switch_trigger(&self, frame: &Frame<'_>) -> Option<(Style, SwitchCause)> {
+    /// only from `Idle`; T1 alone may also fire inside a settle (an exhausted
+    /// style has nothing left to settle into, and waiting would abort the fight).
+    pub(super) fn switch_trigger(
+        &self,
+        frame: &Frame<'_>,
+        settling: bool,
+    ) -> Option<(Style, SwitchCause)> {
         let policy = self.request.switch;
         // T1: resource exhausted. Any engagement; the first usable style.
         if policy.on_exhaustion && self.style_exhausted(frame) {
             if let Some(to) = self.target_style(frame, |_| true) {
                 return Some((to, SwitchCause::Exhausted));
             }
+        }
+        if settling {
+            return None;
         }
         let opponent = self.engaged_player(frame)?;
         let (now, prev) = (self.opp_protect, self.opp_protect_prev);
@@ -514,13 +522,14 @@ impl Combat {
     /// Evaluate the triggers from `Idle` and start the switch they pick. Called
     /// from the `Fight` plan after the arbiter's rows, before the wear repair.
     pub(super) fn switch_start(&mut self, frame: &Frame<'_>, tick: u16) {
-        if self.switch != SwitchState::Idle
+        let settling = matches!(self.switch, SwitchState::Settling { .. });
+        if !(settling || self.switch == SwitchState::Idle)
             || !self.request.allow.equipment
             || self.engaged.is_none()
         {
             return;
         }
-        let Some((to, cause)) = self.switch_trigger(frame) else {
+        let Some((to, cause)) = self.switch_trigger(frame, settling) else {
             return;
         };
         let rate_old = self.rate(frame);
