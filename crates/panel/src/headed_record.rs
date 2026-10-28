@@ -235,7 +235,11 @@ pub fn format_settings_line(
     state: SettingState,
     error: &str,
 ) -> String {
-    let error = if state == SettingState::Failed { error } else { "" };
+    let error = if state == SettingState::Failed {
+        error
+    } else {
+        ""
+    };
     format!(
         "t={t_secs:.3} setting=\"{}\" state={} error=\"{}\"",
         sanitize_settings_text(setting),
@@ -275,7 +279,11 @@ impl SettingsTracker {
         state: SettingState,
         error: &str,
     ) -> [Option<String>; 2] {
-        let error = if state == SettingState::Failed { error } else { "" };
+        let error = if state == SettingState::Failed {
+            error
+        } else {
+            ""
+        };
         let previous = self
             .last
             .iter()
@@ -991,9 +999,7 @@ mod tests {
             tracker.lines_for(1.0, "capture", SettingState::Pending, ""),
             [
                 None,
-                Some(
-                    "t=1.000 setting=\"capture\" state=pending error=\"\"".to_string()
-                )
+                Some("t=1.000 setting=\"capture\" state=pending error=\"\"".to_string())
             ]
         );
         // The same state reported again is not a change.
@@ -1013,9 +1019,7 @@ mod tests {
             tracker.lines_for(2.5, "sidecar_50", SettingState::Pending, ""),
             [
                 None,
-                Some(
-                    "t=2.500 setting=\"sidecar_50\" state=pending error=\"\"".to_string()
-                )
+                Some("t=2.500 setting=\"sidecar_50\" state=pending error=\"\"".to_string())
             ]
         );
     }
@@ -1039,9 +1043,7 @@ mod tests {
         assert_eq!(
             tracker.lines_for(9.0, "capture", SettingState::Saved, ""),
             [
-                Some(
-                    "t=9.000 setting=\"capture\" state=cleared error=\"\"".to_string()
-                ),
+                Some("t=9.000 setting=\"capture\" state=cleared error=\"\"".to_string()),
                 Some("t=9.000 setting=\"capture\" state=saved error=\"\"".to_string())
             ]
         );
@@ -1056,12 +1058,8 @@ mod tests {
         assert_eq!(
             lines,
             [
-                Some(
-                    "t=3.000 setting=\"capture\" state=cleared error=\"\"".to_string()
-                ),
-                Some(
-                    "t=3.000 setting=\"capture\" state=pending error=\"\"".to_string()
-                )
+                Some("t=3.000 setting=\"capture\" state=cleared error=\"\"".to_string()),
+                Some("t=3.000 setting=\"capture\" state=pending error=\"\"".to_string())
             ]
         );
     }
@@ -1080,9 +1078,7 @@ mod tests {
             tracker.lines_for(3.0, "capture", SettingState::Failed, "two"),
             [
                 None,
-                Some(
-                    "t=3.000 setting=\"capture\" state=failed error=\"two\"".to_string()
-                )
+                Some("t=3.000 setting=\"capture\" state=failed error=\"two\"".to_string())
             ]
         );
         assert_eq!(
@@ -1095,9 +1091,7 @@ mod tests {
         assert_eq!(
             tracker.lines_for(20.0, "capture", SettingState::Cleared, ""),
             [
-                Some(
-                    "t=20.000 setting=\"capture\" state=cleared error=\"\"".to_string()
-                ),
+                Some("t=20.000 setting=\"capture\" state=cleared error=\"\"".to_string()),
                 None
             ]
         );
