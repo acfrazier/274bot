@@ -65,6 +65,22 @@ pub enum FixtureMode {
     Prepare,
     RunPrepared,
 }
+const QUESTER_SKIP_SCENARIO: &str = "quester_skip";
+const QUESTER_SKIP_QUESTS: &[&str] = &["cook", "sheep"];
+const QUESTER_SKIP_SETTINGS: &[scenario::ScriptSettingInject] = &[
+    scenario::ScriptSettingInject {
+        id: "quests",
+        value: scenario::ScriptInjectValue::StrList(QUESTER_SKIP_QUESTS),
+    },
+    scenario::ScriptSettingInject {
+        id: "order_override",
+        value: scenario::ScriptInjectValue::StrList(QUESTER_SKIP_QUESTS),
+    },
+    scenario::ScriptSettingInject {
+        id: "skip",
+        value: scenario::ScriptInjectValue::StrList(&[]),
+    },
+];
 
 /// An owned fixture identity. Its adapter representation remains private.
 pub struct FixtureIdentity(Box<scenario::FixtureIdentity>);
@@ -1559,17 +1575,45 @@ fn proof_gate(gate: host_play::live_gate::CoreGate) -> ProofGate {
 impl Scenario {
     /// Resolve a registered scenario by name.
     pub fn get(name: &str) -> Option<Self> {
+        if name == QUESTER_SKIP_SCENARIO {
+            return Self::quester_skip_fixture();
+        }
         scenario::get(name).map(|scenario| Self(Box::new(scenario)))
     }
 
     /// Resolve a scenario without converting unknown-name errors to absence.
     pub fn try_get(name: &str) -> Result<Option<Self>, String> {
+        if name == QUESTER_SKIP_SCENARIO {
+            return Ok(Self::quester_skip_fixture());
+        }
         scenario::try_get(name).map(|scenario| scenario.map(|scenario| Self(Box::new(scenario))))
     }
 
     /// Whether `name` identifies a registered scenario.
     pub fn is_registered(name: &str) -> bool {
-        scenario::is_registered(name)
+        name == QUESTER_SKIP_SCENARIO || scenario::is_registered(name)
+    }
+
+    fn quester_skip_fixture() -> Option<Self> {
+        let mut scenario = scenario::get("quester_queue")?;
+        let start = scenario
+            .steps
+            .iter()
+            .position(|step| step.name == "start the compiled card")?;
+        let sheep = scenario
+            .steps
+            .iter()
+            .position(|step| step.name == "watch the queued Sheep completion")?;
+        let sheep_step = scenario.steps.remove(sheep);
+        scenario.steps.truncate(start + 1);
+        scenario.steps.push(sheep_step);
+        scenario.name = QUESTER_SKIP_SCENARIO;
+        scenario.proof = scenario::Proof::QuestDone {
+            name: "Sheep Shearer",
+        };
+        scenario.settings.script_settings_inject = Some(QUESTER_SKIP_SETTINGS);
+        scenario.settings.terminal_shot = Some("quester_skip");
+        Some(Self(Box::new(scenario)))
     }
 
     #[cfg(feature = "js")]
@@ -2384,6 +2428,38 @@ mod tests {
                 "{raw:?}",
             );
         }
+    }
+    #[test]
+    fn quester_skip_fixture_runs_the_two_quest_queue() {
+        let scenario = super::Scenario::get("quester_skip").expect("skip scenario");
+        assert!(super::Scenario::try_get("quester_skip")
+            .expect("scenario lookup")
+            .is_some());
+        let settings = scenario.settings_inject().expect("queue settings");
+        assert_eq!(
+            settings.get("quests"),
+            Some(&serde_json::json!(["cook", "sheep"]))
+        );
+        assert_eq!(
+            settings.get("order_override"),
+            Some(&serde_json::json!(["cook", "sheep"]))
+        );
+        let start = scenario
+            .0
+            .steps
+            .iter()
+            .position(|step| matches!(&step.kind, scenario::StepKind::StartScript))
+            .expect("compiled start");
+        assert_eq!(scenario.0.steps.len(), start + 2);
+        assert!(matches!(
+            &scenario.0.steps[start + 1].wait.arm,
+            scenario::Proof::QuestDone { name } if *name == "Sheep Shearer"
+        ));
+        assert!(matches!(
+            &scenario.0.proof,
+            scenario::Proof::QuestDone { name } if *name == "Sheep Shearer"
+        ));
+        assert!(scenario.view().terminal_shot().is_some());
     }
     #[test]
     fn pair_script_elapsed_starts_only_after_both_catalog_slots_start() {

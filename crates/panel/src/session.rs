@@ -5830,6 +5830,28 @@ impl Session {
         }
     }
 
+    /// Request that the focused Quester skip its active queue row. The core
+    /// owns acceptance, refusal logging and the one-command report.
+    pub fn script_skip_quest(&mut self) {
+        let Some(name) = self.focused_name() else {
+            self.refuse_command(
+                OperatorCommand::SkipQuest,
+                &[],
+                None,
+                "script: no focused profile",
+            );
+            return;
+        };
+        let Some(submitted) = self.submit(OperatorCommand::SkipQuest, Targets::Profile(&name))
+        else {
+            return;
+        };
+        self.error = self
+            .core
+            .command_failure(submitted.request())
+            .map(str::to_owned);
+    }
+
     /// Pause the focused slot's script, or Resume when it is Paused (the
     /// button label follows [`script_pause_enabled`]). The button is enabled
     /// only for a state `script_pause_enabled` accepts, and

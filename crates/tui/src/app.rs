@@ -318,6 +318,8 @@ pub enum AppAction {
     /// Toggle pause/resume on the focused slot's script (`Play::script_pause`
     /// / [`Play::script_resume`], like the panel's `script_toggle_pause`).
     ScriptPause,
+    /// Skip the active row in the focused Quester queue.
+    ScriptSkipQuest,
     /// Stop the focused slot's script (`Play::script_stop`).
     ScriptStop,
     /// Open the script Browse picker (registry cards).
@@ -1977,6 +1979,10 @@ impl TuiApp {
             &self.script_category_order,
             self.script_browse_open,
             !self.params_schema.as_ref().is_empty(),
+        )
+        .with_native_status(
+            self.focused_detail()
+                .and_then(|detail| detail.native_status()),
         );
         #[cfg(feature = "js")]
         let pane = pane.with_js_controls(
@@ -2024,6 +2030,7 @@ impl TuiApp {
                 }),
             },
             Command::ScriptPause => AppAction::ScriptPause,
+            Command::ScriptSkipQuest => AppAction::ScriptSkipQuest,
             Command::ScriptStop => AppAction::ScriptStop,
             #[cfg(feature = "js")]
             Command::ScriptLoad => {

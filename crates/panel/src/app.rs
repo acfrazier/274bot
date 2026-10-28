@@ -2795,6 +2795,15 @@ fn script_section(ui: &Ui, session: &mut Session) {
     let status = frontend_core::views::script_status_label(state, native);
     if let Some(native) = native {
         kv_row(ui, "status", status);
+        if matches!(state, ScriptRunState::Running | ScriptRunState::Paused)
+            && native.card() == frontend_core::scripts::CompiledCardId::QUESTER
+        {
+            ui.same_line();
+            if ui.small_button("Skip quest") {
+                session.script_skip_quest();
+            }
+            ui.set_item_tooltip("park the active quest row and continue with the next queue item");
+        }
         if let Some(reason) = frontend_core::views::script_status_reason(native) {
             ui.text_wrapped(reason);
         }

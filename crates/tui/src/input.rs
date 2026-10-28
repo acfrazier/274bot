@@ -220,9 +220,9 @@ impl TuiApp {
             "Overview" => "i log in · u log out · x remove · o settings · l loadouts · w manual walk",
             "Map" => "arrows pan · +/- zoom · Enter select/walk · / search · g group · t teleport · Esc back",
             #[cfg(feature = "js")]
-            "Script" => "b browse · t start · P pause · e stop · f load · v params · R reload · T/E all",
+            "Script" => "b browse · t start · P pause · e stop · k skip quest · f load · v params · R reload · T/E all",
             #[cfg(not(feature = "js"))]
-            "Script" => "b browse · t start · P pause · e stop · v params · T/E all",
+            "Script" => "b browse · t start · P pause · e stop · k skip quest · v params · T/E all",
             "Chat" if self.chat_data.is_modal_open() => "Up/Down choose · Space/Enter answer · p paint/chat",
             "Chat" => "p paint/chat · 1-9 paint buttons · Up/Down/Enter paint button",
             _ => "",
@@ -445,6 +445,7 @@ impl TuiApp {
             Command::ScriptStart
             | Command::ScriptPause
             | Command::ScriptStop
+            | Command::ScriptSkipQuest
             | Command::ScriptParams => return self.script_run(command),
             #[cfg(feature = "js")]
             Command::ScriptReload | Command::ScriptReloadCancel => {

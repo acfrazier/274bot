@@ -9436,3 +9436,39 @@ fn a_login_notice_stands_through_retry_states_and_expires_at_both_sizes() {
     assert_eq!(frames, 12);
     let _iso = iso;
 }
+
+#[test]
+fn unavailable_quester_skip_shows_and_expires_the_tui_refusal() {
+    use frontend_core::ERROR_MESSAGE_TIMEOUT as TIMEOUT;
+
+    let iso = IsolatedStores::enter("tui-quester-skip-refusal");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    assert_eq!(
+        app.show_screen(crate::layout::Screen::Script),
+        AppAction::None
+    );
+    let before = session.core.refusals();
+    let action = app.on_key(settings_key(KeyCode::Char('k')));
+    assert!(matches!(
+        &action,
+        AppAction::Refused(refusal)
+            if refusal.command == Some(OperatorCommand::SkipQuest)
+    ));
+    dispatch(&mut session, &mut app, action);
+
+    let message = "script: no active Quester queue";
+    assert_eq!(app.error.as_deref(), Some(message));
+    assert_eq!(session.core.refusals(), before + 1);
+    assert!(refusal_logged("SkipQuest on alice"));
+    for (width, height) in [(120, 40), (80, 24)] {
+        let shown = screen_words(&mut app, width, height);
+        assert!(shown.contains(message), "{width}x{height}: {shown}");
+    }
+
+    let now = Instant::now();
+    session.expire_error(&mut app, now);
+    session.expire_error(&mut app, now + TIMEOUT - Duration::from_secs(1));
+    assert_eq!(app.error.as_deref(), Some(message));
+    session.expire_error(&mut app, now + TIMEOUT);
+    assert_eq!(app.error, None, "the refusal expires at the shared timeout");
+}

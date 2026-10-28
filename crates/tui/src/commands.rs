@@ -69,6 +69,7 @@ pub enum Command {
     ScriptStart,
     ScriptPause,
     ScriptStop,
+    ScriptSkipQuest,
     #[cfg(feature = "js")]
     ScriptLoad,
     ScriptParams,
@@ -158,6 +159,7 @@ pub fn script_command(name: &str) -> Option<Command> {
         "Start" => Command::ScriptStart,
         "Pause" | "Resume" => Command::ScriptPause,
         "Stop" => Command::ScriptStop,
+        "Skip quest" => Command::ScriptSkipQuest,
         #[cfg(feature = "js")]
         "Load" => Command::ScriptLoad,
         "Params" => Command::ScriptParams,
@@ -249,6 +251,7 @@ impl Command {
         Command::ScriptStart,
         Command::ScriptPause,
         Command::ScriptStop,
+        Command::ScriptSkipQuest,
         #[cfg(feature = "js")]
         Command::ScriptLoad,
         Command::ScriptParams,
@@ -320,6 +323,7 @@ impl Command {
             | Command::ScriptStart
             | Command::ScriptPause
             | Command::ScriptStop
+            | Command::ScriptSkipQuest
             | Command::ScriptParams
             | Command::Fleet(
                 FleetAction::Start
@@ -394,6 +398,7 @@ impl Command {
             Command::ScriptPause if app.script_state == ScriptRunState::Paused => "Resume script",
             Command::ScriptPause => "Pause script",
             Command::ScriptStop => "Stop script",
+            Command::ScriptSkipQuest => "Skip quest",
             #[cfg(feature = "js")]
             Command::ScriptLoad => "Load script file",
             Command::ScriptParams => "Script parameters",
@@ -533,6 +538,7 @@ impl Command {
             Command::DismissNotice => &[NoNotice],
             Command::ScriptStart => &[NoFocusedBot, NoScriptPicked],
             Command::ScriptPause => &[NoFocusedBot, NoScriptToPause],
+            Command::ScriptSkipQuest => &[NoFocusedBot, NoQuesterQueue],
             Command::ScriptStop => &[NoFocusedBot, NoScriptToStop],
             Command::ScriptParams => &[NoParamsCard, ParamsUnavailable, NoParams],
             #[cfg(feature = "js")]
@@ -582,6 +588,7 @@ impl Command {
             }
             Command::ScriptPause => OperatorCommand::PauseScript,
             Command::ScriptStop => OperatorCommand::StopScript,
+            Command::ScriptSkipQuest => OperatorCommand::SkipQuest,
             #[cfg(feature = "js")]
             Command::ScriptReload if app.reload_confirm => OperatorCommand::ConfirmReload,
             #[cfg(feature = "js")]
@@ -637,6 +644,7 @@ impl Command {
             | Command::ScriptStart
             | Command::ScriptPause
             | Command::ScriptStop
+            | Command::ScriptSkipQuest
             | Command::MapTeleport => app.focused_name(),
             #[cfg(feature = "js")]
             Command::ScriptReload | Command::ScriptReloadCancel => app.focused_name(),
@@ -689,6 +697,7 @@ pub enum Unavailable {
     NoScriptPicked,
     NoScriptToPause,
     NoScriptToStop,
+    NoQuesterQueue,
     NoParamsCard,
     ParamsUnavailable,
     NoParams,
@@ -725,6 +734,7 @@ impl Unavailable {
             Unavailable::NoScriptPicked => "browse to pick a script first",
             Unavailable::NoScriptToPause => "no running script",
             Unavailable::NoScriptToStop => "no script running",
+            Unavailable::NoQuesterQueue => "no active Quester queue",
             Unavailable::NoParamsCard => "pick a script first",
             #[cfg(feature = "js")]
             Unavailable::NoReloadCard => "pick a script first",
@@ -767,6 +777,17 @@ impl Unavailable {
                 app.script_state,
                 ScriptRunState::Running | ScriptRunState::Paused
             ),
+            Unavailable::NoQuesterQueue => {
+                !matches!(
+                    app.script_state,
+                    ScriptRunState::Running | ScriptRunState::Paused
+                ) || app
+                    .focused_detail()
+                    .and_then(|detail| detail.native_status())
+                    .is_none_or(|status| {
+                        status.card() != frontend_core::scripts::CompiledCardId::QUESTER
+                    })
+            }
             Unavailable::NoScriptToStop => {
                 app.script_state == ScriptRunState::Idle && !app.script_queued
             }

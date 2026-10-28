@@ -146,6 +146,9 @@ pub enum OperatorCommand {
     /// Pause the running script (`OperatorSession::toggle_pause`,
     /// `session.rs:1728-1750`).
     PauseScript,
+    /// Request that the active Quester queue row be skipped at its next
+    /// eligible tick; the shared script host accepts or refuses at dispatch.
+    SkipQuest,
     /// Resume a paused script through the same operator row.
     ResumeScript,
     /// Stop the script (`OperatorSession::{stop_script, stop_scripts}`,
@@ -715,7 +718,7 @@ const ROUTED_MOVEMENT: &[ProcessCapability] = &[
 impl OperatorCommand {
     /// Every row once (parameterized rows with a representative value), for
     /// exhaustive checks.
-    pub const ALL: [OperatorCommand; 97] = [
+    pub const ALL: [OperatorCommand; 98] = [
         Self::Load,
         Self::Remove,
         Self::Login,
@@ -736,6 +739,7 @@ impl OperatorCommand {
         Self::StartScript,
         Self::PauseScript,
         Self::ResumeScript,
+        Self::SkipQuest,
         Self::StopScript,
         Self::CancelQueuedStart,
         Self::PickBrowseCard,
@@ -1021,6 +1025,7 @@ impl OperatorCommand {
             | Self::ReturnToProfileImportPath
             | Self::SetProfileImportDeletePrompt(_)
             | Self::DeleteProfileImportExport
+            | Self::SkipQuest
             | Self::CancelQueuedStart
             | Self::CancelSettingsSync
             | Self::DeferSettingsRestart
