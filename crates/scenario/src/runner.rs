@@ -1253,6 +1253,10 @@ impl ScenarioRunner {
                         })
                     })
                     .or_else(|| {
+                        self.combat_bank_returns
+                            .map(|s| format!("{} [bank_return={s:?}]", arm.name()))
+                    })
+                    .or_else(|| {
                         matches!(
                             self.current_step().kind,
                             StepKind::ObserveRandomEvent { .. }

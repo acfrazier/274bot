@@ -1708,7 +1708,7 @@ impl ChickenKillerBankCycle {
             && now.bank_generation > self.return_bank_generation
         {
             // The initial return plus at most three further returns.
-            if self.returns >= 4 {
+            if self.returns >= 1 + api::CHICKEN_BANK_MAX_RESTARTS {
                 self.restart_limit_spent = true;
                 self.further = false;
                 return;
