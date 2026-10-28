@@ -1333,11 +1333,13 @@ mod tests {
             .unwrap()
             .xp
             .insert("strength".into(), 112);
-        assert!(
-            witness(CoreCase::ChickenKillerBank, &baseline, too_many_trips.iter())
-                .qualify()
-                .is_err()
-        );
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            too_many_trips.iter()
+        )
+        .qualify()
+        .is_err());
         assert!(witness(CoreCase::ChickenKillerBank, &baseline, [&baseline])
             .qualify()
             .is_err());

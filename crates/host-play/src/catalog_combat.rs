@@ -1732,10 +1732,7 @@ impl ChickenKillerBankCycle {
         if self.returned {
             let xp = now.skill_xp("strength");
             let reference = *self.return_xp.get_or_insert(xp);
-            self.further |= !now.bank_open
-                && !now.bank_loaded
-                && near(now.tile, FALADOR_CHICKENS, 6)
-                && xp > reference;
+            self.further |= !now.bank_open && !now.bank_loaded && xp > reference;
         }
     }
 
