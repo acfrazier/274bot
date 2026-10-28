@@ -402,7 +402,6 @@ enum Phase {
     AwaitNoteMode {
         request_id: u64,
         evidence: EvidenceStamp,
-        started_at: Duration,
     },
     Act,
     AwaitTransfer {
@@ -410,11 +409,9 @@ enum Phase {
         before_slots: Option<u8>,
         item_id: i32,
         evidence: EvidenceStamp,
-        started_at: Duration,
     },
     ReconcileDeposit {
         evidence: EvidenceStamp,
-        started_at: Duration,
         reason: ops::DepositFailure,
     },
     AwaitClose {
@@ -437,7 +434,6 @@ struct DepositLogState {
     last_observation: Option<DepositObservationKey>,
     last_logged_tick: u64,
     dispatch_evidence: Option<EvidenceStamp>,
-    started_at: Duration,
     dispatch_accepted: Option<bool>,
     chat_since: Option<i32>,
 }
@@ -1074,7 +1070,6 @@ impl NativeMachine for BankMachine {
                 Phase::AwaitNoteMode {
                     request_id,
                     evidence,
-                    started_at,
                 } => {
                     let current_evidence = cx.evidence();
                     let timed_out = ops::observed_wait_expired(
@@ -1284,7 +1279,6 @@ impl NativeMachine for BankMachine {
                     | BankAction::DepositAll { .. }
                     | BankAction::DepositProducts { .. }
                     | BankAction::DepositCapacity { .. } => {
-                        let now = cx.active_now();
                         let snapshot = cx.snapshot();
                         let pack = snapshot.inventory().map(|rows| rows.value);
                         if matches!(
@@ -1437,7 +1431,6 @@ impl NativeMachine for BankMachine {
                                     main_revision: snapshot.inventory_packet_generation(),
                                     side_revision: snapshot.bank_side_packet_generation(),
                                 });
-                                let started_at = cx.active_now();
                                 let request = std::task::ready!(crate::native::defer_budget(
                                     cx.emit_bank_deposit(
                                         ops::deposit_req(click, self.session),
@@ -1473,7 +1466,6 @@ impl NativeMachine for BankMachine {
                                     dispatch_evidence: None,
                                     dispatch_accepted: None,
                                     chat_since: None,
-                                    started_at,
                                 }));
                                 self.view_armed = false;
                                 self.deadline = None;
@@ -1482,7 +1474,6 @@ impl NativeMachine for BankMachine {
                                     before_slots,
                                     item_id: click.id,
                                     evidence: cx.evidence(),
-                                    started_at,
                                 };
                                 return Poll::Pending;
                             }
@@ -1492,7 +1483,6 @@ impl NativeMachine for BankMachine {
                 },
                 Phase::ReconcileDeposit {
                     evidence,
-                    started_at,
                     reason,
                 } => {
                     if !self.same_session(cx) {
@@ -1549,7 +1539,6 @@ impl NativeMachine for BankMachine {
                     before_slots,
                     item_id,
                     evidence,
-                    started_at,
                 } => {
                     if cx.evidence().run != evidence.run
                         || cx.evidence().sequence <= evidence.sequence
@@ -1592,7 +1581,6 @@ impl NativeMachine for BankMachine {
                                 }
                                 self.phase = Phase::ReconcileDeposit {
                                     evidence: cx.evidence(),
-                                    started_at: cx.active_now(),
                                     reason,
                                 };
                                 return Poll::Pending;
@@ -2054,7 +2042,7 @@ impl BankMachine {
         item_id: i32,
         evidence: EvidenceStamp,
     ) -> Result<TransferWait, ActionError> {
-        let (dispatched, started_at, accepted, chat_since) = {
+        let (dispatched, accepted, chat_since) = {
             let Some(state) = self.deposit_log.as_mut() else {
                 return Ok(TransferWait::Pending);
             };
@@ -2071,7 +2059,6 @@ impl BankMachine {
             }
             (
                 state.dispatch_evidence.unwrap_or(evidence),
-                state.started_at,
                 state.dispatch_accepted,
                 state.chat_since,
             )
@@ -2111,7 +2098,6 @@ impl BankMachine {
         let timed_out = ops::observed_wait_expired(
             dispatched.tick,
             stamp.tick,
-            cx.active_now().saturating_sub(started_at),
             ops::TRANSFER_OBSERVED_TICK_LIMIT,
         );
         let click_main_revision = self
@@ -2363,7 +2349,6 @@ impl BankMachine {
             self.item_mode_ensured = true;
         }
         if !self.item_mode_ensured {
-            let started_at = cx.active_now();
             let request_id = std::task::ready!(crate::native::defer_budget(
                 cx.emit(ops::note_req(NoteIntent::Item))
             ))?;
@@ -2372,11 +2357,9 @@ impl BankMachine {
             self.phase = Phase::AwaitNoteMode {
                 request_id,
                 evidence,
-                started_at,
             };
             return Poll::Ready(Ok(Clicked::Sent));
         }
-        let started_at = cx.active_now();
         std::task::ready!(crate::native::defer_budget(cx.emit(request)))?;
 
         self.phase = Phase::AwaitTransfer {
@@ -2384,7 +2367,6 @@ impl BankMachine {
             before_slots: None,
             item_id: goal.lands_as_id,
             evidence: cx.evidence(),
-            started_at,
         };
         Poll::Ready(Ok(Clicked::Sent))
     }
