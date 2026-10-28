@@ -180,8 +180,8 @@ impl World {
                 .npcs(vec![EntityRow {
                     index: 50,
                     name: Some(self.facts.luthas_name.clone().into()),
-                    x: self.facts.luthas_anchor.x + 1,
-                    z: self.facts.luthas_anchor.z,
+                    x: self.facts.luthas_anchor.x,
+                    z: self.facts.luthas_anchor.z + 1,
                     level: self.facts.luthas_anchor.level,
                     distance: 1,
                     actions: vec!["Talk-to".into()].into(),
@@ -588,12 +588,14 @@ fn failed_luthas_approaches_spend_the_budget_and_keep_the_last_detail() {
             };
             assert_ne!(stand, last_stand, "retry changes stand after each failure");
             let npc = WorldTile {
-                x: luthas.x + 1,
-                z: luthas.z,
+                x: luthas.x,
+                z: luthas.z + 1,
                 level: luthas.level,
             };
+            assert_ne!(stand, luthas, "retry does not reuse the initial stand");
             assert_eq!(stand.level, npc.level);
-            assert!((stand.x - npc.x).abs() <= 1 && (stand.z - npc.z).abs() <= 1);
+            assert_eq!(stand.z, npc.z, "retry uses the other adjacent axis");
+            assert_eq!(stand.x.abs_diff(npc.x), 1);
             last_stand = stand;
             retry_stand = Some(stand);
         } else {
