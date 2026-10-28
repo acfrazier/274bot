@@ -6696,9 +6696,22 @@ fn single_action_per_native_tick(capture: &CombatCapture) -> bool {
 }
 
 fn report_multi_op_count_matches(capture: &CombatCapture, report: &Value) -> bool {
+    // The report counter spans the combat machine's observed tick window.
+    // Exclude quest setup plans that ran before this report's combat started.
+    let Some(report_tick) = integer(report, "combat_evidence_tick") else {
+        return false;
+    };
+    let Some(combat_ticks) = integer(report, "combat_ticks").filter(|ticks| *ticks > 0) else {
+        return false;
+    };
+    let Some(first_tick) = report_tick.checked_sub(combat_ticks - 1) else {
+        return false;
+    };
     let observed = batch_plans(capture)
         .iter()
-        .filter(|plan| plan.rows.len() >= 2)
+        .filter(|plan| {
+            (first_tick..=report_tick).contains(&plan.tick) && plan.rows.len() >= 2
+        })
         .count() as i64;
     integer(report, "combat_multi_op_plans") == Some(observed)
 }
