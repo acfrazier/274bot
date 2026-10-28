@@ -306,18 +306,14 @@ fn token(op: &InteractReq) -> u64 {
         other => panic!("not a walk: {other:?}"),
     }
 }
-fn walk_tile(op: &InteractReq) -> WorldTile {
+fn walk_radius(op: &InteractReq) -> i32 {
     match op {
-        InteractReq::Walk { x, z, level, .. } | InteractReq::WalkNear { x, z, level, .. } => {
-            WorldTile {
-                x: *x,
-                z: *z,
-                level: *level,
-            }
-        }
+        InteractReq::WalkNear { radius, .. } => *radius,
+        InteractReq::Walk { .. } => 0,
         other => panic!("not a walk: {other:?}"),
     }
 }
+
 
 fn orthogonally_adjacent(left: WorldTile, right: WorldTile) -> bool {
     left.level == right.level
@@ -394,6 +390,14 @@ fn install_luthas_reach_view_with(
 }
 
 fn install_luthas_staging_reach_view(anchor: WorldTile) {
+    install_luthas_staging_reach_view_with_ranks(anchor, 0, 1);
+}
+
+fn install_luthas_staging_reach_view_with_ranks(
+    anchor: WorldTile,
+    staged_rank: u16,
+    other_rank: u16,
+) {
     let npc = WorldTile {
         x: anchor.x,
         z: anchor.z + 1,
@@ -430,7 +434,11 @@ fn install_luthas_staging_reach_view(anchor: WorldTile) {
             set_reach_bit(&mut walkable, i);
             set_reach_bit(&mut reachable, i);
             set_reach_bit(&mut reachable_adj, i);
-            exact_rank[i] = if stand == staged { 0 } else { 1 };
+            exact_rank[i] = if stand == staged {
+                staged_rank
+            } else {
+                other_rank
+            };
             adjacent_rank[i] = 1;
         }
     }
@@ -450,6 +458,237 @@ fn install_luthas_staging_reach_view(anchor: WorldTile) {
         canlight: Vec::new(),
     });
 }
+
+fn install_ranked_luthas_reach_view(anchor: WorldTile, ranked_stands: &[(WorldTile, u16)]) {
+    let npc = WorldTile {
+        x: anchor.x,
+        z: anchor.z + 1,
+        level: anchor.level,
+    };
+    let base_x = npc.x - 2;
+    let base_z = npc.z - 2;
+    let width = 5;
+    let height = 5;
+    let index = |tile: WorldTile| {
+        ((tile.x - base_x) as usize) * height as usize + (tile.z - base_z) as usize
+    };
+    let mut walkable = vec![0; 1];
+    let mut reachable = vec![0; 1];
+    let mut reachable_adj = vec![0; 1];
+    let mut exact_rank = vec![u16::MAX; width as usize * height as usize];
+    let mut adjacent_rank = vec![u16::MAX; width as usize * height as usize];
+    for (stand, rank) in ranked_stands {
+        let i = index(*stand);
+        set_reach_bit(&mut walkable, i);
+        set_reach_bit(&mut reachable, i);
+        set_reach_bit(&mut reachable_adj, i);
+        exact_rank[i] = *rank;
+        adjacent_rank[i] = *rank;
+    }
+    crate::reach_query::set_view_for_tests(ReachQueryView {
+        available: true,
+        base_x,
+        base_z,
+        level: anchor.level,
+        width,
+        height,
+        walkable,
+        reachable,
+        reachable_adj,
+        exact_rank,
+        adjacent_rank,
+        step: vec![0; width as usize * height as usize],
+        canlight: Vec::new(),
+    });
+}
+
+#[test]
+fn a_far_start_walks_to_luthas_spawn_without_a_scene_reach_gate() {
+    reset();
+    let brimhaven_cart = WorldTile {
+        x: 2776,
+        z: 3214,
+        level: 0,
+    };
+    let mut world = World::new(brimhaven_cart, 5);
+    let anchor = world.facts.luthas_anchor;
+    world.luthas_posted = false;
+    install_luthas_staging_reach_view_with_ranks(anchor, 401, 401);
+    world.post();
+    let coins = world.facts.coins;
+    let fare = world.facts.coin_payout;
+    fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
+
+    let (_recover, _clock, _logs, ops) = start_recovery();
+    assert!(
+        matches!(ops.as_slice(), [op] if walk_near(anchor, 2)(op)),
+        "a far start walks to Luthas's spawn tile with radius 2: {ops:?}"
+    );
+}
+
+#[test]
+fn a_short_luthas_staging_walk_without_a_row_retries() {
+    reset();
+    let mut world = World::new(MUSA, 5);
+    let anchor = world.facts.luthas_anchor;
+    world.luthas_posted = false;
+    install_luthas_staging_reach_view(anchor);
+    world.post();
+    let coins = world.facts.coins;
+    let fare = world.facts.coin_payout;
+    fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
+
+    let (mut recover, mut clock, mut logs, ops) = start_recovery();
+    let walk = ops.first().expect("staging walk starts");
+    let staging_tile = walk_tile(walk);
+    world.tick += 1;
+    post_walk_outcome(
+        world.tick,
+        token(walk),
+        world.here,
+        staging_tile,
+        walk_radius(walk),
+        false,
+    );
+    let (result, ops) = recovery_step_observed(&mut recover, &mut clock, &mut logs);
+
+    assert_eq!(result, None, "a short walk is retried");
+    assert!(
+        matches!(ops.as_slice(), [op] if walk_near(anchor, 2)(op)),
+        "retry starts a fresh walk to Luthas's spawn tile: {ops:?}"
+    );
+    assert!(
+        logs.iter()
+            .any(|line| line.contains("staging attempt 1/3 failed")),
+        "short walk is recorded as a failed staging attempt: {logs:?}"
+    );
+}
+
+#[test]
+fn staging_walk_failures_share_three_attempts_and_keep_the_last_detail() {
+    reset();
+    let mut world = World::new(MUSA, 5);
+    let anchor = world.facts.luthas_anchor;
+    world.luthas_posted = false;
+    install_luthas_staging_reach_view(anchor);
+    world.post();
+    let coins = world.facts.coins;
+    let fare = world.facts.coin_payout;
+    fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
+
+    let (mut recover, mut clock, mut logs, ops) = start_recovery();
+    let mut walk = ops[0].clone();
+    for attempt in 1..=3 {
+        let staging_tile = walk_tile(&walk);
+        world.tick += 1;
+        post_walk_outcome(
+            world.tick,
+            token(&walk),
+            world.here,
+            staging_tile,
+            walk_radius(&walk),
+            true,
+        );
+        let (result, ops) = recovery_step_observed(&mut recover, &mut clock, &mut logs);
+        if attempt < 3 {
+            assert_eq!(result, None, "attempt {attempt} retries");
+            assert_eq!(ops.len(), 1, "attempt {attempt} starts a fresh walk");
+            walk = ops[0].clone();
+        } else {
+            assert_eq!(result, Some(false), "the third failure is terminal");
+            assert!(ops.is_empty());
+        }
+    }
+
+    assert_eq!(
+        logs.iter()
+            .filter(|line| line.contains("staging attempt") && line.contains("failed"))
+            .count(),
+        3,
+        "staging failures use the three-attempt budget: {logs:?}"
+    );
+    assert!(
+        logs.back().is_some_and(|line| {
+            line.contains("recovery ended after attempt 3/3")
+                && line.contains("the host walk did not reach Luthas's spawn tile")
+        }),
+        "terminal outcome keeps the last failure detail: {logs:?}"
+    );
+    assert!(
+        !logs.iter().any(|line| line.contains("Luthas approach")),
+        "staging failures do not log talk approaches"
+    );
+}
+
+#[test]
+fn being_at_luthas_staging_tile_checks_the_row_before_another_walk() {
+    reset();
+    let mut world = World::new(MUSA, 5);
+    let anchor = world.facts.luthas_anchor;
+    world.here = WorldTile {
+        x: anchor.x,
+        z: anchor.z - 1,
+        level: anchor.level,
+    };
+    world.luthas_posted = false;
+    install_luthas_staging_reach_view(anchor);
+    world.post();
+    let coins = world.facts.coins;
+    let fare = world.facts.coin_payout;
+    fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
+
+    let mut ops = Vec::new();
+    let mut clock = InstantTaskClock::new();
+    let mut logs = VecDeque::new();
+    let recovery = {
+        let mut cx = Cx::test(&mut ops, &mut clock, None);
+        Recover::start(PORT_SARIM, &mut cx, &mut logs)
+    };
+    assert!(recovery.is_err(), "no-row recovery ends after the row check");
+    assert!(ops.is_empty(), "do not walk away before checking the row");
+    assert!(
+        logs.iter()
+            .any(|line| line.contains("no posted talkable Luthas row")),
+        "the row check records its result: {logs:?}"
+    );
+}
+
+#[test]
+fn luthas_stand_selection_uses_search_rank_before_manhattan_distance() {
+    reset();
+    let mut world = World::new(MUSA, 5);
+    let anchor = world.facts.luthas_anchor;
+    let npc = WorldTile {
+        x: anchor.x,
+        z: anchor.z + 1,
+        level: anchor.level,
+    };
+    let lower_rank = anchor;
+    let closer = WorldTile {
+        x: npc.x + 1,
+        z: npc.z,
+        level: npc.level,
+    };
+    world.here = WorldTile {
+        x: closer.x + 1,
+        z: closer.z,
+        level: closer.level,
+    };
+    install_ranked_luthas_reach_view(anchor, &[(lower_rank, 1), (closer, 2)]);
+    world.post();
+    let coins = world.facts.coins;
+    let fare = world.facts.coin_payout;
+    fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
+
+    let (_recover, _clock, _logs, ops) = start_recovery();
+    assert_eq!(ops.len(), 1);
+    assert_eq!(
+        walk_tile(&ops[0]),
+        lower_rank,
+        "search rank wins when the lower-rank tile is farther away"
+    );
+}
+
 
 fn is_talk(name: String) -> impl Fn(&InteractReq) -> bool {
     move |op| {
@@ -928,22 +1167,18 @@ fn initial_luthas_move_stages_without_a_posted_row_then_replans_orthogonally() {
         Recover::start(PORT_SARIM, &mut cx, &mut logs)
             .expect("a no-row recovery starts with a staging walk")
     };
-    assert!(matches!(ops.as_slice(), [InteractReq::Walk { .. }]));
-    let staging_stand = walk_tile(&ops[0]);
-    assert_eq!(
-        staging_stand,
-        WorldTile {
-            x: anchor.x,
-            z: anchor.z - 1,
-            level: anchor.level,
-        }
-    );
     assert!(
-        !orthogonally_adjacent(staging_stand, npc),
-        "the no-row staging walk is not an NPC approach"
+        matches!(ops.as_slice(), [op] if walk_near(anchor, 2)(op)),
+        "a no-row recovery walks to Luthas's spawn tile: {ops:?}"
+    );
+    let staging_tile = walk_tile(&ops[0]);
+    assert_eq!(staging_tile, anchor);
+    assert!(
+        !ops.iter().any(|op| matches!(op, InteractReq::Npc { .. })),
+        "staging does not talk to Luthas"
     );
 
-    world.here = staging_stand;
+    world.here = staging_tile;
     world.luthas_posted = true;
     let (result, ops) = recovery_step(&mut world, &mut recover, &mut clock, &mut logs);
     assert_eq!(result, None);
