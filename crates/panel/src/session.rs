@@ -910,6 +910,8 @@ pub struct Session {
     /// the selected bot (mirrored into `focus.focused` for slot threads),
     /// per-slot [`SlotIo`], removals and operation results.
     pub core: OperatorSession<SlotIo>,
+    /// Terminal Quit was submitted; Drop must not submit it a second time.
+    play_retired: bool,
     /// Last vault/connection error shown in the banner.
     pub error: Option<String>,
     /// The banner message's expiry clock ([`Self::expire_error`]).
@@ -1601,6 +1603,7 @@ impl Session {
                 renderer_by: HashMap::new(),
             })),
             core,
+            play_retired: false,
             error: None,
             error_expiry: frontend_core::ErrorExpiry::default(),
             mainland: Arc::new(AtomicBool::new(
@@ -5209,6 +5212,10 @@ fn warn_stress50_debug() {
 impl Session {
     /// Retire every slot through Quit before the window releases its GPU driver.
     pub(crate) fn retire_play(&mut self) {
+        if self.play_retired {
+            return;
+        }
+        self.play_retired = true;
         let (core, mut surface) = self.core_and_surface();
         let _ = core.submit(OperatorCommand::Quit, Targets::Everyone, &mut surface);
     }
