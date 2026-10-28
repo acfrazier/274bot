@@ -795,9 +795,11 @@ fn watched_setting_events_report_pending_failed_then_saved() {
     assert_eq!(settled_app(&mut d, other.request()), Some(done()));
     let (events, incomplete) = d.session_mut().take_setting_events();
     assert!(!incomplete);
-    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events.len(), 2, "{events:?}");
     assert_eq!(events[0].setting(), "nav.allow_wilderness");
-    assert_eq!(events[0].state(), SettingEventState::Saved);
+    assert_eq!(events[0].state(), SettingEventState::Pending);
+    assert_eq!(events[1].setting(), "nav.allow_wilderness");
+    assert_eq!(events[1].state(), SettingEventState::Saved);
 
     // A retry of the original setting reports its own durable result.
     let submitted = d
