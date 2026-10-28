@@ -666,7 +666,6 @@ impl Combat {
     ) -> Result<TickPlan, ActionError> {
         let was_idle = self.switch == SwitchState::Idle;
         let plan = self.plan(frame, tick, cx)?;
-        eprintln!("DBGPLAN t={tick} switch={:?} rows={:?}", self.switch, plan.iter().map(|r| (r.kind, r.id, r.aux)).collect::<Vec<_>>());
         if was_idle {
             if let SwitchState::Converging { since, .. } = self.switch {
                 if since == tick && !plan.contains(RowKind::Wear) {

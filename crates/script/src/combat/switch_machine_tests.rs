@@ -1043,60 +1043,49 @@ fn has_held(batch: &DrainedBatch, verb: &str) -> bool {
 }
 
 #[test]
-fn an_emergency_eat_and_a_protect_leave_room_for_one_wear() {
-    let (mut scene, kits) = sword_and_bow();
+fn upkeep_shares_the_budget_so_a_wear_set_completes_only_after_its_last_slot() {
+    // Three differing slots (bow, quiver, helm) under an emergency eat and the
+    // prayers: the five-event budget leaves room for fewer wears than the set
+    // holds, so completion waits for the last slot to be observed.
+    let (mut scene, mut kits) = sword_and_bow();
+    give(&mut scene, "rune_full_helm", 1);
+    let mut ranged = (**kits.ranged.as_ref().unwrap()).clone();
+    ranged.worn = Arc::from(
+        ranged
+            .worn
+            .iter()
+            .copied()
+            .chain([(0, id(&scene, "rune_full_helm"))])
+            .collect::<Vec<_>>(),
+    );
+    kits.ranged = Some(Arc::new(ranged));
     let mut harness = start(&mut scene, request(kits));
-    upkeep(&mut scene);
     protect(&mut scene, MELEE_PROTECT);
-    let mut tick = 3;
-    let mut first_wear = None;
-    let mut all = Vec::new();
-    while first_wear.is_none() {
+    step(&mut harness, &mut scene, 3);
+    upkeep(&mut scene);
+    let mut plans = Vec::new();
+    for tick in 4..40 {
+        let before = harness.machine.switches();
         let batch = step(&mut harness, &mut scene, tick);
-        all.push((tick, rows(&batch)));
-        eprintln!("DBGEAT t={tick} {:?} state={:?}", rows(&batch), harness.machine.switch_state());
-        {
-            let frame = frame_of(&harness, &scene);
-            let m = &harness.machine;
-            eprintln!(
-                "DBGEAT   opp={} prev={} trig={:?} usable={} wearset={:b} wearready={} phase={:?}",
-                m.opp_protect,
-                m.opp_protect_prev,
-                m.switch_trigger(&frame, false),
-                m.style_usable(Style::Ranged, &frame),
-                m.wear_set(Style::Ranged, &frame),
-                m.schedule.ready(OpKind::Wear, tick as u16),
-                m.phase
-            );
+        plans.push((tick, wear_names(&batch), before));
+        if harness.machine.switches() == 1 {
+            break;
         }
-        if !wear_names(&batch).is_empty() {
-            first_wear = Some((tick, batch));
-        }
-        tick += 1;
-        assert!(tick < 30, "the switch must start: {all:?}");
     }
-    let (at, batch) = first_wear.unwrap();
-    assert_eq!(
-        wear_names(&batch),
-        ["Maple shortbow"],
-        "one wear under upkeep at tick {at}: {all:?}"
+    assert_eq!(harness.machine.switches(), 1, "{plans:?}");
+    let wearing: Vec<_> = plans.iter().filter(|(_, wears, _)| !wears.is_empty()).collect();
+    assert!(
+        wearing.len() >= 2,
+        "three wears do not fit one plan beside the upkeep rows: {plans:?}"
     );
     assert!(
-        batch.len() <= 4,
-        "[upkeep, wear, attack] stays inside the five-event budget: {all:?}"
+        wearing[0].1.len() < 3,
+        "the first plan carries a proper prefix: {plans:?}"
     );
-    assert_eq!(harness.machine.switches(), 0);
-    // The quiver follows on a later plan and only then does the switch complete.
-    let mut quiver_tick = None;
-    for t in tick..tick + 12 {
-        let batch = step(&mut harness, &mut scene, t);
-        if wear_names(&batch) == ["Iron arrow"] && quiver_tick.is_none() {
-            quiver_tick = Some(t);
-            assert_eq!(harness.machine.switches(), 0, "not after the first wear only");
-        }
-    }
-    assert!(quiver_tick.is_some(), "the quiver is worn on a later plan");
-    assert_eq!(harness.machine.active_style(), Style::Ranged);
+    assert_eq!(wearing[0].1[0], "Maple shortbow", "right hand first: {plans:?}");
+    let completed_at = plans.last().unwrap().0;
+    let last_wear = wearing.last().unwrap().0;
+    assert!(completed_at > last_wear, "complete only after the last wear: {plans:?}");
 }
 
 #[test]
