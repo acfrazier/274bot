@@ -297,7 +297,6 @@ impl<Io> OperatorSession<Io> {
         self.commands.preferences_pending() || !self.order_writes.is_empty()
     }
 
-
     /// Ask the session to record saved-setting transitions for this front
     /// end (drained with [`Self::take_setting_events`]). Off by default:
     /// while off, a transition costs one bool check and records nothing.
@@ -535,9 +534,10 @@ impl<Io> OperatorSession<Io> {
             draw.persist
         };
         let write = match (persist, DrawPolicy::key(switch)) {
-            (true, Some(key)) => {
-                Some((key, self.write_preference(key, serde_json::Value::Bool(on), key)))
-            }
+            (true, Some(key)) => Some((
+                key,
+                self.write_preference(key, serde_json::Value::Bool(on), key),
+            )),
             _ => None,
         };
         surface.draw_changed(switch, on);

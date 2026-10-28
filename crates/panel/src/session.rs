@@ -1838,9 +1838,7 @@ impl Session {
     }
 
     /// The panel-owned members' transitions recorded since the last call.
-    pub(crate) fn take_panel_setting_events(
-        &mut self,
-    ) -> Vec<frontend_core::SettingEvent> {
+    pub(crate) fn take_panel_setting_events(&mut self) -> Vec<frontend_core::SettingEvent> {
         std::mem::take(&mut self.setting_events)
     }
 
@@ -1891,20 +1889,12 @@ impl Session {
         }
         match self.preferences.begin_patch(patch) {
             Ok(Update::Durable) => {
-                self.note_panel_setting(
-                    &member,
-                    frontend_core::SettingEventState::Saved,
-                    None,
-                );
+                self.note_panel_setting(&member, frontend_core::SettingEventState::Saved, None);
                 self.clear_succeeded_panel_members(&[member]);
                 Ok(())
             }
             Ok(update @ Update::Queued(_)) => {
-                self.note_panel_setting(
-                    &member,
-                    frontend_core::SettingEventState::Pending,
-                    None,
-                );
+                self.note_panel_setting(&member, frontend_core::SettingEventState::Pending, None);
                 self.panel_preference_writes.push(PanelPreferenceWrite {
                     update,
                     members: vec![member],
