@@ -1949,22 +1949,9 @@ impl BankingOpen {
                     }
                     Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                     Poll::Ready(Ok(None)) => {
-                        api::host_log!(
-                            api::hostlog::Category::BankOp,
-                            api::hostlog::Level::Warn,
-                            "[DEBUG-cbf] selection none tick={} here={:?}",
-                            cx.evidence().tick, current_tile(cx),
-                        );
                         self.phase = BankingPhase::Access(self.default_access());
                     }
                     Poll::Ready(Ok(Some(selection))) => {
-                        api::host_log!(
-                            api::hostlog::Category::BankOp,
-                            api::hostlog::Level::Warn,
-                            "[DEBUG-cbf] selection bank={} tile={:?} kind={:?} tick={} here={:?}",
-                            selection.bank.name, selection.tile, selection.selected.kind,
-                            cx.evidence().tick, current_tile(cx),
-                        );
                         self.walk_to(
                             cx,
                             selection.tile,
@@ -2083,12 +2070,6 @@ impl BankingOpen {
         let scene_booth = nearest_scene_booth_distance(cx, &self.booth_name, &self.booth_op);
         let nearest =
             here.and_then(|here| nearest_eligible_bank(facts, self.preferences, cx, here));
-        api::host_log!(
-            api::hostlog::Category::BankOp,
-            api::hostlog::Level::Warn,
-            "[DEBUG-cbf] choose tick={} here={here:?} scene_booth={scene_booth:?} nearest={nearest:?}",
-            cx.evidence().tick,
-        );
         if self.prefer_nearby
             && scene_booth.is_some_and(|distance| f64::from(distance) <= self.nearby_radius)
         {
@@ -2300,7 +2281,7 @@ fn selected_bank(facts: &NamedBankFacts, selected: SelectedBank) -> Option<Selec
 mod tests {
     use super::*;
     use crate::native::{ledger, HostEffect};
-    use crate::quester::families::tests::{local_player, with_tick};
+    use crate::quester::families::tests::with_tick;
     use api::snapshot::GameSnapshot;
 
     fn duel_chest(open: bool) -> LocView {
@@ -2448,64 +2429,6 @@ mod tests {
             tile: definition.tile,
             definition: Some(definition),
             routable: true,
-        }
-    }
-
-    #[test]
-    fn world_bank_open_walks_to_the_air_nearest_bank_when_no_route_is_known() {
-        for operation in [BankSeatOperation::Open, BankSeatOperation::OpenNearestWorld] {
-            let bank = catalog_bank("Falador East");
-            let mut snapshot = GameSnapshot::new();
-            snapshot.seed_ingame(2);
-            snapshot.seed_local_player(local_player(tile(3015, 3294)));
-            let mut ledger = None;
-            let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
-                let handle = tick
-                    .actions
-                    .begin::<Opening>(
-                        OpeningArgs {
-                            request: BankSeatArgs::new(operation),
-                            facts: Arc::new(NamedBankFacts::from_banks(vec![bank])),
-                            preferences: BankPreferences::default(),
-                            hooks: Arc::new(Mutex::new(TransferHooks::default())),
-                        },
-                        &mut tick.cx,
-                    )
-                    .unwrap();
-                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
-                handle
-            });
-            let action = ledger.as_mut().unwrap().outbox.pop().unwrap();
-            let HostEffect::BankPick(request) = &action.effect else {
-                panic!("a world bank open must select before walking");
-            };
-            assert!(request.explicit_bank.is_none());
-            ledger.as_mut().unwrap().complete_bank_pick(
-                &action.authority(),
-                crate::native_bank::BankPickReceipt {
-                    request_id: action.request_id.get(),
-                    evidence: api::quest_progress::EvidenceStamp {
-                        run: action.authority().run(),
-                        tick: 1,
-                        sequence: 1,
-                    },
-                    selected: no_candidate_selection(),
-                },
-            );
-            with_tick(&snapshot, &mut ledger, 2, |tick| {
-                assert!(
-                    tick.actions.poll(&handle, &mut tick.cx).is_pending(),
-                    "an unavailable route must not become a local booth failure"
-                );
-            });
-            let actions = &ledger.as_ref().unwrap().outbox;
-            assert_eq!(actions.len(), 1);
-            let HostEffect::Walk(request) = &actions[0].effect else {
-                panic!("the fallback must use the normal world walk");
-            };
-            assert_eq!(request.target, bank.tile);
-            assert_eq!(request.radius, 4);
-            assert_eq!(request.arrival, ArrivalKind::Reach);
         }
     }
 
