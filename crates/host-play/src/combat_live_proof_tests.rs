@@ -5821,7 +5821,6 @@ fn m2_ready(capture: &CombatCapture) -> bool {
     let Some(boost_doses) = integer(report, "combat_boost_doses") else {
         return false;
     };
-    let locked_ticks = integer(report, "combat_locked_ticks").unwrap_or(-1);
     let protected_hits = integer(report, "combat_hits_while_protected").unwrap_or(-1);
     let plans = batch_plans(capture);
     // Require a boost count only when Prep lies inside the report window.
