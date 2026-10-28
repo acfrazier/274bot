@@ -1234,9 +1234,12 @@ fn m2_prep_drink_before_a_late_first_attack_needs_no_tick_three_plan() {
     );
 
     for (tick, batch, sequence) in [(41, 3, 4), (42, 5, 5)] {
-        capture
-            .actions
-            .push(m2_lock_action(tick, batch, sequence, json!({"op": "held", "action": "eat"})));
+        capture.actions.push(m2_lock_action(
+            tick,
+            batch,
+            sequence,
+            json!({"op": "held", "action": "eat"}),
+        ));
         assert!(
             !all_drinks_respect_lock(&capture),
             "the Prep drink still blocks actions at tick {tick}"
