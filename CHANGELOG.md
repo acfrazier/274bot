@@ -18,6 +18,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Combat
 
+- The poison condition now matches the Strange fruit chat line and inventory
+  loss across adjacent game ticks. It does not infer a cure when either signal
+  is missing or arrives outside the one-tick window.
 - Bots now drink their boost potion before the first hit even when the target
   starts out of reach.
 - Bots now know how hard common monsters such as cows, chickens, rats and
