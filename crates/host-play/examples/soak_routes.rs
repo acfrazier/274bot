@@ -201,16 +201,15 @@ fn write_client_approach(
         || approach.shape == LocShape::CENTREPIECE_DIAGONAL
         || approach.shape == LocShape::GROUND_DECOR;
     let (loc_width, loc_length, loc_angle, loc_shape, forceapproach) = if centrepiece {
-        let (width, height) = if approach.angle == LocAngle::WEST || approach.angle == LocAngle::EAST
-        {
+        let (width, height) = if approach.angle == LocAngle::WEST || approach.angle == LocAngle::EAST {
             (loc.width, loc.length)
         } else {
             (loc.length, loc.width)
         };
         let mut forceapproach = loc.forceapproach;
         if approach.angle != 0 {
-            forceapproach = ((forceapproach << approach.angle) & 0xf)
-                + (forceapproach >> (4 - approach.angle));
+            forceapproach =
+                ((forceapproach << approach.angle) & 0xf) + (forceapproach >> (4 - approach.angle));
         }
         (width, height, 0, 0, forceapproach)
     } else {
@@ -220,14 +219,10 @@ fn write_client_approach(
         (0, 0, approach.angle, loc_shape, 0)
     };
 
-    let Some((first_base_x, last_base_x)) =
-        scene_base_range(source.x, target.x)
-    else {
+    let Some((first_base_x, last_base_x)) = scene_base_range(source.x, target.x) else {
         return write_approach_error(batch, approach, None, "endpoints-do-not-fit-scene", out);
     };
-    let Some((first_base_z, last_base_z)) =
-        scene_base_range(source.z, target.z)
-    else {
+    let Some((first_base_z, last_base_z)) = scene_base_range(source.z, target.z) else {
         return write_approach_error(batch, approach, None, "endpoints-do-not-fit-scene", out);
     };
 
@@ -382,7 +377,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .filter(|target| world.collision.standable(*target))
             .collect();
         for source in batch.sources.into_iter().map(tile) {
-            write_routes(&world, &state, &batch.name, source, &targets, "route", &mut out)?;
+            write_routes(
+                &world,
+                &state,
+                &batch.name,
+                source,
+                &targets,
+                "route",
+                &mut out,
+            )?;
         }
         for [here, hazard] in batch.retreats {
             if let Some(target) = script::gatherer::test_hazard_retreat_stand(

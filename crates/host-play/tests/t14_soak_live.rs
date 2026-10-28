@@ -945,11 +945,7 @@ fn bank_settings(site: &BankSite) -> Map<String, Value> {
     settings.insert("site".into(), json!(site.id));
     settings.insert(
         "radius".into(),
-        json!(if site.resource == "normal" {
-            2
-        } else {
-            12
-        }),
+        json!(if site.resource == "normal" { 2 } else { 12 }),
     );
     settings.insert("disposition".into(), json!("Bank"));
     settings.insert("bank".into(), json!(site.bank));
@@ -1257,9 +1253,7 @@ fn drive_frame(
                 writer,
                 run_started,
                 "site-walk-boundary",
-                &format!(
-                    "work/bank route left the audited non-aggressive area at {tile:?}"
-                ),
+                &format!("work/bank route left the audited non-aggressive area at {tile:?}"),
             );
         }
     }
