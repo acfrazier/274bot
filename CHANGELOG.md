@@ -68,6 +68,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   has settled it that way since 0.2.4; the declarations and pages still
   described an `interrupted` result.
 
+### Scenario qualification
+
+- Scenario timeouts now count observed game ticks instead of dirty snapshots.
+  Repeated refreshes no longer exhaust an XP watch before the game advances.
+
 ## [0.2.7] — 2026-10-26 — Beta 2
 
 ### Panel and terminal app
