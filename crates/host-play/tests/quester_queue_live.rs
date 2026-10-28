@@ -1375,7 +1375,7 @@ fn skip_terminal_oracle_accepts_idle_failed_and_rejects_error() {
                 value: StatusValue::Text("skipped by operator".into()),
             },
         ]),
-        failure: Some(script::ScriptFailure {
+        failure: Some(script::native::ScriptFailure {
             code: "queue-blocked".into(),
             message: reason.into(),
         }),
