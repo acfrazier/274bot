@@ -2793,6 +2793,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
         .fleet_view()
         .detail()
         .and_then(|detail| detail.native_status());
+    let target = native.map(|status| status.run());
     let status = frontend_core::views::script_status_label(state, native);
     if let Some(native) = native {
         kv_row(ui, "status", status);
@@ -2816,7 +2817,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
         }
     }
     if skip_quest {
-        session.script_skip_quest();
+        session.script_skip_quest(target);
     }
     if let Some(reason) = session
         .core

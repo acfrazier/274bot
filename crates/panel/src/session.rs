@@ -5832,17 +5832,20 @@ impl Session {
 
     /// Request that the focused Quester skip its active queue row. The core
     /// owns acceptance, refusal logging and the one-command report.
-    pub fn script_skip_quest(&mut self) {
+    pub fn script_skip_quest(&mut self, target: Option<api::selected::RunKey>) {
         let Some(name) = self.focused_name() else {
             self.refuse_command(
-                OperatorCommand::SkipQuest,
+                OperatorCommand::SkipQuest { target },
                 &[],
                 None,
                 "script: no focused profile",
             );
             return;
         };
-        let Some(submitted) = self.submit(OperatorCommand::SkipQuest, Targets::Profile(&name))
+        let Some(submitted) = self.submit(
+            OperatorCommand::SkipQuest { target },
+            Targets::Profile(&name),
+        )
         else {
             return;
         };

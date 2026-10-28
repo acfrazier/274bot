@@ -1,4 +1,6 @@
-//! Unattended Cook → Sheep → Romeo & Juliet → Imp Quester queue. Ignored unless LIVE=1.
+//! Unattended `quester_queue` and
+//! `quester_skip_active_cook_parks_then_sheep_completes` live cells.
+//! Ignored unless LIVE=1.
 #![cfg(feature = "live-harness")]
 
 use std::path::{Path, PathBuf};
@@ -12,6 +14,35 @@ use scenario::{RunnerStatus, ScenarioRunner};
 use script::native::{NativePhase, ScriptStatus, StatusValue};
 use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
+
+struct SkipSessionLog(
+    Mutex<
+        Vec<(
+            Option<String>,
+            api::hostlog::Source,
+            api::hostlog::Level,
+            String,
+        )>,
+    >,
+);
+
+impl api::hostlog::Sink for SkipSessionLog {
+    fn record(&self, record: &api::hostlog::Record<'_>) {
+        if record
+            .message
+            .starts_with("command accepted: SkipQuest on ")
+        {
+            self.0.lock().unwrap().push((
+                record.slot.map(str::to_owned),
+                record.source,
+                record.level,
+                record.message.to_owned(),
+            ));
+        }
+    }
+}
+
+static SKIP_SESSION_LOG: SkipSessionLog = SkipSessionLog(Mutex::new(Vec::new()));
 
 const CELL: &str = "qs_quester_queue";
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -782,31 +813,9 @@ impl SkipQueueEvidence {
 #[cfg(feature = "test-support")]
 fn quester_skip_scenario() -> Result<(scenario::Scenario, Map<String, Value>), String> {
     let mut scenario =
-        scenario::get("quester_queue").ok_or("scenario registry has no quester_queue")?;
-    scenario.name = "quester_skip_queue";
-    scenario.proof = scenario::Proof::QuestDone {
-        name: "Sheep Shearer",
-    };
-    scenario.steps.retain(|step| {
-        !matches!(
-            step.name,
-            "watch the queued Cook completion"
-                | "watch the queued Romeo and Juliet completion"
-                | "watch the queued Imp Catcher completion"
-        )
-    });
-    if !scenario
-        .steps
-        .iter()
-        .any(|step| step.name == "watch the queued Sheep completion")
-    {
-        return Err("quester_queue seed has no Sheep completion watcher".into());
-    }
-    let settings = Map::from_iter([
-        ("quests".to_owned(), json!(SKIP_QUESTS)),
-        ("order_override".to_owned(), json!(SKIP_QUESTS)),
-        ("skip".to_owned(), json!([])),
-    ]);
+        scenario::get("quester_skip").ok_or("scenario registry has no quester_skip")?;
+    let settings = scenario::settings_inject_map(scenario.settings.script_settings_inject)
+        .ok_or("quester_skip scenario has no settings injection")?;
     scenario.settings.script_settings_inject = None;
     scenario.settings.script_settings_overrides = Some(settings.clone());
     Ok((scenario, settings))
@@ -1035,9 +1044,20 @@ fn run_quester_skip() -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Ok(());
     }
-    if std::env::var("BOT_LIVE_NAME_PREFIX").as_deref() != Ok("qsk") {
-        return Err("quester skip live requires BOT_LIVE_NAME_PREFIX=qsk".into());
+    let name_prefix = required("BOT_LIVE_NAME_PREFIX")?;
+    if !(1..=4).contains(&name_prefix.len()) {
+        return Err(format!(
+            "BOT_LIVE_NAME_PREFIX must be 1..=4 bytes for {CELL} live"
+        ));
     }
+    if !api::hostlog::install_sink(&SKIP_SESSION_LOG) {
+        return Err("quester skip live requires its own session log sink".into());
+    }
+    SKIP_SESSION_LOG
+        .0
+        .lock()
+        .map_err(|_| "quester skip session log poisoned")?
+        .clear();
     let _home = script::IsolatedEnv::enter(SKIP_CELL);
     api::hostlog::set_debug(true);
     let nav_pack = required_path("WORLD_NAV_PACK")?;
@@ -1046,7 +1066,7 @@ fn run_quester_skip() -> Result<(), String> {
     let cache_dir = required_path("BOT_CACHE_DIR")?;
 
     let (scenario, start_settings) = quester_skip_scenario()?;
-    if scenario.name != "quester_skip_queue"
+    if scenario.name != "quester_skip"
         || scenario.settings.start_script != Some("Quester")
         || Value::Object(start_settings.clone())
             != json!({
@@ -1129,7 +1149,7 @@ fn run_quester_skip() -> Result<(), String> {
             "account": account,
             "card": "Quester",
             "settings": start_settings,
-            "scenario": "quester_skip_queue",
+            "scenario": "quester_skip",
             "world_speed_change": null,
         })
     );
@@ -1163,7 +1183,7 @@ fn run_quester_skip() -> Result<(), String> {
         if let Some(status) = native_status.as_ref() {
             if evidence.skip.is_none() {
                 if let Some(action) = SkipQueueEvidence::active_cook_action(status)? {
-                    match play.script_skip_quest(&account) {
+                    match play.script_skip_quest(&account, Some(status.run)) {
                         Ok(skipped) => {
                             evidence.accept_skip(action, skipped.clone())?;
                             println!(
@@ -1218,7 +1238,7 @@ fn run_quester_skip() -> Result<(), String> {
                             json!({
                                 "phase": "witness",
                                 "live_case": SKIP_CELL,
-                                "scenario": "quester_skip_queue",
+                                "scenario": "quester_skip",
                                 "native_evidence": evidence.json(),
                                 "runner_status": format!("{runner_status:?}"),
                                 "run_state": format!("{run_state:?}"),
@@ -1252,6 +1272,28 @@ fn run_quester_skip() -> Result<(), String> {
         }
         std::thread::sleep(POLL_INTERVAL);
     };
+    let expected_skip_line = format!(
+        "command accepted: SkipQuest on {account}: {account}: quest_id=cook step_id=cook-bank"
+    );
+    let accepted_skip_log = SKIP_SESSION_LOG
+        .0
+        .lock()
+        .map_err(|_| "quester skip session log poisoned")?
+        .iter()
+        .find(|(slot, source, level, message)| {
+            slot.as_deref() == Some(account.as_str())
+                && *source == api::hostlog::Source::Host
+                && *level == api::hostlog::Level::Info
+                && message == &expected_skip_line
+        })
+        .map(|(_, _, _, message)| message.clone());
+    let result = if result.is_ok() && accepted_skip_log.is_none() {
+        Err(format!(
+            "accepted SkipQuest info line missing from session log: {expected_skip_line}"
+        ))
+    } else {
+        result
+    };
     println!(
         "{}",
         json!({
@@ -1260,7 +1302,7 @@ fn run_quester_skip() -> Result<(), String> {
             "account": account,
             "result": format!("{result:?}"),
             "native_evidence": evidence.json(),
-            "native_status": format!("{:?}", play.script_native_status(&account)),
+            "accepted_skip_log": accepted_skip_log,
             "lifecycle": format!("{:?}", play.script_lifecycle_receipt(&account)),
             "run_state": format!("{:?}", play.script_state(&account)),
         })
@@ -1270,7 +1312,7 @@ fn run_quester_skip() -> Result<(), String> {
 }
 #[cfg(feature = "test-support")]
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=qsk, explicit WORLD_NAV_PACK/WORLD_ENGINE_DIR/RS2B0T/BOT_CACHE_DIR and Engine L"]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=1..4 bytes, explicit WORLD_NAV_PACK/WORLD_ENGINE_DIR/RS2B0T/BOT_CACHE_DIR and Engine L"]
 fn quester_skip_active_cook_parks_then_sheep_completes() {
     run_quester_skip().unwrap();
 }

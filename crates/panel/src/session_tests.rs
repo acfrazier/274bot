@@ -11390,7 +11390,7 @@ fn panel_skip_quest_refusal_uses_expiring_shared_command_feedback() {
     s.select(name);
 
     let before = s.core.refusals();
-    s.script_skip_quest();
+    s.script_skip_quest(None);
     let message = "bot is not running the Quester queue";
     assert_eq!(s.error.as_deref(), Some(message));
     assert_eq!(s.core.refusals(), before + 1);

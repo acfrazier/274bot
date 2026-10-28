@@ -101,7 +101,7 @@ next quest. Two stops need your action:
 | `cancelled by user input` | You moved the bot while the Quester walked or acted, so it stopped. Click **Start**; [Pause, resume and stop](running-scripts.md#pause-resume-and-stop) explains. |
 
 If the active quest is stuck, select its bot and use **Skip quest** beside the
-Quester status. In the terminal app, press **k** on the **Script** screen.
+Quester status. In the terminal app, press **X** on the **Script** screen.
 The command cancels the active walk or action and releases the quest's prayers
 and holds. The row becomes parked (`P`) with the reason `skipped by operator`.
 The queue starts its next candidate on a later tick, without Stop/Start.

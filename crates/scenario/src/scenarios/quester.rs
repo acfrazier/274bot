@@ -50,6 +50,22 @@ const QUEUE_SETTINGS: &[ScriptSettingInject] = &[
         value: ScriptInjectValue::StrList(&[]),
     },
 ];
+const SKIP_QUESTS: &[&str] = &["cook", "sheep"];
+const SKIP_SETTINGS: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "quests",
+        value: ScriptInjectValue::StrList(SKIP_QUESTS),
+    },
+    ScriptSettingInject {
+        id: "order_override",
+        value: ScriptInjectValue::StrList(SKIP_QUESTS),
+    },
+    ScriptSettingInject {
+        id: "skip",
+        value: ScriptInjectValue::StrList(&[]),
+    },
+];
+
 const QUEUE_DEADLINE: Duration = Duration::from_secs(7200);
 const QUEUE_WATCH_TICKS: u32 = 24_000;
 
@@ -498,6 +514,98 @@ pub(crate) fn quester_queue_scenario() -> Scenario {
         },
     }
 }
+/// Start Cook, skip it, then prove that the queue completes Sheep Shearer.
+pub(crate) fn quester_skip_scenario() -> Scenario {
+    let mut steps = script_live_seed_steps();
+    steps.push(s2_reset_step());
+    steps.extend(s2_combat_profile_steps());
+    steps.extend([
+        queue_start_stage_step("reset Cook stage to 0", "cookquest", "get cookquest: 0"),
+        queue_start_stage_step("reset Sheep stage to 0", "sheep", "get sheep: 0"),
+    ]);
+    steps.push(Step {
+        name: "seed travel coins",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "give coins 100");
+                cheat(c, "givebank coins 500");
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ItemId {
+                id: 995,
+                count: 100,
+            },
+            budget_ticks: 80,
+        },
+    });
+    steps.push(Step {
+        name: "stand at Cook's Assistant start",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(
+                    c,
+                    &tele_args(COOK_KITCHEN.level, COOK_KITCHEN.x, COOK_KITCHEN.z),
+                )
+                .is_sent()
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Arrived {
+                x: COOK_KITCHEN.x,
+                z: COOK_KITCHEN.z,
+                level: COOK_KITCHEN.level,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(Step {
+        name: "relog so both quest colours reflect their zero stages",
+        kind: StepKind::Relog,
+        wait: Wait {
+            arm: Proof::SideTabAvailable { index: 3 },
+            budget_ticks: 600,
+        },
+    });
+    steps.push(start_compiled_step());
+    steps.push(Step {
+        name: "watch the queued Sheep completion",
+        kind: StepKind::Perform {
+            send: Box::new(|_, _| true),
+        },
+        wait: Wait {
+            arm: Proof::QuestDone {
+                name: "Sheep Shearer",
+            },
+            budget_ticks: QUEUE_WATCH_TICKS,
+        },
+    });
+    Scenario {
+        name: "quester_skip",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: Proof::QuestDone {
+            name: "Sheep Shearer",
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: QUEUE_DEADLINE,
+            start_script: Some(COOK_CARD),
+            script_settings_inject: Some(SKIP_SETTINGS),
+            terminal_shot: Some("quester_skip"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
 
 /// Resume Cook from in-progress with the three products already held.
 pub(crate) fn quester_cook_resume_scenario() -> Scenario {

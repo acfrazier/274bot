@@ -220,9 +220,9 @@ impl TuiApp {
             "Overview" => "i log in · u log out · x remove · o settings · l loadouts · w manual walk",
             "Map" => "arrows pan · +/- zoom · Enter select/walk · / search · g group · t teleport · Esc back",
             #[cfg(feature = "js")]
-            "Script" => "b browse · t start · P pause · e stop · k skip quest · f load · v params · R reload · T/E all",
+            "Script" => "b browse t start P pause e stop X skip f load v params R reload",
             #[cfg(not(feature = "js"))]
-            "Script" => "b browse · t start · P pause · e stop · k skip quest · v params · T/E all",
+            "Script" => "b browse t start P pause e stop X skip v params T/E all",
             "Chat" if self.chat_data.is_modal_open() => "Up/Down choose · Space/Enter answer · p paint/chat",
             "Chat" => "p paint/chat · 1-9 paint buttons · Up/Down/Enter paint button",
             _ => "",

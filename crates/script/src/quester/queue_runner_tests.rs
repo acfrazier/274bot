@@ -625,6 +625,20 @@ fn activate_preparing(
     assert!(queued.active.is_some());
 }
 
+fn select_terminal_sequence(active: &mut Quester) {
+    active.seq_index = active
+        .path
+        .sequences
+        .iter()
+        .position(|sequence| sequence.terminal && sequence.steps.is_empty())
+        .expect("fixture has a terminal sequence");
+    active.in_prelude = false;
+    active.step_index = 0;
+    active.cursor = 0;
+    active.needs_read = false;
+    active.settling = false;
+    active.step = None;
+}
 struct SkipCancellation(std::sync::Arc<std::sync::atomic::AtomicUsize>);
 
 impl StepRun for SkipCancellation {
@@ -714,6 +728,145 @@ fn operator_skip_last_row_keeps_existing_blocked_end_rule() {
     assert_eq!(queued.queue.next_candidate(), None);
 }
 
+#[test]
+fn operator_skip_wins_on_the_tick_a_quest_would_complete() {
+    let (mut natural, natural_snapshot) = skip_fixture(false);
+    let mut natural_ledger = None;
+    let mut natural_output = Capture::default();
+    with_tick_output(
+        &natural_snapshot,
+        &mut natural_ledger,
+        1,
+        &mut natural_output,
+        |native| natural.tick(native).unwrap(),
+    );
+    activate_preparing(
+        &mut natural,
+        &natural_snapshot,
+        &mut natural_ledger,
+        &mut natural_output,
+        2,
+    );
+    select_terminal_sequence(natural.active.as_mut().unwrap());
+    with_tick_output(
+        &natural_snapshot,
+        &mut natural_ledger,
+        3,
+        &mut natural_output,
+        |native| natural.tick(native).unwrap(),
+    );
+    assert_eq!(natural.queue.status(0), Some(QueueStatus::Done));
+    assert_eq!(natural.completed, 1);
+
+    let (mut queued, snapshot) = skip_fixture(false);
+    let mut ledger = None;
+    let mut output = Capture::default();
+    with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+        queued.tick(native).unwrap();
+    });
+    activate_preparing(&mut queued, &snapshot, &mut ledger, &mut output, 2);
+    select_terminal_sequence(queued.active.as_mut().unwrap());
+    queued.skip_quest().unwrap();
+    with_tick_output(&snapshot, &mut ledger, 3, &mut output, |native| {
+        assert_eq!(queued.tick(native).unwrap(), ScriptFlow::Continue);
+    });
+
+    assert_eq!(queued.queue.status(0), Some(QueueStatus::Parked));
+    assert_eq!(queued.queue.reason(0), Some("skipped by operator"));
+    assert_eq!(queued.completed, 0);
+    assert!(queued.active.is_none());
+    assert!(queued.active_index.is_none());
+    assert!(queued.preparing.is_none());
+}
+
+#[test]
+fn manual_movement_stop_during_skip_tick_wins_over_skip() {
+    let (mut queued, snapshot) = skip_fixture(true);
+    let mut ledger = None;
+    let mut output = Capture::default();
+    with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+        queued.tick(native).unwrap();
+    });
+    activate_preparing(&mut queued, &snapshot, &mut ledger, &mut output, 2);
+    queued.skip_quest().unwrap();
+    let active = queued.active.as_mut().unwrap();
+    active.parked = true;
+    active.last_error_kind = QuesterFailureKind::ManualMovement;
+    active.last_error = Some(Arc::from("cancelled by user input"));
+
+    let flow = with_tick_output(&snapshot, &mut ledger, 3, &mut output, |native| {
+        queued.tick(native).unwrap()
+    });
+    let ScriptFlow::Blocked(failure) = flow else {
+        panic!("manual movement must stop the run");
+    };
+    assert_eq!(failure.code.as_ref(), "manual-movement");
+    assert_eq!(failure.message.as_ref(), "cancelled by user input");
+    assert!(!queued.skip_requested);
+    assert_eq!(
+        queued.active.as_ref().unwrap().path.id.0.as_ref(),
+        "cook",
+        "the skip must not advance to Sheep"
+    );
+    assert_eq!(queued.active_index, Some(0));
+    assert!(queued.preparing.is_none());
+}
+
+#[test]
+fn max_deaths_during_skip_tick_stops_the_run_before_the_next_quest() {
+    let (mut queued, mut snapshot) = skip_fixture(true);
+    queued.deaths = 2;
+    let mut ledger = None;
+    let mut output = Capture::default();
+    with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+        queued.tick(native).unwrap();
+    });
+    activate_preparing(&mut queued, &snapshot, &mut ledger, &mut output, 2);
+    queued.skip_quest().unwrap();
+    snapshot.seed_chat_lines(vec![ChatLineView {
+        type_: 0,
+        username: None,
+        text: "Oh dear, you are dead!".into(),
+        sequence: 1,
+    }]);
+
+    let flow = with_tick_output(&snapshot, &mut ledger, 3, &mut output, |native| {
+        queued.tick(native).unwrap()
+    });
+    let ScriptFlow::Blocked(failure) = flow else {
+        panic!("max-deaths must stop the run");
+    };
+    assert_eq!(failure.code.as_ref(), "max-deaths");
+    assert_eq!(
+        failure.message.as_ref(),
+        "maximum deaths exceeded; Stop/Start required"
+    );
+    assert!(!queued.skip_requested);
+    assert_eq!(
+        queued.active.as_ref().unwrap().path.id.0.as_ref(),
+        "cook",
+        "the skip must not advance to Sheep"
+    );
+    assert_eq!(queued.active_index, Some(0));
+    assert!(queued.preparing.is_none());
+}
+
+#[test]
+fn operator_skip_refuses_an_already_parked_quest() {
+    let (mut queued, snapshot) = skip_fixture(false);
+    let mut ledger = None;
+    let mut output = Capture::default();
+    with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+        queued.tick(native).unwrap();
+    });
+    activate_preparing(&mut queued, &snapshot, &mut ledger, &mut output, 2);
+    queued.active.as_mut().unwrap().parked = true;
+    assert_eq!(
+        queued.skip_quest().unwrap_err().message.as_ref(),
+        "active quest is already parked"
+    );
+    assert!(!queued.skip_requested);
+}
 #[test]
 fn operator_skip_refuses_before_activation_and_during_preparation() {
     let (mut queued, snapshot) = skip_fixture(false);

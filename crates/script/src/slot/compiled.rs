@@ -1528,7 +1528,10 @@ impl SlotScript {
     }
 
     /// Request an operator skip only for a live compiled Quester run.
-    pub fn skip_quest_compiled(&mut self) -> Result<crate::native::SkippedQuest, ScriptFailure> {
+    pub fn skip_quest_compiled(
+        &mut self,
+        target: Option<RunKey>,
+    ) -> Result<crate::native::SkippedQuest, ScriptFailure> {
         if !matches!(self.state, RunState::Running | RunState::Paused) {
             return Err(ScriptFailure {
                 code: "not-quester".into(),
@@ -1546,6 +1549,12 @@ impl SlotScript {
                 return Err(ScriptFailure {
                     code: "not-quester".into(),
                     message: "bot is not running the Quester queue".into(),
+                });
+            }
+            if Some(run.run) != target {
+                return Err(ScriptFailure {
+                    code: "skip-quest-refused".into(),
+                    message: "stale native run".into(),
                 });
             }
             catch_unwind(AssertUnwindSafe(|| run.script.skip_quest()))

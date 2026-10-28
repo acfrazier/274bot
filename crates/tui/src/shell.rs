@@ -629,8 +629,10 @@ impl TuiApp {
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         );
-        let mouse = if self.mouse_capture { "on" } else { "off" };
-        let tail = if area.width >= 100 {
+        let short_script = area.width < 100 && self.key_scope() == "Script";
+        let tail = if short_script {
+            String::new()
+        } else if area.width >= 100 {
             format!(" │ Tab pane · ^P cmd · ? help · mouse {mouse}")
         } else {
             format!(" │ ? help · mouse {mouse}")

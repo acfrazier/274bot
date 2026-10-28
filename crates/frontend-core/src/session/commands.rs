@@ -682,8 +682,8 @@ impl<Io> OperatorSession<Io> {
     /// [`CommandFailure::Rejected`] before any operation exists for it. One
     /// line per command, however many bots it refused.
     fn log_refusals(&mut self, request: RequestId, command: OperatorCommand) {
-        if command == OperatorCommand::SkipQuest {
-            self.log_skip_quest(request);
+        if matches!(&command, OperatorCommand::SkipQuest { .. }) {
+            self.log_skip_quest(request, command);
             return;
         }
         let Some(report) = self.commands.book.report(request) else {
@@ -722,85 +722,43 @@ impl<Io> OperatorSession<Io> {
         self.record_refusal(command, &bots, &reason);
     }
 
-    /// Log one accepted or refused SkipQuest command after every member has
-    /// settled, keeping the queue identity with the bot it belongs to.
-    fn log_skip_quest(&mut self, request: RequestId) {
+    /// Log SkipQuest refusals after every targeted member has settled.
+    fn log_skip_quest(&mut self, request: RequestId, command: OperatorCommand) {
         let Some(report) = self.commands.book.report(request) else {
             return;
         };
-        let mut accepted = Vec::new();
         let mut refused = Vec::new();
         for member in report.members() {
+            let Some(Settlement::Failed(failure)) = member.terminal() else {
+                continue;
+            };
             let name = match member.subject() {
                 Subject::Profile(identity) => self.name_for_identity(identity),
                 Subject::Application => "application".to_owned(),
             };
-            match member.terminal() {
-                Some(Settlement::Completed(Completion::Done)) => {
-                    if let Some(identity) = member.detail() {
-                        accepted.push(format!("{name}: {identity}"));
-                    }
-                }
-                Some(Settlement::Failed(failure)) => {
-                    let reason = member.detail().map_or_else(
-                        || format!("{failure:?}"),
-                        |detail| format!("{failure:?}: {detail}"),
-                    );
-                    refused.push((name, reason));
-                }
-                _ => {}
-            }
-        }
-        if accepted.is_empty() && refused.is_empty() {
-            return;
-        }
-        if accepted.is_empty() {
-            let bots = refused
-                .iter()
-                .map(|(name, _)| name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            let reason = match refused.as_slice() {
-                [(_, reason)] => reason.clone(),
-                many => many
-                    .iter()
-                    .map(|(name, reason)| format!("{name}: {reason}"))
-                    .collect::<Vec<_>>()
-                    .join("; "),
-            };
-            self.record_refusal(OperatorCommand::SkipQuest, &bots, &reason);
-            return;
+            let reason = member.detail().map_or_else(
+                || format!("{failure:?}"),
+                |detail| format!("{failure:?}: {detail}"),
+            );
+            refused.push((name, reason));
         }
         if refused.is_empty() {
-            let bots = accepted
-                .iter()
-                .map(|entry| {
-                    entry
-                        .split_once(": ")
-                        .map_or(entry.as_str(), |(name, _)| name)
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            api::host_log!(
-                api::hostlog::Category::Lifecycle,
-                api::hostlog::Level::Info,
-                "command accepted: SkipQuest on {bots}: {}",
-                accepted.join("; ")
-            );
             return;
         }
-        self.commands.refusals += 1;
-        api::host_log!(
-            api::hostlog::Category::Lifecycle,
-            api::hostlog::Level::Info,
-            "command SkipQuest: accepted {}; refused {}",
-            accepted.join("; "),
-            refused
+        let bots = refused
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let reason = match refused.as_slice() {
+            [(_, reason)] => reason.clone(),
+            many => many
                 .iter()
                 .map(|(name, reason)| format!("{name}: {reason}"))
                 .collect::<Vec<_>>()
-                .join("; ")
-        );
+                .join("; "),
+        };
+        self.record_refusal(command, &bots, &reason);
     }
 
     /// The bots a refused submission named, for its log line: the names the
@@ -1329,11 +1287,11 @@ impl<Io> OperatorSession<Io> {
                 }
                 self.release_names(names);
             }
-            OperatorCommand::SkipQuest => {
+            OperatorCommand::SkipQuest { target } => {
                 let names = self.admitted_names(request);
                 for name in &names {
                     let applied = match self.play.as_ref() {
-                        Some(play) => match play.script_skip_quest(name) {
+                        Some(play) => match play.script_skip_quest(name, target) {
                             Ok(skipped) => Applied::DoneWithDetail(format!(
                                 "quest_id={} step_id={}",
                                 skipped.quest_id, skipped.step_id
