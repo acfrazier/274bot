@@ -473,14 +473,19 @@ proxy test selector; it does not run either headed command or validate its
 
 ### Headed recording
 
-Overnight `--live script_<name>` runs can record video of the panel window
-for next-morning review. Recording reuses the terminal shot's whole-window
-readback (no second screenshot path): the render pass stages one extra
-capture per interval and a background `ffmpeg` process encodes H.264:
+Any panel session can record video of the panel window: an overnight
+`--live script_<name>` run for next-morning review, or an interactive
+session a headed check drives by hand. Recording reuses the terminal
+shot's whole-window readback (no second screenshot path): the render pass
+stages one extra capture per interval and a background `ffmpeg` process
+encodes H.264:
 
 ```sh
 QUESTER_PATH=cook HEADED_RECORD=1 \
   cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --live script_quester_path
+# or, interactively (no --live), under a throwaway HOME:
+ISOHOME_INTERACTIVE=1 HEADED_RECORD=1 \
+  .superpowers/bin/isohome ./target/release/panel-play --profile local-289 --port 1
 ```
 
 It is off by default and costs nothing when off. `HEADED_RECORD=1`
@@ -493,12 +498,41 @@ The file lands next to the terminal shot in the session's shot dir as
 `record.mp4`, with a `record.txt` sidecar mapping each video timestamp to
 its scenario step and runner game tick (`t=<s> frame=<n> step=<i>/<total>
 tick=<ticks> name="<step>"`), so the video lines up with the step trace.
-The mp4 is finalized on PASS, FAIL and window close, so it is always
-playable. Resizing the window mid-run drops the mismatched frames
-(counted) because the encoder pipe has fixed geometry. `ffmpeg` is
-resolved from `HEADED_RECORD_FFMPEG`, then `/opt/homebrew/bin/ffmpeg`,
-then `PATH`; when it is missing the run logs one warning and continues
-without recording.
+An interactive session has no harness shot dir of its own, so the
+recorder creates one when it arms (`~/.274bot/smoke/<runId>/` in the
+session's HOME) and names the scenario `interactive`; the shot dir is on
+the `[panel] headed record:` start line. The mp4 is finalized on PASS,
+FAIL and window close, so it is always playable. Resizing the window
+mid-run drops the mismatched frames (counted) because the encoder pipe
+has fixed geometry. `ffmpeg` is resolved from `HEADED_RECORD_FFMPEG`,
+then `/opt/homebrew/bin/ffmpeg`, then `PATH`; when it is missing the run
+logs one warning and continues without recording.
+
+Next to `record.txt`, the recorder writes `settings.txt`: one line per
+saved-setting state change, appended and flushed as the change happens,
+so a headed check (for example the T5.3-S3 settings check) can verify
+save states by script instead of reading frames:
+
+```text
+t=3.120 setting="capture" state=pending error=""
+t=8.204 setting="capture" state=failed error="preferences is busy"
+t=12.010 setting="capture" state=cleared error=""
+t=12.010 setting="capture" state=pending error=""
+t=12.180 setting="capture" state=saved error=""
+```
+
+`t` is the seconds since the recording armed. `setting` is the write's
+own name from the code that owns it: a preference key for the core's draw
+switches (`capture`, `sidecar_50`, `focused_50`), the core rows'
+`what` (`navigation preference`, `danger routing`,
+`session file setting`, `map bake choice`, `Quest Paths settings`,
+`background bots`, `profile order`), or a panel-owned member's dotted
+path. The states are the settings model's: `pending` (an accepted write
+is still in flight), `failed` (the write failed; the reason is in
+`error`), and `saved` (the write became durable). A retained failure
+that the next action on the same setting resolves writes a `cleared`
+line first. Repeated reports of the same state write nothing. Verify a check with,
+for example, `grep 'setting="capture"' settings.txt`.
 
 ### Catalog scenario notes
 

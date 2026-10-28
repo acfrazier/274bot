@@ -706,6 +706,102 @@ fn a_held_preference_write_stays_pending_and_settles_done_when_it_lands() {
     );
 }
 
+/// HEADED-RECORD: a watching front end sees each saved-setting
+/// transition (pending while the disk holds the write, failed with the
+/// writer's reason, saved once a retry lands), and nothing is recorded
+/// while nobody watches.
+#[test]
+fn watched_setting_events_report_pending_failed_then_saved() {
+    use crate::nav_prefs::NavPreference;
+    use crate::{SettingEvent, SettingEventState};
+    let dir = scratch("setting-events");
+    let mut d = driver_in(&dir, &["alice"]);
+
+    // Unwatched: a durable write records nothing.
+    let submitted = d
+        .submit(
+            OperatorCommand::SetNavPreference(NavPreference::AllowTeleports, true),
+            Targets::Application,
+        )
+        .expect("admitted");
+    assert_eq!(settled_app(&mut d, submitted.request()), Some(done()));
+    assert!(
+        d.session_mut().take_setting_events().is_empty(),
+        "no watcher, no recorded transitions"
+    );
+
+    d.session_mut().watch_setting_events(true);
+    let release = hold_first_write(&d);
+    let submitted = d
+        .submit(
+            OperatorCommand::SetNavPreference(NavPreference::AllowTeleports, false),
+            Targets::Application,
+        )
+        .expect("admitted");
+    d.poll();
+    assert_eq!(
+        d.session_mut().take_setting_events(),
+        vec![SettingEvent {
+            setting: "navigation preference".into(),
+            state: SettingEventState::Pending,
+            error: None,
+        }],
+        "the held write is pending"
+    );
+
+    // Block the preferences file so the held write fails when released:
+    // a directory where the file belongs cannot be published over.
+    let path = d.session().preferences().expect("bound preferences").path();
+    let aside = path.with_extension("aside");
+    std::fs::rename(&path, &aside).expect("file aside");
+    std::fs::create_dir(&path).expect("block the file path");
+    release.send(()).unwrap();
+    let terminal = settled_app(&mut d, submitted.request());
+    assert!(
+        matches!(terminal, Some(Settlement::Failed(_))),
+        "the blocked write settles failed: {terminal:?}"
+    );
+    let events = d.session_mut().take_setting_events();
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].setting, "navigation preference");
+    assert_eq!(events[0].state, SettingEventState::Failed);
+    assert!(
+        events[0].error.as_deref().is_some_and(|e| !e.is_empty()),
+        "the failure carries the writer's reason: {events:?}"
+    );
+
+    // Unblock and retry: the same setting saves.
+    std::fs::remove_dir(&path).expect("unblock");
+    std::fs::rename(&aside, &path).expect("file back");
+    let submitted = d
+        .submit(
+            OperatorCommand::SetNavPreference(NavPreference::AllowTeleports, false),
+            Targets::Application,
+        )
+        .expect("admitted");
+    assert_eq!(settled_app(&mut d, submitted.request()), Some(done()));
+    let events = d.session_mut().take_setting_events();
+    assert!(
+        events.iter().any(|event| {
+            event.setting == "navigation preference"
+                && event.state == SettingEventState::Saved
+                && event.error.is_none()
+        }),
+        "the retry reports saved: {events:?}"
+    );
+
+    // Watching off drops anything undrained and records nothing more.
+    d.session_mut().watch_setting_events(false);
+    let submitted = d
+        .submit(
+            OperatorCommand::SetNavPreference(NavPreference::AllowTeleports, true),
+            Targets::Application,
+        )
+        .expect("admitted");
+    assert_eq!(settled_app(&mut d, submitted.request()), Some(done()));
+    assert!(d.session_mut().take_setting_events().is_empty());
+}
+
 /// T3.3 r5 (review finding 5): the newest command for a setting wins. An
 /// older write the disk held settles after a newer command for the same
 /// setting was accepted and made durable; the running session keeps the

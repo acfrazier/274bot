@@ -964,6 +964,13 @@ pub struct Session {
     /// A failed write remains visible until a later write to that member
     /// succeeds.
     preference_write_error: Option<(Vec<String>, String)>,
+    /// Saved-setting transitions of the panel-owned members, recorded
+    /// only while the headed recorder watches (see
+    /// `watch_setting_events`); it drains them each frame. Always empty
+    /// while not watching.
+    setting_events: Vec<frontend_core::SettingEvent>,
+    /// Whether `setting_events` is recorded.
+    record_setting_events: bool,
     /// Shared Quester Paths settings and reload lifecycle.
     pub(crate) quester_paths: frontend_core::QuesterPathsController,
     pub(crate) quester_paths_folder_edit: String,
@@ -1646,6 +1653,8 @@ impl Session {
             pending_panel_members: HashMap::new(),
             pending_nav_members,
             preference_write_error: None,
+            setting_events: Vec::new(),
+            record_setting_events: false,
             quester_paths,
             quester_paths_folder_edit,
             quester_paths_folder_dirty: false,
@@ -1768,7 +1777,16 @@ impl Session {
             };
             let write = self.panel_preference_writes.swap_remove(index);
             match outcome {
-                Ok(()) => self.clear_succeeded_panel_members(&write.members),
+                Ok(()) => {
+                    for member in &write.members {
+                        self.note_panel_setting(
+                            member,
+                            frontend_core::SettingEventState::Saved,
+                            None,
+                        );
+                    }
+                    self.clear_succeeded_panel_members(&write.members);
+                }
                 Err(error) => {
                     self.set_preference_write_error(write.members.first(), error.to_string())
                 }
@@ -1810,6 +1828,40 @@ impl Session {
             .map(|(_, message)| message.as_str())
     }
 
+    /// Record saved-setting transitions (the core's and this session's
+    /// panel-owned members) for the headed recorder's settings sidecar.
+    /// Called once when the recorder is enabled; while not called, a
+    /// transition costs one bool check and records nothing.
+    pub(crate) fn watch_setting_events(&mut self) {
+        self.record_setting_events = true;
+        self.core.watch_setting_events(true);
+    }
+
+    /// The panel-owned members' transitions recorded since the last call.
+    pub(crate) fn take_panel_setting_events(
+        &mut self,
+    ) -> Vec<frontend_core::SettingEvent> {
+        std::mem::take(&mut self.setting_events)
+    }
+
+    /// Record one panel-owned member's transition. The queue is bounded
+    /// like the core's; the recorder drains it each frame.
+    fn note_panel_setting(
+        &mut self,
+        member: &PanelPreferenceMember,
+        state: frontend_core::SettingEventState,
+        error: Option<String>,
+    ) {
+        if !self.record_setting_events || self.setting_events.len() >= 256 {
+            return;
+        }
+        self.setting_events.push(frontend_core::SettingEvent {
+            setting: member.path.join("."),
+            state,
+            error,
+        });
+    }
+
     /// Submit one exact panel-owned preference member without waiting.
     pub(crate) fn persist_panel_member(
         &mut self,
@@ -1839,10 +1891,20 @@ impl Session {
         }
         match self.preferences.begin_patch(patch) {
             Ok(Update::Durable) => {
+                self.note_panel_setting(
+                    &member,
+                    frontend_core::SettingEventState::Saved,
+                    None,
+                );
                 self.clear_succeeded_panel_members(&[member]);
                 Ok(())
             }
             Ok(update @ Update::Queued(_)) => {
+                self.note_panel_setting(
+                    &member,
+                    frontend_core::SettingEventState::Pending,
+                    None,
+                );
                 self.panel_preference_writes.push(PanelPreferenceWrite {
                     update,
                     members: vec![member],
@@ -1964,6 +2026,14 @@ impl Session {
         member: Option<&PanelPreferenceMember>,
         error: String,
     ) {
+        if let Some(member) = member {
+            let event_error = self.record_setting_events.then(|| error.clone());
+            self.note_panel_setting(
+                member,
+                frontend_core::SettingEventState::Failed,
+                event_error,
+            );
+        }
         let path = member.map_or_else(Vec::new, |member| member.path.clone());
         self.preference_write_error = Some((path, format!("Preferences not saved: {error}")));
     }

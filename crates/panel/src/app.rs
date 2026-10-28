@@ -16,7 +16,7 @@ use crate::chrome::{
 use crate::focus::{draw_for_slot, should_capture, should_draw};
 use crate::game_view::GameView;
 use crate::grid::grid_cells;
-use crate::headed_record::{HeadedRecord, RecordFrame, StepInfo};
+use crate::headed_record::{HeadedRecord, RecordFrame, SettingState, StepInfo};
 use crate::overlay::{PathOverlay, QueueCards};
 use crate::paint::PaintOverlay;
 use crate::picker;
@@ -217,11 +217,13 @@ struct PanelState {
     /// → the render readback (`window::ShotState`) → the shot files.
     shot_state: Arc<Mutex<crate::window::ShotState>>,
     /// Per-run shot dir (`~/.274bot/smoke/<runId>`), created when a
-    /// `--live script_*` run starts or lazily on the first write (the
-    /// interactive F12 capture has no run start to hook).
+    /// `--live script_*` run starts, when an interactive recording arms,
+    /// or lazily on the first write (the interactive F12 capture has no
+    /// run start to hook).
     shot_dir: Option<PathBuf>,
     /// Opt-in headed recording (`HEADED_RECORD=1`): periodic whole-window
-    /// frames into `<shot_dir>/record.mp4` plus a step/tick sidecar.
+    /// frames into `<shot_dir>/record.mp4`, a step/tick sidecar
+    /// (`record.txt`) and a settings-state sidecar (`settings.txt`).
     /// Finalized on PASS/FAIL (see `ui_frame`) and on window close via
     /// `Drop`, so the mp4 is always playable.
     record: HeadedRecord,
@@ -640,7 +642,7 @@ fn dispose_idle_views(
 
 impl PanelState {
     fn with_session(session: Session, shot_state: Arc<Mutex<crate::window::ShotState>>) -> Self {
-        Self {
+        let mut state = Self {
             #[cfg(feature = "memory-profile")]
             memory: None,
             game_view: None,
@@ -672,7 +674,13 @@ impl PanelState {
             shot_dir: None,
             record: HeadedRecord::from_env(),
             walk_map: WalkMapRenderer::new(),
+        };
+        // The one place the env switch reaches the settings owners: with
+        // recording off, nothing watches and nothing is recorded.
+        if state.record.enabled() {
+            state.session.watch_setting_events();
         }
+        state
     }
 
     /// Rebuild the rail and grid cap strings of the fleet model's rows when
@@ -7870,22 +7878,43 @@ fn pump_shots(state: &mut PanelState) -> usize {
     written
 }
 
-/// Headed recording (`HEADED_RECORD=1`): arm once the live run's shot dir
+/// Headed recording (`HEADED_RECORD=1`): arm once the session's shot dir
 /// exists, stage one whole-window readback when the pacer fires, and move
-/// completed frames into the background encoder. When the switch is off
-/// this is a single disabled branch; harness runs only (interactive F12
-/// shots never arm a recording).
+/// completed frames into the background encoder. A live run keeps its
+/// harness-created shot dir and scenario name; an interactive session
+/// creates a shot dir of its own and records as `interactive`. When the
+/// switch is off this is a single disabled branch. Each frame also
+/// drains the watched saved-setting transitions into the settings
+/// sidecar (empty, and allocation-free, while nothing changed).
 fn pump_record(state: &mut PanelState) {
-    if state.record.needs_arm() && state.live.is_some() {
-        if let Some(dir) = state.shot_dir.clone() {
-            if let Some(scenario) = state.session.core.live_runner().scenario_name() {
+    if state.record.needs_arm() {
+        let scenario = state.session.core.live_runner().scenario_name();
+        if state.live.is_some() {
+            if let (Some(dir), Some(scenario)) = (state.shot_dir.clone(), scenario) {
                 state.record.arm(&dir, scenario);
+            }
+        } else {
+            if state.shot_dir.is_none() {
+                match frontend_core::live::create_shot_run_dir() {
+                    Ok(dir) => state.shot_dir = Some(dir),
+                    Err(error) => {
+                        eprintln!(
+                            "[panel] headed record: shot directory unavailable: {error}; \
+                             continuing without recording"
+                        );
+                        state.record.abandon();
+                    }
+                }
+            }
+            if let Some(dir) = state.shot_dir.clone() {
+                state.record.arm(&dir, scenario.unwrap_or("interactive"));
             }
         }
     }
     if !state.record.is_active() {
         return;
     }
+    pump_record_settings(state);
     if state.record.is_due(Instant::now()) {
         state.shot_state.lock().unwrap().arm_record();
     }
@@ -7906,6 +7935,37 @@ fn pump_record(state: &mut PanelState) {
     }
     let step = record_step_info(&state.session);
     state.record.pump_frames(frames, &step);
+}
+
+/// Move the watched saved-setting transitions (the core's preference
+/// writes and the panel's own members) into the settings sidecar. Called
+/// only while a recording is active; both queues are empty in a frame
+/// where no setting changed.
+fn pump_record_settings(state: &mut PanelState) {
+    let core_events = state.session.core.take_setting_events();
+    for event in &core_events {
+        state.record.note_setting(
+            &event.setting,
+            record_setting_state(event.state),
+            event.error.as_deref().unwrap_or(""),
+        );
+    }
+    let panel_events = state.session.take_panel_setting_events();
+    for event in &panel_events {
+        state.record.note_setting(
+            &event.setting,
+            record_setting_state(event.state),
+            event.error.as_deref().unwrap_or(""),
+        );
+    }
+}
+
+fn record_setting_state(state: frontend_core::SettingEventState) -> SettingState {
+    match state {
+        frontend_core::SettingEventState::Pending => SettingState::Pending,
+        frontend_core::SettingEventState::Failed => SettingState::Failed,
+        frontend_core::SettingEventState::Saved => SettingState::Saved,
+    }
 }
 
 /// The runner position for the next recording sidecar line. Read only for

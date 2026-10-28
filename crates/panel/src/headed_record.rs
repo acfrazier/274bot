@@ -1,18 +1,24 @@
-//! Opt-in headed recording for `--live script_<name>` runs.
+//! Opt-in headed recording for any panel session.
 //!
 //! When `HEADED_RECORD=1`, the panel periodically stages one extra whole-
 //! window readback through the same render-pass capture path as the
 //! scenario shots (no second screenshot implementation) and pipes the raw
-//! frames to an `ffmpeg` background process as H.264. Off by default with
-//! zero cost when off: the per-frame check is a single disabled branch.
+//! frames to an `ffmpeg` background process as H.264. A `--live` run and
+//! an interactive session record the same way; only the sidecar's
+//! scenario name differs (`interactive` without a live runner). Off by
+//! default with zero cost when off: the per-frame check is a single
+//! disabled branch.
 //!
 //! The frame loop never waits on disk or encoding: frames cross a bounded
 //! channel with `try_send`, so a slow encoder drops a frame (counted)
 //! instead of stalling the UI. The mp4 is finalized on PASS, FAIL and
 //! window close, and a sidecar `.txt` maps video time to scenario step
-//! and runner tick.
+//! and runner tick. A second sidecar, `settings.txt`, records one line
+//! per saved-setting state change (pending, failed, cleared, saved) as
+//! it happens, so a headed check can verify the save states by script.
 
-use std::io::Write as _;
+use std::fs::File;
+use std::io::{BufWriter, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
@@ -46,6 +52,8 @@ pub(crate) const RECORD_LABEL: &str = "__headed_record_frame";
 /// Output names next to the terminal shot in the session's shot dir.
 pub const RECORD_MP4_NAME: &str = "record.mp4";
 pub const RECORD_SIDECAR_NAME: &str = "record.txt";
+/// Settings-state sidecar next to `record.txt`: one line per state change.
+pub const RECORD_SETTINGS_NAME: &str = "settings.txt";
 
 /// Enabled switch + cadence, read once from the environment.
 #[derive(Debug, Clone)]
@@ -181,6 +189,123 @@ pub fn format_sidecar_header(scenario: &str, fps: f64) -> String {
     )
 }
 
+/// One saved-setting state in the settings sidecar. `Pending`, `Failed`
+/// and `Saved` are the states the settings owners report for a write
+/// (frontend-core's preference writes and the panel's own preference
+/// members); `Cleared` is a retained failure leaving, derived by
+/// [`SettingsTracker`] when a failed setting's next write is accepted or
+/// becomes durable, or reported directly by an owner that clears one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingState {
+    /// An accepted write has not reached its terminal result.
+    Pending,
+    /// A write failed; the line's error column says why.
+    Failed,
+    /// A retained failure was cleared.
+    Cleared,
+    /// A write became durable.
+    Saved,
+}
+
+impl SettingState {
+    /// The state's word in a settings sidecar line.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Failed => "failed",
+            Self::Cleared => "cleared",
+            Self::Saved => "saved",
+        }
+    }
+}
+
+/// Settings names and error text are shown to the operator elsewhere and
+/// may carry quotes or newlines; keep the one-line-per-change format
+/// parseable.
+pub fn sanitize_settings_text(text: &str) -> String {
+    text.replace('"', "'").replace(['\n', '\r'], " ")
+}
+
+/// One settings sidecar line: seconds since the recording armed, the
+/// setting, its new state, and the error text (`failed` lines only;
+/// empty otherwise).
+pub fn format_settings_line(
+    t_secs: f64,
+    setting: &str,
+    state: SettingState,
+    error: &str,
+) -> String {
+    let error = if state == SettingState::Failed { error } else { "" };
+    format!(
+        "t={t_secs:.3} setting=\"{}\" state={} error=\"{}\"",
+        sanitize_settings_text(setting),
+        state.as_str(),
+        sanitize_settings_text(error)
+    )
+}
+
+/// Settings sidecar header: names the scenario, documents the columns.
+pub fn format_settings_header(scenario: &str) -> String {
+    format!(
+        "# headed recording settings scenario={scenario}\n\
+         # t=<seconds since armed> setting=\"<setting>\" \
+         state=pending|failed|cleared|saved error=\"<error or empty>\""
+    )
+}
+
+/// The last sidecar state of each setting seen, so the sidecar writes
+/// one line per change and none for a repeated report of the same state.
+/// Bounded by the number of distinct settings; built only while a
+/// recording is armed.
+#[derive(Debug, Default)]
+pub struct SettingsTracker {
+    last: Vec<(String, SettingState, String)>,
+}
+
+impl SettingsTracker {
+    /// The lines one reported transition writes: a `cleared` line first
+    /// when a retained failure leaves (the setting's next write is
+    /// pending or saved), then the new state's line. Either may be
+    /// absent: a repeat of the current state writes nothing, and a
+    /// `cleared` report with no failure retained writes nothing.
+    pub fn lines_for(
+        &mut self,
+        t_secs: f64,
+        setting: &str,
+        state: SettingState,
+        error: &str,
+    ) -> [Option<String>; 2] {
+        let error = if state == SettingState::Failed { error } else { "" };
+        let previous = self
+            .last
+            .iter()
+            .find(|(name, _, _)| name == setting)
+            .map(|(_, state, error)| (*state, error.as_str()));
+        if previous == Some((state, error)) {
+            return [None, None];
+        }
+        let was_failed = matches!(previous, Some((SettingState::Failed, _)));
+        if state == SettingState::Cleared && !was_failed {
+            return [None, None];
+        }
+        let cleared = (was_failed && state != SettingState::Failed)
+            .then(|| format_settings_line(t_secs, setting, SettingState::Cleared, ""));
+        let line = (state != SettingState::Cleared)
+            .then(|| format_settings_line(t_secs, setting, state, error));
+        match self.last.iter_mut().find(|(name, _, _)| name == setting) {
+            Some(entry) => {
+                entry.1 = state;
+                entry.2.clear();
+                entry.2.push_str(error);
+            }
+            None => self
+                .last
+                .push((setting.to_owned(), state, error.to_owned())),
+        }
+        [cleared, line]
+    }
+}
+
 /// The live recording: spawned ffmpeg plus the bounded frame queue.
 /// `thread` is empty until the first staged readback fixes the pipe
 /// geometry; `pending_receiver` waits for that spawn. Unit tests build
@@ -195,6 +320,13 @@ struct ActiveRecording {
     width: u32,
     height: u32,
     lines: Vec<String>,
+    /// When the recording armed; settings lines count seconds from here.
+    started: Instant,
+    /// The settings sidecar, appended on change only and flushed per
+    /// line. `None` when the file could not be opened (warned once).
+    settings_file: Option<BufWriter<File>>,
+    /// Last settings state per setting, for change-only lines.
+    settings: SettingsTracker,
     queued: u64,
     dropped: u64,
     size_mismatch: u64,
@@ -256,6 +388,9 @@ impl ActiveRecording {
             width: 64,
             height: 64,
             lines: Vec::new(),
+            started: Instant::now(),
+            settings_file: None,
+            settings: SettingsTracker::default(),
             queued: 0,
             dropped: 0,
             size_mismatch: 0,
@@ -264,7 +399,7 @@ impl ActiveRecording {
 }
 
 /// Opt-in headed recorder. Created per panel run from the environment;
-/// armed lazily once the live run's shot dir exists. Drop finalizes the
+/// armed lazily once the session's shot dir exists. Drop finalizes the
 /// file, so window close always leaves a playable mp4.
 pub struct HeadedRecord {
     config: HeadedRecordConfig,
@@ -297,6 +432,50 @@ impl HeadedRecord {
         self.active.is_some()
     }
 
+    /// Whether recording was requested (`HEADED_RECORD=1`), armed or not.
+    pub fn enabled(&self) -> bool {
+        self.config.enabled
+    }
+
+    /// Give up recording for this run without arming (the shot dir could
+    /// not be created): no further arm attempts.
+    pub fn abandon(&mut self) {
+        self.config.enabled = false;
+        self.done = true;
+    }
+
+    /// Record one saved-setting transition in the settings sidecar. A
+    /// no-op before arming and after finish. Writes and flushes only when
+    /// the setting's state changed, so a frame with no settings change
+    /// neither allocates nor touches the disk.
+    pub fn note_setting(&mut self, setting: &str, state: SettingState, error: &str) {
+        let Some(active) = self.active.as_mut() else {
+            return;
+        };
+        let t_secs = active.started.elapsed().as_secs_f64();
+        let lines = active.settings.lines_for(t_secs, setting, state, error);
+        if lines.iter().all(Option::is_none) {
+            return;
+        }
+        let Some(writer) = active.settings_file.as_mut() else {
+            return;
+        };
+        let mut written = true;
+        for line in lines.into_iter().flatten() {
+            if writeln!(writer, "{line}").is_err() {
+                written = false;
+                break;
+            }
+        }
+        if written && writer.flush().is_err() {
+            written = false;
+        }
+        if !written {
+            eprintln!("[panel] headed record: settings sidecar write failed; closing it");
+            active.settings_file = None;
+        }
+    }
+
     /// Stage `<shot_dir>/record.mp4` for recording. One warning and a
     /// permanent disable when the ffmpeg binary is missing; the run
     /// continues. The encoder itself spawns on the first staged readback,
@@ -326,6 +505,30 @@ impl HeadedRecord {
         );
         let (sender, receiver) = sync_channel::<Vec<u8>>(RECORD_QUEUE);
         let lines = vec![format_sidecar_header(scenario, fps)];
+        let settings_path = shot_dir.join(RECORD_SETTINGS_NAME);
+        let settings_file = match File::create(&settings_path) {
+            Ok(file) => {
+                let mut writer = BufWriter::new(file);
+                let header = format_settings_header(scenario);
+                match writeln!(writer, "{header}").and_then(|_| writer.flush()) {
+                    Ok(()) => Some(writer),
+                    Err(error) => {
+                        eprintln!(
+                            "[panel] headed record: settings sidecar {}: {error}",
+                            settings_path.display()
+                        );
+                        None
+                    }
+                }
+            }
+            Err(error) => {
+                eprintln!(
+                    "[panel] headed record: settings sidecar {}: {error}",
+                    settings_path.display()
+                );
+                None
+            }
+        };
         self.active = Some(ActiveRecording {
             sender,
             pending_receiver: Some(receiver),
@@ -336,6 +539,9 @@ impl HeadedRecord {
             width: 0,
             height: 0,
             lines,
+            started: Instant::now(),
+            settings_file,
+            settings: SettingsTracker::default(),
             queued: 0,
             dropped: 0,
             size_mismatch: 0,
@@ -408,6 +614,11 @@ impl HeadedRecord {
         let Some(mut active) = self.active.take() else {
             return;
         };
+        // Settings lines flush as they are written; this last flush only
+        // covers a header-only sidecar.
+        if let Some(writer) = active.settings_file.as_mut() {
+            let _ = writer.flush();
+        }
         self.done = true;
         let Some(thread) = active.thread.take() else {
             // Armed but no frame ever staged (instant exit): the encoder
@@ -721,5 +932,174 @@ mod tests {
         assert_eq!(receiver.try_recv().unwrap()[0], 1);
         assert_eq!(receiver.try_recv().unwrap()[0], 3);
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn settings_line_names_setting_state_and_error() {
+        assert_eq!(
+            format_settings_line(1.5, "capture", SettingState::Pending, ""),
+            "t=1.500 setting=\"capture\" state=pending error=\"\""
+        );
+        assert_eq!(
+            format_settings_line(2.0, "capture", SettingState::Saved, "ignored"),
+            "t=2.000 setting=\"capture\" state=saved error=\"\"",
+            "only a failed line carries error text"
+        );
+        assert_eq!(
+            format_settings_line(
+                7.25,
+                "navigation preference",
+                SettingState::Failed,
+                "preferences is busy"
+            ),
+            "t=7.250 setting=\"navigation preference\" state=failed \
+             error=\"preferences is busy\""
+        );
+        assert_eq!(
+            format_settings_line(9.0, "capture", SettingState::Cleared, ""),
+            "t=9.000 setting=\"capture\" state=cleared error=\"\""
+        );
+    }
+
+    #[test]
+    fn settings_line_keeps_one_line_per_change_parseable() {
+        assert_eq!(
+            format_settings_line(
+                0.5,
+                "capture",
+                SettingState::Failed,
+                "say \"hi\"\nthen\rstop"
+            ),
+            "t=0.500 setting=\"capture\" state=failed error=\"say 'hi' then stop\""
+        );
+    }
+
+    #[test]
+    fn settings_header_documents_the_columns() {
+        let header = format_settings_header("interactive");
+        assert!(header.contains("scenario=interactive"), "{header}");
+        assert!(
+            header.contains("state=pending|failed|cleared|saved"),
+            "{header}"
+        );
+    }
+
+    #[test]
+    fn settings_tracker_writes_one_line_per_change() {
+        let mut tracker = SettingsTracker::default();
+        assert_eq!(
+            tracker.lines_for(1.0, "capture", SettingState::Pending, ""),
+            [
+                None,
+                Some(
+                    "t=1.000 setting=\"capture\" state=pending error=\"\"".to_string()
+                )
+            ]
+        );
+        // The same state reported again is not a change.
+        assert_eq!(
+            tracker.lines_for(1.5, "capture", SettingState::Pending, ""),
+            [None, None]
+        );
+        assert_eq!(
+            tracker.lines_for(2.0, "capture", SettingState::Saved, ""),
+            [
+                None,
+                Some("t=2.000 setting=\"capture\" state=saved error=\"\"".to_string())
+            ]
+        );
+        // Another setting tracks independently.
+        assert_eq!(
+            tracker.lines_for(2.5, "sidecar_50", SettingState::Pending, ""),
+            [
+                None,
+                Some(
+                    "t=2.500 setting=\"sidecar_50\" state=pending error=\"\"".to_string()
+                )
+            ]
+        );
+    }
+
+    #[test]
+    fn settings_tracker_failed_then_saved_clears_first() {
+        let mut tracker = SettingsTracker::default();
+        tracker.lines_for(1.0, "capture", SettingState::Pending, "");
+        assert_eq!(
+            tracker.lines_for(6.0, "capture", SettingState::Failed, "preferences is busy"),
+            [
+                None,
+                Some(
+                    "t=6.000 setting=\"capture\" state=failed \
+                     error=\"preferences is busy\""
+                        .to_string()
+                )
+            ]
+        );
+        // The retry's durable write clears the retained failure, then saves.
+        assert_eq!(
+            tracker.lines_for(9.0, "capture", SettingState::Saved, ""),
+            [
+                Some(
+                    "t=9.000 setting=\"capture\" state=cleared error=\"\"".to_string()
+                ),
+                Some("t=9.000 setting=\"capture\" state=saved error=\"\"".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn settings_tracker_failed_then_pending_clears_first() {
+        let mut tracker = SettingsTracker::default();
+        tracker.lines_for(1.0, "capture", SettingState::Failed, "disk full");
+        // A new accepted write is the action that clears the failure.
+        let lines = tracker.lines_for(3.0, "capture", SettingState::Pending, "");
+        assert_eq!(
+            lines,
+            [
+                Some(
+                    "t=3.000 setting=\"capture\" state=cleared error=\"\"".to_string()
+                ),
+                Some(
+                    "t=3.000 setting=\"capture\" state=pending error=\"\"".to_string()
+                )
+            ]
+        );
+    }
+
+    #[test]
+    fn settings_tracker_cleared_reports_and_repeated_failures() {
+        let mut tracker = SettingsTracker::default();
+        // Clearing with nothing retained writes nothing.
+        assert_eq!(
+            tracker.lines_for(1.0, "capture", SettingState::Cleared, ""),
+            [None, None]
+        );
+        tracker.lines_for(2.0, "capture", SettingState::Failed, "one");
+        // A second failure with new text is a change of its own.
+        assert_eq!(
+            tracker.lines_for(3.0, "capture", SettingState::Failed, "two"),
+            [
+                None,
+                Some(
+                    "t=3.000 setting=\"capture\" state=failed error=\"two\"".to_string()
+                )
+            ]
+        );
+        assert_eq!(
+            tracker.lines_for(4.0, "capture", SettingState::Failed, "two"),
+            [None, None],
+            "the same failure reported again is not a change"
+        );
+        // An owner that clears the failure (expiry, a dismiss) writes one
+        // cleared line and no state line after it.
+        assert_eq!(
+            tracker.lines_for(20.0, "capture", SettingState::Cleared, ""),
+            [
+                Some(
+                    "t=20.000 setting=\"capture\" state=cleared error=\"\"".to_string()
+                ),
+                None
+            ]
+        );
     }
 }
