@@ -35,14 +35,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   After a walk fails, the bot plans again from its current tile and tries the
   next tier with unrequested goals. Each request names one tier. Across both
   passes, later requests never resend a tile named by an earlier failed request.
-  The second pass keeps this exclusion after food runs out. The exclusion
-  history uses six fixed 32-byte records and a one-byte count: 193 bytes per
-  escape. It does not grow on game ticks. The live Reach flood measures walking
-  depth to a goal in that tier. It does not remove goals. A walk that neither
-  arrives nor fails ends after the measured depth plus 12 game ticks. The bot
-  counts game ticks. When it cannot measure the depth, this tick limit does not
-  apply. The route planner's own length limit applies. The walk machine's
-  ten-minute deadline ends the walk first.
+  The second pass keeps this exclusion after food runs out. Six fixed 32-byte
+  request records and a one-byte count add 200 bytes to each bot's combat-run
+  state after alignment. The fixed history does not grow on game ticks. The
+  live Reach flood measures walking depth to a goal in that tier. It does not
+  remove goals. A walk that neither arrives nor fails ends after the measured
+  depth plus 12 game ticks. The bot counts game ticks. When it cannot measure
+  the depth, this tick limit does not apply. The route planner's own length
+  limit applies. The walk machine's ten-minute deadline ends the walk first.
 
   Each pass makes at most one request per tier with unrequested goals. It makes
   up to three requests, or two when the quest gives no stand. A second pass can

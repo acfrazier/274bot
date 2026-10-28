@@ -1292,10 +1292,12 @@ fn m2_post_attack_super_attack_does_not_qualify_as_prep() {
 fn m2_out_of_range_receipts_pass_the_full_oracle() {
     let paths = std::env::var("M2_OUT_OF_RANGE_RECEIPTS").expect("M2_OUT_OF_RANGE_RECEIPTS");
     let mut count = 0;
+    let mut boost_count_mutants = 0;
     for path in paths.split(',') {
         let value: Value =
             serde_json::from_slice(&std::fs::read(path).expect("read M2 receipt")).unwrap();
-        let capture = capture(&value);
+        let parse_capture = capture;
+        let capture = parse_capture(&value);
         let baseline = capture
             .start_baseline
             .as_ref()
@@ -1310,10 +1312,10 @@ fn m2_out_of_range_receipts_pass_the_full_oracle() {
         );
         assert_eq!(start_preflight(Case::M2, baseline), None, "{path}");
         let ready = m2_ready(&capture);
+        let Some(report) = report_with_end(&capture, "Killed") else {
+            panic!("M2 receipt has no Killed report for {path}");
+        };
         if !ready {
-            let Some(report) = report_with_end(&capture, "Killed") else {
-                panic!("M2 oracle false: no Killed report for {path}");
-            };
             let prayer_doses = integer(report, "combat_prayer_doses").unwrap_or(-1);
             let boost_doses = integer(report, "combat_boost_doses").unwrap_or(-1);
             let locked_ticks = integer(report, "combat_locked_ticks").unwrap_or(-1);
@@ -1340,6 +1342,10 @@ fn m2_out_of_range_receipts_pass_the_full_oracle() {
                 ),
                 ("first prep plan", first_prep_plan_ok(&capture)),
                 ("drink lock", all_drinks_respect_lock(&capture)),
+                (
+                    "Prep boost count in report window",
+                    prep_boost_count_matches(&capture, report, boost_doses),
+                ),
                 ("prayer floor", all_prayer_drinks_at_floor(&capture, 26)),
                 (
                     "first-floor sip timing",
@@ -1397,6 +1403,38 @@ fn m2_out_of_range_receipts_pass_the_full_oracle() {
             }
         }
         assert!(ready, "receipt {path}; see preceding M2 oracle diagnostics");
+        let prep_tick = first_prep_tick(&capture).expect("M2 receipt has a Prep plan");
+        let report_tick =
+            integer(report, "combat_evidence_tick").expect("M2 receipt has an evidence tick");
+        let combat_ticks = integer(report, "combat_ticks")
+            .filter(|ticks| *ticks > 0)
+            .expect("M2 receipt has a positive combat duration");
+        let window_start = report_tick
+            .checked_sub(combat_ticks - 1)
+            .expect("M2 report window start does not underflow");
+        if (window_start..=report_tick).contains(&prep_tick) {
+            let boost_doses = integer(report, "combat_boost_doses").unwrap();
+            assert!(boost_doses >= 1, "in-window Prep is counted for {path}");
+            let locked_ticks = integer(report, "combat_locked_ticks").unwrap();
+            let mut mutant = value.clone();
+            let status = mutant["statuses"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|status| status["fields"]["combat_end"] == json!("Killed"))
+                .expect("M2 receipt retains its Killed report");
+            let fields = status["fields"].as_object_mut().unwrap();
+            fields.insert("combat_boost_doses".to_owned(), json!(0));
+            fields.insert(
+                "combat_locked_ticks".to_owned(),
+                locked_ticks - 2 * boost_doses,
+            );
+            assert!(
+                !m2_ready(&parse_capture(&mutant)),
+                "zero reported boost dose does not pass for in-window Prep in {path}"
+            );
+            boost_count_mutants += 1;
+        }
 
         let mut in_range = baseline.clone();
         let warlord = in_range["nearby_npcs"]
@@ -1417,4 +1455,8 @@ fn m2_out_of_range_receipts_pass_the_full_oracle() {
         count += 1;
     }
     assert_eq!(count, 2, "supply the two out-of-range reviewer receipts");
+    assert_eq!(
+        boost_count_mutants, 2,
+        "both retained receipts count Prep within their combat windows"
+    );
 }

@@ -1987,6 +1987,7 @@ fn m4_disconnected_authored_stand_is_still_sent_to_the_router() {
 /// the run, its ledger, the snapshot and the earlier request goals.
 fn m4_exhausted_escape_walk(
     lease: &nav_planner::contract::NavLease,
+    move_tree: bool,
 ) -> (
     CombatRun,
     TestLedger,
@@ -2022,18 +2023,25 @@ fn m4_exhausted_escape_walk(
         );
     }
     assert!(matches!(&run.phase, Phase::HoldingAfterAbort));
-    let moved_tree = api::WorldTile {
-        x: M4_TREE.x + 1,
-        ..M4_TREE
-    };
-    seed_m4_scene_at(
-        &mut snapshot,
-        M4_HERE,
-        moved_tree,
-        true,
-        live_attack_animation(&run),
-        false,
+    assert_eq!(
+        earlier_goals.len(),
+        escape::ESCAPE_PASS_ATTEMPTS,
+        "the first pass fails each escape tier"
     );
+    if move_tree {
+        let moved_tree = api::WorldTile {
+            x: M4_TREE.x + 1,
+            ..M4_TREE
+        };
+        seed_m4_scene_at(
+            &mut snapshot,
+            M4_HERE,
+            moved_tree,
+            true,
+            live_attack_animation(&run),
+            false,
+        );
+    }
     for tick in 14..=40 {
         assert!(with_step_context_collision(
             &snapshot,
@@ -2044,18 +2052,20 @@ fn m4_exhausted_escape_walk(
         )
         .is_pending());
         if pending_walk(&ledger).is_some_and(|walk| !walk.allow_food) {
-            let moved_again = api::WorldTile {
-                x: M4_TREE.x + 2,
-                ..M4_TREE
-            };
-            seed_m4_scene_at(
-                &mut snapshot,
-                M4_HERE,
-                moved_again,
-                true,
-                live_attack_animation(&run),
-                false,
-            );
+            if move_tree {
+                let moved_again = api::WorldTile {
+                    x: M4_TREE.x + 2,
+                    ..M4_TREE
+                };
+                seed_m4_scene_at(
+                    &mut snapshot,
+                    M4_HERE,
+                    moved_again,
+                    true,
+                    live_attack_animation(&run),
+                    false,
+                );
+            }
             return (run, ledger, snapshot, earlier_goals);
         }
     }
@@ -2069,7 +2079,7 @@ fn m4_exhausted_escape_walk(
 fn exhausted_m4_escape_arrival_with_a_live_attacker_replans_and_completes_only_when_safe() {
     let collision = m4_collision();
     let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
-    let (mut run, mut ledger, live, mut previous) = m4_exhausted_escape_walk(&lease);
+    let (mut run, mut ledger, live, mut previous) = m4_exhausted_escape_walk(&lease, true);
     let first = last_walk(&ledger);
     assert!(!first.food_guard && !first.allow_food);
     assert!(
@@ -2135,10 +2145,28 @@ fn exhausted_m4_escape_arrival_with_a_live_attacker_replans_and_completes_only_w
 }
 
 #[test]
+fn stationary_m4_tree_gets_untried_goals_after_food_runs_out() {
+    let collision = m4_collision();
+    let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
+    let (_, ledger, _, previous) = m4_exhausted_escape_walk(&lease, false);
+    let exhausted = last_walk(&ledger);
+    assert!(!exhausted.food_guard && !exhausted.allow_food);
+    assert!(
+        previous.iter().all(|goals| {
+            goals_of(&exhausted)
+                .as_slice()
+                .iter()
+                .all(|goal| !goals.contains(goal))
+        }),
+        "the stationary tree's exhausted request uses only untried goals"
+    );
+}
+
+#[test]
 fn exhausted_m4_escape_that_never_loses_the_attacker_ends_with_the_unsafe_arrival() {
     let collision = m4_collision();
     let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
-    let (mut run, mut ledger, live, _) = m4_exhausted_escape_walk(&lease);
+    let (mut run, mut ledger, live, _) = m4_exhausted_escape_walk(&lease, true);
     let mut tick = 41;
     let result = loop {
         let goal = arrival_goal(&last_walk(&ledger));
@@ -3220,18 +3248,35 @@ fn failed_abort_walk_does_not_retry_named_tiles_after_food_exhaustion() {
     })
     .is_pending());
     fail_escape_walks_until_hold(&mut run, &snapshot, &mut ledger, 13);
-    assert!(with_step_context(&snapshot, &mut ledger, 14, |cx| run.poll(cx)).is_pending());
-    let result = with_step_context(&snapshot, &mut ledger, 15, |cx| run.poll(cx));
+    let earlier_goal_sets = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .filter_map(|action| match &action.effect {
+            crate::native::HostEffect::Walk(request) => request
+                .candidate_goals
+                .as_ref()
+                .map(|goals| goals.as_slice().to_vec()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
     assert!(
-        matches!(
-            &result,
-            Poll::Ready(Err(ActionError::Blocked(reason)))
-                if reason.as_ref() == "route fixture failure"
-        ),
-        "the exhausted escape preserves its last route failure, got {}",
-        describe_poll(&result)
+        !earlier_goal_sets.is_empty(),
+        "the guarded pass names goals before food runs out"
     );
-    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    assert!(with_step_context(&snapshot, &mut ledger, 14, |cx| run.poll(cx)).is_pending());
+    let exhausted = last_walk(&ledger);
+    assert!(!exhausted.food_guard && !exhausted.allow_food);
+    assert!(
+        earlier_goal_sets.iter().all(|goals| {
+            goals_of(&exhausted)
+                .as_slice()
+                .iter()
+                .all(|goal| !goals.contains(goal))
+        }),
+        "food exhaustion starts a request with only untried tiles"
+    );
 }
 
 /// Every escape walk fails. One pass makes one request per destination tier:
@@ -3307,8 +3352,8 @@ fn failed_escape_recovery_is_bounded_and_preserves_the_last_failure() {
 
         assert_eq!(
             walks.len(),
-            pass,
-            "stand={stand:?}: fixed geometry has no untried tile for a second pass"
+            2 * pass,
+            "stand={stand:?}: the exhausted second pass requests untried tiers"
         );
         let mut earlier_goal_sets = Vec::<Vec<api::WorldTile>>::new();
         for walk in &walks {
@@ -3348,7 +3393,7 @@ fn failed_escape_recovery_is_bounded_and_preserves_the_last_failure() {
                 "the authored stand leads a pass only when the Path names one"
             );
         }
-        let last = format!("route fixture failure {}", pass);
+        let last = format!("route fixture failure {}", 2 * pass);
         assert!(
             matches!(&result, Err(ActionError::Blocked(reason)) if reason.as_ref() == last),
             "the step must end with the last walk failure"
@@ -3496,8 +3541,8 @@ fn escape_walks_that_never_settle_end_on_their_observed_tick_budget() {
 
         assert_eq!(
             walks.len(),
-            pass,
-            "stand={stand:?}: fixed geometry has no untried tile for a second pass"
+            2 * pass,
+            "stand={stand:?}: the exhausted second pass requests untried tiers"
         );
         for chunk in walks.chunks(pass) {
             for pair in chunk.windows(2) {
@@ -3919,6 +3964,19 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
     assert!(
         tile_distance(walks[0], new_attacker_tile) > tile_distance(here, new_attacker_tile),
         "the escape moves farther from the new attacker"
+    );
+    let new_attacker = data
+        .npc_name(wolf_like.id)
+        .expect("selected content includes the new attacker's range facts");
+    let chase_envelope = new_attacker
+        .maxrange
+        .saturating_mul(2)
+        .saturating_add(new_attacker.attackrange)
+        .max(0)
+        .saturating_add(1);
+    assert!(
+        tile_distance(walks[0], new_attacker_tile) > chase_envelope,
+        "the plan leaves the new attacker's chase envelope of {chase_envelope} tiles"
     );
 }
 
