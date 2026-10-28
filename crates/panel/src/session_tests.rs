@@ -3,7 +3,7 @@ use super::{
     live_or_walk_paint, null_raster_live_entries, parse_getvar_line, publish_nav_debug,
     retire_client_trail, script_active, script_pause_enabled, script_stop_enabled,
     seed_on_first_world, stress_live_entries, temp_live_vault_from, PanelPreferenceMember,
-    PANEL_SETTING_EVENTS_CAP, PreparationCompletion, SceneRoutePaint, Session, SlotIo,
+    PreparationCompletion, SceneRoutePaint, Session, SlotIo, PANEL_SETTING_EVENTS_CAP,
 };
 use crate::focus::draw_for_slot;
 use crate::picker::{
@@ -10115,6 +10115,8 @@ fn panel_setting_retry_clears_only_when_the_owner_removes_the_failure() {
     assert_eq!(events[0].error(), Some("preferences is busy"));
 
     let path = session.preferences.path();
+    std::fs::create_dir_all(path.parent().expect("preferences parent"))
+        .expect("preferences directory");
     let mut lock_name = path.as_os_str().to_os_string();
     lock_name.push(".lock");
     let lock_file = std::fs::OpenOptions::new()

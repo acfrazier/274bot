@@ -1845,9 +1845,7 @@ impl Session {
 
     /// The panel-owned members' transitions and overflow status since the
     /// last call.
-    pub(crate) fn take_panel_setting_events(
-        &mut self,
-    ) -> (Vec<frontend_core::SettingEvent>, bool) {
+    pub(crate) fn take_panel_setting_events(&mut self) -> (Vec<frontend_core::SettingEvent>, bool) {
         (
             std::mem::take(&mut self.setting_events),
             std::mem::take(&mut self.setting_events_overflowed),

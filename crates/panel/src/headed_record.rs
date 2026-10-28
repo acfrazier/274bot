@@ -61,11 +61,7 @@ const SETTINGS_INCOMPLETE_MARKER: &str =
 /// Send a recorder diagnostic through the host log's category, level,
 /// session sink, and redaction.
 pub(crate) fn log_diagnostic(level: api::hostlog::Level, message: impl std::fmt::Display) {
-    api::host_log!(
-        api::hostlog::Category::Lifecycle,
-        level,
-        "{message}"
-    );
+    api::host_log!(api::hostlog::Category::Lifecycle, level, "{message}");
 }
 
 /// Enabled switch + cadence, read once from the environment.
@@ -547,7 +543,10 @@ impl HeadedRecord {
         }
         log_diagnostic(
             api::hostlog::Level::Info,
-            format_args!("headed record: {scenario} -> {} @ {fps} fps", mp4_path.display()),
+            format_args!(
+                "headed record: {scenario} -> {} @ {fps} fps",
+                mp4_path.display()
+            ),
         );
         let (sender, receiver) = sync_channel::<Vec<u8>>(RECORD_QUEUE);
         let lines = vec![format_sidecar_header(scenario, fps)];
@@ -699,7 +698,10 @@ impl HeadedRecord {
         if let Err(error) = std::fs::write(&active.txt_path, sidecar) {
             log_diagnostic(
                 api::hostlog::Level::Warn,
-                format_args!("headed record: sidecar {}: {error}", active.txt_path.display()),
+                format_args!(
+                    "headed record: sidecar {}: {error}",
+                    active.txt_path.display()
+                ),
             );
         }
         if let Some(error) = outcome.error.as_deref() {
