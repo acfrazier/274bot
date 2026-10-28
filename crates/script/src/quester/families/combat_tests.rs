@@ -3924,8 +3924,8 @@ fn live_attack_animation(run: &CombatRun) -> i32 {
 #[test]
 fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
-    // Keep the replacement at the vanished Warlord's tile. It must use the
-    // replacement's wider envelope, not the stale actor's range.
+    // A lower-range replacement at the vanished Warlord's tile isolates the
+    // range fact: the plan must use the replacement, not the old report.
     let escape_envelope = |maxrange: i32, attackrange: i32| {
         maxrange
             .saturating_mul(2)
@@ -3945,10 +3945,10 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
         .iter()
         .find(|row| {
             crate::combat::facts::npc_max_hit(row) == Some(4)
-                && escape_envelope(row.maxrange, row.attackrange) > old_envelope
+                && escape_envelope(row.maxrange, row.attackrange) < old_envelope
         })
         .map(|row| row.id)
-        .expect("selected content includes a lower-hit NPC with a wider chase envelope");
+        .expect("selected content includes a lower-hit NPC with a narrower chase envelope");
     let mut snapshot = GameSnapshot::new();
     let new_attacker_tile = api::WorldTile {
         x: 3001,
@@ -3987,9 +3987,14 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
         .npc_name(new_attacker_id)
         .expect("selected content includes the new attacker's range facts");
     let chase_envelope = escape_envelope(new_attacker.maxrange, new_attacker.attackrange);
+    let distance = tile_distance(walks[0], new_attacker_tile);
     assert!(
-        tile_distance(walks[0], new_attacker_tile) > chase_envelope,
+        distance > chase_envelope,
         "the plan leaves the new attacker's chase envelope of {chase_envelope} tiles"
+    );
+    assert!(
+        distance <= chase_envelope.saturating_add(1),
+        "the plan should target the first ring outside the new attacker's envelope, not the vanished Warlord's range"
     );
 }
 
