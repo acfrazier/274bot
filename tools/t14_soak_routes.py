@@ -159,12 +159,13 @@ def client_approaches(resources):
     ]
 
 
-def client_walks(origins, blocked, checked):
+def client_walks(origins, blocked, checked, recoveries=()):
     """Cover every possible Traveller aim, including click-ahead and recovery.
 
     pick_aim selects the last tile within Chebyshev 20, or a tile 15 steps
-    ahead. Scene clipping only shortens that aim. Every source and aim lies
-    in the closed route-origin set. Query both directions without duplicates.
+    ahead. Scene clipping only shortens that aim. Query both directions in
+    the closed origin set. Also reissue each accepted aim from every tile
+    of its client BFS detour, including recovery distances greater than 20.
     """
     walks = []
     targets = sorted(origins - blocked)
@@ -176,6 +177,11 @@ def client_walks(origins, blocked, checked):
             if 0 < max(abs(source[0] - target[0]), abs(source[1] - target[1])) <= 20:
                 checked.add(pair)
                 walks.append(dict(source=source, target=target))
+    for source, target in sorted(recoveries):
+        pair = source, target
+        if pair not in checked and source != target and target not in blocked:
+            checked.add(pair)
+            walks.append(dict(source=source, target=target))
     return walks
 
 
@@ -225,6 +231,7 @@ def main():
     checked, no_path, retreat_count, client_count, walk_count = 0, 0, 0, 0, 0
     client_errors = []
     walk_pairs, transport_routes = set(), []
+    walk_recoveries = set()
     blocked, processed, bank_reachable, resource_reached = set(), set(), set(), set()
     pending = set(targets)
     access = {}
@@ -254,6 +261,7 @@ def main():
                     client_count += 1
                 if row["kind"] == "client-walk":
                     walk_count += 1
+                    walk_recoveries.update((tuple(point), target) for point in row["tiles"])
                 if row.get("transports"):
                     transport_routes.append(dict(source=row["source"], target=row["target"]))
                 if row["kind"] == "hazard-retreat":
@@ -278,7 +286,7 @@ def main():
             files.append(run_probe(args, f"closure-{round_number}", origins, targets))
             round_number += 1
         else:
-            walks = client_walks(processed, blocked, walk_pairs)
+            walks = client_walks(processed, blocked, walk_pairs, walk_recoveries)
             if not walks:
                 break
             files.append(run_probe(args, f"client-walk-{walk_rounds}", (), (), walks=walks))

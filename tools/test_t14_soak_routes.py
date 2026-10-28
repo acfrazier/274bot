@@ -84,6 +84,15 @@ class RouteSafetyTests(unittest.TestCase):
             (left, middle), (right, middle), (middle, left), (middle, right),
         })
 
+    def test_stalled_walk_recovery_can_reissue_an_aim_beyond_twenty_tiles(self):
+        detour, aim = (0, 30, 0), (20, 0, 0)
+        checked = set()
+        self.assertEqual(audit.client_walks({detour, aim}, set(), checked), [])
+        self.assertEqual(
+            audit.client_walks({detour, aim}, set(), checked, {(detour, aim), (aim, aim)}),
+            [dict(source=detour, target=aim)],
+        )
+
     def test_authored_map_rotation_is_optional(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "m42_54.jm2"
