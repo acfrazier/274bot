@@ -3924,20 +3924,32 @@ fn live_attack_animation(run: &CombatRun) -> i32 {
 #[test]
 fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
-    let wolf_like = data
+    // The R3 base sends a point 24 tiles out. Select a lower-hit threat whose
+    // envelope covers that point, so this test proves which threat sets the goal.
+    let new_attacker_id = data
         .npc_names()
         .unwrap()
         .rows
-        .iter()
-        .find(|row| crate::combat::facts::npc_max_hit(row) == Some(4))
-        .expect("selected content includes a known-hit lower threat");
+        .into_iter()
+        .find(|row| {
+            crate::combat::facts::npc_max_hit(row) == Some(4)
+                && row
+                    .maxrange
+                    .saturating_mul(2)
+                    .saturating_add(row.attackrange)
+                    .max(0)
+                    .saturating_add(1)
+                    >= 24
+        })
+        .map(|row| row.id)
+        .expect("selected content includes a low-hit NPC with a wide chase envelope");
     let mut snapshot = GameSnapshot::new();
     let new_attacker_tile = api::WorldTile {
         x: 2999,
         z: 3000,
         level: 0,
     };
-    let mut newcomer = aborting_npc(9, wolf_like.id, new_attacker_tile);
+    let mut newcomer = aborting_npc(9, new_attacker_id, new_attacker_tile);
     // The live R2 shape: the Warlord row is gone; another NPC attacks.
     let probe_run = combat_test_run(imp_target(&data), None, None, Vec::new());
     newcomer.animation = live_attack_animation(&probe_run);
@@ -3970,7 +3982,7 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
         "the escape moves farther from the new attacker"
     );
     let new_attacker = data
-        .npc_name(wolf_like.id)
+        .npc_name(new_attacker_id)
         .expect("selected content includes the new attacker's range facts");
     let chase_envelope = new_attacker
         .maxrange
