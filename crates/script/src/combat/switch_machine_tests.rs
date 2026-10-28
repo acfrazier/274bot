@@ -1519,3 +1519,52 @@ fn a_completed_switch_allocates_exactly_its_style_box() {
     assert_eq!(harness.machine.active_style(), Style::Melee);
     assert_eq!(allocations.count_total, 0, "{allocations:?}");
 }
+
+// --- T3: the preferred style comes back only when nothing is protected ------
+
+#[test]
+fn t3_returns_to_the_preferred_style_only_when_the_opponent_shows_no_protect_and_is_in_reach() {
+    let (mut scene, kits) = sword_and_bow();
+    let mut harness = start(&mut scene, request(kits));
+    protect(&mut scene, MELEE_PROTECT);
+    let mut tick = 3;
+    while harness.machine.switches() == 0 {
+        step(&mut harness, &mut scene, tick);
+        tick += 1;
+        assert!(tick < 20);
+    }
+    assert_eq!(harness.machine.active_style(), Style::Ranged);
+    // A protect bit against a style we are not using is still a protect shown:
+    // no return to melee, for as long as it stays.
+    protect(&mut scene, MAGE_PROTECT);
+    for t in tick..tick + 20 {
+        step(&mut harness, &mut scene, t);
+        assert_eq!(converging_to(&harness), None, "tick {t}");
+    }
+    tick += 20;
+    // Nothing protected, but the opponent is out of melee reach: no return.
+    far_opponent(&mut scene, tile(3346, 3250));
+    protect(&mut scene, 0);
+    for t in tick..tick + 20 {
+        step(&mut harness, &mut scene, t);
+        assert_eq!(converging_to(&harness), None, "tick {t}: out of reach");
+    }
+    tick += 20;
+    // Nothing protected and in reach: back to the first preference.
+    far_opponent(&mut scene, tile(3341, 3250));
+    let mut guard = 0;
+    while converging_to(&harness).is_none() {
+        step(&mut harness, &mut scene, tick);
+        tick += 1;
+        guard += 1;
+        assert!(guard < 10, "T3 must fire");
+    }
+    assert_eq!(converging_to(&harness), Some(Style::Melee));
+    assert!(matches!(
+        harness.machine.switch_state(),
+        SwitchState::Converging {
+            cause: SwitchCause::Prefer,
+            ..
+        }
+    ));
+}

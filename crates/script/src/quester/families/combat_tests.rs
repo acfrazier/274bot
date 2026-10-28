@@ -3692,6 +3692,75 @@ fn combat_kit_carry_keeps_compiled_alias_ids() {
         "kit carry keeps the compiled alias identities, not the display-name picks"
     );
 }
+
+/// PVP-DESIGN-1026 §4.4, §10.1 case 7e: a kit that lists a two-hander and a
+/// shield is refused at compile (`try_equip` vacates one for the other,
+/// `player/scripts/equip.rs2:355-358,371`); each alone compiles.
+#[test]
+fn a_kit_with_a_two_hander_and_a_shield_is_refused_at_compile() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
+    let name = |alias: &str| data.item_by_alias(alias).unwrap().name.clone().unwrap();
+    let rows = [
+        api::loadout::Loadout::new("kitpath/both")
+            .with_slot("righthand", name("rune_2h_sword"))
+            .with_slot("lefthand", name("wooden_shield")),
+        api::loadout::Loadout::new("kitpath/two_hander")
+            .with_slot("righthand", name("rune_2h_sword")),
+        api::loadout::Loadout::new("kitpath/one_hander")
+            .with_slot("righthand", name("rune_scimitar"))
+            .with_slot("lefthand", name("wooden_shield")),
+    ];
+    let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from(rows));
+    let progress = CompiledProgress {
+        binding: FactKey::new("journal:kitpath"),
+        role: None,
+        colour_not_started: FactKey::new("kitpath:0"),
+        colour_in_progress: FactKey::new("kitpath:1"),
+        colour_complete: FactKey::new("kitpath:2"),
+        stage_keys: Arc::from([]),
+        rules: Arc::from([]),
+        flags: Arc::from([]),
+        monotonic: false,
+    };
+    let areas = HashMap::new();
+    let recipes = HashMap::new();
+    let loadout_carry = HashMap::new();
+    let path = FactKey::new("kitpath");
+    let cx = CompileContext {
+        path: &path,
+        kind: crate::quester::path::PathKind::Quest,
+        pair: None,
+        progress: &progress,
+        selected: &data,
+        quests: &quests,
+        gathering: None,
+        bank: None,
+        bank_required: false,
+        keep_ids: &[],
+        areas: &areas,
+        loadouts: &loadouts,
+        loadout_carry: &loadout_carry,
+        recipes: &recipes,
+    };
+    let compile = |loadout: &str| {
+        let args = serde_json::json!({
+            "target": {"npc": "jailguard", "pick": "nearest", "not_targeting_others": true},
+            "tactic": {"kind": "open", "style": "melee", "engage_radius": 12},
+            "lost_radius": 16,
+            "kill_budget_ticks": 400,
+            "loadout": loadout,
+            "until": {"Any": []}
+        });
+        compile_plan(serde_json::from_value(args).unwrap(), &cx)
+    };
+    assert_eq!(
+        compile("both").err().map(|error| error.code.to_string()),
+        Some("two-handed-kit-with-shield".to_owned())
+    );
+    assert!(compile("two_hander").is_ok());
+    assert!(compile("one_hander").is_ok());
+}
 #[cfg(test)]
 mod abort_hold_cure_policy_tests {
     use super::*;
