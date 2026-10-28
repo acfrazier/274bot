@@ -1260,7 +1260,10 @@ mod bank_pick_capture {
         let world = Arc::new(loaded);
         let banks = world.named_bank_facts().unwrap().banks().to_vec();
         let service = service();
-        for from in [tile(3029, 3294), tile(3018, 3289), tile(3017, 3293)] {
+        for from in (3013..=3045)
+            .flat_map(|x| (3278..=3310).map(move |z| tile(x, z)))
+            .filter(|from| world.collision.walkable(*from))
+        {
             let (slot, action) = native_pick_action(banks.clone(), from, None, false);
             let authority = action.authority();
             let script::native::HostEffect::BankPick(native_request) = action.effect else {
