@@ -42,6 +42,12 @@ enum RangedReadinessWait {
     },
 }
 const PREP_READINESS_TICKS: u16 = 8;
+/// Failed stand-approach walks in one fight before the attempt ends.
+/// Each retry is a fresh route plan from the observed tile, which is
+/// the recovery for a transient stall or a route that ended short.
+/// Three failures report `NoTarget` (no reachable fight from this
+/// stand) instead of re-walking until the kill budget expires.
+const MAX_STAND_WALK_FAILURES: u8 = 3;
 #[derive(Default)]
 struct Counters {
     ticks: u16,
@@ -202,6 +208,7 @@ pub struct Combat {
     emitted_tick: u16,
     phase: Phase,
     flags: u16,
+    stand_walk_failures: u8,
 }
 const OBSERVED: u16 = 1;
 const EMITTED: u16 = 2;
@@ -349,6 +356,7 @@ impl NativeMachine for Combat {
             prep_failures: 0,
             phase: Phase::Prep,
             flags: 0,
+            stand_walk_failures: 0,
         };
         if let Some(lines) = cx.snapshot().chat_lines(-1) {
             machine.chat_since = lines
@@ -416,12 +424,58 @@ impl NativeMachine for Combat {
         }
         self.flags |= OBSERVED;
         self.counters.ticks = self.counters.ticks.saturating_add(1);
-        if self.phase != Phase::Escape
-            && self
+        if self.phase != Phase::Escape {
+            if let Some(receipt) = self
                 .pending_walk
-                .is_some_and(|id| cx.walk_receipt(id.get()).is_some())
-        {
-            self.pending_walk = None;
+                .and_then(|id| cx.walk_receipt(id.get()))
+            {
+                // A stand-approach walk is identified by its context, as
+                // `pending_walk` also carries leash and escape walks:
+                // no engaged target yet, still in Prep/Engage, and the
+                // stand still ahead. Its failure is information first:
+                // the plan below walks again from the observed tile.
+                // Only the bounded count is terminal.
+                let stand_walk = self.engaged.is_none()
+                    && matches!(self.phase, Phase::Prep | Phase::Engage)
+                    && select::stand_pending(&self.request, &frame);
+                let end = receipt.end.clone();
+                let detail = receipt.failure_detail();
+                self.pending_walk = None;
+                if stand_walk {
+                    match end {
+                        WalkEnd::Arrived => self.stand_walk_failures = 0,
+                        WalkEnd::NeedsEvidence(gates) => {
+                            return Poll::Ready(Err(ActionError::NeedsEvidence(gates)));
+                        }
+                        WalkEnd::Cancelled => {
+                            return Poll::Ready(Err(ActionError::Cancelled));
+                        }
+                        WalkEnd::UserInput => {
+                            return Poll::Ready(Err(ActionError::UserInput));
+                        }
+                        end => {
+                            self.stand_walk_failures =
+                                self.stand_walk_failures.saturating_add(1);
+                            if self.stand_walk_failures >= MAX_STAND_WALK_FAILURES {
+                                if let Some(stand) = self.request.stand {
+                                    api::host_log!(
+                                        api::hostlog::Category::NavEvent,
+                                        api::hostlog::Level::Info,
+                                        "combat stand walk to ({},{},{}) failed {} times; last end {:?}; detail {}",
+                                        stand.x,
+                                        stand.z,
+                                        stand.level,
+                                        self.stand_walk_failures,
+                                        end,
+                                        detail.as_deref().unwrap_or("none"),
+                                    );
+                                }
+                                self.finish(CombatEnd::NoTarget, tick);
+                            }
+                        }
+                    }
+                }
+            }
         }
         let events = self.threats.observe(&frame, &self.tables, tick);
         self.counters.damage = self.counters.damage.saturating_add(events.damage);
@@ -1211,11 +1265,22 @@ impl Combat {
             self.flags &= !(LOST | LEASH_WALKED);
         }
         if self.engaged.is_none() {
-            if self.flags & LOST == 0 {
+            if select::stand_pending(&self.request, frame) {
+                // Walking to the stand is the approach, not lost time:
+                // the no-target clock starts only after arrival, and the
+                // bounded stand-walk failures and the request deadline
+                // remain the approach's own limits. The failure count is
+                // spent only by failed walks, so it survives this refresh.
                 self.lost_since = tick;
                 self.flags |= LOST;
-            } else if elapsed(tick, self.lost_since) >= 15 {
-                self.finish(CombatEnd::NoTarget, tick);
+            } else {
+                self.stand_walk_failures = 0;
+                if self.flags & LOST == 0 {
+                    self.lost_since = tick;
+                    self.flags |= LOST;
+                } else if elapsed(tick, self.lost_since) >= 15 {
+                    self.finish(CombatEnd::NoTarget, tick);
+                }
             }
         }
         if self.phase == Phase::Engage

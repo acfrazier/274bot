@@ -46,6 +46,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   starts only after the bot sees that the attacker is gone. If every route
   fails, the quest stops with the last route failure. This does not promise
   that an escape exists.
+- A quest fight with a named fight spot now walks to that spot before it
+  attacks. Before, the bot could start the fight from outside a wall or
+  fence, click a monster it could not reach, and never land a hit. The
+  Witch's Potion rat inside its building and the Druidic Ritual cow inside
+  its fence both failed this way. Melee target choice also skips a monster
+  the bot cannot walk up to, and picks a reachable one instead. A walk to
+  the fight spot that fails is planned again from where the bot stands,
+  up to three failed walks, before the fight attempt ends.
 
 ### Navigation
 

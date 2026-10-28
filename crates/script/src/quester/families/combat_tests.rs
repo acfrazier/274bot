@@ -932,6 +932,7 @@ fn combat_test_run(
         last_report: None,
         last_outcome: None,
         target_gone_restarts: 0,
+        return_walk_failures: 0,
         manual_takeover_watch: crate::native::ManualTakeoverWatch::default(),
         raised_prayers: crate::combat::RaisedPrayers::empty(),
         finish: None,
@@ -3794,6 +3795,75 @@ fn target_gone_walks_to_stand_and_rebegins_only_after_arrival() {
         .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
         .expect("restarted combat must retain the TargetGone report");
     assert_eq!(receipt.target_gone_restarts, 1);
+}
+
+#[test]
+fn return_to_stand_walk_retries_blocked_failures_to_a_bound() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let stand = api::WorldTile {
+        x: 2632,
+        z: 3222,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    let mut ledger = None;
+    let mut run = combat_test_run(
+        imp_target(&data),
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(report(CombatEnd::TargetGone), cx)
+    })
+    .is_pending());
+
+    let blocked = |run: &mut CombatRun,
+                   ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+                   tick: u64,
+                   detail: &'static str| {
+        with_step_context(&snapshot, ledger, tick, |cx| {
+            run.on_return_walk(
+                WalkReceipt {
+                    goal: None,
+                    request_id: 1,
+                    evidence: cx.tick.cx.evidence(),
+                    end: WalkEnd::NoPath,
+                    blocked: None,
+                    detail: Some(Arc::from(detail)),
+                    refusal: None,
+                    assessment: None,
+                    escape: None,
+                },
+                cx,
+            )
+        })
+    };
+
+    // Two blocked walks are retried with fresh walk requests.
+    for (tick, failures) in [(13, 1), (14, 2)] {
+        assert!(blocked(&mut run, &mut ledger, tick, "route stopped short").is_pending());
+        assert_eq!(run.return_walk_failures, failures);
+        assert!(matches!(&run.phase, Phase::ReturningToStand));
+        assert!(matches!(run.action.as_ref(), Some(Action::Walk(_))));
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+            crate::native::HostEffect::Walk(request)
+                if request.target == stand && request.radius == 1
+        ));
+    }
+    // The third blocked walk is terminal and keeps its own detail.
+    let result = blocked(&mut run, &mut ledger, 15, "the last route failure");
+    assert_eq!(run.return_walk_failures, 3);
+    match result {
+        Poll::Ready(Err(ActionError::Blocked(reason))) => {
+            assert_eq!(reason.as_ref(), "the last route failure");
+        }
+        other => panic!("expected the last blocked walk error, got {other:?}"),
+    }
+    assert_eq!(run.target_gone_restarts, 0);
+    assert!(run.action.is_none());
 }
 
 #[test]

@@ -1,6 +1,6 @@
 //! Borrowed combat selection, danger lines and fact-derived combat formulas.
 use super::frame::Frame;
-use super::request::{ActorKind, ActorRef, CombatRequest, Pick, Target};
+use super::request::{ActorKind, ActorRef, CombatRequest, Pick, Style, Target};
 use super::tables::{CombatTables, PrayerRole, StyleMask};
 use super::threats::{StyleObs, Threat, ThreatSet};
 use api::game_data::{DragonfireKind, NpcAttackKind, NpcNameRow, PrayerFact};
@@ -281,6 +281,31 @@ fn has_attack(actions: &[Option<String>]) -> bool {
         .any(|action| action.as_deref() == Some("Attack"))
 }
 
+/// True while an authored stand is still to be reached: the player is
+/// more than one tile (Chebyshev, the stand walk's radius) from it. A
+/// fight with a stand picks no target until then, so the machine's
+/// stand walk runs first and the fight starts from the stand.
+pub fn stand_pending(request: &CombatRequest, frame: &Frame<'_>) -> bool {
+    request
+        .stand
+        .is_some_and(|stand| tile_distance(frame.here, stand) > 1)
+}
+
+/// Walking steps from the player's tile to a wall-valid stand beside
+/// `npc`, from the posted live reach flood. `None` when no stand beside
+/// the NPC is reachable in that flood.
+fn npc_route_steps(view: &api::query::ReachQueryView, npc: &NpcView) -> Option<u32> {
+    crate::reach_route::route_steps(
+        view,
+        crate::reach_route::Footprint {
+            tile: npc.tile,
+            width: npc.size.max(1),
+            length: npc.size.max(1),
+        },
+    )
+    .map(|(steps, _)| steps)
+}
+
 /// Pick an attackable target without allocating or weakening actor identity.
 /// The parent machine retains a selected actor/type while it remains valid.
 pub fn pick_target(
@@ -296,7 +321,25 @@ pub fn pick_target(
             pick,
             not_targeting_others,
         } => {
+            // Walk to the stand first: a target near the stand is not
+            // engageable from wherever the player happens to be, and a
+            // melee click from outside its walls or fence never lands.
+            if stand_pending(request, frame) {
+                return None;
+            }
             let origin = request.stand.unwrap_or(frame.here);
+            // Melee needs a wall-valid stand beside the target. When the
+            // live flood is known, a target with no reachable stand (the
+            // other side of a wall or fence) is not a candidate, and
+            // `Nearest` ranks by walking steps, not straight-line tiles.
+            // Ranged and mage keep straight-line picks: they can attack
+            // over a fence the flood cannot cross. An unknown flood
+            // keeps the straight-line behaviour.
+            let reach = (request.style == Style::Melee)
+                .then(|| {
+                    crate::reach_route::live(frame.reach, Some(frame.local.player.network))
+                })
+                .flatten();
             let mut best: Option<(&NpcView, u64, u64)> = None;
             let mut random_state = seed | 1;
             let mut seen = 0u64;
@@ -309,11 +352,17 @@ pub fn pick_target(
                     })
                     && within_search_bounds(npc.tile, request.search_bounds.as_deref())
                     && tile_distance(npc.tile, origin) <= u32::from(request.engage_radius)
+                    && reach.is_none_or(|view| npc_route_steps(view, npc).is_some())
                     && (!not_targeting_others || !taken_by_another(npc, None, frame.me()))
                     && npc_actor(npc).is_some_and(|actor| actor_attackable(frame, actor))
             }) {
                 seen = seen.saturating_add(1);
-                let distance = u64::from(tile_distance(npc.tile, origin));
+                let distance = reach
+                    .and_then(|view| npc_route_steps(view, npc))
+                    .map_or_else(
+                        || u64::from(tile_distance(npc.tile, origin)),
+                        u64::from,
+                    );
                 let health = health_rank(npc);
                 let replace = match (pick, best) {
                     (Pick::Nearest, Some((_, best_distance, _))) => distance < best_distance,

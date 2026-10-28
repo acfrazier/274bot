@@ -141,6 +141,21 @@ impl Harness {
         Self::new_at(scene, request, 0)
     }
     fn new_at(scene: &Scene, request: CombatRequest, origin: u64) -> Self {
+        Self::new_inner(scene, request, origin, None)
+    }
+    fn new_with_reach(
+        scene: &Scene,
+        request: CombatRequest,
+        reach: api::query::ReachQueryView,
+    ) -> Self {
+        Self::new_inner(scene, request, 0, Some(reach))
+    }
+    fn new_inner(
+        scene: &Scene,
+        request: CombatRequest,
+        origin: u64,
+        reach: Option<api::query::ReachQueryView>,
+    ) -> Self {
         let mut runtime = Runtime {
             pin: scene.data.selected_pin().unwrap(),
             retained: RetainedMemory::default(),
@@ -148,7 +163,7 @@ impl Harness {
             budget: ledger::TickBudget::default(),
             wall: Instant::now(),
             evidence: None,
-            reach: None,
+            reach,
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
@@ -587,6 +602,14 @@ fn fight(scene: &mut Scene) -> Harness {
     harness
 }
 fn user_input_walk_receipt(harness: &mut Harness, tick: u64) {
+    post_walk_receipt(harness, tick, crate::native::WalkEnd::UserInput, None);
+}
+fn post_walk_receipt(
+    harness: &mut Harness,
+    tick: u64,
+    end: crate::native::WalkEnd,
+    detail: Option<&str>,
+) {
     let request_id = harness
         .machine
         .pending_walk
@@ -604,13 +627,53 @@ fn user_input_walk_receipt(harness: &mut Harness, tick: u64) {
             tick,
             sequence: tick.saturating_add(1),
         },
-        end: crate::native::WalkEnd::UserInput,
+        end,
         blocked: None,
-        detail: None,
+        detail: detail.map(Arc::from),
         refusal: None,
         assessment: None,
         escape: None,
     });
+}
+
+/// A live reach view flooded from `player` over a `size`-square open
+/// scene at `base`, with collision `flags` OR-ed onto tiles. The same
+/// construction as the Quester chooser tests.
+fn flood_view(
+    base: api::WorldTile,
+    size: i32,
+    flags: &[(api::WorldTile, i32)],
+    player: api::WorldTile,
+) -> api::query::ReachQueryView {
+    let mut scene = api::snapshot::SceneView {
+        available: true,
+        base_x: base.x,
+        base_z: base.z,
+        level: 0,
+        width: size,
+        height: size,
+        collision_flags: vec![0; (size * size) as usize],
+    };
+    for (flagged, flag) in flags {
+        let index = ((flagged.x - base.x) * size + flagged.z - base.z) as usize;
+        scene.collision_flags[index] |= flag;
+    }
+    let flood = api::query::SceneQuery::new(&scene, Some(player)).flood_reach();
+    api::query::pack_reach_query(&scene, flood.as_ref())
+}
+
+/// The eight tiles around `center` blocked: a closed pen.
+fn pen_flags(center: api::WorldTile) -> Vec<(api::WorldTile, i32)> {
+    (-1..=1)
+        .flat_map(|dx| (-1..=1).map(move |dz| (dx, dz)))
+        .filter(|&(dx, dz)| dx != 0 || dz != 0)
+        .map(|(dx, dz)| {
+            (
+                tile(center.x + dx, center.z + dz),
+                client::dash3d::CollisionFlag::SQ_BLOCKED,
+            )
+        })
+        .collect()
 }
 #[test]
 fn combat_machine_cure_row_precedes_eat_row() {
@@ -3736,6 +3799,150 @@ fn same_tick_combat_approach_defers_after_an_interaction_spends_budget() {
         &harness.runtime.ledger.as_ref().unwrap().outbox.last().unwrap().effect,
         HostEffect::Walk(walk) if walk.target == stand
     ));
+}
+
+#[test]
+fn stand_is_reached_before_engagement_even_when_a_target_is_already_in_radius() {
+    // The QUEST-S2 sweep shape: the target stands on the authored stand
+    // tile, inside engage radius of it, while the player is still three
+    // tiles away on the other side of its fence. Picking it now would
+    // click Attack from outside the pen and never land a swing.
+    let mut scene = Scene::new("cow");
+    let here = scene.local.player.actor.tile;
+    let stand = tile(here.x + 3, here.z);
+    scene.npcs[0].tile = stand;
+    scene.npcs[0].network = stand;
+    scene.npcs[0].distance = 3;
+    scene.refresh();
+    let mut request = scene.request();
+    request.stand = Some(stand);
+    let mut harness = Harness::new(&scene, request);
+    assert_eq!(
+        harness.machine.engaged(),
+        None,
+        "begin must not pick a target before the stand is reached"
+    );
+    assert!(matches!(
+        harness.pending(&scene, 1),
+        Some(HostEffect::Walk(walk)) if walk.target == stand
+    ));
+    // The approach may take longer than the 15-tick no-target window:
+    // walking to the stand is progress, not lost time.
+    for tick in 2..=20 {
+        assert!(harness.pending(&scene, tick).is_none());
+        assert_eq!(harness.machine.engaged(), None);
+        assert_eq!(harness.machine.end, None);
+    }
+    scene.local.player.actor.tile = stand;
+    scene.local.player.network = stand;
+    scene.refresh();
+    post_walk_receipt(&mut harness, 20, crate::native::WalkEnd::Arrived, None);
+    attack(harness.pending(&scene, 21));
+    assert_eq!(
+        harness.machine.engaged(),
+        Some(ActorRef {
+            kind: ActorKind::Npc,
+            index: 7,
+        })
+    );
+}
+
+#[test]
+fn melee_pick_never_takes_a_target_behind_a_closed_pen() {
+    // At the stand, the straight-line-nearest cow is inside a closed
+    // pen. The posted flood has no wall-valid stand beside it, so the
+    // reachable cow farther away is the only melee candidate.
+    let mut scene = Scene::new("cow");
+    let here = scene.local.player.actor.tile;
+    let penned = tile(here.x + 3, here.z);
+    scene.npcs[0].tile = penned;
+    scene.npcs[0].network = penned;
+    scene.npcs[0].distance = 3;
+    let mut open = scene.npcs[0].clone();
+    open.index = 8;
+    open.tile = tile(here.x, here.z + 6);
+    open.network = open.tile;
+    open.distance = 6;
+    scene.npcs.push(open);
+    scene.refresh();
+    let mut request = scene.request();
+    request.stand = Some(here);
+    let reach = flood_view(
+        tile(here.x - 10, here.z - 10),
+        32,
+        &pen_flags(penned),
+        here,
+    );
+    let harness = Harness::new_with_reach(&scene, request.clone(), reach);
+    assert_eq!(
+        harness.machine.engaged(),
+        Some(ActorRef {
+            kind: ActorKind::Npc,
+            index: 8,
+        }),
+        "the penned cow at straight-line distance 3 must lose to the reachable cow"
+    );
+
+    // With only the penned cow present, nothing is picked at all.
+    let mut scene = Scene::new("cow");
+    scene.npcs[0].tile = penned;
+    scene.npcs[0].network = penned;
+    scene.npcs[0].distance = 3;
+    scene.refresh();
+    let reach = flood_view(
+        tile(here.x - 10, here.z - 10),
+        32,
+        &pen_flags(penned),
+        here,
+    );
+    let mut harness = Harness::new_with_reach(&scene, request, reach);
+    assert_eq!(harness.machine.engaged(), None);
+    assert!(
+        harness.pending(&scene, 1).is_none(),
+        "no attack and no walk: the player is at the stand and the only cow is penned"
+    );
+}
+
+#[test]
+fn failed_stand_walks_retry_to_a_bound_then_report_no_target() {
+    let mut scene = Scene::new("cow");
+    let here = scene.local.player.actor.tile;
+    let stand = tile(here.x + 10, here.z);
+    scene.npcs[0].tile = stand;
+    scene.npcs[0].network = stand;
+    scene.npcs[0].distance = 10;
+    scene.refresh();
+    let mut request = scene.request();
+    request.stand = Some(stand);
+    let mut harness = Harness::new(&scene, request);
+
+    for tick in 1..=3u64 {
+        assert!(matches!(
+            harness.pending(&scene, tick),
+            Some(HostEffect::Walk(walk)) if walk.target == stand
+        ));
+        post_walk_receipt(
+            &mut harness,
+            tick,
+            crate::native::WalkEnd::NoPath,
+            Some("no route to the stand"),
+        );
+        if tick < 3 {
+            assert_eq!(harness.machine.end, None);
+        }
+    }
+    // The third failure is terminal for this attempt. It may complete
+    // its wind-down in the same poll or a later one.
+    match harness.poll(&scene.snapshot, 4) {
+        Poll::Pending => {
+            harness.drain(None);
+            assert_eq!(harness.machine.end, Some(CombatEnd::NoTarget));
+        }
+        Poll::Ready(Ok(report)) => assert_eq!(report.end, CombatEnd::NoTarget),
+        other => panic!("expected a NoTarget end after three failed stand walks, got {other:?}"),
+    }
+    assert_eq!(harness.machine.stand_walk_failures, 3);
+    assert_eq!(harness.machine.counters.swings, 0);
 }
 
 #[test]

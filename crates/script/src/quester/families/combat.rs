@@ -51,6 +51,10 @@ pub const ABORT_ESCAPE_UNSAFE_REASON: &str =
 pub const ABORT_ESCAPE_STALLED_REASON: &str =
     "combat abort escape walk made no settled progress within its tick budget";
 
+/// Failed return-to-stand walks in one return before the last failure
+/// ends the step. Each retry is a fresh walk request, so the router
+/// plans again from the observed tile.
+const MAX_RETURN_WALK_FAILURES: u8 = 3;
 static ABORTED_COMBAT_STEP: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from(ABORTED_COMBAT_STEP_REASON));
 static ABORT_WALK_FAILED: std::sync::LazyLock<Arc<str>> =
@@ -793,6 +797,7 @@ impl StepPlan for CombatPlan {
             last_report: None,
             last_outcome: None,
             target_gone_restarts: 0,
+            return_walk_failures: 0,
             raised_prayers: RaisedPrayers::empty(),
             manual_takeover_watch: crate::native::ManualTakeoverWatch::default(),
             finish_target_index: None,
@@ -1131,6 +1136,7 @@ struct CombatRun {
     last_report: Option<CombatReport>,
     last_outcome: Option<StepOutcome>,
     target_gone_restarts: u8,
+    return_walk_failures: u8,
     raised_prayers: RaisedPrayers,
     manual_takeover_watch: crate::native::ManualTakeoverWatch,
     finish: Option<FinishConfig>,
@@ -1556,8 +1562,30 @@ impl CombatRun {
         cx: &mut StepContext<'_, '_>,
     ) -> Poll<Result<StepOutcome, ActionError>> {
         self.action = None;
-        receipt.into_arrival()?;
-        self.rebegin_combat(cx, true)
+        match receipt.into_arrival() {
+            Ok(_) => {
+                self.return_walk_failures = 0;
+                self.rebegin_combat(cx, true)
+            }
+            // A blocked walk is information first: walk again, replanned
+            // from the observed tile, within the bounded count. Typed
+            // evidence failures (user input, cancellation, missing quest
+            // evidence) are not retryable and keep their exact error.
+            Err(error) if matches!(error, ActionError::Blocked(_)) => {
+                self.return_walk_failures = self.return_walk_failures.saturating_add(1);
+                if self.return_walk_failures >= MAX_RETURN_WALK_FAILURES {
+                    return Poll::Ready(Err(error));
+                }
+                match self.request.stand {
+                    Some(stand) => match self.begin_return_to_stand(stand, cx) {
+                        Ok(()) => Poll::Pending,
+                        Err(begin_error) => Poll::Ready(Err(begin_error)),
+                    },
+                    None => Poll::Ready(Err(error)),
+                }
+            }
+            Err(error) => Poll::Ready(Err(error)),
+        }
     }
 
     /// Ends an escape walk that stays unsettled past its observed-tick
@@ -1701,6 +1729,7 @@ impl CombatRun {
                     return self.finish(cx);
                 }
                 if let Some(stand) = self.request.stand {
+                    self.return_walk_failures = 0;
                     match self.begin_return_to_stand(stand, cx) {
                         Ok(()) => Poll::Pending,
                         Err(error) => Poll::Ready(Err(error)),
