@@ -364,8 +364,14 @@ impl QueueEvidence {
     }
 }
 
+#[cfg(feature = "test-support")]
+
 const SKIP_CELL: &str = "qs_quester_skip";
+#[cfg(feature = "test-support")]
+
 const SKIP_QUESTS: &[&str] = &["cook", "sheep"];
+
+#[cfg(feature = "test-support")]
 
 #[derive(Debug, Clone)]
 struct SkipActionReceipt {
@@ -375,6 +381,8 @@ struct SkipActionReceipt {
     child_step_id: Option<String>,
     phase: String,
 }
+
+#[cfg(feature = "test-support")]
 
 #[derive(Debug, Clone)]
 struct SkipStatusReceipt {
@@ -389,12 +397,16 @@ struct SkipStatusReceipt {
     failure: Option<(String, String)>,
 }
 
+#[cfg(feature = "test-support")]
+
 #[derive(Debug, Clone)]
 struct SkipRequestReceipt {
     quest_id: String,
     step_id: String,
     action: SkipActionReceipt,
 }
+
+#[cfg(feature = "test-support")]
 
 #[derive(Debug, Clone, Copy)]
 struct SkipCleanupOwnership {
@@ -404,6 +416,8 @@ struct SkipCleanupOwnership {
     seat_results: usize,
     reserved_releases: usize,
 }
+
+#[cfg(feature = "test-support")]
 
 #[derive(Default)]
 struct SkipQueueEvidence {
@@ -419,6 +433,8 @@ struct SkipQueueEvidence {
 }
 
 
+#[cfg(feature = "test-support")]
+
 fn queue_row_letter(queue: &str, id: &str) -> Result<char, String> {
     let position = script::quester::registry::BUNDLED_INDEX
         .paths
@@ -430,6 +446,8 @@ fn queue_row_letter(queue: &str, id: &str) -> Result<char, String> {
         .nth(position)
         .ok_or_else(|| format!("Quester queue status is missing row {id:?}: {queue:?}"))
 }
+
+#[cfg(feature = "test-support")]
 
 impl SkipQueueEvidence {
     fn active_cook_action(
@@ -463,6 +481,8 @@ impl SkipQueueEvidence {
             phase: format!("{:?}", status.phase),
         }))
     }
+
+    #[cfg(feature = "test-support")]
 
     fn observe_cancel_ownership(
         &mut self,
@@ -760,6 +780,8 @@ impl SkipQueueEvidence {
     }
 }
 
+#[cfg(feature = "test-support")]
+
 fn quester_skip_scenario() -> Result<(scenario::Scenario, Map<String, Value>), String> {
     let mut scenario =
         scenario::get("quester_queue").ok_or("scenario registry has no quester_queue")?;
@@ -1011,6 +1033,8 @@ fn run_quester_queue() -> Result<(), String> {
 }
 
 
+#[cfg(feature = "test-support")]
+
 fn run_quester_skip() -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Ok(());
@@ -1246,6 +1270,8 @@ fn run_quester_skip() -> Result<(), String> {
     play.stop_slot(&account);
     result
 }
+#[cfg(feature = "test-support")]
+
 #[test]
 #[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=qs, explicit WORLD_NAV_PACK/WORLD_ENGINE_DIR/RS2B0T/BOT_CACHE_DIR and Engine L"]
 fn quester_skip_active_cook_parks_then_sheep_completes() {
