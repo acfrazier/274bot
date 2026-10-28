@@ -89,28 +89,31 @@ const CHICKEN_KILLER_BANK_INJECT: &[ScriptSettingInject] = &[
     },
     ScriptSettingInject {
         id: "lootMatch",
-        value: ScriptInjectValue::Str("feather"),
+        value: ScriptInjectValue::Str("bones"),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
     },
     ScriptSettingInject {
         id: "combatStyle",
         value: ScriptInjectValue::Str("melee"),
     },
 ];
-/// ChickenKiller loot-count trip: melee, `bankEveryItems=1`, Feather 314.
-/// Bones stay the bury keep-list default; melee `afterDeposit` is a no-op.
-/// Prepare only before Start. Proof is combat, exact loot, fresh deposit,
-/// return to the original anchor, then new exact feathers after the pack
-/// was emptied. Same-id `StatXpGain { min: 1 }` cannot witness further
-/// work: the runner keeps the first XP baseline per skill id.
+/// ChickenKiller loot-count trip: melee, `bankEveryItems=1`, Bones 526.
+/// Burial is disabled so the guaranteed Bones drop enters the bank.
+/// Prepare only before Start. Proof is combat, pickup, fresh deposit,
+/// return to the original anchor, then fresh Strength XP after return.
+/// Up to three further bank returns restart the same 150-tick combat window.
 pub(crate) fn chicken_killer_bank_scenario() -> Scenario {
     let tele = FALADOR_CHICKENS;
     let first_strength = Proof::StatXpGain {
         id: STRENGTH_STAT,
         min: 1,
     };
-    let further_feathers = Proof::ItemId {
-        id: FEATHER_ID,
-        count: 1,
+    let further_strength = Proof::FreshStatXpGain {
+        id: STRENGTH_STAT,
+        min: 1,
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
@@ -141,9 +144,9 @@ pub(crate) fn chicken_killer_bank_scenario() -> Scenario {
         steps.push(bank_fletcher_watch(name, Proof::Stat { id, min: 30 }));
     }
     steps.push(bank_fletcher_watch(
-        "confirm no seeded feathers in pack before Start",
+        "confirm no seeded Bones in pack before Start",
         Proof::ItemIdAtMost {
-            id: FEATHER_ID,
+            id: BONES_ID,
             count: 0,
         },
     ));
@@ -154,23 +157,23 @@ pub(crate) fn chicken_killer_bank_scenario() -> Scenario {
             first_strength,
         ),
         (
-            "watch exact Feather 314 looted after Start",
+            "watch exact Bones 526 looted after Start",
             Proof::ItemId {
-                id: FEATHER_ID,
+                id: BONES_ID,
                 count: 1,
             },
         ),
         (
-            "watch script-looted feathers enter a fresh bank",
+            "watch script-looted Bones enter a fresh bank",
             Proof::BankItemId {
-                id: FEATHER_ID,
+                id: BONES_ID,
                 count: 1,
             },
         ),
         (
-            "watch the pack empty of feathers after deposit",
+            "watch the pack empty of Bones after deposit",
             Proof::ItemIdAtMost {
-                id: FEATHER_ID,
+                id: BONES_ID,
                 count: 0,
             },
         ),
@@ -187,10 +190,21 @@ pub(crate) fn chicken_killer_bank_scenario() -> Scenario {
             "watch the periodic bank close after deposit",
             Proof::BankClosed,
         ),
-        ("watch new exact Feather 314 after return", further_feathers),
     ] {
         steps.push(bank_fletcher_watch(step_name, arm));
     }
+    steps.push(Step {
+        name: "watch fresh Strength XP after the bank return",
+        kind: StepKind::ObserveCombatAcrossBankReturns {
+            stand: tele,
+            radius: 6,
+            max_restarts: api::CHICKEN_BANK_MAX_RESTARTS,
+        },
+        wait: Wait {
+            arm: further_strength,
+            budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
+        },
+    });
     Scenario {
         name: "chicken_killer_bank",
         seed: Seed {
@@ -198,15 +212,18 @@ pub(crate) fn chicken_killer_bank_scenario() -> Scenario {
             mainland: true,
         },
         steps,
-        proof: further_feathers,
+        proof: further_strength,
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
             // NIGHTLY-C7-1023: three complete Engine A cycles took 169, 197,
-            // and 308 ticks (maximum 199.993s). Keep 20% wall-clock headroom
-            // for this full bank-and-return cycle, not the shared gold cap.
-            deadline: Duration::from_secs(240),
+            // and 308 ticks (maximum 199.993s).
+            // The final observer can wait 150 + api::CHICKEN_BANK_MAX_RESTARTS
+            // * (150 + 150) = 1,050 more ticks. At the measured 0.365 s/tick,
+            // that adds 383.25s. 199.993s + 383.25s with 20% headroom is
+            // 700s. The 720s deadline is the outer wall-clock limit.
+            deadline: Duration::from_secs(720),
             start_script: Some("ChickenKiller"),
             script_settings_inject: Some(CHICKEN_KILLER_BANK_INJECT),
             terminal_shot: Some("chicken_killer_bank"),

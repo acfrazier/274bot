@@ -276,6 +276,41 @@ fn native_near_walk_after_compat_tile_walk_uses_arrival_endpoint() {
 }
 
 #[test]
+fn stale_route_terminal_cannot_complete_a_native_walk_with_the_same_request_id() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    {
+        let mut navs = rig.navs.lock().unwrap();
+        let bot = navs.get_mut("alice").unwrap();
+        let request_id = bot.native_walk.as_ref().unwrap().request_id().get();
+        let previous_generation = bot.route_generation.wrapping_sub(1);
+        // Compatibility walks and native actions have separate request-id
+        // sequences. A retained compatibility terminal can reuse this id.
+        bot.walk_outcome_seq = bot.walk_outcome_seq.wrapping_add(1);
+        bot.walk_outcome_generation = previous_generation;
+        bot.walk_outcome_request_id = request_id;
+        bot.walk_outcome_failed = false;
+        bot.walk_outcome_blocked = false;
+    }
+
+    rig.observe(2);
+    assert!(
+        rig.shared.lock().result.is_none(),
+        "a previous route generation must not finish the current native walk"
+    );
+
+    let target = WorldTile {
+        x: 4,
+        z: 0,
+        level: 0,
+    };
+    rig.step_at(target);
+    rig.observe_at(3, target);
+    assert_eq!(rig.end(), Some(Ok(WalkEnd::Arrived)));
+}
+
+#[test]
 fn candidate_walk_returns_and_settles_the_chosen_goal() {
     let mut rig = rig(Some(Arc::new(open_world(40, 40))), false);
     // Client scene borders are blocked. Use an actual interior Area stand.
