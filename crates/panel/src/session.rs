@@ -2532,11 +2532,15 @@ impl Session {
         self.ui.sidecar_50 = self.draw.sidecar_50();
         self.ui.focused_50 = self.draw.focused_50();
         self.ui.map_bake = self.map_desk.bake_gate().choice();
-        self.script_load_dir =
-            crate::script_picker::default_load_browse_dir(self.ui.script_load_last_dir.as_deref());
-        self.rs2b0t_catalog_dir = crate::script_picker::default_load_browse_dir(
-            self.ui.script_catalog_last_dir.as_deref(),
-        );
+        #[cfg(feature = "js")]
+        {
+            self.script_load_dir = crate::script_picker::default_load_browse_dir(
+                self.ui.script_load_last_dir.as_deref(),
+            );
+            self.rs2b0t_catalog_dir = crate::script_picker::default_load_browse_dir(
+                self.ui.script_catalog_last_dir.as_deref(),
+            );
+        }
 
         self.clear_cached_nav_members(document);
     }
