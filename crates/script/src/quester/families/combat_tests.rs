@@ -3256,6 +3256,7 @@ fn failed_abort_walk_does_not_retry_named_tiles_after_food_exhaustion() {
         "the guarded pass names goals before food runs out"
     );
     assert!(with_step_context(&snapshot, &mut ledger, 14, |cx| run.poll(cx)).is_pending());
+    assert!(with_step_context(&snapshot, &mut ledger, 15, |cx| run.poll(cx)).is_pending());
     let exhausted = last_walk(&ledger);
     assert!(!exhausted.food_guard && !exhausted.allow_food);
     assert!(
@@ -3341,7 +3342,10 @@ fn failed_escape_recovery_is_bounded_and_preserves_the_last_failure() {
         };
 
         let first_pass_count = walks.iter().take_while(|walk| walk.food_guard).count();
-        assert_eq!(first_pass_count, pass, "the guarded pass requests each available tier");
+        assert_eq!(
+            first_pass_count, pass,
+            "the guarded pass requests each available tier"
+        );
         let exhausted_count = walks.len() - first_pass_count;
         assert!(
             exhausted_count > 0 && exhausted_count <= pass,
@@ -3535,7 +3539,10 @@ fn escape_walks_that_never_settle_end_on_their_observed_tick_budget() {
             .iter()
             .take_while(|(_, walk)| walk.food_guard)
             .count();
-        assert_eq!(first_pass_count, pass, "the guarded pass requests each available tier");
+        assert_eq!(
+            first_pass_count, pass,
+            "the guarded pass requests each available tier"
+        );
         assert!(
             walks.len() > first_pass_count && walks.len() <= 2 * pass,
             "stand={stand:?}: the exhausted pass requests only tiers with untried goals"
