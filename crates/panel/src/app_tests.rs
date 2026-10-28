@@ -98,6 +98,77 @@ fn panel_exit_status_child() {
             });
             std::process::exit(live_exit_code(&live, None).expect("PASS exits immediately"));
         }
+        Ok("startup_fail") => {
+            let mut session = crate::session::Session::new();
+            let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 1,
+                cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
+                lowmem: true,
+                mainland: false,
+            });
+            let exited = play.attach_stop_observed_worker_for_test(
+                "startup",
+                host_play::SlotArm::new(1, false),
+            );
+            session.core.fleet_mut().add("startup");
+            session.core.set_play(Some(play));
+            let _ = super::fail_startup(&mut session, true, "synthetic boot error".into());
+            assert!(!session.core.has_play(), "fatal startup must retire Play");
+            assert!(exited.try_recv().is_ok(), "fatal startup must join its worker");
+            eprintln!("startup worker retired before window teardown");
+        }
+        #[cfg(feature = "memory-profile")]
+        Ok("memory_pass") => {
+            let mut state = PanelState::default();
+            let config = frontend_core::bench::BenchConfig::from_env()
+                .expect("benchmark configuration")
+                .expect("memory benchmark enabled");
+            let mut run =
+                frontend_core::bench::BenchRun::prepare(config, "panel").expect("benchmark run");
+            let name = run.names()[0].clone();
+            run.finish_for_test();
+            let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 1,
+                cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
+                lowmem: true,
+                mainland: false,
+            });
+            let exited =
+                play.attach_stop_observed_worker_for_test(&name, host_play::SlotArm::new(1, false));
+            state.session.core.fleet_mut().add(&name);
+            state.session.core.set_play(Some(play));
+            state.memory = Some(run);
+            let mut ctx = crate::test_support::imgui_context();
+            ctx.prepare_frame(
+                dear_imgui_rs::FramePrepareOptions::new([800.0, 600.0], 1.0 / 60.0)
+                    .renderer_has_textures(),
+            );
+            let _ui = ctx.frame();
+            let failure = std::sync::Mutex::new(None);
+            assert!(super::frame_pumps(&mut state, &failure));
+            assert!(!state.session.core.has_play(), "PASS must retire Play");
+            assert!(
+                exited.try_recv().is_ok(),
+                "PASS must join its worker before frame_pumps returns"
+            );
+            assert!(failure.lock().unwrap().is_none(), "PASS must exit successfully");
+            assert!(
+                state
+                    .session
+                    .core
+                    .commands()
+                    .reports()
+                    .any(|report| report.command() == frontend_core::OperatorCommand::Quit
+                        && report.is_settled()),
+                "PASS must use the Quit settlement before window teardown"
+            );
+            ctx.render();
+            eprintln!("PASS worker joined before window teardown");
+        }
         #[cfg(feature = "memory-profile")]
         Ok("memory_fail") => {
             let mut state = PanelState::default();
@@ -180,6 +251,52 @@ fn live_pass_exits_the_process_successfully() {
 #[test]
 fn normal_interactive_window_close_remains_successful() {
     assert!(finish_panel_run(Ok(()), None).is_ok());
+}
+
+#[test]
+fn fatal_startup_retires_play_before_the_gpu_window_is_released() {
+    let output = live_exit_child("startup_fail");
+    assert!(
+        output.status.success(),
+        "fatal startup must return to the frame before process exit:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("startup worker retired before window teardown"),
+        "the worker must finish before the window closes"
+    );
+}
+
+#[cfg(feature = "memory-profile")]
+#[test]
+fn successful_memory_run_joins_worker_before_frame_returns() {
+    let dir = TestDir::new("memory-panel-pass");
+    let output =
+        std::process::Command::new(std::env::current_exe().expect("current test executable"))
+            .args([
+                "--ignored",
+                "--exact",
+                "--nocapture",
+                "app::tests::panel_exit_status_child",
+            ])
+            .env("PANEL_EXIT_CHILD", "memory_pass")
+            .env("BOT_MEMORY_N", "1")
+            .env("BOT_MEMORY_WORKLOAD", "idle")
+            .env("BOT_MEMORY_OUTPUT", dir.join("samples.jsonl"))
+            .env("BOT_LIVE_NAME_PREFIX", "pex")
+            .env_remove("RS2B0T")
+            .output()
+            .expect("run memory pass child");
+    assert!(
+        output.status.success(),
+        "PASS must join its worker and settle Quit:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("PASS worker joined before window teardown"),
+        "the worker must finish before the window closes"
+    );
 }
 
 #[cfg(feature = "memory-profile")]

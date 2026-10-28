@@ -430,6 +430,29 @@ impl Play {
         release
     }
 
+    /// Attach a worker that records its exit after the Play signals shutdown.
+    #[cfg(feature = "test-support")]
+    pub fn attach_stop_observed_worker_for_test(
+        &mut self,
+        name: &str,
+        arm: Arc<SlotArm>,
+    ) -> std::sync::mpsc::Receiver<()> {
+        let stop = Arc::clone(&arm.stop);
+        self.attach_arm(name, arm);
+        self.spawned.insert(name.to_string());
+        let (exited, observe_exit) = std::sync::mpsc::channel();
+        self.handles.insert(
+            name.to_string(),
+            thread::spawn(move || {
+                while !stop.load(Ordering::Acquire) {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                let _ = exited.send(());
+            }),
+        );
+        observe_exit
+    }
+
     /// Spawn one more slot on this play's FIFO. No-op if `username` is
     /// already in the status list (already running). `None` arm behaves as
     /// [`SlotArm::new(profile.uid, true)`] — the slot logs in immediately

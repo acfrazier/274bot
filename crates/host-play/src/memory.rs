@@ -1970,6 +1970,13 @@ impl Run {
         result
     }
 
+    /// Put a test run at the terminal observation boundary without a live server.
+    #[cfg(feature = "test-support")]
+    pub fn finish_for_test(&mut self) {
+        self.teardown = Some(Instant::now());
+        self.config.teardown = Duration::ZERO;
+    }
+
     fn poll_inner(&mut self, play: &Play) -> Result<bool, String> {
         let now = Instant::now();
         let statuses = play.statuses();
