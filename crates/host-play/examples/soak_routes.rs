@@ -23,6 +23,8 @@ struct Batch {
     retreats: Vec<[[i32; 3]; 2]>,
     #[serde(default)]
     approaches: Vec<Approach>,
+    #[serde(default)]
+    walks: Vec<Walk>,
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -32,6 +34,27 @@ struct Approach {
     id: i32,
     shape: i32,
     angle: i32,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+struct Walk {
+    source: [i32; 3],
+    target: [i32; 3],
+}
+
+#[derive(Clone, Copy)]
+enum ClientRoute {
+    Approach(Approach),
+    Walk(Walk),
+}
+
+impl ClientRoute {
+    fn endpoints(self) -> ([i32; 3], [i32; 3]) {
+        match self {
+            Self::Approach(approach) => (approach.source, approach.target),
+            Self::Walk(walk) => (walk.source, walk.target),
+        }
+    }
 }
 
 fn tile(value: [i32; 3]) -> WorldTile {
@@ -107,26 +130,29 @@ fn write_json_line(
     Ok(())
 }
 
-fn approach_row(batch: &str, approach: Approach) -> serde_json::Value {
-    json!({
-        "batch": batch,
-        "kind": "client-approach",
-        "source": approach.source,
-        "target": approach.target,
-        "id": approach.id,
-        "shape": approach.shape,
-        "angle": approach.angle
-    })
+fn client_row(batch: &str, route: ClientRoute) -> serde_json::Value {
+    let (source, target) = route.endpoints();
+    let mut row = json!({"batch":batch,"source":source,"target":target});
+    match route {
+        ClientRoute::Approach(approach) => {
+            row["kind"] = json!("client-approach");
+            row["id"] = json!(approach.id);
+            row["shape"] = json!(approach.shape);
+            row["angle"] = json!(approach.angle);
+        }
+        ClientRoute::Walk(_) => row["kind"] = json!("client-walk"),
+    }
+    row
 }
 
-fn write_approach_error(
+fn write_client_error(
     batch: &str,
-    approach: Approach,
+    route: ClientRoute,
     scene_base: Option<[i32; 2]>,
     error: &str,
     out: &mut impl Write,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut row = approach_row(batch, approach);
+    let mut row = client_row(batch, route);
     if let Some(scene_base) = scene_base {
         row["scene_base"] = json!(scene_base);
     }
@@ -162,68 +188,79 @@ fn scene_fits_flags(
         && local_z + i64::from(BuildArea::SIZE) <= height as i64
 }
 
-fn write_client_approach(
+fn write_client_route(
     client: &mut Client,
     flags: &nav_planner::pack::FlagsSidecarLoad,
     batch: &str,
-    approach: Approach,
+    route: ClientRoute,
     out: &mut impl Write,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let flags_origin = flags.origin;
     let flags_width = flags.width;
     let flags_height = flags.height;
     let flags = flags.flags.as_slice();
-    let source = tile(approach.source);
-    let target = tile(approach.target);
+    let (source, target) = route.endpoints();
+    let source = tile(source);
+    let target = tile(target);
     if source.level != target.level {
-        return write_approach_error(
+        return write_client_error(
             batch,
-            approach,
+            route,
             None,
             "source-target-level-mismatch",
             out,
         );
     }
     if !(0..BuildArea::LEVELS).contains(&source.level) {
-        return write_approach_error(batch, approach, None, "invalid-level", out);
+        return write_client_error(batch, route, None, "invalid-level", out);
     }
-    if !(0..=LocAngle::SOUTH).contains(&approach.angle) {
-        return write_approach_error(batch, approach, None, "invalid-angle", out);
-    }
-
-    let Some(loc) = usize::try_from(approach.id)
-        .ok()
-        .and_then(|id| client.cache.locs.get(id))
-    else {
-        return write_approach_error(batch, approach, None, "loc-id-not-in-cache", out);
-    };
-    let centrepiece = approach.shape == LocShape::CENTREPIECE_STRAIGHT
-        || approach.shape == LocShape::CENTREPIECE_DIAGONAL
-        || approach.shape == LocShape::GROUND_DECOR;
-    let (loc_width, loc_length, loc_angle, loc_shape, forceapproach) = if centrepiece {
-        let (width, height) = if approach.angle == LocAngle::WEST || approach.angle == LocAngle::EAST {
-            (loc.width, loc.length)
+    let (loc_width, loc_length, loc_angle, loc_shape, forceapproach) =
+        if let ClientRoute::Approach(approach) = route {
+            if !(0..=LocAngle::SOUTH).contains(&approach.angle) {
+                return write_client_error(batch, route, None, "invalid-angle", out);
+            }
+            let Some(loc) = usize::try_from(approach.id)
+                .ok()
+                .and_then(|id| client.cache.locs.get(id))
+            else {
+                return write_client_error(batch, route, None, "loc-id-not-in-cache", out);
+            };
+            let centrepiece = approach.shape == LocShape::CENTREPIECE_STRAIGHT
+                || approach.shape == LocShape::CENTREPIECE_DIAGONAL
+                || approach.shape == LocShape::GROUND_DECOR;
+            if centrepiece {
+                let (width, height) =
+                    if approach.angle == LocAngle::WEST || approach.angle == LocAngle::EAST {
+                        (loc.width, loc.length)
+                    } else {
+                        (loc.length, loc.width)
+                    };
+                let mut forceapproach = loc.forceapproach;
+                if approach.angle != 0 {
+                    forceapproach = ((forceapproach << approach.angle) & 0xf)
+                        + (forceapproach >> (4 - approach.angle));
+                }
+                (width, height, 0, 0, forceapproach)
+            } else {
+                let Some(loc_shape) = approach.shape.checked_add(1) else {
+                    return write_client_error(batch, route, None, "invalid-shape", out);
+                };
+                (0, 0, approach.angle, loc_shape, 0)
+            }
         } else {
-            (loc.length, loc.width)
+            (0, 0, 0, 0, 0)
         };
-        let mut forceapproach = loc.forceapproach;
-        if approach.angle != 0 {
-            forceapproach =
-                ((forceapproach << approach.angle) & 0xf) + (forceapproach >> (4 - approach.angle));
-        }
-        (width, height, 0, 0, forceapproach)
+    let move_type = if matches!(route, ClientRoute::Walk(_)) {
+        0
     } else {
-        let Some(loc_shape) = approach.shape.checked_add(1) else {
-            return write_approach_error(batch, approach, None, "invalid-shape", out);
-        };
-        (0, 0, approach.angle, loc_shape, 0)
+        2
     };
 
     let Some((first_base_x, last_base_x)) = scene_base_range(source.x, target.x) else {
-        return write_approach_error(batch, approach, None, "endpoints-do-not-fit-scene", out);
+        return write_client_error(batch, route, None, "endpoints-do-not-fit-scene", out);
     };
     let Some((first_base_z, last_base_z)) = scene_base_range(source.z, target.z) else {
-        return write_approach_error(batch, approach, None, "endpoints-do-not-fit-scene", out);
+        return write_client_error(batch, route, None, "endpoints-do-not-fit-scene", out);
     };
 
     let mut base_x = first_base_x;
@@ -232,9 +269,9 @@ fn write_client_approach(
         while base_z <= last_base_z {
             let scene_base = [base_x, base_z];
             if !scene_fits_flags(base_x, base_z, flags_origin, flags_width, flags_height) {
-                write_approach_error(
+                write_client_error(
                     batch,
-                    approach,
+                    route,
                     Some(scene_base),
                     "scene-outside-flags-grid",
                     out,
@@ -281,26 +318,26 @@ fn write_client_approach(
                     loc_angle,
                     loc_shape,
                     forceapproach,
-                    2,
+                    move_type,
                 );
                 if !reached {
-                    write_approach_error(
+                    write_client_error(
                         batch,
-                        approach,
+                        route,
                         Some(scene_base),
                         "client-no-route",
                         out,
                     )?;
                 } else if client.try_move_path.is_empty() {
-                    write_approach_error(
+                    write_client_error(
                         batch,
-                        approach,
+                        route,
                         Some(scene_base),
                         "client-route-path-empty",
                         out,
                     )?;
                 } else {
-                    let mut row = approach_row(batch, approach);
+                    let mut row = client_row(batch, route);
                     row["scene_base"] = json!(scene_base);
                     row["tiles"] = json!(client
                         .try_move_path
@@ -404,12 +441,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )?;
             }
         }
-        for approach in batch.approaches {
-            write_client_approach(
+        for route in batch
+            .approaches
+            .into_iter()
+            .map(ClientRoute::Approach)
+            .chain(batch.walks.into_iter().map(ClientRoute::Walk))
+        {
+            write_client_route(
                 &mut client,
                 &loaded_flags,
                 &batch.name,
-                approach,
+                route,
                 &mut out,
             )?;
         }

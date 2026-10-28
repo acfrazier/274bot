@@ -86,10 +86,12 @@ It checks every footprint, Reach alternative, return observation, Start, and ban
 It calls the production hazard-retreat selector for every resource access stand.
 It calls the actual revision-289 client interaction BFS with cached loc geometry and raw collision flags.
 It covers every resource and bank access origin at every qualifying scene base.
+It also calls the actual client BFS for every short Traveller aim in the closed origin set.
+These aims include both directions, click-ahead, scene clipping, and stalled-walk recovery.
 It queries every alternative goal from all starts, access stands, and retreat destinations.
 It repeats those queries from every intermediate route tile until the replan-origin set is closed.
 This includes blocked-origin escape after a resource changes.
-The checker examines complete walk legs and transport endpoints.
+The checker examines complete walk legs and rejects routes that require transport interactions.
 It rejects routes outside the area or inside any hunter envelope.
 The result retains source, content-map, catalogue, v17 pack, raw-flag and client-config hashes.
 

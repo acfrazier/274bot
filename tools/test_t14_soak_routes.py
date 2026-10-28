@@ -62,6 +62,28 @@ class RouteSafetyTests(unittest.TestCase):
             self.assertEqual(row["target"], resource["origin"])
             self.assertEqual((row["id"], row["shape"], row["angle"]), (1276, 10, 2))
 
+    def test_client_walks_cover_short_aims_both_directions_and_blocked_escape(self):
+        start, edge, far, upstairs = (0, 0, 0), (20, 0, 0), (21, 0, 0), (0, 0, 1)
+        checked = set()
+        walks = audit.client_walks({start, edge, far, upstairs}, {edge}, checked)
+        pairs = {(row["source"], row["target"]) for row in walks}
+        self.assertIn((edge, start), pairs)
+        self.assertNotIn((start, edge), pairs)
+        self.assertNotIn((start, far), pairs)
+        self.assertNotIn((start, upstairs), pairs)
+        self.assertNotIn((start, start), pairs)
+        self.assertEqual(pairs, checked)
+        self.assertEqual(audit.client_walks({start, edge, far, upstairs}, {edge}, checked), [])
+
+    def test_client_walk_closure_adds_both_directions_for_new_origins(self):
+        left, right, middle = (0, 0, 0), (20, 0, 0), (10, 10, 0)
+        checked = set()
+        audit.client_walks({left, right}, set(), checked)
+        walks = audit.client_walks({left, right, middle}, set(), checked)
+        self.assertEqual({(row["source"], row["target"]) for row in walks}, {
+            (left, middle), (right, middle), (middle, left), (middle, right),
+        })
+
     def test_authored_map_rotation_is_optional(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "m42_54.jm2"

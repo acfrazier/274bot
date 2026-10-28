@@ -3,7 +3,8 @@
 
 Seed every Start, resource footprint/access/return tile, bank access tile, and
 production hazard-retreat stand. Query every alternative goal from each seed
-and every intermediate route tile until the replan-origin set is closed.
+and every intermediate route tile until the replan-origin set is closed. Check
+the client's own BFS for loc interactions and all short Traveller walk aims.
 """
 
 import argparse
@@ -158,10 +159,31 @@ def client_approaches(resources):
     ]
 
 
-def run_probe(args, name, sources, targets, retreats=(), approaches=()):
+def client_walks(origins, blocked, checked):
+    """Cover every possible Traveller aim, including click-ahead and recovery.
+
+    pick_aim selects the last tile within Chebyshev 20, or a tile 15 steps
+    ahead. Scene clipping only shortens that aim. Every source and aim lies
+    in the closed route-origin set. Query both directions without duplicates.
+    """
+    walks = []
+    targets = sorted(origins - blocked)
+    for source in sorted(origins):
+        for target in targets:
+            pair = source, target
+            if pair in checked or source[2] != target[2]:
+                continue
+            if 0 < max(abs(source[0] - target[0]), abs(source[1] - target[1])) <= 20:
+                checked.add(pair)
+                walks.append(dict(source=source, target=target))
+    return walks
+
+
+def run_probe(args, name, sources, targets, retreats=(), approaches=(), walks=()):
     inputs = args.output / f"{name}-batches.json"
     inputs.write_text(json.dumps([dict(name=name, sources=sorted(sources), targets=sorted(targets),
-                                      retreats=list(retreats), approaches=list(approaches))]) + "\n")
+                                      retreats=list(retreats), approaches=list(approaches),
+                                      walks=list(walks))]) + "\n")
     routes = args.output / f"{name}-routes.jsonl"
     subprocess.run([str(path.resolve()) for path in
                     (args.router, args.pack, args.flags, args.cache, inputs, routes)], check=True)
@@ -200,8 +222,9 @@ def main():
     retreats = [(here, resource["origin"]) for resource in resources for here in sorted(goals_for(resource))]
     files = [run_probe(args, "interactions", (), (), retreats,
                        client_approaches([*resources, *bank_locs]))]
-    checked, no_path, retreat_count, client_count = 0, 0, 0, 0
+    checked, no_path, retreat_count, client_count, walk_count = 0, 0, 0, 0, 0
     client_errors = []
+    walk_pairs, transport_routes = set(), []
     blocked, processed, bank_reachable, resource_reached = set(), set(), set(), set()
     pending = set(targets)
     access = {}
@@ -211,7 +234,7 @@ def main():
             for target in goals_for(resource):
                 access.setdefault((start, target), set()).add(index)
     violations, tile_cache = [], {}
-    round_number = 0
+    round_number, walk_rounds = 0, 0
     while files:
         routes = files.pop(0)
         for line in routes.open():
@@ -220,7 +243,8 @@ def main():
             if row.get("error") == "source-not-standable":
                 blocked.add(origin)
             elif "error" in row:
-                if row.get("kind") == "client-approach":
+                if row.get("kind") == "client-approach" or (
+                        row.get("kind") == "client-walk" and row["error"] != "client-no-route"):
                     client_errors.append(row)
                 no_path += 1
             else:
@@ -228,6 +252,10 @@ def main():
                 target = tuple(row["target"])
                 if row["kind"] == "client-approach":
                     client_count += 1
+                if row["kind"] == "client-walk":
+                    walk_count += 1
+                if row.get("transports"):
+                    transport_routes.append(dict(source=row["source"], target=row["target"]))
                 if row["kind"] == "hazard-retreat":
                     retreat_count += 1
                     targets.add(target)
@@ -241,16 +269,27 @@ def main():
                     violations.append(dict(source=row["source"], target=row["target"],
                                            kind=row["kind"], failures=failures[:8]))
         pending.difference_update(processed)
-        if violations or not pending:
+        if violations:
             break
-        origins = pending
-        pending = set()
-        processed.update(origins)
-        files.append(run_probe(args, f"closure-{round_number}", origins, targets))
-        round_number += 1
-    errors = [f"client approach has no verified route: {row}" for row in client_errors[:10]]
+        if pending:
+            origins = pending
+            pending = set()
+            processed.update(origins)
+            files.append(run_probe(args, f"closure-{round_number}", origins, targets))
+            round_number += 1
+        else:
+            walks = client_walks(processed, blocked, walk_pairs)
+            if not walks:
+                break
+            files.append(run_probe(args, f"client-walk-{walk_rounds}", (), (), walks=walks))
+            walk_rounds += 1
+    errors = [f"client route has no verified witness: {row}" for row in client_errors[:10]]
     if not client_count:
         errors.append("no actual client loc-approach witnesses")
+    if not walk_count:
+        errors.append("no actual client Traveller-walk witnesses")
+    if transport_routes:
+        errors.append(f"{len(transport_routes)} routes use unverified transport interactions")
     for hunter in hunters:
         x, z, level = hunter["spawn"]
         radius = hunter["envelope"]
@@ -271,14 +310,16 @@ def main():
     result = dict(request_id="T14-SOAK-ROUTE", verdict="FAIL" if violations or errors else "PASS",
                   routes_checked=checked, unreachable_pairs=no_path, nonstandable_origins=len(blocked),
                   hazard_retreat_routes=retreat_count, client_approach_routes=client_count,
+                  client_walk_routes=walk_count, client_walk_pairs=len(walk_pairs),
                   replan_origins=len(processed), closure_rounds=round_number,
+                  client_walk_rounds=walk_rounds, transport_routes=len(transport_routes),
                   closure_complete=not pending, rectangles=rectangles, normal_starts=starts,
                   maple_start=maple_start, resources=resources, hunters_checked=len(hunters),
                   sources={str(p): digest(p) for p in [source, catalog, config, args.pack, args.flags, args.cache / "config", *sorted(maps)]},
                   violation_count=len(violations), violations=violations[:30], errors=errors,
-                  scope="Production host-router replan closure plus actual client loc-approach BFS for every resource/bank access origin and scene base. Includes blocked-origin escape and production hazard retreats. Random-event interiors remain separate product travel.")
+                  scope="Production host-router replan closure plus actual client loc-approach BFS for every resource/bank access origin and scene base. Actual client ground-walk BFS covers every closure-origin pair within Chebyshev 20, including Traveller click-ahead and recovery. Includes blocked-origin escape and production hazard retreats. Transport interactions fail closed. Random-event interiors remain separate product travel.")
     (args.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
-    print(json.dumps({k: result[k] for k in ("verdict", "routes_checked", "unreachable_pairs", "nonstandable_origins", "hazard_retreat_routes", "client_approach_routes", "replan_origins", "closure_rounds", "closure_complete", "hunters_checked", "violation_count", "errors")}))
+    print(json.dumps({k: result[k] for k in ("verdict", "routes_checked", "unreachable_pairs", "nonstandable_origins", "hazard_retreat_routes", "client_approach_routes", "client_walk_routes", "client_walk_pairs", "replan_origins", "closure_rounds", "client_walk_rounds", "closure_complete", "hunters_checked", "violation_count", "errors")}))
     return 1 if violations or errors else 0
 
 
