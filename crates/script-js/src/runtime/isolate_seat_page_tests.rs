@@ -145,24 +145,28 @@ fn steps_of(iso: &LoadIsolate, id: RequestId) -> u64 {
     row_of(iso, id)["steps"].as_u64().unwrap_or(0)
 }
 
-const THREE_DEPOSITS: &str = "globalThis.__got = {};
-     const hooks = { match: () => false };
-     for (const name of ['c', 'o', 'a']) {
-         runMachine('bank_deposit', {}, hooks).then(
-             value => { globalThis.__got[name] = { kind: 'done', value }; },
-             error => { globalThis.__got[name] = { kind: 'threw' }; },
-         );
-     }";
+/// Three native rows that one script awaits: C is a `bank_nearest`, O a
+/// `bank_wait` and A a `bank_deposit`. One transfer at a time may run, so the
+/// rows are of different families.
+const THREE_ROWS: &str = "globalThis.__got = {};
+     const record = (name) => [
+         value => { globalThis.__got[name] = { kind: 'done', value }; },
+         error => { globalThis.__got[name] = { kind: 'threw' }; },
+     ];
+     runMachine('bank_nearest', {}, { deposit: () => false, afterDeposit: () => true, log: () => {} })
+         .then(...record('c'));
+     runMachine('bank_wait', { kind: 'ready' }, { log: () => {} }).then(...record('o'));
+     runMachine('bank_deposit', {}, { match: () => false }).then(...record('a'));";
 
 #[test]
 fn seat_answer_wake_releases_its_obligation_and_nothing_older() {
-    let iso = spawn_bank_machine_card(THREE_DEPOSITS);
+    let iso = spawn_bank_machine_card(THREE_ROWS);
     let ids = started(&iso);
     assert_eq!(ids.len(), 3, "three native starts");
     let [c, o, a] = [ids[0], ids[1], ids[2]];
     let mut buffer = crate::wire::IsolateBuf::default();
     let rows = [
-        live(c, NativeKind::BankPlan),
+        live(c, NativeKind::BankNearest),
         live(o, NativeKind::BankPlan),
         live(a, NativeKind::BankPlan),
     ];
@@ -234,7 +238,8 @@ fn seat_page_stamps_a_pass_settled_native_outcome() {
          ];
          runMachine('bank_deposit', {}, { match: () => { throw globalThis.__thrown; } })
              .then(...record('x'));
-         runMachine('bank_deposit', {}, { match: () => false }).then(...record('u'));",
+         runMachine('bank_nearest', {}, { deposit: () => false, afterDeposit: () => true, log: () => {} })
+             .then(...record('u'));",
     );
     let ids = started(&iso);
     let [x, u] = [ids[0], ids[1]];
@@ -243,7 +248,7 @@ fn seat_page_stamps_a_pass_settled_native_outcome() {
         &iso,
         &mut buffer,
         1,
-        &[live(x, NativeKind::BankPlan), live(u, NativeKind::BankPlan)],
+        &[live(x, NativeKind::BankPlan), live(u, NativeKind::BankNearest)],
         &[],
     );
     dispatch(&iso, 1, 0);
@@ -350,8 +355,10 @@ fn seat_page_dispatches_carry_the_awaited_call_budget() {
     let row = row_of(&iso, id);
     assert_eq!(row["calls"], 256);
     assert_eq!(row["seat_changed"], true, "the 257th prompt still waits for a step");
-    // A full tick refills the budget and steps the row once more.
+    // Full ticks refill the budget: the first consumes the 256th reply, the
+    // next calls the hook for the prompt that waited.
     machine_tick(&iso, 2);
+    machine_tick(&iso, 3);
     assert_eq!(
         iso.probe("globalThis.__after_calls").unwrap(),
         serde_json::json!(257)
@@ -508,10 +515,9 @@ fn destructive_reset_zeroes_stamps_and_the_first_new_result_qualifies() {
         "globalThis.__got = {};
          runMachine('bank_deposit', {}, { match: () => false }).then(
              v => { globalThis.__got.c = 'done'; }, e => { globalThis.__got.c = 'threw'; });
-         runMachine('bank_deposit', {}, { match: () => false }).then(
+         runMachine('bank_nearest', {}, { deposit: () => false, afterDeposit: () => true, log: () => {} }).then(
              v => { globalThis.__got.n = 'done'; }, e => { globalThis.__got.n = 'threw'; });
-         globalThis.__start_n3 = false;
-         runMachine('bank_deposit', {}, { match: () => false }).then(
+         runMachine('bank_wait', { kind: 'ready' }, { log: () => {} }).then(
              v => { globalThis.__got.n3 = 'done'; }, e => { globalThis.__got.n3 = 'threw'; });",
     );
     let ids = started(&iso);
@@ -519,7 +525,7 @@ fn destructive_reset_zeroes_stamps_and_the_first_new_result_qualifies() {
     let mut buffer = crate::wire::IsolateBuf::default();
     let rows = [
         live(c, NativeKind::BankPlan),
-        live(n, NativeKind::BankPlan),
+        live(n, NativeKind::BankNearest),
         live(n3, NativeKind::BankPlan),
     ];
     post_page(&iso, &mut buffer, 1, &rows, &[]);
