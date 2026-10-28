@@ -5526,6 +5526,8 @@ fn headed_stress_spawns_every_member_prefers_and_arms_s00() {
         ..Default::default()
     });
     let mut s = Session::new();
+    s.mainland.store(false, Ordering::Relaxed);
+    s.scatter.store(false, Ordering::Relaxed);
     s.live_prepare_stress(3, false).expect("prepare");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < deadline {
@@ -5563,6 +5565,10 @@ fn headed_stress_spawns_every_member_prefers_and_arms_s00() {
         "RAM watch does not raise sidecar/game to 50 fps overlay"
     );
     assert!(
+        !s.mainland.load(Ordering::Relaxed),
+        "headed stress wall must not use mainland seeding"
+    );
+    assert!(
         s.scatter.load(Ordering::Relaxed),
         "stress wall scatter-seeds after scene 2"
     );
@@ -5594,7 +5600,13 @@ fn headed_stress_full_paints_every_member_at_50fps() {
         ..Default::default()
     });
     let mut s = Session::new();
+    s.mainland.store(false, Ordering::Relaxed);
+    s.scatter.store(false, Ordering::Relaxed);
     s.live_prepare_stress(2, true).expect("prepare");
+    assert!(
+        !s.mainland.load(Ordering::Relaxed),
+        "headed stress wall must not use mainland seeding"
+    );
     assert!(
         s.scatter.load(Ordering::Relaxed),
         "the separate stress-wall workload still scatter-seeds"
@@ -5613,31 +5625,159 @@ fn headed_stress_full_paints_every_member_at_50fps() {
 }
 
 #[cfg(feature = "memory-profile")]
-#[test]
-fn memory_stress50_full_keeps_mainland_seed_and_full_rate_rendering() {
-    use frontend_core::bench::RenderPolicy;
+struct MemoryRunFixture {
+    run: Option<frontend_core::bench::BenchRun>,
+    temp_dir: PathBuf,
+}
 
-    let names = vec!["memory0".to_string(), "memory1".to_string()];
-    let session = Session::new();
-    session.scatter.store(true, Ordering::Relaxed);
-    {
-        let mut focus = session.focus.lock().unwrap();
-        crate::focus::memory_draw_policy(&mut focus, &names, RenderPolicy::Stress50Full);
+#[cfg(feature = "memory-profile")]
+impl MemoryRunFixture {
+    fn prepare() -> Self {
+        let config = frontend_core::bench::BenchConfig::from_env()
+            .expect("memory benchmark config")
+            .expect("memory benchmark enabled");
+        let run = frontend_core::bench::BenchRun::prepare(config, "panel")
+            .expect("prepare memory benchmark fixture");
+        let temp_dir = run
+            .vault()
+            .parent()
+            .expect("memory vault parent")
+            .to_path_buf();
+        Self {
+            run: Some(run),
+            temp_dir,
+        }
     }
 
-    assert!(session.configure_memory_render_policy(RenderPolicy::Stress50Full));
-    assert!(
-        !session.scatter.load(Ordering::Relaxed),
-        "full-rate rendering must not enable scatter seeding"
-    );
+    fn run(&self) -> &frontend_core::bench::BenchRun {
+        self.run.as_ref().expect("memory run")
+    }
+}
 
-    let focus = session.focus.lock().unwrap();
-    assert!(!focus.only_render_selected);
-    assert!(focus.live_full_rate);
-    assert!(names.iter().all(|name| draw_for_slot(&focus, name)));
-    assert!(names
-        .iter()
-        .all(|name| crate::focus::full_rate_for(&focus, name)));
+#[cfg(feature = "memory-profile")]
+impl Drop for MemoryRunFixture {
+    fn drop(&mut self) {
+        self.run.take();
+        let _ = std::fs::remove_dir_all(&self.temp_dir);
+    }
+}
+
+#[cfg(feature = "memory-profile")]
+struct MemoryRunEnv {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+}
+
+#[cfg(feature = "memory-profile")]
+impl MemoryRunEnv {
+    fn new() -> Self {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        const KEYS: &[&str] = &[
+            "BOT_MEMORY_N",
+            "BOT_MEMORY_WORKLOAD",
+            "BOT_MEMORY_WARMUP_S",
+            "BOT_MEMORY_OBSERVE_S",
+            "BOT_MEMORY_TEARDOWN_S",
+            "BOT_MEMORY_SCENARIO",
+            "BOT_MEMORY_SUSTAIN",
+            "BOT_MEMORY_DIAGNOSTICS",
+            "BOT_MEMORY_SINGLE_RENDERER",
+            "BOT_MEMORY_RENDER_POLICY",
+            "BOT_MEMORY_OUTPUT",
+            "RS2B0T",
+        ];
+        let lock = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let saved = KEYS
+            .iter()
+            .map(|key| (*key, std::env::var_os(key)))
+            .collect();
+        for key in KEYS {
+            std::env::remove_var(key);
+        }
+        std::env::set_var("BOT_MEMORY_N", "10");
+        std::env::set_var("BOT_MEMORY_WARMUP_S", "1");
+        std::env::set_var("BOT_MEMORY_OBSERVE_S", "1");
+        std::env::set_var("BOT_MEMORY_TEARDOWN_S", "1");
+        // Native Gatherer lets the fixture exercise Workload::Active without
+        // requiring an external rs2b0t checkout.
+        std::env::set_var("BOT_MEMORY_SCENARIO", "gatherer");
+        Self { _lock: lock, saved }
+    }
+
+    fn set_run(&self, workload: &str, policy: &str) {
+        std::env::set_var("BOT_MEMORY_WORKLOAD", workload);
+        std::env::set_var("BOT_MEMORY_RENDER_POLICY", policy);
+    }
+}
+
+#[cfg(feature = "memory-profile")]
+impl Drop for MemoryRunEnv {
+    fn drop(&mut self) {
+        for (key, value) in &self.saved {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+}
+
+#[cfg(feature = "memory-profile")]
+#[test]
+fn memory_stress_policies_keep_seed_placement_by_workload() {
+    let env = MemoryRunEnv::new();
+    for (case, workload, policy, scatter) in [
+        ("M1 running", "active", "stress50", false),
+        ("M1 running", "active", "stress50-full", false),
+        ("W3 idle", "idle", "stress50", true),
+        ("W3 idle", "idle", "stress50-full", true),
+    ] {
+        env.set_run(workload, policy);
+        let run = MemoryRunFixture::prepare();
+        let mut session = preparation_only_session();
+        session.mainland.store(false, Ordering::Relaxed);
+        session.scatter.store(!scatter, Ordering::Relaxed);
+        session
+            .prepare_memory(run.run())
+            .expect("prepare benchmark session");
+
+        assert!(
+            session.mainland.load(Ordering::Relaxed),
+            "{case} must keep mainland seeding"
+        );
+        assert_eq!(
+            session.scatter.load(Ordering::Relaxed),
+            scatter,
+            "{case} with {policy} has the expected scatter seed"
+        );
+
+        let focus = session.focus.lock().unwrap();
+        let full_rate = policy == "stress50-full";
+        assert_eq!(focus.live_full_rate, full_rate, "{case} with {policy}");
+        assert_eq!(focus.only_render_selected, !full_rate, "{case} with {policy}");
+        let drawn = run
+            .run()
+            .names()
+            .iter()
+            .filter(|name| draw_for_slot(&focus, name))
+            .count();
+        let expected_drawn = if full_rate {
+            run.run().names().len()
+        } else {
+            1
+        };
+        assert_eq!(drawn, expected_drawn, "{case} with {policy}");
+        if full_rate {
+            assert!(run
+                .run()
+                .names()
+                .iter()
+                .all(|name| crate::focus::full_rate_for(&focus, name)));
+        }
+        drop(focus);
+        drop(session);
+        drop(run);
+    }
 }
 
 /// RAM watch members must be raster Off so a flipped only-render-
