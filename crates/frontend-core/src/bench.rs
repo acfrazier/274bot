@@ -142,6 +142,12 @@ impl BenchRun {
             None => Ok(false),
         }
     }
+
+    /// Put a test run at the terminal observation boundary without a live server.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn finish_for_test(&mut self) {
+        self.0.finish_for_test();
+    }
 }
 
 /// A startup milestone the benchmark record times.
