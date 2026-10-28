@@ -414,7 +414,7 @@ struct SkipCleanupOwnership {
 }
 
 #[cfg(feature = "test-support")]
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct SkipQueueEvidence {
     skip: Option<SkipRequestReceipt>,
     active_order: Vec<String>,
