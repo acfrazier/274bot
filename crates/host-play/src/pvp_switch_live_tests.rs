@@ -106,6 +106,8 @@ struct SwitchFight {
     tables: Arc<CombatTables>,
     handle: Option<ActionHandle<Combat>>,
     tried: bool,
+    /// The holder's screen name: other accounts may share the arena.
+    partner: String,
 }
 
 impl Script for SwitchFight {
@@ -193,13 +195,11 @@ impl Script for SwitchFight {
         let mut shared = self.shared.lock().expect("shared lock");
         if shared.last != Some(state) {
             let snapshot = tick.frame().snapshot();
-            let own = snapshot.and_then(|snapshot| snapshot.local_player());
             let partner = snapshot.and_then(|snapshot| {
-                let own_index = own.map(|local| local.player.index)?;
                 snapshot
                     .players()
                     .iter()
-                    .find(|row| row.index != own_index)
+                    .find(|row| row.actor.name.as_deref() == Some(self.partner.as_str()))
                     .cloned()
             });
             let own_tile = snapshot.and_then(|snapshot| snapshot.tile());
@@ -679,6 +679,7 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
             tables,
             handle: None,
             tried: false,
+            partner: screen(&holder),
         }),
         None,
     ) {
