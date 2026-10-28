@@ -9458,7 +9458,7 @@ fn unavailable_quester_skip_shows_and_expires_the_tui_refusal() {
     ));
     dispatch(&mut session, &mut app, action);
 
-    let message = "script: no active Quester queue";
+    let message = "Skip quest: no active Quester queue";
     assert_eq!(app.error.as_deref(), Some(message));
     assert_eq!(session.core.refusals(), before + 1);
     assert!(refusal_logged("SkipQuest on alice"));
