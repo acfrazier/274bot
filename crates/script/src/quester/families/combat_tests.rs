@@ -1682,11 +1682,12 @@ fn m4_escape_keeps_a_goal_beyond_a_closed_door_in_the_live_flood() {
             reach.step[index] = 0;
         }
     }
-    let door = api::WorldTile {
-        x: door_x,
-        ..here
-    };
-    assert!(!crate::reach_route::reach_bit(&reach, &reach.walkable, door));
+    let door = api::WorldTile { x: door_x, ..here };
+    assert!(!crate::reach_route::reach_bit(
+        &reach,
+        &reach.walkable,
+        door
+    ));
     assert!(
         crate::reach_route::nearest_depth(&reach, std::slice::from_ref(&stand)).is_none(),
         "the closed door keeps the goal outside the live flood"
@@ -2012,9 +2013,7 @@ fn exhausted_m4_escape_arrival_with_a_live_attacker_replans_and_completes_only_w
     );
     let second = last_walk(&ledger);
     assert_ne!(second.request_id, first.request_id);
-    assert!(
-        goals_of(&first).fallback().is_empty() && goals_of(&second).fallback().is_empty()
-    );
+    assert!(goals_of(&first).fallback().is_empty() && goals_of(&second).fallback().is_empty());
     assert!(
         goals_of(&second)
             .as_slice()
@@ -2089,12 +2088,15 @@ fn escape_goals_never_exceed_the_router_cap_and_requests_use_distinct_tiers() {
     let mut request_goals: Vec<Vec<api::WorldTile>> = Vec::new();
     while let Some(next) = pass.next_goals(&geometry, None, None) {
         assert!(next.goals.as_slice().len() <= crate::native::WalkGoals::MAX);
-        assert!(next.goals.fallback().is_empty(), "each request sends one tier");
+        assert!(
+            next.goals.fallback().is_empty(),
+            "each request sends one tier"
+        );
         let goals = next.goals.as_slice().to_vec();
         assert!(
-            request_goals.iter().all(|previous| {
-                goals.iter().all(|goal| !previous.contains(goal))
-            }),
+            request_goals
+                .iter()
+                .all(|previous| { goals.iter().all(|goal| !previous.contains(goal)) }),
             "each retry names goals from a distinct tier"
         );
         request_goals.push(goals);
