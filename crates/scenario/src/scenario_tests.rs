@@ -12108,6 +12108,58 @@ fn step_budget_counts_game_ticks_not_dirty_snapshots() {
     }
 }
 
+#[test]
+fn valid_chat_receipt_passes_after_dirty_snapshots() {
+    use client::io::ServerProt;
+
+    let scenario = Scenario {
+        name: "budget_receipt_passes_after_dirty_snapshots",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![Step {
+            name: "wait for an accepted chat line",
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: Wait {
+                arm: Proof::Chat { needle: "accepted" },
+                budget_ticks: 3,
+            },
+        }],
+        proof: Proof::Chat { needle: "accepted" },
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    };
+    let mut client = native_seed_client();
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+    assert_eq!(runner.total_ticks(), 1);
+
+    for _ in 0..20 {
+        client.chat_text[0] = "noise".into();
+        client.bump_gens(ServerProt::MESSAGE_GAME);
+        runner.tick(&mut client);
+    }
+    assert_eq!(
+        runner.status(),
+        RunnerStatus::Running { step: 0, total: 1 },
+        "a valid receipt must remain eligible after dirty snapshots"
+    );
+    assert_eq!(runner.total_ticks(), 1);
+
+    client.chat_text[0] = "accepted".into();
+    client.bump_gens(ServerProt::MESSAGE_GAME);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+    assert_eq!(runner.total_ticks(), 1);
+}
+
 /// Re-render `client`'s chat modal as `options` — the native
 /// `if_openchat(multiN)`: the same layer id and child component ids as
 /// every other chat dialog, with the new question's texts and the
