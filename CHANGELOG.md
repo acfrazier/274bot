@@ -69,8 +69,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Fixed during development
 
-- The T1.4 transport soak uses independent normal-tree patches in Seers and
-  northwest Seers maples. An offline checker tests complete router paths,
+- The T1.4 transport soak uses independent normal-tree patches west of Seers.
+  An offline checker tests complete router paths,
   replan origins, bank alternatives and actual hazard retreats against every
   authored hunter envelope before a run.
 

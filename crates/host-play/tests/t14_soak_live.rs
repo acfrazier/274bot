@@ -37,22 +37,22 @@ const GATHERER_SITE_STEP: &str = "stand at the live Draynor normal tree before S
 const GATHERER_TREE_PROOF_STEP: &str = "confirm the selected-289 normal tree is live before Start";
 const GATHERER_RELOG_STEP: &str = "relog successfully so the inventory tab binds before Start";
 
-// Ten resource-disjoint radius-two normal-tree patches in Seers.
+// Ten resource-disjoint radius-two normal-tree patches west of Seers.
 // The offline audit checks complete production routes, their replan closure,
 // all resource/return/bank access alternatives, and actual hazard retreats.
 const NORMAL_STARTS: [(i32, i32); 10] = [
-    (2721, 3475),
-    (2722, 3483),
-    (2723, 3468),
-    (2724, 3471),
-    (2725, 3479),
-    (2725, 3484),
-    (2730, 3494),
-    (2731, 3478),
-    (2736, 3483),
-    (2740, 3493),
+    (2690, 3475),
+    (2691, 3479),
+    (2693, 3454),
+    (2694, 3473),
+    (2697, 3452),
+    (2697, 3478),
+    (2702, 3452),
+    (2707, 3457),
+    (2711, 3456),
+    (2712, 3461),
 ];
-const MAPLE_START: (i32, i32) = (2683, 3540);
+const MAPLE_START: (i32, i32) = (2726, 3500);
 
 #[derive(Clone, Copy)]
 struct SafeWalk {
@@ -73,26 +73,12 @@ impl SafeWalk {
 // This area excludes every authored hunter envelope, independently of combat
 // level. It is not route evidence by itself. The offline router audit checks
 // complete paths and every alternative resource, return, and bank stand.
-const NORMAL_SAFE_WALK: &[SafeWalk] = &[
-    SafeWalk {
-        min_x: 2660,
-        max_x: 2706,
-        min_z: 3512,
-        max_z: 3564,
-    },
-    SafeWalk {
-        min_x: 2680,
-        max_x: 2720,
-        min_z: 3485,
-        max_z: 3558,
-    },
-    SafeWalk {
-        min_x: 2706,
-        max_x: 2753,
-        min_z: 3460,
-        max_z: 3506,
-    },
-];
+const NORMAL_SAFE_WALK: &[SafeWalk] = &[SafeWalk {
+    min_x: 2680,
+    max_x: 2753,
+    min_z: 3440,
+    max_z: 3506,
+}];
 
 fn safe_walk_contains(areas: &[SafeWalk], tile: (i32, i32, i32)) -> bool {
     areas.iter().any(|area| area.contains(tile))
@@ -135,10 +121,10 @@ fn safe_walk_accepts_worksites_and_seers_bank() {
 #[test]
 fn safe_walk_rejects_every_boundary_and_old_unsafe_route() {
     for tile in [
-        (2659, 3540, 0),
+        (2679, 3480, 0),
         (2754, 3480, 0),
-        (2730, 3459, 0),
-        (2680, 3565, 0),
+        (2700, 3439, 0),
+        (2700, 3507, 0),
         (2700, 3480, 1),
         (2735, 3521, 0),
         (2811, 3473, 0),
@@ -569,10 +555,10 @@ fn select_sites(root: &Value) -> Result<[BankSite; 2], String> {
             .gather_site("woodcutting", &name)
             .ok_or_else(|| format!("selected 289 content lacks woodcutting site {name:?}"))?;
         match site.id.as_str() {
-            "woodcutting.seers" if site_has_key(site, "normal") => {
+            "woodcutting.seers_village" if site_has_key(site, "normal") => {
                 normal = Some(make_site(site, "normal")?);
             }
-            "woodcutting.seers.nw" if site_has_key(site, "maple") => {
+            "woodcutting.seers" if site_has_key(site, "maple") => {
                 maple = Some(make_site(site, "maple")?);
             }
             _ => {
@@ -595,7 +581,7 @@ fn select_sites(root: &Value) -> Result<[BankSite; 2], String> {
 fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite, String> {
     let (start, product_id, level, bank, bank_prefix, safe_walk) =
         match (site.id.as_str(), resource) {
-            ("woodcutting.seers", "normal") => (
+            ("woodcutting.seers_village", "normal") => (
                 WorldTile {
                     x: NORMAL_STARTS[0].0,
                     z: NORMAL_STARTS[0].1,
@@ -607,7 +593,7 @@ fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite
                 "Seers; Reachable;",
                 Some(NORMAL_SAFE_WALK),
             ),
-            ("woodcutting.seers.nw", "maple") => (
+            ("woodcutting.seers", "maple") => (
                 WorldTile {
                     x: MAPLE_START.0,
                     z: MAPLE_START.1,

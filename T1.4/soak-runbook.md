@@ -47,13 +47,13 @@ These failures do not justify a transport threshold change.
 
 ## Route-safe workload
 
-Ten accounts gather normal logs in `woodcutting.seers`.
+Ten accounts gather normal logs west of Seers in `woodcutting.seers_village`.
 Each account retains one radius-two Start anchor from `NORMAL_STARTS`.
-The other ten accounts use the `woodcutting.seers.nw` maple Site and radius twelve.
+The other ten accounts use the `woodcutting.seers` maple Site and radius twelve.
 Both groups use Seers bank.
 Each account receives Woodcutting 99, one rune axe, and 64 banked spare rune axes.
 
-Both groups must remain inside the three level-zero areas in `NORMAL_SAFE_WALK`: the normal patches, the northwest maple stand, and their Seers-bank corridor.
+Both groups must remain inside `NORMAL_SAFE_WALK`: `x=2680..2753,z=3440..3506,level=0`.
 The guard still permits only the production-classified Maze and Mime interiors outside this area.
 It does not permit an ordinary route outside the area.
 
