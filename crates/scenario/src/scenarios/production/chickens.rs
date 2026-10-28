@@ -189,7 +189,10 @@ pub(crate) fn chicken_killer_bank_scenario() -> Scenario {
             "watch the periodic bank close after deposit",
             Proof::BankClosed,
         ),
-        ("watch fresh Strength XP after the bank return", further_strength),
+        (
+            "watch fresh Strength XP after the bank return",
+            further_strength,
+        ),
     ] {
         steps.push(bank_fletcher_watch(step_name, arm));
     }
