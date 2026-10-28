@@ -1039,8 +1039,8 @@ fn run_quester_skip() -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Ok(());
     }
-    if std::env::var("BOT_LIVE_NAME_PREFIX").as_deref() != Ok("qs") {
-        return Err("quester skip live requires BOT_LIVE_NAME_PREFIX=qs".into());
+    if std::env::var("BOT_LIVE_NAME_PREFIX").as_deref() != Ok("qsk") {
+        return Err("quester skip live requires BOT_LIVE_NAME_PREFIX=qsk".into());
     }
     let _home = script::IsolatedEnv::enter(SKIP_CELL);
     api::hostlog::set_debug(true);
@@ -1273,7 +1273,7 @@ fn run_quester_skip() -> Result<(), String> {
 #[cfg(feature = "test-support")]
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=qs, explicit WORLD_NAV_PACK/WORLD_ENGINE_DIR/RS2B0T/BOT_CACHE_DIR and Engine L"]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=qsk, explicit WORLD_NAV_PACK/WORLD_ENGINE_DIR/RS2B0T/BOT_CACHE_DIR and Engine L"]
 fn quester_skip_active_cook_parks_then_sheep_completes() {
     run_quester_skip().unwrap();
 }
