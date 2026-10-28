@@ -2380,10 +2380,7 @@ impl Session {
 
     /// Keep benchmark seed selection separate from its render mode.
     #[cfg(feature = "memory-profile")]
-    fn configure_memory_render_policy(
-        &self,
-        policy: frontend_core::bench::RenderPolicy,
-    ) -> bool {
+    fn configure_memory_render_policy(&self, policy: frontend_core::bench::RenderPolicy) -> bool {
         use frontend_core::bench::RenderPolicy;
         let stress_wall = matches!(policy, RenderPolicy::Stress50 | RenderPolicy::Stress50Full);
         self.scatter.store(false, Ordering::Relaxed);
