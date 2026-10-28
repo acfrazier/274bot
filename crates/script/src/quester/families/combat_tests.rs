@@ -3994,7 +3994,7 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
     );
     assert!(
         distance <= chase_envelope.saturating_add(1),
-        "the plan should target the first ring outside the new attacker's envelope, not the vanished Warlord's range"
+        "distance {distance} is not within the first ring beyond new envelope {chase_envelope}; old envelope is {old_envelope}"
     );
 }
 
