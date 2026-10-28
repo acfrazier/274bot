@@ -3972,11 +3972,9 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
     let new_walk = last_walk(&ledger);
     let new_goals = goals_of(&new_walk).as_slice();
     assert!(
-        earlier_goals.iter().all(|previous| {
-            new_goals
-                .iter()
-                .all(|goal| !previous.contains(goal))
-        }),
+        earlier_goals
+            .iter()
+            .all(|previous| { new_goals.iter().all(|goal| !previous.contains(goal)) }),
         "the new attacker plan does not repeat the vanished Warlord's failed tiles"
     );
     let escape_distance = tile_distance(walks[0], new_attacker_tile);
@@ -3993,8 +3991,7 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
 #[test]
 fn exhausted_hold_without_any_attacker_parks_only_after_the_threat_free_horizon() {
     let mut snapshot = GameSnapshot::new();
-    let (mut run, mut ledger, _, _) =
-        engaged_abort_hold_after_failed_walk(&mut snapshot, vec![]);
+    let (mut run, mut ledger, _, _) = engaged_abort_hold_after_failed_walk(&mut snapshot, vec![]);
     let mut ended = None;
     for tick in 14..=20 {
         let polled = with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx));
