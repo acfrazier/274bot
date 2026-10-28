@@ -1756,6 +1756,11 @@ fn fallback_ammunition_between_the_pack_and_the_worn_container_is_not_vanished()
     step_without_server(&mut harness, &mut scene, 5);
     assert_eq!(harness.machine.switch_failures(), 0);
     assert_eq!(converging_to(&harness), Some(Style::Ranged));
+    assert_eq!(
+        harness.machine.switches(),
+        0,
+        "not complete before the worn container shows the bow and the arrows"
+    );
     for (mut row, slot) in moved.into_iter().zip([3, 13]) {
         row.container = ItemContainer::Equipment;
         row.slot = slot;
