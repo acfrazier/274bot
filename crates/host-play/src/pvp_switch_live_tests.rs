@@ -364,11 +364,7 @@ fn partner_step(
             ]
             .into_iter()
             .max_by_key(|corner| (corner.0 - chaser.0).abs().max((corner.1 - chaser.1).abs()))
-            .map(|(x, z)| api::snapshot::WorldTile {
-                x,
-                z,
-                level: own.2,
-            })
+            .map(|(x, z)| api::snapshot::WorldTile { x, z, level: own.2 })
             .expect("four corners");
             if !pace(&state.walked_tick, 4) && state.far != Some(far) {
                 state.walked_tick = Some(tick);
