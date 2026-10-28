@@ -2043,3 +2043,29 @@ fn competing_staves_pick_the_one_that_serves_the_most_spells() {
         );
     }
 }
+
+// --- Review (memory): begin builds no state for a style it does not open ----
+
+#[test]
+fn begin_allocates_no_magic_state_for_a_mage_kit_it_does_not_open() {
+    // A mage kit beside the melee and ranged kits costs its own few small
+    // allocations (the kit rows), not a `MagicState` to validate its spell order.
+    let bytes = |with_mage: bool| {
+        let (scene, mut kits) = sword_and_bow();
+        if with_mage {
+            kits.mage = Some(kit(&[], &[(id(&scene, "mindrune"), 50)]));
+        }
+        let request = request(kits);
+        allocation_counter::measure(|| {
+            let _harness = Harness::new(&scene, request);
+        })
+        .bytes_total
+    };
+    let (without, with) = (bytes(false), bytes(true));
+    assert!(
+        with.saturating_sub(without) < std::mem::size_of::<MagicState>() as u64,
+        "begin allocated {} bytes more with a mage kit; a MagicState is {}",
+        with.saturating_sub(without),
+        std::mem::size_of::<MagicState>()
+    );
+}
