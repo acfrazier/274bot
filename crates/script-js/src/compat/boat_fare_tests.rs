@@ -288,6 +288,10 @@ fn walk_near(to: WorldTile, radius: i32) -> impl Fn(&InteractReq) -> bool {
         )
     }
 }
+fn is_walk(op: &InteractReq) -> bool {
+    matches!(op, InteractReq::Walk { .. })
+}
+
 
 fn token(op: &InteractReq) -> u64 {
     match op {
@@ -490,9 +494,7 @@ fn earn_the_fare(
 ) -> (machine::Handle, World, InteractReq, InteractReq) {
     reset();
     let mut world = World::new(MUSA, 5);
-    if retry_point.is_some() {
-        install_luthas_reach_view(world.facts.luthas_anchor, None);
-    }
+    install_luthas_reach_view(world.facts.luthas_anchor, None);
     let luthas = world.facts.luthas_anchor;
     let crate_tile = world.facts.crate_tile;
     let grove_tile = world.facts.grove_tile;
@@ -520,9 +522,16 @@ fn earn_the_fare(
         2,
         (coins_id, fare),
     );
-    let walk_to_luthas = until(&mut world, "walk to Luthas", walk_near(luthas, 2));
+    let walk_to_luthas = until(&mut world, "walk to Luthas", is_walk);
     assert_ne!(token(&walk_to_luthas), token(&first[0]));
-    world.here = luthas;
+    let first_stand = walk_tile(&walk_to_luthas);
+    let npc = WorldTile {
+        x: luthas.x,
+        z: luthas.z + 1,
+        level: luthas.level,
+    };
+    assert!(orthogonally_adjacent(first_stand, npc));
+    world.here = first_stand;
     if retry_point == Some(RetryPoint::InitialTalk) {
         fail_luthas_reach(&mut world, "first talk to Luthas");
     }
@@ -591,8 +600,15 @@ fn earn_the_fare(
         is_loc(crate_id, crate_action),
     );
     world.say("The crate is full of bananas.");
-    until(&mut world, "walk back to Luthas", walk_near(luthas, 2));
-    world.here = luthas;
+    let walk_back_to_luthas = until(&mut world, "walk back to Luthas", is_walk);
+    let second_stand = walk_tile(&walk_back_to_luthas);
+    let npc = WorldTile {
+        x: luthas.x,
+        z: luthas.z + 1,
+        level: luthas.level,
+    };
+    assert!(orthogonally_adjacent(second_stand, npc));
+    world.here = second_stand;
     let paid_options = [
         "Will you pay me for another crate full?".into(),
         paid,
@@ -657,6 +673,7 @@ fn failed_luthas_approaches_spend_the_budget_and_keep_the_last_detail() {
     let coins = world.facts.coins;
     let fare = world.facts.coin_payout;
     let luthas = world.facts.luthas_anchor;
+    world.post();
     fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
 
     let mut ops = Vec::new();
@@ -666,19 +683,23 @@ fn failed_luthas_approaches_spend_the_budget_and_keep_the_last_detail() {
         let mut cx = Cx::test(&mut ops, &mut clock, None);
         Recover::start(PORT_SARIM, &mut cx, &mut logs).expect("fare recovery starts")
     };
-    assert!(
-        matches!(ops.as_slice(), [op] if walk_near(luthas, 2)(op)),
-        "the initial approach targets the selected Luthas anchor: {ops:?}"
-    );
+    assert!(matches!(ops.as_slice(), [InteractReq::Walk { .. }]));
+    let initial_stand = walk_tile(&ops[0]);
+    let npc = WorldTile {
+        x: luthas.x,
+        z: luthas.z + 1,
+        level: luthas.level,
+    };
+    assert!(orthogonally_adjacent(initial_stand, npc));
 
-    world.here = luthas;
+    world.here = initial_stand;
     assert!(
         recovery_step(&mut world, &mut recover, &mut clock, &mut logs)
             .1
             .is_empty()
     );
     let mut retry_stand = None;
-    let mut last_stand = luthas;
+    let mut last_stand = initial_stand;
     for attempt in 0..3 {
         if let Some(stand) = retry_stand.take() {
             world.here = stand;
@@ -831,14 +852,15 @@ fn retries_skip_a_blocked_luthas_stand() {
         level: npc.level,
     };
     install_luthas_reach_view(luthas, Some(blocked));
+    world.post();
     fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
     let (mut recover, mut clock, mut logs, initial_ops) = start_recovery();
-    assert!(matches!(
-        initial_ops.as_slice(),
-        [op] if walk_near(luthas, 2)(op)
-    ));
+    assert!(matches!(initial_ops.as_slice(), [InteractReq::Walk { .. }]));
+    let initial_stand = walk_tile(&initial_ops[0]);
+    assert_ne!(initial_stand, blocked);
+    assert!(orthogonally_adjacent(initial_stand, npc));
 
-    world.here = luthas;
+    world.here = initial_stand;
     assert!(
         recovery_step(&mut world, &mut recover, &mut clock, &mut logs)
             .1
@@ -869,14 +891,22 @@ fn dialogue_timeout_retries_within_the_talk_budget() {
     let coins = world.facts.coins;
     let fare = world.facts.coin_payout;
     install_luthas_reach_view(luthas, None);
+    world.post();
     fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
     let (mut recover, mut clock, mut logs, initial_ops) = start_recovery();
     let mut walk = initial_ops.into_iter().next().expect("initial talk walk");
-    assert!(walk_near(luthas, 2)(&walk));
+    assert!(is_walk(&walk));
+    let initial_stand = walk_tile(&walk);
+    let npc = WorldTile {
+        x: luthas.x,
+        z: luthas.z + 1,
+        level: luthas.level,
+    };
+    assert!(orthogonally_adjacent(initial_stand, npc));
 
     for attempt in 0..3 {
         world.here = if attempt == 0 {
-            luthas
+            initial_stand
         } else {
             walk_tile(&walk)
         };
@@ -927,11 +957,18 @@ fn a_failed_talk_walk_retries_and_logs_the_terminal_failure() {
     world.post();
     let (mut recover, mut clock, mut logs, initial_ops) = start_recovery();
     let mut walk = initial_ops.into_iter().next().expect("initial talk walk");
-    assert!(walk_near(luthas, 2)(&walk));
+    assert!(is_walk(&walk));
+    let first_stand = walk_tile(&walk);
+    let npc = WorldTile {
+        x: luthas.x,
+        z: luthas.z + 1,
+        level: luthas.level,
+    };
+    assert!(orthogonally_adjacent(first_stand, npc));
 
     for attempt in 0..3 {
         let dest = walk_tile(&walk);
-        let radius = if attempt == 0 { 2 } else { 0 };
+        let radius = 0;
         world.tick += 1;
         post_walk_outcome(world.tick, token(&walk), world.here, dest, radius, true);
         let (result, ops) = recovery_step_observed(&mut recover, &mut clock, &mut logs);
@@ -1041,6 +1078,7 @@ fn walk_resilient_baked_failure_short_of_the_fare_goes_to_luthas() {
     let coins_id = world.facts.coins;
     let luthas = world.facts.luthas_anchor;
     let fare = world.facts.coin_payout;
+    install_luthas_reach_view(luthas, None);
     world.post();
     let args = json!({
         "tile": { "x": PORT_SARIM.x, "z": PORT_SARIM.z, "level": 0 },
@@ -1063,9 +1101,16 @@ fn walk_resilient_baked_failure_short_of_the_fare_goes_to_luthas() {
         (coins_id, fare),
     );
     let ops = tick();
+    assert!(matches!(ops.as_slice(), [InteractReq::Walk { .. }]));
+    let stand = walk_tile(&ops[0]);
+    let npc = WorldTile {
+        x: luthas.x,
+        z: luthas.z + 1,
+        level: luthas.level,
+    };
     assert!(
-        matches!(ops.as_slice(), [op] if walk_near(luthas, 2)(op)),
-        "frozen walkResilient's baked Traversal.walkTo recovers the fare, not a scene step: {ops:?}"
+        orthogonally_adjacent(stand, npc),
+        "the baked walk recovery chooses a stand next to Luthas: {ops:?}"
     );
     assert_eq!(machine::take(h), Take::Pending);
 }

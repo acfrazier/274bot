@@ -32,10 +32,10 @@
 //! Karamja facts come from the selected Luthas and banana-crate scripts,
 //! plantation/tree configs, identity packs and map placements. The frozen
 //! `karamja.ts` orchestration is ported here: talk to Luthas, fill the
-//! configured crate from fruiting placements, then talk again. Unlike frozen
-//! orchestration, native talk stages retry failed approaches within a bounded
-//! budget.
-//! primitives ported here: `openDialogue` / `talkChoosingBy` with no rules
+//! configured crate from fruiting placements, then talk again. Native talk
+//! stages select an untried, walkable, reachable orthogonal stand for every
+//! approach, then retry failures within a bounded budget.
+//! Frozen primitives ported here: `openDialogue` / `talkChoosingBy` with no rules
 //! (`primitives.ts:227–253, 276–318`), `driveChoice` / `driveUntil` /
 //! `useOnLoc` / `settleScene` (`prompts.ts:30–93, 316–345`), `pickBananas`
 //! (`karamja.ts:45–74`) and `searchBananaCrate` / `readCrateMessages`
@@ -72,8 +72,8 @@ const LEG_MS: u64 = 180_000;
 /// The frozen `walkResilient(..., { attempts: 3 })` limit
 /// (`Traversal.ts:160–170`) supplies the talk retry budget.
 const TALK_ATTEMPTS: u32 = LEG_ATTEMPTS;
-/// Orthogonal candidate stands around Luthas's observed tile.
-const TALK_RETRY_OFFSETS: [(i32, i32); 4] = [(0, -1), (1, 0), (0, 1), (-1, 0)];
+/// Orthogonal candidate stands around Luthas's posted tile.
+const TALK_STAND_OFFSETS: [(i32, i32); 4] = [(0, -1), (1, 0), (0, 1), (-1, 0)];
 /// Frozen `settleScene` (`prompts.ts:30–32`).
 const SETTLE_TICKS: u32 = 2;
 /// Frozen `searchBananaCrate` message wait (`crate.ts:52`).
@@ -603,10 +603,10 @@ impl Talk {
                         *self = Self::Drive(Pages::new(true, &facts.preferences));
                         self.step(facts, cx, logs)
                     }
-                    Some("unreachable") => TalkProgress::Failed("reach"),
+                    Some("unreachable") => TalkProgress::Failed(ApproachFailure::Reach),
                     Some("retry") => {
                         logs.push_back(format!("'{}' never opened a dialogue", facts.luthas_name));
-                        TalkProgress::Failed("dialogue-timeout")
+                        TalkProgress::Failed(ApproachFailure::DialogueTimeout)
                     }
                     Some(_) => {
                         logs.push_back(format!("'{}' never opened a dialogue", facts.luthas_name));
@@ -621,9 +621,37 @@ impl Talk {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ApproachFailure {
+    Walk,
+    Reach,
+    DialogueTimeout,
+    Dialogue,
+}
+
+impl ApproachFailure {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Walk => "walk",
+            Self::Reach => "reach",
+            Self::DialogueTimeout => "dialogue-timeout",
+            Self::Dialogue => "dialogue",
+        }
+    }
+
+    const fn fallback(self) -> &'static str {
+        match self {
+            Self::Walk => "the host walk did not reach the selected stand",
+            Self::Reach => "the server reported that Luthas was unreachable",
+            Self::DialogueTimeout => "Luthas did not open a dialogue",
+            Self::Dialogue => "the dialogue did not complete",
+        }
+    }
+}
+
 enum TalkProgress {
     Pending,
-    Failed(&'static str),
+    Failed(ApproachFailure),
     Done(bool),
 }
 
@@ -1142,8 +1170,8 @@ fn next_talk_stand(npc: &str, tried: &TriedStands) -> Result<WorldTile, &'static
         if !view.available {
             return Err("the posted reach view is unavailable");
         }
-        let mut nearest: Option<(u64, WorldTile)> = None;
-        for (dx, dz) in TALK_RETRY_OFFSETS {
+        let mut nearest: Option<(u16, u64, WorldTile)> = None;
+        for (dx, dz) in TALK_STAND_OFFSETS {
             let (Some(x), Some(z)) = (target.x.checked_add(dx), target.z.checked_add(dz)) else {
                 continue;
             };
@@ -1155,16 +1183,20 @@ fn next_talk_stand(npc: &str, tried: &TriedStands) -> Result<WorldTile, &'static
             if tried.contains(stand) || !view.walkable(stand) || !view.can_reach(stand, &options) {
                 continue;
             }
+            let lx = (stand.x - view.base_x) as usize;
+            let lz = (stand.z - view.base_z) as usize;
+            let rank = view.exact_rank[lx * view.height as usize + lz];
             let distance =
                 u64::from(from.x.abs_diff(stand.x)) + u64::from(from.z.abs_diff(stand.z));
             match nearest {
-                Some((best, _)) if distance >= best => {}
-                _ => nearest = Some((distance, stand)),
+                Some((best_rank, best_distance, _))
+                    if (rank, distance) >= (best_rank, best_distance) => {}
+                _ => nearest = Some((rank, distance, stand)),
             }
         }
         nearest
-            .map(|(_, stand)| stand)
-            .ok_or("all reachable orthogonal Luthas stands are blocked or already tried")
+            .map(|(_, _, stand)| stand)
+            .ok_or("no untried reachable orthogonal Luthas stand is available")
     })
 }
 
@@ -1181,12 +1213,13 @@ fn record_recovery_log(logs: &mut VecDeque<String>, line: String) {
 fn log_approach_failure(
     logs: &mut VecDeque<String>,
     attempt: u32,
-    cause: &str,
+    cause: ApproachFailure,
     stand: WorldTile,
     detail: &str,
 ) {
     let line = format!(
-        "boat fare Luthas approach {attempt}/{TALK_ATTEMPTS} failed cause={cause} stand=({},{},{}) detail={detail}",
+        "boat fare Luthas approach {attempt}/{TALK_ATTEMPTS} failed cause={} stand=({},{},{}) detail={detail}",
+        cause.label(),
         stand.x, stand.z, stand.level
     );
     record_recovery_log(logs, line);
@@ -1269,22 +1302,25 @@ impl Recover {
             if interrupted(cx) {
                 return Err(false);
             }
-            let (stand, radius) = if attempt == 1 {
-                (facts.luthas_anchor, 2)
-            } else {
-                match next_talk_stand(&facts.luthas_name, &tried_stands) {
-                    Ok(stand) => (stand, 0),
-                    Err(reason) => {
-                        let reason = format!("no retry stand: {reason}");
-                        log_terminal_failure(logs, attempt.saturating_sub(1), &reason);
-                        return Err(false);
+            let stand = match next_talk_stand(&facts.luthas_name, &tried_stands) {
+                Ok(stand) => stand,
+                Err(reason) => {
+                    let detail = format!("no reachable stand: {reason}");
+                    if attempt == 1 {
+                        record_recovery_log(
+                            logs,
+                            format!("boat fare Luthas recovery could not start: {detail}"),
+                        );
+                    } else {
+                        log_terminal_failure(logs, attempt - 1, &detail);
                     }
+                    return Err(false);
                 }
             };
             tried_stands.insert(stand);
             match Walk::begin_compat_avoiding(
                 stand,
-                radius,
+                0,
                 TALK_WALK_MS,
                 false,
                 Vec::new(),
@@ -1311,7 +1347,7 @@ impl Recover {
                 }
                 Err(false) => {
                     let detail = "the host could not start a walk to the stand";
-                    log_approach_failure(logs, attempt, "walk", stand, detail);
+                    log_approach_failure(logs, attempt, ApproachFailure::Walk, stand, detail);
                     if let Some(current) = here() {
                         tried_stands.insert(current);
                     }
@@ -1368,7 +1404,7 @@ impl Recover {
                 let arrived = walk.step(cx)?;
                 if !arrived {
                     let detail = "the host walk did not reach the selected stand";
-                    log_approach_failure(logs, *attempt, "walk", *stand, detail);
+                    log_approach_failure(logs, *attempt, ApproachFailure::Walk, *stand, detail);
                     let mut tried = *tried_stands;
                     if let Some(current) = here() {
                         tried.insert(current);
@@ -1405,11 +1441,7 @@ impl Recover {
                 match talk.step(&self.facts, cx, logs) {
                     TalkProgress::Pending => return None,
                     TalkProgress::Failed(cause) => {
-                        let fallback = match cause {
-                            "reach" => "the server reported that Luthas was unreachable",
-                            "dialogue-timeout" => "Luthas did not open a dialogue",
-                            _ => "the Luthas approach failed",
-                        };
+                        let fallback = cause.fallback();
                         let detail = logs
                             .iter()
                             .skip(log_start)
@@ -1437,7 +1469,13 @@ impl Recover {
                             .cloned()
                             .unwrap_or_else(|| "the dialogue did not complete".to_string());
                         let failed_stand = here().unwrap_or(*stand);
-                        log_approach_failure(logs, *attempt, "dialogue", failed_stand, &detail);
+                        log_approach_failure(
+                            logs,
+                            *attempt,
+                            ApproachFailure::Dialogue,
+                            failed_stand,
+                            &detail,
+                        );
                         log_terminal_failure(logs, *attempt, &detail);
                         return Some(false);
                     }
