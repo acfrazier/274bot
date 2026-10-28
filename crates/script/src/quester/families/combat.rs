@@ -19,8 +19,8 @@ use crate::native::{
     ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, WalkAllow, WalkReceipt,
 };
 use crate::shim::InteractReq;
+use api::game_data::wearpos_for_loadout_slot;
 use api::gather_methods::SceneRegionInput;
-use api::loadout::WORN_SLOTS;
 use api::selected::Truth;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -142,9 +142,18 @@ pub(super) struct CombatArgs {
     /// Optional melee attack mode.
     #[serde(default)]
     melee_mode: Option<MeleeMode>,
-    /// Optional named loadout for the encounter.
+    /// Optional named loadout for the encounter: the loadout of the opening
+    /// `tactic.style`.
     #[serde(default)]
     loadout: Option<String>,
+    /// Optional named loadout per combat style. The machine wears the
+    /// loadout of a style when it switches to that style in the middle of a
+    /// fight (when the opponent protects against the opening style, when
+    /// ammunition or runes run out, and when the opponent stays out of melee
+    /// reach). A style with no loadout is never a switch target. Naming the
+    /// opening style here and in `loadout` is refused.
+    #[serde(default)]
+    loadouts: Option<StyleLoadoutsArg>,
     /// Selected spell aliases in explicit manual order; null uses native selection.
     #[serde(default)]
     spells: Option<Vec<String>>,
@@ -185,6 +194,23 @@ pub(super) struct CombatArgs {
     #[serde(default)]
     win: Option<PredicateDocument>,
 }
+
+/// The named loadout of each combat style (PVP-DESIGN-1026 §4.1).
+#[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+struct StyleLoadoutsArg {
+    /// Name or Path-qualified name of the melee loadout.
+    #[serde(default)]
+    melee: Option<String>,
+    /// Name or Path-qualified name of the ranged loadout.
+    #[serde(default)]
+    ranged: Option<String>,
+    /// Name or Path-qualified name of the magic loadout.
+    #[serde(default)]
+    mage: Option<String>,
+}
+
 /// One optional loot item, either a single-item or explicit per-kill threshold.
 #[derive(Deserialize)]
 #[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
@@ -425,11 +451,12 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
     let stand = super::anchor_tile(args.stand.as_ref())?;
     let search_bounds = compile_search_bounds(args.area, cx)?;
 
-    let kit = args
-        .loadout
-        .as_deref()
-        .map(|name| compile_kit(name, cx))
-        .transpose()?;
+    let kits = compile_kits(
+        args.loadout.as_deref(),
+        args.loadouts.as_ref(),
+        style,
+        cx,
+    )?;
     let loot = compile_loot(&args.loot, cx)?;
     let until = args
         .until
@@ -474,9 +501,7 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
         style,
         melee_mode: args.melee_mode,
         ranged_style: args.tactic.ranged_style,
-        kits: kit.map_or_else(StyleKits::default, |kit| {
-            StyleKits::default().with(style, kit)
-        }),
+        kits,
         switch: SwitchPolicy::for_style(style),
         spells,
         fallback_spells: args.fallback_spells,
@@ -668,6 +693,37 @@ fn compile_search_bounds(
     Ok(Some(Arc::from(bounds)))
 }
 
+/// The kit of every named style (PVP-DESIGN-1026 §4.1): `loadout` is the kit of
+/// the opening `style`, `loadouts` names the kit of each style. Naming the
+/// opening style in both is refused, since the two would disagree about it.
+fn compile_kits(
+    loadout: Option<&str>,
+    loadouts: Option<&StyleLoadoutsArg>,
+    style: Style,
+    cx: &CompileContext<'_>,
+) -> Result<StyleKits, CompileError> {
+    let mut kits = StyleKits::default();
+    if let Some(name) = loadout {
+        kits = kits.with(style, compile_kit(name, cx)?);
+    }
+    if let Some(named) = loadouts {
+        for (kit_style, name) in [
+            (Style::Melee, named.melee.as_deref()),
+            (Style::Ranged, named.ranged.as_deref()),
+            (Style::Mage, named.mage.as_deref()),
+        ] {
+            let Some(name) = name else {
+                continue;
+            };
+            if kit_style == style && loadout.is_some() {
+                return Err(CompileError::code("conflicting-combat-loadouts"));
+            }
+            kits = kits.with(kit_style, compile_kit(name, cx)?);
+        }
+    }
+    Ok(kits)
+}
+
 fn compile_kit(name: &str, cx: &CompileContext<'_>) -> Result<Arc<CompiledKit>, CompileError> {
     if name.trim().is_empty() {
         return Err(CompileError::code("unknown-loadout"));
@@ -688,10 +744,10 @@ fn compile_kit(name: &str, cx: &CompileContext<'_>) -> Result<Arc<CompiledKit>, 
     let mut worn = Vec::with_capacity(row.worn.len());
     let (mut two_hander, mut shield) = (false, false);
     for (slot, item) in &row.worn {
-        let slot = WORN_SLOTS
-            .iter()
-            .position(|known| known.eq_ignore_ascii_case(slot))
-            .and_then(|slot| u8::try_from(slot).ok())
+        // The wear position the server uses (`quiver` is 13, `legs` 7), not the
+        // slot name's index in the loadout's own list.
+        let slot = wearpos_for_loadout_slot(&slot.to_ascii_lowercase())
+            .and_then(|position| u8::try_from(position).ok())
             .ok_or_else(|| CompileError::code("invalid-loadout-slot"))?;
         let id = resolve_loadout_item(cx, item)?.0;
         // A two-hander and a shield cannot be worn together: `try_equip` vacates

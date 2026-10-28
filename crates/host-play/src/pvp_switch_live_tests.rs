@@ -10,9 +10,17 @@
 //! 3. T4: the opponent runs away; out of reach for two attack intervals with no
 //!    swing of ours, the machine switches to its bow.
 //!
-//! Every transition is read from the live machine (`ActionHandle::inspect`) with
-//! the host tick of the frame that showed it, next to the worn items, the
-//! opponent's head icons and the distance between the two players.
+//! The cell reads the machine's state (`ActionHandle::inspect`) and, apart from
+//! it, the fighter's own frame before every poll: `Frame::borrow` of the snapshot
+//! the poll receives (the local actor's tile, the holder's actor tile, the worn
+//! items, the holder's head icons) and the fighter's own swing onsets from a
+//! detector with its own stamps. The verdict ([`judge`]) is computed from those
+//! samples and the state changes together; the machine's cause `Reach` is only
+//! one of its clauses. T4 is rejected unless the holder stayed more than one
+//! tile away for `2 * rate` consecutive observed ticks with no swing of ours
+//! (design §4.3 T4, §10.1 case 7d; the rate is the rune scimitar's content
+//! attack rate, so the window is 8 ticks) before any wear of the bow appears.
+//! [`receipt_tests`] run the verdict on a correct trace and on each broken one.
 //!
 //! ```sh
 //! LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=<pfx> \
@@ -24,12 +32,14 @@
 //! ```
 use super::pvp::{duel_step, DuelDrive};
 use super::*;
+use script::combat::frame::Frame;
+use script::combat::style::melee;
 use script::combat::{
-    Combat, CombatRequest, CombatTables, CompiledKit, Fallback, Style, StyleKits, SwitchPolicy,
-    SwitchState, Target,
+    ActorKind, ActorRef, Combat, CombatRequest, CombatTables, CompiledKit, Fallback, Style,
+    StyleKits, SwitchPolicy, SwitchState, Target,
 };
 use script::native::{ActionHandle, NativeTick, PvpGlobals, Script, ScriptFailure, ScriptFlow};
-use serde_json::{json, Value};
+use serde_json::json;
 use std::task::Poll;
 
 /// Ticks each phase may take before the cell fails (600 ms each).
@@ -86,8 +96,11 @@ struct Shared {
     begun_tick: Option<u64>,
     failure: Option<String>,
     last: Option<(Style, SwitchState, u8, u8, u8, u8)>,
-    /// The Chebyshev distance to the holder at every observed tick.
-    series: Vec<(u64, i32)>,
+    /// The fighter's frame at every observed tick, before that tick's poll.
+    samples: Vec<Sample>,
+    /// Observed ticks whose frame could not be borrowed (the machine stays
+    /// pending on those too).
+    missing_samples: u32,
     quiet: u32,
 }
 
@@ -102,8 +115,176 @@ impl Shared {
     }
 }
 
-/// The machine's native script: begins one `Combat` against the partner and
-/// samples it after every poll.
+/// One observed tick of the fighter's frame, taken before that tick's poll of
+/// the machine from the same snapshot (`Frame::borrow`).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+struct Sample {
+    tick: u64,
+    phase: Phase,
+    /// `Frame::here`, the local actor's tile: where the machine measures from.
+    own: (i32, i32, i32),
+    /// The holder's actor tile.
+    holder: Option<(i32, i32, i32)>,
+    /// Chebyshev distance on one level; -1 without the holder's row or across levels.
+    distance: i32,
+    /// An onset of our own swing, from a detector with its own stamps.
+    swing: bool,
+    /// The holder's head icon bits (bit 3 melee, 4 ranged, 5 magic).
+    headicons: i32,
+    /// `(slot, obj id)` worn by the fighter.
+    worn: Vec<(i32, i32)>,
+}
+
+/// Protect from Melee, and any protection prayer, in the head icon bits.
+const MELEE_PROTECT: i32 = 1 << 3;
+const ANY_PROTECT: i32 = 0b11_1000;
+
+#[derive(Clone, Copy)]
+struct Ids {
+    sword: i32,
+    bow: i32,
+    arrows: i32,
+}
+
+/// The clauses of the smoke, each computed from the samples and the state
+/// changes. [`Verdict::passed`] is their conjunction.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+struct Verdict {
+    t2_started_by_protect: bool,
+    /// The holder showed Protect from Melee on the frame of the start and on the one before.
+    t2_holder_showed_protect_on_two_frames: bool,
+    t2_no_bow_before_the_start: bool,
+    t2_completed_with_bow_and_quiver_worn: bool,
+    t3_started_by_prefer: bool,
+    /// No protection on the frame of the start and the one before, and the holder within reach.
+    t3_holder_showed_no_protect_and_stood_in_reach: bool,
+    t3_completed_with_sword_worn: bool,
+    t4_started_by_reach: bool,
+    /// The tick at which `2 * rate` consecutive observed ticks with the holder more than
+    /// one tile away and no swing of ours were complete, computed from the samples alone.
+    t4_reach_window_ended_at: Option<u64>,
+    t4_started_after_the_window: bool,
+    t4_no_bow_before_the_window_ended: bool,
+    t4_completed_with_bow_and_quiver_worn: bool,
+    switches: u8,
+    switch_failures: u8,
+}
+
+impl Verdict {
+    fn passed(&self) -> bool {
+        self.t2_started_by_protect
+            && self.t2_holder_showed_protect_on_two_frames
+            && self.t2_no_bow_before_the_start
+            && self.t2_completed_with_bow_and_quiver_worn
+            && self.t3_started_by_prefer
+            && self.t3_holder_showed_no_protect_and_stood_in_reach
+            && self.t3_completed_with_sword_worn
+            && self.t4_started_by_reach
+            && self.t4_reach_window_ended_at.is_some()
+            && self.t4_started_after_the_window
+            && self.t4_no_bow_before_the_window_ended
+            && self.t4_completed_with_bow_and_quiver_worn
+            && self.switches >= 3
+            && self.switch_failures == 0
+    }
+}
+
+fn sample_at(samples: &[Sample], tick: u64) -> Option<&Sample> {
+    samples.iter().find(|sample| sample.tick == tick)
+}
+
+/// Whether `holds` is true of the samples at `tick - 1` and at `tick`.
+fn on_two_frames(samples: &[Sample], tick: u64, holds: impl Fn(&Sample) -> bool) -> bool {
+    tick > 0
+        && [tick - 1, tick]
+            .iter()
+            .all(|at| sample_at(samples, *at).is_some_and(&holds))
+}
+
+/// The tick at which `window` consecutive observed ticks of the Away phase have
+/// the holder more than one tile away and no swing of ours; a tick missing from
+/// the samples, a sample with the holder in reach or unseen, and a swing each
+/// start the count again.
+fn reach_window_end(samples: &[Sample], window: usize) -> Option<u64> {
+    let (mut run, mut previous) = (0usize, None::<u64>);
+    for sample in samples.iter().filter(|sample| sample.phase == Phase::Away) {
+        if previous.is_some_and(|at| sample.tick != at + 1) {
+            run = 0;
+        }
+        previous = Some(sample.tick);
+        if sample.distance > 1 && !sample.swing {
+            run += 1;
+            if run >= window {
+                return Some(sample.tick);
+            }
+        } else {
+            run = 0;
+        }
+    }
+    None
+}
+
+/// The verdict of one run: `rows` are the state changes of the machine,
+/// `samples` the fighter's frames, `window` is `2 * rate` of the melee weapon.
+fn judge(rows: &[TraceRow], samples: &[Sample], ids: Ids, window: usize) -> Verdict {
+    let first = |predicate: &dyn Fn(&TraceRow) -> bool| rows.iter().find(|row| predicate(row));
+    let converging = |row: &TraceRow, phase: Phase, cause: &str| {
+        row.phase == phase && row.switch.starts_with("Converging") && row.switch.contains(cause)
+    };
+    let worn = |row: &TraceRow, slot: i32, item: i32| row.worn.contains(&(slot, item));
+    let t2_start = first(&|row| converging(row, Phase::Hold, "Protect"));
+    let t2 = first(&|row| row.phase == Phase::Hold && row.switches >= 1 && row.active == "Ranged");
+    let t3_start = first(&|row| converging(row, Phase::Drop, "Prefer"));
+    let t3 = first(&|row| row.phase == Phase::Drop && row.switches >= 2 && row.active == "Melee");
+    let t4_start = first(&|row| converging(row, Phase::Away, "Reach"));
+    let t4 = first(&|row| row.phase == Phase::Away && row.switches >= 3 && row.active == "Ranged");
+    let window_end = reach_window_end(samples, window);
+    let first_bow_in_away = samples
+        .iter()
+        .filter(|sample| sample.phase == Phase::Away)
+        .find(|sample| sample.worn.contains(&(3, ids.bow)))
+        .map(|sample| sample.tick);
+    Verdict {
+        t2_started_by_protect: t2_start.is_some(),
+        t2_holder_showed_protect_on_two_frames: t2_start.is_some_and(|start| {
+            on_two_frames(samples, start.tick, |sample| {
+                sample.headicons & MELEE_PROTECT != 0
+            })
+        }),
+        t2_no_bow_before_the_start: t2_start.is_some_and(|start| {
+            !samples.iter().any(|sample| {
+                sample.phase == Phase::Hold
+                    && sample.tick <= start.tick
+                    && sample.worn.contains(&(3, ids.bow))
+            })
+        }),
+        t2_completed_with_bow_and_quiver_worn: t2
+            .is_some_and(|row| worn(row, 3, ids.bow) && worn(row, 13, ids.arrows)),
+        t3_started_by_prefer: t3_start.is_some(),
+        t3_holder_showed_no_protect_and_stood_in_reach: t3_start.is_some_and(|start| {
+            on_two_frames(samples, start.tick, |sample| {
+                sample.headicons & ANY_PROTECT == 0
+            }) && sample_at(samples, start.tick)
+                .is_some_and(|sample| (0..=1).contains(&sample.distance))
+        }),
+        t3_completed_with_sword_worn: t3.is_some_and(|row| worn(row, 3, ids.sword)),
+        t4_started_by_reach: t4_start.is_some(),
+        t4_reach_window_ended_at: window_end,
+        t4_started_after_the_window: window_end
+            .zip(t4_start)
+            .is_some_and(|(end, start)| start.tick >= end),
+        t4_no_bow_before_the_window_ended: window_end
+            .zip(first_bow_in_away)
+            .is_some_and(|(end, bow)| bow > end),
+        t4_completed_with_bow_and_quiver_worn: t4
+            .is_some_and(|row| worn(row, 3, ids.bow) && worn(row, 13, ids.arrows)),
+        switches: rows.last().map_or(0, |row| row.switches),
+        switch_failures: rows.last().map_or(0, |row| row.failures),
+    }
+}
+
+/// The machine's native script: begins one `Combat` against the partner,
+/// records the fighter's frame before every poll and samples the machine after it.
 struct SwitchFight {
     shared: Arc<Mutex<Shared>>,
     request: Arc<CombatRequest>,
@@ -112,6 +293,65 @@ struct SwitchFight {
     tried: bool,
     /// The holder's screen name: other accounts may share the arena.
     partner: String,
+    /// The stamps of the cell's own swing-onset detector.
+    swing_id: i32,
+    swing_frame: i32,
+}
+
+impl SwitchFight {
+    /// The fighter's frame as the poll below reads it (`Frame::borrow` of the
+    /// same snapshot): one sample per observed tick.
+    fn observe(&mut self, tick: &NativeTick<'_>, now: u64) -> Option<Sample> {
+        let Some(frame) = Frame::borrow(tick.cx.snapshot()) else {
+            let mut shared = self.shared.lock().expect("shared lock");
+            shared.missing_samples += 1;
+            return None;
+        };
+        let mut shared = self.shared.lock().expect("shared lock");
+        if let Some(last) = shared.samples.last().filter(|last| last.tick == now) {
+            return Some(last.clone());
+        }
+        let holder = frame
+            .players
+            .iter()
+            .find(|row| row.actor.name.as_deref() == Some(self.partner.as_str()));
+        let engaged = holder.map(|row| ActorRef {
+            kind: ActorKind::Player,
+            index: row.index as u16,
+        });
+        let swing = melee::onset(
+            &frame.local.player.actor,
+            engaged,
+            &self.tables,
+            &mut self.swing_id,
+            &mut self.swing_frame,
+        );
+        let tile = |tile: &api::snapshot::WorldTile| (tile.x, tile.z, tile.level);
+        let distance = holder.map_or(-1, |row| {
+            let (a, b) = (frame.here, row.actor.tile);
+            if a.level == b.level {
+                (a.x - b.x).abs().max((a.z - b.z).abs())
+            } else {
+                -1
+            }
+        });
+        let sample = Sample {
+            tick: now,
+            phase: shared.phase,
+            own: tile(&frame.here),
+            holder: holder.map(|row| tile(&row.actor.tile)),
+            distance,
+            swing,
+            headicons: holder.map_or(0, |row| row.headicons),
+            worn: frame
+                .equipment
+                .iter()
+                .map(|item| (item.slot, item.def.id))
+                .collect(),
+        };
+        shared.samples.push(sample.clone());
+        Some(sample)
+    }
 }
 
 impl Script for SwitchFight {
@@ -137,40 +377,11 @@ impl Script for SwitchFight {
                 }
             }
         }
-        if self.handle.is_some() {
-            let mut shared = self.shared.lock().expect("shared lock");
-            if shared.actions.len() < 80 {
-                let view = tick
-                    .frame()
-                    .snapshot()
-                    .map(|snapshot| {
-                        format!(
-                            "own {:?} players {:?}",
-                            snapshot.tile(),
-                            snapshot
-                                .players()
-                                .iter()
-                                .map(|row| (
-                                    row.actor.name.clone(),
-                                    row.actor.tile.x,
-                                    row.actor.tile.z,
-                                    row.actor
-                                        .actions
-                                        .iter()
-                                        .flatten()
-                                        .cloned()
-                                        .collect::<Vec<_>>(),
-                                ))
-                                .collect::<Vec<_>>()
-                        )
-                    })
-                    .unwrap_or_else(|| "no snapshot".into());
-                shared.actions.push(ActionRow {
-                    tick: now,
-                    what: format!("view {view}"),
-                });
-            }
-        }
+        let sample = if self.handle.is_some() {
+            self.observe(tick, now)
+        } else {
+            None
+        };
         let polled = match self.handle.as_ref() {
             Some(handle) => tick.actions.poll(handle, &mut tick.cx),
             None => return Ok(ScriptFlow::Continue),
@@ -199,25 +410,6 @@ impl Script for SwitchFight {
             return Ok(ScriptFlow::Continue);
         };
         let mut shared = self.shared.lock().expect("shared lock");
-        let snapshot = tick.frame().snapshot();
-        let partner = snapshot.and_then(|snapshot| {
-            snapshot
-                .players()
-                .iter()
-                .find(|row| row.actor.name.as_deref() == Some(self.partner.as_str()))
-                .cloned()
-        });
-        let own_tile = snapshot.and_then(|snapshot| snapshot.tile());
-        let partner_tile = partner
-            .as_ref()
-            .map(|row| (row.actor.tile.x, row.actor.tile.z, row.actor.tile.level));
-        let distance = match (own_tile, partner_tile) {
-            (Some(a), Some(b)) => (a.0 - b.0).abs().max((a.1 - b.1).abs()),
-            _ => -1,
-        };
-        if shared.series.last().is_none_or(|(at, _)| *at != now) {
-            shared.series.push((now, distance));
-        }
         if shared.last != Some(state) {
             let row = TraceRow {
                 tick: now,
@@ -227,19 +419,14 @@ impl Script for SwitchFight {
                 switches: state.2,
                 failures: state.3,
                 refusals: (state.4, state.5),
-                worn: snapshot
-                    .map(|snapshot| {
-                        snapshot
-                            .equipment()
-                            .iter()
-                            .map(|item| (item.slot, item.def.id))
-                            .collect()
-                    })
+                worn: sample
+                    .as_ref()
+                    .map(|sample| sample.worn.clone())
                     .unwrap_or_default(),
-                partner_headicons: partner.as_ref().map_or(0, |row| row.headicons),
-                distance,
-                own_tile,
-                partner_tile,
+                partner_headicons: sample.as_ref().map_or(0, |sample| sample.headicons),
+                distance: sample.as_ref().map_or(-1, |sample| sample.distance),
+                own_tile: sample.as_ref().map(|sample| sample.own),
+                partner_tile: sample.as_ref().and_then(|sample| sample.holder),
             };
             shared.trace.push(row);
             shared.last = Some(state);
@@ -704,6 +891,8 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
             handle: None,
             tried: false,
             partner: screen(&holder),
+            swing_id: -1,
+            swing_frame: -1,
         }),
         None,
     ) {
@@ -755,61 +944,22 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
     let shared = shared.lock().expect("shared lock");
     let refusals = partner_state.lock().expect("partner lock").refusals.clone();
     let rows = &shared.trace;
-    let first = |predicate: &dyn Fn(&TraceRow) -> bool| rows.iter().find(|row| predicate(row));
-    let t2 = first(&|row| row.phase == Phase::Hold && row.switches >= 1 && row.active == "Ranged");
-    let t2_start = first(&|row| {
-        row.phase == Phase::Hold
-            && row.switch.starts_with("Converging")
-            && row.switch.contains("Protect")
-    });
-    let t3 = first(&|row| row.phase == Phase::Drop && row.switches >= 2 && row.active == "Melee");
-    let t3_start = first(&|row| {
-        row.phase == Phase::Drop
-            && row.switch.starts_with("Converging")
-            && row.switch.contains("Prefer")
-    });
-    let t4 = first(&|row| row.phase == Phase::Away && row.switches >= 3 && row.active == "Ranged");
-    let t4_start = first(&|row| {
-        row.phase == Phase::Away
-            && row.switch.starts_with("Converging")
-            && row.switch.contains("Reach")
-    });
-    let bow = id("maple_shortbow");
-    let sword = id("rune_scimitar");
-    let arrows = id("iron_arrow");
-    let worn = |row: &TraceRow, slot: i32, item: i32| row.worn.contains(&(slot, item));
-    let verdict = json!({
-        "t2_started_by_protect": t2_start.is_some(),
-        "t2_completed_with_bow_and_quiver_worn": t2.is_some_and(|row| worn(row, 3, bow) && worn(row, 13, arrows)),
-        "t2_partner_showed_protect_from_melee": t2_start.is_some_and(|row| row.partner_headicons & (1 << 3) != 0),
-        "t3_started_by_prefer": t3_start.is_some(),
-        "t3_completed_with_sword_worn": t3.is_some_and(|row| worn(row, 3, sword)),
-        "t3_partner_showed_no_protect": t3_start.is_some_and(|row| row.partner_headicons & 0b11_1000 == 0),
-        "t4_started_by_reach": t4_start.is_some(),
-        // The machine counts eight ticks out of reach from its own frames, which
-        // the cell cannot sample (its distance lags the machine's by a tick or two
-        // while the runner moves): the cause `Reach` proves the count, and this
-        // reads the cell's own series as corroboration, at least five of the ten
-        // ticks up to the switch more than one tile apart.
-        "t4_partner_out_of_reach": t4_start.is_some_and(|start| {
-            shared
-                .series
-                .iter()
-                .filter(|(at, distance)| {
-                    *at + 9 >= start.tick && *at <= start.tick && *distance > 1
-                })
-                .count()
-                >= 5
-        }),
-        "t4_completed_with_bow_worn": t4.is_some_and(|row| worn(row, 3, bow)),
-        "switch_failures": rows.last().map_or(0, |row| row.failures),
-    });
-    let passed = verdict
-        .as_object()
-        .expect("verdict object")
+    let ids = Ids {
+        sword: id("rune_scimitar"),
+        bow: id("maple_shortbow"),
+        arrows: id("iron_arrow"),
+    };
+    // T4's window is `2 * rate` observed ticks (design §4.3): the rate is the
+    // melee weapon's content attack rate, read from the selected game data.
+    let rate = data
+        .weapon_styles()
         .iter()
-        .all(|(key, value)| key == "switch_failures" || value == &Value::Bool(true))
-        && verdict["switch_failures"] == 0
+        .find(|row| row.obj_id == ids.sword)
+        .map_or(0, |row| usize::from(row.attackrate));
+    assert!(rate > 0, "the rune scimitar has an attack rate in the content");
+    let window = 2 * rate;
+    let verdict = judge(rows, &shared.samples, ids, window);
+    let passed = verdict.passed()
         && shared.failure.is_none()
         && shared.begin_error.is_none()
         && refusals.is_empty();
@@ -826,8 +976,10 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
         "partner_refusals": refusals,
         "trace": rows,
         "actions": shared.actions,
-        "distance_series": shared.series,
-        "ids": { "rune_scimitar": sword, "maple_shortbow": bow, "iron_arrow": arrows },
+        "samples": shared.samples,
+        "missing_samples": shared.missing_samples,
+        "reach_window_ticks": window,
+        "ids": { "rune_scimitar": ids.sword, "maple_shortbow": ids.bow, "iron_arrow": ids.arrows },
         "verdict": verdict,
         "passed": passed,
         "seconds": started.elapsed().as_secs(),
@@ -845,4 +997,364 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
         passed,
         "the live smoke failed: see pvp-switch-receipt.json: {receipt}"
     );
+}
+
+/// The verdict on recorded traces (PVP-DESIGN-1026 §10.6): a correct trace
+/// passes and each named broken trace fails the clause it breaks.
+#[cfg(test)]
+mod receipt_tests {
+    use super::*;
+    use script::combat::SwitchCause;
+
+    const IDS: Ids = Ids {
+        sword: 1333,
+        bow: 853,
+        arrows: 884,
+    };
+    /// `2 * rate` of the rune scimitar (content attack rate 4).
+    const WINDOW: usize = 8;
+    const SWORD_ONLY: [(i32, i32); 1] = [(3, IDS.sword)];
+    /// The sword with the quiver (the arrows stay worn after the return to melee).
+    const SWORD: [(i32, i32); 2] = [(3, IDS.sword), (13, IDS.arrows)];
+    const BOW: [(i32, i32); 2] = [(3, IDS.bow), (13, IDS.arrows)];
+
+    fn converging(to: Style, cause: SwitchCause, since: u16) -> String {
+        format!(
+            "{:?}",
+            SwitchState::Converging {
+                to,
+                cause,
+                since,
+                mask: 0,
+                rate_old: 4
+            }
+        )
+    }
+
+    fn settling(since: u16) -> String {
+        format!(
+            "{:?}",
+            SwitchState::Settling {
+                since,
+                rate_old: 4
+            }
+        )
+    }
+
+    fn row(
+        tick: u64,
+        phase: Phase,
+        active: &str,
+        switch: String,
+        switches: u8,
+        worn: &[(i32, i32)],
+    ) -> TraceRow {
+        TraceRow {
+            tick,
+            phase,
+            active: active.into(),
+            switch,
+            switches,
+            worn: worn.to_vec(),
+            ..TraceRow::default()
+        }
+    }
+
+    fn sample(
+        tick: u64,
+        phase: Phase,
+        distance: i32,
+        headicons: i32,
+        swing: bool,
+        worn: &[(i32, i32)],
+    ) -> Sample {
+        Sample {
+            tick,
+            phase,
+            own: (3340, 3250, 0),
+            holder: Some((3340 + distance, 3250, 0)),
+            distance,
+            swing,
+            headicons,
+            worn: worn.to_vec(),
+        }
+    }
+
+    /// A correct run: T2 starts at tick 23 (Protect from Melee on ticks 22 and
+    /// 23) and completes at 25; T3 starts at 33 (nothing protected on 32 and 33,
+    /// the holder adjacent) and completes at 35; the holder runs from tick 42,
+    /// the eight ticks 42 to 49 are the T4 window, T4 starts at 49 and the bow
+    /// is worn from tick 51.
+    fn correct() -> (Vec<TraceRow>, Vec<Sample>) {
+        let idle = format!("{:?}", SwitchState::Idle);
+        let rows = vec![
+            row(20, Phase::Hold, "Melee", idle.clone(), 0, &SWORD_ONLY),
+            row(
+                23,
+                Phase::Hold,
+                "Melee",
+                converging(Style::Ranged, SwitchCause::Protect(MELEE_PROTECT as u8), 23),
+                0,
+                &SWORD_ONLY,
+            ),
+            row(25, Phase::Hold, "Ranged", settling(25), 1, &BOW),
+            row(27, Phase::Hold, "Ranged", idle.clone(), 1, &BOW),
+            row(
+                33,
+                Phase::Drop,
+                "Ranged",
+                converging(Style::Melee, SwitchCause::Prefer, 33),
+                1,
+                &BOW,
+            ),
+            row(35, Phase::Drop, "Melee", settling(35), 2, &SWORD),
+            row(37, Phase::Drop, "Melee", idle, 2, &SWORD),
+            row(
+                49,
+                Phase::Away,
+                "Melee",
+                converging(Style::Ranged, SwitchCause::Reach, 49),
+                2,
+                &SWORD,
+            ),
+            row(51, Phase::Away, "Ranged", settling(51), 3, &BOW),
+        ];
+        let samples = (20..=53u64)
+            .map(|tick| {
+                let phase = match tick {
+                    ..=29 => Phase::Hold,
+                    30..=39 => Phase::Drop,
+                    _ => Phase::Away,
+                };
+                let headicons = if (22..=30).contains(&tick) {
+                    MELEE_PROTECT
+                } else {
+                    0
+                };
+                let distance = if tick >= 42 { 3 } else { 1 };
+                let worn: &[(i32, i32)] = match tick {
+                    ..=24 => &SWORD_ONLY,
+                    25..=34 => &BOW,
+                    35..=50 => &SWORD,
+                    _ => &BOW,
+                };
+                sample(
+                    tick,
+                    phase,
+                    distance,
+                    headicons,
+                    matches!(tick, 21 | 36 | 41),
+                    worn,
+                )
+            })
+            .collect();
+        (rows, samples)
+    }
+
+    fn verdict(rows: &[TraceRow], samples: &[Sample]) -> Verdict {
+        judge(rows, samples, IDS, WINDOW)
+    }
+
+    fn sample_mut(samples: &mut [Sample], tick: u64) -> &mut Sample {
+        samples
+            .iter_mut()
+            .find(|sample| sample.tick == tick)
+            .expect("sample")
+    }
+
+    #[test]
+    fn a_correct_trace_passes() {
+        let (rows, samples) = correct();
+        let verdict = verdict(&rows, &samples);
+        assert!(verdict.passed(), "{verdict:?}");
+        assert_eq!(verdict.t4_reach_window_ended_at, Some(49));
+    }
+
+    #[test]
+    fn the_window_is_two_attack_intervals_of_consecutive_ticks() {
+        let (_, samples) = correct();
+        assert_eq!(reach_window_end(&samples, 8), Some(49));
+        assert_eq!(reach_window_end(&samples, 9), Some(50));
+        assert_eq!(reach_window_end(&samples, 12), Some(53));
+        assert_eq!(reach_window_end(&samples, 13), None);
+    }
+
+    #[test]
+    fn no_t2_switch_fails() {
+        let (mut rows, samples) = correct();
+        rows.retain(|row| !(23..=27).contains(&row.tick));
+        let verdict = verdict(&rows, &samples);
+        assert!(!verdict.t2_started_by_protect);
+        assert!(!verdict.t2_completed_with_bow_and_quiver_worn);
+        assert!(!verdict.passed());
+    }
+
+    #[test]
+    fn no_t4_switch_fails() {
+        let (mut rows, samples) = correct();
+        rows.retain(|row| row.phase != Phase::Away || row.tick < 49);
+        let verdict = verdict(&rows, &samples);
+        assert!(!verdict.t4_started_by_reach);
+        assert!(!verdict.t4_completed_with_bow_and_quiver_worn);
+        assert!(!verdict.passed());
+    }
+
+    #[test]
+    fn a_t4_switch_by_another_cause_fails() {
+        let (mut rows, samples) = correct();
+        let at = rows.iter().position(|row| row.tick == 49).expect("row");
+        rows[at].switch = converging(Style::Ranged, SwitchCause::Exhausted, 49);
+        let verdict = verdict(&rows, &samples);
+        assert!(!verdict.t4_started_by_reach);
+        assert!(!verdict.passed());
+    }
+
+    #[test]
+    fn a_switch_that_wears_nothing_fails() {
+        // The counters and causes are right, but no bow is ever worn.
+        let (mut rows, mut samples) = correct();
+        for row in &mut rows {
+            row.worn = SWORD_ONLY.to_vec();
+        }
+        for sample in &mut samples {
+            sample.worn = SWORD_ONLY.to_vec();
+        }
+        let verdict = verdict(&rows, &samples);
+        assert!(verdict.t2_started_by_protect && verdict.t4_started_by_reach);
+        assert!(!verdict.t2_completed_with_bow_and_quiver_worn);
+        assert!(!verdict.t4_completed_with_bow_and_quiver_worn);
+        assert!(!verdict.t4_no_bow_before_the_window_ended);
+        assert!(!verdict.passed());
+    }
+
+    #[test]
+    fn a_t4_completion_without_the_quiver_fails() {
+        let (mut rows, samples) = correct();
+        let at = rows.iter().position(|row| row.tick == 51).expect("row");
+        rows[at].worn = vec![(3, IDS.bow)];
+        let verdict = verdict(&rows, &samples);
+        assert!(!verdict.t4_completed_with_bow_and_quiver_worn);
+        assert!(!verdict.passed());
+    }
+
+    #[test]
+    fn an_early_t4_switch_fails() {
+        // The machine starts after four distant ticks and the bow is worn at 47,
+        // two ticks before the eight-tick window is complete.
+        let (mut rows, mut samples) = correct();
+        for row in &mut rows {
+            match row.tick {
+                49 => {
+                    row.tick = 45;
+                    row.switch = converging(Style::Ranged, SwitchCause::Reach, 45);
+                }
+                51 => row.tick = 47,
+                _ => {}
+            }
+        }
+        for sample in &mut samples {
+            if sample.tick >= 47 {
+                sample.worn = BOW.to_vec();
+            }
+        }
+        let verdict = verdict(&rows, &samples);
+        assert!(verdict.t4_started_by_reach);
+        assert_eq!(verdict.t4_reach_window_ended_at, Some(49));
+        assert!(!verdict.t4_started_after_the_window);
+        assert!(!verdict.t4_no_bow_before_the_window_ended);
+        assert!(!verdict.passed());
+    }
+
+    #[test]
+    fn a_wear_before_the_window_ends_fails_even_when_the_start_is_late() {
+        let (rows, mut samples) = correct();
+        for sample in &mut samples {
+            if sample.tick >= 46 {
+                sample.worn = BOW.to_vec();
+            }
+        }
+        let verdict = verdict(&rows, &samples);
+        assert!(verdict.t4_started_after_the_window);
+        assert!(!verdict.t4_no_bow_before_the_window_ended);
+        assert!(!verdict.passed());
+    }
+
+    #[test]
+    fn a_nonconsecutive_distance_series_fails() {
+        // One tick inside the window with the holder back in reach: the machine
+        // switched at 49 all the same.
+        let (rows, mut samples) = correct();
+        sample_mut(&mut samples, 45).distance = 1;
+        let verdict = verdict(&rows, &samples);
+        assert!(verdict.t4_started_by_reach);
+        assert!(verdict.t4_reach_window_ended_at != Some(49));
+        assert!(!verdict.t4_started_after_the_window);
+        assert!(!verdict.passed());
+    }
+
+    #[test]
+    fn an_intervening_swing_of_ours_fails() {
+        let (rows, mut samples) = correct();
+        sample_mut(&mut samples, 46).swing = true;
+        let verdict = verdict(&rows, &samples);
+        assert!(verdict.t4_reach_window_ended_at != Some(49));
+        assert!(!verdict.t4_started_after_the_window);
+        assert!(!verdict.passed());
+    }
+
+    #[test]
+    fn a_missing_tick_or_an_unseen_holder_breaks_the_run() {
+        let (rows, mut samples) = correct();
+        samples.retain(|sample| sample.tick != 44);
+        assert!(!verdict(&rows, &samples).t4_started_after_the_window);
+        let (rows, mut samples) = correct();
+        sample_mut(&mut samples, 44).distance = -1;
+        assert!(!verdict(&rows, &samples).t4_started_after_the_window);
+    }
+
+    #[test]
+    fn a_t2_start_on_one_protected_frame_fails() {
+        let (rows, mut samples) = correct();
+        sample_mut(&mut samples, 22).headicons = 0;
+        let verdict = verdict(&rows, &samples);
+        assert!(!verdict.t2_holder_showed_protect_on_two_frames);
+        assert!(!verdict.passed());
+    }
+
+    #[test]
+    fn a_bow_worn_before_the_t2_start_fails() {
+        let (rows, mut samples) = correct();
+        sample_mut(&mut samples, 22).worn = BOW.to_vec();
+        let verdict = verdict(&rows, &samples);
+        assert!(!verdict.t2_no_bow_before_the_start);
+        assert!(!verdict.passed());
+    }
+
+    #[test]
+    fn a_t3_return_while_the_holder_protects_or_stands_away_fails() {
+        let (rows, mut samples) = correct();
+        sample_mut(&mut samples, 32).headicons = 1 << 4;
+        assert!(!verdict(&rows, &samples).t3_holder_showed_no_protect_and_stood_in_reach);
+        let (rows, mut samples) = correct();
+        sample_mut(&mut samples, 33).distance = 3;
+        let verdict = verdict(&rows, &samples);
+        assert!(!verdict.t3_holder_showed_no_protect_and_stood_in_reach);
+        assert!(!verdict.passed());
+    }
+
+    #[test]
+    fn a_failed_switch_fails() {
+        let (mut rows, samples) = correct();
+        rows.last_mut().expect("row").failures = 1;
+        let verdict = verdict(&rows, &samples);
+        assert_eq!(verdict.switch_failures, 1);
+        assert!(!verdict.passed());
+    }
+
+    #[test]
+    fn fewer_than_three_switches_fail() {
+        let (mut rows, samples) = correct();
+        rows.last_mut().expect("row").switches = 2;
+        assert!(!verdict(&rows, &samples).passed());
+    }
 }

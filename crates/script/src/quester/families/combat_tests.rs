@@ -3761,6 +3761,132 @@ fn a_kit_with_a_two_hander_and_a_shield_is_refused_at_compile() {
     assert!(compile("two_hander").is_ok());
     assert!(compile("one_hander").is_ok());
 }
+
+/// PVP-DESIGN-1026 §4.1 (review F4): a Path names one loadout per combat style
+/// (`loadouts: { melee, ranged, mage }`); each resolves through the kit
+/// compiler, and the singular `loadout` stays the kit of the opening style.
+#[test]
+fn a_path_names_one_loadout_per_style() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
+    let name = |alias: &str| data.item_by_alias(alias).unwrap().name.clone().unwrap();
+    let id = |alias: &str| data.item_by_alias(alias).unwrap().id;
+    let rows = [
+        api::loadout::Loadout::new("kitpath/sword").with_slot("righthand", name("rune_scimitar")),
+        api::loadout::Loadout::new("kitpath/bow")
+            .with_slot("righthand", name("maple_shortbow"))
+            .with_slot("quiver", name("iron_arrow"))
+            .with_slot("legs", name("rune_platelegs")),
+        api::loadout::Loadout::new("kitpath/staff")
+            .with_slot("righthand", name("air_battlestaff")),
+    ];
+    let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from(rows));
+    let progress = CompiledProgress {
+        binding: FactKey::new("journal:kitpath"),
+        role: None,
+        colour_not_started: FactKey::new("kitpath:0"),
+        colour_in_progress: FactKey::new("kitpath:1"),
+        colour_complete: FactKey::new("kitpath:2"),
+        stage_keys: Arc::from([]),
+        rules: Arc::from([]),
+        flags: Arc::from([]),
+        monotonic: false,
+    };
+    let areas = HashMap::new();
+    let recipes = HashMap::new();
+    let loadout_carry = HashMap::new();
+    let path = FactKey::new("kitpath");
+    let cx = CompileContext {
+        path: &path,
+        kind: crate::quester::path::PathKind::Quest,
+        pair: None,
+        progress: &progress,
+        selected: &data,
+        quests: &quests,
+        gathering: None,
+        bank: None,
+        bank_required: false,
+        keep_ids: &[],
+        areas: &areas,
+        loadouts: &loadouts,
+        loadout_carry: &loadout_carry,
+        recipes: &recipes,
+    };
+    let compile = |extra: serde_json::Value| {
+        let mut args = serde_json::json!({
+            "target": {"npc": "jailguard", "pick": "nearest", "not_targeting_others": true},
+            "tactic": {"kind": "open", "style": "melee", "engage_radius": 12},
+            "lost_radius": 16,
+            "kill_budget_ticks": 400,
+            "until": {"Any": []}
+        });
+        args.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        serde_json::from_value(args).map(|args| compile_plan(args, &cx))
+    };
+    let code = |result: Result<Result<CombatPlan, CompileError>, serde_json::Error>| {
+        result
+            .unwrap()
+            .err()
+            .map(|error| error.code.to_string())
+    };
+    // One loadout per style.
+    let plan = compile(serde_json::json!({
+        "loadouts": {"melee": "sword", "ranged": "bow", "mage": "staff"}
+    }))
+    .unwrap()
+    .unwrap();
+    let kits = &plan.request.kits;
+    assert_eq!(
+        kits.melee.as_ref().unwrap().worn.as_ref(),
+        &[(3, id("rune_scimitar"))]
+    );
+    assert_eq!(
+        kits.mage.as_ref().unwrap().worn.as_ref(),
+        &[(3, id("air_battlestaff"))]
+    );
+    // The quiver and the legs compile to the wear positions the server uses.
+    let mut ranged = kits.ranged.as_ref().unwrap().worn.to_vec();
+    ranged.sort_unstable();
+    assert_eq!(
+        ranged,
+        [
+            (3, id("maple_shortbow")),
+            (7, id("rune_platelegs")),
+            (13, id("iron_arrow"))
+        ]
+    );
+    assert_eq!(plan.request.style, Style::Melee);
+    // The singular `loadout` is the kit of the opening style, beside the others.
+    let plan = compile(serde_json::json!({
+        "loadout": "sword",
+        "loadouts": {"ranged": "bow"}
+    }))
+    .unwrap()
+    .unwrap();
+    assert!(plan.request.kits.melee.is_some() && plan.request.kits.ranged.is_some());
+    assert!(plan.request.kits.mage.is_none());
+    // Only the singular `loadout`: as before, one kit under the opening style.
+    let plan = compile(serde_json::json!({"loadout": "sword"}))
+        .unwrap()
+        .unwrap();
+    assert!(plan.request.kits.melee.is_some());
+    assert!(plan.request.kits.ranged.is_none() && plan.request.kits.mage.is_none());
+    // Naming the opening style twice is refused; so is an unknown loadout or style.
+    assert_eq!(
+        code(compile(serde_json::json!({
+            "loadout": "sword",
+            "loadouts": {"melee": "sword"}
+        }))),
+        Some("conflicting-combat-loadouts".to_owned())
+    );
+    assert_eq!(
+        code(compile(serde_json::json!({"loadouts": {"ranged": "nope"}}))),
+        Some("unknown-loadout".to_owned())
+    );
+    assert!(compile(serde_json::json!({"loadouts": {"archery": "bow"}})).is_err());
+}
 #[cfg(test)]
 mod abort_hold_cure_policy_tests {
     use super::*;

@@ -1712,3 +1712,332 @@ fn t3_returns_to_the_preferred_style_only_when_the_opponent_shows_no_protect_and
         }
     ));
 }
+
+// --- Review F1: fallback ammunition in the pack/worn gap --------------------
+
+/// The bow and the iron arrows (the kit names steel arrows, which are not held):
+/// the switch is started and its two wear rows are out; the pack has lost both
+/// items and the worn container has not shown them yet.
+fn fallback_switch_in_the_gap() -> (Harness, Scene, Vec<ItemView>) {
+    let (mut scene, req) = bow_and_iron_arrows_scene();
+    let mut harness = start(&mut scene, req);
+    protect(&mut scene, MELEE_PROTECT);
+    step(&mut harness, &mut scene, 3);
+    let polled = harness.poll(&scene.snapshot, 4);
+    assert!(matches!(polled, Poll::Pending));
+    let batch = harness.drain(None);
+    assert_eq!(
+        wear_names(&batch),
+        [
+            item_name(&scene, "maple_shortbow"),
+            item_name(&scene, "iron_arrow")
+        ]
+    );
+    let mut moved = Vec::new();
+    for alias in ["maple_shortbow", "iron_arrow"] {
+        let item = id(&scene, alias);
+        let at = scene
+            .inventory
+            .iter()
+            .position(|row| row.def.id == item)
+            .unwrap();
+        moved.push(scene.inventory.remove(at));
+    }
+    scene.refresh();
+    (harness, scene, moved)
+}
+
+#[test]
+fn fallback_ammunition_between_the_pack_and_the_worn_container_is_not_vanished() {
+    // The kit's literal steel arrows are absent, so the quiver is the fallback
+    // pick (iron arrows). While its wear row awaits the echo and the pack no
+    // longer shows the arrows, the need is still the iron arrows.
+    let (mut harness, mut scene, moved) = fallback_switch_in_the_gap();
+    step_without_server(&mut harness, &mut scene, 5);
+    assert_eq!(harness.machine.switch_failures(), 0);
+    assert_eq!(converging_to(&harness), Some(Style::Ranged));
+    for (mut row, slot) in moved.into_iter().zip([3, 13]) {
+        row.container = ItemContainer::Equipment;
+        row.slot = slot;
+        scene.equipment.push(row);
+    }
+    scene.refresh();
+    step_without_server(&mut harness, &mut scene, 6);
+    assert_eq!(harness.machine.switch_failures(), 0);
+    assert_eq!(harness.machine.switches(), 1);
+    assert_eq!(harness.machine.active_style(), Style::Ranged);
+    assert_eq!(harness.machine.ranged().ammo_pick, id(&scene, "iron_arrow"));
+}
+
+#[test]
+fn fallback_ammunition_that_never_reaches_the_worn_container_fails_the_switch() {
+    // The pending wear is only a window: once it times out with the arrows in
+    // neither container, the switch fails and is never counted.
+    let (mut harness, mut scene, _moved) = fallback_switch_in_the_gap();
+    let mut tick = 5;
+    while harness.machine.switch_failures() == 0 {
+        step_without_server(&mut harness, &mut scene, tick);
+        tick += 1;
+        assert!(tick < 14, "arrows that never arrive fail the switch");
+    }
+    assert!(tick > 6, "not before the wear rows' window has run out");
+    assert_eq!(harness.machine.switches(), 0);
+    assert_eq!(harness.machine.active_style(), Style::Melee);
+}
+
+// --- Review F7: a settle evaluates no trigger -------------------------------
+
+/// Melee -> Ranged, completed; the returned tick is the completion tick.
+fn completed_ranged_switch(harness: &mut Harness, scene: &mut Scene) -> u64 {
+    protect(scene, MELEE_PROTECT);
+    let mut tick = 3;
+    while harness.machine.switches() == 0 {
+        step(harness, scene, tick);
+        tick += 1;
+        assert!(tick < 20, "the switch must complete");
+    }
+    assert_eq!(harness.machine.active_style(), Style::Ranged);
+    tick - 1
+}
+
+#[test]
+fn a_settle_holds_the_exhaustion_for_its_first_idle_tick() {
+    // The arrows run out inside the settle: no trigger is evaluated there (T1
+    // included), the engagement does not abort for it, and the first Idle tick
+    // starts the switch back to melee.
+    let (mut scene, kits) = sword_and_bow();
+    let mut harness = start(&mut scene, request(kits));
+    let done = completed_ranged_switch(&mut harness, &mut scene);
+    scene.equipment.retain(|row| row.slot != 13);
+    scene.refresh();
+    // `rate_old` is 4 and `SETTLE_SLACK` 2: the settle covers six ticks.
+    for tick in done + 1..done + 6 {
+        step(&mut harness, &mut scene, tick);
+        assert!(
+            matches!(harness.machine.switch_state(), SwitchState::Settling { .. }),
+            "tick {tick}: still settling, no trigger evaluated: {:?}",
+            harness.machine.switch_state()
+        );
+        assert_eq!(harness.machine.end, None, "tick {tick}");
+    }
+    step(&mut harness, &mut scene, done + 6);
+    assert!(
+        matches!(
+            harness.machine.switch_state(),
+            SwitchState::Converging {
+                to: Style::Melee,
+                cause: SwitchCause::Exhausted,
+                ..
+            }
+        ),
+        "{:?}",
+        harness.machine.switch_state()
+    );
+    step(&mut harness, &mut scene, done + 7);
+    assert_eq!(harness.machine.active_style(), Style::Melee);
+    assert_eq!(harness.machine.switches(), 2);
+}
+
+#[test]
+fn an_exhaustion_in_a_settle_with_no_alternative_still_aborts() {
+    // Nothing to switch to (the sword is gone too): the settle does not hold
+    // the abort back.
+    let (mut scene, kits) = sword_and_bow();
+    let mut harness = start(&mut scene, request(kits));
+    let done = completed_ranged_switch(&mut harness, &mut scene);
+    scene.equipment.retain(|row| row.slot != 13);
+    let sword = id(&scene, "rune_scimitar");
+    scene.inventory.retain(|row| row.def.id != sword);
+    scene.refresh();
+    let mut ended = None;
+    for tick in done + 1..done + 5 {
+        if let Poll::Ready(result) = harness.poll(&scene.snapshot, tick) {
+            ended = Some((result.unwrap().end, harness.machine.switch_state()));
+            break;
+        }
+        harness.drain(None);
+    }
+    let (end, state) = ended.expect("the fight must abort inside the settle");
+    assert_eq!(
+        end,
+        CombatEnd::Aborted(AbortReason::Unprotected(Unprotected::NoAmmo))
+    );
+    assert!(matches!(state, SwitchState::Settling { .. }), "{state:?}");
+}
+
+// --- Review F6: the opening honours the resources and the preference order --
+
+#[test]
+fn a_mage_opening_without_runes_opens_the_usable_melee_kit() {
+    let mut scene = pen_scene();
+    scene
+        .players
+        .push(player(OPPONENT, BOB, tile(3341, 3250), &fight_ops(), 60));
+    wear(&mut scene, "rune_scimitar", 1);
+    scene.refresh();
+    let runes = |scene: &Scene| {
+        [(id(scene, "mindrune"), 50), (id(scene, "airrune"), 50)]
+    };
+    let kits = |scene: &Scene| {
+        StyleKits::default()
+            .with(Style::Melee, kit(&[(3, id(scene, "rune_scimitar"))], &[]))
+            .with(Style::Mage, kit(&[], &runes(scene)))
+    };
+    let mage_first = |kits: StyleKits| {
+        let mut req = request(kits);
+        req.style = Style::Mage;
+        req.switch = SwitchPolicy::for_style(Style::Mage);
+        req
+    };
+    // No runes held: the mage kit cannot attack, the melee kit can.
+    let harness = Harness::new(&scene, mage_first(kits(&scene)));
+    assert_eq!(harness.machine.active_style(), Style::Melee);
+    // With the runes held the preferred style opens.
+    give(&mut scene, "mindrune", 50);
+    give(&mut scene, "airrune", 50);
+    scene.refresh();
+    let harness = Harness::new(&scene, mage_first(kits(&scene)));
+    assert_eq!(harness.machine.active_style(), Style::Mage);
+}
+
+#[test]
+fn the_preference_order_decides_the_opening_between_two_usable_kits() {
+    let (scene, kits) = sword_and_bow();
+    let mut req = request(kits);
+    req.style = Style::Melee;
+    req.switch.prefer = [Style::Ranged, Style::Melee, Style::Mage];
+    let harness = Harness::new(&scene, req);
+    assert_eq!(harness.machine.active_style(), Style::Ranged);
+}
+
+#[test]
+fn no_weapons_and_no_melee_without_runes_ends_the_preparation() {
+    // The cross product `NoWeapons + NoMelee` leaves manual magic only. With no
+    // runes held the machine opens it and ends the preparation: it never wears
+    // or casts.
+    let mut scene = pen_scene();
+    scene
+        .players
+        .push(player(OPPONENT, BOB, tile(3341, 3250), &fight_ops(), 60));
+    scene.refresh();
+    let kits = StyleKits::default().with(
+        Style::Mage,
+        kit(
+            &[],
+            &[(id(&scene, "mindrune"), 50), (id(&scene, "airrune"), 50)],
+        ),
+    );
+    let mut req = request(kits);
+    req.allow.locked_slots = 1 << 3;
+    let mut harness = Harness::new(&scene, req);
+    assert_eq!(harness.machine.active_style(), Style::Mage);
+    let mut ended = None;
+    for tick in 1..12 {
+        match harness.poll(&scene.snapshot, tick) {
+            Poll::Ready(result) => {
+                ended = Some(result.unwrap().end);
+                break;
+            }
+            Poll::Pending => {
+                let batch = harness.drain(None);
+                assert!(wear_names(&batch).is_empty(), "{:?}", rows(&batch));
+                assert!(!has_cast(&batch), "{:?}", rows(&batch));
+            }
+        }
+    }
+    assert!(
+        matches!(ended, Some(CombatEnd::Aborted(_))),
+        "no runes, no fight: {ended:?}"
+    );
+}
+
+// --- Review F5: the picks rank usable candidates ----------------------------
+
+/// A no-kit request for `style` over a pack of `items` (alias, count), with
+/// the Ranged and Magic levels `levels`.
+fn pick_harness(style: Style, items: &[(&str, i32)], levels: (i32, i32)) -> Harness {
+    let mut scene = Scene::new("cow");
+    scene.stat(4, levels.0, levels.0);
+    scene.stat(6, levels.1, levels.1);
+    for (alias, count) in items {
+        give(&mut scene, alias, *count);
+    }
+    scene.refresh();
+    let mut req = scene.request();
+    req.style = style;
+    req.switch = SwitchPolicy::for_style(style);
+    Harness::new(&scene, req)
+}
+
+fn picked(harness: &Harness, style: Style, alias: &str) -> bool {
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    harness.machine.rhand_pick[style.index()] == data.item_by_alias(alias).unwrap().id
+}
+
+#[test]
+fn an_unusable_first_ranged_candidate_never_hides_a_usable_later_one() {
+    // A crossbow with no bolts comes first; the shortbow has arrows.
+    for items in [
+        [("crossbow", 1), ("shortbow", 1), ("iron_arrow", 30)],
+        [("shortbow", 1), ("crossbow", 1), ("iron_arrow", 30)],
+    ] {
+        assert!(
+            picked(
+                &pick_harness(Style::Ranged, &items, (40, 40)),
+                Style::Ranged,
+                "shortbow"
+            ),
+            "{items:?}"
+        );
+    }
+}
+
+#[test]
+fn ranged_candidates_rank_by_level_and_the_level_gates_them() {
+    // The maple shortbow (level 30) beats the shortbow (1) in either order,
+    // unless the Ranged level does not allow it.
+    for items in [
+        [("shortbow", 1), ("maple_shortbow", 1), ("iron_arrow", 30)],
+        [("maple_shortbow", 1), ("shortbow", 1), ("iron_arrow", 30)],
+    ] {
+        assert!(picked(
+            &pick_harness(Style::Ranged, &items, (40, 40)),
+            Style::Ranged,
+            "maple_shortbow"
+        ));
+        assert!(picked(
+            &pick_harness(Style::Ranged, &items, (20, 40)),
+            Style::Ranged,
+            "shortbow"
+        ));
+    }
+}
+
+#[test]
+fn competing_staves_pick_the_one_that_serves_the_most_spells() {
+    // With the mind and air runes held, the fire staff serves wind strike and
+    // fire strike (its fire rune), the air staff only wind strike.
+    for items in [
+        [
+            ("staff_of_air", 1),
+            ("staff_of_fire", 1),
+            ("mindrune", 50),
+            ("airrune", 50),
+        ],
+        [
+            ("staff_of_fire", 1),
+            ("staff_of_air", 1),
+            ("mindrune", 50),
+            ("airrune", 50),
+        ],
+    ] {
+        assert!(
+            picked(
+                &pick_harness(Style::Mage, &items, (40, 40)),
+                Style::Mage,
+                "staff_of_fire"
+            ),
+            "{items:?}"
+        );
+    }
+}

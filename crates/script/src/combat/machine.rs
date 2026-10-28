@@ -335,9 +335,11 @@ impl NativeMachine for Combat {
                 return Err(unavailable("unattackable npc target"));
             }
         }
-        let active = switch::opening_style(&request)
+        // The first legal declared style: the opening style is settled below,
+        // once the machine can read its own capabilities from the begin frame.
+        let provisional = switch::opening_style(&request, |_| true)
             .ok_or_else(|| unavailable("combat style capability"))?;
-        if (active == Style::Mage || request.kits.mage.is_some())
+        if (provisional == Style::Mage || request.kits.mage.is_some())
             && (tables.selected().spells().is_empty() || tables.selected().spells().len() > 32)
         {
             return Err(unavailable("combat spell facts"));
@@ -359,11 +361,12 @@ impl NativeMachine for Combat {
             .local_player()
             .and_then(|local| local.value.animation_update)
             .map(|update| update.serial);
-        let style_state = Self::new_style_state(&request, &tables, active, local_update, -1)?;
-        if active != Style::Mage && request.kits.mage.is_some() {
+        if request.kits.mage.is_some() {
             // A bad spell order fails here, not at a later switch.
-            Self::new_style_state(&request, &tables, Style::Mage, None, -1)?;
+            Self::validate_spell_order(&request, &tables)?;
         }
+        // An inline placeholder (no allocation) until the opening style is known.
+        let style_state = Self::new_style_state(&request, &tables, Style::Melee, None, -1)?;
         let mut machine = Self {
             request,
             tables,
@@ -388,7 +391,7 @@ impl NativeMachine for Combat {
             single_way_lines: 0,
             duel_wait_lines: 0,
             flags2: 0,
-            active,
+            active: provisional,
             switch: SwitchState::Idle,
             switches: 0,
             switch_failed: 0,
@@ -420,6 +423,20 @@ impl NativeMachine for Combat {
             phase: Phase::Prep,
             flags: 0,
         };
+        if let Some(frame) = begin_frame.as_ref() {
+            if let Some(open) = switch::opening_style(&machine.request, |style| {
+                machine.style_usable(style, frame)
+            }) {
+                machine.active = open;
+            }
+        }
+        machine.style_state = Self::new_style_state(
+            &machine.request,
+            &machine.tables,
+            machine.active,
+            local_update,
+            -1,
+        )?;
         if let Some(lines) = cx.snapshot().chat_lines(-1) {
             machine.chat_since = lines
                 .value
@@ -1028,6 +1045,11 @@ impl Combat {
                             && (mode == CastMode::Manual || spell.autocast_selectable)
                             && magic::eligible(spell, frame, &self.tables, self.engaged)
                     });
+            if rune_exhausted && self.exhaustion_deferred(frame) {
+                // A settle holds the exhaustion for its first `Idle` tick,
+                // where T1 switches (design §4.4).
+                return true;
+            }
             let reason = if rune_exhausted {
                 AbortReason::Unprotected(Unprotected::NoRunes)
             } else if mode == CastMode::Manual {
@@ -1274,30 +1296,8 @@ impl Combat {
     }
     fn pick_weapon(&self, style: Style, frame: &Frame<'_>) -> i32 {
         match style {
-            Style::Mage => frame
-                .equipment
-                .iter()
-                .find(|row| row.slot == 3)
-                .filter(|row| {
-                    self.tables
-                        .weapon_style(row.def.id)
-                        .is_some_and(|weapon| weapon.tab == Some(CombatTab::Staff))
-                })
-                .or_else(|| {
-                    frame.inventory.iter().find(|row| {
-                        self.tables
-                            .weapon_style(row.def.id)
-                            .is_some_and(|weapon| weapon.tab == Some(CombatTab::Staff))
-                            && row.count > 0
-                    })
-                })
-                .map_or(-1, |row| row.def.id),
-            Style::Ranged => frame
-                .equipment
-                .iter()
-                .chain(frame.inventory)
-                .find(|row| row.count > 0 && ranged::weapon(&self.tables, row.def.id).is_some())
-                .map_or(-1, |row| row.def.id),
+            Style::Mage => self.best_staff(frame),
+            Style::Ranged => self.best_ranged_weapon(frame),
             Style::Melee => switch::best_melee_weapon(&self.tables, frame),
         }
     }
@@ -2764,15 +2764,15 @@ impl Combat {
     }
 
     fn ranged_prepare(&mut self, frame: &Frame<'_>, tick: u16) -> bool {
-        // A converging switch owns the style's exhaustion: the target style is
-        // the answer to it, so nothing below may abort the engagement.
-        let converging = self.switch.pending().is_some();
+        // A converging switch owns the style's exhaustion (the target style is
+        // the answer to it) and a settle holds it for its first `Idle` tick
+        // (T1 runs there), so nothing below may abort the engagement meanwhile.
         let weapon = self
             .weapon_for(Style::Ranged, frame)
             .and_then(|id| ranged::weapon(&self.tables, id));
         let prep = self.phase == Phase::Prep;
         let Some(weapon) = weapon else {
-            if converging {
+            if self.exhaustion_deferred(frame) {
                 return true;
             }
             self.finish(
@@ -2811,7 +2811,7 @@ impl Combat {
         let shift = u32::from(slot) * 3;
         let failed = (self.prep_failures >> shift) & 3 >= 2;
         if !usable || failed {
-            if converging {
+            if self.exhaustion_deferred(frame) {
                 return true;
             }
             let reason = if prep {
