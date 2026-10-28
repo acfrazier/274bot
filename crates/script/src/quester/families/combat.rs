@@ -1358,9 +1358,9 @@ impl CombatRun {
         heaviest
     }
 
-    /// The next escape request from the observed position: exact goals in
-    /// tiers for the host router, which owns reachability. `None` when every
-    /// tier of the pass is spent or empty.
+    /// The next escape request from the observed position. It sends one exact
+    /// tier, and the host router decides reachability. `None` when every tier
+    /// of the pass is spent or empty.
     fn abort_walk_goals(
         &mut self,
         report: CombatReport,
@@ -1400,9 +1400,8 @@ impl CombatRun {
             .next_goals(&geometry, cx.tick.frame.compiled.collision, reach)
     }
 
-    /// The escape walk for `goals`: exact Area goals, which the router
-    /// resolves in tier order. The preferred tier wins over the fallback tier
-    /// even when the fallback is nearer.
+    /// The escape walk for `goals`: exact Area goals from one tier. The router
+    /// chooses among these goals.
     fn escape_walk_request(
         &self,
         goals: EscapeGoals,
