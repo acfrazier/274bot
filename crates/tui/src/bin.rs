@@ -499,6 +499,10 @@ pub struct TuiSession {
     notice_sig: Option<(usize, u64)>,
     /// The acknowledgement state the notice text was built with.
     notice_feedback: Option<SettingFeedback>,
+    /// Keep test sessions from replacing the process-wide Quester folder
+    /// registry while another test is using its snapshot.
+    #[cfg(test)]
+    _quester_paths_test_guard: seam::QuesterPathsTestGuard,
 }
 
 #[cfg(test)]
@@ -523,11 +527,73 @@ pub(crate) mod seam {
 
     static QUESTER_PATHS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    /// Serialize tests that use the process-global Quester folder registry.
-    pub(crate) fn lock_quester_paths_test_state() -> std::sync::MutexGuard<'static, ()> {
-        QUESTER_PATHS_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
+    std::thread_local! {
+        static QUESTER_PATHS_TEST_LOCK_DEPTH: std::cell::Cell<usize> =
+            const { std::cell::Cell::new(0) };
+        static QUESTER_PATHS_TEST_MUTEX_GUARD: std::cell::RefCell<
+            Option<std::sync::MutexGuard<'static, ()>>,
+        > = std::cell::RefCell::new(None);
+    }
+
+    pub(crate) struct QuesterPathsTestGuard {
+        _not_send: std::marker::PhantomData<std::rc::Rc<()>>,
+    }
+
+    impl Drop for QuesterPathsTestGuard {
+        fn drop(&mut self) {
+            let last_guard = QUESTER_PATHS_TEST_LOCK_DEPTH.with(|depth| {
+                let next = depth
+                    .get()
+                    .checked_sub(1)
+                    .expect("the Quester test lock depth is positive");
+                depth.set(next);
+                next == 0
+            });
+            if last_guard {
+                QUESTER_PATHS_TEST_MUTEX_GUARD.with(|slot| {
+                    let guard = slot.borrow_mut().take();
+                    debug_assert!(guard.is_some());
+                    drop(guard);
+                });
+            }
+        }
+    }
+
+    /// Isolated stores do not isolate the process-global Quester registry, so
+    /// test sessions hold this lock for their lifetime. Helpers may acquire it
+    /// while a session owns it, so the per-thread guard is reentrant.
+    pub(crate) fn lock_quester_paths_test_state() -> QuesterPathsTestGuard {
+        let nested = QUESTER_PATHS_TEST_LOCK_DEPTH.with(|depth| depth.get() != 0);
+        if !nested {
+            let guard = QUESTER_PATHS_TEST_LOCK
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            QUESTER_PATHS_TEST_MUTEX_GUARD.with(|slot| {
+                assert!(slot.borrow().is_none());
+                *slot.borrow_mut() = Some(guard);
+            });
+        }
+        QUESTER_PATHS_TEST_LOCK_DEPTH.with(|depth| {
+            depth.set(
+                depth
+                    .get()
+                    .checked_add(1)
+                    .expect("the Quester test lock depth fits in usize"),
+            );
+        });
+        QuesterPathsTestGuard {
+            _not_send: std::marker::PhantomData,
+        }
+    }
+
+    /// Restore preferences under the same process-global registry guard.
+    /// This nests safely when a session already owns the guard.
+    pub(crate) fn restore_preferences(
+        app: &mut TuiApp,
+        preferences: frontend_core::UiPreferences,
+    ) {
+        let _guard = lock_quester_paths_test_state();
+        app.restore_preferences(preferences);
     }
 
     pub(crate) struct Seam {
@@ -672,6 +738,8 @@ impl TuiSession {
         permit: frontend_core::launch::InstancePermit,
     ) -> Self {
         #[cfg(test)]
+        let _quester_paths_test_guard = seam::lock_quester_paths_test_state();
+        #[cfg(test)]
         frontend_core::test_support::IsolatedStores::ensure_thread();
         // A missing store is a first run; a refused or corrupt one is said out
         // loud (and nothing is saved over a refused one).
@@ -750,6 +818,8 @@ impl TuiSession {
             ack_checked_at: Some(Instant::now()),
             notice_sig: None,
             notice_feedback: None,
+            #[cfg(test)]
+            _quester_paths_test_guard,
         }
     }
 
