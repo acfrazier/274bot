@@ -259,9 +259,7 @@ impl Script for SwitchFight {
             }
             // The third completed switch is the out-of-reach one; a later return to
             // melee (the chaser is adjacent again) is the machine behaving.
-            Phase::Away if switches >= 3 => {
-                shared.advance(Phase::Done, now)
-            }
+            Phase::Away if switches >= 3 => shared.advance(Phase::Done, now),
             Phase::Hold | Phase::Drop | Phase::Away if waited > PHASE_TICKS => {
                 shared.failure = Some(format!(
                     "phase {:?} did not complete in {PHASE_TICKS} ticks",
