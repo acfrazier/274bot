@@ -57,6 +57,10 @@ required-features = ["js"]
 name = "external_watch"
 required-features = ["js"]
 
+[[example]]
+name = "quester_skip"
+required-features = ["js"]
+
 # Winit requires the OS main thread on macOS, unlike libtest's worker threads.
 [[test]]
 name = "ime_frame"

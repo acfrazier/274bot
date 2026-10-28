@@ -3113,6 +3113,23 @@ impl TuiSession {
         }
     }
 
+    /// Request a skip for the focused Quester through the shared command
+    /// boundary; its refusal text is shown on the expiring message line.
+    fn script_skip_quest(&mut self, app: &mut TuiApp) {
+        let Some(name) = app.focused_name() else {
+            self.refuse_command(
+                app,
+                OperatorCommand::SkipQuest,
+                &[],
+                Unavailable::NoFocusedBot.need(),
+                "script: no focused profile",
+            );
+            return;
+        };
+        let result = self.submit_with(app, OperatorCommand::SkipQuest, Targets::Profile(&name));
+        app.error = result.err();
+    }
+
     /// Stop the focused slot's script.
     fn script_stop(&mut self, app: &mut TuiApp) {
         if let Some(name) = app.focused_name() {
@@ -5032,6 +5049,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::Remove(name) => session.remove(app, &name),
         AppAction::ScriptStart(sel) => session.script_start(app, &sel),
         AppAction::ScriptPause => session.script_toggle_pause(app),
+        AppAction::ScriptSkipQuest => session.script_skip_quest(app),
         AppAction::ScriptStop => session.script_stop(app),
         AppAction::ScriptBrowse =>
         {

@@ -1855,6 +1855,36 @@ fn script_commands_are_reachable_at_80x24() {
 }
 
 #[test]
+fn running_quester_skip_control_is_clickable_at_both_terminal_sizes_and_in_help() {
+    let id = CompiledCardId::QUESTER;
+    let mut app = script_app();
+    app.script_state = ScriptRunState::Running;
+    app.script_sel = Some(ScriptChoice::compiled(id));
+    let mut detail = crate::test_support::ready_detail("alice");
+    detail.row_mut().set_script(ScriptRunState::Running);
+    app.detail = Some(NativeStatus::working(id).attach_to(detail));
+
+    for (width, height) in [(120, 40), (80, 24)] {
+        let rows = draw(&mut app, width, height);
+        let (x, y) = find(&rows, "[Skip quest k]").expect("running Quester button");
+        assert_eq!(
+            app.on_click(x + 1, y),
+            AppAction::ScriptSkipQuest,
+            "{width}x{height}: click"
+        );
+        assert_eq!(
+            app.on_key(ch('k')),
+            AppAction::ScriptSkipQuest,
+            "{width}x{height}: key"
+        );
+    }
+
+    assert!(crate::help::help_rows(&app)
+        .iter()
+        .any(|row| row.context == "Script" && row.keys == "k" && row.what == "Skip quest"));
+}
+
+#[test]
 fn map_search_list_uses_display_name_not_slash_breaks() {
     let (catalogue, _, label_anchor) = map_poi_catalogue();
     let mut app = TuiApp::new("274bot headless");

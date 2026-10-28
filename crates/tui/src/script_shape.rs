@@ -34,11 +34,12 @@ pub const SCRIPT_BULK_BUTTONS: [&str; 2] = ["Start fleet", "Stop fleet"];
 /// same commands the buttons emit, reachable when the pane is clipped.
 /// Pause also toggles Resume.
 #[cfg(feature = "js")]
-pub const SCRIPT_KEYS: [(&str, char); 10] = [
+pub const SCRIPT_KEYS: [(&str, char); 11] = [
     ("Browse", 'b'),
     ("Start", 't'),
     ("Pause", 'P'),
     ("Stop", 'e'),
+    ("Skip quest", 'k'),
     ("Load", 'f'),
     ("Params", 'v'),
     ("Reload", 'R'),
@@ -47,11 +48,12 @@ pub const SCRIPT_KEYS: [(&str, char); 10] = [
     ("Stop fleet", 'E'),
 ];
 #[cfg(not(feature = "js"))]
-pub const SCRIPT_KEYS: [(&str, char); 7] = [
+pub const SCRIPT_KEYS: [(&str, char); 8] = [
     ("Browse", 'b'),
     ("Start", 't'),
     ("Pause", 'P'),
     ("Stop", 'e'),
+    ("Skip quest", 'k'),
     ("Params", 'v'),
     ("Start fleet", 'T'),
     ("Stop fleet", 'E'),
@@ -438,18 +440,24 @@ impl<'a> ScriptPane<'a> {
     }
 
     /// The main row's buttons, left to right (Pause reads Resume while
-    /// paused).
+    /// paused); Skip quest appears only for a running Quester.
     fn main_buttons(&self) -> impl Iterator<Item = &'static str> {
         let state = self.state;
-        SCRIPT_BUTTONS.iter().map(move |b| {
-            if *b == "Pause" {
-                pause_button_label(state)
-            } else {
-                b
-            }
-        })
+        let skip_quest = matches!(state, ScriptRunState::Running | ScriptRunState::Paused)
+            && self
+                .native_status
+                .is_some_and(|status| status.card() == CompiledCardId::QUESTER);
+        SCRIPT_BUTTONS
+            .iter()
+            .map(move |b| {
+                if *b == "Pause" {
+                    pause_button_label(state)
+                } else {
+                    b
+                }
+            })
+            .chain(skip_quest.then_some("Skip quest"))
     }
-
     /// The bulk row's buttons, left to right.
     fn bulk_buttons(&self) -> impl Iterator<Item = &'static str> {
         #[cfg(feature = "js")]

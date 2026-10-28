@@ -5807,3 +5807,115 @@ fn a_preference_refused_at_queue_admission_logs_one_refusal_at_the_command_bound
     }
     assert_eq!(d.session().refusals(), refusals + refused.len() as u64);
 }
+#[test]
+fn skip_quest_acceptance_uses_the_shared_driver_command_and_logs_the_identity_once() {
+    use script::native::{NativeTick, Script, ScriptFailure, ScriptFlow, SkippedQuest};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct SkipProbe(Arc<AtomicUsize>);
+
+    impl Script for SkipProbe {
+        fn tick(&mut self, _tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            Ok(ScriptFlow::Continue)
+        }
+
+        fn skip_quest(&mut self) -> Result<SkippedQuest, ScriptFailure> {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            Ok(SkippedQuest {
+                quest_id: Arc::from("driver-probe-quest"),
+                step_id: Arc::from("driver-probe-step"),
+            })
+        }
+    }
+
+    let mut d = driver("skip-quest-accepted", &["alice"]);
+    let load = d
+        .submit(OperatorCommand::Load, Targets::Profile("alice"))
+        .expect("load");
+    settle(&mut d, load.request());
+    let calls = Arc::new(AtomicUsize::new(0));
+    d.session()
+        .play_for_test()
+        .expect("play")
+        .script_start_handle()
+        .start_test_script("alice", Box::new(SkipProbe(Arc::clone(&calls))), None)
+        .expect("start native probe");
+    wait_state(&mut d, "alice", ScriptRunState::Running);
+
+    let refusals = d.session().refusals();
+    let skip = d
+        .submit(OperatorCommand::SkipQuest, Targets::Profile("alice"))
+        .expect("skip submission")
+        .request();
+    settle(&mut d, skip);
+    assert_eq!(terminal(&d, skip, "alice"), Some(done()));
+    let detail = d.report(skip).and_then(|report| {
+        report
+            .members()
+            .first()
+            .and_then(|member| member.detail())
+            .map(str::to_owned)
+    });
+    assert_eq!(
+        detail.as_deref(),
+        Some("quest_id=driver-probe-quest step_id=driver-probe-step")
+    );
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    assert_eq!(d.session().refusals(), refusals);
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Running);
+
+    let mut view = crate::log::LogView::new(crate::log::LogScope::Process);
+    view.edit_filter(|filter| filter.set_text("driver-probe-quest"));
+    crate::log::global().refresh(&mut view);
+    let accepted = view
+        .rows()
+        .iter()
+        .filter(|row| {
+            let message = row.message();
+            message.contains("command accepted: SkipQuest on alice")
+                && message.contains("quest_id=driver-probe-quest step_id=driver-probe-step")
+        })
+        .count();
+    assert_eq!(accepted, 1, "one accepted command log line");
+}
+
+#[test]
+fn skip_quest_without_a_running_queue_is_refused_with_one_shared_log_line() {
+    let name = "skiprefusal";
+    let mut d = driver("skip-quest-refused", &[name]);
+    let load = d
+        .submit(OperatorCommand::Load, Targets::Profile(name))
+        .expect("load");
+    settle(&mut d, load.request());
+
+    let refusals = d.session().refusals();
+    let skip = d
+        .submit(OperatorCommand::SkipQuest, Targets::Profile(name))
+        .expect("skip submission")
+        .request();
+    settle(&mut d, skip);
+    assert!(matches!(
+        terminal(&d, skip, name),
+        Some(Settlement::Failed(CommandFailure::Rejected(
+            crate::command::Rejection::NotApplicable
+        )))
+    ));
+    assert_eq!(
+        d.session().command_failure(skip),
+        Some("bot is not running the Quester queue")
+    );
+    assert_eq!(d.session().refusals(), refusals + 1);
+    let mut view = crate::log::LogView::new(crate::log::LogScope::Process);
+    view.edit_filter(|filter| filter.set_text("command refused: SkipQuest on skiprefusal"));
+    crate::log::global().refresh(&mut view);
+    let refused = view
+        .rows()
+        .iter()
+        .filter(|row| {
+            row.message()
+                .contains("bot is not running the Quester queue")
+        })
+        .count();
+    assert_eq!(refused, 1, "one shared command refusal log line");
+}
