@@ -805,11 +805,17 @@ fn switch_refused_mandatory_ammo_fails() {
     protect(&mut scene, MELEE_PROTECT);
     let keep = [bow.as_str(), scimitar.as_str()];
     step_keeping(&mut harness, &mut scene, 3, &keep);
+    let arrows = item_name(&scene, "iron_arrow");
     let mut tick = 4;
     let mut rewore_scimitar = false;
+    let mut arrow_wears = 0;
     while harness.machine.switch_failures() == 0 {
         let batch = step_keeping(&mut harness, &mut scene, tick, &keep);
         assert!(!has_cast(&batch));
+        arrow_wears += wear_names(&batch)
+            .iter()
+            .filter(|name| **name == arrows)
+            .count();
         // The sword is only worn again once the switch has failed.
         rewore_scimitar |= wear_names(&batch).contains(&scimitar);
         tick += 1;
@@ -818,6 +824,10 @@ fn switch_refused_mandatory_ammo_fails() {
             "two refusals of the iron arrows must fail the switch"
         );
     }
+    assert_eq!(
+        arrow_wears, 2,
+        "the failure comes with the second refusal of the quiver, not a third"
+    );
     // The bow is worn, the quiver never was: a bow with no arrows must not be a completion.
     assert_eq!(harness.machine.active_style(), Style::Melee);
     assert_eq!(harness.machine.switches(), 0);
@@ -1137,7 +1147,7 @@ fn a_drink_on_the_trigger_tick_admits_no_wear_and_starts_nothing() {
     let (mut scene, kits) = sword_and_bow();
     let mut harness = start(&mut scene, request(kits));
     give(&mut scene, "1doseprayerrestore", 1);
-    scene.stat(5, 0, 50);
+    scene.stat(5, 30, 50);
     scene.players[0].actor.target = Some(ActorTargetView {
         kind: ActorKind::Player,
         index: scene.local.player.index,
@@ -1146,11 +1156,17 @@ fn a_drink_on_the_trigger_tick_admits_no_wear_and_starts_nothing() {
     scene.players[0].actor.in_combat = true;
     scene.refresh();
     protect(&mut scene, MELEE_PROTECT);
+    // One protected frame with the prayer points still high; the points run out
+    // before the second, so the sip and the trigger share tick 4.
+    step(&mut harness, &mut scene, 3);
+    scene.stat(5, 0, 50);
+    scene.refresh();
     let mut drank = false;
     let mut started = None;
-    for tick in 3..14 {
+    for tick in 4..14 {
         let batch = step(&mut harness, &mut scene, tick);
         if has_held(&batch, "Drink") {
+            assert!(drank || tick == 4, "the sip shares the trigger tick");
             drank = true;
             assert!(wear_names(&batch).is_empty(), "no wear in a drink plan");
             assert_eq!(
@@ -1343,6 +1359,9 @@ fn no_equipment_allowance_means_no_wear_and_no_switch_evaluation() {
     ));
     let mut req = request(kits);
     req.allow.equipment = false;
+    // The mage kit is tried first: only the equipment gate keeps its zero-wear
+    // switch from completing.
+    req.switch.prefer = [Style::Melee, Style::Mage, Style::Ranged];
     let mut harness = start(&mut scene, req);
     protect(&mut scene, MELEE_PROTECT);
     for tick in 3..25 {
