@@ -379,6 +379,7 @@ text = """When a script walks from Karamja to the mainland without the 30 coins 
 first = "0.2.6"
 listed = "0.2.7"
 target = "none"
+fixed = "0.2.8"
 severity = "medium"
 owner = "T2.rest walking"
 
