@@ -30824,19 +30824,25 @@ mod skip_quest_tests {
 
     impl Script for SkipProbe {
         fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
-            if self.complete.load(Ordering::Relaxed) {
-                return Ok(ScriptFlow::Complete);
-            }
+            let complete = self.complete.load(Ordering::Relaxed);
             tick.output.status(ScriptStatus {
                 run: tick.cx.run(),
                 card: script::CompiledId("Quester"),
-                phase: NativePhase::Waiting,
+                phase: if complete {
+                    NativePhase::Complete
+                } else {
+                    NativePhase::Waiting
+                },
                 active_settings: 1,
                 pending_settings: None,
                 fields: Arc::from([]),
                 failure: None,
             });
-            Ok(ScriptFlow::Continue)
+            Ok(if complete {
+                ScriptFlow::Complete
+            } else {
+                ScriptFlow::Continue
+            })
         }
 
         fn skip_quest(&mut self) -> Result<SkippedQuest, ScriptFailure> {
