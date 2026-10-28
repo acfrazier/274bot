@@ -292,7 +292,6 @@ fn is_walk(op: &InteractReq) -> bool {
     matches!(op, InteractReq::Walk { .. })
 }
 
-
 fn token(op: &InteractReq) -> u64 {
     match op {
         InteractReq::Walk { request_id, .. } | InteractReq::WalkNear { request_id, .. } => {
@@ -355,9 +354,7 @@ fn install_luthas_reach_view_with(
             z: npc.z + dz,
             level: npc.level,
         };
-        if blocked == Some(stand)
-            || only_walkable_unreachable.is_some_and(|only| only != stand)
-        {
+        if blocked == Some(stand) || only_walkable_unreachable.is_some_and(|only| only != stand) {
             continue;
         }
         let i = index(stand);
@@ -799,7 +796,10 @@ fn a_walkable_but_unreachable_luthas_stand_is_not_selected() {
         recovery.is_err(),
         "a walkable but unreachable stand must not start an approach"
     );
-    assert!(ops.is_empty(), "no unreachable stand walk is emitted: {ops:?}");
+    assert!(
+        ops.is_empty(),
+        "no unreachable stand walk is emitted: {ops:?}"
+    );
 }
 
 #[test]
