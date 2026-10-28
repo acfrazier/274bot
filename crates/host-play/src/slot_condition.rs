@@ -23,11 +23,6 @@ use script::combat::threats::ThreatSet;
 const POISON_LINE: &str = "You have been poisoned!";
 const DRINK_LINE: &str = "You drink some of your antipoison potion.";
 const FRUIT_LINE: &str = "You eat the fruit.";
-// strange_fruit.rs2:6-12 removes the item before it sends the consume messages.
-// consume_effect_messages adds no p_delay for the fruit message table
-// (consume_effects.rs2:166-168; consume_messages.dbrow:713-720). Permit only
-// adjacent PLAYER_INFO ticks so split snapshots can still prove this one action.
-const FRUIT_SIGNAL_WINDOW_TICKS: u16 = 1;
 // poison.rs2:29,72-75: after the last dispatched interaction, retain 30
 // ticks to the fire, one queued-damage tick (World.ts:701-704;
 // Player.ts:903-911), and the existing observation margin.
@@ -96,9 +91,8 @@ struct PendingLatch {
     hit_at_edge: bool,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 enum PendingFruit {
-    #[default]
     None,
     Chat {
         tick: u16,
@@ -242,19 +236,26 @@ impl SlotCondition {
         self.memory = self.memory.transition(event);
     }
 
-    fn fruit_origin(&mut self, chat: bool, count_loss: bool, now: u16) -> Option<u16> {
-        if chat && count_loss {
-            self.pending_fruit = PendingFruit::None;
-            return Some(now);
-        }
-
+    // strange_fruit.rs2:6-12 removes the fruit and sends its line in one
+    // server tick. The row has no p_delay (consume_effects.rs2:166-168,
+    // consume_messages.dbrow:713-719). World.ts:1108-1116 sends PLAYER_INFO
+    // before inventory. NetworkPlayer.ts:191-227 writes each packet at once.
+    // A drain can hold multiple PLAYER_INFO packets, so pair signals from this
+    // or the immediately previous observed edge, not by a fixed tick delta.
+    fn fruit_origin(
+        &mut self,
+        chat: bool,
+        count_loss: bool,
+        previous_tick: u16,
+        now: u16,
+    ) -> Option<u16> {
         let pending = self.pending_fruit;
         let pending_tick = match pending {
             PendingFruit::None => None,
             PendingFruit::Chat { tick } | PendingFruit::CountLoss { tick } => Some(tick),
         };
         let pending = pending_tick
-            .filter(|tick| now.wrapping_sub(*tick) <= FRUIT_SIGNAL_WINDOW_TICKS)
+            .filter(|tick| *tick == previous_tick || *tick == now)
             .map(|_| pending);
         if pending.is_none() {
             self.pending_fruit = PendingFruit::None;
@@ -265,6 +266,10 @@ impl SlotCondition {
             | (Some(PendingFruit::CountLoss { tick }), true, false) => {
                 self.pending_fruit = PendingFruit::None;
                 Some(tick)
+            }
+            (_, true, true) => {
+                self.pending_fruit = PendingFruit::None;
+                Some(now)
             }
             (_, true, false) => {
                 self.pending_fruit = PendingFruit::Chat { tick: now };
@@ -350,6 +355,7 @@ impl SlotCondition {
             None
         };
         let tick = snapshot.tick();
+        let previous_tick = self.last_tick as u16;
         let now = tick as u16;
         let k = tick.saturating_sub(self.last_tick);
         let prev_complete = self.complete;
@@ -357,9 +363,15 @@ impl SlotCondition {
         let fruit_count_loss =
             derived.is_some_and(|fact| fact.cures.strange_fruit < self.fact.cures.strange_fruit);
         let mut poison_signal = false;
-        let mut fruit_chat = false;
         let mut hits = [None; 4];
         let mut hit_at_edge = false;
+        if let Some(origin) = self.fruit_origin(false, fruit_count_loss, previous_tick, now) {
+            // strange_fruit.rs2:10 sets %poison to min(%poison, -1). Its
+            // negative timer proves that no future immunity fire can occur,
+            // so the fruit earns zero lower-bound immunity credit.
+            self.transition(PoisonEvent::ProvenFruit { origin });
+            self.latch = None;
+        }
         if drain.player_info {
             // Close only a latch opened by an earlier edge, before new evidence.
             if self.latch.take().is_some() {
@@ -383,6 +395,9 @@ impl SlotCondition {
                 line.sequence > previous_seen && line.type_ == 0 && line.username.is_none()
             }) {
                 if line.text == POISON_LINE {
+                    if matches!(self.pending_fruit, PendingFruit::Chat { .. }) {
+                        self.pending_fruit = PendingFruit::None;
+                    }
                     poison_signal = true;
                     self.transition(PoisonEvent::PoisonChat { tick: now });
                     let proven = line.sequence <= self.chat_visible || !drain.npc_rows_coherent;
@@ -403,18 +418,19 @@ impl SlotCondition {
                     self.transition(PoisonEvent::ProvenDrink { origin });
                     self.latch = None;
                 } else if line.text == FRUIT_LINE {
-                    fruit_chat = true;
+                    if let Some(origin) = self.fruit_origin(true, false, previous_tick, now) {
+                        // strange_fruit.rs2:10 sets %poison to min(%poison, -1).
+                        // That negative timer proves no future immunity fire, so
+                        // fruit grants zero lower-bound immunity credit.
+                        self.transition(PoisonEvent::ProvenFruit { origin });
+                        self.latch = None;
+                    }
                 }
             }
             self.chat_seen = snapshot
                 .chat_lines()
                 .first()
                 .map_or(self.chat_seen, |line| line.sequence.max(self.chat_seen));
-        }
-        if let Some(origin) = self.fruit_origin(fruit_chat, fruit_count_loss, now) {
-            // The server's fruit effect sets a negative poison timer.
-            self.transition(PoisonEvent::ProvenFruit { origin });
-            self.latch = None;
         }
         if drain.player_info {
             // Kind 2 reveals the fire's value. A same-edge ordinary hit may
