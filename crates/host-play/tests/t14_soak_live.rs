@@ -43,7 +43,7 @@ const GATHERER_RELOG_STEP: &str = "relog successfully so the inventory tab binds
 const NORMAL_STARTS: [(i32, i32); 10] = [
     (2694, 3475),
     (2694, 3480),
-    (2693, 3454),
+    (2697, 3454),
     (2694, 3473),
     (2697, 3452),
     (2697, 3478),
