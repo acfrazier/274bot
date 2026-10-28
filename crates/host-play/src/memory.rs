@@ -2381,8 +2381,8 @@ impl Run {
             value["proved"] = seed_counts.map(|(_, proved)| proved).into();
             value["game_data"] = self.game_data_json(play);
             writeln!(self.output, "{value}").map_err(|e| e.to_string())?;
-            // Frontends finish with process::exit, which skips destructors:
-            // each complete row must be visible before this poll returns.
+            // Flush complete rows before returning a terminal result; a
+            // frontend may exit without running destructors.
             self.output.flush().map_err(|e| e.to_string())?;
             if self.diagnostics {
                 self.write_diagnostics(play, None)?;
