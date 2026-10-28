@@ -299,6 +299,7 @@ fn partner_step(
                 if let Some(widget) = snapshot
                     .widgets()
                     .iter()
+                    .chain(snapshot.side_tabs().iter().flat_map(|tab| tab.widgets.iter()))
                     .find(|widget| widget.component_id == protect_button)
                 {
                     state.clicked_tick = Some(tick);
