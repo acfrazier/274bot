@@ -152,6 +152,7 @@ struct BoatFacts {
     crate_loc: i32,
     tree_actions: Vec<TreeAction>,
     luthas_name: String,
+    #[cfg(test)]
     luthas_anchor: WorldTile,
     crate_tile: WorldTile,
     grove_tile: WorldTile,
@@ -233,6 +234,7 @@ impl BoatFacts {
             crate_loc: crate_loc.id,
             tree_actions,
             luthas_name,
+            #[cfg(test)]
             luthas_anchor: tile(&facts.luthas_spawn),
             crate_tile: tile(&facts.crate_spawn),
             grove_tile,
