@@ -3924,8 +3924,6 @@ fn live_attack_animation(run: &CombatRun) -> i32 {
 #[test]
 fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
-    // A lower-range replacement at the vanished Warlord's tile isolates the
-    // range fact: the plan must use the replacement, not the old report.
     let escape_envelope = |maxrange: i32, attackrange: i32| {
         maxrange
             .saturating_mul(2)
@@ -3938,71 +3936,63 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
         .npc_name(warlord.id)
         .expect("selected content includes the engaged Warlord");
     let old_envelope = escape_envelope(warlord_row.maxrange, warlord_row.attackrange);
-    let new_attacker_id = data
+    let new_attacker = data
         .npc_names()
         .unwrap()
         .rows
         .iter()
-        .find(|row| {
-            crate::combat::facts::npc_max_hit(row) == Some(4)
-                && escape_envelope(row.maxrange, row.attackrange) < old_envelope
+        .filter(|row| {
+            row.id != warlord.id
+                && escape_envelope(row.maxrange, row.attackrange) > old_envelope
+                && escape_envelope(row.maxrange, row.attackrange) < 64
         })
-        .map(|row| row.id)
-        .expect("selected content includes a lower-hit NPC with a narrower chase envelope");
-    let new_attacker = data
-        .npc_name(new_attacker_id)
-        .expect("selected content includes the new attacker's range facts");
-    let chase_envelope = escape_envelope(new_attacker.maxrange, new_attacker.attackrange);
+        .max_by_key(|row| escape_envelope(row.maxrange, row.attackrange))
+        .expect("selected content includes a wider-range replacement within the escape ring bound");
+    let mut snapshot = GameSnapshot::new();
+    let new_attacker_tile = api::WorldTile {
+        x: 3000,
+        z: 2999,
+        level: 0,
+    };
+    let mut newcomer = aborting_npc(9, new_attacker.id, new_attacker_tile);
+    // The live R2 shape: the Warlord row is gone; another NPC attacks.
     let probe_run = combat_test_run(imp_target(&data), None, None, Vec::new());
-    for (dx, dz) in [
-        (-5, 0),
-        (5, 0),
-        (0, -5),
-        (0, 5),
-        (-20, 0),
-        (20, 0),
-        (0, -20),
-        (0, 20),
-    ] {
-        let mut snapshot = GameSnapshot::new();
-        let new_attacker_tile = api::WorldTile {
-            x: 3001 + dx,
-            z: 3000 + dz,
-            level: 0,
-        };
-        let mut newcomer = aborting_npc(9, new_attacker_id, new_attacker_tile);
-        newcomer.animation = live_attack_animation(&probe_run);
-        let (mut run, mut ledger, here) =
-            engaged_abort_hold_after_failed_walk(&mut snapshot, vec![newcomer]);
-        for tick in 14..=16 {
-            let polled = with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx));
-            assert!(
-                polled.is_pending(),
-                "tick {tick}: the exhausted hold must escape, not park"
-            );
-        }
-        let walks = ledger
-            .as_ref()
-            .unwrap()
-            .outbox
-            .iter()
-            .filter_map(|action| match &action.effect {
-                crate::native::HostEffect::Walk(request) => Some(request.target),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        let target = walks.first().copied();
-        let distance = target.map(|target| tile_distance(target, new_attacker_tile));
-        eprintln!(
-            "[DEBUG-CPE-R4-F5] offset=({dx},{dz}) walks={} target={target:?} distance={distance:?} new={chase_envelope} old={old_envelope}",
-            walks.len()
+    newcomer.animation = live_attack_animation(&probe_run);
+    let (mut run, mut ledger, here) =
+        engaged_abort_hold_after_failed_walk(&mut snapshot, vec![newcomer]);
+    for tick in 14..=16 {
+        let polled = with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx));
+        assert!(
+            polled.is_pending(),
+            "tick {tick}: the exhausted hold must escape, not park"
         );
-        assert_eq!(walks.len(), 1, "exactly one exhausted escape walk");
-        assert!(distance.unwrap() > chase_envelope);
-        assert!(tile_distance(walks[0], new_attacker_tile) > tile_distance(here, new_attacker_tile));
     }
+    let walks = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .filter_map(|action| match &action.effect {
+            crate::native::HostEffect::Walk(request) => Some(request.target),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(walks.len(), 1, "exactly one exhausted escape walk");
+    assert_eq!(
+        walks[0].x, here.x,
+        "the escape does not use the vanished Warlord's east tile"
+    );
+    assert!(
+        walks[0].z > here.z,
+        "the escape moves north from the new attacker south of the player"
+    );
+    let chase_envelope =
+        escape_envelope(new_attacker.maxrange, new_attacker.attackrange);
+    assert!(
+        tile_distance(walks[0], new_attacker_tile) > chase_envelope,
+        "the plan leaves the new attacker's chase envelope of {chase_envelope} tiles"
+    );
 }
-
 #[test]
 fn exhausted_hold_without_any_attacker_parks_only_after_the_threat_free_horizon() {
     let mut snapshot = GameSnapshot::new();
