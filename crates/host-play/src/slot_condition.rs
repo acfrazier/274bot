@@ -94,12 +94,8 @@ struct PendingLatch {
 #[derive(Clone, Copy)]
 enum PendingFruit {
     None,
-    Chat {
-        tick: u16,
-    },
-    CountLoss {
-        tick: u16,
-    },
+    Chat { tick: u16 },
+    CountLoss { tick: u16 },
 }
 
 pub(crate) struct SlotCondition {
