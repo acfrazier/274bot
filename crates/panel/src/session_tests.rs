@@ -1,7 +1,7 @@
 use super::{
     combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, live_client_trail,
     live_or_walk_paint, null_raster_live_entries, parse_getvar_line, publish_nav_debug,
-    retire_client_trail, script_active, script_pause_enabled, script_stop_enabled,
+    retire_client_trail, script_active, script_pause_enabled, script_stop_enabled, FeedbackOwner,
     seed_on_first_world, stress_live_entries, temp_live_vault_from, PanelPreferenceMember,
     PreparationCompletion, SceneRoutePaint, Session, SlotIo, PANEL_SETTING_EVENTS_CAP,
 };
@@ -10543,7 +10543,10 @@ fn settings_feedback_held_then_failed_presentation_choices_revert_to_the_durable
             .map(|event| (event.setting(), event.state()))
             .collect::<Vec<_>>(),
         [
-            ("show_parameters_rail", frontend_core::SettingEventState::Pending),
+            (
+                "show_parameters_rail",
+                frontend_core::SettingEventState::Pending
+            ),
             ("chrome.accent", frontend_core::SettingEventState::Pending),
         ]
     );
@@ -10558,7 +10561,10 @@ fn settings_feedback_held_then_failed_presentation_choices_revert_to_the_durable
             .map(|event| (event.setting(), event.state()))
             .collect::<Vec<_>>(),
         [
-            ("show_parameters_rail", frontend_core::SettingEventState::Failed),
+            (
+                "show_parameters_rail",
+                frontend_core::SettingEventState::Failed
+            ),
             ("chrome.accent", frontend_core::SettingEventState::Failed),
         ]
     );
@@ -10585,7 +10591,10 @@ fn settings_feedback_held_then_failed_presentation_choices_revert_to_the_durable
             .map(|event| (event.setting(), event.state()))
             .collect::<Vec<_>>(),
         [
-            ("show_parameters_rail", frontend_core::SettingEventState::Cleared),
+            (
+                "show_parameters_rail",
+                frontend_core::SettingEventState::Cleared
+            ),
             ("chrome.accent", frontend_core::SettingEventState::Cleared),
         ]
     );

@@ -828,9 +828,9 @@ fn watched_setting_events_report_pending_failed_then_saved() {
         ],
         "retry clears the retained failure, then reports its own write: {events:?}"
     );
-    assert!(events.iter().all(|event| {
-        event.setting() == "nav.allow_teleports" && event.error().is_none()
-    }));
+    assert!(events
+        .iter()
+        .all(|event| { event.setting() == "nav.allow_teleports" && event.error().is_none() }));
 
     // Watching off drops anything undrained and records nothing more.
     d.session_mut().watch_setting_events(false);

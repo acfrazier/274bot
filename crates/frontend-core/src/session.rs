@@ -603,9 +603,7 @@ pub use commands::{GuardianEdit, SubmitError, Submitted, SurvivalEdit, Targets};
 pub use map::{GameInputEvent, MapDesk};
 pub(crate) use native_settings::NativeCopyCancellation;
 use native_settings::{PendingDelivery, PendingPreparation};
-pub use prefs::{
-    DrawPolicy, Notice, RENDER_ALL_WARNING_ACK_KEY, SettingEvent, SettingEventState,
-};
+pub use prefs::{DrawPolicy, Notice, SettingEvent, SettingEventState, RENDER_ALL_WARNING_ACK_KEY};
 
 pub struct OperatorSession<Io> {
     vault: Option<Vault>,
@@ -1620,8 +1618,7 @@ impl<Io> OperatorSession<Io> {
             .then(|| text.clone());
         let now = Instant::now();
         if was_pending {
-            self.settings
-                .fail(crate::Setting::ProfileOrder, text, now);
+            self.settings.fail(crate::Setting::ProfileOrder, text, now);
         } else {
             self.settings
                 .fail_now(crate::Setting::ProfileOrder, text, now);
