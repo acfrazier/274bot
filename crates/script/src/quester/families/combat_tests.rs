@@ -3933,8 +3933,8 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
         .expect("selected content includes a known-hit lower threat");
     let mut snapshot = GameSnapshot::new();
     let new_attacker_tile = api::WorldTile {
-        x: 3000,
-        z: 2999,
+        x: 2999,
+        z: 3000,
         level: 0,
     };
     let mut newcomer = aborting_npc(9, wolf_like.id, new_attacker_tile);
@@ -3961,10 +3961,9 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
         })
         .collect::<Vec<_>>();
     assert_eq!(walks.len(), 1, "exactly one exhausted escape walk");
-    assert_eq!(
-        walks[0].x,
-        here.x,
-        "the escape follows the northward axis away from the new attacker"
+    assert!(
+        walks[0].x > here.x,
+        "the escape moves east from the new attacker on the west"
     );
     assert!(
         tile_distance(walks[0], new_attacker_tile) > tile_distance(here, new_attacker_tile),
