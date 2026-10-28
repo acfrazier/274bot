@@ -104,6 +104,7 @@ const CHICKEN_KILLER_BANK_INJECT: &[ScriptSettingInject] = &[
 /// Burial is disabled so the guaranteed Bones drop enters the bank.
 /// Prepare only before Start. Proof is combat, pickup, fresh deposit,
 /// return to the original anchor, then fresh Strength XP after return.
+/// Up to three further bank returns restart the same 150-tick combat window.
 pub(crate) fn chicken_killer_bank_scenario() -> Scenario {
     let tele = FALADOR_CHICKENS;
     let first_strength = Proof::StatXpGain {
@@ -189,13 +190,21 @@ pub(crate) fn chicken_killer_bank_scenario() -> Scenario {
             "watch the periodic bank close after deposit",
             Proof::BankClosed,
         ),
-        (
-            "watch fresh Strength XP after the bank return",
-            further_strength,
-        ),
     ] {
         steps.push(bank_fletcher_watch(step_name, arm));
     }
+    steps.push(Step {
+        name: "watch fresh Strength XP after the bank return",
+        kind: StepKind::ObserveCombatAcrossBankReturns {
+            stand: tele,
+            radius: 6,
+            max_restarts: 3,
+        },
+        wait: Wait {
+            arm: further_strength,
+            budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
+        },
+    });
     Scenario {
         name: "chicken_killer_bank",
         seed: Seed {

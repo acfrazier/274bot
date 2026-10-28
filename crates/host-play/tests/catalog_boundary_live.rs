@@ -1282,6 +1282,62 @@ mod tests {
         )
         .qualify()
         .is_ok());
+        let mut second_deposit = deposited.clone();
+        second_deposit.bank_generation = 3;
+        let mut second_return = returned.clone();
+        second_return.bank_generation = 4;
+        second_return.xp.insert("strength".into(), 108);
+        let mut after_second_return = further.clone();
+        after_second_return.bank_generation = 4;
+        after_second_return.xp.insert("strength".into(), 112);
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            [
+                &looted,
+                &deposited,
+                &returned,
+                &second_deposit,
+                &second_return,
+                &after_second_return
+            ]
+        )
+        .qualify()
+        .is_ok());
+        after_second_return.xp.insert("strength".into(), 108);
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            [
+                &looted,
+                &deposited,
+                &returned,
+                &second_deposit,
+                &second_return,
+                &after_second_return
+            ]
+        )
+        .qualify()
+        .is_err());
+        let mut too_many_trips = vec![looted.clone(), deposited.clone(), returned.clone()];
+        for trip in 1..=4 {
+            let mut next_deposit = deposited.clone();
+            next_deposit.bank_generation = trip * 2 + 1;
+            too_many_trips.push(next_deposit);
+            let mut next_return = returned.clone();
+            next_return.bank_generation = trip * 2 + 2;
+            too_many_trips.push(next_return);
+        }
+        too_many_trips
+            .last_mut()
+            .unwrap()
+            .xp
+            .insert("strength".into(), 112);
+        assert!(
+            witness(CoreCase::ChickenKillerBank, &baseline, too_many_trips.iter())
+                .qualify()
+                .is_err()
+        );
         assert!(witness(CoreCase::ChickenKillerBank, &baseline, [&baseline])
             .qualify()
             .is_err());

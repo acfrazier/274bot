@@ -1681,6 +1681,9 @@ pub struct ChickenKillerBankCycle {
     pub returned: bool,
     pub further: bool,
     pub return_xp: Option<i32>,
+    pub returns: u8,
+    pub restart_limit_spent: bool,
+    pub return_bank_generation: u64,
 }
 
 impl ChickenKillerBankCycle {
@@ -1697,22 +1700,46 @@ impl ChickenKillerBankCycle {
             && now.bank_item_id(catalog_item_id("bones")) >= 1
         {
             self.deposited = Some(now.clone());
+            self.return_bank_generation = now.bank_generation;
         }
-        if let Some(deposited) = &self.deposited {
-            self.returned |= !now.bank_open
-                && !now.bank_loaded
-                // Closing the modal advances the bank session generation.
-                && now.bank_generation > deposited.bank_generation
-                && near(now.tile, FALADOR_CHICKENS, 6);
+        if self.returned
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > self.return_bank_generation
+        {
+            // The initial return plus at most three further returns.
+            if self.returns >= 4 {
+                self.restart_limit_spent = true;
+                self.further = false;
+                return;
+            }
+            self.returned = false;
+            self.return_xp = None;
+            self.return_bank_generation = now.bank_generation;
+        }
+        if self.deposited.is_some()
+            && !self.returned
+            && !now.bank_open
+            && !now.bank_loaded
+            && now.bank_generation > self.return_bank_generation
+            && near(now.tile, FALADOR_CHICKENS, 6)
+        {
+            self.returned = true;
+            self.returns += 1;
+            self.return_xp = Some(now.skill_xp("strength"));
+            return;
         }
         if self.returned {
             let xp = now.skill_xp("strength");
             let reference = *self.return_xp.get_or_insert(xp);
-            self.further |= !now.bank_open && xp > reference;
+            self.further |= !now.bank_open
+                && !now.bank_loaded
+                && near(now.tile, FALADOR_CHICKENS, 6)
+                && xp > reference;
         }
     }
 
     pub fn qualified(&self) -> bool {
-        self.further
+        self.further && !self.restart_limit_spent
     }
 }
