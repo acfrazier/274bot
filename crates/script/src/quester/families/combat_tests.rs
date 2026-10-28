@@ -3978,6 +3978,10 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
         .saturating_add(new_attacker.attackrange)
         .max(0)
         .saturating_add(1);
+    eprintln!(
+        "[DEBUG-CPE-R4-F5] here=({}, {}) new=({}, {}) walk=({}, {}) envelope={chase_envelope}",
+        here.x, here.z, new_attacker_tile.x, new_attacker_tile.z, walks[0].x, walks[0].z
+    );
     assert!(
         tile_distance(walks[0], new_attacker_tile) > chase_envelope,
         "the plan leaves the new attacker's chase envelope of {chase_envelope} tiles"
