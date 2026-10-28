@@ -269,7 +269,7 @@ fn start_pair(
 /// teleports both into a pen and counts down to `FIGHT!`. This is the
 /// fixture's own use of the game's interface, not the V5 trainer.
 #[derive(Default, Clone, serde::Serialize)]
-struct DuelDrive {
+pub(super) struct DuelDrive {
     last_challenge: Option<u32>,
     challenges: u32,
     accept1_at: Option<u32>,
@@ -277,11 +277,11 @@ struct DuelDrive {
     saw_select: bool,
     saw_confirm: bool,
     saw_pen: bool,
-    fight_seen: bool,
+    pub(super) fight_seen: bool,
     refusals: Vec<String>,
 }
 
-fn duel_step(client: &mut client::client::Client, drive: &mut DuelDrive, partner: &str) {
+pub(super) fn duel_step(client: &mut client::client::Client, drive: &mut DuelDrive, partner: &str) {
     use crate::paired_core::{
         fight_pen, DUEL_CONFIRM_ACCEPT, DUEL_CONFIRM_MODAL, DUEL_SELECT_ACCEPT, DUEL_SELECT_MODAL,
     };

@@ -627,8 +627,9 @@ impl<M: NativeMachine> ActionHandle<M> {
         }
     }
 
-    /// Read the live machine without polling it; `None` once it completed.
-    pub(crate) fn inspect<R>(&self, read: impl FnOnce(&M) -> R) -> Option<R> {
+    /// Read the live machine without polling it; `None` once it completed. A
+    /// live proof reads a machine's own state with it (the PvP V2 switch trace).
+    pub fn inspect<R>(&self, read: impl FnOnce(&M) -> R) -> Option<R> {
         self.machine.borrow().as_ref().map(read)
     }
 }

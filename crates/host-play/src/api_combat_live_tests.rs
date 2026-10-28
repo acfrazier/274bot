@@ -20,6 +20,9 @@ use vault::{Profile, ProfileSettings};
 #[path = "api_pvp_live_tests.rs"]
 mod pvp;
 
+#[path = "pvp_switch_live_tests.rs"]
+mod pvp_switch;
+
 /// A cow spawn tile inside the Lumbridge east cow field (selected
 /// `npc_placements`: cow at 3255,3278).
 const COW_FIELD: WorldTile = WorldTile {

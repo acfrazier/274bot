@@ -5817,7 +5817,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3784, 1624, 520, 264)
+        (3784, 1624, 544, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -5832,9 +5832,13 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3784, 1624, 520, 264)
+        (3784, 1624, 544, 264)
     );
-    assert!(std::mem::size_of::<script::combat::Combat>() <= 520);
+    // PvP V2 (PVP-DESIGN-1026 §4): the executable style, the switch state and the
+    // per-style right-hand picks take `Combat` from 520 to 544 B, measured on
+    // Linux x86_64; every added field is fixed-size, so the macOS pin carries the
+    // same value. No heap is added to an idle bot.
+    assert!(std::mem::size_of::<script::combat::Combat>() <= 544);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);
 }
 
