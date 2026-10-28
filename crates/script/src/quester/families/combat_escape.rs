@@ -1,17 +1,12 @@
 //! Escape-goal planning for an aborted Quester fight.
 //!
-//! The adapter used to pick one tile at the chase-range distance and check
-//! only world-coordinate bounds. A tile inside a tree footprint has no legal
-//! Reach arrival goal, so the host refused the route and the bot stood still.
+//! The old adapter could pick a tile inside a tree footprint, which has no
+//! legal Reach arrival goal and made the bot stand still.
 //!
-//! This module does not decide what is reachable. It names exact candidate
-//! tiles in three tiers and hands them to the host router as a [`WalkGoals`]
-//! request. The router owns reachability: it searches the baked collision and
-//! transports, applies the account's own restrictions, and takes the cheapest
-//! reachable goal of the preferred tier before any goal of the fallback tier.
-//! The Gatherer's observation walks use the same interface. A candidate the
-//! router cannot reach costs nothing, and an unreachable pocket, a door or a
-//! detour outside any local window needs no code here.
+//! This module builds exact candidate tiles in three tiers. A live Reach flood
+//! removes goals it proves unreachable; the host router still checks collision,
+//! transports and account restrictions, and handles goals outside its view.
+//! Without a live flood, the router receives the next tier as a fallback.
 use super::tile_distance;
 use crate::native::WalkGoals;
 use crate::reach_route;
@@ -31,15 +26,13 @@ const STAND: usize = 0;
 const BEYOND: usize = 1;
 const AWAY: usize = 2;
 
-/// Walk requests one escape pass may make: one per non-empty tier. A request
-/// names its preferred tier and the next non-empty tier as the router's
-/// fallback, and the next request of the pass starts one tier lower. The
-/// tiers may share tiles (the stand's neighbours can also lie beyond the
-/// envelope), so two requests can overlap, but the request count cannot pass
-/// this. Each request is a fresh plan from the observed position. A request
-/// ends with its walk receipt or, when none comes, with its observed-tick
-/// budget ([`ESCAPE_SLACK_TICKS`]) when the walk has a measured depth. A walk
-/// without a measured depth has no tick budget. The walk machine's
+/// An escape pass makes at most one request per non-empty preferred tier.
+/// Without a live flood, each request also offers the next tier as a router
+/// fallback. With a live flood, it offers one tier so a retry cannot repeat
+/// that fallback. The tiers are disjoint, and each request is planned from the
+/// observed position. A request ends with its walk receipt or, when none comes,
+/// with its observed-tick budget ([`ESCAPE_SLACK_TICKS`]) when the walk has a
+/// measured depth. An unmeasured walk has no tick budget; the walk machine's
 /// ten-minute active-clock deadline stays as the outer backstop.
 pub(super) const ESCAPE_PASS_ATTEMPTS: usize = 3;
 
@@ -112,18 +105,31 @@ impl AbortEscape {
 
     /// The next request of the pass, planned from the observed `geometry`.
     /// `None` when every tier from the current one down is empty. `reach` is
-    /// the live posted flood, when there is one; it measures the walk.
+    /// the live posted flood, when there is one. It removes in-view goals it
+    /// proves unreachable and measures walking depth.
     pub(super) fn next_goals(
         &mut self,
         geometry: &EscapeGeometry,
         collision: Option<CollisionView<'_>>,
         reach: Option<&ReachQueryView>,
     ) -> Option<EscapeGoals> {
-        let tiers = tier_tiles(geometry, collision);
+        let mut tiers = tier_tiles(geometry, collision);
+        if let Some(view) = reach {
+            for tier in &mut tiers {
+                tier.retain(|tile| {
+                    goal_is_reachable(view, *tile)
+                        || reach_route::local_index(view, *tile).is_none()
+                });
+            }
+        }
         let preferred =
             (self.next_tier..ESCAPE_PASS_ATTEMPTS).find(|&tier| !tiers[tier].is_empty())?;
         self.next_tier = preferred + 1;
-        let fallback = (preferred + 1..ESCAPE_PASS_ATTEMPTS).find(|&tier| !tiers[tier].is_empty());
+        let fallback = if reach.is_none() {
+            (preferred + 1..ESCAPE_PASS_ATTEMPTS).find(|&tier| !tiers[tier].is_empty())
+        } else {
+            None
+        };
         let focus = if preferred == STAND {
             geometry.stand.unwrap_or(geometry.here)
         } else {
@@ -133,13 +139,8 @@ impl AbortEscape {
             .iter()
             .copied()
             .min_by_key(|tile| (tile_distance(focus, *tile), squared_gap(focus, *tile)))?;
-        // The router takes the nearest reachable goal of the preferred tier
-        // and the fallback tier only when no preferred goal is reachable.
-        let depth = reach.and_then(|view| {
-            reach_route::nearest_depth(view, &tiers[preferred]).or_else(|| {
-                fallback.and_then(|tier| reach_route::nearest_depth(view, &tiers[tier]))
-            })
-        });
+        let depth =
+            reach.and_then(|view| reach_route::nearest_depth(view, &tiers[preferred]));
         let fallback_tiles = fallback.map_or_else(Vec::new, |tier| tiers[tier].clone());
         // Each tier holds at most `TIER_CAP` tiles, so the union fits the cap
         // and construction cannot fail.
@@ -228,6 +229,18 @@ fn squared_gap(a: WorldTile, b: WorldTile) -> i64 {
     dx * dx + dz * dz
 }
 
+/// Return true when the live flood proves that an exact goal is reachable.
+fn goal_is_reachable(view: &ReachQueryView, tile: WorldTile) -> bool {
+    let Some(index) = reach_route::local_index(view, tile) else {
+        return false;
+    };
+    reach_route::reach_bit(view, &view.reachable, tile)
+        && view
+            .exact_rank
+            .get(index)
+            .is_some_and(|rank| *rank != u16::MAX)
+}
+
 /// The tiles of each tier. A tile is a candidate when the world has it and,
 /// with a baked collision view, it is standable. Without a nav pack the host
 /// cannot route either, so every in-bounds tile stays a candidate, as in the
@@ -267,16 +280,23 @@ fn tier_tiles(
     if let Some(threat) = geometry.threat {
         let level = geometry.here.level;
         let here_gap = tile_distance(geometry.here, threat);
+        let (stand_tier, other_tiers) = tiers.split_at_mut(BEYOND);
+        let stand_goals = &stand_tier[STAND];
+        let outside_stand = |tile| usable(tile) && !stand_goals.contains(&tile);
+
         // Beyond the envelope, and farther than the player already is.
         let first = envelope.max(here_gap).saturating_add(1);
+        let beyond = &mut other_tiers[0];
         for radius in first..=MAX_RING {
-            if !push_ring(&mut tiers[BEYOND], threat, level, radius, &usable) {
+            if !push_ring(beyond, threat, level, radius, &outside_stand) {
                 break;
             }
         }
-        // Inside the envelope, outermost ring first.
+        // Inside the envelope, outermost ring first. The stand's neighbours
+        // are reserved for its tier so a later retry never repeats them.
+        let away = &mut other_tiers[AWAY - BEYOND];
         for radius in (here_gap.saturating_add(1)..=envelope).rev() {
-            if !push_ring(&mut tiers[AWAY], threat, level, radius, &usable) {
+            if !push_ring(away, threat, level, radius, &outside_stand) {
                 break;
             }
         }

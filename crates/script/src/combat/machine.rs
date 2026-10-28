@@ -350,6 +350,12 @@ impl NativeMachine for Combat {
             phase: Phase::Prep,
             flags: 0,
         };
+
+        // Request facts can warrant a boost before the first complete actor
+        // frame is available to resolve engagement worth.
+        if machine.request_worth() {
+            machine.flags |= BOOST_WORTH;
+        }
         if let Some(lines) = cx.snapshot().chat_lines(-1) {
             machine.chat_since = lines
                 .value
@@ -1024,8 +1030,8 @@ impl Combat {
         self.schedule.interaction = Interaction::Unknown;
         self.resolve_worth(frame);
     }
-    fn resolve_worth(&mut self, frame: &Frame<'_>) {
-        let carries_boost = self.request.kit.as_ref().is_some_and(|kit| {
+    fn carries_boost(&self) -> bool {
+        self.request.kit.as_ref().is_some_and(|kit| {
             kit.carry.iter().any(|(id, _)| {
                 self.boost_kinds().iter().any(|kind| {
                     self.tables.potion(*kind).is_some_and(|family| {
@@ -1033,7 +1039,14 @@ impl Combat {
                     })
                 })
             })
-        });
+        })
+    }
+    fn request_worth(&self) -> bool {
+        self.carries_boost() || select::requested_worth(&self.request, &self.tables)
+    }
+    fn resolve_worth(&mut self, frame: &Frame<'_>) {
+        let carries_boost = self.carries_boost();
+
         let worth = select::offensives_worth(
             self.engaged,
             self.engaged_type(),

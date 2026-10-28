@@ -2074,15 +2074,14 @@ fn exhausted_m4_escape_that_never_loses_the_attacker_ends_with_the_unsafe_arriva
 
 #[test]
 fn escape_goals_never_exceed_the_router_cap_and_each_request_prefers_a_new_tier() {
-    let far_stand = api::WorldTile {
-        x: 3109,
-        z: 3200,
-        level: 0,
+    let stand = api::WorldTile {
+        x: M4_TREE.x + 16,
+        ..M4_TREE
     };
     let geometry = escape::EscapeGeometry {
         here: M4_HERE,
         threat: Some(M4_TREE),
-        stand: Some(far_stand),
+        stand: Some(stand),
         chase_range: 14,
     };
     let mut pass = escape::AbortEscape::new();
@@ -2091,14 +2090,16 @@ fn escape_goals_never_exceed_the_router_cap_and_each_request_prefers_a_new_tier(
         assert!(next.goals.as_slice().len() <= crate::native::WalkGoals::MAX);
         let preferred = next.goals.preferred().to_vec();
         assert!(
-            !preferred_tiers.contains(&preferred),
-            "a pass names each tier as preferred once"
+            preferred_tiers
+                .iter()
+                .all(|previous| preferred.iter().all(|goal| !previous.contains(goal))),
+            "each retry names a disjoint next tier"
         );
         preferred_tiers.push(preferred);
     }
     assert_eq!(preferred_tiers.len(), escape::ESCAPE_PASS_ATTEMPTS);
     assert!(
-        preferred_tiers[0].contains(&far_stand),
+        preferred_tiers[0].contains(&stand),
         "the authored stand is the first preference"
     );
 }
@@ -3569,10 +3570,16 @@ fn a_stalled_guarded_escape_walk_keeps_eating_and_ends_with_supplies_left() {
         first.food_guard && second.food_guard,
         "both walks are guarded"
     );
-    assert_eq!(
-        goals_of(second).preferred(),
-        goals_of(first).fallback(),
-        "the next request prefers the tier the first held back"
+    assert!(
+        goals_of(first).fallback().is_empty() && goals_of(second).fallback().is_empty(),
+        "a live flood sends one tier per request"
+    );
+    assert!(
+        goals_of(second)
+            .preferred()
+            .iter()
+            .all(|goal| !goals_of(first).preferred().contains(goal)),
+        "the retry uses different goals"
     );
     assert_eq!(
         handoff,
@@ -3646,10 +3653,13 @@ fn a_measured_escape_walk_is_abandoned_after_its_flood_depth_plus_the_slack() {
         "the walk is abandoned after its flood depth plus the slack"
     );
     let second = last_walk(&ledger);
-    assert_eq!(
-        goals_of(&second).preferred(),
-        goals_of(&first).fallback(),
-        "the next request prefers the tier the first held back"
+    assert!(goals_of(&second).fallback().is_empty());
+    assert!(
+        goals_of(&second)
+            .preferred()
+            .iter()
+            .all(|goal| !goals_of(&first).preferred().contains(goal)),
+        "the next request chooses a distinct tier"
     );
     assert!(second.food_guard, "the food guard continues");
 }
