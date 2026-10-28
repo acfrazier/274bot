@@ -3997,13 +3997,31 @@ fn chicken_bank_oracle_restarts_after_an_extra_bank_return_then_accepts_fresh_xp
 }
 
 #[test]
+fn chicken_bank_oracle_accepts_fresh_combat_after_chasing_outside_the_return_radius() {
+    let (mut runner, mut c) = chicken_bank_at_first_return();
+    set_world_tile(
+        &mut c,
+        WorldTile {
+            x: 3019,
+            z: 3288,
+            level: 0,
+        },
+    );
+    oracle_gain_strength(&mut c);
+    assert_eq!(oracle_finish(&mut runner, &mut c), RunnerStatus::Passed);
+}
+
+#[test]
 fn chicken_bank_oracle_rejects_no_xp_after_the_last_bank_return() {
     let (mut runner, mut c) = chicken_bank_at_first_return();
     chicken_bank_extra_return(&mut runner, &mut c, 2);
     let RunnerStatus::Failed(message) = oracle_finish(&mut runner, &mut c) else {
         panic!("the latest return must still require fresh XP");
     };
-    assert!(message.contains("not seen within 150 game ticks"), "{message}");
+    assert!(
+        message.contains("not seen within 150 game ticks"),
+        "{message}"
+    );
 }
 
 #[test]

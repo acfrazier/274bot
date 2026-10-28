@@ -1617,7 +1617,7 @@ impl ScenarioRunner {
             }
             return Ok(false);
         }
-        Ok(bank_closed && at_stand)
+        Ok(bank_closed)
     }
 
     fn observe_stall_combat(&mut self, xp_gained: bool) -> Result<bool, &'static str> {
