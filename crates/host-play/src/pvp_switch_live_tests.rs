@@ -274,7 +274,10 @@ impl Script for SwitchFight {
 #[derive(Default)]
 struct PartnerState {
     clicked_tick: Option<u64>,
-    far: Option<api::snapshot::WorldTile>,
+    /// The two waypoints of the run, fixed on the first Away tick.
+    legs: Option<(api::snapshot::WorldTile, api::snapshot::WorldTile)>,
+    at_second: bool,
+    sent: Option<api::snapshot::WorldTile>,
     run_set: bool,
     walked_tick: Option<u64>,
     refusals: Vec<String>,
@@ -286,7 +289,6 @@ fn partner_step(
     state: &mut PartnerState,
     protect_varp: i32,
     protect_button: i32,
-    chaser_name: &str,
 ) {
     use api::interact::Interactions;
     let mut snapshot = api::snapshot::GameSnapshot::new();
@@ -346,29 +348,32 @@ fn partner_step(
             else {
                 return;
             };
-            // The corner of the pen farthest from the machine's account, chosen
-            // again every few ticks, so the runner keeps its lead on a walker.
-            let Some(chaser) = snapshot
-                .players()
-                .iter()
-                .find(|row| row.actor.name.as_deref() == Some(chaser_name))
-                .map(|row| (row.actor.tile.x, row.actor.tile.z))
-            else {
-                return;
-            };
-            let far = [
-                (min_x + 1, min_z + 1),
-                (min_x + 1, max_z - 1),
-                (max_x - 1, min_z + 1),
-                (max_x - 1, max_z - 1),
-            ]
-            .into_iter()
-            .max_by_key(|corner| (corner.0 - chaser.0).abs().max((corner.1 - chaser.1).abs()))
-            .map(|(x, z)| api::snapshot::WorldTile { x, z, level: own.2 })
-            .expect("four corners");
-            if !pace(&state.walked_tick, 4) && state.far != Some(far) {
+            // Two legs: the pen's far end along its long side, then the far end
+            // of that wall, so a runner outpaces a walker for long enough.
+            let (first, second) = *state.legs.get_or_insert_with(|| {
+                let x = if own.0 - min_x > max_x - own.0 {
+                    min_x + 1
+                } else {
+                    max_x - 1
+                };
+                let z = if own.1 - min_z > max_z - own.1 {
+                    min_z + 1
+                } else {
+                    max_z - 1
+                };
+                let tile = |z| api::snapshot::WorldTile {
+                    x,
+                    z,
+                    level: own.2,
+                };
+                (tile(own.1), tile(z))
+            });
+            let arrived = (own.0 - first.x).abs().max((own.1 - first.z).abs()) <= 1;
+            let far = if arrived || state.at_second { second } else { first };
+            state.at_second |= arrived;
+            if !pace(&state.walked_tick, 12) || (arrived && state.sent != Some(far)) {
                 state.walked_tick = Some(tick);
-                state.far = Some(far);
+                state.sent = Some(far);
                 let result = Interactions::new(&snapshot, client).walk_nearest(far);
                 shared.lock().expect("shared lock").actions.push(ActionRow {
                     tick,
@@ -569,7 +574,6 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
                         &mut hook_partner.lock().expect("partner lock"),
                         protect_varp,
                         protect_button,
-                        &partners[*index],
                     );
                 }
             }
