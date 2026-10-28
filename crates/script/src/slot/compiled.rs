@@ -1601,13 +1601,7 @@ impl SlotScript {
         self.want_run = true;
         self.install_compiled(CompiledRun {
             script: ScriptOwner(Some(script)),
-            config: PreparedConfig::new(
-                card,
-                1,
-                1,
-                Arc::new(SettingsBag::new()),
-                (),
-            ),
+            config: PreparedConfig::new(card, 1, 1, Arc::new(SettingsBag::new()), ()),
             pending: None,
             pending_registry: None,
             run: RunKey {

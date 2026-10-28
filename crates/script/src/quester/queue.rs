@@ -635,7 +635,10 @@ mod tests {
         queue.mark_done(next);
         queue.refresh_blocked();
         assert_eq!(queue.next_candidate(), None);
-        assert!(!queue.all_done(), "a parked row keeps the normal blocked ending");
+        assert!(
+            !queue.all_done(),
+            "a parked row keeps the normal blocked ending"
+        );
         assert_eq!(queue.reason(0), Some("skipped by operator"));
 
         let restarted = Queue::from_index(&index, settings).unwrap();
