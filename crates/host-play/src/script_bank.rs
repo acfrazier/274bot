@@ -2081,7 +2081,7 @@ fn queue_bank(
             api::hostlog::Category::BankOp,
             api::hostlog::Level::Warn,
             slot = name,
-            "[DEBUG-cbf] pick tick={} from={from:?} eligible={:?} candidates={} targets={target_count}",
+            "[DEBUG-cbf] pick tick={} from={from:?} eligible={:?} candidates={} targets={target_count} options={opts:?} state={state:?}",
             native.evidence.tick, native.request.eligible, order.len(),
         );
         for candidate in &order {
