@@ -131,6 +131,35 @@ impl Script for SwitchFight {
                 }
             }
         }
+        if self.handle.is_some() {
+            let mut shared = self.shared.lock().expect("shared lock");
+            if shared.actions.len() < 80 {
+                let view = tick
+                    .frame()
+                    .snapshot()
+                    .map(|snapshot| {
+                        format!(
+                            "own {:?} players {:?}",
+                            snapshot.tile(),
+                            snapshot
+                                .players()
+                                .iter()
+                                .map(|row| (
+                                    row.actor.name.clone(),
+                                    row.actor.tile.x,
+                                    row.actor.tile.z,
+                                    row.actor.actions.iter().flatten().cloned().collect::<Vec<_>>(),
+                                ))
+                                .collect::<Vec<_>>()
+                        )
+                    })
+                    .unwrap_or_else(|| "no snapshot".into());
+                shared.actions.push(ActionRow {
+                    tick: now,
+                    what: format!("view {view}"),
+                });
+            }
+        }
         let polled = match self.handle.as_ref() {
             Some(handle) => tick.actions.poll(handle, &mut tick.cx),
             None => return Ok(ScriptFlow::Continue),
@@ -641,7 +670,10 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
                     shared.phase_since = begun;
                 }
             }
-            if shared.phase == Phase::Done || shared.begin_error.is_some() {
+            if shared.phase == Phase::Done
+                || shared.begin_error.is_some()
+                || shared.failure.is_some()
+            {
                 break;
             }
         }
