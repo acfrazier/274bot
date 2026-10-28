@@ -86,6 +86,8 @@ struct Shared {
     begun_tick: Option<u64>,
     failure: Option<String>,
     last: Option<(Style, SwitchState, u8, u8, u8, u8)>,
+    /// The Chebyshev distance to the holder at every observed tick.
+    series: Vec<(u64, i32)>,
     quiet: u32,
 }
 
@@ -197,23 +199,26 @@ impl Script for SwitchFight {
             return Ok(ScriptFlow::Continue);
         };
         let mut shared = self.shared.lock().expect("shared lock");
+        let snapshot = tick.frame().snapshot();
+        let partner = snapshot.and_then(|snapshot| {
+            snapshot
+                .players()
+                .iter()
+                .find(|row| row.actor.name.as_deref() == Some(self.partner.as_str()))
+                .cloned()
+        });
+        let own_tile = snapshot.and_then(|snapshot| snapshot.tile());
+        let partner_tile = partner
+            .as_ref()
+            .map(|row| (row.actor.tile.x, row.actor.tile.z, row.actor.tile.level));
+        let distance = match (own_tile, partner_tile) {
+            (Some(a), Some(b)) => (a.0 - b.0).abs().max((a.1 - b.1).abs()),
+            _ => -1,
+        };
+        if shared.series.last().is_none_or(|(at, _)| *at != now) {
+            shared.series.push((now, distance));
+        }
         if shared.last != Some(state) {
-            let snapshot = tick.frame().snapshot();
-            let partner = snapshot.and_then(|snapshot| {
-                snapshot
-                    .players()
-                    .iter()
-                    .find(|row| row.actor.name.as_deref() == Some(self.partner.as_str()))
-                    .cloned()
-            });
-            let own_tile = snapshot.and_then(|snapshot| snapshot.tile());
-            let partner_tile = partner
-                .as_ref()
-                .map(|row| (row.actor.tile.x, row.actor.tile.z, row.actor.tile.level));
-            let distance = match (own_tile, partner_tile) {
-                (Some(a), Some(b)) => (a.0 - b.0).abs().max((a.1 - b.1).abs()),
-                _ => -1,
-            };
             let row = TraceRow {
                 tick: now,
                 phase: shared.phase,
@@ -780,7 +785,18 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
         "t3_completed_with_sword_worn": t3.is_some_and(|row| worn(row, 3, sword)),
         "t3_partner_showed_no_protect": t3_start.is_some_and(|row| row.partner_headicons & 0b11_1000 == 0),
         "t4_started_by_reach": t4_start.is_some(),
-        "t4_partner_out_of_reach": t4_start.is_some_and(|row| row.distance > 1),
+        // The machine counts ticks out of reach from its own frames; the same
+        // distance in the last ten ticks up to the switch is the evidence.
+        "t4_partner_out_of_reach": t4_start.is_some_and(|start| {
+            shared
+                .series
+                .iter()
+                .filter(|(at, distance)| {
+                    *at + 9 >= start.tick && *at <= start.tick && *distance > 1
+                })
+                .count()
+                >= 8
+        }),
         "t4_completed_with_bow_worn": t4.is_some_and(|row| worn(row, 3, bow)),
         "switch_failures": rows.last().map_or(0, |row| row.failures),
     });
@@ -806,6 +822,7 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
         "partner_refusals": refusals,
         "trace": rows,
         "actions": shared.actions,
+        "distance_series": shared.series,
         "ids": { "rune_scimitar": sword, "maple_shortbow": bow, "iron_arrow": arrows },
         "verdict": verdict,
         "passed": passed,
