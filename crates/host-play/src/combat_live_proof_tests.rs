@@ -6709,9 +6709,7 @@ fn report_multi_op_count_matches(capture: &CombatCapture, report: &Value) -> boo
     };
     let observed = batch_plans(capture)
         .iter()
-        .filter(|plan| {
-            (first_tick..=report_tick).contains(&plan.tick) && plan.rows.len() >= 2
-        })
+        .filter(|plan| (first_tick..=report_tick).contains(&plan.tick) && plan.rows.len() >= 2)
         .count() as i64;
     integer(report, "combat_multi_op_plans") == Some(observed)
 }
