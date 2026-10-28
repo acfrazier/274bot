@@ -19,7 +19,7 @@ class RouteSafetyTests(unittest.TestCase):
         self.assertEqual({f["reason"] for f in failures}, {"outside-approved-area", "hunter-envelope"})
 
     def test_chosen_bank_resource_routes_pass_and_envelope_edge_fails(self):
-        areas = [(2660, 2698, 3512, 3560), (2680, 2720, 3485, 3558), (2706, 2753, 3460, 3506)]
+        areas = [(2660, 2706, 3512, 3564), (2680, 2720, 3485, 3558), (2706, 2753, 3460, 3506)]
         highwayman = {"name": "highwayman", "spawn": [2735, 3521, 0], "envelope": 14}
         route = {"tiles": [[2721, 3475, 0], [2724, 3493, 0], [2710, 3520, 0], [2683, 3540, 0]]}
         cache = {}

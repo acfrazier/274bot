@@ -76,9 +76,9 @@ impl SafeWalk {
 const NORMAL_SAFE_WALK: &[SafeWalk] = &[
     SafeWalk {
         min_x: 2660,
-        max_x: 2698,
+        max_x: 2706,
         min_z: 3512,
-        max_z: 3560,
+        max_z: 3564,
     },
     SafeWalk {
         min_x: 2680,
@@ -138,7 +138,7 @@ fn safe_walk_rejects_every_boundary_and_old_unsafe_route() {
         (2659, 3540, 0),
         (2754, 3480, 0),
         (2730, 3459, 0),
-        (2680, 3561, 0),
+        (2680, 3565, 0),
         (2700, 3480, 1),
         (2735, 3521, 0),
         (2811, 3473, 0),
