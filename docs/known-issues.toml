@@ -384,6 +384,19 @@ severity = "medium"
 owner = "T2.rest walking"
 
 [[item]]
+id = "boat-fare-post-payout-unreachable"
+kind = "known-issue"
+area = "Scripts"
+text = """A transient engine-side "I can't reach that!" report has also been
+  observed after Luthas pays the fare and before boarding, with no Luthas reach
+  failure in the host log. Its cause is unknown; it is tracked separately from
+  the host's bounded Luthas approach retries."""
+first = "0.2.8"
+target = "none"
+severity = "medium"
+owner = "engine"
+
+[[item]]
 id = "copy-settings-renamed-target"
 kind = "known-issue"
 area = "Panel"

@@ -67,9 +67,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   fight ends `api.combat.fight` as `aborted` with reason `user-input`. The host
   has settled it that way since 0.2.4; the declarations and pages still
   described an `interrupted` result.
-- Fare recovery now retries failed Luthas approaches from the bot's current
-  position, using other nearby stands where available, for up to three
-  attempts before it reports failure. The last reach detail stays in the logs.
+- Fare recovery now retries failed Luthas approaches from the four orthogonal
+  tiles next to Luthas, selecting only walkable, reachable, untried stands.
+  Failed walks, reach responses, and dialogue timeouts share a three-approach
+  limit; each failed approach and the final failure are logged.
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 

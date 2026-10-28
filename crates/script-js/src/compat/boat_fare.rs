@@ -32,7 +32,9 @@
 //! Karamja facts come from the selected Luthas and banana-crate scripts,
 //! plantation/tree configs, identity packs and map placements. The frozen
 //! `karamja.ts` orchestration is ported here: talk to Luthas, fill the
-//! configured crate from fruiting placements, then talk again. Frozen
+//! configured crate from fruiting placements, then talk again. Unlike frozen
+//! orchestration, native talk stages retry failed approaches within a bounded
+//! budget.
 //! primitives ported here: `openDialogue` / `talkChoosingBy` with no rules
 //! (`primitives.ts:227–253, 276–318`), `driveChoice` / `driveUntil` /
 //! `useOnLoc` / `settleScene` (`prompts.ts:30–93, 316–345`), `pickBananas`
@@ -45,13 +47,12 @@
 
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed;
-use crate::reach_entity::{
-    chat_mark, chat_state, nearest_npc_tile, npc_talkable, NpcReach, NpcReachOpts, TalkExpect,
-};
+use crate::reach_entity::{chat_mark, chat_state, npc_talkable, talk_row, NpcReach, NpcReachOpts, TalkExpect};
 use crate::supply_v2;
 use crate::walk::{
     avoid_refusal, here, interrupted, resolve_teleports, teleport_span_allows, Resilient, Walk,
 };
+use api::query::SceneReachOptions;
 use api::snapshot::WorldTile;
 use script::shim::{InspectAvoidWire, InteractReq};
 use serde::Deserialize;
@@ -66,10 +67,11 @@ const TALK_WALK_MS: u64 = 120_000;
 /// Frozen `walkResilient(..., { attempts: 3, timeoutMs: 180_000 })` legs.
 const LEG_ATTEMPTS: u32 = 3;
 const LEG_MS: u64 = 180_000;
-/// Reuse the content-backed three-attempt budget for Karamja resilient legs.
+/// The frozen `walkResilient(..., { attempts: 3 })` limit
+/// (`Traversal.ts:160–170`) supplies the talk retry budget.
 const TALK_ATTEMPTS: u32 = LEG_ATTEMPTS;
-/// Signed offsets for orthogonal retry stands around Luthas's observed tile.
-const TALK_RETRY_OFFSETS: [i32; (TALK_ATTEMPTS - 1) as usize] = [1, -1];
+/// Orthogonal candidate stands around Luthas's observed tile.
+const TALK_RETRY_OFFSETS: [(i32, i32); 4] = [(0, -1), (1, 0), (0, 1), (-1, 0)];
 /// Frozen `settleScene` (`prompts.ts:30–32`).
 const SETTLE_TICKS: u32 = 2;
 /// Frozen `searchBananaCrate` message wait (`crate.ts:52`).
@@ -599,7 +601,11 @@ impl Talk {
                         *self = Self::Drive(Pages::new(true, &facts.preferences));
                         self.step(facts, cx, logs)
                     }
-                    Some("unreachable") => TalkProgress::Unreachable,
+                    Some("unreachable") => TalkProgress::Failed("reach"),
+                    Some("retry") => {
+                        logs.push_back(format!("'{}' never opened a dialogue", facts.luthas_name));
+                        TalkProgress::Failed("dialogue-timeout")
+                    }
                     Some(_) => {
                         logs.push_back(format!("'{}' never opened a dialogue", facts.luthas_name));
                         TalkProgress::Done(false)
@@ -615,7 +621,7 @@ impl Talk {
 
 enum TalkProgress {
     Pending,
-    Unreachable,
+    Failed(&'static str),
     Done(bool),
 }
 
@@ -1095,17 +1101,115 @@ impl Fill {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+struct TriedStands {
+    tiles: [Option<WorldTile>; TALK_ATTEMPTS as usize * 2],
+}
+
+impl TriedStands {
+    fn contains(&self, tile: WorldTile) -> bool {
+        self.tiles.contains(&Some(tile))
+    }
+
+    fn insert(&mut self, tile: WorldTile) {
+        if self.contains(tile) {
+            return;
+        }
+        if let Some(slot) = self.tiles.iter_mut().find(|slot| slot.is_none()) {
+            *slot = Some(tile);
+        }
+    }
+}
+
+fn next_talk_stand(npc: &str, tried: &TriedStands) -> Result<WorldTile, &'static str> {
+    let Some(row) = talk_row(npc) else {
+        return Err("no posted talkable Luthas row");
+    };
+    if !row.reachable_adj {
+        return Err("the posted Luthas row has no reachable adjacent tile");
+    }
+    let Some(from) = here() else {
+        return Err("the observed player tile is unavailable");
+    };
+    let target = row.world_tile();
+    let options = SceneReachOptions {
+        max_steps: Some(crate::reach_entity::BFS_STEPS),
+        adjacent_ok: false,
+    };
+    crate::reach_query::with_view(|view| {
+        if !view.available {
+            return Err("the posted reach view is unavailable");
+        }
+        let mut nearest: Option<(u64, WorldTile)> = None;
+        for (dx, dz) in TALK_RETRY_OFFSETS {
+            let (Some(x), Some(z)) = (target.x.checked_add(dx), target.z.checked_add(dz)) else {
+                continue;
+            };
+            let stand = WorldTile {
+                x,
+                z,
+                level: target.level,
+            };
+            if tried.contains(stand) || !view.walkable(stand) || !view.can_reach(stand, &options) {
+                continue;
+            }
+            let distance =
+                u64::from(from.x.abs_diff(stand.x)) + u64::from(from.z.abs_diff(stand.z));
+            match nearest {
+                Some((best, _)) if distance >= best => {}
+                _ => nearest = Some((distance, stand)),
+            }
+        }
+        nearest
+            .map(|(_, stand)| stand)
+            .ok_or("all reachable orthogonal Luthas stands are blocked or already tried")
+    })
+}
+
+fn record_recovery_log(logs: &mut VecDeque<String>, line: String) {
+    api::host_log!(
+        api::hostlog::Category::ScriptLifecycle,
+        api::hostlog::Level::Warn,
+        "{}",
+        line
+    );
+    logs.push_back(line);
+}
+
+fn log_approach_failure(
+    logs: &mut VecDeque<String>,
+    attempt: u32,
+    cause: &str,
+    stand: WorldTile,
+    detail: &str,
+) {
+    let line = format!(
+        "boat fare Luthas approach {attempt}/{TALK_ATTEMPTS} failed cause={cause} stand=({},{},{}) detail={detail}",
+        stand.x, stand.z, stand.level
+    );
+    record_recovery_log(logs, line);
+}
+
+fn log_terminal_failure(logs: &mut VecDeque<String>, attempt: u32, detail: &str) {
+    let line = format!(
+        "boat fare Luthas recovery ended after approach {attempt}/{TALK_ATTEMPTS}: {detail}"
+    );
+    record_recovery_log(logs, line);
+}
+
 enum Stage {
     TalkWalk {
         second: bool,
         attempt: u32,
-        retry_axis: Option<usize>,
+        tried_stands: TriedStands,
+        stand: WorldTile,
         walk: Walk,
     },
     Talk {
         second: bool,
         attempt: u32,
-        retry_axis: Option<usize>,
+        tried_stands: TriedStands,
+        stand: WorldTile,
         talk: Talk,
     },
     Fill(Fill),
@@ -1142,7 +1246,7 @@ impl Recover {
             "no boat fare: earning {} coins at {}'s plantation",
             facts.coin_payout, facts.luthas_name
         ));
-        let stage = Self::talk(&facts, false, 1, None, cx, logs)?;
+        let stage = Self::talk(&facts, false, 1, TriedStands::default(), cx, logs)?;
         Ok(Self {
             facts,
             stage,
@@ -1155,7 +1259,7 @@ impl Recover {
         facts: &BoatFacts,
         second: bool,
         mut attempt: u32,
-        mut retry_axis: Option<usize>,
+        mut tried_stands: TriedStands,
         cx: &mut Cx<'_>,
         logs: &mut VecDeque<String>,
     ) -> Result<Stage, bool> {
@@ -1163,50 +1267,21 @@ impl Recover {
             if interrupted(cx) {
                 return Err(false);
             }
-            let (dest, radius) = if attempt == 1 {
+            let (stand, radius) = if attempt == 1 {
                 (facts.luthas_anchor, 2)
             } else {
-                let Some(offset) = attempt
-                    .checked_sub(2)
-                    .and_then(|index| usize::try_from(index).ok())
-                    .and_then(|index| TALK_RETRY_OFFSETS.get(index))
-                    .copied()
-                else {
-                    return Err(false);
-                };
-                let target = nearest_npc_tile(&facts.luthas_name).unwrap_or(facts.luthas_anchor);
-                let axis = match retry_axis {
-                    Some(axis) => axis,
-                    None => {
-                        let Some(from) = here() else {
-                            return Err(false);
-                        };
-                        // Step perpendicular to the original approach, avoiding its stand.
-                        let axis = if from.x.abs_diff(target.x) >= from.z.abs_diff(target.z) {
-                            1
-                        } else {
-                            0
-                        };
-                        retry_axis = Some(axis);
-                        axis
+                match next_talk_stand(&facts.luthas_name, &tried_stands) {
+                    Ok(stand) => (stand, 0),
+                    Err(reason) => {
+                        let reason = format!("no retry stand: {reason}");
+                        log_terminal_failure(logs, attempt.saturating_sub(1), &reason);
+                        return Err(false);
                     }
-                };
-                let (dx, dz) = match axis {
-                    0 => (offset, 0),
-                    1 => (0, offset),
-                    _ => return Err(false),
-                };
-                (
-                    WorldTile {
-                        x: target.x.saturating_add(dx),
-                        z: target.z.saturating_add(dz),
-                        level: target.level,
-                    },
-                    0,
-                )
+                }
             };
+            tried_stands.insert(stand);
             match Walk::begin_compat_avoiding(
-                dest,
+                stand,
                 radius,
                 TALK_WALK_MS,
                 false,
@@ -1218,7 +1293,8 @@ impl Recover {
                     return Ok(Stage::TalkWalk {
                         second,
                         attempt,
-                        retry_axis,
+                        tried_stands,
+                        stand,
                         walk,
                     });
                 }
@@ -1226,11 +1302,23 @@ impl Recover {
                     return Ok(Stage::Talk {
                         second,
                         attempt,
-                        retry_axis,
+                        tried_stands,
+                        stand,
                         talk: Talk::start(facts, logs)?,
                     });
                 }
-                Err(false) => attempt += 1,
+                Err(false) => {
+                    let detail = "the host could not start a walk to the stand";
+                    log_approach_failure(logs, attempt, "walk", stand, detail);
+                    if let Some(current) = here() {
+                        tried_stands.insert(current);
+                    }
+                    if attempt >= TALK_ATTEMPTS {
+                        log_terminal_failure(logs, attempt, detail);
+                        return Err(false);
+                    }
+                    attempt += 1;
+                }
             }
         }
         Err(false)
@@ -1271,15 +1359,23 @@ impl Recover {
             Stage::TalkWalk {
                 second,
                 attempt,
-                retry_axis,
+                tried_stands,
+                stand,
                 walk,
             } => {
                 let arrived = walk.step(cx)?;
                 if !arrived {
+                    let detail = "the host walk did not reach the selected stand";
+                    log_approach_failure(logs, *attempt, "walk", *stand, detail);
+                    let mut tried = *tried_stands;
+                    if let Some(current) = here() {
+                        tried.insert(current);
+                    }
                     if *attempt >= TALK_ATTEMPTS {
+                        log_terminal_failure(logs, *attempt, detail);
                         return Some(false);
                     }
-                    match Self::talk(&self.facts, *second, *attempt + 1, *retry_axis, cx, logs) {
+                    match Self::talk(&self.facts, *second, *attempt + 1, tried, cx, logs) {
                         Ok(stage) => stage,
                         Err(done) => return Some(done),
                     }
@@ -1287,7 +1383,8 @@ impl Recover {
                     Stage::Talk {
                         second: *second,
                         attempt: *attempt,
-                        retry_axis: *retry_axis,
+                        tried_stands: *tried_stands,
+                        stand: *stand,
                         talk: match Talk::start(&self.facts, logs) {
                             Ok(talk) => talk,
                             Err(done) => return Some(done),
@@ -1298,36 +1395,70 @@ impl Recover {
             Stage::Talk {
                 second,
                 attempt,
-                retry_axis,
+                tried_stands,
+                stand,
                 talk,
-            } => match talk.step(&self.facts, cx, logs) {
-                TalkProgress::Pending => return None,
-                TalkProgress::Unreachable if *attempt < TALK_ATTEMPTS => {
-                    match Self::talk(&self.facts, *second, *attempt + 1, *retry_axis, cx, logs) {
-                        Ok(stage) => stage,
-                        Err(done) => return Some(done),
+            } => {
+                let log_start = logs.len();
+                match talk.step(&self.facts, cx, logs) {
+                    TalkProgress::Pending => return None,
+                    TalkProgress::Failed(cause) => {
+                        let fallback = match cause {
+                            "reach" => "the server reported that Luthas was unreachable",
+                            "dialogue-timeout" => "Luthas did not open a dialogue",
+                            _ => "the Luthas approach failed",
+                        };
+                        let detail = logs
+                            .iter()
+                            .skip(log_start)
+                            .last()
+                            .cloned()
+                            .unwrap_or_else(|| fallback.to_string());
+                        let failed_stand = here().unwrap_or(*stand);
+                        log_approach_failure(logs, *attempt, cause, failed_stand, &detail);
+                        let mut tried = *tried_stands;
+                        tried.insert(failed_stand);
+                        if *attempt >= TALK_ATTEMPTS {
+                            log_terminal_failure(logs, *attempt, &detail);
+                            return Some(false);
+                        }
+                        match Self::talk(&self.facts, *second, *attempt + 1, tried, cx, logs) {
+                            Ok(stage) => stage,
+                            Err(done) => return Some(done),
+                        }
                     }
-                }
-                TalkProgress::Unreachable | TalkProgress::Done(false) => return Some(false),
-                TalkProgress::Done(true) => {
-                    let coins = held(self.facts.coins);
-                    if *second || coins >= self.facts.coin_payout {
-                        return Some(coins >= self.facts.coin_payout);
-                    }
-                    if interrupted(cx) {
+                    TalkProgress::Done(false) => {
+                        let detail = logs
+                            .iter()
+                            .skip(log_start)
+                            .last()
+                            .cloned()
+                            .unwrap_or_else(|| "the dialogue did not complete".to_string());
+                        let failed_stand = here().unwrap_or(*stand);
+                        log_approach_failure(logs, *attempt, "dialogue", failed_stand, &detail);
+                        log_terminal_failure(logs, *attempt, &detail);
                         return Some(false);
                     }
-                    match Fill::start(self.facts.clone(), cx, logs) {
-                        Ok(fill) => Stage::Fill(fill),
-                        Err(_) => return Some(false),
+                    TalkProgress::Done(true) => {
+                        let coins = held(self.facts.coins);
+                        if *second || coins >= self.facts.coin_payout {
+                            return Some(coins >= self.facts.coin_payout);
+                        }
+                        if interrupted(cx) {
+                            return Some(false);
+                        }
+                        match Fill::start(self.facts.clone(), cx, logs) {
+                            Ok(fill) => Stage::Fill(fill),
+                            Err(_) => return Some(false),
+                        }
                     }
                 }
-            },
+            }
             Stage::Fill(fill) => {
                 if !fill.step(cx, logs)? {
                     return Some(false);
                 }
-                match Self::talk(&self.facts, true, 1, None, cx, logs) {
+                match Self::talk(&self.facts, true, 1, TriedStands::default(), cx, logs) {
                     Ok(stage) => stage,
                     Err(done) => return Some(done),
                 }
@@ -1336,6 +1467,7 @@ impl Recover {
         self.stage = next;
         None
     }
+
 }
 
 #[derive(Clone, Copy, Deserialize)]
