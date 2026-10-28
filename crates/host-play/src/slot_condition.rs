@@ -100,8 +100,12 @@ struct PendingLatch {
 enum PendingFruit {
     #[default]
     None,
-    Chat { tick: u16 },
-    CountLoss { tick: u16 },
+    Chat {
+        tick: u16,
+    },
+    CountLoss {
+        tick: u16,
+    },
 }
 
 pub(crate) struct SlotCondition {
@@ -122,7 +126,7 @@ pub(crate) struct SlotCondition {
 }
 
 const _: () = {
-    assert!(std::mem::size_of::<SlotCondition>() == 112);
+    assert!(std::mem::size_of::<SlotCondition>() == 104);
     assert!(std::mem::size_of::<SlotCondition>() <= 160);
 };
 
