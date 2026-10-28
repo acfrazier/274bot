@@ -433,21 +433,28 @@ fn write_guardian_route(
         client.gens.player_info = client.gens.player_info.wrapping_add(1);
         client.gens.scene = client.gens.scene.wrapping_add(1);
         snapshot.rebuild(client);
-        let status = guardian.tick_with_live_policies(
-            client, snapshot, settings, &context, 0, None,
-        );
+        let status =
+            guardian.tick_with_live_policies(client, snapshot, settings, &context, 0, None);
         if status.kind != Some(RandomKind::Evade) || !status.hold {
             return write_client_error(
-                batch, ClientRoute::Guardian(request), Some(scene_base),
-                "guardian-did-not-own-evade", out,
+                batch,
+                ClientRoute::Guardian(request),
+                Some(scene_base),
+                "guardian-did-not-own-evade",
+                out,
             );
         }
         if !client.try_move_path.is_empty() {
             let flee_path = client.try_move_path.clone();
             let mut row = client_row(batch, ClientRoute::Guardian(request));
             row["scene_base"] = json!(scene_base);
-            row["target"] = json!(flee_path.last().map(|&(x, z)| [base_x + x, base_z + z, level]));
-            row["tiles"] = json!(flee_path.iter().map(|&(x, z)| [base_x + x, base_z + z, level]).collect::<Vec<_>>());
+            row["target"] = json!(flee_path
+                .last()
+                .map(|&(x, z)| [base_x + x, base_z + z, level]));
+            row["tiles"] = json!(flee_path
+                .iter()
+                .map(|&(x, z)| [base_x + x, base_z + z, level])
+                .collect::<Vec<_>>());
             write_json_line(out, &row)?;
             // resolve() returns to flee_from with an exact ground walk.
             // Cover resolution from every intermediate flee tile, not only
@@ -455,9 +462,7 @@ fn write_guardian_route(
             for (return_x, return_z) in flee_path {
                 client.out.pos = 0;
                 client.try_move_path.clear();
-                let reached = client.tryMove(
-                    return_x, return_z, x, z, false, 0, 0, 0, 0, 0, 0,
-                );
+                let reached = client.tryMove(return_x, return_z, x, z, false, 0, 0, 0, 0, 0, 0);
                 let mut row = json!({
                     "batch":batch, "kind":"guardian-return", "npc_id":request.npc_id,
                     "source":[base_x + return_x,base_z + return_z,level],
@@ -468,8 +473,11 @@ fn write_guardian_route(
                 } else if client.try_move_path.is_empty() {
                     row["error"] = json!("client-route-path-empty");
                 } else {
-                    row["tiles"] = json!(client.try_move_path.iter()
-                        .map(|&(x, z)| [base_x + x, base_z + z, level]).collect::<Vec<_>>());
+                    row["tiles"] = json!(client
+                        .try_move_path
+                        .iter()
+                        .map(|&(x, z)| [base_x + x, base_z + z, level])
+                        .collect::<Vec<_>>());
                 }
                 write_json_line(out, &row)?;
             }
@@ -477,7 +485,11 @@ fn write_guardian_route(
         }
     }
     write_client_error(
-        batch, ClientRoute::Guardian(request), Some(scene_base), "client-no-route", out,
+        batch,
+        ClientRoute::Guardian(request),
+        Some(scene_base),
+        "client-no-route",
+        out,
     )
 }
 
@@ -585,7 +597,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .chain(batch.hazards.into_iter().map(ClientRoute::Hazard))
         {
             write_client_route(
-                &mut client, &loaded_flags, &batch.name, route, &mut guardian_audit, &mut out,
+                &mut client,
+                &loaded_flags,
+                &batch.name,
+                route,
+                &mut guardian_audit,
+                &mut out,
             )?;
         }
     }

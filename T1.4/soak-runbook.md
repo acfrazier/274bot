@@ -58,14 +58,14 @@ Each account retains one radius-five Start anchor from `NORMAL_STARTS`.
 The checker requires at least two eligible normal trees for each account.
 Patches can share trees. The result records each account's eligible tree count.
 This avoids the separate Gatherer wait finding without changing that product behavior.
-The other ten accounts use the `woodcutting.seers` maple Site and radius twelve.
-Both groups use Seers bank.
+The other ten accounts use the `woodcutting.flax` maple Site and radius twelve.
+Both groups use Catherby bank.
 Each account receives Woodcutting 99, one rune axe, and 64 banked spare rune axes.
 
 `NORMAL_SAFE_WALK`, `x=2680..2753,z=3440..3506,level=0`, defines the resource census input.
 It is not a movement stop condition.
 The guard rejects every authored danger envelope and movement outside `OUTER_WALK_BOUNDS`.
-The outer bound is `x=2624..2815,z=3392..3583,level=0`.
+The outer bound is `x=2624..2879,z=3392..3583,level=0`.
 The product-classified Maze and Mime interiors retain their separate travel rules.
 The guard accepts correct Guardian travel outside the worksite rectangle when the complete route remains safe.
 
@@ -73,6 +73,9 @@ The checker uses each hunter's `wanderrange + huntrange + size`.
 It checks all selected-content hunter placements, independently of combat-level immunity and collision shielding.
 It does not exempt a route because a random event caused it.
 Main selected this oracle from source evidence before diagnostic launch 3.
+Real Guardian/client queries rejected Seers maple access and Seers bank.
+A Swarm flee from `(2724,3493)` enters a highwayman envelope at `(2738,3507)`.
+The replacement retains maple gathering at the authored Flax site and uses Catherby bank.
 
 Build the offline probe and check the actual routes before either arm:
 
@@ -103,9 +106,11 @@ Each worksite and bank tile receives all adjacent NPC spawn directions and the s
 The Guardian chooses its real ordered exact goals, nearest fallback, and nearer-ring retries.
 The probe checks exact return walks from every intermediate accepted flee tile.
 It also checks every goal in the Guardian's four-tile hazard ring through the real client BFS.
+Every accepted Guardian tile also enters the ordinary replan closure.
 The checker examines complete walk legs and rejects routes that require transport interactions.
 It rejects routes inside any hunter envelope or outside the wide outer bound.
 The result retains source, content-map, catalogue, v17 pack, raw-flag and client-config hashes.
+Native route rows use lossless gzip compression in `*-routes.jsonl.gz`.
 
 An unroutable client alternative returns before movement encoding.
 The checker counts this outcome as nonmovement for loc approaches, ordinary walk aims, and Guardian walks.

@@ -2,6 +2,7 @@
 """Two-way oracle tests. Real-pack route coverage runs through t14_soak_routes.py."""
 
 import argparse
+import gzip
 import json
 import tempfile
 from pathlib import Path
@@ -34,7 +35,7 @@ class RouteSafetyTests(unittest.TestCase):
             route, [(2788, 2834, 3436, 3468), (2788, 2811, 3436, 3476)], [wolf])
         self.assertEqual({f["reason"] for f in failures}, {"outside-outer-bound", "hunter-envelope"})
 
-    def test_chosen_bank_resource_routes_pass_and_envelope_edge_fails(self):
+    def test_historical_bank_resource_route_passes_and_envelope_edge_fails(self):
         areas = [(2680, 2753, 3440, 3506)]
         highwayman = {"name": "highwayman", "spawn": [2735, 3521, 0], "envelope": 14}
         # Complete v17 route from the maple Start to a Seers bank stand.
@@ -79,14 +80,14 @@ class RouteSafetyTests(unittest.TestCase):
             tile = [x - hunter["envelope"], z, level]
             failures = audit.route_violations({"tiles": [tile]}, outer, [hunter])
             self.assertIn("hunter-envelope", {row["reason"] for row in failures})
-        for tile in [[2623, 3480, 0], [2816, 3480, 0],
+        for tile in [[2623, 3480, 0], [2880, 3480, 0],
                      [2700, 3391, 0], [2700, 3584, 0], [2700, 3480, 1]]:
             failures = audit.route_violations({"tiles": [tile]}, outer, hunters)
             self.assertIn("outside-outer-bound", {row["reason"] for row in failures})
 
     def test_guardian_requests_cover_content_ranges_spawns_and_hazard_ring(self):
         game = json.loads((audit.ROOT / "crates/api/data/game-data/289.json").read_text())
-        origins = {(2695, 3473, 0), (2724, 3493, 0)}
+        origins = {(2695, 3473, 0), (2808, 3443, 0)}
         requests, ranges = audit.guardian_requests(game, origins)
         self.assertEqual({(row["maxrange"], row["wanderrange"]) for row in ranges},
                          {(3, 3), (5, 3), (15, 15)})
@@ -179,12 +180,12 @@ class RouteSafetyTests(unittest.TestCase):
             root = Path(folder)
             args = argparse.Namespace(replay=root, output=root / "fresh")
             inputs = root / "example-batches.json"
-            routes = root / "example-routes.jsonl"
+            routes = root / "example-routes.jsonl.gz"
             inputs.write_text(json.dumps([dict(
                 name="example", sources=[[1, 2, 0]], targets=[[2, 2, 0]],
                 retreats=[], approaches=[], walks=[], guardians=[], hazards=[],
             )]))
-            routes.write_text('{"kind":"walk","tiles":[[1,2,0],[2,2,0]]}\n')
+            routes.write_bytes(gzip.compress(b'{"kind":"walk","tiles":[[1,2,0],[2,2,0]]}\n'))
             self.assertEqual(
                 audit.run_probe(args, "example", {(1, 2, 0)}, {(2, 2, 0)}), routes)
             self.assertFalse(args.output.exists())

@@ -9,10 +9,12 @@ the client's own BFS for loc interactions, walk aims, and Guardian travel.
 
 import argparse
 import ast
+import gzip
 import hashlib
 import json
 from pathlib import Path
 import re
+import shutil
 import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -84,7 +86,11 @@ def outer_walk_bounds(source):
     return rectangles
 
 
-def census(content, game, starts, rectangles, maple_site, normal_radius):
+def fixture_bank(source):
+    return re.search(r'const SOAK_BANK: &str = "([^"]+)";', source.read_text())[1]
+
+
+def census(content, game, starts, rectangles, maple_site, normal_radius, bank_name):
     locs = {row["id"]: row["config"] for row in game["loc_names"]["rows"]}
     tables = blocks(content / "scripts/skill_woodcutting/configs/trees.dbrow")
     normal = set(re.findall(r"^data=tree,(.+)$", tables["normal_tree_table"], re.M))
@@ -100,7 +106,7 @@ def census(content, game, starts, rectangles, maple_site, normal_radius):
     bank_rows = {
         (bank["x"], bank["z"], bank["level"]): bank
         for bank in game["bank_placements"]["rows"]
-        if bank["name"] == "Seers" and bank["kind"] == "object"
+        if bank["name"] == bank_name and bank["kind"] == "object"
     }
     bank_locs = []
     for mx in range(min(r[0] for r in rectangles) // 64, max(r[1] for r in rectangles) // 64 + 1):
@@ -137,7 +143,7 @@ def census(content, game, starts, rectangles, maple_site, normal_radius):
     if not any(row["kind"] == "maple" for row in resources):
         raise ValueError("no authored maple resources")
     if len(bank_locs) != len(bank_rows):
-        raise ValueError("selected-content maps do not contain every Seers bank loc")
+        raise ValueError(f"selected-content maps do not contain every {bank_name} bank loc")
     return resources, hunter_envelopes(game), sources, bank_locs
 
 
@@ -244,15 +250,24 @@ def run_probe(args, name, sources, targets, retreats=(), approaches=(), walks=()
         # JSON normalizes the generated coordinate tuples to the stored arrays.
         if json.loads(inputs.read_text()) != json.loads(json.dumps(payload)):
             raise ValueError(f"replay requests differ from the actual producer input: {inputs}")
-        routes = args.replay / f"{name}-routes.jsonl"
+        routes = args.replay / f"{name}-routes.jsonl.gz"
         if not routes.is_file():
             raise FileNotFoundError(f"replay route output missing: {routes}")
         return routes
     inputs = args.output / f"{name}-batches.json"
     inputs.write_text(json.dumps(payload) + "\n")
-    routes = args.output / f"{name}-routes.jsonl"
-    subprocess.run([str(path.resolve()) for path in
-                    (args.router, args.pack, args.flags, args.cache, inputs, routes)], check=True)
+    routes = args.output / f"{name}-routes.jsonl.gz"
+    command = [str(path.resolve()) for path in
+               (args.router, args.pack, args.flags, args.cache, inputs)]
+    command.append("/dev/stdout")
+    # Retain every native row losslessly without duplicating enormous raw
+    # route files. The producer still owns all routing and path extraction.
+    with subprocess.Popen(command, stdout=subprocess.PIPE) as producer:
+        with gzip.open(routes, "wb", compresslevel=1) as output:
+            shutil.copyfileobj(producer.stdout, output)
+        returncode = producer.wait()
+        if returncode:
+            raise subprocess.CalledProcessError(returncode, command)
     return routes
 
 
@@ -298,8 +313,9 @@ def main():
     sites = json.loads(config.read_text())["workload"]["site_names"]
     starts, maple_start, rectangles, normal_radius = fixture(source)
     outer_bounds = outer_walk_bounds(source)
+    bank_name = fixture_bank(source)
     resources, hunters, maps, bank_locs = census(
-        args.content, game, starts, rectangles, sites[1], normal_radius)
+        args.content, game, starts, rectangles, sites[1], normal_radius, bank_name)
     patch_counts = normal_patch_capacity(resources, len(starts))
     sources = {str(p): digest(p) for p in [
         source, catalog, config, args.pack, args.flags, args.cache / "config", *sorted(maps),
@@ -315,7 +331,7 @@ def main():
         targets.update(goals_for(resource))
     bank_goals = set()
     for bank in game["bank_placements"]["rows"]:
-        if bank["name"] == "Seers":
+        if bank["name"] == bank_name:
             bank_goals.update(goals_for(dict(origin=[bank["x"], bank["z"], bank["level"]],
                                             width=bank["width"], height=bank["length"])))
     targets.update(bank_goals)
@@ -345,7 +361,7 @@ def main():
     round_number, walk_rounds = 0, 0
     while files:
         routes = files.pop(0)
-        for line in routes.open():
+        for line in gzip.open(routes, "rt"):
             row = json.loads(line)
             origin = tuple(row["source"])
             guardian_kind = row.get("kind", "").startswith("guardian-")
@@ -377,8 +393,7 @@ def main():
                 if target in bank_goals:
                     bank_reachable.add(origin)
                 resource_reached.update(access.get((origin, target), ()))
-                if not guardian_kind:
-                    pending.update(tuple(t) for t in row["tiles"])
+                pending.update(tuple(t) for t in row["tiles"])
                 failures = route_violations(row, outer_bounds, hunters, tile_cache)
                 if failures:
                     violations.append(dict(source=row["source"], target=row["target"],
@@ -437,7 +452,8 @@ def main():
                   guardian_scenarios=len(guardian_scenarios), guardian_work_bank_tiles=len(guardian_origins),
                   guardian_ranges=guardian_ranges,
                   normal_radius=normal_radius, normal_patch_trees=patch_counts,
-                  maple_start=maple_start, resources=resources, hunters_checked=len(hunters),
+                  maple_start=maple_start, bank=bank_name, resources=resources,
+                  hunters_checked=len(hunters),
                   sources=sources, replay_source=str(args.replay) if args.replay else None,
                   violation_count=len(violations), violations=violations[:30], errors=errors,
                   scope="Production host-router replan closure plus actual client loc-approach BFS for every resource/bank access origin and scene base. Actual client ground-walk BFS covers every closure-origin pair within Chebyshev 20, including Traveller click-ahead and stalled recovery. Includes blocked-origin escape and production Gatherer hazard retreats. The real Guardian and Client exercise all content range groups and adjacent spawn directions from every worksite/bank tile, exact and nearest flee fallback, and exact returns from every accepted flee-path tile. Actual client BFS also checks every Guardian four-tile hazard-ring goal. Every accepted path must avoid all authored hunter envelopes and stay inside the wide outer bound. Worksite rectangles are census inputs, not stop conditions. Transport interactions fail closed. Random-event interiors remain separate product travel.")

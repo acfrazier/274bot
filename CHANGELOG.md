@@ -75,9 +75,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   An offline checker tests complete host-router paths, client interaction paths,
   walk aims, replan origins, bank alternatives and hazard retreats.
   It also checks real Guardian flee and return paths at the content distances.
-  The guard rejects every authored danger envelope and a wide outer boundary.
+  The guard rejects danger-envelope entry or movement beyond a wide outer bound.
   It does not reject safe Guardian travel outside the worksite rectangle.
   Main selected this oracle from source evidence before diagnostic launch 3.
+  Real Guardian paths rejected Seers maples and Seers bank. The replacement
+  keeps maple gathering at the authored Flax site and uses Catherby bank.
   The fixture remains blocked until its corrected audit and diagnostic finish.
   Unroutable client alternatives count as nonmovement. Each resource and bank
   loc still requires an accepted approach witness. Consumer-only corrections

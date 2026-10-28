@@ -53,7 +53,9 @@ const NORMAL_STARTS: [(i32, i32); 10] = [
     (2712, 3461),
 ];
 const NORMAL_RADIUS: i32 = 5;
-const MAPLE_START: (i32, i32) = (2726, 3500);
+const MAPLE_START: (i32, i32) = (2752, 3466);
+const SOAK_BANK: &str = "Catherby";
+const SOAK_BANK_PREFIX: &str = "Catherby; Reachable;";
 
 #[derive(Clone, Copy)]
 struct SafeWalk {
@@ -80,11 +82,11 @@ const NORMAL_SAFE_WALK: &[SafeWalk] = &[SafeWalk {
     max_z: 3506,
 }];
 
-// Three map squares in each direction leave room for content-distance Guardian
-// travel. The danger-envelope guard remains active everywhere in this bound.
+// Wide map-square bounds leave room for content-distance Guardian travel.
+// The danger-envelope guard remains active everywhere in this bound.
 const OUTER_WALK_BOUNDS: &[SafeWalk] = &[SafeWalk {
     min_x: 2624,
-    max_x: 2815,
+    max_x: 2879,
     min_z: 3392,
     max_z: 3583,
 }];
@@ -180,7 +182,7 @@ fn work_route_guard_accepts_safe_guardian_flee_and_random_event_travel() {
 }
 
 #[test]
-fn safe_walk_accepts_worksites_and_seers_bank() {
+fn worksite_census_and_bank_guard_use_distinct_bounds() {
     for (x, z) in NORMAL_STARTS {
         for dx in -NORMAL_RADIUS..=NORMAL_RADIUS {
             for dz in -NORMAL_RADIUS..=NORMAL_RADIUS {
@@ -188,7 +190,8 @@ fn safe_walk_accepts_worksites_and_seers_bank() {
             }
         }
     }
-    assert!(safe_walk_contains(NORMAL_SAFE_WALK, (2724, 3493, 0)));
+    assert!(!safe_walk_contains(NORMAL_SAFE_WALK, (2808, 3443, 0)));
+    assert!(!work_route_escape(OUTER_WALK_BOUNDS, (2808, 3443, 0)));
     assert!(safe_walk_contains(
         NORMAL_SAFE_WALK,
         (MAPLE_START.0, MAPLE_START.1, 0)
@@ -211,7 +214,7 @@ fn work_route_guard_rejects_every_danger_envelope_and_outer_boundary() {
     assert!(work_route_escape(OUTER_WALK_BOUNDS, (2813, 3477, 0)));
     for tile in [
         (2623, 3480, 0),
-        (2816, 3480, 0),
+        (2880, 3480, 0),
         (2700, 3391, 0),
         (2700, 3584, 0),
         (2700, 3480, 1),
@@ -643,7 +646,7 @@ fn select_sites(root: &Value) -> Result<[BankSite; 2], String> {
             "woodcutting.seers_village" if site_has_key(site, "normal") => {
                 normal = Some(make_site(site, "normal")?);
             }
-            "woodcutting.seers" if site_has_key(site, "maple") => {
+            "woodcutting.flax" if site_has_key(site, "maple") => {
                 maple = Some(make_site(site, "maple")?);
             }
             _ => {
@@ -674,11 +677,11 @@ fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite
                 },
                 NORMAL_LOG_ID,
                 1,
-                "Seers",
-                "Seers; Reachable;",
+                SOAK_BANK,
+                SOAK_BANK_PREFIX,
                 OUTER_WALK_BOUNDS,
             ),
-            ("woodcutting.seers", "maple") => (
+            ("woodcutting.flax", "maple") => (
                 WorldTile {
                     x: MAPLE_START.0,
                     z: MAPLE_START.1,
@@ -686,8 +689,8 @@ fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite
                 },
                 MAPLE_LOG_ID,
                 45,
-                "Seers",
-                "Seers; Reachable;",
+                SOAK_BANK,
+                SOAK_BANK_PREFIX,
                 OUTER_WALK_BOUNDS,
             ),
             _ => {
@@ -980,7 +983,7 @@ fn scenario_for(site: &BankSite, duration: Duration) -> Result<Scenario, String>
 #[test]
 fn soak_seed_proves_rune_axe_without_inherited_bronze_equipment() {
     let sites = select_sites(&json!({
-        "workload": {"site_names": ["woodcutting.seers_village", "woodcutting.seers"]}
+        "workload": {"site_names": ["woodcutting.seers_village", "woodcutting.flax"]}
     }))
     .expect("selected content sites");
     for site in sites {
@@ -1331,15 +1334,15 @@ fn drive_frame(
             actor.walk_tile_changes = actor.walk_tile_changes.saturating_add(1);
         }
         actor.last_tile = Some(tile);
-        if actor.script_started_at.is_some()
-            && work_route_escape(actor.site.outer_bounds, tile)
-        {
+        if actor.script_started_at.is_some() && work_route_escape(actor.site.outer_bounds, tile) {
             fail_actor(
                 actor,
                 writer,
                 run_started,
                 "site-walk-boundary",
-                &format!("work/bank route entered a danger envelope or left the outer bound at {tile:?}"),
+                &format!(
+                    "work/bank route entered a danger envelope or left the outer bound at {tile:?}"
+                ),
             );
         }
     }
