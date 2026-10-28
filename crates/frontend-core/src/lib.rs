@@ -114,7 +114,8 @@ pub use selection::{
 };
 pub use session::{
     pick_focus, ArmMirror, DrawPolicy, GameInputEvent, GuardianEdit, MapDesk, MemoryNotice,
-    Notice as OperatorNotice, OperatorSession, Removal, ScriptStart, Selection, SlotTransition,
+    Notice as OperatorNotice, OperatorSession, Removal, ScriptStart, Selection, SettingEvent,
+    SettingEventState, SlotTransition,
     StartSettled, SubmitError, Submitted, SurvivalEdit, Targets, Transition, SLOT_REMOVE_TIMEOUT,
 };
 pub use slot_view::{SlotView, StatusBuf};

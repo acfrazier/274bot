@@ -79,6 +79,41 @@ pub enum Notice {
     QuesterPaths,
 }
 
+/// The most saved-setting transitions kept for a watching front end that
+/// has not drained them yet. Transitions are operator-paced, so a front
+/// end that drains each frame never nears the cap.
+pub const SETTING_EVENTS_CAP: usize = 256;
+
+/// The save state one [`SettingEvent`] reports for its setting. The
+/// states are the ones a front end shows beside a saved setting: an
+/// accepted write still in flight, a write that failed, and a write that
+/// became durable. A retained failure that a later action resolves is
+/// visible as the next `Pending` or `Saved` for the same setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingEventState {
+    /// An accepted write has not reached its terminal result.
+    Pending,
+    /// A write failed; the event's error text says why.
+    Failed,
+    /// A write became durable.
+    Saved,
+}
+
+/// One saved-setting transition, recorded only while a front end watches
+/// ([`OperatorSession::watch_setting_events`]) and drained with
+/// [`OperatorSession::take_setting_events`]. `setting` is the write's own
+/// name (the `what` a failure's detail uses: a preference key such as
+/// `capture`, or `navigation preference`, `profile order`, and friends).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingEvent {
+    /// The setting the write saves.
+    pub setting: String,
+    /// The state the write entered.
+    pub state: SettingEventState,
+    /// The failure text; `Some` only for [`SettingEventState::Failed`].
+    pub error: Option<String>,
+}
+
 /// The panel's draw policy: the saved draw switches and the run-only full
 /// rate. A front end reads it to mirror the switches onto its renderer; it
 /// changes only through [`OperatorCommand::SetDraw`].
@@ -262,6 +297,35 @@ impl<Io> OperatorSession<Io> {
         self.commands.preferences_pending() || !self.order_writes.is_empty()
     }
 
+
+    /// Ask the session to record saved-setting transitions for this front
+    /// end (drained with [`Self::take_setting_events`]). Off by default:
+    /// while off, a transition costs one bool check and records nothing.
+    /// Turning it off drops any undrained transitions.
+    pub fn watch_setting_events(&mut self, watch: bool) {
+        self.commands.set_watch_setting_events(watch);
+    }
+
+    /// The saved-setting transitions recorded since the last call, in the
+    /// order they happened. Empty while watching is off.
+    pub fn take_setting_events(&mut self) -> Vec<SettingEvent> {
+        self.commands.take_setting_events()
+    }
+
+    /// Record that `setting`'s write entered `state` (no error text).
+    pub(super) fn note_setting(&mut self, setting: &str, state: SettingEventState) {
+        self.commands.note_setting_event(setting, state, None);
+    }
+
+    /// Record that `setting`'s write failed with `error`. The text is
+    /// formatted only while a front end watches.
+    pub(super) fn note_setting_failed(&mut self, setting: &str, error: &dyn std::fmt::Display) {
+        if self.commands.watching_setting_events() {
+            let text = error.to_string();
+            self.commands
+                .note_setting_event(setting, SettingEventState::Failed, Some(text));
+        }
+    }
     /// A handle on the running write of the SaveLog command `request`, for
     /// the front end's status line ([`crate::log::SaveTicket::poll`]).
     pub fn log_save(&self, request: RequestId) -> Option<crate::log::SaveTicket> {
@@ -368,6 +432,7 @@ impl<Io> OperatorSession<Io> {
         match write {
             Update::Durable => {
                 self.apply_pref_effect(effect);
+                self.note_setting(what, SettingEventState::Saved);
                 Applied::Done
             }
             Update::Queued(queued) => {
@@ -378,6 +443,7 @@ impl<Io> OperatorSession<Io> {
                     effect,
                     order: None,
                 });
+                self.note_setting(what, SettingEventState::Pending);
                 Applied::Later
             }
         }
@@ -418,6 +484,7 @@ impl<Io> OperatorSession<Io> {
             let watch = self.commands.pref_writes().swap_remove(index);
             let (terminal, detail) = match outcome {
                 Ok(()) => {
+                    self.note_setting(watch.what, SettingEventState::Saved);
                     if let Some(view) = self.apply_pref_effect(watch.effect) {
                         self.commands.settle_walk_globals(view);
                     }
@@ -430,6 +497,7 @@ impl<Io> OperatorSession<Io> {
                     (Settlement::Completed(Completion::Done), None)
                 }
                 Err(error) => {
+                    self.note_setting_failed(watch.what, &error);
                     // The newest reorder's write failed: show the last
                     // durable order again. An older one's failure changes
                     // nothing (a newer write carries the current order).
@@ -468,7 +536,7 @@ impl<Io> OperatorSession<Io> {
         };
         let write = match (persist, DrawPolicy::key(switch)) {
             (true, Some(key)) => {
-                Some((key, self.write_preference(key, serde_json::Value::Bool(on))))
+                Some((key, self.write_preference(key, serde_json::Value::Bool(on), key)))
             }
             _ => None,
         };
@@ -502,7 +570,10 @@ impl<Io> OperatorSession<Io> {
         };
         let write = match crate::nav_prefs::write_nav_preference(&preferences, preference, on) {
             Ok(write) => write,
-            Err(error) => return write_failed("navigation preference", &error),
+            Err(error) => {
+                self.note_setting_failed("navigation preference", &error);
+                return write_failed("navigation preference", &error);
+            }
         };
         let pause = (preference == NavPreference::PauseScriptOnManualWalkAbort).then_some(on);
         let durable = matches!(write, Update::Durable);
@@ -529,7 +600,10 @@ impl<Io> OperatorSession<Io> {
         };
         let write = match WalkGlobalsView::persist_danger(&preferences, level) {
             Ok(write) => write,
-            Err(error) => return write_failed("danger routing", &error),
+            Err(error) => {
+                self.note_setting_failed("danger routing", &error);
+                return write_failed("danger routing", &error);
+            }
         };
         let durable = matches!(write, Update::Durable);
         let applied = self.after_write(request, write, "danger routing", PrefEffect::Walk(None));
@@ -564,7 +638,10 @@ impl<Io> OperatorSession<Io> {
                 "session file setting",
                 PrefEffect::SessionLog(on),
             ),
-            Err(error) => write_failed("session file setting", &error),
+            Err(error) => {
+                self.note_setting_failed("session file setting", &error);
+                write_failed("session file setting", &error)
+            }
         }
     }
 
@@ -582,7 +659,10 @@ impl<Io> OperatorSession<Io> {
         };
         let write = match crate::map_bake::persist_map_bake_choice(&preferences, choice) {
             Ok(write) => write,
-            Err(error) => return write_failed("map bake choice", &error),
+            Err(error) => {
+                self.note_setting_failed("map bake choice", &error);
+                return write_failed("map bake choice", &error);
+            }
         };
         if let Some(desk) = surface.models().map.as_deref_mut() {
             desk.bake_gate_mut().set_choice(choice);
@@ -611,7 +691,10 @@ impl<Io> OperatorSession<Io> {
         };
         match applied {
             Ok(write) => self.after_write(request, write, "Quest Paths settings", PrefEffect::None),
-            Err(reason) => Applied::Failed(FailureKind::WriteFailed, Some(reason)),
+            Err(reason) => {
+                self.note_setting_failed("Quest Paths settings", &reason);
+                Applied::Failed(FailureKind::WriteFailed, Some(reason))
+            }
         }
     }
 
@@ -654,14 +737,19 @@ impl<Io> OperatorSession<Io> {
                     Ok(write) => {
                         self.after_write(request, write, "background bots", PrefEffect::None)
                     }
-                    Err(error) => Applied::Failed(
-                        FailureKind::WriteFailed,
-                        Some(host_play::background_bots_ack_error(&error)),
-                    ),
+                    Err(error) => {
+                        let text = host_play::background_bots_ack_error(&error);
+                        self.note_setting_failed("background bots", &text);
+                        Applied::Failed(FailureKind::WriteFailed, Some(text))
+                    }
                 }
             }
             Notice::RenderAllWarning => {
-                match self.write_preference(RENDER_ALL_WARNING_ACK_KEY, true.into()) {
+                match self.write_preference(
+                    RENDER_ALL_WARNING_ACK_KEY,
+                    true.into(),
+                    RENDER_ALL_WARNING_ACK_KEY,
+                ) {
                     Ok(write) => self.after_write(
                         request,
                         write,
@@ -692,11 +780,17 @@ impl<Io> OperatorSession<Io> {
 
     /// Write one top-level preference; the failure as the member's
     /// terminal.
-    fn write_preference(&self, key: &str, value: serde_json::Value) -> Result<Update, Applied> {
+    fn write_preference(
+        &mut self,
+        key: &str,
+        value: serde_json::Value,
+        setting: &str,
+    ) -> Result<Update, Applied> {
         let preferences = self.preferences().ok_or_else(no_store)?;
-        preferences
-            .begin_set(key, value)
-            .map_err(|error| write_failed(key, &error))
+        preferences.begin_set(key, value).map_err(|error| {
+            self.note_setting_failed(setting, &error);
+            write_failed(key, &error)
+        })
     }
 
     /// Write the saved Load order.
@@ -707,6 +801,7 @@ impl<Io> OperatorSession<Io> {
         let write = match self.write_preference(
             crate::profile_order::PROFILE_ORDER_KEY,
             self.profile_order.to_value(),
+            "profile order",
         ) {
             Ok(write) => write,
             Err(refused) => {
@@ -722,6 +817,7 @@ impl<Io> OperatorSession<Io> {
             Update::Durable => {
                 self.durable_order_seq = self.order_write_seq;
                 self.durable_order.assign_from(&self.profile_order);
+                self.note_setting("profile order", SettingEventState::Saved);
                 Applied::Done
             }
             Update::Queued(queued) => {
@@ -735,6 +831,7 @@ impl<Io> OperatorSession<Io> {
                         order: self.profile_order.snapshot(),
                     }),
                 });
+                self.note_setting("profile order", SettingEventState::Pending);
                 Applied::Later
             }
         }

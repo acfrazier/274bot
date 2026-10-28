@@ -603,7 +603,7 @@ pub use commands::{GuardianEdit, SubmitError, Submitted, SurvivalEdit, Targets};
 pub use map::{GameInputEvent, MapDesk};
 pub(crate) use native_settings::NativeCopyCancellation;
 use native_settings::{PendingDelivery, PendingPreparation};
-pub use prefs::{DrawPolicy, Notice};
+pub use prefs::{DrawPolicy, Notice, SettingEvent, SettingEventState};
 
 pub struct OperatorSession<Io> {
     vault: Option<Vault>,
@@ -1494,8 +1494,12 @@ impl<Io> OperatorSession<Io> {
                 self.order_write_seq += 1;
                 self.durable_order_seq = self.order_write_seq;
                 self.durable_order.assign_from(&self.profile_order);
+                self.note_setting("profile order", prefs::SettingEventState::Saved);
             }
-            Ok(host_play::local_state::Update::Queued(queued)) => self.order_writes.push(queued),
+            Ok(host_play::local_state::Update::Queued(queued)) => {
+                self.order_writes.push(queued);
+                self.note_setting("profile order", prefs::SettingEventState::Pending);
+            }
             Err(error) => self.retain_order_write_error(&error),
         }
     }
@@ -1508,8 +1512,11 @@ impl<Io> OperatorSession<Io> {
                 None => index += 1,
                 Some(outcome) => {
                     self.order_writes.swap_remove(index);
-                    if let Err(error) = outcome {
-                        self.retain_order_write_error(&error);
+                    match outcome {
+                        Ok(()) => {
+                            self.note_setting("profile order", prefs::SettingEventState::Saved)
+                        }
+                        Err(error) => self.retain_order_write_error(&error),
                     }
                 }
             }
@@ -1518,6 +1525,7 @@ impl<Io> OperatorSession<Io> {
 
     fn retain_order_write_error(&mut self, error: &crate::prefs::PreferenceError) {
         order_write_failed(error);
+        self.note_setting_failed("profile order", error);
         self.preference_error = Some(format!("profile order: {error}"));
     }
 

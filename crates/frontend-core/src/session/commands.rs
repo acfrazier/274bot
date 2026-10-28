@@ -343,6 +343,12 @@ pub(super) struct CommandDesk {
     /// Preference commands whose write is still queued on the
     /// local-state writer thread.
     pref_writes: Vec<super::prefs::PrefWriteWatch>,
+    /// Saved-setting transitions recorded for a front end that asked to
+    /// watch them ([`OperatorSession::watch_setting_events`]). Empty, and
+    /// never pushed to, while no front end watches.
+    setting_events: Vec<super::prefs::SettingEvent>,
+    /// Whether a front end drains `setting_events`.
+    watch_setting_events: bool,
     /// The walk view a queued Nav or danger write adopted when it
     /// settled, for a front end that does not re-read it each frame (the
     /// headless driver) to take into its lent model.
@@ -443,6 +449,44 @@ impl CommandDesk {
 
     pub(super) fn preferences_pending(&self) -> bool {
         !self.pref_writes.is_empty()
+    }
+
+    pub(super) fn set_watch_setting_events(&mut self, watch: bool) {
+        self.watch_setting_events = watch;
+        if !watch {
+            self.setting_events.clear();
+        }
+    }
+
+    pub(super) fn watching_setting_events(&self) -> bool {
+        self.watch_setting_events
+    }
+
+    /// Record one saved-setting transition for a watching front end. With
+    /// no watcher this is one bool check: nothing is built or kept. The
+    /// queue is bounded; a watcher that stops draining loses the newest
+    /// transitions rather than growing without limit.
+    pub(super) fn note_setting_event(
+        &mut self,
+        setting: &str,
+        state: super::prefs::SettingEventState,
+        error: Option<String>,
+    ) {
+        if !self.watch_setting_events {
+            return;
+        }
+        if self.setting_events.len() >= super::prefs::SETTING_EVENTS_CAP {
+            return;
+        }
+        self.setting_events.push(super::prefs::SettingEvent {
+            setting: setting.to_owned(),
+            state,
+            error,
+        });
+    }
+
+    pub(super) fn take_setting_events(&mut self) -> Vec<super::prefs::SettingEvent> {
+        std::mem::take(&mut self.setting_events)
     }
 
     pub(super) fn settle_walk_globals(&mut self, view: crate::walk_permissions::WalkGlobalsView) {
