@@ -1341,7 +1341,13 @@ fn exhaustion_of_the_target_during_a_convergence_fails_the_switch() {
     let arrows = id(&scene, "iron_arrow");
     scene.inventory.retain(|row| row.def.id != arrows);
     scene.refresh();
-    step_without_server(&mut harness, &mut scene, 5);
+    // The wear row of the arrows is in flight; its window decides.
+    let mut tick = 5;
+    while harness.machine.switch_failures() == 0 {
+        step_without_server(&mut harness, &mut scene, tick);
+        tick += 1;
+        assert!(tick < 14, "arrows that never arrive fail the switch");
+    }
     assert_eq!(harness.machine.switch_failures(), 1);
     assert_eq!(harness.machine.active_style(), Style::Melee);
     assert!(matches!(
