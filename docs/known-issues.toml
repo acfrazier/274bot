@@ -423,6 +423,7 @@ text = """The rs2b0t GnomeMagicChopper script can stop chopping when a Strange
   slot and the script resumes. The fix is in review upstream; update your
   rs2b0t folder once it is merged."""
 first = "0.2.7"
+listed = "0.2.8"
 target = "0.2.9"
 severity = "low"
 owner = "upstream rs2b0t GnomeMagicChopper (rs2b2t/rs2b0t#897)"
