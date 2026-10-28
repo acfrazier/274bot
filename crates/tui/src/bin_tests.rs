@@ -9439,6 +9439,7 @@ fn a_login_notice_stands_through_retry_states_and_expires_at_both_sizes() {
 
 #[test]
 fn unavailable_quester_skip_shows_and_expires_the_tui_refusal() {
+    use crossterm::event::KeyCode;
     use frontend_core::ERROR_MESSAGE_TIMEOUT as TIMEOUT;
 
     let iso = IsolatedStores::enter("tui-quester-skip-refusal");
