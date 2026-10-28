@@ -148,7 +148,12 @@ impl Script for SwitchFight {
                                     row.actor.name.clone(),
                                     row.actor.tile.x,
                                     row.actor.tile.z,
-                                    row.actor.actions.iter().flatten().cloned().collect::<Vec<_>>(),
+                                    row.actor
+                                        .actions
+                                        .iter()
+                                        .flatten()
+                                        .cloned()
+                                        .collect::<Vec<_>>(),
                                 ))
                                 .collect::<Vec<_>>()
                         )
@@ -299,7 +304,12 @@ fn partner_step(
                 if let Some(widget) = snapshot
                     .widgets()
                     .iter()
-                    .chain(snapshot.side_tabs().iter().flat_map(|tab| tab.widgets.iter()))
+                    .chain(
+                        snapshot
+                            .side_tabs()
+                            .iter()
+                            .flat_map(|tab| tab.widgets.iter()),
+                    )
                     .find(|widget| widget.component_id == protect_button)
                 {
                     state.clicked_tick = Some(tick);
@@ -595,7 +605,10 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
             let both = states();
             println!(
                 "fixture: holder step {} ready {}, fighter step {} ready {}",
-                both["holder"]["step"], both["holder"]["ready"], both["fighter"]["step"], both["fighter"]["ready"]
+                both["holder"]["step"],
+                both["holder"]["ready"],
+                both["fighter"]["step"],
+                both["fighter"]["ready"]
             );
             for status in play.statuses().iter() {
                 println!(
@@ -705,7 +718,10 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
                 serde_json::to_vec_pretty(&dump).expect("timeout json"),
             )
             .expect("write timeout dump");
-            panic!("the cell timed out: phase {:?}, begun tick {:?}", shared.phase, shared.begun_tick);
+            panic!(
+                "the cell timed out: phase {:?}, begun tick {:?}",
+                shared.phase, shared.begun_tick
+            );
         }
         thread::sleep(Duration::from_millis(100));
     }
