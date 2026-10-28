@@ -3873,6 +3873,76 @@ const ROCK_SEEDED_ORACLE: OracleCell = OracleCell {
     selects_style: false,
 };
 
+const CHICKEN_ORACLE: OracleCell = OracleCell {
+    name: "chicken_killer_bank",
+    field: WorldTile {
+        x: 3029,
+        z: 3294,
+        level: 0,
+    },
+    bank: WorldTile {
+        x: 3013,
+        z: 3355,
+        level: 0,
+    },
+    carried: &[],
+    supplied: &[(526, 1)],
+    bank_rows: &[(526, 1)],
+    restocked: &[],
+    deposited: Some((526, 1)),
+    supply_step: "watch exact Bones 526 looted after Start",
+    visit_step: "watch script-looted Bones enter a fresh bank",
+    return_step: "watch return to the Falador chicken anchor within radius 6",
+    xp_step: "watch fresh Strength XP after the bank return",
+    selects_style: false,
+};
+
+#[test]
+fn chicken_bank_oracle_passes_without_feathers() {
+    oracle_assert_passes(&CHICKEN_ORACLE, Flaw::Correct);
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_no_pickup() {
+    oracle_assert_fails_at(
+        &CHICKEN_ORACLE,
+        Flaw::NoSupplyEvent,
+        CHICKEN_ORACLE.supply_step,
+    );
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_no_deposit() {
+    oracle_assert_fails_at(
+        &CHICKEN_ORACLE,
+        Flaw::NotDeposited,
+        CHICKEN_ORACLE.visit_step,
+    );
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_a_stalled_outbound_route() {
+    oracle_assert_fails_at(
+        &CHICKEN_ORACLE,
+        Flaw::OutboundStall,
+        CHICKEN_ORACLE.visit_step,
+    );
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_a_stalled_return_route() {
+    oracle_assert_fails_at(
+        &CHICKEN_ORACLE,
+        Flaw::ReturnStall,
+        CHICKEN_ORACLE.return_step,
+    );
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_no_fresh_xp() {
+    oracle_assert_fails_at(&CHICKEN_ORACLE, Flaw::StaleXp, CHICKEN_ORACLE.xp_step);
+}
+
 #[test]
 fn rock_crab_seeded_bank_oracle_passes_deposit_return_and_fresh_combat() {
     oracle_assert_passes(&ROCK_SEEDED_ORACLE, Flaw::Correct);

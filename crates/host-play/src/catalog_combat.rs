@@ -1673,27 +1673,28 @@ impl CombatApproachCycle {
         self.entered && self.style_xp
     }
 }
-/// Combat and exact feather loot, then a fresh deposit, return r6, further work.
+/// Combat and exact Bones loot, then a fresh deposit, return r6, fresh Strength XP.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ChickenKillerBankCycle {
     pub combat_loot: bool,
     pub deposited: Option<Observation>,
     pub returned: bool,
     pub further: bool,
+    pub return_xp: Option<i32>,
 }
 
 impl ChickenKillerBankCycle {
     pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
         self.combat_loot |= now.skill_xp("strength") > baseline.skill_xp("strength")
-            && now.item_id(catalog_item_id("feather")) >= 1
-            && baseline.item_id(catalog_item_id("feather")) == 0;
+            && now.item_id(catalog_item_id("bones")) >= 1
+            && baseline.item_id(catalog_item_id("bones")) == 0;
         if self.combat_loot
             && self.deposited.is_none()
             && now.bank_open
             && now.bank_loaded
             && now.bank_generation > baseline.bank_generation
-            && now.item_id(catalog_item_id("feather")) == 0
-            && now.bank_item_id(catalog_item_id("feather")) >= 1
+            && now.item_id(catalog_item_id("bones")) == 0
+            && now.bank_item_id(catalog_item_id("bones")) >= 1
         {
             self.deposited = Some(now.clone());
         }
@@ -1705,10 +1706,9 @@ impl ChickenKillerBankCycle {
                 && near(now.tile, FALADOR_CHICKENS, 6);
         }
         if self.returned {
-            if let Some(deposited) = &self.deposited {
-                self.further |= now.skill_xp("strength") > deposited.skill_xp("strength")
-                    || now.item_id(catalog_item_id("feather")) >= 1;
-            }
+            let xp = now.skill_xp("strength");
+            let reference = *self.return_xp.get_or_insert(xp);
+            self.further |= !now.bank_open && xp > reference;
         }
     }
 
