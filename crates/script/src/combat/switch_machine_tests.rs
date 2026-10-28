@@ -572,6 +572,11 @@ fn switch_t2_rotates_past_two_styles() {
         let mut req = request(kits);
         req.style = opening;
         req.switch = SwitchPolicy::for_style(opening);
+        req.switch.prefer = if opening == Style::Ranged {
+            [Style::Ranged, Style::Mage, Style::Melee]
+        } else {
+            [Style::Melee, Style::Ranged, Style::Mage]
+        };
         let mut harness = start(&mut scene, req);
         let mut seen = vec![harness.machine.active_style()];
         for tick in 3..400u64 {
@@ -595,14 +600,374 @@ fn switch_t2_rotates_past_two_styles() {
     }
 }
 
-#[test]
-fn layout_report() {
-    eprintln!(
-        "LAYOUT Combat={} CombatReport={} CombatRequest={} SwitchState={} StyleKits={}",
-        std::mem::size_of::<Combat>(),
-        std::mem::size_of::<CombatReport>(),
-        std::mem::size_of::<CombatRequest>(),
-        std::mem::size_of::<SwitchState>(),
-        std::mem::size_of::<StyleKits>()
+/// Like `step`, but only the wears `keep` names reach the server.
+fn step_keeping(
+    harness: &mut Harness,
+    scene: &mut Scene,
+    tick: u64,
+    keep: &[&str],
+) -> DrainedBatch {
+    let polled = harness.poll(&scene.snapshot, tick);
+    assert!(
+        matches!(polled, Poll::Pending),
+        "tick {tick}: the fight must continue, got {polled:?}"
     );
+    let batch = harness.drain(None);
+    let names: Vec<String> = wear_names(&batch)
+        .into_iter()
+        .filter(|name| keep.contains(&name.as_str()))
+        .collect();
+    let mut filtered = DrainedBatch::default();
+    for name in names {
+        filtered.effects[filtered.len] = Some(HostEffect::Interaction(InteractReq::Wear { name }));
+        filtered.len += 1;
+    }
+    apply_wears(scene, &filtered);
+    scene.refresh();
+    batch
+}
+
+fn item_name(scene: &Scene, alias: &str) -> String {
+    scene
+        .data
+        .item_by_alias(alias)
+        .unwrap()
+        .name
+        .clone()
+        .unwrap()
+}
+
+// --- Case 7g: the pending Ranged need (Codex F1) ----------------------------
+
+#[test]
+fn switch_thrownaxe_needs_no_quiver() {
+    let mut scene = pen_scene();
+    scene
+        .players
+        .push(player(OPPONENT, BOB, tile(3341, 3250), &fight_ops(), 60));
+    wear(&mut scene, "rune_scimitar", 1);
+    give(&mut scene, "rune_thrownaxe", 20);
+    scene.refresh();
+    let axe = id(&scene, "rune_thrownaxe");
+    let kits = StyleKits::default()
+        .with(Style::Melee, kit(&[(3, id(&scene, "rune_scimitar"))], &[]))
+        .with(Style::Ranged, kit(&[(3, axe)], &[]));
+    let mut harness = start(&mut scene, request(kits));
+    {
+        let frame = frame_of(&harness, &scene);
+        assert_eq!(
+            harness.machine.pending_ranged_need(Style::Ranged, &frame),
+            Some(RangedNeed::Thrown { weapon: axe })
+        );
+        assert_eq!(harness.machine.wear_set(Style::Ranged, &frame), 1 << 3);
+    }
+    protect(&mut scene, MELEE_PROTECT);
+    step(&mut harness, &mut scene, 3);
+    let batch = step(&mut harness, &mut scene, 4);
+    assert_eq!(wear_names(&batch), [item_name(&scene, "rune_thrownaxe")]);
+    assert_eq!(converging_to(&harness), Some(Style::Ranged));
+    // Slot 3 shows the axe, slot 13 is still empty: complete.
+    step(&mut harness, &mut scene, 5);
+    assert!(scene.equipment.iter().all(|row| row.slot != 13));
+    assert_eq!(harness.machine.active_style(), Style::Ranged);
+    assert_eq!(harness.machine.ranged().ammo_pick, axe);
+    assert_eq!(harness.machine.switches(), 1);
+}
+
+fn bow_and_iron_arrows_scene() -> (Scene, CombatRequest) {
+    let mut scene = pen_scene();
+    scene
+        .players
+        .push(player(OPPONENT, BOB, tile(3341, 3250), &fight_ops(), 60));
+    wear(&mut scene, "rune_scimitar", 1);
+    give(&mut scene, "maple_shortbow", 1);
+    give(&mut scene, "iron_arrow", 30);
+    scene.refresh();
+    // The kit names steel arrows; only iron arrows are held.
+    let kits = StyleKits::default()
+        .with(Style::Melee, kit(&[(3, id(&scene, "rune_scimitar"))], &[]))
+        .with(
+            Style::Ranged,
+            kit(
+                &[
+                    (3, id(&scene, "maple_shortbow")),
+                    (13, id(&scene, "steel_arrow")),
+                ],
+                &[],
+            ),
+        );
+    let req = request(kits);
+    (scene, req)
+}
+
+#[test]
+fn switch_bow_uses_held_fallback_ammo() {
+    let (mut scene, req) = bow_and_iron_arrows_scene();
+    let (bow, iron) = (id(&scene, "maple_shortbow"), id(&scene, "iron_arrow"));
+    let mut harness = start(&mut scene, req);
+    {
+        let frame = frame_of(&harness, &scene);
+        assert_eq!(
+            harness.machine.pending_ranged_need(Style::Ranged, &frame),
+            Some(RangedNeed::Quiver {
+                weapon: bow,
+                ammo: iron
+            })
+        );
+        assert_eq!(
+            harness.machine.wear_set(Style::Ranged, &frame),
+            (1 << 3) | (1 << 13)
+        );
+    }
+    protect(&mut scene, MELEE_PROTECT);
+    step(&mut harness, &mut scene, 3);
+    let batch = step(&mut harness, &mut scene, 4);
+    assert_eq!(
+        wear_names(&batch),
+        [
+            item_name(&scene, "maple_shortbow"),
+            item_name(&scene, "iron_arrow")
+        ],
+        "the bow first, then the iron arrows"
+    );
+    step(&mut harness, &mut scene, 5);
+    assert_eq!(harness.machine.active_style(), Style::Ranged);
+    assert_eq!(harness.machine.ranged().ammo_pick, iron);
+    assert_eq!(harness.machine.switches(), 1);
+}
+
+#[test]
+fn switch_refused_mandatory_ammo_fails() {
+    let (mut scene, req) = bow_and_iron_arrows_scene();
+    let scimitar = item_name(&scene, "rune_scimitar");
+    let bow = item_name(&scene, "maple_shortbow");
+    let mut harness = start(&mut scene, req);
+    protect(&mut scene, MELEE_PROTECT);
+    let keep = [bow.as_str(), scimitar.as_str()];
+    step_keeping(&mut harness, &mut scene, 3, &keep);
+    let mut tick = 4;
+    let mut rewore_scimitar = false;
+    while harness.machine.switch_failures() == 0 {
+        let batch = step_keeping(&mut harness, &mut scene, tick, &keep);
+        assert!(!has_cast(&batch));
+        tick += 1;
+        assert!(tick < 60, "two refusals of the iron arrows must fail the switch");
+    }
+    // The bow is worn, the quiver never was: a bow with no arrows must not be a completion.
+    assert_eq!(harness.machine.active_style(), Style::Melee);
+    assert_eq!(harness.machine.switches(), 0);
+    assert!(matches!(harness.machine.style_state, StyleState::Melee(_)));
+    for t in tick..tick + 12 {
+        let batch = step_keeping(&mut harness, &mut scene, t, &keep);
+        rewore_scimitar |= wear_names(&batch).contains(&scimitar);
+    }
+    assert!(rewore_scimitar, "the ordinary repair wears the sword again");
+    assert!(scene
+        .equipment
+        .iter()
+        .any(|row| row.slot == 3 && row.def.id == id(&scene, "rune_scimitar")));
+}
+
+// --- Case 7b/7c/7e/7f: upkeep, refusals, two-handers, armour ----------------
+
+#[test]
+fn a_client_refused_first_wear_keeps_converging_and_retries_next_tick() {
+    let (mut scene, kits) = sword_and_bow();
+    let mut harness = start(&mut scene, request(kits));
+    protect(&mut scene, MELEE_PROTECT);
+    step(&mut harness, &mut scene, 3);
+    // Tick 4: the first row (the bow) is refused by the client; the batch fail-stops.
+    assert!(matches!(harness.poll(&scene.snapshot, 4), Poll::Pending));
+    let batch = harness.drain(Some(0));
+    assert_eq!(wear_names(&batch).len(), 2, "{:?}", rows(&batch));
+    assert_eq!(converging_to(&harness), Some(Style::Ranged));
+    assert_eq!(harness.machine.switch_failures(), 0);
+    // Tick 5: the wear is planned again.
+    let batch = step(&mut harness, &mut scene, 5);
+    assert_eq!(
+        wear_names(&batch).first().map(String::as_str),
+        Some("Maple shortbow"),
+        "{:?}",
+        rows(&batch)
+    );
+    step(&mut harness, &mut scene, 6);
+    assert_eq!(harness.machine.active_style(), Style::Ranged);
+}
+
+#[test]
+fn a_full_armour_change_wears_the_right_hand_first_over_two_plans() {
+    let mut scene = pen_scene();
+    scene
+        .players
+        .push(player(OPPONENT, BOB, tile(3341, 3250), &fight_ops(), 60));
+    wear(&mut scene, "rune_scimitar", 1);
+    for (alias, count) in [
+        ("maple_shortbow", 1),
+        ("iron_arrow", 30),
+        ("rune_full_helm", 1),
+        ("rune_platebody", 1),
+        ("rune_platelegs", 1),
+    ] {
+        give(&mut scene, alias, count);
+    }
+    scene.refresh();
+    let kits = StyleKits::default()
+        .with(Style::Melee, kit(&[(3, id(&scene, "rune_scimitar"))], &[]))
+        .with(
+            Style::Ranged,
+            kit(
+                &[
+                    (3, id(&scene, "maple_shortbow")),
+                    (13, id(&scene, "iron_arrow")),
+                    (0, id(&scene, "rune_full_helm")),
+                    (4, id(&scene, "rune_platebody")),
+                    (7, id(&scene, "rune_platelegs")),
+                ],
+                &[],
+            ),
+        );
+    let mut harness = start(&mut scene, request(kits));
+    protect(&mut scene, MELEE_PROTECT);
+    step(&mut harness, &mut scene, 3);
+    let first = step(&mut harness, &mut scene, 4);
+    assert_eq!(
+        wear_names(&first),
+        [
+            item_name(&scene, "maple_shortbow"),
+            item_name(&scene, "iron_arrow"),
+            item_name(&scene, "rune_full_helm")
+        ],
+        "right hand, quiver, then slot order"
+    );
+    assert_eq!(harness.machine.switches(), 0);
+    let second = step(&mut harness, &mut scene, 5);
+    assert_eq!(
+        wear_names(&second),
+        [
+            item_name(&scene, "rune_platebody"),
+            item_name(&scene, "rune_platelegs")
+        ]
+    );
+    assert_eq!(harness.machine.switches(), 0, "not before the last slot is observed");
+    step(&mut harness, &mut scene, 6);
+    assert_eq!(harness.machine.active_style(), Style::Ranged);
+    assert_eq!(harness.machine.switches(), 1);
+}
+
+#[test]
+fn a_shield_waits_for_the_right_hand_when_a_two_hander_gives_way() {
+    let mut scene = pen_scene();
+    scene
+        .players
+        .push(player(OPPONENT, BOB, tile(3341, 3250), &fight_ops(), 60));
+    wear(&mut scene, "rune_2h_sword", 1);
+    give(&mut scene, "air_battlestaff", 1);
+    give(&mut scene, "wooden_shield", 1);
+    give(&mut scene, "mindrune", 100);
+    scene.refresh();
+    let kits = StyleKits::default()
+        .with(Style::Melee, kit(&[(3, id(&scene, "rune_2h_sword"))], &[]))
+        .with(
+            Style::Mage,
+            kit(
+                &[
+                    (3, id(&scene, "air_battlestaff")),
+                    (5, id(&scene, "wooden_shield")),
+                ],
+                &[(id(&scene, "mindrune"), 100)],
+            ),
+        );
+    let mut req = request(kits);
+    req.switch.prefer = [Style::Melee, Style::Mage, Style::Ranged];
+    let mut harness = start(&mut scene, req);
+    protect(&mut scene, MELEE_PROTECT);
+    step(&mut harness, &mut scene, 3);
+    let first = step(&mut harness, &mut scene, 4);
+    assert_eq!(
+        wear_names(&first),
+        [item_name(&scene, "air_battlestaff")],
+        "the shield is not in the plan of the two-hander's replacement: {:?}",
+        rows(&first)
+    );
+    let second = step(&mut harness, &mut scene, 5);
+    assert_eq!(wear_names(&second), [item_name(&scene, "wooden_shield")]);
+    assert_eq!(harness.machine.switches(), 0);
+    step(&mut harness, &mut scene, 6);
+    assert_eq!(harness.machine.active_style(), Style::Mage);
+}
+
+// --- Case 7d: out of reach while melee (T4) ---------------------------------
+
+fn far_opponent(scene: &mut Scene, at: api::WorldTile) {
+    scene.players[0].actor.tile = at;
+    scene.players[0].network = at;
+    scene.refresh();
+}
+
+#[test]
+fn t4_switches_after_two_attack_intervals_out_of_reach() {
+    let (mut scene, kits) = sword_and_bow();
+    let mut harness = start(&mut scene, request(kits));
+    far_opponent(&mut scene, tile(3345, 3250));
+    // 2 * rate(4) = 8 observed ticks out of reach with no swing onset of ours.
+    for tick in 3..10 {
+        step(&mut harness, &mut scene, tick);
+        assert_eq!(converging_to(&harness), None, "tick {tick}");
+    }
+    let batch = step(&mut harness, &mut scene, 10);
+    assert_eq!(converging_to(&harness), Some(Style::Ranged), "{:?}", rows(&batch));
+    assert!(matches!(
+        harness.machine.switch_state(),
+        SwitchState::Converging {
+            cause: SwitchCause::Reach,
+            ..
+        }
+    ));
+    step(&mut harness, &mut scene, 11);
+    assert_eq!(harness.machine.active_style(), Style::Ranged);
+}
+
+#[test]
+fn t4_never_fires_beside_the_opponent_or_without_an_alternative() {
+    // Adjacent: never.
+    let (mut scene, kits) = sword_and_bow();
+    let mut harness = start(&mut scene, request(kits));
+    for tick in 3..40 {
+        step(&mut harness, &mut scene, tick);
+    }
+    assert_eq!(harness.machine.switch_state(), SwitchState::Idle);
+    // Out of reach but no non-melee kit: never.
+    let (mut scene, mut kits) = sword_and_bow();
+    kits.ranged = None;
+    let mut harness = start(&mut scene, request(kits));
+    far_opponent(&mut scene, tile(3345, 3250));
+    for tick in 3..40 {
+        step(&mut harness, &mut scene, tick);
+    }
+    assert_eq!(harness.machine.switch_state(), SwitchState::Idle);
+    assert_eq!(harness.machine.switches(), 0);
+}
+
+#[test]
+fn t4_waits_out_a_swing_onset_inside_the_window() {
+    let (mut scene, kits) = sword_and_bow();
+    let mut harness = start(&mut scene, request(kits));
+    far_opponent(&mut scene, tile(3345, 3250));
+    let seq = scene.melee_seq();
+    for tick in 3..14 {
+        if tick == 6 {
+            // One swing of ours at tick 6 restarts the count.
+            scene.local.player.actor.animation = seq;
+            scene.local.player.actor.animation_frame = 0;
+        } else {
+            scene.local.player.actor.animation = -1;
+        }
+        scene.refresh();
+        step(&mut harness, &mut scene, tick);
+        assert_eq!(converging_to(&harness), None, "tick {tick}");
+    }
+    scene.local.player.actor.animation = -1;
+    scene.refresh();
+    step(&mut harness, &mut scene, 14);
+    assert_eq!(converging_to(&harness), Some(Style::Ranged));
 }

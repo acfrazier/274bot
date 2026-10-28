@@ -88,9 +88,18 @@ pub(super) fn legal_style(request: &CombatRequest, style: Style) -> bool {
 }
 
 /// The style the machine opens with: `request.style` when it is legal,
-/// otherwise the first legal style of `prefer` that has a kit.
+/// otherwise the first legal style of `prefer`. A request that declares any kit
+/// opens only with a style that has one (a duel that forbids a style leaves its
+/// kit out); a request with no kit at all opens with any legal style, as before
+/// loadouts existed.
 pub(super) fn opening_style(request: &CombatRequest) -> Option<Style> {
-    if legal_style(request, request.style) {
+    let any_kit = Style::ALL
+        .iter()
+        .any(|style| request.kits.get(*style).is_some());
+    let opens = |style: Style| {
+        legal_style(request, style) && (!any_kit || request.kits.get(style).is_some())
+    };
+    if opens(request.style) {
         return Some(request.style);
     }
     request
@@ -98,7 +107,7 @@ pub(super) fn opening_style(request: &CombatRequest) -> Option<Style> {
         .prefer
         .iter()
         .copied()
-        .find(|style| legal_style(request, *style) && request.kits.get(*style).is_some())
+        .find(|style| opens(*style))
 }
 
 /// The wear repair's slot order: while a switch converges the right hand
