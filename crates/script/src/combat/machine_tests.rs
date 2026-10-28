@@ -4458,7 +4458,9 @@ fn ranged_thrown_uses_weapon_stack_without_ammo_slot() {
     let mut harness = Harness::new(&scene, request);
     attack(harness.pending(&scene, 1));
     assert_eq!(harness.machine.ranged().ammo_pick, id);
-    assert_eq!(harness.machine.desired(13), None);
+    let evidence = harness.runtime.evidence.unwrap();
+    let frame = Frame::borrow(SnapshotView::new(Some(&scene.snapshot), evidence)).unwrap();
+    assert_eq!(harness.machine.desired(13, &frame), None);
     scene.install();
     // Route-head launch coordinates lead the rendered pose during a chase.
     scene.local.player.actor.tile.x += 3;

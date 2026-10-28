@@ -173,25 +173,6 @@ pub fn best_melee_weapon(
     .map(str::to_string)
 }
 
-/// Borrowed native pick. It uses the same refusal, wield, and ordering policy
-/// without copying the inventory at engagement start.
-pub(crate) fn best_melee_weapon_by<'a>(
-    family: &'a [EquipmentNameEntry],
-    attack: i32,
-    prefer_stab: bool,
-    unusable: &[String],
-    available: impl FnMut(&str) -> bool,
-) -> Option<&'a str> {
-    best_melee_weapon_by_where(
-        family,
-        f64::from(attack),
-        prefer_stab,
-        unusable,
-        |_| true,
-        available,
-    )
-}
-
 /// The first family weapon (family order) named in `names`, case-insensitive.
 pub fn known_melee_weapon(family: &[EquipmentNameEntry], names: &[String]) -> Option<String> {
     weapon_names(family)
@@ -308,28 +289,6 @@ mod tests {
             best(&bank, 40.0, false, &["rune scimitar"]).as_deref(),
             Some("Rune scimitar")
         );
-    }
-
-    #[test]
-    fn borrowed_native_and_compat_pickers_share_refusal_and_candidate_policy() {
-        let family = family();
-        let available = names(&["Rune scimitar", "Rune sword"]);
-        let unusable = names(&["Rune scimitar"]);
-        let compat = best_melee_weapon(
-            &family,
-            &available,
-            &WeaponPick {
-                attack: 40.0,
-                prefer_stab: false,
-                unusable: &unusable,
-            },
-        );
-        let native = best_melee_weapon_by(&family, 40, false, &unusable, |name| {
-            available.iter().any(|have| have.eq_ignore_ascii_case(name))
-        });
-
-        assert_eq!(native, Some("Rune sword"));
-        assert_eq!(compat.as_deref(), native);
     }
 
     #[test]
