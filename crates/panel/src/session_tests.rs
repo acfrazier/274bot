@@ -5595,6 +5595,10 @@ fn headed_stress_full_paints_every_member_at_50fps() {
     });
     let mut s = Session::new();
     s.live_prepare_stress(2, true).expect("prepare");
+    assert!(
+        s.scatter.load(Ordering::Relaxed),
+        "the separate stress-wall workload still scatter-seeds"
+    );
     let f = s.focus.lock().unwrap();
     assert!(
         !f.only_render_selected,
@@ -5606,6 +5610,34 @@ fn headed_stress_full_paints_every_member_at_50fps() {
         let slot = s.core.slot_io(name).expect("slot");
         assert!(slot.input.full_rate(), "{name} must run the 50 fps cadence");
     }
+}
+
+#[cfg(feature = "memory-profile")]
+#[test]
+fn memory_stress50_full_keeps_mainland_seed_and_full_rate_rendering() {
+    use frontend_core::bench::RenderPolicy;
+
+    let names = vec!["memory0".to_string(), "memory1".to_string()];
+    let mut session = Session::new();
+    session.scatter.store(true, Ordering::Relaxed);
+    {
+        let mut focus = session.focus.lock().unwrap();
+        crate::focus::memory_draw_policy(&mut focus, &names, RenderPolicy::Stress50Full);
+    }
+
+    assert!(session.configure_memory_render_policy(RenderPolicy::Stress50Full));
+    assert!(
+        !session.scatter.load(Ordering::Relaxed),
+        "full-rate rendering must not enable scatter seeding"
+    );
+
+    let focus = session.focus.lock().unwrap();
+    assert!(!focus.only_render_selected);
+    assert!(focus.live_full_rate);
+    assert!(names.iter().all(|name| draw_for_slot(&focus, name)));
+    assert!(names
+        .iter()
+        .all(|name| crate::focus::full_rate_for(&focus, name)));
 }
 
 /// RAM watch members must be raster Off so a flipped only-render-
