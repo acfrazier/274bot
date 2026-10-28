@@ -1463,6 +1463,7 @@ impl Scripts {
         let Some(row) = row else {
             return CopyStep::Failed(target, "no profile".to_string());
         };
+        let target_identity = crate::selection::ProfileIdentity::uid(row.uid);
         let unassigned = row.settings.script_assignment.is_none();
         let same_card = row
             .settings
@@ -1542,7 +1543,13 @@ impl Scripts {
                     self.track_settings_card(write, copy.selection.clone(), copy.card_name);
                 }
                 if let (Some(token), Some(cancellation)) = (copy.start_hold, copy.cancellation) {
-                    core.hold_native_copy_start(write, Arc::clone(token), cancellation.clone());
+                    core.hold_native_copy_start(
+                        write,
+                        target_identity,
+                        prepared_name,
+                        Arc::clone(token),
+                        cancellation.clone(),
+                    );
                 }
                 CopyStep::Pending(write, target)
             }
