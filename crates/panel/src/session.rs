@@ -3102,7 +3102,8 @@ impl Session {
         self.mainland.store(true, Ordering::Relaxed);
         let policy = run.render_policy();
         let stress_wall = matches!(policy, RenderPolicy::Stress50 | RenderPolicy::Stress50Full);
-        self.scatter.store(stress_wall, Ordering::Relaxed);
+        let scatter_seed = run.workload() == frontend_core::bench::Workload::Idle && stress_wall;
+        self.scatter.store(scatter_seed, Ordering::Relaxed);
         if !self.start_vault(run.vault(), run.passphrase()) {
             return Err(self
                 .error
