@@ -153,7 +153,6 @@ struct BoatFacts {
     crate_loc: i32,
     tree_actions: Vec<TreeAction>,
     luthas_name: String,
-    #[cfg(test)]
     luthas_anchor: WorldTile,
     crate_tile: WorldTile,
     grove_tile: WorldTile,
@@ -235,7 +234,6 @@ impl BoatFacts {
             crate_loc: crate_loc.id,
             tree_actions,
             luthas_name,
-            #[cfg(test)]
             luthas_anchor: tile(&facts.luthas_spawn),
             crate_tile: tile(&facts.crate_spawn),
             grove_tile,
@@ -1469,9 +1467,7 @@ impl Recover {
     /// The op that stops the native walk this recovery has in flight.
     pub(crate) fn release(&self) -> Option<InteractReq> {
         match &self.stage {
-            Stage::TalkWalk { walk, .. } | Stage::LocateLuthas { walk, .. } => {
-                Some(walk.release())
-            }
+            Stage::TalkWalk { walk, .. } | Stage::LocateLuthas { walk, .. } => Some(walk.release()),
             Stage::Fill(fill) => match &fill.phase {
                 FillPhase::Search(SearchCrate::Walk(walk))
                 | FillPhase::Final(SearchCrate::Walk(walk))
@@ -1509,14 +1505,8 @@ impl Recover {
                 walk,
             } => {
                 if walk.step(cx)? {
-                    match Self::talk_posted(
-                        &self.facts,
-                        *second,
-                        *attempt,
-                        *tried_stands,
-                        cx,
-                        logs,
-                    ) {
+                    match Self::talk_posted(&self.facts, *second, *attempt, *tried_stands, cx, logs)
+                    {
                         Ok(stage) => stage,
                         Err(done) => return Some(done),
                     }
