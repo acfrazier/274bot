@@ -1318,3 +1318,87 @@ fn skip_cleanup_keeps_only_the_compiled_run_owner() {
     }
     .step_released());
 }
+
+#[cfg(feature = "test-support")]
+#[test]
+fn skip_terminal_oracle_accepts_idle_failed_and_rejects_error() {
+    use script::native::StatusField;
+
+    let evidence = SkipQueueEvidence {
+        skip: Some(SkipRequestReceipt {
+            quest_id: "cook".into(),
+            step_id: "start".into(),
+            action: SkipActionReceipt {
+                quest_id: "cook".into(),
+                step_id: "start".into(),
+                action_state: "talking".into(),
+                child_step_id: None,
+                phase: "Working".into(),
+            },
+        }),
+        active_order: vec!["cook".into(), "sheep".into()],
+        cook_parked: true,
+        cancellation_observed: true,
+        sheep_completed: true,
+        ..Default::default()
+    };
+    let queue: String = script::quester::registry::BUNDLED_INDEX
+        .paths
+        .iter()
+        .map(|path| if path.id == "sheep" { 'D' } else { 'P' })
+        .collect();
+    let reason = "skipped by operator; resolve the condition, then Stop/Start Quester";
+    let mut status = ScriptStatus {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 1,
+            session: 2,
+        },
+        card: script::CompiledId("Quester"),
+        phase: NativePhase::Blocked,
+        active_settings: 1,
+        pending_settings: None,
+        fields: Arc::from([
+            StatusField {
+                key: "queue",
+                label: "Queue",
+                value: StatusValue::Text(queue.into()),
+            },
+            StatusField {
+                key: "completed",
+                label: "Completed this session",
+                value: StatusValue::Integer(1),
+            },
+            StatusField {
+                key: "block_reason",
+                label: "Queue block reason",
+                value: StatusValue::Text("skipped by operator".into()),
+            },
+        ]),
+        failure: Some(script::ScriptFailure {
+            code: "queue-blocked".into(),
+            message: reason.into(),
+        }),
+    };
+    let mut lifecycle = script::ScriptLifecycleReceipt {
+        runtime_generation: 1,
+        state: script::ScriptTerminalState::Failed,
+        tick: 1756,
+        reason: reason.into(),
+    };
+    assert!(evidence
+        .validate_terminal(&status, &lifecycle, script::RunState::Idle, true, 1)
+        .is_ok());
+    assert!(evidence
+        .validate_terminal(&status, &lifecycle, script::RunState::Error, true, 1)
+        .is_err());
+    lifecycle.state = script::ScriptTerminalState::Completed;
+    assert!(evidence
+        .validate_terminal(&status, &lifecycle, script::RunState::Idle, true, 1)
+        .is_err());
+    lifecycle.state = script::ScriptTerminalState::Failed;
+    status.phase = NativePhase::Complete;
+    assert!(evidence
+        .validate_terminal(&status, &lifecycle, script::RunState::Idle, true, 1)
+        .is_err());
+}
