@@ -139,8 +139,7 @@ impl AbortEscape {
             .iter()
             .copied()
             .min_by_key(|tile| (tile_distance(focus, *tile), squared_gap(focus, *tile)))?;
-        let depth =
-            reach.and_then(|view| reach_route::nearest_depth(view, &tiers[preferred]));
+        let depth = reach.and_then(|view| reach_route::nearest_depth(view, &tiers[preferred]));
         let fallback_tiles = fallback.map_or_else(Vec::new, |tier| tiers[tier].clone());
         // Each tier holds at most `TIER_CAP` tiles, so the union fits the cap
         // and construction cannot fail.
