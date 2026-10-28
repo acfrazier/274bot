@@ -6642,6 +6642,7 @@ fn settings_feedback_every_panel_owned_control_shows_saving_then_the_failure_unt
             },
             draw: |ui, s| super::config_section(ui, s, "Nav", |_, _| {}),
         },
+        #[cfg(feature = "js")]
         Surface {
             name: "last directory",
             write: |s| {
