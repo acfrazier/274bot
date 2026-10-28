@@ -5823,7 +5823,7 @@ fn m2_ready(capture: &CombatCapture) -> bool {
     };
     let protected_hits = integer(report, "combat_hits_while_protected").unwrap_or(-1);
     let plans = batch_plans(capture);
-    // Require a boost count only when Prep lies inside the report window.
+    // Require at least one boost dose only when Prep lies inside the report window.
     prayer_doses > 0
         && prep_boost_count_matches(capture, report, boost_doses)
         && protected_hits == 0
