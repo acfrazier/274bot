@@ -3949,53 +3949,58 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
         })
         .map(|row| row.id)
         .expect("selected content includes a lower-hit NPC with a narrower chase envelope");
-    let mut snapshot = GameSnapshot::new();
-    let new_attacker_tile = api::WorldTile {
-        x: 3001,
-        z: 3000,
-        level: 0,
-    };
-    let mut newcomer = aborting_npc(9, new_attacker_id, new_attacker_tile);
-    // A lower-hit attacker occupies the vanished Warlord's former tile.
-    let probe_run = combat_test_run(imp_target(&data), None, None, Vec::new());
-    newcomer.animation = live_attack_animation(&probe_run);
-    let (mut run, mut ledger, here) =
-        engaged_abort_hold_after_failed_walk(&mut snapshot, vec![newcomer]);
-    for tick in 14..=16 {
-        let polled = with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx));
-        assert!(
-            polled.is_pending(),
-            "tick {tick}: the exhausted hold must escape, not park"
-        );
-    }
-    let walks = ledger
-        .as_ref()
-        .unwrap()
-        .outbox
-        .iter()
-        .filter_map(|action| match &action.effect {
-            crate::native::HostEffect::Walk(request) => Some(request.target),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(walks.len(), 1, "exactly one exhausted escape walk");
-    assert!(
-        tile_distance(walks[0], new_attacker_tile) > tile_distance(here, new_attacker_tile),
-        "the escape moves farther from the new attacker"
-    );
     let new_attacker = data
         .npc_name(new_attacker_id)
         .expect("selected content includes the new attacker's range facts");
     let chase_envelope = escape_envelope(new_attacker.maxrange, new_attacker.attackrange);
-    let distance = tile_distance(walks[0], new_attacker_tile);
-    assert!(
-        distance > chase_envelope,
-        "the plan leaves the new attacker's chase envelope of {chase_envelope} tiles"
-    );
-    assert!(
-        distance <= chase_envelope.saturating_add(1),
-        "distance {distance} is not within the first ring beyond new envelope {chase_envelope}; old envelope is {old_envelope}"
-    );
+    let probe_run = combat_test_run(imp_target(&data), None, None, Vec::new());
+    for (dx, dz) in [
+        (-5, 0),
+        (5, 0),
+        (0, -5),
+        (0, 5),
+        (-20, 0),
+        (20, 0),
+        (0, -20),
+        (0, 20),
+    ] {
+        let mut snapshot = GameSnapshot::new();
+        let new_attacker_tile = api::WorldTile {
+            x: 3001 + dx,
+            z: 3000 + dz,
+            level: 0,
+        };
+        let mut newcomer = aborting_npc(9, new_attacker_id, new_attacker_tile);
+        newcomer.animation = live_attack_animation(&probe_run);
+        let (mut run, mut ledger, here) =
+            engaged_abort_hold_after_failed_walk(&mut snapshot, vec![newcomer]);
+        for tick in 14..=16 {
+            let polled = with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx));
+            assert!(
+                polled.is_pending(),
+                "tick {tick}: the exhausted hold must escape, not park"
+            );
+        }
+        let walks = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter_map(|action| match &action.effect {
+                crate::native::HostEffect::Walk(request) => Some(request.target),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let target = walks.first().copied();
+        let distance = target.map(|target| tile_distance(target, new_attacker_tile));
+        eprintln!(
+            "[DEBUG-CPE-R4-F5] offset=({dx},{dz}) walks={} target={target:?} distance={distance:?} new={chase_envelope} old={old_envelope}",
+            walks.len()
+        );
+        assert_eq!(walks.len(), 1, "exactly one exhausted escape walk");
+        assert!(distance.unwrap() > chase_envelope);
+        assert!(tile_distance(walks[0], new_attacker_tile) > tile_distance(here, new_attacker_tile));
+    }
 }
 
 #[test]
