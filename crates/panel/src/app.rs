@@ -409,11 +409,7 @@ fn exit_after_work_shutdown(code: i32) -> ! {
     std::process::exit(code)
 }
 
-fn fail_startup(
-    session: &mut Session,
-    fatal: bool,
-    error: String,
-) -> Option<window::PanelError> {
+fn fail_startup(session: &mut Session, fatal: bool, error: String) -> Option<window::PanelError> {
     session.set_profile_preparing(false);
     session.error = Some(error.clone());
     if fatal {
@@ -549,7 +545,8 @@ fn drive_startup(
                         .pending_boot
                         .as_ref()
                         .is_some_and(boot_failure_is_fatal);
-                    if let Some(error) = fail_startup(&mut state.session, fatal, error.to_string()) {
+                    if let Some(error) = fail_startup(&mut state.session, fatal, error.to_string())
+                    {
                         return Some(error);
                     }
                 }
@@ -570,7 +567,8 @@ fn drive_startup(
                         .pending_boot
                         .as_ref()
                         .is_some_and(boot_failure_is_fatal);
-                    if let Some(error) = fail_startup(&mut state.session, fatal, error.to_string()) {
+                    if let Some(error) = fail_startup(&mut state.session, fatal, error.to_string())
+                    {
                         return Some(error);
                     }
                 }
