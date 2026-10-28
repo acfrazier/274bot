@@ -759,6 +759,7 @@ fn switch_refused_mandatory_ammo_fails() {
     assert!(matches!(harness.machine.style_state, StyleState::Melee(_)));
     for t in tick..tick + 12 {
         let batch = step_keeping(&mut harness, &mut scene, t, &keep);
+        eprintln!("DBG t={t} rows={:?} state={:?} equip={:?} pack={:?}", rows(&batch), harness.machine.switch_state(), scene.equipment.iter().map(|r| (r.slot, r.def.id)).collect::<Vec<_>>(), scene.inventory.iter().map(|r| (r.slot, r.def.id)).collect::<Vec<_>>());
         rewore_scimitar |= wear_names(&batch).contains(&scimitar);
     }
     assert!(rewore_scimitar, "the ordinary repair wears the sword again");
@@ -840,7 +841,9 @@ fn a_full_armour_change_wears_the_right_hand_first_over_two_plans() {
         "right hand, quiver, then slot order"
     );
     assert_eq!(harness.machine.switches(), 0);
-    let second = step(&mut harness, &mut scene, 5);
+    // A wear paces the next one by two ticks (`OpKind::Wear` admission delay).
+    assert!(wear_names(&step(&mut harness, &mut scene, 5)).is_empty());
+    let second = step(&mut harness, &mut scene, 6);
     assert_eq!(
         wear_names(&second),
         [
@@ -849,7 +852,7 @@ fn a_full_armour_change_wears_the_right_hand_first_over_two_plans() {
         ]
     );
     assert_eq!(harness.machine.switches(), 0, "not before the last slot is observed");
-    step(&mut harness, &mut scene, 6);
+    step(&mut harness, &mut scene, 7);
     assert_eq!(harness.machine.active_style(), Style::Ranged);
     assert_eq!(harness.machine.switches(), 1);
 }
@@ -889,10 +892,11 @@ fn a_shield_waits_for_the_right_hand_when_a_two_hander_gives_way() {
         "the shield is not in the plan of the two-hander's replacement: {:?}",
         rows(&first)
     );
-    let second = step(&mut harness, &mut scene, 5);
+    assert!(wear_names(&step(&mut harness, &mut scene, 5)).is_empty());
+    let second = step(&mut harness, &mut scene, 6);
     assert_eq!(wear_names(&second), [item_name(&scene, "wooden_shield")]);
     assert_eq!(harness.machine.switches(), 0);
-    step(&mut harness, &mut scene, 6);
+    step(&mut harness, &mut scene, 7);
     assert_eq!(harness.machine.active_style(), Style::Mage);
 }
 
