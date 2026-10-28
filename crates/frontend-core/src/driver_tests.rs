@@ -749,12 +749,20 @@ fn watched_setting_events_report_pending_failed_then_saved() {
         "the held write is pending"
     );
 
-    // Block the preferences file so the held write fails when released:
-    // a directory where the file belongs cannot be published over.
+    // Hold the preferences file's write lock so the held write fails when
+    // released: the writer's bounded lock wait runs out (the same
+    // contention the T5.3-S3 headed check uses).
     let path = d.session().preferences().expect("bound preferences").path();
-    let aside = path.with_extension("aside");
-    std::fs::rename(&path, &aside).expect("file aside");
-    std::fs::create_dir(&path).expect("block the file path");
+    let mut lock_name = path.as_os_str().to_os_string();
+    lock_name.push(".lock");
+    let lock_file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(std::path::PathBuf::from(lock_name))
+        .expect("lock file");
+    lock_file.try_lock().expect("hold the write lock");
     release.send(()).unwrap();
     let terminal = settled_app(&mut d, submitted.request());
     assert!(
@@ -770,9 +778,9 @@ fn watched_setting_events_report_pending_failed_then_saved() {
         "the failure carries the writer's reason: {events:?}"
     );
 
-    // Unblock and retry: the same setting saves.
-    std::fs::remove_dir(&path).expect("unblock");
-    std::fs::rename(&aside, &path).expect("file back");
+    // Release the lock and retry: the same setting saves.
+    lock_file.unlock().expect("release the write lock");
+    drop(lock_file);
     let submitted = d
         .submit(
             OperatorCommand::SetNavPreference(NavPreference::AllowTeleports, false),
