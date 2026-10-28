@@ -190,6 +190,35 @@ pub(crate) fn chicken_killer_bank_scenario() -> Scenario {
         ("watch new exact Feather 314 after return", further_feathers),
     ] {
         steps.push(bank_fletcher_watch(step_name, arm));
+        if step_name == "watch exact Feather 314 looted after Start" {
+            steps.push(Step {
+                name: "diagnosis: stop with script-looted feathers before the trip",
+                kind: StepKind::StopScript,
+                wait: Wait {
+                    arm: Proof::ScriptIdle,
+                    budget_ticks: 10,
+                },
+            });
+            steps.push(Step {
+                name: "diagnosis: place the account at the no-route chicken shed tile",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        cheat(c, &tele_args(0, 3015, 3294));
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::ArrivedNear {
+                        x: 3015,
+                        z: 3294,
+                        level: 0,
+                        radius: 0,
+                    },
+                    budget_ticks: 20,
+                },
+            });
+            steps.push(start_catalog_step());
+        }
     }
     Scenario {
         name: "chicken_killer_bank",
