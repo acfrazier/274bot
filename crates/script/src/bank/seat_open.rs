@@ -2452,6 +2452,64 @@ mod tests {
     }
 
     #[test]
+    fn world_bank_open_walks_to_the_air_nearest_bank_when_no_route_is_known() {
+        for operation in [BankSeatOperation::Open, BankSeatOperation::OpenNearestWorld] {
+            let bank = catalog_bank("Falador East");
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            snapshot.seed_tile(tile(3015, 3294));
+            let mut ledger = None;
+            let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                let handle = tick
+                    .actions
+                    .begin::<Opening>(
+                        OpeningArgs {
+                            request: BankSeatArgs::new(operation),
+                            facts: Arc::new(NamedBankFacts::from_banks(vec![bank])),
+                            preferences: BankPreferences::default(),
+                            hooks: Arc::new(Mutex::new(TransferHooks::default())),
+                        },
+                        &mut tick.cx,
+                    )
+                    .unwrap();
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+                handle
+            });
+            let action = ledger.as_mut().unwrap().outbox.pop().unwrap();
+            let HostEffect::BankPick(request) = &action.effect else {
+                panic!("a world bank open must select before walking");
+            };
+            assert!(request.explicit_bank.is_none());
+            ledger.as_mut().unwrap().complete_bank_pick(
+                &action.authority(),
+                crate::native_bank::BankPickReceipt {
+                    request_id: action.request_id.get(),
+                    evidence: api::quest_progress::EvidenceStamp {
+                        run: action.authority().run(),
+                        tick: 1,
+                        sequence: 1,
+                    },
+                    selected: no_candidate_selection(),
+                },
+            );
+            with_tick(&snapshot, &mut ledger, 2, |tick| {
+                assert!(
+                    tick.actions.poll(&handle, &mut tick.cx).is_pending(),
+                    "an unavailable route must not become a local booth failure"
+                );
+            });
+            let actions = &ledger.as_ref().unwrap().outbox;
+            assert_eq!(actions.len(), 1);
+            let HostEffect::Walk(request) = &actions[0].effect else {
+                panic!("the fallback must use the normal world walk");
+            };
+            assert_eq!(request.target, bank.tile);
+            assert_eq!(request.radius, 4);
+            assert_eq!(request.arrival, ArrivalKind::Reach);
+        }
+    }
+
+    #[test]
     fn banking_open_preferences_gate_the_closer_mage_arena_choice() {
         let mage = catalog_bank("Mage Arena");
         let public = NamedBank::new("Public", tile(mage.air_tile().x + 1, mage.air_tile().z));
