@@ -47,7 +47,9 @@
 
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed;
-use crate::reach_entity::{chat_mark, chat_state, npc_talkable, talk_row, NpcReach, NpcReachOpts, TalkExpect};
+use crate::reach_entity::{
+    chat_mark, chat_state, npc_talkable, talk_row, NpcReach, NpcReachOpts, TalkExpect,
+};
 use crate::supply_v2;
 use crate::walk::{
     avoid_refusal, here, interrupted, resolve_teleports, teleport_span_allows, Resilient, Walk,
@@ -1467,7 +1469,6 @@ impl Recover {
         self.stage = next;
         None
     }
-
 }
 
 #[derive(Clone, Copy, Deserialize)]
