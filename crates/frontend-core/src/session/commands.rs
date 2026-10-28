@@ -488,9 +488,7 @@ impl CommandDesk {
         ));
     }
 
-    pub(super) fn take_setting_events(
-        &mut self,
-    ) -> (Vec<super::prefs::SettingEvent>, bool) {
+    pub(super) fn take_setting_events(&mut self) -> (Vec<super::prefs::SettingEvent>, bool) {
         (
             std::mem::take(&mut self.setting_events),
             std::mem::take(&mut self.setting_events_overflowed),
@@ -2893,9 +2891,14 @@ mod setting_event_tests {
 
         let (events, incomplete) = commands.take_setting_events();
         assert_eq!(events.len(), SETTING_EVENTS_CAP);
-        assert!(incomplete, "a dropped terminal failure marks the batch incomplete");
         assert!(
-            events.iter().all(|event| event.state() == SettingEventState::Pending),
+            incomplete,
+            "a dropped terminal failure marks the batch incomplete"
+        );
+        assert!(
+            events
+                .iter()
+                .all(|event| event.state() == SettingEventState::Pending),
             "the full queue retains its original bounded contents"
         );
         assert_eq!(commands.take_setting_events(), (Vec::new(), false));

@@ -57,7 +57,6 @@ impl NavPreference {
             Self::SurvivableRoutingNoticeAck => "nav.survivable_routing_notice_ack",
         }
     }
-
 }
 /// Read one shared nested nav boolean through the process service's
 /// preferences, with its legacy default. (Changing it is the

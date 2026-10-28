@@ -340,12 +340,6 @@ impl<Io> OperatorSession<Io> {
         self.commands.note_setting_event(setting, state, None);
     }
 
-    /// Record that the owner removed `setting`'s retained failure.
-    pub(super) fn note_setting_cleared(&mut self, setting: &str) {
-        self.commands
-            .note_setting_event(setting, SettingEventState::Cleared, None);
-    }
-
     /// Record that `setting`'s write failed with `error`. The text is
     /// formatted only while a front end watches.
     pub(super) fn note_setting_failed(&mut self, setting: &str, error: &dyn std::fmt::Display) {
@@ -708,7 +702,13 @@ impl<Io> OperatorSession<Io> {
         if let Some(desk) = surface.models().map.as_deref_mut() {
             desk.bake_gate_mut().set_choice(choice);
         }
-        self.after_write(request, write, "map bake choice", "map bake choice", PrefEffect::None)
+        self.after_write(
+            request,
+            write,
+            "map bake choice",
+            "map bake choice",
+            PrefEffect::None,
+        )
     }
 
     fn set_quester_paths<S: SlotSurface<Io = Io>>(
@@ -781,15 +781,13 @@ impl<Io> OperatorSession<Io> {
                     return no_store();
                 };
                 match host_play::begin_persist_background_bots_ack(preferences.inner()) {
-                    Ok(write) => {
-                        self.after_write(
-                            request,
-                            write,
-                            "background bots",
-                            "background bots",
-                            PrefEffect::None,
-                        )
-                    }
+                    Ok(write) => self.after_write(
+                        request,
+                        write,
+                        "background bots",
+                        "background bots",
+                        PrefEffect::None,
+                    ),
                     Err(error) => {
                         let text = host_play::background_bots_ack_error(&error);
                         self.note_setting_failed("background bots", &text);
