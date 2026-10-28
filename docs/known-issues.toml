@@ -393,8 +393,8 @@ text = """During a Karamja trip to the mainland without the 30-coin boat fare,
   boat boards. During the conversation, the bot can make up to three attempts
   to reach Luthas. If all three fail, the fare is not paid and the trip does
   not cross.
-  After payment, the fare is already paid; in observed cases the bot still
-  boards. No workaround is known."""
+  After payment, the fare is paid. In observed cases, the bot still boards.
+  No workaround is known."""
 first = "0.2.8"
 target = "none"
 severity = "medium"
