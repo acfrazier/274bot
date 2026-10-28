@@ -864,7 +864,6 @@ const SURFACE: &[(&str, Decision)] = &[
         "panel/session.rs::Session::script_toggle_pause",
         Rows(&[C::PauseScript, C::ResumeScript], RUN_STATE),
     ),
-    ("panel/session.rs::Session::script_skip_quest", Row(C::SkipQuest)),
     ("panel/session.rs::Session::cache_tutorial", Row(C::MarkTutorialSkipped)),
     ("panel/session.rs::Session::set_capture", Row(C::SetDraw(DrawSwitch::CaptureInput, true))),
     ("panel/session.rs::Session::set_sidecar_50", Row(C::SetDraw(DrawSwitch::SidecarFullRate, true))),
@@ -1148,7 +1147,6 @@ const SURFACE: &[(&str, Decision)] = &[
         "tui/bin.rs::TuiSession::script_toggle_pause",
         Rows(&[C::PauseScript, C::ResumeScript], RUN_STATE),
     ),
-    ("tui/bin.rs::TuiSession::script_skip_quest", Row(C::SkipQuest)),
     (
         "tui/bin.rs::TuiSession::run_fleet_plan",
         Rows(

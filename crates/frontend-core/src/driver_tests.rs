@@ -5839,7 +5839,12 @@ fn skip_quest_acceptance_uses_the_shared_driver_command_and_logs_the_identity_on
         .play_for_test()
         .expect("play")
         .script_start_handle()
-        .start_test_script("alice", Box::new(SkipProbe(Arc::clone(&calls))), None)
+        .start_test_script_with_card(
+            "alice",
+            script::CompiledId("Quester"),
+            Box::new(SkipProbe(Arc::clone(&calls))),
+            None,
+        )
         .expect("start native probe");
     wait_state(&mut d, "alice", ScriptRunState::Running);
 
