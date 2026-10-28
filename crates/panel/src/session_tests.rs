@@ -5657,7 +5657,7 @@ impl MemoryRunFixture {
 #[cfg(feature = "memory-profile")]
 impl Drop for MemoryRunFixture {
     fn drop(&mut self) {
-        self.run.take();
+        drop(self.run.take());
         let _ = std::fs::remove_dir_all(&self.temp_dir);
     }
 }
@@ -5775,8 +5775,7 @@ fn memory_stress_policies_keep_seed_placement_by_workload() {
                 .all(|name| crate::focus::full_rate_for(&focus, name)));
         }
         drop(focus);
-        drop(session);
-        drop(run);
+
     }
 }
 

@@ -2378,15 +2378,6 @@ impl Session {
         Ok(())
     }
 
-    /// Keep benchmark seed selection separate from its render mode.
-    #[cfg(feature = "memory-profile")]
-    fn configure_memory_render_policy(&self, policy: frontend_core::bench::RenderPolicy) -> bool {
-        use frontend_core::bench::RenderPolicy;
-        let stress_wall = matches!(policy, RenderPolicy::Stress50 | RenderPolicy::Stress50Full);
-        self.scatter.store(false, Ordering::Relaxed);
-        stress_wall
-    }
-
     #[cfg(feature = "memory-profile")]
     pub fn prepare_memory(&mut self, run: &frontend_core::bench::BenchRun) -> Result<(), String> {
         use frontend_core::bench::RenderPolicy;
@@ -2394,7 +2385,9 @@ impl Session {
         self.draw.set_persist(false);
         self.mainland.store(true, Ordering::Relaxed);
         let policy = run.render_policy();
-        let stress_wall = self.configure_memory_render_policy(policy);
+        let stress_wall = matches!(policy, RenderPolicy::Stress50 | RenderPolicy::Stress50Full);
+        let scatter_seed = run.workload() == frontend_core::bench::Workload::Idle && stress_wall;
+        self.scatter.store(scatter_seed, Ordering::Relaxed);
         if !self.start_vault(run.vault(), run.passphrase()) {
             return Err(self
                 .error
