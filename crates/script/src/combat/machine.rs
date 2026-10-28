@@ -22,6 +22,10 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
+#[path = "switch.rs"]
+mod switch;
+pub use switch::{RangedNeed, SwitchCause, SwitchState, SETTLE_SLACK};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
     Prep,
@@ -190,7 +194,9 @@ pub struct Combat {
     // The remaining bits hold Prep-origin and skipped boost-family masks.
     prep_failures: u64,
     sequence: u64,
-    rhand_pick: i32,
+    /// The right-hand pick of each style with no kit, by `Style::index`
+    /// (PVP-DESIGN-1026 §4.2); `-1` is "none".
+    rhand_pick: [i32; 3],
     suspended_type: i32,
     chat_since: i32,
     /// The source that authorised STARTING a fight; `None` for self-defence.
@@ -205,6 +211,23 @@ pub struct Combat {
     duel_wait_lines: u8,
     /// `PVP_*` bits; `flags` has all sixteen bits in use.
     flags2: u16,
+    /// The executable style (PVP-DESIGN-1026 §4.1): the one whose `style_state`
+    /// exists. `switch` names the pending one.
+    active: Style,
+    switch: SwitchState,
+    /// Completed style switches and switches that ended `Failed`.
+    switches: u8,
+    switch_failed: u8,
+    /// Styles whose last switch ended `Failed`, one bit per `Style::index`.
+    failed_styles: u8,
+    /// The engaged player's protection bits (`headicons & 0b111000`) on this
+    /// and on the previous observed frame, and when the last switch completed.
+    opp_protect: u8,
+    opp_protect_prev: u8,
+    last_switch_mask: u8,
+    /// Consecutive observed ticks with the engaged player out of melee reach and
+    /// no swing onset of ours (T4).
+    reach_ticks: u8,
     engaged: Option<ActorRef>,
     suspended: Option<ActorRef>,
     end: Option<CombatEnd>,
@@ -236,6 +259,8 @@ const LEASH_WALKED: u16 = 32768;
 const PVP_HOLD: u16 = 1;
 /// A server kill line was seen for the engaged player.
 const PVP_KILL_LINE: u16 = 2;
+/// A swing onset of ours was observed this tick (consumed by the switch step).
+const PVP_SWING: u16 = 4;
 /// Ticks an attack row stays held after a single-way line (`add(%lastcombat, 8)`,
 /// `skill_combat/scripts/pvp/pvp_combat.rs2:102`).
 const SINGLE_WAY_WINDOW: u16 = 8;
@@ -305,7 +330,9 @@ impl NativeMachine for Combat {
                 return Err(unavailable("unattackable npc target"));
             }
         }
-        if request.style == Style::Mage
+        let active = switch::opening_style(&request)
+            .ok_or_else(|| unavailable("combat style capability"))?;
+        if (active == Style::Mage || request.kits.mage.is_some())
             && (tables.selected().spells().is_empty() || tables.selected().spells().len() > 32)
         {
             return Err(unavailable("combat spell facts"));
@@ -322,42 +349,16 @@ impl NativeMachine for Combat {
         } else {
             request.budget_ticks
         };
-        let style_state = match request.style {
-            Style::Ranged => StyleState::Ranged(Box::new(RangedState {
-                ammo_pick: -1,
-                anim_update: cx
-                    .snapshot()
-                    .local_player()
-                    .and_then(|local| local.value.animation_update)
-                    .map(|update| update.serial),
-                pickup_baseline: 0,
-                sweep_attempts: 0,
-                sweep_done: false,
-                readiness_wait: RangedReadinessWait::Inactive,
-            })),
-            Style::Melee => StyleState::Melee(MeleeState {
-                anim_id: -1,
-                anim_frame: -1,
-                mode_fallback: None,
-            }),
-            Style::Mage => {
-                let mut state = Box::<MagicState>::default();
-                if let Some(order) = &request.spells {
-                    if order.is_empty() || order.len() > u8::MAX as usize {
-                        return Err(unavailable("combat spell order"));
-                    }
-                    for (slot, spell) in order.iter().enumerate() {
-                        let Some(index) = magic::spell_index(&tables, &spell.alias) else {
-                            return Err(unavailable("combat spell order"));
-                        };
-                        state.spell_order[slot] = index;
-                        state.ordered_mask |= 1u32 << index;
-                    }
-                    state.spell_order_len = order.len() as u8;
-                }
-                StyleState::Magic(state)
-            }
-        };
+        let local_update = cx
+            .snapshot()
+            .local_player()
+            .and_then(|local| local.value.animation_update)
+            .map(|update| update.serial);
+        let style_state = Self::new_style_state(&request, &tables, active, local_update, -1)?;
+        if active != Style::Mage && request.kits.mage.is_some() {
+            // A bad spell order fails here, not at a later switch.
+            Self::new_style_state(&request, &tables, Style::Mage, None, -1)?;
+        }
         let mut machine = Self {
             request,
             tables,
@@ -373,7 +374,7 @@ impl NativeMachine for Combat {
             counters: Counters::default(),
             style_state,
             sequence: 0,
-            rhand_pick: -1,
+            rhand_pick: [-1; 3],
             suspended_type: -1,
             chat_since: -1,
             pvp_source,
@@ -382,6 +383,15 @@ impl NativeMachine for Combat {
             single_way_lines: 0,
             duel_wait_lines: 0,
             flags2: 0,
+            active,
+            switch: SwitchState::Idle,
+            switches: 0,
+            switch_failed: 0,
+            failed_styles: 0,
+            opp_protect: 0,
+            opp_protect_prev: 0,
+            last_switch_mask: 0,
+            reach_ticks: 0,
             engaged: None,
             suspended: None,
             end: None,
@@ -425,8 +435,8 @@ impl NativeMachine for Combat {
             if let Some(actor) = picked {
                 machine.engage(actor, &frame);
             }
-            machine.pick_weapon(&frame);
-            if machine.request.style == Style::Mage {
+            machine.pick_weapons(&frame);
+            if machine.active == Style::Mage {
                 machine.resolve_magic_mode(&frame);
             }
             machine.resolve_worth(&frame);
@@ -503,7 +513,7 @@ impl NativeMachine for Combat {
                 self.finish(CombatEnd::Died, tick);
             } else {
                 self.observe_target(&frame, tick);
-                if self.request.style == Style::Mage {
+                if self.active == Style::Mage {
                     for line in chat.value.iter() {
                         self.magic_refusal(&line.text);
                     }
@@ -535,7 +545,7 @@ impl NativeMachine for Combat {
             if self.phase != Phase::WindDown {
                 let failure = if self.flags & FAILED_WEAPON != 0 {
                     Some(AbortReason::PrepFailed(weapon_prep_item(
-                        self.request.style,
+                        self.active,
                     )))
                 } else if self.flags & FAILED_SHIELD != 0 {
                     Some(AbortReason::PrepFailed(PrepItem::Shield))
@@ -550,11 +560,14 @@ impl NativeMachine for Combat {
             }
             // The request-wide deadline is checked above; this narrower wait
             // consumes only fresh observations, even while style work is locked.
-            if self.phase == Phase::Prep && self.request.style == Style::Ranged {
+            if self.phase == Phase::Prep && self.active == Style::Ranged {
                 if let Some(reason) = self.ranged_readiness_abort(&frame, None) {
                     self.finish(CombatEnd::Aborted(AbortReason::PrepReadiness(reason)), tick);
                 }
             }
+        }
+        if self.phase != Phase::WindDown {
+            self.switch_observe(&frame, tick);
         }
         if self.player_ident().is_some() {
             if self.engaged.is_some_and(|actor| {
@@ -599,7 +612,7 @@ impl NativeMachine for Combat {
         }
         self.schedule.unlock_observed(tick);
         self.plan = TickPlan::default();
-        match self.plan(&frame, tick, cx) {
+        match self.plan_tick(&frame, tick, cx) {
             Ok(plan) => {
                 self.plan = plan;
                 if plan.len == 0 {
@@ -607,7 +620,7 @@ impl NativeMachine for Combat {
                         && self.baseline_on & BASELINE_READY != 0
                         && self.sweep.pending_mask() == 0
                         && !self.pending_row(RowKind::Pickup)
-                        && (self.request.style != Style::Ranged || self.ranged().sweep_done)
+                        && (self.active != Style::Ranged || self.ranged().sweep_done)
                         && !(self.flags & TERMINAL_FOOD != 0 && self.pending_row(RowKind::Eat))
                         && self
                             .sweep
@@ -754,6 +767,9 @@ impl Combat {
             pvp_blocked: self.counters.pvp_blocked,
             pvp_source: self.pvp_source,
             kill_line_seen: self.flags2 & PVP_KILL_LINE != 0,
+            switches: self.switches,
+            switch_failed: self.switch_failed,
+            active_style: self.active,
         }
     }
     fn clear_pending_cast(&mut self) {
@@ -879,7 +895,7 @@ impl Combat {
     }
     fn resolve_magic_mode(&mut self, frame: &Frame<'_>) {
         if self.magic().mode.is_none() {
-            let rhand = self.desired(3).or_else(|| {
+            let rhand = self.active_desired(3, frame).or_else(|| {
                 frame
                     .equipment
                     .iter()
@@ -890,7 +906,7 @@ impl Combat {
         }
     }
     fn observe_magic(&mut self, frame: &Frame<'_>, tick: u16) {
-        if self.request.style != Style::Mage {
+        if self.active != Style::Mage {
             return;
         }
         let Some(index) = self.magic().selected else {
@@ -910,6 +926,7 @@ impl Combat {
         if spent && accepted_cast {
             self.magic_mut().last_launched = Some(index);
             self.counters.casts = self.counters.casts.saturating_add(1);
+            self.flags2 |= PVP_SWING;
             if self.magic().mode == Some(CastMode::Autocast) {
                 self.schedule.observe_swing(tick, magic::CAST_TICKS as u8);
             } else {
@@ -1140,7 +1157,7 @@ impl Combat {
         }
     }
     fn rate(&self, frame: &Frame<'_>) -> u8 {
-        if self.request.style == Style::Mage {
+        if self.active == Style::Mage {
             return magic::CAST_TICKS as u8;
         }
         let base = frame
@@ -1149,10 +1166,11 @@ impl Combat {
             .find(|row| row.slot == 3)
             .and_then(|row| self.tables.weapon_style(row.def.id))
             .map_or(4, |row| row.attackrate.max(1));
-        self.style_rate(base)
+        self.style_rate(self.active, base)
     }
-    fn style_rate(&self, base: u8) -> u8 {
-        if self.request.style == Style::Ranged {
+    /// The attack interval of a weapon with `base` rate when used for `style`.
+    fn style_rate(&self, style: Style, base: u8) -> u8 {
+        if style == Style::Ranged {
             ranged::rate(base, self.request.ranged_style)
         } else {
             base.max(1)
@@ -1209,7 +1227,7 @@ impl Combat {
         true
     }
     fn resolve_worth(&mut self, frame: &Frame<'_>) {
-        let carries_boost = self.request.kit.as_ref().is_some_and(|kit| {
+        let carries_boost = self.request.kits.get(self.active).is_some_and(|kit| {
             kit.carry.iter().any(|(id, _)| {
                 self.boost_kinds().iter().any(|kind| {
                     self.tables.potion(*kind).is_some_and(|family| {
@@ -1238,78 +1256,46 @@ impl Combat {
         } else {
             self.flags &= !SHIELD_OVERRIDE;
         }
-        if self.rhand_pick < 0 {
-            self.pick_weapon(frame);
+        if self.rhand_pick[self.active.index()] < 0 {
+            self.pick_weapons(frame);
         }
     }
-    fn pick_weapon(&mut self, frame: &Frame<'_>) {
-        if self.request.style == Style::Mage {
-            if self.request.kit.is_none() {
-                self.rhand_pick = frame
-                    .equipment
-                    .iter()
-                    .find(|row| row.slot == 3)
-                    .filter(|row| {
+    /// Resolve the right-hand pick of every style that has no kit
+    /// (PVP-DESIGN-1026 §4.2). A style with a kit wears the kit's rows only.
+    fn pick_weapons(&mut self, frame: &Frame<'_>) {
+        for style in Style::ALL {
+            if self.request.kits.get(style).is_none() {
+                self.rhand_pick[style.index()] = self.pick_weapon(style, frame);
+            }
+        }
+    }
+    fn pick_weapon(&self, style: Style, frame: &Frame<'_>) -> i32 {
+        match style {
+            Style::Mage => frame
+                .equipment
+                .iter()
+                .find(|row| row.slot == 3)
+                .filter(|row| {
+                    self.tables
+                        .weapon_style(row.def.id)
+                        .is_some_and(|weapon| weapon.tab == Some(CombatTab::Staff))
+                })
+                .or_else(|| {
+                    frame.inventory.iter().find(|row| {
                         self.tables
                             .weapon_style(row.def.id)
                             .is_some_and(|weapon| weapon.tab == Some(CombatTab::Staff))
+                            && row.count > 0
                     })
-                    .or_else(|| {
-                        frame.inventory.iter().find(|row| {
-                            self.tables
-                                .weapon_style(row.def.id)
-                                .is_some_and(|weapon| weapon.tab == Some(CombatTab::Staff))
-                                && row.count > 0
-                        })
-                    })
-                    .map_or(-1, |row| row.def.id);
-            }
-            return;
-        }
-        if self.request.kit.is_some() {
-            return;
-        }
-        if self.request.style == Style::Ranged {
-            self.rhand_pick = frame
+                })
+                .map_or(-1, |row| row.def.id),
+            Style::Ranged => frame
                 .equipment
                 .iter()
                 .chain(frame.inventory)
                 .find(|row| row.count > 0 && ranged::weapon(&self.tables, row.def.id).is_some())
-                .map_or(-1, |row| row.def.id);
-            return;
-        }
-        let Some(names) = self.tables.selected().equipment_names() else {
-            return;
-        };
-        let Some(family) = names.family("melee_weapons") else {
-            return;
-        };
-        let name = crate::melee_weapons::best_melee_weapon_by(
-            family,
-            arbiter::stat(frame, 0).1,
-            false,
-            &[],
-            |name| {
-                frame.inventory.iter().chain(frame.equipment).any(|row| {
-                    row.def
-                        .name
-                        .as_deref()
-                        .is_some_and(|have| have.eq_ignore_ascii_case(name))
-                })
-            },
-        );
-        if let Some(name) = name {
-            self.rhand_pick = frame
-                .inventory
-                .iter()
-                .chain(frame.equipment)
-                .find(|row| {
-                    row.def
-                        .name
-                        .as_deref()
-                        .is_some_and(|have| have.eq_ignore_ascii_case(name))
-                })
-                .map_or(-1, |row| row.def.id);
+                .map_or(-1, |row| row.def.id),
+            Style::Melee => switch::best_melee_weapon(&self.tables, frame),
         }
     }
     fn observe_target(&mut self, frame: &Frame<'_>, tick: u16) {
@@ -1486,7 +1472,7 @@ impl Combat {
                 self.tables.food(row.id).expect("planned food fact"),
             ),
             RowKind::CureFruit => super::schedule::InputEffect::CureFruit,
-            RowKind::Attack if self.request.style == Style::Ranged => {
+            RowKind::Attack if self.active == Style::Ranged => {
                 super::schedule::InputEffect::RangedAttack
             }
             RowKind::Prayer if row.aux != 0 => super::schedule::InputEffect::PrayerOn,
@@ -1600,7 +1586,7 @@ impl Combat {
                     self.tables.food(row.id).expect("planned food fact"),
                 ),
                 RowKind::CureFruit => super::schedule::InputEffect::CureFruit,
-                RowKind::Attack if self.request.style == Style::Ranged => {
+                RowKind::Attack if self.active == Style::Ranged => {
                     super::schedule::InputEffect::RangedAttack
                 }
                 RowKind::Prayer if row.aux != 0 => super::schedule::InputEffect::PrayerOn,
@@ -1740,6 +1726,7 @@ impl Combat {
                 || (reached(tick, self.schedule.last_clear) && tick != self.schedule.last_clear))
         {
             self.counters.swings = self.counters.swings.saturating_add(1);
+            self.flags2 |= PVP_SWING;
             self.schedule.observe_swing(tick, self.rate(frame));
         }
         for slot in 0..self.pending.len() {
@@ -1854,7 +1841,10 @@ impl Combat {
                         let count = (((self.prep_failures >> shift) & 3) + 1).min(3);
                         self.prep_failures =
                             (self.prep_failures & !(3 << shift)) | (count << shift);
-                        if count >= 2 && row.aux == 3 {
+                        if self.switch.pending().is_some() {
+                            // A refused wear of a pending kit is the switch's to
+                            // judge (`Failed`), never the engagement's.
+                        } else if count >= 2 && row.aux == 3 {
                             self.flags |= FAILED_WEAPON;
                         } else if count >= 2 && row.aux == 5 && self.flags & SHIELD_OVERRIDE != 0 {
                             self.flags |= FAILED_SHIELD;
@@ -2396,7 +2386,10 @@ impl Combat {
             }
             return Ok(plan);
         }
-        if self.request.style == Style::Ranged {
+        if self.phase == Phase::Fight {
+            self.switch_start(frame, tick);
+        }
+        if self.active == Style::Ranged {
             if !self.ranged_prepare(frame, tick) {
                 return self.plan(frame, tick, cx);
             }
@@ -2405,7 +2398,7 @@ impl Combat {
             }
         }
         if self.phase == Phase::Prep {
-            let weapon = self.desired(3);
+            let weapon = self.desired(3, frame);
             let conflict = self.flags & SHIELD_OVERRIDE != 0
                 && weapon.is_some_and(|id| {
                     self.tables
@@ -2426,7 +2419,7 @@ impl Combat {
                     CombatEnd::Aborted(AbortReason::PrepFailed(if conflict {
                         PrepItem::Shield
                     } else {
-                        weapon_prep_item(self.request.style)
+                        weapon_prep_item(self.active)
                     })),
                     tick,
                 );
@@ -2435,7 +2428,7 @@ impl Combat {
             self.wear(&mut plan, frame, tick);
             self.style(&mut plan, frame, tick);
             // Ranged Prep waits for the exact tab and observed style echo.
-            if self.request.style == Style::Ranged {
+            if self.active == Style::Ranged {
                 if let Some(reason) = self.ranged_readiness_abort(frame, Some(&plan)) {
                     self.finish(CombatEnd::Aborted(AbortReason::PrepReadiness(reason)), tick);
                     return self.plan(frame, tick, cx);
@@ -2444,7 +2437,7 @@ impl Combat {
                     return Ok(plan);
                 }
             }
-            if self.request.style == Style::Mage && self.magic_prepare(&mut plan, frame, tick, cx) {
+            if self.active == Style::Mage && self.magic_prepare(&mut plan, frame, tick, cx) {
                 return Ok(plan);
             }
             self.retaliate(&mut plan, frame, tick);
@@ -2473,7 +2466,7 @@ impl Combat {
             }
             // Only completed or in-plan equipment permits engagement.
             let missing_wear = (0..14).any(|slot| {
-                self.desired(slot).is_some_and(|id| {
+                self.desired(slot, frame).is_some_and(|id| {
                     !frame
                         .equipment
                         .iter()
@@ -2493,7 +2486,7 @@ impl Combat {
         if self.phase == Phase::Engage {
             self.style(&mut plan, frame, tick);
             self.retaliate(&mut plan, frame, tick);
-            if self.request.style == Style::Mage {
+            if self.active == Style::Mage {
                 if self.magic_prepare(&mut plan, frame, tick, cx) {
                     return Ok(plan);
                 }
@@ -2557,14 +2550,14 @@ impl Combat {
         if plan.closed(&self.tables) {
             return Ok(plan);
         }
-        let offense = self.request.style == Style::Melee
+        let offense = self.active == Style::Melee
             && self.flags & BOOST_WORTH != 0
             && prayer_allowed
             && (frame.local.player.actor.in_combat || self.threats.iter(tick).next().is_some())
             && points > 0
             && (points > policy::prayer_sip_floor(base)
                 || arbiter::potion_id(frame, &self.tables, PotionKind::Prayer).is_some());
-        let offensives = if offense && self.request.style == Style::Melee {
+        let offensives = if offense && self.active == Style::Melee {
             [
                 self.offensive_prayer(PrayerRole::Strength, base, &observation),
                 self.offensive_prayer(PrayerRole::Attack, base, &observation),
@@ -2602,7 +2595,7 @@ impl Combat {
         self.wear(&mut plan, frame, tick);
         self.style(&mut plan, frame, tick);
         self.retaliate(&mut plan, frame, tick);
-        if self.request.style == Style::Mage {
+        if self.active == Style::Mage && self.switch.pending().is_none() {
             if self.magic_prepare(&mut plan, frame, tick, cx) {
                 return Ok(plan);
             }
@@ -2638,7 +2631,12 @@ impl Combat {
             .and_then(|row| self.tables.weapon_style(row.id))
             .map_or_else(
                 || self.rate(frame),
-                |weapon| self.style_rate(weapon.attackrate),
+                |weapon| {
+                    self.style_rate(
+                        self.switch.pending().unwrap_or(self.active),
+                        weapon.attackrate,
+                    )
+                },
             );
         PlanRow::new(
             RowKind::Attack,
@@ -2647,7 +2645,7 @@ impl Combat {
         )
     }
     fn boost_kinds(&self) -> &'static [PotionKind] {
-        match self.request.style {
+        match self.active {
             Style::Ranged => &[PotionKind::Ranging, PotionKind::SuperDefence],
             Style::Mage => &[PotionKind::Magic, PotionKind::SuperDefence],
             Style::Melee => &[
@@ -2679,49 +2677,36 @@ impl Combat {
                 && arbiter::potion_id(frame, &self.tables, *kind).is_some()
         })
     }
-    fn desired(&self, slot: u8) -> Option<i32> {
-        if slot == 5 && self.flags & SHIELD_OVERRIDE != 0 {
-            self.tables
-                .selected()
-                .item_by_alias("antidragonbreathshield")
-                .map(|row| row.id)
-        } else if let Some(kit) = &self.request.kit {
-            kit.worn
-                .iter()
-                .find(|(wanted, _)| *wanted == slot)
-                .map(|(_, id)| *id)
-                .or_else(|| {
-                    (slot == 13
-                        && self.request.style == Style::Ranged
-                        && self.ranged().ammo_pick >= 0
-                        && Some(self.ranged().ammo_pick) != self.desired(3))
-                    .then(|| self.ranged().ammo_pick)
-                })
-        } else if slot == 3 && self.rhand_pick >= 0 {
-            Some(self.rhand_pick)
-        } else if slot == 13
-            && self.request.style == Style::Ranged
-            && self.ranged().ammo_pick >= 0
-            && self.ranged().ammo_pick != self.rhand_pick
-        {
-            Some(self.ranged().ammo_pick)
-        } else {
-            None
-        }
+    /// The item the wear repair wants in `slot`: the pending style's kit while a
+    /// switch converges, otherwise the active style's (PVP-DESIGN-1026 §4.1).
+    fn desired(&self, slot: u8, frame: &Frame<'_>) -> Option<i32> {
+        self.desired_for(self.switch.pending().unwrap_or(self.active), slot, frame)
+    }
+    /// The active style's own kit row, for every helper that runs on `active`.
+    fn active_desired(&self, slot: u8, frame: &Frame<'_>) -> Option<i32> {
+        self.desired_for(self.active, slot, frame)
     }
     fn wear(&self, plan: &mut TickPlan, frame: &Frame<'_>, tick: u16) {
         if !self.request.allow.equipment || !self.schedule.ready(OpKind::Wear, tick) {
             return;
         }
-        for slot in 0..14u8 {
+        let converging = self.switch.pending().is_some();
+        for slot in switch::wear_order(converging) {
             if self.wear_skipped(slot) {
                 continue;
             }
-            if let Some(id) = self.desired(slot) {
-                if !frame
-                    .equipment
-                    .iter()
-                    .any(|row| row.slot == i32::from(slot) && row.def.id == id)
+            // A two-hander and a shield never share a plan: the shield waits
+            // until the right hand is observed (PVP-DESIGN-1026 §4.4).
+            if converging
+                && slot == 5
+                && self
+                    .desired(3, frame)
+                    .is_some_and(|id| !self.worn(frame, 3, id))
+            {
+                continue;
+            }
+            if let Some(id) = self.desired(slot, frame) {
+                if !self.worn(frame, slot, id)
                     && arbiter::count(frame, id) > 0
                     && !self
                         .pending
@@ -2733,12 +2718,19 @@ impl Combat {
             }
         }
     }
+    /// Whether `id` is worn in `slot` on this frame.
+    fn worn(&self, frame: &Frame<'_>, slot: u8, id: i32) -> bool {
+        frame
+            .equipment
+            .iter()
+            .any(|row| row.slot == i32::from(slot) && row.def.id == id)
+    }
     fn wear_skipped(&self, slot: u8) -> bool {
         let state = (self.prep_failures >> (u32::from(slot) * 3)) & 7;
         state & 4 != 0 && state & 3 >= 2
     }
     fn style_varp(&self) -> Option<i32> {
-        if self.request.style == Style::Ranged {
+        if self.active == Style::Ranged {
             self.tables.selected().ranged_mode_varp()
         } else {
             self.tables.melee_mode_varp()
@@ -2769,16 +2761,17 @@ impl Combat {
     }
 
     fn ranged_prepare(&mut self, frame: &Frame<'_>, tick: u16) -> bool {
-        let weapon_id = self.desired(3).or_else(|| {
-            frame
-                .equipment
-                .iter()
-                .find(|row| row.slot == 3 && row.count > 0)
-                .map(|row| row.def.id)
-        });
-        let weapon = weapon_id.and_then(|id| ranged::weapon(&self.tables, id));
+        // A converging switch owns the style's exhaustion: the target style is
+        // the answer to it, so nothing below may abort the engagement.
+        let converging = self.switch.pending().is_some();
+        let weapon = self
+            .weapon_for(Style::Ranged, frame)
+            .and_then(|id| ranged::weapon(&self.tables, id));
         let prep = self.phase == Phase::Prep;
         let Some(weapon) = weapon else {
+            if converging {
+                return true;
+            }
             self.finish(
                 CombatEnd::Aborted(if prep {
                     AbortReason::PrepFailed(PrepItem::Weapon)
@@ -2794,29 +2787,10 @@ impl Combat {
         if self.pending_wear(slot) {
             return true;
         }
-        let ammo = if thrown {
-            Some(weapon.obj_id)
-        } else {
-            self.request
-                .kit
-                .as_ref()
-                .and_then(|kit| {
-                    kit.worn
-                        .iter()
-                        .find(|(slot, _)| *slot == 13)
-                        .map(|(_, id)| *id)
-                })
-                .or_else(|| {
-                    frame
-                        .equipment
-                        .iter()
-                        .filter(|row| row.slot == 13)
-                        .chain(frame.inventory)
-                        .find(|row| {
-                            row.count > 0 && ranged::accepts(&self.tables, weapon, row.def.id)
-                        })
-                        .map(|row| row.def.id)
-                })
+        let ammo = match self.pending_ranged_need(Style::Ranged, frame) {
+            Some(RangedNeed::Thrown { weapon }) => Some(weapon),
+            Some(RangedNeed::Quiver { ammo, .. }) => Some(ammo),
+            None => None,
         };
         let usable = ammo.is_some_and(|id| {
             ranged::accepts(&self.tables, weapon, id)
@@ -2834,6 +2808,9 @@ impl Combat {
         let shift = u32::from(slot) * 3;
         let failed = (self.prep_failures >> shift) & 3 >= 2;
         if !usable || failed {
+            if converging {
+                return true;
+            }
             let reason = if prep {
                 AbortReason::PrepFailed(if thrown {
                     PrepItem::Weapon
@@ -2871,7 +2848,7 @@ impl Combat {
         frame: &Frame<'_>,
         plan: Option<&TickPlan>,
     ) -> Option<PrepReadiness> {
-        if self.request.style != Style::Ranged {
+        if self.active != Style::Ranged {
             return None;
         }
         if self.phase != Phase::Prep {
@@ -2888,7 +2865,7 @@ impl Combat {
             return None;
         };
         if ammo_id < 0
-            || self.desired(3).is_some_and(|id| id != weapon.def.id)
+            || self.active_desired(3, frame).is_some_and(|id| id != weapon.def.id)
             || !frame.equipment.iter().any(|row| {
                 row.def.id == ammo_id && row.count > 0 && (row.slot == 3 || row.slot == 13)
             })
@@ -2938,7 +2915,7 @@ impl Combat {
 
     fn ranged_ready(&self, frame: &Frame<'_>) -> bool {
         if self.pending_row(RowKind::Wear)
-            || self.desired(3).is_some_and(|id| {
+            || self.active_desired(3, frame).is_some_and(|id| {
                 !frame
                     .equipment
                     .iter()
@@ -3006,7 +2983,7 @@ impl Combat {
         tick: u16,
         cx: &ActionContext<'_>,
     ) {
-        if self.request.style != Style::Ranged {
+        if self.active != Style::Ranged {
             return;
         }
         if self.end != Some(CombatEnd::Killed)
@@ -3064,7 +3041,11 @@ impl Combat {
     }
 
     fn style(&mut self, plan: &mut TickPlan, frame: &Frame<'_>, tick: u16) {
-        if self.request.style == Style::Ranged {
+        // A converging switch emits no style row (PVP-DESIGN-1026 §4.4).
+        if self.switch.pending().is_some() {
+            return;
+        }
+        if self.active == Style::Ranged {
             self.ranged_style(plan, frame, tick);
             return;
         }
@@ -3137,7 +3118,7 @@ impl Combat {
     }
     fn retaliate(&self, plan: &mut TickPlan, frame: &Frame<'_>, tick: u16) {
         let wanted = self.request.retaliate
-            && !(self.request.style == Style::Mage
+            && !(self.active == Style::Mage
                 && (self.request.spells.is_some() || self.magic().mode == Some(CastMode::Manual)));
         if !plan.contains(RowKind::Retaliate)
             && self.request.allow.retaliate_toggle

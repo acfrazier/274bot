@@ -16,11 +16,25 @@ impl ActorRef {
         self.kind == other.kind && usize::from(self.index) == other.index
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum Style {
     Melee,
     Ranged,
     Mage,
+}
+impl Style {
+    /// The three styles in their canonical order (also the `StyleKits` order).
+    pub const ALL: [Self; 3] = [Self::Melee, Self::Ranged, Self::Mage];
+    /// Dense index into a per-style array.
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+    /// The `headicons` bit of the protection prayer that blocks this style:
+    /// Protect from Melee, Missiles and Magic show as bits 3, 4 and 5
+    /// (`headicon.constant:4-6`).
+    pub const fn protect_bit(self) -> u8 {
+        1 << (3 + self as u8)
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
@@ -100,6 +114,75 @@ pub enum Target {
 pub struct CompiledKit {
     pub worn: Arc<[(u8, i32)]>,
     pub carry: Arc<[(i32, u32)]>,
+    /// The special-attack weapon of this style's loadout when it is not the
+    /// kit's main right hand (PVP-DESIGN-1026 §6.2). Read from V4 on.
+    pub special: Option<i32>,
+}
+/// One loadout per style (PVP-DESIGN-1026 §4.1). A style with no kit is never
+/// a switch target; the opening style may still run without one (the machine
+/// then picks its weapon from the pack by content facts, §4.2).
+#[derive(Debug, Clone, Default)]
+pub struct StyleKits {
+    pub melee: Option<Arc<CompiledKit>>,
+    pub ranged: Option<Arc<CompiledKit>>,
+    pub mage: Option<Arc<CompiledKit>>,
+}
+impl StyleKits {
+    pub fn get(&self, style: Style) -> Option<&Arc<CompiledKit>> {
+        match style {
+            Style::Melee => self.melee.as_ref(),
+            Style::Ranged => self.ranged.as_ref(),
+            Style::Mage => self.mage.as_ref(),
+        }
+    }
+    /// The same kits with `kit` as the loadout of `style`.
+    #[must_use]
+    pub fn with(mut self, style: Style, kit: Arc<CompiledKit>) -> Self {
+        match style {
+            Style::Melee => self.melee = Some(kit),
+            Style::Ranged => self.ranged = Some(kit),
+            Style::Mage => self.mage = Some(kit),
+        }
+        self
+    }
+}
+/// When the machine may change attack style mid-fight (PVP-DESIGN-1026 §4.1,
+/// §4.3). A trigger only ever targets a style that has a kit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SwitchPolicy {
+    /// T2/T3: leave a style the opponent protects against, and return to
+    /// `prefer[0]` once the opponent shows no protection.
+    pub on_protect: bool,
+    /// T1: switch instead of aborting when ammo or runes run out.
+    pub on_exhaustion: bool,
+    /// T4: leave melee when the opponent stays out of reach.
+    pub on_reach: bool,
+    /// The order tried: the opening style first by default, then the rest.
+    pub prefer: [Style; 3],
+}
+impl SwitchPolicy {
+    /// Every trigger on, `first` preferred, the other styles in canonical order.
+    pub fn for_style(first: Style) -> Self {
+        let mut prefer = [first; 3];
+        let mut next = 1;
+        for style in Style::ALL {
+            if style != first {
+                prefer[next] = style;
+                next += 1;
+            }
+        }
+        Self {
+            on_protect: true,
+            on_exhaustion: true,
+            on_reach: true,
+            prefer,
+        }
+    }
+}
+impl Default for SwitchPolicy {
+    fn default() -> Self {
+        Self::for_style(Style::Melee)
+    }
 }
 #[derive(Debug, Clone)]
 pub struct SpellRef {
@@ -165,7 +248,9 @@ pub struct CombatRequest {
     pub style: Style,
     pub melee_mode: Option<MeleeMode>,
     pub ranged_style: RangedMode,
-    pub kit: Option<Arc<CompiledKit>>,
+    /// One loadout per style; the opening style's kit is `kits.get(style)`.
+    pub kits: StyleKits,
+    pub switch: SwitchPolicy,
     /// An explicit order always uses manual casts, even with an armed staff.
     /// `None` selects the strongest castable spell (the 16-row chooser when
     /// a staff is desired, otherwise manual). Manual casts are five ticks apart.
@@ -200,7 +285,8 @@ impl Default for CombatRequest {
             },
             tactic: Tactic::Open,
             style: Style::Melee,
-            kit: None,
+            kits: StyleKits::default(),
+            switch: SwitchPolicy::default(),
             spells: None,
             fallback_spells: false,
             melee_mode: None,
@@ -348,6 +434,13 @@ pub struct CombatReport {
     pub pvp_source: Option<super::select::PvpSource>,
     /// Whether a server kill line was seen (never a gate; the zero bar is).
     pub kill_line_seen: bool,
+    /// Completed style switches (PVP-DESIGN-1026 §4.1); not the protect-prayer
+    /// switches of `protect_switches`.
+    pub switches: u8,
+    /// Switches that ended `Failed`: the old style kept fighting.
+    pub switch_failed: u8,
+    /// The style the machine was executing when the fight ended.
+    pub active_style: Style,
 }
 const _: () = assert!(std::mem::size_of::<CombatReport>() <= 80);
 

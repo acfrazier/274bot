@@ -1221,6 +1221,9 @@ mod tests {
             pvp_blocked: 0,
             pvp_source: None,
             kill_line_seen: false,
+            switches: 0,
+            switch_failed: 0,
+            active_style: crate::combat::Style::Melee,
         };
         let summary = CombatSummary::from(&report);
         assert_eq!(summary.end, ReportEnd::Aborted);

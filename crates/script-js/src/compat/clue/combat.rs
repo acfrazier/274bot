@@ -2,7 +2,7 @@ use super::*;
 use api::WorldTile;
 use script::combat::{
     AbortReason, Allowances, CombatEnd, CombatReport, CombatRequest, Fallback, IntruderPolicy,
-    Pick, PrayerMode, PrepReadiness, Style, Tactic, Target, Unprotected,
+    Pick, PrayerMode, PrepReadiness, Style, StyleKits, SwitchPolicy, Tactic, Target, Unprotected,
 };
 use script::native::ActionError;
 use std::sync::Arc;
@@ -106,7 +106,8 @@ impl Delegation {
             style: Style::Melee,
             melee_mode: None,
             ranged_style: Default::default(),
-            kit: None,
+            kits: StyleKits::default(),
+            switch: SwitchPolicy::default(),
             spells: None,
             fallback_spells: false,
             stand: Some(WorldTile {

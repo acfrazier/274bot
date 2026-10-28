@@ -10,7 +10,8 @@ use super::{compile_dialogue_options, DialogueOptionsDocument, LineRuleDocument}
 use crate::combat::{
     AbortReason, ActorRef, Allowances, Combat, CombatEnd, CombatReport, CombatRequest,
     CombatTables, CompiledKit, Fallback, GuardOp, GuardRefusal, IntruderPolicy, MeleeMode, Pick,
-    PrayerMode, RaisedPrayers, RangedMode, SpellRef, Style, Tactic, Target, WalkGuard,
+    PrayerMode, RaisedPrayers, RangedMode, SpellRef, Style, StyleKits, SwitchPolicy, Tactic,
+    Target, WalkGuard,
 };
 use crate::dialogue_outcome::DialogueOutcome;
 use crate::native::walk::Walk;
@@ -473,7 +474,10 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
         style,
         melee_mode: args.melee_mode,
         ranged_style: args.tactic.ranged_style,
-        kit,
+        kits: kit.map_or_else(StyleKits::default, |kit| {
+            StyleKits::default().with(style, kit)
+        }),
+        switch: SwitchPolicy::for_style(style),
         spells,
         fallback_spells: args.fallback_spells,
         stand,
@@ -682,6 +686,7 @@ fn compile_kit(name: &str, cx: &CompileContext<'_>) -> Result<Arc<CompiledKit>, 
         return Err(CompileError::code("unsupported-combat-loadout-items"));
     }
     let mut worn = Vec::with_capacity(row.worn.len());
+    let (mut two_hander, mut shield) = (false, false);
     for (slot, item) in &row.worn {
         let slot = WORN_SLOTS
             .iter()
@@ -689,7 +694,18 @@ fn compile_kit(name: &str, cx: &CompileContext<'_>) -> Result<Arc<CompiledKit>, 
             .and_then(|slot| u8::try_from(slot).ok())
             .ok_or_else(|| CompileError::code("invalid-loadout-slot"))?;
         let id = resolve_loadout_item(cx, item)?.0;
+        // A two-hander and a shield cannot be worn together: `try_equip` vacates
+        // one for the other (`player/scripts/equip.rs2:355-358,371`).
+        two_hander |= slot == 3
+            && cx
+                .selected
+                .item_by_id(id)
+                .is_some_and(|item| item.is_two_handed());
+        shield |= slot == 5;
         worn.push((slot, id));
+    }
+    if two_hander && shield {
+        return Err(CompileError::code("two-handed-kit-with-shield"));
     }
     // Carry ids come from the compiled loadout rows the native consumers use:
     // shared display names can collide (e.g. `Coins` is both 617 and 995),
@@ -706,6 +722,7 @@ fn compile_kit(name: &str, cx: &CompileContext<'_>) -> Result<Arc<CompiledKit>, 
     Ok(Arc::new(CompiledKit {
         worn: Arc::from(worn),
         carry: Arc::from(carry),
+        special: None,
     }))
 }
 

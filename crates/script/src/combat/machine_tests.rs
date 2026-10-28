@@ -13,6 +13,16 @@ use api::snapshot::{
 };
 use std::time::Instant;
 
+/// Test shorthand: make `kit` the loadout of the request's opening style.
+pub(super) trait SetKit {
+    fn set_kit(&mut self, kit: Arc<CompiledKit>);
+}
+impl SetKit for CombatRequest {
+    fn set_kit(&mut self, kit: Arc<CompiledKit>) {
+        self.kits = std::mem::take(&mut self.kits).with(self.style, kit);
+    }
+}
+
 /// One zone of a synthetic Wilderness (the shape of a `wilderness_zones` pair).
 #[derive(Debug, Clone, Copy)]
 pub(super) struct TestZone {
@@ -2482,7 +2492,7 @@ fn case1_and2_prep_distinguishes_essential_and_optional_wear() {
         scene.inventory.push(item);
         scene.refresh();
         let mut request = scene.request();
-        request.kit = Some(Arc::new(CompiledKit {
+        request.set_kit(Arc::new(CompiledKit {
             worn: Arc::from([(slot, id)]),
             ..CompiledKit::default()
         }));
@@ -2526,7 +2536,7 @@ fn case1_and2_prep_distinguishes_essential_and_optional_wear() {
         let scene = Scene::new("imp");
         let id = scene.data.item_by_alias("bronze_scimitar").unwrap().id;
         let mut request = scene.request();
-        request.kit = Some(Arc::new(CompiledKit {
+        request.set_kit(Arc::new(CompiledKit {
             worn: Arc::from([(slot, id)]),
             ..CompiledKit::default()
         }));
@@ -2593,7 +2603,7 @@ fn case6_imp_skips_offensive_upkeep_unless_the_kit_carries_boosts() {
         scene.refresh();
         let mut request = scene.request();
         if in_kit {
-            request.kit = Some(Arc::new(CompiledKit {
+            request.set_kit(Arc::new(CompiledKit {
                 carry: Arc::from([(id, 1)]),
                 ..CompiledKit::default()
             }));
@@ -2634,7 +2644,7 @@ fn case13_dragon_shield_overrides_kit_and_rejects_two_handed_weapon() {
         scene.inventory.extend([weapon.clone(), shield.clone()]);
         scene.refresh();
         let mut request = scene.request();
-        request.kit = Some(Arc::new(CompiledKit {
+        request.set_kit(Arc::new(CompiledKit {
             worn: Arc::from([(3, weapon_id), (5, kit_shield_id)]),
             ..CompiledKit::default()
         }));
@@ -3254,7 +3264,7 @@ fn case45_wear_style_waits_for_the_exact_observed_combat_tab() {
     same_tab.combat_tab(hack_root);
     let mut request = same_tab.request();
     request.melee_mode = Some(MeleeMode::Aggressive);
-    request.kit = Some(Arc::new(CompiledKit {
+    request.set_kit(Arc::new(CompiledKit {
         worn: Arc::from([(3, rune_id)]),
         ..CompiledKit::default()
     }));
@@ -3310,7 +3320,7 @@ fn case45_wear_style_waits_for_the_exact_observed_combat_tab() {
     changed_tab.combat_tab(old_root);
     let mut request = changed_tab.request();
     request.melee_mode = Some(MeleeMode::Aggressive);
-    request.kit = Some(Arc::new(CompiledKit {
+    request.set_kit(Arc::new(CompiledKit {
         worn: Arc::from([(3, twohand_id)]),
         ..CompiledKit::default()
     }));
@@ -3354,7 +3364,7 @@ fn case45_wear_style_waits_for_the_exact_observed_combat_tab() {
     stale_tab.combat_tab(heavy_root);
     let mut request = stale_tab.request();
     request.melee_mode = Some(MeleeMode::Aggressive);
-    request.kit = Some(Arc::new(CompiledKit {
+    request.set_kit(Arc::new(CompiledKit {
         worn: Arc::from([(3, rune_id)]),
         ..CompiledKit::default()
     }));
@@ -4144,7 +4154,7 @@ fn ranged_readiness_fixture(style_echo: bool) -> (Scene, CombatRequest, i32) {
     let mut request = scene.request();
     request.style = Style::Ranged;
     request.ranged_style = RangedMode::Rapid;
-    request.kit = Some(Arc::new(CompiledKit {
+    request.set_kit(Arc::new(CompiledKit {
         worn: Arc::from([(3, bow_id), (13, arrow_id)]),
         ..CompiledKit::default()
     }));
@@ -4519,7 +4529,7 @@ fn ranged_prep_waits_for_torn_thrown_weapon_wear_frame() {
 
     let mut request = scene.request();
     request.style = Style::Ranged;
-    request.kit = Some(Arc::new(CompiledKit {
+    request.set_kit(Arc::new(CompiledKit {
         worn: Arc::from([(3, id)]),
         ..CompiledKit::default()
     }));
@@ -4571,7 +4581,7 @@ fn ranged_fight_waits_for_torn_bow_ammo_wear_frame() {
 
     let mut request = scene.request();
     request.style = Style::Ranged;
-    request.kit = Some(Arc::new(CompiledKit {
+    request.set_kit(Arc::new(CompiledKit {
         worn: Arc::from([(3, bow_id), (13, arrow_id)]),
         ..CompiledKit::default()
     }));
@@ -4636,7 +4646,7 @@ fn ranged_missing_bow_ammo_wear_times_out_as_prep_failed_ammo() {
 
     let mut request = scene.request();
     request.style = Style::Ranged;
-    request.kit = Some(Arc::new(CompiledKit {
+    request.set_kit(Arc::new(CompiledKit {
         worn: Arc::from([(3, bow_id), (13, arrow_id)]),
         ..CompiledKit::default()
     }));
@@ -4672,7 +4682,7 @@ fn ranged_missing_thrown_weapon_wear_times_out_as_prep_failed_weapon() {
 
     let mut request = scene.request();
     request.style = Style::Ranged;
-    request.kit = Some(Arc::new(CompiledKit {
+    request.set_kit(Arc::new(CompiledKit {
         worn: Arc::from([(3, id)]),
         ..CompiledKit::default()
     }));
@@ -5085,3 +5095,6 @@ mod magic_tests;
 
 #[path = "pvp_machine_tests.rs"]
 mod pvp_tests;
+
+#[path = "switch_machine_tests.rs"]
+mod switch_tests;

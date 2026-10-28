@@ -928,6 +928,9 @@ impl StepRun for KillRun {
             pvp_blocked: 0,
             pvp_source: None,
             kill_line_seen: false,
+            switches: 0,
+            switch_failed: 0,
+            active_style: crate::combat::Style::Melee,
         };
         Poll::Ready(Ok(StepOutcome {
             progress: None,
@@ -1961,6 +1964,9 @@ fn provisioner_pending_preserves_semantic_outcome_and_status() {
                 pvp_blocked: 0,
                 pvp_source: None,
                 kill_line_seen: false,
+                switches: 0,
+                switch_failed: 0,
+                active_style: crate::combat::Style::Melee,
             };
             fixture.script.last_outcome = Some(StepOutcome {
                 progress: None,

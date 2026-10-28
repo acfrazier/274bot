@@ -4100,6 +4100,9 @@ mod tests {
             pvp_blocked: 0,
             pvp_source: None,
             kill_line_seen: false,
+            switches: 0,
+            switch_failed: 0,
+            active_style: crate::combat::Style::Melee,
         };
         script.last_outcome = Some(StepOutcome {
             progress: None,

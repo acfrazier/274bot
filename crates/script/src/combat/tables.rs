@@ -8,7 +8,8 @@ use std::sync::Arc;
 use super::request::MeleeMode;
 use crate::native::ActionError;
 use api::game_data::{
-    ConsumptionFact, NpcNameRow, PrayerFact, SelectedGameData, StyleSpotanimFact, WeaponStyleFact,
+    ConsumptionFact, MeleeWeaponTier, NpcNameRow, PrayerFact, SelectedGameData,
+    StyleSpotanimFact, WeaponStyleFact,
 };
 
 const STYLE_BITS: u8 = 0x0f;
@@ -411,6 +412,13 @@ impl CombatTables {
         let rows = self.selected.weapon_styles();
         let index = rows.binary_search_by_key(&obj_id, |row| row.obj_id).ok()?;
         weapon_style(&rows[index])
+    }
+
+    /// The melee attack tier of a weapon (PVP-DESIGN-1026 §4.2), or `None` when
+    /// the obj is not a melee-category weapon. A quest-gated row is never a plain
+    /// tier; the caller treats it as unusable.
+    pub fn melee_weapon_tier(&self, obj_id: i32) -> Option<MeleeWeaponTier> {
+        self.selected.melee_weapon_tier(obj_id)
     }
 
     /// Root interface ID for one tab in this selected content pin.

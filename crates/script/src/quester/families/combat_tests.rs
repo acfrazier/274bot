@@ -52,6 +52,9 @@ fn report(end: CombatEnd) -> CombatReport {
         pvp_blocked: 0,
         pvp_source: None,
         kill_line_seen: false,
+        switches: 0,
+        switch_failed: 0,
+        active_style: crate::combat::Style::Melee,
     }
 }
 
@@ -3678,7 +3681,11 @@ fn combat_kit_carry_keeps_compiled_alias_ids() {
         "until": {"Any": []}
     });
     let plan = compile_plan(serde_json::from_value(args).unwrap(), &cx).unwrap();
-    let kit = plan.request.kit.as_ref().expect("kit compiles");
+    let kit = plan
+        .request
+        .kits
+        .get(plan.request.style)
+        .expect("kit compiles");
     assert_eq!(
         kit.carry.as_ref(),
         &[(coins.id, 1000), (bones.id, 5)],
