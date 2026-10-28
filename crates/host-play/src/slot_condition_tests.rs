@@ -663,6 +663,74 @@ fn fruit_line_requires_fruit_loss_and_grants_no_future_fire() {
 }
 
 #[test]
+fn fruit_chat_and_count_loss_match_across_adjacent_ticks_in_either_order() {
+    for chat_first in [true, false] {
+        let mut owner = owner();
+        let mut snapshot = frame(1);
+        inventory(&mut snapshot, 1, &[464]);
+        hit(&mut snapshot, 2, 6, 1);
+        owner.observe_frame(&snapshot, &drain(true, true), false);
+        assert_eq!(owner.current().unwrap().cures.strange_fruit, 1);
+
+        snapshot.seed_tick(2);
+        if chat_first {
+            chat(&mut snapshot, 1, FRUIT_LINE);
+        } else {
+            inventory(&mut snapshot, 2, &[]);
+        }
+        owner.observe_frame(&snapshot, &drain(true, true), false);
+        assert!(matches!(
+            owner.current().unwrap().poison,
+            PoisonState::Poisoned { .. }
+        ));
+
+        snapshot.seed_tick(3);
+        if chat_first {
+            inventory(&mut snapshot, 2, &[]);
+        } else {
+            chat(&mut snapshot, 1, FRUIT_LINE);
+        }
+        owner.observe_frame(&snapshot, &drain(true, true), false);
+        assert_eq!(
+            owner.current().unwrap().poison,
+            PoisonState::Clear,
+            "chat_first={chat_first}"
+        );
+    }
+}
+
+#[test]
+fn fruit_chat_and_count_loss_do_not_match_after_the_content_bound() {
+    for chat_first in [true, false] {
+        let mut owner = owner();
+        let mut snapshot = frame(1);
+        inventory(&mut snapshot, 1, &[464]);
+        hit(&mut snapshot, 2, 6, 1);
+        owner.observe_frame(&snapshot, &drain(true, true), false);
+
+        snapshot.seed_tick(2);
+        if chat_first {
+            chat(&mut snapshot, 1, FRUIT_LINE);
+        } else {
+            inventory(&mut snapshot, 2, &[]);
+        }
+        owner.observe_frame(&snapshot, &drain(true, true), false);
+
+        snapshot.seed_tick(4);
+        if chat_first {
+            inventory(&mut snapshot, 2, &[]);
+        } else {
+            chat(&mut snapshot, 1, FRUIT_LINE);
+        }
+        owner.observe_frame(&snapshot, &drain(true, true), false);
+        assert!(matches!(
+            owner.current().unwrap().poison,
+            PoisonState::Poisoned { .. }
+        ));
+    }
+}
+
+#[test]
 fn accepted_click_settle_covers_last_login_mark_tick_and_lag() {
     // Login is session tick 1. The timer fires 30 ticks later, damage is
     // queued for the following tick, and LAG retains two observation ticks.
@@ -1012,12 +1080,12 @@ fn slot_condition_size_of_pinned() {
             std::mem::size_of::<client::client::ClientGens>(),
             std::mem::size_of::<script::combat::risk::RiskInput>(),
         ),
-        (104, 28, 8, 120, 120),
-        "SlotCondition is 104 B: the inline fact, reducer, cursors and latch; no inventory witness or allocation"
+        (112, 28, 8, 120, 120),
+        "SlotCondition is 112 B: the inline fact, reducer, cursors, latches and one pending fruit signal; no allocation"
     );
     assert!(
         std::mem::size_of::<SlotCondition>() <= 160,
-        "measured 104 B leaves 56 B under the 160 B owner ceiling"
+        "measured 112 B leaves 48 B under the 160 B owner ceiling"
     );
 }
 
