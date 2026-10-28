@@ -76,9 +76,9 @@ impl NativeCopyHold {
             return false;
         }
         let Some(profile) = vault.and_then(|vault| {
-            vault.profiles().find(|profile| {
-                crate::selection::ProfileIdentity::uid(profile.uid) == self.target
-            })
+            vault
+                .profiles()
+                .find(|profile| crate::selection::ProfileIdentity::uid(profile.uid) == self.target)
         }) else {
             return false;
         };
@@ -602,11 +602,7 @@ impl<Io> OperatorSession<Io> {
                 {
                     Err("settings copy cancelled".to_string())
                 } else if pending.copy_start_hold.as_ref().is_some_and(|hold| {
-                    !hold.target_available(
-                        self.play.is_some(),
-                        self.vault.as_ref(),
-                        self.members(),
-                    )
+                    !hold.target_available(self.play.is_some(), self.vault.as_ref(), self.members())
                 }) {
                     Err("settings copy cancelled: bot or vault unavailable".to_string())
                 } else if let Some(error) = pending.failure.take() {
