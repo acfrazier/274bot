@@ -1,10 +1,11 @@
 //! Offline T1.4 fixture witnesses from production routing and hazard retreat.
 
-use api::snapshot::WorldTile;
-use client::client::{Client, ClientConfig};
+use api::snapshot::{GameSnapshot, WorldTile};
+use client::client::{Client, ClientConfig, ClientPlayer};
 use client::config::{Cache, IfType, IfTypeMut};
-use client::dash3d::{BuildArea, CollisionMap, LocAngle, LocShape};
+use client::dash3d::{BuildArea, ClientNpc, CollisionMap, LocAngle, LocShape};
 use client::io::{ClientRevision, JagFile};
+use host::{Guardian, GuardianLiveContext, RandomKind};
 use nav_planner::router::{find_many_with, FindOptions, Leg};
 use nav_planner::world::NavWorld;
 use nav_planner::world_state::WorldState;
@@ -13,6 +14,7 @@ use serde_json::json;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::Arc;
+use vault::ProfileSettings;
 
 #[derive(Deserialize)]
 struct Batch {
@@ -25,6 +27,10 @@ struct Batch {
     approaches: Vec<Approach>,
     #[serde(default)]
     walks: Vec<Walk>,
+    #[serde(default)]
+    guardians: Vec<GuardianRequest>,
+    #[serde(default)]
+    hazards: Vec<Walk>,
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -42,17 +48,33 @@ struct Walk {
     target: [i32; 3],
 }
 
+#[derive(Clone, Copy, Deserialize)]
+struct GuardianRequest {
+    source: [i32; 3],
+    npc_id: usize,
+    offset: [i32; 2],
+}
+
+struct GuardianAudit {
+    data: Arc<api::game_data::SelectedGameData>,
+    settings: ProfileSettings,
+    snapshot: GameSnapshot,
+}
+
 #[derive(Clone, Copy)]
 enum ClientRoute {
     Approach(Approach),
     Walk(Walk),
+    Hazard(Walk),
+    Guardian(GuardianRequest),
 }
 
 impl ClientRoute {
     fn endpoints(self) -> ([i32; 3], [i32; 3]) {
         match self {
             Self::Approach(approach) => (approach.source, approach.target),
-            Self::Walk(walk) => (walk.source, walk.target),
+            Self::Walk(walk) | Self::Hazard(walk) => (walk.source, walk.target),
+            Self::Guardian(request) => (request.source, request.source),
         }
     }
 }
@@ -141,6 +163,16 @@ fn client_row(batch: &str, route: ClientRoute) -> serde_json::Value {
             row["angle"] = json!(approach.angle);
         }
         ClientRoute::Walk(_) => row["kind"] = json!("client-walk"),
+        ClientRoute::Hazard(_) => row["kind"] = json!("guardian-hazard"),
+        ClientRoute::Guardian(request) => {
+            row["kind"] = json!("guardian-flee");
+            row["npc_id"] = json!(request.npc_id);
+            row["npc_start"] = json!([
+                request.source[0] + request.offset[0],
+                request.source[1] + request.offset[1],
+                request.source[2]
+            ]);
+        }
     }
     row
 }
@@ -193,6 +225,7 @@ fn write_client_route(
     flags: &nav_planner::pack::FlagsSidecarLoad,
     batch: &str,
     route: ClientRoute,
+    guardian_audit: &mut GuardianAudit,
     out: &mut impl Write,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let flags_origin = flags.origin;
@@ -244,10 +277,10 @@ fn write_client_route(
         } else {
             (0, 0, 0, 0, 0)
         };
-    let move_type = if matches!(route, ClientRoute::Walk(_)) {
-        0
-    } else {
+    let move_type = if matches!(route, ClientRoute::Approach(_)) {
         2
+    } else {
+        0
     };
 
     let Some((first_base_x, last_base_x)) = scene_base_range(source.x, target.x) else {
@@ -303,6 +336,14 @@ fn write_client_route(
                 client.minusedlevel = source.level;
                 client.out.pos = 0;
                 client.try_move_path.clear();
+                if let ClientRoute::Guardian(request) = route {
+                    write_guardian_route(client, guardian_audit, batch, request, scene_base, out)?;
+                    if base_z == last_base_z {
+                        break;
+                    }
+                    base_z += 8;
+                    continue;
+                }
                 let reached = client.tryMove(
                     source_x,
                     source_z,
@@ -350,6 +391,96 @@ fn write_client_route(
     Ok(())
 }
 
+fn write_guardian_route(
+    client: &mut Client,
+    audit: &mut GuardianAudit,
+    batch: &str,
+    request: GuardianRequest,
+    scene_base: [i32; 2],
+    out: &mut impl Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let data = &audit.data;
+    let npc_data = data
+        .npc_name(i32::try_from(request.npc_id)?)
+        .ok_or("Guardian request has no selected-content NPC")?;
+    let [base_x, base_z] = scene_base;
+    let [world_x, world_z, level] = request.source;
+    let (x, z) = (world_x - base_x, world_z - base_z);
+    let player = client.local_player.as_mut().ok_or("audit player missing")?;
+    player.entity.x = x * 128 + 64;
+    player.entity.z = z * 128 + 64;
+    player.route_x[0] = x;
+    player.route_z[0] = z;
+    player.entity.route_length = 0;
+    let npc = client.npc[0].as_mut().ok_or("audit NPC missing")?;
+    npc.r#type = Some(request.npc_id);
+    npc.entity.face_entity = 32768;
+    npc.entity.x = (x + request.offset[0]) * 128 + 64;
+    npc.entity.z = (z + request.offset[1]) * 128 + 64;
+    let settings = &audit.settings;
+    let context = GuardianLiveContext {
+        event_policies: &settings.random_event_policies,
+        game_data: Some(data),
+    };
+    let mut guardian = Guardian::new();
+    let snapshot = &mut audit.snapshot;
+    // This bound includes every nearer-ring retry. The real Guardian chooses
+    // exact goals, nearest fallback, and ring order through the real Client.
+    let ticks = npc_data.maxrange.max(npc_data.wanderrange).max(0) + 5;
+    for _ in 0..ticks {
+        client.gens.npc = client.gens.npc.wrapping_add(1);
+        client.gens.player = client.gens.player.wrapping_add(1);
+        client.gens.player_info = client.gens.player_info.wrapping_add(1);
+        client.gens.scene = client.gens.scene.wrapping_add(1);
+        snapshot.rebuild(client);
+        let status = guardian.tick_with_live_policies(
+            client, snapshot, settings, &context, 0, None,
+        );
+        if status.kind != Some(RandomKind::Evade) || !status.hold {
+            return write_client_error(
+                batch, ClientRoute::Guardian(request), Some(scene_base),
+                "guardian-did-not-own-evade", out,
+            );
+        }
+        if !client.try_move_path.is_empty() {
+            let flee_path = client.try_move_path.clone();
+            let mut row = client_row(batch, ClientRoute::Guardian(request));
+            row["scene_base"] = json!(scene_base);
+            row["target"] = json!(flee_path.last().map(|&(x, z)| [base_x + x, base_z + z, level]));
+            row["tiles"] = json!(flee_path.iter().map(|&(x, z)| [base_x + x, base_z + z, level]).collect::<Vec<_>>());
+            write_json_line(out, &row)?;
+            // resolve() returns to flee_from with an exact ground walk.
+            // Cover resolution from every intermediate flee tile, not only
+            // the final tile. These are actual client BFS routes too.
+            for (return_x, return_z) in flee_path {
+                client.out.pos = 0;
+                client.try_move_path.clear();
+                let reached = client.tryMove(
+                    return_x, return_z, x, z, false, 0, 0, 0, 0, 0, 0,
+                );
+                let mut row = json!({
+                    "batch":batch, "kind":"guardian-return", "npc_id":request.npc_id,
+                    "source":[base_x + return_x,base_z + return_z,level],
+                    "target":request.source, "scene_base":scene_base,
+                });
+                if !reached {
+                    row["error"] = json!("client-no-route");
+                } else if client.try_move_path.is_empty() {
+                    row["error"] = json!("client-route-path-empty");
+                } else {
+                    row["tiles"] = json!(client.try_move_path.iter()
+                        .map(|&(x, z)| [base_x + x, base_z + z, level]).collect::<Vec<_>>());
+                }
+                write_json_line(out, &row)?;
+            }
+            return Ok(());
+        }
+    }
+    write_client_error(
+        batch, ClientRoute::Guardian(request), Some(scene_base), "client-no-route", out,
+    )
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.len() != 5 {
@@ -391,11 +522,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ifaces_mut,
         ClientRevision::R289,
     );
+    client.self_slot = 0;
+    client.ingame = true;
+    client.scene_state = 2;
+    let mut player = ClientPlayer::at(0, 0);
+    player.name = Some("T14RouteAudit".to_string());
+    client.local_player = Some(player);
+    client.npc[0] = Some(Box::new(ClientNpc::at(0, 0)));
+    client.npc_ids[0] = 0;
+    client.npc_count = 1;
     let batches: Vec<Batch> = serde_json::from_slice(&std::fs::read(&args[3])?)?;
     let mut state = WorldState::empty();
     state.map_members = true;
     state.combat_level = Some(3);
     let mut out = BufWriter::new(std::fs::File::create(&args[4])?);
+    let mut guardian_audit = GuardianAudit {
+        data: api::game_data::for_revision(ClientRevision::R289)
+            .ok_or("revision-289 Guardian content is missing")?,
+        settings: ProfileSettings::default(),
+        snapshot: GameSnapshot::new(),
+    };
     for batch in batches {
         let targets: Vec<_> = batch
             .targets
@@ -436,8 +582,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .into_iter()
             .map(ClientRoute::Approach)
             .chain(batch.walks.into_iter().map(ClientRoute::Walk))
+            .chain(batch.guardians.into_iter().map(ClientRoute::Guardian))
+            .chain(batch.hazards.into_iter().map(ClientRoute::Hazard))
         {
-            write_client_route(&mut client, &loaded_flags, &batch.name, route, &mut out)?;
+            write_client_route(
+                &mut client, &loaded_flags, &batch.name, route, &mut guardian_audit, &mut out,
+            )?;
         }
     }
     out.flush()?;

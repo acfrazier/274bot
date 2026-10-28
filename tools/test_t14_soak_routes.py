@@ -18,7 +18,7 @@ class RouteSafetyTests(unittest.TestCase):
         self.assertTrue(audit.contains(areas, route["tiles"][0]))
         self.assertTrue(audit.contains(areas, route["tiles"][-1]))
         failures = audit.route_violations(route, areas, [wolf])
-        self.assertEqual({f["reason"] for f in failures}, {"outside-approved-area", "hunter-envelope"})
+        self.assertEqual({f["reason"] for f in failures}, {"outside-outer-bound", "hunter-envelope"})
 
     def test_actual_v17_route_to_unsafe_observed_tile_is_rejected(self):
         # This is a router witness, not attribution of the old movement.
@@ -32,7 +32,7 @@ class RouteSafetyTests(unittest.TestCase):
         route = {"tiles": [[x, z, 0] for x, z in points]}
         failures = audit.route_violations(
             route, [(2788, 2834, 3436, 3468), (2788, 2811, 3436, 3476)], [wolf])
-        self.assertEqual({f["reason"] for f in failures}, {"outside-approved-area", "hunter-envelope"})
+        self.assertEqual({f["reason"] for f in failures}, {"outside-outer-bound", "hunter-envelope"})
 
     def test_chosen_bank_resource_routes_pass_and_envelope_edge_fails(self):
         areas = [(2680, 2753, 3440, 3506)]
@@ -53,6 +53,52 @@ class RouteSafetyTests(unittest.TestCase):
         self.assertEqual(audit.route_violations(route, areas, [highwayman], cache), [])
         self.assertEqual(audit.route_violations(route, areas, [highwayman], cache), [])
         self.assertTrue(audit.route_violations({"tiles": [[2735, 3507, 0]]}, areas, [highwayman]))
+
+    def test_actual_guardian_flee_outside_worksite_passes_but_danger_and_outer_escape_fail(self):
+        # Complete native-client/v17 receipt, scene base 2600,3376.
+        points = [
+            (2695, 3473), (2695, 3472), (2695, 3471), (2694, 3470),
+            (2693, 3470), (2692, 3470), (2691, 3470), (2690, 3470),
+            (2689, 3470), (2688, 3469), (2687, 3468), (2686, 3468),
+            (2685, 3468), (2684, 3467), (2683, 3466), (2683, 3465),
+            (2683, 3464), (2682, 3463), (2681, 3462), (2680, 3461),
+            (2679, 3460), (2678, 3460), (2677, 3459), (2677, 3458),
+            (2677, 3457), (2677, 3456), (2677, 3455),
+        ]
+        source = audit.ROOT / "crates/host-play/tests/t14_soak_live.rs"
+        _, _, work_areas, _ = audit.fixture(source)
+        outer = audit.outer_walk_bounds(source)
+        game = json.loads((audit.ROOT / "crates/api/data/game-data/289.json").read_text())
+        hunters = audit.hunter_envelopes(game)
+        self.assertFalse(audit.contains(work_areas, (*points[20], 0)))
+        self.assertEqual(audit.route_violations(
+            {"tiles": [[x, z, 0] for x, z in points]}, outer, hunters), [])
+        # Every authored hunter uses the same envelope rule.
+        for hunter in hunters:
+            x, z, level = hunter["spawn"]
+            tile = [x - hunter["envelope"], z, level]
+            failures = audit.route_violations({"tiles": [tile]}, outer, [hunter])
+            self.assertIn("hunter-envelope", {row["reason"] for row in failures})
+        for tile in [[2623, 3480, 0], [2816, 3480, 0],
+                     [2700, 3391, 0], [2700, 3584, 0], [2700, 3480, 1]]:
+            failures = audit.route_violations({"tiles": [tile]}, outer, hunters)
+            self.assertIn("outside-outer-bound", {row["reason"] for row in failures})
+
+    def test_guardian_requests_cover_content_ranges_spawns_and_hazard_ring(self):
+        game = json.loads((audit.ROOT / "crates/api/data/game-data/289.json").read_text())
+        origins = {(2695, 3473, 0), (2724, 3493, 0)}
+        requests, ranges = audit.guardian_requests(game, origins)
+        self.assertEqual({(row["maxrange"], row["wanderrange"]) for row in ranges},
+                         {(3, 3), (5, 3), (15, 15)})
+        self.assertEqual(sum(len(row["npc_ids"]) for row in ranges), 38)
+        self.assertEqual(len(requests), len(origins) * len(ranges) * 9)
+        for source in origins:
+            self.assertEqual({tuple(row["offset"]) for row in requests if row["source"] == source},
+                             {(dx, dz) for dx in range(-1, 2) for dz in range(-1, 2)})
+        hazards = audit.guardian_hazards(origins)
+        self.assertEqual(len(hazards), len(origins) * 8)
+        for row in hazards:
+            self.assertEqual(max(abs(row["source"][i] - row["target"][i]) for i in (0, 1)), 4)
 
     def test_client_approaches_cover_every_access_origin_and_keep_loc_geometry(self):
         resource = dict(origin=[2695, 3474, 0], width=2, height=2,
@@ -109,7 +155,8 @@ class RouteSafetyTests(unittest.TestCase):
         self.assertEqual(radius, 5)
 
     def test_unroutable_client_alternatives_encode_no_movement(self):
-        for kind in ("client-approach", "client-walk"):
+        for kind in ("client-approach", "client-walk", "guardian-flee",
+                     "guardian-return", "guardian-hazard"):
             self.assertFalse(audit.client_route_error(dict(kind=kind, error="client-no-route")))
             self.assertTrue(audit.client_route_error(dict(kind=kind, error="loc-id-not-in-cache")))
             self.assertTrue(audit.client_route_error(dict(kind=kind, error="client-route-path-empty")))
@@ -135,7 +182,7 @@ class RouteSafetyTests(unittest.TestCase):
             routes = root / "example-routes.jsonl"
             inputs.write_text(json.dumps([dict(
                 name="example", sources=[[1, 2, 0]], targets=[[2, 2, 0]],
-                retreats=[], approaches=[], walks=[],
+                retreats=[], approaches=[], walks=[], guardians=[], hazards=[],
             )]))
             routes.write_text('{"kind":"walk","tiles":[[1,2,0],[2,2,0]]}\n')
             self.assertEqual(

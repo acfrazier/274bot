@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -41,8 +41,8 @@ const GATHERER_RELOG_STEP: &str = "relog successfully so the inventory tab binds
 // The offline audit checks complete production routes, their replan closure,
 // all resource/return/bank access alternatives, and actual hazard retreats.
 const NORMAL_STARTS: [(i32, i32); 10] = [
-    (2692, 3475),
-    (2693, 3479),
+    (2694, 3475),
+    (2694, 3480),
     (2693, 3454),
     (2694, 3473),
     (2697, 3452),
@@ -71,9 +71,8 @@ impl SafeWalk {
     }
 }
 
-// This area excludes every authored hunter envelope, independently of combat
-// level. It is not route evidence by itself. The offline router audit checks
-// complete paths and every alternative resource, return, and bank stand.
+// Worksite census input, not a movement stop condition. Correct Guardian
+// travel can leave this rectangle without entering an authored danger envelope.
 const NORMAL_SAFE_WALK: &[SafeWalk] = &[SafeWalk {
     min_x: 2680,
     max_x: 2753,
@@ -81,26 +80,103 @@ const NORMAL_SAFE_WALK: &[SafeWalk] = &[SafeWalk {
     max_z: 3506,
 }];
 
+// Three map squares in each direction leave room for content-distance Guardian
+// travel. The danger-envelope guard remains active everywhere in this bound.
+const OUTER_WALK_BOUNDS: &[SafeWalk] = &[SafeWalk {
+    min_x: 2624,
+    max_x: 2815,
+    min_z: 3392,
+    max_z: 3583,
+}];
+
+fn danger_envelopes() -> &'static [(WorldTile, i32)] {
+    static ENVELOPES: LazyLock<Vec<(WorldTile, i32)>> = LazyLock::new(|| {
+        let data = game_data::for_revision(ClientRevision::R289)
+            .expect("the soak requires embedded revision-289 content");
+        data.npc_placements()
+            .expect("the soak requires authored NPC placements")
+            .rows
+            .iter()
+            .filter_map(|placement| {
+                let npc = data
+                    .npc_name(placement.npc_id)
+                    .expect("every authored NPC placement requires its definition");
+                if npc.huntrange <= 0 {
+                    return None;
+                }
+                let radius = npc.wanderrange + npc.huntrange + npc.size;
+                let intersects = placement.plane == 0
+                    && OUTER_WALK_BOUNDS.iter().any(|area| {
+                        (area.min_x - radius..=area.max_x + radius).contains(&placement.x)
+                            && (area.min_z - radius..=area.max_z + radius).contains(&placement.z)
+                    });
+                intersects.then_some((
+                    WorldTile {
+                        x: placement.x,
+                        z: placement.z,
+                        level: placement.plane,
+                    },
+                    radius,
+                ))
+            })
+            .collect()
+    });
+    &ENVELOPES
+}
+
 fn safe_walk_contains(areas: &[SafeWalk], tile: (i32, i32, i32)) -> bool {
     areas.iter().any(|area| area.contains(tile))
 }
 
-fn work_route_escape(areas: &[SafeWalk], tile: (i32, i32, i32)) -> bool {
-    !safe_walk_contains(areas, tile) && api::random::trapped_area(tile.0, tile.1, tile.2).is_none()
+fn work_route_escape(outer_bounds: &[SafeWalk], tile: (i32, i32, i32)) -> bool {
+    danger_envelopes().iter().any(|(spawn, radius)| {
+        tile.2 == spawn.level && (tile.0 - spawn.x).abs().max((tile.1 - spawn.z).abs()) <= *radius
+    }) || (!safe_walk_contains(outer_bounds, tile)
+        && api::random::trapped_area(tile.0, tile.1, tile.2).is_none())
 }
 
 #[test]
-fn work_route_guard_distinguishes_random_event_travel_from_escape() {
-    // Attempt 10, tick 8227: the server selected maze spawn 0.
-    // macro_events.enum:73–79 and macro_event_maze.rs2:14–22.
-    for tile in [(2891, 4597, 0), (31 * 64, 74 * 64, 0)] {
-        assert!(!safe_walk_contains(NORMAL_SAFE_WALK, tile));
-        assert!(!work_route_escape(NORMAL_SAFE_WALK, tile));
-        assert!(work_route_escape(NORMAL_SAFE_WALK, (tile.0, tile.1, 1)));
+fn work_route_guard_accepts_safe_guardian_flee_and_random_event_travel() {
+    // Actual client/v17 Swarm flee receipt: 2695,3473 -> 2677,3455.
+    // The receipt crosses the old worksite rectangle at 2679,3460.
+    let flee = [
+        (2695, 3473, 0),
+        (2695, 3472, 0),
+        (2695, 3471, 0),
+        (2694, 3470, 0),
+        (2693, 3470, 0),
+        (2692, 3470, 0),
+        (2691, 3470, 0),
+        (2690, 3470, 0),
+        (2689, 3470, 0),
+        (2688, 3469, 0),
+        (2687, 3468, 0),
+        (2686, 3468, 0),
+        (2685, 3468, 0),
+        (2684, 3467, 0),
+        (2683, 3466, 0),
+        (2683, 3465, 0),
+        (2683, 3464, 0),
+        (2682, 3463, 0),
+        (2681, 3462, 0),
+        (2680, 3461, 0),
+        (2679, 3460, 0),
+        (2678, 3460, 0),
+        (2677, 3459, 0),
+        (2677, 3458, 0),
+        (2677, 3457, 0),
+        (2677, 3456, 0),
+        (2677, 3455, 0),
+    ];
+    assert!(!safe_walk_contains(NORMAL_SAFE_WALK, flee[20]));
+    for tile in flee {
+        assert!(!work_route_escape(OUTER_WALK_BOUNDS, tile), "{tile:?}");
     }
-    assert!(!work_route_escape(NORMAL_SAFE_WALK, (2724, 3493, 0)));
-    assert!(work_route_escape(NORMAL_SAFE_WALK, (2735, 3521, 0)));
-    assert!(work_route_escape(NORMAL_SAFE_WALK, (2813, 3477, 0)));
+    // The product identifies these Maze/Mime interiors separately.
+    for tile in [(2891, 4597, 0), (31 * 64, 74 * 64, 0)] {
+        assert!(!work_route_escape(OUTER_WALK_BOUNDS, tile));
+        assert!(work_route_escape(OUTER_WALK_BOUNDS, (tile.0, tile.1, 1)));
+    }
 }
 
 #[test]
@@ -120,19 +196,27 @@ fn safe_walk_accepts_worksites_and_seers_bank() {
 }
 
 #[test]
-fn safe_walk_rejects_every_boundary_and_old_unsafe_route() {
+fn work_route_guard_rejects_every_danger_envelope_and_outer_boundary() {
+    for &(spawn, radius) in danger_envelopes() {
+        for dx in [-radius, 0, radius] {
+            for dz in [-radius, 0, radius] {
+                let tile = (spawn.x + dx, spawn.z + dz, spawn.level);
+                assert!(work_route_escape(OUTER_WALK_BOUNDS, tile), "{tile:?}");
+            }
+        }
+    }
+    // The western wolf-envelope edge is inside the wide outer bound.
+    assert!(safe_walk_contains(OUTER_WALK_BOUNDS, (2812, 3495, 0)));
+    assert!(work_route_escape(OUTER_WALK_BOUNDS, (2812, 3495, 0)));
+    assert!(work_route_escape(OUTER_WALK_BOUNDS, (2813, 3477, 0)));
     for tile in [
-        (2679, 3480, 0),
-        (2754, 3480, 0),
-        (2700, 3439, 0),
-        (2700, 3507, 0),
+        (2623, 3480, 0),
+        (2816, 3480, 0),
+        (2700, 3391, 0),
+        (2700, 3584, 0),
         (2700, 3480, 1),
-        (2735, 3521, 0),
-        (2811, 3473, 0),
-        (2813, 3477, 0),
-        (2836, 3495, 0),
     ] {
-        assert!(!safe_walk_contains(NORMAL_SAFE_WALK, tile), "{tile:?}");
+        assert!(work_route_escape(OUTER_WALK_BOUNDS, tile), "{tile:?}");
     }
 }
 
@@ -145,7 +229,7 @@ struct BankSite {
     bank: &'static str,
     bank_prefix: &'static str,
     start: WorldTile,
-    safe_walk: Option<&'static [SafeWalk]>,
+    outer_bounds: &'static [SafeWalk],
 }
 
 struct RunConfig {
@@ -580,7 +664,7 @@ fn select_sites(root: &Value) -> Result<[BankSite; 2], String> {
 }
 
 fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite, String> {
-    let (start, product_id, level, bank, bank_prefix, safe_walk) =
+    let (start, product_id, level, bank, bank_prefix, outer_bounds) =
         match (site.id.as_str(), resource) {
             ("woodcutting.seers_village", "normal") => (
                 WorldTile {
@@ -592,7 +676,7 @@ fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite
                 1,
                 "Seers",
                 "Seers; Reachable;",
-                Some(NORMAL_SAFE_WALK),
+                OUTER_WALK_BOUNDS,
             ),
             ("woodcutting.seers", "maple") => (
                 WorldTile {
@@ -604,7 +688,7 @@ fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite
                 45,
                 "Seers",
                 "Seers; Reachable;",
-                Some(NORMAL_SAFE_WALK),
+                OUTER_WALK_BOUNDS,
             ),
             _ => {
                 return Err(format!(
@@ -633,7 +717,7 @@ fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite
         bank,
         bank_prefix,
         start,
-        safe_walk,
+        outer_bounds,
     })
 }
 
@@ -1248,17 +1332,14 @@ fn drive_frame(
         }
         actor.last_tile = Some(tile);
         if actor.script_started_at.is_some()
-            && actor
-                .site
-                .safe_walk
-                .is_some_and(|areas| work_route_escape(areas, tile))
+            && work_route_escape(actor.site.outer_bounds, tile)
         {
             fail_actor(
                 actor,
                 writer,
                 run_started,
                 "site-walk-boundary",
-                &format!("work/bank route left the audited non-aggressive area at {tile:?}"),
+                &format!("work/bank route entered a danger envelope or left the outer bound at {tile:?}"),
             );
         }
     }

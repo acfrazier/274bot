@@ -73,8 +73,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   Each account must have at least two eligible trees. This avoids a separate
   Gatherer wait finding without changing the product's bounded-wait policy.
   An offline checker tests complete host-router paths, client interaction paths,
-  client walk aims, replan origins, bank alternatives and actual hazard retreats against every
-  authored hunter envelope. The fixture remains blocked after a diagnostic stop.
+  walk aims, replan origins, bank alternatives and hazard retreats.
+  It also checks real Guardian flee and return paths at the content distances.
+  The guard rejects every authored danger envelope and a wide outer boundary.
+  It does not reject safe Guardian travel outside the worksite rectangle.
+  Main selected this oracle from source evidence before diagnostic launch 3.
+  The fixture remains blocked until its corrected audit and diagnostic finish.
   Unroutable client alternatives count as nonmovement. Each resource and bank
   loc still requires an accepted approach witness. Consumer-only corrections
   can recheck retained native routes with identical inputs and request batches.

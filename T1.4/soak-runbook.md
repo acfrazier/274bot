@@ -48,10 +48,10 @@ These failures do not justify a transport threshold change.
 ## Workload route check
 
 The proposed fixture is not approved for qualification.
-The baseline diagnostic stopped at `(2678,3471,0)` before thirty minutes.
+The baseline diagnostic stopped at `(2678,3471,0)` under the old rectangle oracle.
 The candidate diagnostic stopped on native `resource-unavailable` after approximately 376 phase-zero seconds.
 Neither diagnostic satisfies the thirty-minute requirement.
-Do not use the qualification commands until these failures are classified and corrected.
+Qualification requires the corrected static audit and the remaining authorized diagnostic.
 
 Ten accounts gather normal logs west of Seers in `woodcutting.seers_village`.
 Each account retains one radius-five Start anchor from `NORMAL_STARTS`.
@@ -62,14 +62,17 @@ The other ten accounts use the `woodcutting.seers` maple Site and radius twelve.
 Both groups use Seers bank.
 Each account receives Woodcutting 99, one rune axe, and 64 banked spare rune axes.
 
-Both groups must remain inside `NORMAL_SAFE_WALK`: `x=2680..2753,z=3440..3506,level=0`.
-The guard still permits only the production-classified Maze and Mime interiors outside this area.
-It does not permit an ordinary route outside the area.
+`NORMAL_SAFE_WALK`, `x=2680..2753,z=3440..3506,level=0`, defines the resource census input.
+It is not a movement stop condition.
+The guard rejects every authored danger envelope and movement outside `OUTER_WALK_BOUNDS`.
+The outer bound is `x=2624..2815,z=3392..3583,level=0`.
+The product-classified Maze and Mime interiors retain their separate travel rules.
+The guard accepts correct Guardian travel outside the worksite rectangle when the complete route remains safe.
 
-The area excludes every authored hunter envelope, independently of combat-level immunity.
 The checker uses each hunter's `wanderrange + huntrange + size`.
-It checks all selected-content hunter placements, not only mountain wolves.
-Rectangle separation alone does not establish route safety.
+It checks all selected-content hunter placements, independently of combat-level immunity and collision shielding.
+It does not exempt a route because a random event caused it.
+Main selected this oracle from source evidence before diagnostic launch 3.
 
 Build the offline probe and check the actual routes before either arm:
 
@@ -95,12 +98,17 @@ These aims include both directions, click-ahead, scene clipping, and stalled-wal
 It queries every alternative goal from all starts, access stands, and retreat destinations.
 It repeats those queries from every intermediate route tile until the replan-origin set is closed.
 This includes blocked-origin escape after a resource changes.
+The real Guardian and Client also check all selected-content flee-range groups.
+Each worksite and bank tile receives all adjacent NPC spawn directions and the same-tile fallback.
+The Guardian chooses its real ordered exact goals, nearest fallback, and nearer-ring retries.
+The probe checks exact return walks from every intermediate accepted flee tile.
+It also checks every goal in the Guardian's four-tile hazard ring through the real client BFS.
 The checker examines complete walk legs and rejects routes that require transport interactions.
-It rejects routes outside the area or inside any hunter envelope.
+It rejects routes inside any hunter envelope or outside the wide outer bound.
 The result retains source, content-map, catalogue, v17 pack, raw-flag and client-config hashes.
 
 An unroutable client alternative returns before movement encoding.
-The checker counts this outcome as nonmovement for loc approaches and ordinary walk aims.
+The checker counts this outcome as nonmovement for loc approaches, ordinary walk aims, and Guardian walks.
 Every selected resource and bank loc must still have an actual accepted client approach witness.
 Other client errors fail the check.
 
@@ -114,7 +122,10 @@ The old Catherby fixture did not constrain route geometry.
 The Gatherer bounds resource origins, not every approach or bank-return tile.
 Baseline attempt 12 reached `(2813,3477,0)`, inside the wolf's retained envelope.
 Candidate attempt 1 reached `(2811,3473,0)`, outside its then-approved rectangle.
-Do not enlarge a guard to admit either old route.
+Actual client/v17 Swarm flee paths can reach both old observed tiles.
+This proves a possible movement source. It does not identify either historical NPC.
+Guardian walks omit their cause and NPC from logs. Main will file that separate product finding.
+Do not change product logging or exempt danger-envelope entry.
 Evidence and the route analysis are in `TRACK-T1/T1.4/soak-route-1028/report.md`.
 
 ## Nonqualifying diagnostics

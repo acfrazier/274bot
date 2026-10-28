@@ -4,7 +4,7 @@
 Seed every Start, resource footprint/access/return tile, bank access tile, and
 production hazard-retreat stand. Query every alternative goal from each seed
 and every intermediate route tile until the replan-origin set is closed. Check
-the client's own BFS for loc interactions and all short Traveller walk aims.
+the client's own BFS for loc interactions, walk aims, and Guardian travel.
 """
 
 import argparse
@@ -36,7 +36,7 @@ def route_violations(row, rectangles, hunters, cache=None):
             continue
         found = []
         if not contains(rectangles, tile):
-            found.append({"tile": tile, "reason": "outside-approved-area"})
+            found.append({"tile": tile, "reason": "outside-outer-bound"})
         for hunter in hunters:
             x, z, level = hunter["spawn"]
             if tile[2] == level and max(abs(tile[0] - x), abs(tile[1] - z)) <= hunter["envelope"]:
@@ -72,6 +72,16 @@ def fixture(source):
     if len(starts) != 10 or len(set(starts)) != 10 or not rectangles:
         raise ValueError("fixture requires ten distinct Start anchors and explicit route areas")
     return starts, maple_start, rectangles, radius
+
+
+def outer_walk_bounds(source):
+    text = source.read_text()
+    area = re.search(r"const OUTER_WALK_BOUNDS[^=]*= &(\[.*?\]);", text, re.S)[1]
+    rectangles = [tuple(map(int, match)) for match in re.findall(
+        r"min_x: (\d+),\s*max_x: (\d+),\s*min_z: (\d+),\s*max_z: (\d+)", area)]
+    if not rectangles:
+        raise ValueError("fixture requires an explicit outer walk bound")
+    return rectangles
 
 
 def census(content, game, starts, rectangles, maple_site, normal_radius):
@@ -126,6 +136,12 @@ def census(content, game, starts, rectangles, maple_site, normal_radius):
                                       shape=values[1], angle=values[2] if len(values) > 2 else 0))
     if not any(row["kind"] == "maple" for row in resources):
         raise ValueError("no authored maple resources")
+    if len(bank_locs) != len(bank_rows):
+        raise ValueError("selected-content maps do not contain every Seers bank loc")
+    return resources, hunter_envelopes(game), sources, bank_locs
+
+
+def hunter_envelopes(game):
     # Ignore combat-level immunity and collision shielding: audit every hunter.
     definitions = {row["id"]: row for row in game["npc_names"]["rows"]}
     hunters = []
@@ -135,9 +151,7 @@ def census(content, game, starts, rectangles, maple_site, normal_radius):
             continue
         hunters.append(dict(name=definition["config"], spawn=[placement["x"], placement["z"], placement["plane"]],
                             envelope=definition["wanderrange"] + definition["huntrange"] + definition["size"]))
-    if len(bank_locs) != len(bank_rows):
-        raise ValueError("selected-content maps do not contain every Seers bank loc")
-    return resources, hunters, sources, bank_locs
+    return hunters
 
 
 def normal_patch_capacity(resources, patch_count):
@@ -191,9 +205,40 @@ def client_walks(origins, blocked, checked, recoveries=()):
     return walks
 
 
-def run_probe(args, name, sources, targets, retreats=(), approaches=(), walks=()):
+def guardian_requests(game, origins):
+    # is_evade_type (host/random.rs). IDs with equal selected-content ranges
+    # share the movement policy. Exercise one real Guardian per range group.
+    groups = {}
+    for npc in game["npc_names"]["rows"]:
+        ident = npc["id"]
+        if (391 <= ident <= 396 or ident in (408, 411)
+                or 413 <= ident <= 436 or 438 <= ident <= 443):
+            key = npc["maxrange"], npc["wanderrange"]
+            groups.setdefault(key, []).append(ident)
+    if not groups:
+        raise ValueError("selected content has no Guardian evade ranges")
+    ranges = [dict(maxrange=key[0], wanderrange=key[1], npc_ids=sorted(ids))
+              for key, ids in sorted(groups.items())]
+    # macro_events.rs2 uses map_findsquare(coord, 1, 1, lineofwalk).
+    # Include the same-tile fallback and every adjacent spawn direction.
+    requests = [dict(source=source, npc_id=min(ids), offset=[dx, dz])
+                for source in sorted(origins) for ids in groups.values()
+                for dx in range(-1, 2) for dz in range(-1, 2)]
+    return requests, ranges
+
+
+def guardian_hazards(origins):
+    # Superset of the real Guardian's ordered HAZARD_STEP=4 compass ring.
+    return [dict(source=(x, z, level), target=(x + dx * 4, z + dz * 4, level))
+            for x, z, level in sorted(origins)
+            for dx in range(-1, 2) for dz in range(-1, 2) if dx or dz]
+
+
+def run_probe(args, name, sources, targets, retreats=(), approaches=(), walks=(),
+              guardians=(), hazards=()):
     payload = [dict(name=name, sources=sorted(sources), targets=sorted(targets),
-                    retreats=list(retreats), approaches=list(approaches), walks=list(walks))]
+                    retreats=list(retreats), approaches=list(approaches), walks=list(walks),
+                    guardians=list(guardians), hazards=list(hazards))]
     if args.replay:
         inputs = args.replay / f"{name}-batches.json"
         # JSON normalizes the generated coordinate tuples to the stored arrays.
@@ -213,7 +258,9 @@ def run_probe(args, name, sources, targets, retreats=(), approaches=(), walks=()
 
 def client_route_error(row):
     # tryMove returns false before encoding movement for either request kind.
-    return row.get("kind") in ("client-approach", "client-walk") and row["error"] != "client-no-route"
+    return (row.get("kind") in ("client-approach", "client-walk",
+                                "guardian-flee", "guardian-return", "guardian-hazard")
+            and row["error"] != "client-no-route")
 
 
 def loc_key(row):
@@ -250,11 +297,15 @@ def main():
     game = json.loads(catalog.read_text())
     sites = json.loads(config.read_text())["workload"]["site_names"]
     starts, maple_start, rectangles, normal_radius = fixture(source)
+    outer_bounds = outer_walk_bounds(source)
     resources, hunters, maps, bank_locs = census(
         args.content, game, starts, rectangles, sites[1], normal_radius)
     patch_counts = normal_patch_capacity(resources, len(starts))
     sources = {str(p): digest(p) for p in [
-        source, catalog, config, args.pack, args.flags, args.cache / "config", *sorted(maps)]}
+        source, catalog, config, args.pack, args.flags, args.cache / "config", *sorted(maps),
+        ROOT / "crates/host/src/random.rs", ROOT / "crates/host/src/random/guardian.rs",
+        ROOT / "crates/host-play/examples/soak_routes.rs",
+    ]}
     if args.replay:
         args.replay = args.replay.resolve(strict=True)
         verify_replay_sources(args.replay, sources)
@@ -268,9 +319,13 @@ def main():
             bank_goals.update(goals_for(dict(origin=[bank["x"], bank["z"], bank["level"]],
                                             width=bank["width"], height=bank["length"])))
     targets.update(bank_goals)
+    guardian_origins = set(targets)
+    guardians, guardian_ranges = guardian_requests(game, guardian_origins)
     retreats = [(here, resource["origin"]) for resource in resources for here in sorted(goals_for(resource))]
     files = [run_probe(args, "interactions", (), (), retreats,
-                       client_approaches([*resources, *bank_locs]))]
+                       client_approaches([*resources, *bank_locs])),
+             run_probe(args, "guardians", (), (), guardians=guardians,
+                       hazards=guardian_hazards(guardian_origins))]
     checked, no_path, retreat_count, client_count, walk_count = 0, 0, 0, 0, 0
     client_errors = []
     approach_witnesses = set()
@@ -278,6 +333,8 @@ def main():
     walk_recoveries = set()
     blocked, processed, bank_reachable, resource_reached = set(), set(), set(), set()
     pending = set(targets)
+    guardian_counts = dict.fromkeys(("guardian-flee", "guardian-return", "guardian-hazard"), 0)
+    guardian_scenarios = set()
     access = {}
     for index, resource in enumerate(resources):
         for owner in resource["owners"]:
@@ -291,6 +348,9 @@ def main():
         for line in routes.open():
             row = json.loads(line)
             origin = tuple(row["source"])
+            guardian_kind = row.get("kind", "").startswith("guardian-")
+            if row.get("kind") == "guardian-flee":
+                guardian_scenarios.add((origin, row["npc_id"], tuple(row["npc_start"])))
             if row.get("error") == "source-not-standable":
                 blocked.add(origin)
             elif "error" in row:
@@ -300,6 +360,8 @@ def main():
             else:
                 checked += 1
                 target = tuple(row["target"])
+                if guardian_kind:
+                    guardian_counts[row["kind"]] += 1
                 if row["kind"] == "client-approach":
                     client_count += 1
                     approach_witnesses.add(loc_key(row))
@@ -315,8 +377,9 @@ def main():
                 if target in bank_goals:
                     bank_reachable.add(origin)
                 resource_reached.update(access.get((origin, target), ()))
-                pending.update(tuple(t) for t in row["tiles"])
-                failures = route_violations(row, rectangles, hunters, tile_cache)
+                if not guardian_kind:
+                    pending.update(tuple(t) for t in row["tiles"])
+                failures = route_violations(row, outer_bounds, hunters, tile_cache)
                 if failures:
                     violations.append(dict(source=row["source"], target=row["target"],
                                            kind=row["kind"], failures=failures[:8]))
@@ -339,6 +402,11 @@ def main():
     errors.extend(missing_client_approaches([*resources, *bank_locs], approach_witnesses))
     if not walk_count:
         errors.append("no actual client Traveller-walk witnesses")
+    if len(guardian_scenarios) != len(guardians):
+        errors.append(f"Guardian scenarios missing: {len(guardian_scenarios)} of {len(guardians)}")
+    for kind, count in guardian_counts.items():
+        if not count:
+            errors.append(f"no actual {kind} witnesses")
     if transport_routes:
         errors.append(f"{len(transport_routes)} routes use unverified transport interactions")
     for hunter in hunters:
@@ -364,12 +432,15 @@ def main():
                   client_walk_routes=walk_count, client_walk_pairs=len(walk_pairs),
                   replan_origins=len(processed), closure_rounds=round_number,
                   client_walk_rounds=walk_rounds, transport_routes=len(transport_routes),
-                  closure_complete=not pending, rectangles=rectangles, normal_starts=starts,
+                  closure_complete=not pending, rectangles=rectangles, outer_bounds=outer_bounds,
+                  normal_starts=starts, guardian_routes=guardian_counts,
+                  guardian_scenarios=len(guardian_scenarios), guardian_work_bank_tiles=len(guardian_origins),
+                  guardian_ranges=guardian_ranges,
                   normal_radius=normal_radius, normal_patch_trees=patch_counts,
                   maple_start=maple_start, resources=resources, hunters_checked=len(hunters),
                   sources=sources, replay_source=str(args.replay) if args.replay else None,
                   violation_count=len(violations), violations=violations[:30], errors=errors,
-                  scope="Production host-router replan closure plus actual client loc-approach BFS for every resource/bank access origin and scene base. Actual client ground-walk BFS covers every closure-origin pair within Chebyshev 20, including Traveller click-ahead and recovery. Includes blocked-origin escape and production hazard retreats. Transport interactions fail closed. Random-event interiors remain separate product travel.")
+                  scope="Production host-router replan closure plus actual client loc-approach BFS for every resource/bank access origin and scene base. Actual client ground-walk BFS covers every closure-origin pair within Chebyshev 20, including Traveller click-ahead and stalled recovery. Includes blocked-origin escape and production Gatherer hazard retreats. The real Guardian and Client exercise all content range groups and adjacent spawn directions from every worksite/bank tile, exact and nearest flee fallback, and exact returns from every accepted flee-path tile. Actual client BFS also checks every Guardian four-tile hazard-ring goal. Every accepted path must avoid all authored hunter envelopes and stay inside the wide outer bound. Worksite rectangles are census inputs, not stop conditions. Transport interactions fail closed. Random-event interiors remain separate product travel.")
     (args.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps({k: result[k] for k in ("verdict", "routes_checked", "unreachable_pairs", "nonstandable_origins", "hazard_retreat_routes", "client_approach_routes", "client_walk_routes", "client_walk_pairs", "replan_origins", "closure_rounds", "client_walk_rounds", "closure_complete", "hunters_checked", "violation_count", "errors")}))
     return 1 if violations or errors else 0
