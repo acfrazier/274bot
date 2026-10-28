@@ -2251,12 +2251,10 @@ fn start_preflight(case: Case, baseline: &Value) -> Option<String> {
                     case.key()
                 ));
             }
-            let distance_is_valid = warlords[0]["distance"]
-                .as_i64()
-                .is_some_and(|distance| {
-                    distance <= i64::from(WARLORD_WANDER_RANGE)
-                        && (case != Case::M2 || distance >= M2_OUT_OF_RANGE_MIN_DISTANCE)
-                });
+            let distance_is_valid = warlords[0]["distance"].as_i64().is_some_and(|distance| {
+                distance <= i64::from(WARLORD_WANDER_RANGE)
+                    && (case != Case::M2 || distance >= M2_OUT_OF_RANGE_MIN_DISTANCE)
+            });
             if !distance_is_valid {
                 let reason = if case == Case::M2 {
                     "start-range mismatch"
@@ -6763,10 +6761,7 @@ fn last_is_attack_or_drink(plan: &BatchPlan<'_>) -> bool {
         .last()
         .is_some_and(|action| is_npc_attack(action) || is_drink(action))
 }
-fn first_prep_drink<'a>(
-    capture: &'a CombatCapture,
-    plans: &[BatchPlan<'a>],
-) -> Option<&'a Value> {
+fn first_prep_drink<'a>(capture: &'a CombatCapture, plans: &[BatchPlan<'a>]) -> Option<&'a Value> {
     let first_attack_tick = first_attack_action(capture)?["tick"].as_i64()?;
     let prep = plans.iter().find(|plan| {
         plan.tick < first_attack_tick
@@ -6781,7 +6776,6 @@ fn first_prep_drink<'a>(
     let drink = prep.rows[1];
     is_drink(drink).then_some(drink)
 }
-
 
 fn all_drinks_respect_lock(capture: &CombatCapture) -> bool {
     let plans = batch_plans(capture);

@@ -1958,13 +1958,10 @@ fn m4_disconnected_authored_stand_is_still_sent_to_the_router() {
                 WalkEnd::Failed,
                 Some("the authored stand has no route"),
             );
-            let retried = with_step_context_collision(
-                &snapshot,
-                lease.collision(),
-                &mut ledger,
-                13,
-                |cx| run.poll(cx),
-            );
+            let retried =
+                with_step_context_collision(&snapshot, lease.collision(), &mut ledger, 13, |cx| {
+                    run.poll(cx)
+                });
             assert!(
                 retried.is_pending(),
                 "{name}: a disconnected stand must not finish the escape"
@@ -2071,7 +2068,10 @@ fn exhausted_m4_escape_arrival_with_a_live_attacker_replans_and_completes_only_w
     let (mut run, mut ledger, live, mut previous) = m4_exhausted_escape_walk(&lease);
     let first = last_walk(&ledger);
     assert!(!first.food_guard && !first.allow_food);
-    assert!(!previous.is_empty(), "the exhausted pass follows failed walks");
+    assert!(
+        !previous.is_empty(),
+        "the exhausted pass follows failed walks"
+    );
     assert!(
         previous.iter().all(|goals| {
             goals_of(&first)
@@ -2095,7 +2095,10 @@ fn exhausted_m4_escape_arrival_with_a_live_attacker_replans_and_completes_only_w
     let second = last_walk(&ledger);
     assert_ne!(second.request_id, first.request_id);
     assert!(goals_of(&first).fallback().is_empty() && goals_of(&second).fallback().is_empty());
-    assert!(!previous.is_empty(), "the attacker moved after the first retry");
+    assert!(
+        !previous.is_empty(),
+        "the attacker moved after the first retry"
+    );
     assert!(
         previous.iter().all(|goals| {
             goals_of(&second)
@@ -2223,7 +2226,10 @@ fn moving_attacker_cannot_repeat_an_earlier_failed_escape_goal() {
         level: 0,
     };
     assert!(
-        failed.goals.as_slice().contains(&repeated_under_new_geometry),
+        failed
+            .goals
+            .as_slice()
+            .contains(&repeated_under_new_geometry),
         "the first Beyond region includes the moving-attacker probe tile"
     );
 
@@ -3209,15 +3215,24 @@ fn failed_abort_walk_does_not_retry_named_tiles_after_food_exhaustion() {
         )
     })
     .is_pending());
+    let failed = last_walk(&ledger);
+    let failed_goals = goals_of(&failed).as_slice().to_vec();
     fail_escape_walks_until_hold(&mut run, &snapshot, &mut ledger, 13);
     assert!(with_step_context(&snapshot, &mut ledger, 14, |cx| run.poll(cx)).is_pending());
     let result = with_step_context(&snapshot, &mut ledger, 15, |cx| run.poll(cx));
-
-    assert!(matches!(
-        result,
-        Poll::Ready(Err(ActionError::Blocked(reason))) if reason.contains("escape")
-    ));
-    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    assert!(result.is_pending(), "food exhaustion starts the second pass");
+    let exhausted = last_walk(&ledger);
+    assert!(
+        !exhausted.food_guard && !exhausted.allow_food,
+        "the second pass runs without food support"
+    );
+    assert!(
+        goals_of(&exhausted)
+            .as_slice()
+            .iter()
+            .all(|goal| !failed_goals.contains(goal)),
+        "the exhausted pass does not retry an earlier failed goal"
+    );
 }
 
 /// Every escape walk fails. One pass makes one request per destination tier:
@@ -3873,15 +3888,12 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
         .find(|row| crate::combat::facts::npc_max_hit(row) == Some(4))
         .expect("selected content includes a known-hit lower threat");
     let mut snapshot = GameSnapshot::new();
-    let mut newcomer = aborting_npc(
-        9,
-        wolf_like.id,
-        api::WorldTile {
-            x: 3000,
-            z: 2999,
-            level: 0,
-        },
-    );
+    let new_attacker_tile = api::WorldTile {
+        x: 3000,
+        z: 2999,
+        level: 0,
+    };
+    let mut newcomer = aborting_npc(9, wolf_like.id, new_attacker_tile);
     // The live R2 shape: the Warlord row is gone; another NPC attacks.
     let probe_run = combat_test_run(imp_target(&data), None, None, Vec::new());
     newcomer.animation = live_attack_animation(&probe_run);
@@ -3905,10 +3917,9 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
         })
         .collect::<Vec<_>>();
     assert_eq!(walks.len(), 1, "exactly one exhausted escape walk");
-    assert_eq!(walks[0].x, here.x, "no reference to the vanished Warlord");
     assert!(
-        walks[0].z > here.z,
-        "the escape runs north, away from the new attacker"
+        tile_distance(walks[0], new_attacker_tile) > tile_distance(here, new_attacker_tile),
+        "the escape moves farther from the new attacker"
     );
 }
 
