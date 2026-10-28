@@ -152,11 +152,7 @@ fn hit(snapshot: &mut GameSnapshot, kind: i32, value: i32, serial: i32) {
     });
 }
 
-fn chat_pair(
-    snapshot: &mut GameSnapshot,
-    older: (i32, &str),
-    newer: (i32, &str),
-) {
+fn chat_pair(snapshot: &mut GameSnapshot, older: (i32, &str), newer: (i32, &str)) {
     snapshot.seed_chat_lines(vec![
         ChatLineView {
             type_: 0,
@@ -777,11 +773,7 @@ fn review_probe_same_edge_fruit_then_newer_poison_line_is_onset() {
     let (mut owner, mut snapshot) = poisoned_owner_with_fruit();
     snapshot.seed_tick(2);
     inventory(&mut snapshot, 2, &[]);
-    chat_pair(
-        &mut snapshot,
-        (1, FRUIT_LINE),
-        (2, POISON_LINE),
-    );
+    chat_pair(&mut snapshot, (1, FRUIT_LINE), (2, POISON_LINE));
     owner.observe_frame(&snapshot, &drain(true, true), false);
 
     snapshot.seed_tick(3);
@@ -801,11 +793,7 @@ fn review_probe_split_fruit_chat_then_poison_line_with_count_loss_is_onset() {
 
     snapshot.seed_tick(3);
     inventory(&mut snapshot, 2, &[]);
-    chat_pair(
-        &mut snapshot,
-        (1, FRUIT_LINE),
-        (2, POISON_LINE),
-    );
+    chat_pair(&mut snapshot, (1, FRUIT_LINE), (2, POISON_LINE));
     owner.observe_frame(&snapshot, &drain(true, true), false);
     assert!(matches!(
         owner.current().unwrap().poison,
@@ -821,11 +809,7 @@ fn newer_poison_line_clears_waiting_fruit_chat() {
     owner.observe_frame(&snapshot, &drain(true, true), false);
 
     snapshot.seed_tick(3);
-    chat_pair(
-        &mut snapshot,
-        (1, FRUIT_LINE),
-        (2, POISON_LINE),
-    );
+    chat_pair(&mut snapshot, (1, FRUIT_LINE), (2, POISON_LINE));
     owner.observe_frame(&snapshot, &drain(true, true), false);
     assert!(matches!(owner.pending_fruit, PendingFruit::None));
     assert!(matches!(
