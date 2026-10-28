@@ -43,7 +43,7 @@
     "limits.rss_final_baseline_extra_percent": "Main soak-values.md:23",
     "limits.fixed_threads": "Main soak-values.md:24; T1-GATE/r7e/T1-GATE.md:333-348 (F ≤ 14)",
     "limits.max_request_threads": "Main soak-values.md:25, F0 ADR 0007 amendment 7: R ≤ 64 accepted-job slots",
-    "workload.site_names": "T14-SOAK-ROUTE: ten independent normal-tree Start patches in woodcutting.seers_village and the woodcutting.seers maple Site, both using Seers bank. tools/t14_soak_routes.py checks actual v17 routes, replan closure, production hazard retreats, and every authored hunter envelope."
+    "workload.site_names": "T14-SOAK-ROUTE: ten independent normal-tree Start patches in woodcutting.seers_village and the woodcutting.seers maple Site, both using Seers bank. tools/t14_soak_routes.py checks actual v17 host routes, client interaction BFS, replan closure, production hazard retreats, and every authored hunter envelope."
   },
   "run": {
     "slots": 20,

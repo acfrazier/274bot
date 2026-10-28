@@ -45,7 +45,12 @@ The earlier Catherby fixtures also failed real resource routes.
 The current workload below replaces Catherby.
 These failures do not justify a transport threshold change.
 
-## Route-safe workload
+## Workload route check
+
+The proposed fixture is not approved for qualification.
+Its baseline diagnostic stopped at `(2678,3471,0)` before thirty minutes.
+The report below records the unresolved movement cause.
+Do not use the qualification commands until the failure is classified and corrected.
 
 Ten accounts gather normal logs west of Seers in `woodcutting.seers_village`.
 Each account retains one radius-two Start anchor from `NORMAL_STARTS`.
@@ -69,7 +74,8 @@ BOT_NAV_BUILD=skip cargo build --release --locked -p host-play --example soak_ro
 python3 -B -m unittest discover -s tools -p test_t14_soak_routes.py -v
 python3 -B tools/t14_soak_routes.py \
   --router target/release/examples/soak_routes \
-  --pack "$NAV_PACK" --content "$ENGINE_DIR/../content" \
+  --pack "$NAV_PACK" --flags "$NAV_FLAGS" \
+  --cache "$ENGINE_DIR/data/pack/client" --content "$ENGINE_DIR/../content" \
   --output "$SOAK_EVIDENCE_DIR/route-audit"
 ```
 
@@ -78,12 +84,14 @@ No normal resource may belong to two patches.
 It includes every maple origin in the selected Site.
 It checks every footprint, Reach alternative, return observation, Start, and bank access goal.
 It calls the production hazard-retreat selector for every resource access stand.
+It calls the actual revision-289 client interaction BFS with cached loc geometry and raw collision flags.
+It covers every resource and bank access origin at every qualifying scene base.
 It queries every alternative goal from all starts, access stands, and retreat destinations.
 It repeats those queries from every intermediate route tile until the replan-origin set is closed.
 This includes blocked-origin escape after a resource changes.
 The checker examines complete walk legs and transport endpoints.
 It rejects routes outside the area or inside any hunter envelope.
-The result retains the source, content-map, catalogue, and v17 pack hashes.
+The result retains source, content-map, catalogue, v17 pack, raw-flag and client-config hashes.
 
 The old Catherby fixture did not constrain route geometry.
 The Gatherer bounds resource origins, not every approach or bank-return tile.

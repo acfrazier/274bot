@@ -52,6 +52,16 @@ class RouteSafetyTests(unittest.TestCase):
         self.assertEqual(audit.route_violations(route, areas, [highwayman], cache), [])
         self.assertTrue(audit.route_violations({"tiles": [[2735, 3507, 0]]}, areas, [highwayman]))
 
+    def test_client_approaches_cover_every_access_origin_and_keep_loc_geometry(self):
+        resource = dict(origin=[2695, 3474, 0], width=2, height=2,
+                        id=1276, shape=10, angle=2)
+        approaches = audit.client_approaches([resource])
+        self.assertEqual({row["source"] for row in approaches}, audit.goals_for(resource))
+        self.assertEqual(len(approaches), 16)
+        for row in approaches:
+            self.assertEqual(row["target"], resource["origin"])
+            self.assertEqual((row["id"], row["shape"], row["angle"]), (1276, 10, 2))
+
     def test_authored_map_rotation_is_optional(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "m42_54.jm2"

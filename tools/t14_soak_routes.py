@@ -85,6 +85,12 @@ def census(content, game, starts, rectangles, maple_site):
     site = next(s for s in game["gather_sites"] if s["id"] == maple_site)
     resources = []
     sources = set()
+    bank_rows = {
+        (bank["x"], bank["z"], bank["level"]): bank
+        for bank in game["bank_placements"]["rows"]
+        if bank["name"] == "Seers" and bank["kind"] == "object"
+    }
+    bank_locs = []
     for mx in range(min(r[0] for r in rectangles) // 64, max(r[1] for r in rectangles) // 64 + 1):
         for mz in range(min(r[2] for r in rectangles) // 64, max(r[3] for r in rectangles) // 64 + 1):
             path = content / f"maps/m{mx}_{mz}.jm2"
@@ -93,6 +99,11 @@ def census(content, game, starts, rectangles, maple_site):
                 ident = values[0]
                 name = locs.get(ident)
                 x, z = mx * 64 + x, mz * 64 + z
+                bank = bank_rows.get((x, z, level))
+                if bank is not None and ident == bank["id"]:
+                    bank_locs.append(dict(kind="bank", id=ident, origin=[x, z, level],
+                                          width=bank["width"], height=bank["length"],
+                                          shape=values[1], angle=values[2] if len(values) > 2 else 0))
                 kind = "normal" if name in normal else "maple" if name in maple else None
                 if level or kind is None:
                     continue
@@ -110,7 +121,8 @@ def census(content, game, starts, rectangles, maple_site):
                 if len(values) > 2 and values[2] % 2:
                     width, height = height, width
                 resources.append(dict(kind=kind, id=ident, origin=[x, z, 0], width=width,
-                                      height=height, owners=owners, source=f"{path}:{number}"))
+                                      height=height, owners=owners, source=f"{path}:{number}",
+                                      shape=values[1], angle=values[2] if len(values) > 2 else 0))
     for index in range(10):
         if not any(index in row["owners"] for row in resources):
             raise ValueError(f"normal patch {index} contains no authored resource")
@@ -125,7 +137,9 @@ def census(content, game, starts, rectangles, maple_site):
             continue
         hunters.append(dict(name=definition["config"], spawn=[placement["x"], placement["z"], placement["plane"]],
                             envelope=definition["wanderrange"] + definition["huntrange"] + definition["size"]))
-    return resources, hunters, sources
+    if len(bank_locs) != len(bank_rows):
+        raise ValueError("selected-content maps do not contain every Seers bank loc")
+    return resources, hunters, sources, bank_locs
 
 
 def goals_for(resource):
@@ -136,12 +150,21 @@ def goals_for(resource):
             for b in range(z - 1, z + height + 1)}
 
 
-def run_probe(args, name, sources, targets, retreats=()):
+def client_approaches(resources):
+    return [
+        dict(source=source, target=resource["origin"], id=resource["id"],
+             shape=resource["shape"], angle=resource["angle"])
+        for resource in resources for source in sorted(goals_for(resource))
+    ]
+
+
+def run_probe(args, name, sources, targets, retreats=(), approaches=()):
     inputs = args.output / f"{name}-batches.json"
-    inputs.write_text(json.dumps([dict(name=name, sources=sorted(sources),
-                                      targets=sorted(targets), retreats=list(retreats))]) + "\n")
+    inputs.write_text(json.dumps([dict(name=name, sources=sorted(sources), targets=sorted(targets),
+                                      retreats=list(retreats), approaches=list(approaches))]) + "\n")
     routes = args.output / f"{name}-routes.jsonl"
-    subprocess.run([str(args.router.resolve()), str(args.pack.resolve()), str(inputs.resolve()), str(routes.resolve())], check=True)
+    subprocess.run([str(path.resolve()) for path in
+                    (args.router, args.pack, args.flags, args.cache, inputs, routes)], check=True)
     return routes
 
 
@@ -150,8 +173,12 @@ def main():
     parser.add_argument("--router", type=Path, required=True)
     parser.add_argument("--pack", type=Path, required=True)
     parser.add_argument("--content", type=Path, required=True)
+    parser.add_argument("--flags", type=Path, help="raw flags paired with PACK (default: its .navflags)")
+    parser.add_argument("--cache", type=Path, help="real immutable client cache (default: CONTENT/../engine/data/pack/client)")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    args.flags = args.flags or args.pack.with_suffix(".navflags")
+    args.cache = args.cache or args.content.parent / "engine/data/pack/client"
     args.output.mkdir(parents=True, exist_ok=False)
     source = ROOT / "crates/host-play/tests/t14_soak_live.rs"
     catalog = ROOT / "crates/api/data/game-data/289.json"
@@ -159,7 +186,7 @@ def main():
     game = json.loads(catalog.read_text())
     sites = json.loads(config.read_text())["workload"]["site_names"]
     starts, maple_start, rectangles = fixture(source)
-    resources, hunters, maps = census(args.content, game, starts, rectangles, sites[1])
+    resources, hunters, maps, bank_locs = census(args.content, game, starts, rectangles, sites[1])
     anchors = {(*start, 0) for start in starts} | {(*maple_start, 0)}
     targets = set(anchors)
     for resource in resources:
@@ -171,8 +198,10 @@ def main():
                                             width=bank["width"], height=bank["length"])))
     targets.update(bank_goals)
     retreats = [(here, resource["origin"]) for resource in resources for here in sorted(goals_for(resource))]
-    files = [run_probe(args, "retreat", (), (), retreats)]
-    checked, no_path, retreat_count = 0, 0, 0
+    files = [run_probe(args, "interactions", (), (), retreats,
+                       client_approaches([*resources, *bank_locs]))]
+    checked, no_path, retreat_count, client_count = 0, 0, 0, 0
+    client_errors = []
     blocked, processed, bank_reachable, resource_reached = set(), set(), set(), set()
     pending = set(targets)
     access = {}
@@ -191,10 +220,14 @@ def main():
             if row.get("error") == "source-not-standable":
                 blocked.add(origin)
             elif "error" in row:
+                if row.get("kind") == "client-approach":
+                    client_errors.append(row)
                 no_path += 1
             else:
                 checked += 1
                 target = tuple(row["target"])
+                if row["kind"] == "client-approach":
+                    client_count += 1
                 if row["kind"] == "hazard-retreat":
                     retreat_count += 1
                     targets.add(target)
@@ -215,7 +248,9 @@ def main():
         processed.update(origins)
         files.append(run_probe(args, f"closure-{round_number}", origins, targets))
         round_number += 1
-    errors = []
+    errors = [f"client approach has no verified route: {row}" for row in client_errors[:10]]
+    if not client_count:
+        errors.append("no actual client loc-approach witnesses")
     for hunter in hunters:
         x, z, level = hunter["spawn"]
         radius = hunter["envelope"]
@@ -235,14 +270,15 @@ def main():
         errors.append(f"{len(isolated)} standable origins have no bank-access route")
     result = dict(request_id="T14-SOAK-ROUTE", verdict="FAIL" if violations or errors else "PASS",
                   routes_checked=checked, unreachable_pairs=no_path, nonstandable_origins=len(blocked),
-                  hazard_retreat_routes=retreat_count, replan_origins=len(processed), closure_rounds=round_number,
+                  hazard_retreat_routes=retreat_count, client_approach_routes=client_count,
+                  replan_origins=len(processed), closure_rounds=round_number,
                   closure_complete=not pending, rectangles=rectangles, normal_starts=starts,
                   maple_start=maple_start, resources=resources, hunters_checked=len(hunters),
-                  sources={str(p): digest(p) for p in [source, catalog, config, args.pack, *sorted(maps)]},
+                  sources={str(p): digest(p) for p in [source, catalog, config, args.pack, args.flags, args.cache / "config", *sorted(maps)]},
                   violation_count=len(violations), violations=violations[:30], errors=errors,
-                  scope="Production-router replan closure over all alternative resource/return/bank goals, including blocked-origin escape and production hazard retreats. Random-event interiors remain separate product travel.")
+                  scope="Production host-router replan closure plus actual client loc-approach BFS for every resource/bank access origin and scene base. Includes blocked-origin escape and production hazard retreats. Random-event interiors remain separate product travel.")
     (args.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
-    print(json.dumps({k: result[k] for k in ("verdict", "routes_checked", "unreachable_pairs", "nonstandable_origins", "hazard_retreat_routes", "replan_origins", "closure_rounds", "closure_complete", "hunters_checked", "violation_count", "errors")}))
+    print(json.dumps({k: result[k] for k in ("verdict", "routes_checked", "unreachable_pairs", "nonstandable_origins", "hazard_retreat_routes", "client_approach_routes", "replan_origins", "closure_rounds", "closure_complete", "hunters_checked", "violation_count", "errors")}))
     return 1 if violations or errors else 0
 
 

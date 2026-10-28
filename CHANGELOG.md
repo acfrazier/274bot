@@ -70,9 +70,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 ### Fixed during development
 
 - The T1.4 transport soak uses independent normal-tree patches west of Seers.
-  An offline checker tests complete router paths,
+  An offline checker tests complete host-router paths, client interaction paths,
   replan origins, bank alternatives and actual hazard retreats against every
-  authored hunter envelope before a run.
+  authored hunter envelope. The fixture remains blocked after a diagnostic stop.
 
 - A refused game connection on macOS keeps its connection-refused error.
   The new transport sets TCP_NODELAY only after the connection succeeds,
