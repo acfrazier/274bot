@@ -3115,11 +3115,7 @@ impl TuiSession {
 
     /// Request a skip for the focused Quester through the shared command
     /// boundary; its refusal text is shown on the expiring message line.
-    fn script_skip_quest(
-        &mut self,
-        app: &mut TuiApp,
-        target: Option<api::selected::RunKey>,
-    ) {
+    fn script_skip_quest(&mut self, app: &mut TuiApp, target: Option<api::selected::RunKey>) {
         let Some(name) = app.focused_name() else {
             self.refuse_command(
                 app,

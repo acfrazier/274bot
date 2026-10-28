@@ -5845,8 +5845,7 @@ impl Session {
         let Some(submitted) = self.submit(
             OperatorCommand::SkipQuest { target },
             Targets::Profile(&name),
-        )
-        else {
+        ) else {
             return;
         };
         self.error = self

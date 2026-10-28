@@ -3721,7 +3721,8 @@ impl Script for QueuedQuester {
                     let skip_requested = std::mem::take(&mut self.skip_requested);
                     match flow {
                         ScriptFlow::Complete if skip_requested => {
-                            self.queue.mark_parked(index, Arc::from("skipped by operator"));
+                            self.queue
+                                .mark_parked(index, Arc::from("skipped by operator"));
                         }
                         ScriptFlow::Complete => {
                             self.queue.mark_done(index);

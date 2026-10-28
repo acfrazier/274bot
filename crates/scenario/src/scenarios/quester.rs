@@ -606,7 +606,6 @@ pub(crate) fn quester_skip_scenario() -> Scenario {
     }
 }
 
-
 /// Resume Cook from in-progress with the three products already held.
 pub(crate) fn quester_cook_resume_scenario() -> Scenario {
     let mut scenario = quester_stage(

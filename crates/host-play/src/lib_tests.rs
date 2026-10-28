@@ -30978,9 +30978,7 @@ mod skip_quest_tests {
         let current = run_key(&slot);
         assert_ne!(stale, current);
 
-        let failure = play
-            .script_skip_quest("alice", Some(stale))
-            .unwrap_err();
+        let failure = play.script_skip_quest("alice", Some(stale)).unwrap_err();
         assert_eq!(failure.code.as_ref(), "skip-quest-refused");
         assert_eq!(failure.message.as_ref(), "stale native run");
         assert_eq!(calls.load(Ordering::Relaxed), 0);
@@ -31064,9 +31062,7 @@ mod skip_quest_tests {
         );
         assert_eq!(slot.lock().unwrap().state(), script::RunState::Idle);
 
-        let failure = play
-            .script_skip_quest("alice", Some(target))
-            .unwrap_err();
+        let failure = play.script_skip_quest("alice", Some(target)).unwrap_err();
         assert_not_quester(&failure);
         assert_eq!(calls.load(Ordering::Relaxed), 0);
         let slot = slot.lock().unwrap();
