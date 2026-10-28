@@ -370,7 +370,8 @@ fn partner_step(
                     max_z - 1
                 };
                 let tile = |z| api::snapshot::WorldTile { x, z, level: own.2 };
-                (tile(own.1), tile(z))
+                // A tile on the pen's own edge row is not walkable: stay inside it.
+                (tile(own.1.clamp(min_z + 1, max_z - 1)), tile(z))
             });
             let arrived = (own.0 - first.x).abs().max((own.1 - first.z).abs()) <= 1;
             let far = if arrived || state.at_second {
