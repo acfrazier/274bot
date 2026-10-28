@@ -3924,8 +3924,20 @@ fn live_attack_animation(run: &CombatRun) -> i32 {
 #[test]
 fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
-    // The R3 base sends a point 24 tiles out. Select a lower-hit threat whose
-    // envelope covers that point, so this test proves which threat sets the goal.
+    // Keep the replacement at the vanished Warlord's tile. It must use the
+    // replacement's wider envelope, not the stale actor's range.
+    let escape_envelope = |maxrange: i32, attackrange: i32| {
+        maxrange
+            .saturating_mul(2)
+            .saturating_add(attackrange)
+            .max(0)
+            .saturating_add(1)
+    };
+    let warlord = data.npc_by_config("khazard_warlord").unwrap();
+    let warlord_row = data
+        .npc_name(warlord.id)
+        .expect("selected content includes the engaged Warlord");
+    let old_envelope = escape_envelope(warlord_row.maxrange, warlord_row.attackrange);
     let new_attacker_id = data
         .npc_names()
         .unwrap()
@@ -3933,16 +3945,10 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
         .iter()
         .find(|row| {
             crate::combat::facts::npc_max_hit(row) == Some(4)
-                && row
-                    .maxrange
-                    .saturating_mul(2)
-                    .saturating_add(row.attackrange)
-                    .max(0)
-                    .saturating_add(1)
-                    >= 24
+                && escape_envelope(row.maxrange, row.attackrange) > old_envelope
         })
         .map(|row| row.id)
-        .expect("selected content includes a low-hit NPC with a wide chase envelope");
+        .expect("selected content includes a lower-hit NPC with a wider chase envelope");
     let mut snapshot = GameSnapshot::new();
     let new_attacker_tile = api::WorldTile {
         x: 3001,
@@ -3980,16 +3986,7 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
     let new_attacker = data
         .npc_name(new_attacker_id)
         .expect("selected content includes the new attacker's range facts");
-    let chase_envelope = new_attacker
-        .maxrange
-        .saturating_mul(2)
-        .saturating_add(new_attacker.attackrange)
-        .max(0)
-        .saturating_add(1);
-    eprintln!(
-        "[DEBUG-CPE-R4-F5] here=({}, {}) new=({}, {}) walk=({}, {}) envelope={chase_envelope}",
-        here.x, here.z, new_attacker_tile.x, new_attacker_tile.z, walks[0].x, walks[0].z
-    );
+    let chase_envelope = escape_envelope(new_attacker.maxrange, new_attacker.attackrange);
     assert!(
         tile_distance(walks[0], new_attacker_tile) > chase_envelope,
         "the plan leaves the new attacker's chase envelope of {chase_envelope} tiles"
