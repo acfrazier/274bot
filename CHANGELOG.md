@@ -70,6 +70,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - Fare recovery now selects a walkable, reachable, untried orthogonal stand
   next to Luthas's posted tile for every approach. It selects the shortest
   route and uses Manhattan distance to break ties.
+  If Luthas is not posted yet, recovery first uses a non-interacting
+  orthogonal staging walk near his content anchor, then selects the talk stand
+  from the posted row.
   Failed walks, "I can't reach that!" replies and dialogue timeouts share a
   limit of three approaches. The bot logs each failed approach and the final
   failure.

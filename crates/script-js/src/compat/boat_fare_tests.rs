@@ -99,6 +99,7 @@ struct World {
     options: Vec<String>,
     lines: Vec<ChatLine>,
     seq: i32,
+    luthas_posted: bool,
     ours: bool,
 }
 
@@ -116,6 +117,7 @@ impl World {
             options: Vec::new(),
             lines: Vec::new(),
             seq: 0,
+            luthas_posted: true,
             ours: false,
         }
     }
@@ -178,17 +180,21 @@ impl World {
                 .chat_continue(self.cont)
                 .chat_options(self.options.clone())
                 .chat_lines(self.lines.clone())
-                .npcs(vec![EntityRow {
-                    index: 50,
-                    name: Some(self.facts.luthas_name.clone().into()),
-                    x: self.facts.luthas_anchor.x,
-                    z: self.facts.luthas_anchor.z + 1,
-                    level: self.facts.luthas_anchor.level,
-                    distance: 1,
-                    actions: vec!["Talk-to".into()].into(),
-                    reachable_adj: true,
-                    ..EntityRow::default()
-                }])
+                .npcs(if self.luthas_posted {
+                    vec![EntityRow {
+                        index: 50,
+                        name: Some(self.facts.luthas_name.clone().into()),
+                        x: self.facts.luthas_anchor.x,
+                        z: self.facts.luthas_anchor.z + 1,
+                        level: self.facts.luthas_anchor.level,
+                        distance: 1,
+                        actions: vec!["Talk-to".into()].into(),
+                        reachable_adj: true,
+                        ..EntityRow::default()
+                    }]
+                } else {
+                    Vec::new()
+                })
                 .locs(locs);
         });
     }
@@ -383,6 +389,64 @@ fn install_luthas_reach_view_with(
         exact_rank,
         adjacent_rank,
         step: vec![0; 25],
+        canlight: Vec::new(),
+    });
+}
+
+fn install_luthas_staging_reach_view(anchor: WorldTile) {
+    let npc = WorldTile {
+        x: anchor.x,
+        z: anchor.z + 1,
+        level: anchor.level,
+    };
+    let staged = WorldTile {
+        x: anchor.x,
+        z: anchor.z - 1,
+        level: anchor.level,
+    };
+    let base_x = anchor.x - 2;
+    let base_z = anchor.z - 2;
+    let width = 5;
+    let height = 5;
+    let index = |tile: WorldTile| {
+        ((tile.x - base_x) as usize) * height as usize + (tile.z - base_z) as usize
+    };
+    let mut walkable = vec![0; 1];
+    let mut reachable = vec![0; 1];
+    let mut reachable_adj = vec![0; 1];
+    let mut exact_rank = vec![u16::MAX; width as usize * height as usize];
+    let mut adjacent_rank = vec![u16::MAX; width as usize * height as usize];
+    for target in [anchor, npc] {
+        for (dx, dz) in [(0, -1), (1, 0), (0, 1), (-1, 0)] {
+            let stand = WorldTile {
+                x: target.x + dx,
+                z: target.z + dz,
+                level: target.level,
+            };
+            if stand == npc {
+                continue;
+            }
+            let i = index(stand);
+            set_reach_bit(&mut walkable, i);
+            set_reach_bit(&mut reachable, i);
+            set_reach_bit(&mut reachable_adj, i);
+            exact_rank[i] = if stand == staged { 0 } else { 1 };
+            adjacent_rank[i] = 1;
+        }
+    }
+    crate::reach_query::set_view_for_tests(ReachQueryView {
+        available: true,
+        base_x,
+        base_z,
+        level: anchor.level,
+        width,
+        height,
+        walkable,
+        reachable,
+        reachable_adj,
+        exact_rank,
+        adjacent_rank,
+        step: vec![0; width as usize * height as usize],
         canlight: Vec::new(),
     });
 }
@@ -831,6 +895,74 @@ fn first_luthas_approach_uses_an_orthogonal_stand_from_a_diagonal_tile() {
     assert!(
         orthogonally_adjacent(stand, npc),
         "first approach stand {stand:?} must be orthogonal to posted Luthas {npc:?}"
+    );
+}
+
+#[test]
+fn initial_luthas_move_stages_without_a_posted_row_then_replans_orthogonally() {
+    reset();
+    let mut world = World::new(MUSA, 5);
+    let anchor = world.facts.luthas_anchor;
+    let npc = WorldTile {
+        x: anchor.x,
+        z: anchor.z + 1,
+        level: anchor.level,
+    };
+    world.here = WorldTile {
+        x: anchor.x + 16,
+        z: anchor.z - 6,
+        level: anchor.level,
+    };
+    world.luthas_posted = false;
+    install_luthas_staging_reach_view(anchor);
+    world.post();
+    let coins = world.facts.coins;
+    let fare = world.facts.coin_payout;
+    fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
+
+    let mut ops = Vec::new();
+    let mut clock = InstantTaskClock::new();
+    let mut logs = VecDeque::new();
+    let mut recover = {
+        let mut cx = Cx::test(&mut ops, &mut clock, None);
+        Recover::start(PORT_SARIM, &mut cx, &mut logs)
+            .expect("a no-row recovery starts with a staging walk")
+    };
+    assert!(matches!(ops.as_slice(), [InteractReq::Walk { .. }]));
+    let staging_stand = walk_tile(&ops[0]);
+    assert_eq!(
+        staging_stand,
+        WorldTile {
+            x: anchor.x,
+            z: anchor.z - 1,
+            level: anchor.level,
+        }
+    );
+    assert!(
+        !orthogonally_adjacent(staging_stand, npc),
+        "the no-row staging walk is not an NPC approach"
+    );
+
+    world.here = staging_stand;
+    world.luthas_posted = true;
+    let (result, ops) = recovery_step(&mut world, &mut recover, &mut clock, &mut logs);
+    assert_eq!(result, None);
+    assert!(matches!(ops.as_slice(), [InteractReq::Walk { .. }]));
+    let talk_stand = walk_tile(&ops[0]);
+    assert!(
+        orthogonally_adjacent(talk_stand, npc),
+        "the posted row is used to replan the actual talk approach: {talk_stand:?}"
+    );
+
+    world.here = talk_stand;
+    assert!(recovery_step(&mut world, &mut recover, &mut clock, &mut logs)
+        .1
+        .is_empty());
+    let (result, ops) = recovery_step(&mut world, &mut recover, &mut clock, &mut logs);
+    assert_eq!(result, None);
+    assert!(
+        matches!(ops.as_slice(), [InteractReq::Npc { action, .. }] if action == "Talk-to"),
+        "only the posted-row orthogonal stand dispatches Talk-to: {ops:?}"
     );
 }
 

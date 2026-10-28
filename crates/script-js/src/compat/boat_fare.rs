@@ -34,7 +34,8 @@
 //! `karamja.ts` orchestration is ported here: talk to Luthas, fill the
 //! configured crate from fruiting placements, then talk again. Native talk
 //! stages select an untried, walkable, reachable orthogonal stand for every
-//! approach, then retry failures within a bounded budget.
+//! approach, then retry failures within a bounded budget. If Luthas has not
+//! been posted yet, a non-interacting staging walk precedes that selection.
 //! Frozen primitives ported here: `openDialogue` / `talkChoosingBy` with no rules
 //! (`primitives.ts:227–253, 276–318`), `driveChoice` / `driveUntil` /
 //! `useOnLoc` / `settleScene` (`prompts.ts:30–93, 316–345`), `pickBananas`
@@ -72,7 +73,7 @@ const LEG_MS: u64 = 180_000;
 /// The frozen `walkResilient(..., { attempts: 3 })` limit
 /// (`Traversal.ts:160–170`) supplies the talk retry budget.
 const TALK_ATTEMPTS: u32 = LEG_ATTEMPTS;
-/// Orthogonal candidate stands around Luthas's posted tile.
+/// Orthogonal candidate offsets for posted stands and initial staging.
 const TALK_STAND_OFFSETS: [(i32, i32); 4] = [(0, -1), (1, 0), (0, 1), (-1, 0)];
 /// Frozen `settleScene` (`prompts.ts:30–32`).
 const SETTLE_TICKS: u32 = 2;
@@ -1160,10 +1161,21 @@ fn next_talk_stand(npc: &str, tried: &TriedStands) -> Result<WorldTile, &'static
     if !row.reachable_adj {
         return Err("the posted Luthas row has no reachable adjacent tile");
     }
+    next_orthogonal_stand(
+        row.world_tile(),
+        tried,
+        "no untried reachable orthogonal Luthas stand is available",
+    )
+}
+
+fn next_orthogonal_stand(
+    target: WorldTile,
+    tried: &TriedStands,
+    no_stand: &'static str,
+) -> Result<WorldTile, &'static str> {
     let Some(from) = here() else {
         return Err("the observed player tile is unavailable");
     };
-    let target = row.world_tile();
     let options = SceneReachOptions {
         max_steps: Some(crate::reach_entity::BFS_STEPS),
         adjacent_ok: false,
@@ -1196,9 +1208,7 @@ fn next_talk_stand(npc: &str, tried: &TriedStands) -> Result<WorldTile, &'static
                 _ => nearest = Some((rank, distance, stand)),
             }
         }
-        nearest
-            .map(|(_, _, stand)| stand)
-            .ok_or("no untried reachable orthogonal Luthas stand is available")
+        nearest.map(|(_, _, stand)| stand).ok_or(no_stand)
     })
 }
 
@@ -1235,6 +1245,14 @@ fn log_terminal_failure(logs: &mut VecDeque<String>, attempt: u32, detail: &str)
 }
 
 enum Stage {
+    LocateLuthas {
+        second: bool,
+        attempt: u32,
+        tried_stands: TriedStands,
+        tried_staging_stands: TriedStands,
+        stand: WorldTile,
+        walk: Walk,
+    },
     TalkWalk {
         second: bool,
         attempt: u32,
@@ -1293,6 +1311,90 @@ impl Recover {
 
     /// Frozen `talk()`'s first route, with bounded retries from fresh plans.
     fn talk(
+        facts: &BoatFacts,
+        second: bool,
+        attempt: u32,
+        tried_stands: TriedStands,
+        cx: &mut Cx<'_>,
+        logs: &mut VecDeque<String>,
+    ) -> Result<Stage, bool> {
+        if talk_row(&facts.luthas_name).is_none() {
+            return Self::locate_luthas(
+                facts,
+                second,
+                attempt,
+                tried_stands,
+                TriedStands::default(),
+                cx,
+                logs,
+            );
+        }
+        Self::talk_posted(facts, second, attempt, tried_stands, cx, logs)
+    }
+
+    /// Walk to a content-derived staging stand without interacting; the NPC
+    /// row is re-read before an orthogonal talk stand is selected.
+    fn locate_luthas(
+        facts: &BoatFacts,
+        second: bool,
+        attempt: u32,
+        tried_stands: TriedStands,
+        mut tried_staging_stands: TriedStands,
+        cx: &mut Cx<'_>,
+        logs: &mut VecDeque<String>,
+    ) -> Result<Stage, bool> {
+        let mut walk_failed_to_start = false;
+        loop {
+            if interrupted(cx) {
+                return Err(false);
+            }
+            let stand = match next_orthogonal_stand(
+                facts.luthas_anchor,
+                &tried_staging_stands,
+                "no untried reachable orthogonal Luthas staging stand is available",
+            ) {
+                Ok(stand) => stand,
+                Err(reason) => {
+                    let detail = if walk_failed_to_start {
+                        "the host could not start a walk to any reachable staging stand"
+                    } else {
+                        reason
+                    };
+                    record_recovery_log(
+                        logs,
+                        format!("boat fare Luthas recovery could not start: {detail}"),
+                    );
+                    return Err(false);
+                }
+            };
+            tried_staging_stands.insert(stand);
+            match Walk::begin_compat_avoiding(
+                stand,
+                0,
+                TALK_WALK_MS,
+                false,
+                Vec::new(),
+                Vec::new(),
+                cx,
+            ) {
+                Ok(walk) => {
+                    return Ok(Stage::LocateLuthas {
+                        second,
+                        attempt,
+                        tried_stands,
+                        tried_staging_stands,
+                        stand,
+                        walk,
+                    });
+                }
+                Err(true) => {}
+                Err(false) => walk_failed_to_start = true,
+            }
+        }
+    }
+
+    /// Frozen `talk()` after a talkable scene row has been observed.
+    fn talk_posted(
         facts: &BoatFacts,
         second: bool,
         mut attempt: u32,
@@ -1367,7 +1469,9 @@ impl Recover {
     /// The op that stops the native walk this recovery has in flight.
     pub(crate) fn release(&self) -> Option<InteractReq> {
         match &self.stage {
-            Stage::TalkWalk { walk, .. } => Some(walk.release()),
+            Stage::TalkWalk { walk, .. } | Stage::LocateLuthas { walk, .. } => {
+                Some(walk.release())
+            }
             Stage::Fill(fill) => match &fill.phase {
                 FillPhase::Search(SearchCrate::Walk(walk))
                 | FillPhase::Final(SearchCrate::Walk(walk))
@@ -1396,6 +1500,48 @@ impl Recover {
             return Some(false);
         }
         let next = match &mut self.stage {
+            Stage::LocateLuthas {
+                second,
+                attempt,
+                tried_stands,
+                tried_staging_stands,
+                stand,
+                walk,
+            } => {
+                if walk.step(cx)? {
+                    match Self::talk_posted(
+                        &self.facts,
+                        *second,
+                        *attempt,
+                        *tried_stands,
+                        cx,
+                        logs,
+                    ) {
+                        Ok(stage) => stage,
+                        Err(done) => return Some(done),
+                    }
+                } else {
+                    record_recovery_log(
+                        logs,
+                        format!(
+                            "boat fare Luthas staging walk failed stand=({},{},{})",
+                            stand.x, stand.z, stand.level
+                        ),
+                    );
+                    match Self::locate_luthas(
+                        &self.facts,
+                        *second,
+                        *attempt,
+                        *tried_stands,
+                        *tried_staging_stands,
+                        cx,
+                        logs,
+                    ) {
+                        Ok(stage) => stage,
+                        Err(done) => return Some(done),
+                    }
+                }
+            }
             Stage::TalkWalk {
                 second,
                 attempt,
