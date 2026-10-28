@@ -985,11 +985,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Write one top-level preference; the failure as the member's
     /// terminal.
-    fn write_preference(
-        &self,
-        key: &str,
-        value: serde_json::Value,
-    ) -> Result<Update, Applied> {
+    fn write_preference(&self, key: &str, value: serde_json::Value) -> Result<Update, Applied> {
         let preferences = self.preferences().ok_or_else(no_store)?;
         preferences
             .begin_set(key, value)
@@ -1073,7 +1069,7 @@ mod setting_event_outcome_tests {
     use crate::launch::InstancePermit;
 
     fn session() -> OperatorSession<u32> {
-        OperatorSession::new(InstancePermit::SkipLock)
+        OperatorSession::new(InstancePermit::skip())
     }
 
     #[test]
@@ -1123,6 +1119,8 @@ mod setting_event_outcome_tests {
             events.iter().map(SettingEvent::state).collect::<Vec<_>>(),
             [SettingEventState::Cleared, SettingEventState::Saved]
         );
-        assert!(events.iter().all(|event| event.setting() == "profile order"));
+        assert!(events
+            .iter()
+            .all(|event| event.setting() == "profile order"));
     }
 }

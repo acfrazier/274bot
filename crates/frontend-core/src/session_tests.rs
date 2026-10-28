@@ -3331,13 +3331,12 @@ fn a_failed_quiet_load_order_write_is_reported_and_the_stored_order_stays() {
     );
     assert_eq!(events[0].setting(), "profile order");
     assert!(
-        events[0].error().is_some_and(|error| error.contains("busy")),
+        events[0]
+            .error()
+            .is_some_and(|error| error.contains("busy")),
         "{events:?}"
     );
-    session.poll_preferences_at(
-        &mut surface,
-        Instant::now() + crate::ERROR_MESSAGE_TIMEOUT,
-    );
+    session.poll_preferences_at(&mut surface, Instant::now() + crate::ERROR_MESSAGE_TIMEOUT);
     assert_eq!(
         session.setting_failure(crate::Setting::ProfileOrder),
         None,
