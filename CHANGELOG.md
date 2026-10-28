@@ -13,9 +13,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   not offer Load, Reload, catalog or rs2b0t profile import. Default builds
   still include JavaScript. Sherlock needs the JS-runtime build until its
   native clue rewrite, although Sherlock itself creates no V8 isolate.
-- The memory-profile panel now joins its bot workers before closing the GPU
-  window on success or failure. This avoids a shutdown crash when a worker
-  uses the Vulkan driver while the process is exiting.
+- The panel now stops bot workers before closing its GPU window after a fatal
+  startup error. This prevents a shutdown crash when a worker still uses the
+  Vulkan driver. Developer builds with `memory-profile` also stop workers
+  before the window closes on benchmark success or failure. Release builds
+  do not include `memory-profile`.
 - The terminal app's script pane now marks the selected compiled (native)
   script card with `>` the same way as a selected JavaScript card.
 
