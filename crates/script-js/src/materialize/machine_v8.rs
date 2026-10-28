@@ -26,7 +26,22 @@ use serde_json::Value;
 
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     callback_v8::install(runtime, "__rs2b0t_machine_start", start_callback)?;
+    #[cfg(feature = "test-hooks")]
+    callback_v8::install(runtime, "__rs2b0t_test_machine_host", test_host_callback)?;
     callback_v8::install(runtime, "__rs2b0t_machine_take", take_callback)
+}
+
+/// Test seam: the machine host as JSON text, for the seat page tests.
+#[cfg(feature = "test-hooks")]
+fn test_host_callback<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    _args: v8::FunctionCallbackArguments<'s>,
+    mut rv: v8::ReturnValue,
+) {
+    let text = machine::test_host_report().to_string();
+    if let Some(value) = v8::String::new(scope, &text) {
+        rv.set(value.into());
+    }
 }
 
 /// Step every live machine once, before the tick's other JS. `claimed`

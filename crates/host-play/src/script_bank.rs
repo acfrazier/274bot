@@ -3429,3 +3429,7 @@ pub(crate) mod harness;
 #[cfg(test)]
 #[path = "script_bank_tests.rs"]
 mod tests;
+
+#[cfg(all(test, feature = "js"))]
+#[path = "script_seat_answer_tests.rs"]
+mod seat_answer_tests;

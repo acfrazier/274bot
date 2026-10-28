@@ -922,6 +922,25 @@ impl LoadIsolate {
         self.teardown.lock().unwrap().executed_seat_pages
     }
 
+    /// The producer evidence generation of the posted pages: changed seat
+    /// pages may advance it, the seat page command must not.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn snapshot_evidence_sequence_for_test(&self) -> u64 {
+        self.snapshot_evidence_sequence()
+    }
+
+    /// The isolate thread's machine host: rows with their pass counts and
+    /// budget use, and the settled entries with their seat stamps. A round
+    /// trip through the isolate thread, so it also waits for every command
+    /// queued before it.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn machine_host_for_test(&self) -> serde_json::Value {
+        self.probe("JSON.parse(__rs2b0t_test_machine_host())")
+            .expect("the machine host report")
+    }
+
     /// Queue a game tick directly, without sampling or arming the host
     /// watchdog. Slow-completion regression tests place these behind the
     /// first tick command to exercise the isolate thread's stale-window

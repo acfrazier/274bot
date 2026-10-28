@@ -3869,6 +3869,60 @@ pub(crate) fn any_settled() -> bool {
     HOST.with(|host| !host.borrow().settled.is_empty())
 }
 
+#[cfg(feature = "test-hooks")]
+thread_local! {
+    /// Test seam: how many passes drove each row, by handle.
+    static TEST_STEPS: RefCell<std::collections::HashMap<Handle, u64>> =
+        RefCell::new(std::collections::HashMap::new());
+}
+
+/// Test seam: the machine host as the seat page tests read it. Rows list
+/// their handle, family, pass count, callback budget use, pending promise and
+/// `seat_changed` flag; `settled` lists each entry's handle, outcome kind and
+/// seat stamp.
+#[cfg(feature = "test-hooks")]
+pub(crate) fn test_host_report() -> Value {
+    use serde_json::json;
+    let steps = TEST_STEPS.with(|steps| steps.borrow().clone());
+    HOST.with(|host| {
+        let host = host.borrow();
+        let rows: Vec<Value> = host
+            .rows
+            .iter()
+            .map(|row| {
+                json!({
+                    "handle": row.handle,
+                    "family": row.family,
+                    "native": row.native_kind.is_some(),
+                    "calls": row.calls,
+                    "pending": row.pending.is_some(),
+                    "seat_changed": row.seat_changed,
+                    "steps": steps.get(&row.handle).copied().unwrap_or(0),
+                })
+            })
+            .collect();
+        let settled: Vec<Value> = host
+            .settled
+            .iter()
+            .map(|entry| {
+                let (kind, reason) = match &entry.outcome {
+                    Outcome::Done(_) => ("done", ""),
+                    Outcome::Failed(_) => ("failed", ""),
+                    Outcome::Refused(_) => ("refused", ""),
+                    Outcome::Aborted(reason) => ("aborted", reason.as_str()),
+                };
+                json!({
+                    "handle": entry.handle,
+                    "kind": kind,
+                    "reason": reason,
+                    "seat_seq": entry.seat_seq,
+                })
+            })
+            .collect();
+        json!({ "rows": rows, "settled": settled })
+    })
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Pass<'a> {
     /// Every row; starts the tick's callback budget.
@@ -4046,6 +4100,8 @@ fn drive_in_pass(
 ) -> Option<Outcome> {
     // Every pass that steps a row has read what a seat page left for it.
     row.seat_changed = false;
+    #[cfg(feature = "test-hooks")]
+    TEST_STEPS.with(|steps| *steps.borrow_mut().entry(row.handle).or_insert(0) += 1);
     if row.rebaseline_on_resume {
         // Pause and reconnect holds produce no runnable observations. Refresh
         // on the first eligible resumed step, after its Running snapshot.
