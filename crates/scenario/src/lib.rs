@@ -550,6 +550,7 @@ pub enum StepKind {
     /// XP baseline and the same game-tick budget. At most `max_restarts`
     /// further bank returns may restart the watch. Each bank/return phase
     /// has the same finite budget. Sends no actions.
+    /// The scenario's whole-run wall-clock deadline remains the outer limit.
     ObserveCombatAcrossBankReturns {
         stand: WorldTile,
         radius: i32,

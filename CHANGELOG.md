@@ -68,16 +68,21 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   before the bot reached the bank. The host now checks the route generation
   before it sends a walk result to a native action.
 
-- The chicken bank check now uses a guaranteed Bones drop for its pickup and
-  deposit checks. It requires fresh combat XP after the bank return instead
-  of waiting for a random Feather drop. Up to three further bank returns
-  restart the same 150-tick combat window. Each return must follow a fresh
-  bank visit. A stalled return or a spent restart limit still fails.
-
 - The script API documentation now states that moving the bot by hand during a
   fight ends `api.combat.fight` as `aborted` with reason `user-input`. The host
   has settled it that way since 0.2.4; the declarations and pages still
   described an `interrupted` result.
+
+### Fixed during development
+
+#### Scenario checks
+
+- The chicken bank check now uses a guaranteed Bones drop for its pickup and
+  deposit checks. It requires fresh combat XP after the bank return instead
+  of waiting for a random Feather drop. Up to three further bank returns may
+  restart the same 150-tick combat window. Each return follows a fresh bank
+  visit. A stalled return or a spent restart limit still fails. The 12-minute
+  deadline is the outer wall-clock limit.
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 

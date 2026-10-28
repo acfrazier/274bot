@@ -198,7 +198,7 @@ pub(crate) fn chicken_killer_bank_scenario() -> Scenario {
         kind: StepKind::ObserveCombatAcrossBankReturns {
             stand: tele,
             radius: 6,
-            max_restarts: 3,
+            max_restarts: api::CHICKEN_BANK_MAX_RESTARTS,
         },
         wait: Wait {
             arm: further_strength,
@@ -218,9 +218,12 @@ pub(crate) fn chicken_killer_bank_scenario() -> Scenario {
             full_rate: true,
             require_mainland_base: true,
             // NIGHTLY-C7-1023: three complete Engine A cycles took 169, 197,
-            // and 308 ticks (maximum 199.993s). Keep 20% wall-clock headroom
-            // for this full bank-and-return cycle, not the shared gold cap.
-            deadline: Duration::from_secs(240),
+            // and 308 ticks (maximum 199.993s).
+            // The final observer can wait 150 + api::CHICKEN_BANK_MAX_RESTARTS
+            // * (150 + 150) = 1,050 more ticks. At the measured 0.365 s/tick,
+            // that adds 383.25s. 199.993s + 383.25s with 20% headroom is
+            // 700s. The 720s deadline is the outer wall-clock limit.
+            deadline: Duration::from_secs(720),
             start_script: Some("ChickenKiller"),
             script_settings_inject: Some(CHICKEN_KILLER_BANK_INJECT),
             terminal_shot: Some("chicken_killer_bank"),

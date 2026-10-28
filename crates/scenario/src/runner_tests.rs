@@ -4065,10 +4065,13 @@ fn chicken_bank_oracle_does_not_restart_on_an_unfinished_bank_return() {
     set_world_tile(&mut c, CHICKEN_ORACLE.bank);
     oracle_open_bank(&mut c, &[(526, 2)]);
     oracle_settle(&mut runner, &mut c, 1);
-    assert!(matches!(
-        oracle_finish(&mut runner, &mut c),
-        RunnerStatus::Failed(_)
-    ));
+    let RunnerStatus::Failed(message) = oracle_finish(&mut runner, &mut c) else {
+        panic!("an unfinished bank return must fail");
+    };
+    assert!(
+        message.contains("bank_return=CombatBankReturnObservation { bank_open_seen: true"),
+        "{message}"
+    );
     assert_eq!(runner.combat_bank_returns.unwrap().restarts, 0);
 }
 

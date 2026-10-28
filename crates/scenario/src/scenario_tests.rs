@@ -6713,6 +6713,11 @@ fn superheater_cases_register_exact_ids_and_bank_cycles() {
 fn chicken_killer_bank_registers_guaranteed_bones_trip_and_fresh_combat() {
     let bank = get("chicken_killer_bank").expect("chicken_killer_bank");
     assert_eq!(bank.settings.start_script, Some("ChickenKiller"));
+    assert_eq!(
+        bank.settings.deadline,
+        Duration::from_secs(720),
+        "the whole-run deadline covers the permitted bank-return restarts"
+    );
     let inject = settings_inject_map(bank.settings.script_settings_inject).unwrap();
     assert_eq!(
         inject.get("bankStrategy"),
@@ -6806,7 +6811,7 @@ fn chicken_killer_bank_registers_guaranteed_bones_trip_and_fresh_combat() {
                 level: 0
             },
             radius: 6,
-            max_restarts: 3,
+            max_restarts: api::CHICKEN_BANK_MAX_RESTARTS,
         }
     ));
     let core = get("chicken_killer").unwrap();
