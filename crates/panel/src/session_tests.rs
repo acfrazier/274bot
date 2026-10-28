@@ -1,9 +1,10 @@
 use super::{
     combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, live_client_trail,
     live_or_walk_paint, null_raster_live_entries, parse_getvar_line, publish_nav_debug,
-    retire_client_trail, script_active, script_pause_enabled, script_stop_enabled, FeedbackOwner,
-    seed_on_first_world, stress_live_entries, temp_live_vault_from, PanelPreferenceMember,
-    PreparationCompletion, SceneRoutePaint, Session, SlotIo, PANEL_SETTING_EVENTS_CAP,
+    retire_client_trail, script_active, script_pause_enabled, script_stop_enabled,
+    seed_on_first_world, stress_live_entries, temp_live_vault_from, FeedbackOwner,
+    PanelPreferenceMember, PreparationCompletion, SceneRoutePaint, Session, SlotIo,
+    PANEL_SETTING_EVENTS_CAP,
 };
 use crate::focus::draw_for_slot;
 use crate::picker::{
@@ -10144,7 +10145,7 @@ fn panel_setting_events_follow_pending_failed_retry_clear_and_saved_owner_outcom
     assert!(
         events[0]
             .error()
-            .is_some_and(|error| error.contains("preferences is busy")),
+            .is_some_and(|error| error.contains("store I/O error")),
         "{events:?}"
     );
     assert!(session.panel_member_error(&["chrome", "accent"]).is_some());
@@ -10222,7 +10223,7 @@ fn panel_setting_event_overflow_marks_the_drained_batch_incomplete() {
     session.note_panel_setting(
         &member,
         frontend_core::SettingEventState::Failed,
-        Some("preferences is busy".into()),
+        Some("preferences is busy"),
     );
 
     let (events, incomplete) = session.take_panel_setting_events();
@@ -10624,7 +10625,8 @@ fn settings_feedback_a_typed_pending_draft_survives_refresh_frames_and_a_second_
         assert_eq!(s.quester_paths_folder_edit, "typed-but-not-committed");
         assert_eq!(s.draw_shown(DrawSwitch::CaptureInput), !capture);
     }
-    disk.release().store(false, Ordering::SeqCst);
+    disk.failing.store(false, Ordering::SeqCst);
+    drop(disk.release());
     settle_panel_writes(&mut s);
     assert_eq!(s.draw_shown(DrawSwitch::CaptureInput), !capture);
     assert_eq!(s.quester_paths_folder_edit, "typed-but-not-committed");
@@ -11027,7 +11029,8 @@ fn settings_feedback_a_second_process_version_reaches_every_panel_control_after_
             "the pending request previews"
         );
     }
-    disk.release().store(false, Ordering::SeqCst);
+    disk.failing.store(false, Ordering::SeqCst);
+    drop(disk.release());
     settle_panel_writes(&mut s);
     assert_eq!(s.ui.chrome.accent, "#112233");
     assert_eq!(s.ui.section_order, ["log", "status"], "nothing else moved");

@@ -3333,7 +3333,7 @@ fn a_failed_quiet_load_order_write_is_reported_and_the_stored_order_stays() {
     assert!(
         events[0]
             .error()
-            .is_some_and(|error| error.contains("busy")),
+            .is_some_and(|error| error.contains("store I/O error")),
         "{events:?}"
     );
     session.poll_preferences_at(&mut surface, Instant::now() + crate::ERROR_MESSAGE_TIMEOUT);
