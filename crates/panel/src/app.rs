@@ -2787,6 +2787,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
             session.script_stop();
         }
     }
+    let mut skip_quest = false;
     let native = session
         .core
         .fleet_view()
@@ -2799,9 +2800,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
             && native.card() == frontend_core::scripts::CompiledCardId::QUESTER
         {
             ui.same_line();
-            if ui.small_button("Skip quest") {
-                session.script_skip_quest();
-            }
+            skip_quest = ui.small_button("Skip quest");
             ui.set_item_tooltip("park the active quest row and continue with the next queue item");
         }
         if let Some(reason) = frontend_core::views::script_status_reason(native) {
@@ -2815,6 +2814,9 @@ fn script_section(ui: &Ui, session: &mut Session) {
             Some(err) => kv_row(ui, "status", &format!("{status}: {err}")),
             None => kv_row(ui, "status", status),
         }
+    }
+    if skip_quest {
+        session.script_skip_quest();
     }
     if let Some(reason) = session
         .core
