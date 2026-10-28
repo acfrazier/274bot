@@ -329,7 +329,8 @@ fn five() -> serde_json::Value {
 fn observe_wake_matrix() {
     use crate::script_runtime::script_observe::{observe_wake, ObserveWake as W};
     // (tick_edge, tick, evidence, host results, answer owed, held) -> wake
-    let rows: &[((bool, u64, bool, bool, bool, bool), W)] = &[
+    type Inputs = (bool, u64, bool, bool, bool, bool);
+    let rows: &[(Inputs, W)] = &[
         ((true, 5, false, false, false, false), W::Tick),
         ((true, 5, true, true, true, true), W::Tick),
         ((true, 0, false, false, false, true), W::Tick),

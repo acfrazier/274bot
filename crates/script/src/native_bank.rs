@@ -5844,7 +5844,7 @@ mod tests {
     }
 
     #[test]
-    fn deposit_timeout_ignores_ticks_drained_after_click_until_server_time_passes() {
+    fn deposit_wait_counts_only_observed_ticks_after_the_click() {
         let item_id = 314;
         let side = row_with(
             item(item_id, "Ore", 1, ItemContainer::BankSide),
@@ -5877,21 +5877,21 @@ mod tests {
 
         for tick in 2..=9 {
             let pending = with_tick(&snapshot, &mut ledger, tick, |frame| {
-                // The receipt and click share tick 1 in production. Later
-                // PLAYER_INFO frames drain the already queued client backlog.
-                frame.cx.active_now = Duration::from_millis(600 + tick.saturating_sub(1) * 200);
+                // No clock decides the wait: a slow host (an hour of active
+                // time) and a fast one (none) see the same observed ticks.
+                frame.cx.active_now = Duration::from_secs(3_600);
                 frame.actions.poll(&handle, &mut frame.cx)
             });
             assert!(
                 pending.is_pending(),
-                "backlog drain tick {tick} is not a server opportunity"
+                "observed tick {tick} is inside the deposit wait"
             );
         }
 
         snapshot.seed_inventory(Vec::new(), 28);
         assert!(matches!(
             with_tick(&snapshot, &mut ledger, 10, |frame| {
-                frame.cx.active_now = Duration::from_millis(2_600);
+                frame.cx.active_now = Duration::ZERO;
                 frame.actions.poll(&handle, &mut frame.cx)
             }),
             Poll::Ready(Ok(BankReceipt { complete: true, .. }))
@@ -5899,7 +5899,7 @@ mod tests {
     }
 
     #[test]
-    fn deposit_missing_receipt_recovers_after_tick_and_time_bounds() {
+    fn deposit_missing_receipt_recovers_after_observed_tick_bounds() {
         let item_id = 314;
         let side = row_with(
             item(item_id, "Ore", 1, ItemContainer::BankSide),
@@ -5928,17 +5928,17 @@ mod tests {
 
         for tick in 2..=9 {
             let pending = with_tick(&snapshot, &mut ledger, tick, |frame| {
-                frame.cx.active_now = Duration::from_millis(600 + tick.saturating_sub(1) * 200);
+                frame.cx.active_now = Duration::from_secs(3_600);
                 frame.actions.poll(&handle, &mut frame.cx)
             });
             assert!(
                 pending.is_pending(),
-                "the missing receipt stays pending before server time elapses"
+                "the missing receipt stays pending before the observed-tick bound"
             );
         }
 
         assert!(with_tick(&snapshot, &mut ledger, 9, |frame| {
-            frame.cx.active_now = Duration::from_millis(5_400);
+            frame.cx.active_now = Duration::ZERO;
             frame.actions.poll(&handle, &mut frame.cx)
         })
         .is_pending());

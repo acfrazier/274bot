@@ -866,6 +866,7 @@ pub(crate) fn script_observe_cached_with_channels(
             slot.seat_answer_owed(),
             prayer_cleanup_hold || hold || recovery_hold,
         );
+        #[cfg(feature = "js")]
         let wake_waits = wake == ObserveWake::Evidence;
         // Load Gather owns its own committed permissions; other native
         // ticks use the compiled card's current permissions. Pass the
