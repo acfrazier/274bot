@@ -440,15 +440,17 @@ impl Combat {
             })
     }
 
-    /// §4.2 Ranged: the held or worn ranged weapon to wield with no kit. A
-    /// candidate needs accepted ammunition held (a thrown weapon is its own)
-    /// and a Ranged level that allows the weapon (`levelrequire`, the same
-    /// gate the server applies on wear); candidates rank by the weapon's
-    /// `levelrequire`, then by the best accepted ammunition's, then by the
-    /// lower obj id, so the result does not depend on the order of the rows.
+    /// §4.2 Ranged: the held or worn ranged weapon to wield with no kit. Usable
+    /// candidates (accepted ammunition held, a thrown weapon being its own; a
+    /// Ranged level that allows the weapon, `levelrequire`, the gate the server
+    /// applies on wear) outrank the others; each tier ranks by the weapon's
+    /// `levelrequire`, then by the best accepted ammunition's, then by the lower
+    /// obj id, so the result does not depend on the order of the rows. With no
+    /// usable candidate the best of the rest is still picked, so preparation
+    /// reports the missing ammunition (`PrepFailed(Ammo)`) as it did before.
     pub(super) fn best_ranged_weapon(&self, frame: &Frame<'_>) -> i32 {
         let level = arbiter::stat(frame, 4).0;
-        let mut best: Option<((u8, u8), i32)> = None;
+        let mut best: Option<((u8, u8, u8), i32)> = None;
         for row in frame.equipment.iter().chain(frame.inventory) {
             if row.count <= 0 {
                 continue;
@@ -456,9 +458,7 @@ impl Combat {
             let Some(weapon) = ranged::weapon(&self.tables, row.def.id) else {
                 continue;
             };
-            if i32::from(weapon.levelrequire) > level {
-                continue;
-            }
+            let allowed = i32::from(weapon.levelrequire) <= level;
             let ammo = if ranged::thrown(weapon) {
                 // A thrown weapon is its own ammunition.
                 Some(weapon.levelrequire)
@@ -474,10 +474,8 @@ impl Combat {
                     })
                     .max()
             };
-            let Some(ammo) = ammo else {
-                continue;
-            };
-            let key = (weapon.levelrequire, ammo);
+            let tier = u8::from(allowed) + u8::from(allowed && ammo.is_some());
+            let key = (tier, weapon.levelrequire, ammo.unwrap_or(0));
             if best.is_none_or(|(top, id)| key > top || (key == top && row.def.id < id)) {
                 best = Some((key, row.def.id));
             }

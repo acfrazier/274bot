@@ -1302,14 +1302,60 @@ mod receipt_tests {
         assert!(!verdict.passed());
     }
 
+    /// The machine's T4 start at `start`, the bow worn from `start + 2`.
+    fn t4_at(rows: &mut [TraceRow], samples: &mut [Sample], start: u64) {
+        for row in rows.iter_mut() {
+            match row.tick {
+                49 => {
+                    row.tick = start;
+                    row.switch = converging(Style::Ranged, SwitchCause::Reach, start as u16);
+                }
+                51 => row.tick = start + 2,
+                _ => {}
+            }
+        }
+        for sample in samples.iter_mut() {
+            sample.worn = if sample.tick >= start + 2 {
+                BOW.to_vec()
+            } else if sample.tick >= 35 {
+                SWORD.to_vec()
+            } else {
+                sample.worn.clone()
+            };
+        }
+    }
+
     #[test]
-    fn a_missing_tick_or_an_unseen_holder_breaks_the_run() {
-        let (rows, mut samples) = correct();
+    fn a_missing_tick_breaks_the_run() {
+        // Tick 44 was never observed: the ticks around it are not consecutive, so
+        // the window ends at 52 and a machine that started at 50 counted too early.
+        let (mut rows, mut samples) = correct();
         samples.retain(|sample| sample.tick != 44);
-        assert!(!verdict(&rows, &samples).t4_started_after_the_window);
-        let (rows, mut samples) = correct();
+        t4_at(&mut rows, &mut samples, 50);
+        let verdict = verdict(&rows, &samples);
+        assert_eq!(verdict.t4_reach_window_ended_at, Some(52));
+        assert!(!verdict.t4_started_after_the_window);
+        assert!(!verdict.passed());
+    }
+
+    #[test]
+    fn an_unseen_holder_breaks_the_run() {
+        let (mut rows, mut samples) = correct();
         sample_mut(&mut samples, 44).distance = -1;
-        assert!(!verdict(&rows, &samples).t4_started_after_the_window);
+        t4_at(&mut rows, &mut samples, 50);
+        let verdict = verdict(&rows, &samples);
+        assert_eq!(verdict.t4_reach_window_ended_at, Some(52));
+        assert!(!verdict.t4_started_after_the_window);
+        assert!(!verdict.passed());
+    }
+
+    #[test]
+    fn a_start_on_the_last_tick_of_the_window_passes() {
+        // The bound is tight, not loose: a start at the window's end is correct.
+        let (mut rows, mut samples) = correct();
+        t4_at(&mut rows, &mut samples, 49);
+        let verdict = verdict(&rows, &samples);
+        assert!(verdict.passed(), "{verdict:?}");
     }
 
     #[test]

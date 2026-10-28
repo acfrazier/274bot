@@ -3774,7 +3774,7 @@ fn a_path_names_one_loadout_per_style() {
     let rows = [
         api::loadout::Loadout::new("kitpath/sword").with_slot("righthand", name("rune_scimitar")),
         api::loadout::Loadout::new("kitpath/bow")
-            .with_slot("righthand", name("maple_shortbow"))
+            .with_slot("righthand", name("crossbow"))
             .with_slot("quiver", name("iron_arrow"))
             .with_slot("legs", name("rune_platelegs")),
         api::loadout::Loadout::new("kitpath/staff")
@@ -3852,7 +3852,7 @@ fn a_path_names_one_loadout_per_style() {
     assert_eq!(
         ranged,
         [
-            (3, id("maple_shortbow")),
+            (3, id("crossbow")),
             (7, id("rune_platelegs")),
             (13, id("iron_arrow"))
         ]

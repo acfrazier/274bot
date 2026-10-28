@@ -1976,10 +1976,14 @@ fn picked(harness: &Harness, style: Style, alias: &str) -> bool {
 
 #[test]
 fn an_unusable_first_ranged_candidate_never_hides_a_usable_later_one() {
-    // A crossbow with no bolts comes first; the shortbow has arrows.
+    // A weapon with no ammunition held comes first, in either order (a crossbow
+    // with no bolts; the ogre bow, of a higher level, with no ogre arrows); the
+    // shortbow has arrows.
     for items in [
         [("crossbow", 1), ("shortbow", 1), ("iron_arrow", 30)],
         [("shortbow", 1), ("crossbow", 1), ("iron_arrow", 30)],
+        [("ogre_bow", 1), ("shortbow", 1), ("iron_arrow", 30)],
+        [("shortbow", 1), ("ogre_bow", 1), ("iron_arrow", 30)],
     ] {
         assert!(
             picked(
