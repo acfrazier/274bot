@@ -396,6 +396,15 @@ struct SkipRequestReceipt {
     action: SkipActionReceipt,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SkipCleanupOwnership {
+    script_walk: Option<(i32, i32, i32)>,
+    seat_held: bool,
+    live_actions: usize,
+    seat_results: usize,
+    reserved_releases: usize,
+}
+
 #[derive(Default)]
 struct SkipQueueEvidence {
     skip: Option<SkipRequestReceipt>,
@@ -404,9 +413,11 @@ struct SkipQueueEvidence {
     completed_states: Vec<i64>,
     cook_parked: bool,
     cancellation_observed: bool,
+    cleanup_ownership: Option<SkipCleanupOwnership>,
     sheep_completed: bool,
     latest: Option<SkipStatusReceipt>,
 }
+
 
 fn queue_row_letter(queue: &str, id: &str) -> Result<char, String> {
     let position = script::quester::registry::BUNDLED_INDEX
@@ -451,6 +462,56 @@ impl SkipQueueEvidence {
             child_step_id,
             phase: format!("{:?}", status.phase),
         }))
+    }
+
+    fn observe_cancel_ownership(
+        &mut self,
+        status: &ScriptStatus,
+        play: &host_play::Play,
+        name: &str,
+    ) -> Result<(), String> {
+        if self.skip.is_none() || self.cleanup_ownership.is_some() {
+            return Ok(());
+        }
+        if status.phase == NativePhase::Preparing
+            || status.card != script::CompiledId("Quester")
+            || text_field(status, "block_reason")?.as_deref() != Some("skipped by operator")
+        {
+            return Ok(());
+        }
+        let queue = text_field(status, "queue")?.ok_or("parked Quester status is missing queue")?;
+        if queue_row_letter(&queue, "cook")? != 'P'
+            || text_field(status, "quest_id")?.is_some()
+            || text_field(status, "step_id")?.is_some()
+            || text_field(status, "action_state")?.is_some()
+            || text_field(status, "child_step_id")?.is_some()
+        {
+            return Ok(());
+        }
+        let slot_status = play
+            .statuses()
+            .into_iter()
+            .find(|status| status.username == name)
+            .ok_or("live slot status disappeared before skip cancellation proof")?;
+        let seat = play
+            .script_seat_probe(name)
+            .ok_or("Quester slot seat disappeared before skip cancellation proof")?;
+        let ownership = SkipCleanupOwnership {
+            script_walk: slot_status.script_walk(),
+            seat_held: seat.held,
+            live_actions: seat.live,
+            seat_results: seat.results,
+            reserved_releases: seat.reserved_releases,
+        };
+        if ownership.script_walk.is_none()
+            && !ownership.seat_held
+            && ownership.live_actions == 0
+            && ownership.reserved_releases == 0
+        {
+            self.cleanup_ownership = Some(ownership);
+            self.cancellation_observed = true;
+        }
+        Ok(())
     }
 
     fn accept_skip(
@@ -544,9 +605,7 @@ impl SkipQueueEvidence {
                 ));
             }
             self.cook_parked = true;
-            if quest_id.is_none() && step_id.is_none() {
-                self.cancellation_observed = true;
-            }
+
         }
         if quest_id.as_deref() == Some("sheep") && cook_state != 'P' {
             return Err(format!(
@@ -677,7 +736,15 @@ impl SkipQueueEvidence {
             "completed_states": self.completed_states,
             "cook_parked": self.cook_parked,
             "active_action_cancelled": self.cancellation_observed,
+            "cancellation_ownership": self.cleanup_ownership.map(|ownership| json!({
+                "script_walk": ownership.script_walk,
+                "seat_held": ownership.seat_held,
+                "live_actions": ownership.live_actions,
+                "seat_results": ownership.seat_results,
+                "reserved_releases": ownership.reserved_releases,
+            })),
             "sheep_completed": self.sheep_completed,
+
             "latest": latest.map(|status| json!({
                 "native_phase": status.phase,
                 "queue": status.queue,
@@ -1053,6 +1120,9 @@ fn run_quester_skip() -> Result<(), String> {
         let lifecycle = play.script_lifecycle_receipt(&account);
         if let Some(status) = native_status.as_ref() {
             if let Err(error) = evidence.observe(status) {
+                break Err(error);
+            }
+            if let Err(error) = evidence.observe_cancel_ownership(status, &play, &account) {
                 break Err(error);
             }
         }
