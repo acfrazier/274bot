@@ -158,7 +158,7 @@ impl Script for SwitchFight {
         };
         let mut shared = self.shared.lock().expect("shared lock");
         if shared.last != Some(state) {
-            let snapshot = tick.frame().snapshot;
+            let snapshot = tick.frame().snapshot();
             let own = snapshot.and_then(|snapshot| snapshot.local_player());
             let partner = snapshot.and_then(|snapshot| {
                 let own_index = own.map(|local| local.player.index)?;
