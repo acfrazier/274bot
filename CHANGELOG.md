@@ -63,6 +63,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Scripting
 
+- Bank opening now waits for its own walk to finish. A completed walk from
+  a script could reuse the bank walk's request number and end the bank walk
+  before the bot reached the bank. The host now checks the route generation
+  before it sends a walk result to a native action.
+
 - The script API documentation now states that moving the bot by hand during a
   fight ends `api.combat.fight` as `aborted` with reason `user-input`. The host
   has settled it that way since 0.2.4; the declarations and pages still
