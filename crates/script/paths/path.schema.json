@@ -3188,8 +3188,19 @@
             "string",
             "null"
           ],
-          "description": "Optional named loadout for the encounter.",
+          "description": "Optional named loadout for the encounter: the loadout of the opening\n`tactic.style`.",
           "default": null
+        },
+        "loadouts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyleLoadoutsArg"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional named loadout per combat style. The machine wears the\nloadout of a style when it switches to that style in the middle of a\nfight (when the opponent protects against the opening style, when\nammunition or runes run out, and when the opponent stays out of melee\nreach). A style with no loadout is never a switch target. Naming the\nopening style here and in `loadout` is refused."
         },
         "spells": {
           "type": [
@@ -3477,6 +3488,37 @@
         "defensive",
         "controlled"
       ]
+    },
+    "StyleLoadoutsArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "melee": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Name or Path-qualified name of the melee loadout.",
+          "default": null
+        },
+        "ranged": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Name or Path-qualified name of the ranged loadout.",
+          "default": null
+        },
+        "mage": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Name or Path-qualified name of the magic loadout.",
+          "default": null
+        }
+      },
+      "description": "The named loadout of each combat style (PVP-DESIGN-1026 §4.1)."
     },
     "AreaArg2": {
       "anyOf": [

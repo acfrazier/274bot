@@ -117,7 +117,8 @@ pub(super) fn opening_style(
                     .find(|style| legal_style(request, *style))
             });
     }
-    let declared = |style: &Style| legal_style(request, *style) && request.kits.get(*style).is_some();
+    let declared =
+        |style: &Style| legal_style(request, *style) && request.kits.get(*style).is_some();
     prefer
         .into_iter()
         .find(|style| declared(style) && usable(*style))
@@ -469,9 +470,7 @@ impl Combat {
                     .filter(|held| held.slot == 13)
                     .chain(frame.inventory)
                     .filter(|held| held.count > 0)
-                    .filter_map(|held| {
-                        ranged::ammo_levelrequire(&self.tables, weapon, held.def.id)
-                    })
+                    .filter_map(|held| ranged::ammo_levelrequire(&self.tables, weapon, held.def.id))
                     .max()
             };
             let tier = u8::from(allowed) + u8::from(allowed && ammo.is_some());

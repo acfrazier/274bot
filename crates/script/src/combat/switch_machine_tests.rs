@@ -1875,9 +1875,7 @@ fn a_mage_opening_without_runes_opens_the_usable_melee_kit() {
         .push(player(OPPONENT, BOB, tile(3341, 3250), &fight_ops(), 60));
     wear(&mut scene, "rune_scimitar", 1);
     scene.refresh();
-    let runes = |scene: &Scene| {
-        [(id(scene, "mindrune"), 50), (id(scene, "airrune"), 50)]
-    };
+    let runes = |scene: &Scene| [(id(scene, "mindrune"), 50), (id(scene, "airrune"), 50)];
     let kits = |scene: &Scene| {
         StyleKits::default()
             .with(Style::Melee, kit(&[(3, id(scene, "rune_scimitar"))], &[]))

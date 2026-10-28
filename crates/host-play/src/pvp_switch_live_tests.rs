@@ -956,7 +956,10 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
         .iter()
         .find(|row| row.obj_id == ids.sword)
         .map_or(0, |row| usize::from(row.attackrate));
-    assert!(rate > 0, "the rune scimitar has an attack rate in the content");
+    assert!(
+        rate > 0,
+        "the rune scimitar has an attack rate in the content"
+    );
     let window = 2 * rate;
     let verdict = judge(rows, &shared.samples, ids, window);
     let passed = verdict.passed()
@@ -1032,13 +1035,7 @@ mod receipt_tests {
     }
 
     fn settling(since: u16) -> String {
-        format!(
-            "{:?}",
-            SwitchState::Settling {
-                since,
-                rate_old: 4
-            }
-        )
+        format!("{:?}", SwitchState::Settling { since, rate_old: 4 })
     }
 
     fn row(

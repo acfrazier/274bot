@@ -3777,8 +3777,7 @@ fn a_path_names_one_loadout_per_style() {
             .with_slot("righthand", name("crossbow"))
             .with_slot("quiver", name("iron_arrow"))
             .with_slot("legs", name("rune_platelegs")),
-        api::loadout::Loadout::new("kitpath/staff")
-            .with_slot("righthand", name("air_battlestaff")),
+        api::loadout::Loadout::new("kitpath/staff").with_slot("righthand", name("air_battlestaff")),
     ];
     let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from(rows));
     let progress = CompiledProgress {
@@ -3826,10 +3825,7 @@ fn a_path_names_one_loadout_per_style() {
         serde_json::from_value(args).map(|args| compile_plan(args, &cx))
     };
     let code = |result: Result<Result<CombatPlan, CompileError>, serde_json::Error>| {
-        result
-            .unwrap()
-            .err()
-            .map(|error| error.code.to_string())
+        result.unwrap().err().map(|error| error.code.to_string())
     };
     // One loadout per style.
     let plan = compile(serde_json::json!({

@@ -424,9 +424,9 @@ impl NativeMachine for Combat {
             flags: 0,
         };
         if let Some(frame) = begin_frame.as_ref() {
-            if let Some(open) = switch::opening_style(&machine.request, |style| {
-                machine.style_usable(style, frame)
-            }) {
+            if let Some(open) =
+                switch::opening_style(&machine.request, |style| machine.style_usable(style, frame))
+            {
                 machine.active = open;
             }
         }

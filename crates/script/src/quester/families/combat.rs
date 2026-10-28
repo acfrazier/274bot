@@ -451,12 +451,7 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
     let stand = super::anchor_tile(args.stand.as_ref())?;
     let search_bounds = compile_search_bounds(args.area, cx)?;
 
-    let kits = compile_kits(
-        args.loadout.as_deref(),
-        args.loadouts.as_ref(),
-        style,
-        cx,
-    )?;
+    let kits = compile_kits(args.loadout.as_deref(), args.loadouts.as_ref(), style, cx)?;
     let loot = compile_loot(&args.loot, cx)?;
     let until = args
         .until
