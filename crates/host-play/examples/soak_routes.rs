@@ -537,8 +537,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     state.combat_level = Some(3);
     let mut out = BufWriter::new(std::fs::File::create(&args[4])?);
     let mut guardian_audit = GuardianAudit {
-        data: api::game_data::for_revision(ClientRevision::R289)
-            .ok_or("revision-289 Guardian content is missing")?,
+        data: api::game_data::for_revision(ClientRevision::R289)?,
         settings: ProfileSettings::default(),
         snapshot: GameSnapshot::new(),
     };
