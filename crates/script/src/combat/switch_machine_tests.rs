@@ -164,6 +164,42 @@ fn apply_wears(scene: &mut Scene, batch: &DrainedBatch) {
     }
 }
 
+/// What the server does with an accepted prayer click (a toggle) or meal: the
+/// varp flips, one lobster leaves the pack and heals 12.
+fn apply_upkeep(scene: &mut Scene, batch: &DrainedBatch) {
+    for index in 0..batch.len() {
+        match batch.get(index) {
+            Some(HostEffect::Interaction(InteractReq::IfButton { component_id })) => {
+                if let Some(row) = scene
+                    .data
+                    .prayers()
+                    .iter()
+                    .find(|row| row.button_com == *component_id)
+                {
+                    let on = scene
+                        .varps
+                        .iter()
+                        .any(|varp| varp.index == row.varp && varp.value == 1);
+                    let varp = row.varp;
+                    scene.prayer(varp, !on);
+                }
+            }
+            Some(HostEffect::Interaction(InteractReq::Held { action, .. })) if action == "Eat" => {
+                let lobster = id(scene, "lobster");
+                if let Some(at) = scene.inventory.iter().position(|row| row.def.id == lobster) {
+                    scene.inventory[at].count -= 1;
+                    if scene.inventory[at].count == 0 {
+                        scene.inventory.remove(at);
+                    }
+                    let hp = scene.stats[3].effective;
+                    scene.stat(3, (hp + 12).min(40), 40);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// One poll with the server applied: the batch the machine emitted.
 fn step(harness: &mut Harness, scene: &mut Scene, tick: u64) -> DrainedBatch {
     let polled = harness.poll(&scene.snapshot, tick);
@@ -173,6 +209,7 @@ fn step(harness: &mut Harness, scene: &mut Scene, tick: u64) -> DrainedBatch {
     );
     let batch = harness.drain(None);
     apply_wears(scene, &batch);
+    apply_upkeep(scene, &batch);
     scene.refresh();
     batch
 }
