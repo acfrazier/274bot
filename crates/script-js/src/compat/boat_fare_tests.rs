@@ -955,9 +955,11 @@ fn initial_luthas_move_stages_without_a_posted_row_then_replans_orthogonally() {
     );
 
     world.here = talk_stand;
-    assert!(recovery_step(&mut world, &mut recover, &mut clock, &mut logs)
-        .1
-        .is_empty());
+    assert!(
+        recovery_step(&mut world, &mut recover, &mut clock, &mut logs)
+            .1
+            .is_empty()
+    );
     let (result, ops) = recovery_step(&mut world, &mut recover, &mut clock, &mut logs);
     assert_eq!(result, None);
     assert!(
