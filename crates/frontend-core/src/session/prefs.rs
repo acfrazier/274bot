@@ -1066,10 +1066,10 @@ fn not_accepted(what: &str, error: &crate::prefs::PreferenceError) -> Applied {
 #[cfg(test)]
 mod setting_event_outcome_tests {
     use super::*;
-    use crate::launch::InstancePermit;
+    use host_play::InstancePermit;
 
     fn session() -> OperatorSession<u32> {
-        OperatorSession::new(InstancePermit::skip())
+        OperatorSession::new(InstancePermit::SkipLock)
     }
 
     #[test]
