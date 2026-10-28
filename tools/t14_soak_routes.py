@@ -4,7 +4,8 @@
 Seed every Start, resource footprint/access/return tile, bank access tile, and
 production hazard-retreat stand. Query every alternative goal from each seed
 and every intermediate route tile until the replan-origin set is closed. Check
-the client's own BFS for loc interactions, walk aims, and Guardian travel.
+the client's own BFS for loc interactions, walk aims, and initial Guardian travel.
+The finite samples do not establish the worst-case scene-box flee bound.
 """
 
 import argparse
@@ -47,6 +48,22 @@ def route_violations(row, rectangles, hunters, cache=None):
             cache[key] = found
         failures.extend(found)
     return failures
+
+
+def ordinary_gate_route(row):
+    """Admit only identified, requirement-free, one-tile physical door edges."""
+    edges = row.get("transport_edges")
+    if not isinstance(edges, list) or len(edges) != row.get("transports"):
+        return False
+    for edge in edges:
+        if edge.get("kind") != "Door" or edge.get("has_requirements") is not False:
+            return False
+        start, end = edge.get("at"), edge.get("to")
+        if not isinstance(start, list) or not isinstance(end, list) or len(start) != 3 or len(end) != 3:
+            return False
+        if start[2] != end[2] or abs(start[0] - end[0]) + abs(start[1] - end[1]) != 1:
+            return False
+    return True
 
 
 def map_rows(path, section):
@@ -321,6 +338,8 @@ def main():
         source, catalog, config, args.pack, args.flags, args.cache / "config", *sorted(maps),
         ROOT / "crates/host/src/random.rs", ROOT / "crates/host/src/random/guardian.rs",
         ROOT / "crates/host-play/examples/soak_routes.rs",
+        args.content / "scripts/general_use/configs/gates.loc",
+        args.content / "scripts/general_use/scripts/gates.rs2",
     ]}
     if args.replay:
         args.replay = args.replay.resolve(strict=True)
@@ -345,7 +364,9 @@ def main():
     checked, no_path, retreat_count, client_count, walk_count = 0, 0, 0, 0, 0
     client_errors = []
     approach_witnesses = set()
-    walk_pairs, transport_routes = set(), []
+    walk_pairs, unverified_transport_routes = set(), []
+    ordinary_gate_routes = 0
+    ordinary_gate_locs = set()
     walk_recoveries = set()
     blocked, processed, bank_reachable, resource_reached = set(), set(), set(), set()
     pending = set(targets)
@@ -385,7 +406,13 @@ def main():
                     walk_count += 1
                     walk_recoveries.update((tuple(point), target) for point in row["tiles"])
                 if row.get("transports"):
-                    transport_routes.append(dict(source=row["source"], target=row["target"]))
+                    if ordinary_gate_route(row):
+                        ordinary_gate_routes += 1
+                        ordinary_gate_locs.update(edge["loc_id"] for edge in row["transport_edges"])
+                    else:
+                        unverified_transport_routes.append(dict(
+                            source=row["source"], target=row["target"],
+                            transport_edges=row.get("transport_edges")))
                 if row["kind"] == "hazard-retreat":
                     retreat_count += 1
                     targets.add(target)
@@ -422,14 +449,8 @@ def main():
     for kind, count in guardian_counts.items():
         if not count:
             errors.append(f"no actual {kind} witnesses")
-    if transport_routes:
-        errors.append(f"{len(transport_routes)} routes use unverified transport interactions")
-    for hunter in hunters:
-        x, z, level = hunter["spawn"]
-        radius = hunter["envelope"]
-        if level == 0 and any(a - radius <= x <= b + radius and c - radius <= z <= d + radius
-                              for a, b, c, d in rectangles):
-            errors.append(f"approved area intersects hunter envelope: {hunter}")
+    if unverified_transport_routes:
+        errors.append(f"{len(unverified_transport_routes)} routes use unverified transport interactions")
     if not checked:
         errors.append("no actual route witnesses")
     for start in sorted(anchors):
@@ -446,7 +467,10 @@ def main():
                   hazard_retreat_routes=retreat_count, client_approach_routes=client_count,
                   client_walk_routes=walk_count, client_walk_pairs=len(walk_pairs),
                   replan_origins=len(processed), closure_rounds=round_number,
-                  client_walk_rounds=walk_rounds, transport_routes=len(transport_routes),
+                  client_walk_rounds=walk_rounds, ordinary_gate_routes=ordinary_gate_routes,
+                  unverified_transport_routes=len(unverified_transport_routes),
+                  ordinary_gate_loc_ids=sorted(ordinary_gate_locs),
+                  unverified_transport_examples=unverified_transport_routes[:30],
                   closure_complete=not pending, rectangles=rectangles, outer_bounds=outer_bounds,
                   normal_starts=starts, guardian_routes=guardian_counts,
                   guardian_scenarios=len(guardian_scenarios), guardian_work_bank_tiles=len(guardian_origins),
@@ -456,7 +480,9 @@ def main():
                   hunters_checked=len(hunters),
                   sources=sources, replay_source=str(args.replay) if args.replay else None,
                   violation_count=len(violations), violations=violations[:30], errors=errors,
-                  scope="Production host-router replan closure plus actual client loc-approach BFS for every resource/bank access origin and scene base. Actual client ground-walk BFS covers every closure-origin pair within Chebyshev 20, including Traveller click-ahead and stalled recovery. Includes blocked-origin escape and production Gatherer hazard retreats. The real Guardian and Client exercise all content range groups and adjacent spawn directions from every worksite/bank tile, exact and nearest flee fallback, and exact returns from every accepted flee-path tile. Actual client BFS also checks every Guardian four-tile hazard-ring goal. Every accepted path must avoid all authored hunter envelopes and stay inside the wide outer bound. Worksite rectangles are census inputs, not stop conditions. Transport interactions fail closed. Random-event interiors remain separate product travel.")
+                  complete_movement_coverage=False, guardian_continuation_covered=False,
+                  residual_risk="The conservative bound is not met. The initial-flee and walk routes checked here do not bound continued Guardian radius growth or a worst-case 104-by-104 client scene-box detour.",
+                  scope="Production host-router replan closure and actual client loc-approach and short-walk BFS. Includes blocked-origin escape and production Gatherer hazard retreats. The real Guardian and Client check the first accepted flee for all selected-content range groups and adjacent NPC spawn directions, plus exact returns from every accepted flee-path tile and four-tile hazard-ring goals. Continued radius growth is not covered. Every accepted path must avoid all authored hunter envelopes and stay inside the wide outer bound. Worksite rectangles are census inputs, not stop conditions. Only identified, requirement-free, adjacent same-level ordinary door/gate edges pass the physical-route check. Other transport interactions fail closed. Random-event interiors remain separate product travel.")
     (args.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps({k: result[k] for k in ("verdict", "routes_checked", "unreachable_pairs", "nonstandable_origins", "hazard_retreat_routes", "client_approach_routes", "client_walk_routes", "client_walk_pairs", "replan_origins", "closure_rounds", "client_walk_rounds", "closure_complete", "hunters_checked", "violation_count", "errors")}))
     return 1 if violations or errors else 0

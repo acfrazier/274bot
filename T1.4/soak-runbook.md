@@ -42,7 +42,7 @@ Smoke runs use two accounts for 180 seconds and only the **first** approved late
 The earlier Catherby fixtures also failed real resource routes.
 `smoke-baseline-289144-r/summary.json:95-105` records an unreachable western oak approach.
 `qual-1027/baseline-soak-qualification-attempt-12/events.jsonl:457` records the later normal-tree route outside the audited area.
-The current workload below replaces Catherby.
+The current workload replaces those Catherby tree patches, not Catherby bank.
 These failures do not justify a transport threshold change.
 
 ## Workload route check
@@ -51,23 +51,28 @@ The proposed fixture is not approved for qualification.
 The baseline diagnostic stopped at `(2678,3471,0)` under the old rectangle oracle.
 The candidate diagnostic stopped on native `resource-unavailable` after approximately 376 phase-zero seconds.
 Neither diagnostic satisfies the thirty-minute requirement.
-Qualification requires the corrected static audit and the remaining authorized diagnostic.
+Qualification requires the corrected scoped audit and the remaining authorized diagnostic.
 
-Ten accounts gather normal logs west of Seers in `woodcutting.seers_village`.
+Ten accounts gather normal logs from `woodcutting.hemenster`.
 Each account retains one radius-five Start anchor from `NORMAL_STARTS`.
 The checker requires at least two eligible normal trees for each account.
-Patches can share trees. The result records each account's eligible tree count.
-This avoids the separate Gatherer wait finding without changing that product behavior.
+The source selection ranks patches by their minimum access-tile clearance.
+The selected clearances range from 48 to 27 tiles.
+A matching assigns two distinct authored trees per account.
+Actual Gatherers still choose their own trees, so patches can share candidates.
+The fixture does not change the product's bounded-wait policy.
 The other ten accounts use the `woodcutting.flax` maple Site and radius twelve.
 Both groups use Catherby bank.
 Each account receives Woodcutting 99, one rune axe, and 64 banked spare rune axes.
 
-`NORMAL_SAFE_WALK`, `x=2680..2753,z=3440..3506,level=0`, defines the resource census input.
+`NORMAL_SAFE_WALK` defines the Hemenster and Flax resource-census rectangles.
 It is not a movement stop condition.
 The guard rejects every authored danger envelope and movement outside `OUTER_WALK_BOUNDS`.
 The outer bound is `x=2624..2879,z=3392..3583,level=0`.
 The product-classified Maze and Mime interiors retain their separate travel rules.
-The guard accepts correct Guardian travel outside the worksite rectangle when the complete route remains safe.
+The guard records a `worksite-exit` event when a bot leaves these rectangles.
+That event does not fail the arm.
+Only danger-envelope entry or movement beyond the outer bound fails the physical-route guard.
 
 The checker uses each hunter's `wanderrange + huntrange + size`.
 It checks all selected-content hunter placements, independently of combat-level immunity and collision shielding.
@@ -76,6 +81,25 @@ Main selected this oracle from source evidence before diagnostic launch 3.
 Real Guardian/client queries rejected Seers maple access and Seers bank.
 A Swarm flee from `(2724,3493)` enters a highwayman envelope at `(2738,3507)`.
 The replacement retains maple gathering at the authored Flax site and uses Catherby bank.
+Flax's best usable maple access stand is `(2748,3464,0)`, with 43-tile clearance.
+Miscellania's 140-tile maple placement is not usable for this workload.
+Its content grants kingdom approval instead of logs.
+See `woodcut.rs2:69-76,140-148` and `lumberjack_leif.rs2:29-40`.
+
+The conservative bound is not met.
+The checked initial-flee and walk routes do not prove the worst-case scene-box flee.
+The native client searches a 104-by-104 scene, whose Chebyshev diameter is 103 tiles.
+Continued Guardian radius growth also remains outside this finite audit.
+Main accepts this residual risk before launch 3, with the same rule for both arms.
+
+An adjacent ordinary gate or door may pass the physical-route check.
+The edge must have typed Door identity, no requirements, one-tile adjacency, and no level change.
+Every approach, crossing endpoint, and exit walk must stay clear.
+The Catherby crossing uses loc 1551 at `content/maps/m43_53.jm2:5172`.
+`general_use/configs/gates.loc:1-22` defines its ordinary closed/open pair.
+`general_use/scripts/gates.rs2:45-62,84-94` changes the gate locs without moving the player.
+It has no teleport or skill, item, quest, or level-change requirement.
+Stairs, ladders, teleports, agility shortcuts, and nonadjacent transports still fail closed.
 
 Build the offline probe and check the actual routes before either arm:
 
@@ -101,13 +125,16 @@ These aims include both directions, click-ahead, scene clipping, and stalled-wal
 It queries every alternative goal from all starts, access stands, and retreat destinations.
 It repeats those queries from every intermediate route tile until the replan-origin set is closed.
 This includes blocked-origin escape after a resource changes.
-The real Guardian and Client also check all selected-content flee-range groups.
+The real Guardian and Client also check all selected-content initial-flee range groups.
 Each worksite and bank tile receives all adjacent NPC spawn directions and the same-tile fallback.
 The Guardian chooses its real ordered exact goals, nearest fallback, and nearer-ring retries.
-The probe checks exact return walks from every intermediate accepted flee tile.
+The probe stops after the first accepted flee.
+It checks exact return walks from every intermediate accepted flee tile.
 It also checks every goal in the Guardian's four-tile hazard ring through the real client BFS.
-Every accepted Guardian tile also enters the ordinary replan closure.
-The checker examines complete walk legs and rejects routes that require transport interactions.
+Every accepted Guardian tile enters the ordinary replan closure.
+The result sets `complete_movement_coverage` and `guardian_continuation_covered` to false.
+A scoped pass does not establish a complete movement bound.
+The checker examines complete walk legs and permits only the ordinary crossings described above.
 It rejects routes inside any hunter envelope or outside the wide outer bound.
 The result retains source, content-map, catalogue, v17 pack, raw-flag and client-config hashes.
 Native route rows use lossless gzip compression in `*-routes.jsonl.gz`.
@@ -136,19 +163,17 @@ Evidence and the route analysis are in `TRACK-T1/T1.4/soak-route-1028/report.md`
 ## Nonqualifying diagnostics
 
 Engine L diagnostics retain all twenty accounts and all committed fault phases.
-Run the arms one after the other.
+Two diagnostic launches already failed, so only launch 3 remains authorized.
+Run the corrected candidate arm once after the scoped audit and two-way tests pass.
+Do not repeat either earlier arm or treat this one arm as paired qualification evidence.
 Use an owned three-character account prefix.
 The diagnostic duration starts at the first script Start after the setup barrier:
 
 ```sh
-python3 -B tools/t14_soak_run.py --mode baseline --repo "$BASELINE_REPO" \
-  --seed 1027 --diagnostic-seconds 1800 --name-prefix srt \
-  --engine-dir /Volumes/dev-scratch/engines/lostcity-289-l/engine \
-  --upstream-port 3080 --output "$SOAK_EVIDENCE_DIR/diagnostic-baseline"
 python3 -B tools/t14_soak_run.py --mode candidate --repo "$CANDIDATE_REPO" \
   --seed 1027 --diagnostic-seconds 1800 --name-prefix srt \
-  --engine-dir /Volumes/dev-scratch/engines/lostcity-289-l/engine \
-  --upstream-port 3080 --output "$SOAK_EVIDENCE_DIR/diagnostic-candidate"
+  --engine-dir "$ENGINE_L_DIR" --upstream-port 3080 \
+  --output "$SOAK_EVIDENCE_DIR/diagnostic-candidate-corrected"
 ```
 
 These runs cannot qualify the gate.

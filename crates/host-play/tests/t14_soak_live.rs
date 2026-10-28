@@ -37,23 +37,23 @@ const GATHERER_SITE_STEP: &str = "stand at the live Draynor normal tree before S
 const GATHERER_TREE_PROOF_STEP: &str = "confirm the selected-289 normal tree is live before Start";
 const GATHERER_RELOG_STEP: &str = "relog successfully so the inventory tab binds before Start";
 
-// Ten radius-five normal-tree patches west of Seers, each with alternatives.
-// The offline audit checks complete production routes, their replan closure,
-// all resource/return/bank access alternatives, and actual hazard retreats.
+// Ten radius-five normal-tree Start patches in the Hemenster content site.
+// The offline audit checks sampled production routes and initial Guardian
+// travel. It does not prove the worst-case scene-box flee bound.
 const NORMAL_STARTS: [(i32, i32); 10] = [
-    (2694, 3475),
-    (2694, 3480),
-    (2697, 3454),
-    (2694, 3473),
-    (2697, 3452),
-    (2697, 3478),
-    (2702, 3452),
-    (2707, 3457),
-    (2711, 3456),
-    (2712, 3461),
+    (2659, 3415),
+    (2657, 3416),
+    (2654, 3416),
+    (2680, 3417),
+    (2652, 3417),
+    (2685, 3417),
+    (2685, 3418),
+    (2649, 3423),
+    (2686, 3429),
+    (2686, 3432),
 ];
 const NORMAL_RADIUS: i32 = 5;
-const MAPLE_START: (i32, i32) = (2752, 3466);
+const MAPLE_START: (i32, i32) = (2748, 3464);
 const SOAK_BANK: &str = "Catherby";
 const SOAK_BANK_PREFIX: &str = "Catherby; Reachable;";
 
@@ -75,12 +75,20 @@ impl SafeWalk {
 
 // Worksite census input, not a movement stop condition. Correct Guardian
 // travel can leave this rectangle without entering an authored danger envelope.
-const NORMAL_SAFE_WALK: &[SafeWalk] = &[SafeWalk {
-    min_x: 2680,
-    max_x: 2753,
-    min_z: 3440,
-    max_z: 3506,
-}];
+const NORMAL_SAFE_WALK: &[SafeWalk] = &[
+    SafeWalk {
+        min_x: 2644,
+        max_x: 2691,
+        min_z: 3410,
+        max_z: 3437,
+    },
+    SafeWalk {
+        min_x: 2743,
+        max_x: 2775,
+        min_z: 3442,
+        max_z: 3480,
+    },
+];
 
 // Wide map-square bounds leave room for content-distance Guardian travel.
 // The danger-envelope guard remains active everywhere in this bound.
@@ -128,6 +136,15 @@ fn danger_envelopes() -> &'static [(WorldTile, i32)] {
 
 fn safe_walk_contains(areas: &[SafeWalk], tile: (i32, i32, i32)) -> bool {
     areas.iter().any(|area| area.contains(tile))
+}
+
+fn worksite_exit(
+    areas: &[SafeWalk],
+    previous: Option<(i32, i32, i32)>,
+    tile: (i32, i32, i32),
+) -> bool {
+    previous.is_some_and(|last| safe_walk_contains(areas, last))
+        && !safe_walk_contains(areas, tile)
 }
 
 fn work_route_escape(outer_bounds: &[SafeWalk], tile: (i32, i32, i32)) -> bool {
@@ -196,6 +213,16 @@ fn worksite_census_and_bank_guard_use_distinct_bounds() {
         NORMAL_SAFE_WALK,
         (MAPLE_START.0, MAPLE_START.1, 0)
     ));
+}
+
+#[test]
+fn worksite_departure_is_recorded_without_failing_the_route_guard() {
+    let inside = (2691, 3420, 0);
+    let outside = (2692, 3420, 0);
+    assert!(worksite_exit(NORMAL_SAFE_WALK, Some(inside), outside));
+    assert!(!work_route_escape(OUTER_WALK_BOUNDS, outside));
+    assert!(!worksite_exit(NORMAL_SAFE_WALK, Some(outside), inside));
+    assert!(!worksite_exit(NORMAL_SAFE_WALK, None, outside));
 }
 
 #[test]
@@ -643,7 +670,7 @@ fn select_sites(root: &Value) -> Result<[BankSite; 2], String> {
             .gather_site("woodcutting", &name)
             .ok_or_else(|| format!("selected 289 content lacks woodcutting site {name:?}"))?;
         match site.id.as_str() {
-            "woodcutting.seers_village" if site_has_key(site, "normal") => {
+            "woodcutting.hemenster" if site_has_key(site, "normal") => {
                 normal = Some(make_site(site, "normal")?);
             }
             "woodcutting.flax" if site_has_key(site, "maple") => {
@@ -669,7 +696,7 @@ fn select_sites(root: &Value) -> Result<[BankSite; 2], String> {
 fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite, String> {
     let (start, product_id, level, bank, bank_prefix, outer_bounds) =
         match (site.id.as_str(), resource) {
-            ("woodcutting.seers_village", "normal") => (
+            ("woodcutting.hemenster", "normal") => (
                 WorldTile {
                     x: NORMAL_STARTS[0].0,
                     z: NORMAL_STARTS[0].1,
@@ -701,10 +728,11 @@ fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite
             }
         };
     let region = &site.region;
-    if start.x < region.min_x
-        || start.x > region.max_x
-        || start.z < region.min_z
-        || start.z > region.max_z
+    // A real resource access stand may sit one tile outside its Site rectangle.
+    if start.x < region.min_x - 1
+        || start.x > region.max_x + 1
+        || start.z < region.min_z - 1
+        || start.z > region.max_z + 1
         || start.level != region.level
     {
         return Err(format!(
@@ -983,7 +1011,7 @@ fn scenario_for(site: &BankSite, duration: Duration) -> Result<Scenario, String>
 #[test]
 fn soak_seed_proves_rune_axe_without_inherited_bronze_equipment() {
     let sites = select_sites(&json!({
-        "workload": {"site_names": ["woodcutting.seers_village", "woodcutting.flax"]}
+        "workload": {"site_names": ["woodcutting.hemenster", "woodcutting.flax"]}
     }))
     .expect("selected content sites");
     for site in sites {
@@ -1330,8 +1358,22 @@ fn drive_frame(
     host::publish_snapshot(&mut actor.snapshot, client, drain);
     record_scene2(actor, writer, run_started);
     if let Some(tile) = actor.snapshot.tile() {
-        if actor.script_started_at.is_some() && actor.last_tile.is_some_and(|last| last != tile) {
+        let previous = actor.last_tile;
+        if actor.script_started_at.is_some() && previous.is_some_and(|last| last != tile) {
             actor.walk_tile_changes = actor.walk_tile_changes.saturating_add(1);
+            if worksite_exit(NORMAL_SAFE_WALK, previous, tile) {
+                match time_ms() {
+                    Ok(wall_ms) => {
+                        let mut event = event_base("worksite-exit", actor, run_started, wall_ms);
+                        event["previous_tile"] = json!(previous);
+                        event["tile"] = json!(tile);
+                        if let Err(error) = writer.write(&event) {
+                            actor.failure = Some(error);
+                        }
+                    }
+                    Err(error) => actor.failure = Some(error),
+                }
+            }
         }
         actor.last_tile = Some(tile);
         if actor.script_started_at.is_some() && work_route_escape(actor.site.outer_bounds, tile) {

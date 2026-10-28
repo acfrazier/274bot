@@ -119,7 +119,7 @@ fn write_routes(
         match search.route(index) {
             Ok(route) => {
                 let mut tiles = vec![[source.x, source.z, source.level]];
-                let mut transports = 0;
+                let mut transport_edges = Vec::new();
                 for leg in &route.legs {
                     match leg {
                         Leg::Walk { tiles: walk } => {
@@ -128,12 +128,38 @@ fn write_routes(
                         Leg::Transport { edge } => {
                             tiles.push([edge.at.x, edge.at.z, edge.at.level]);
                             tiles.push([edge.to.x, edge.to.z, edge.to.level]);
-                            transports += 1;
+                            let has_requirements = edge.takeoff.is_some()
+                                || edge.player_delta.is_some()
+                                || !edge.skill_req.is_empty()
+                                || !edge.item_req.is_empty()
+                                || !edge.consumed_req.is_empty()
+                                || !edge.item_returns.is_empty()
+                                || !edge.quest_req.is_empty()
+                                || !edge.varp_req.is_empty()
+                                || !edge.worn_req.is_empty()
+                                || !edge.worn_all_req.is_empty()
+                                || !edge.forbidden_held.is_empty()
+                                || !edge.forbidden_worn.is_empty()
+                                || edge.members_req
+                                || edge.wildy_cap.is_some()
+                                || edge.quest_gates.is_some();
+                            transport_edges.push(json!({
+                                "kind": if matches!(
+                                    edge.kind,
+                                    nav_planner::transport::TransportKind::Door
+                                ) { "Door" } else { "Other" },
+                                "at": [edge.at.x, edge.at.z, edge.at.level],
+                                "to": [edge.to.x, edge.to.z, edge.to.level],
+                                "loc_id": edge.loc_id,
+                                "open_loc_id": edge.open_loc_id,
+                                "has_requirements": has_requirements,
+                            }));
                         }
                     }
                 }
                 row["tiles"] = json!(tiles);
-                row["transports"] = json!(transports);
+                row["transports"] = json!(transport_edges.len());
+                row["transport_edges"] = json!(transport_edges);
                 row["ticks"] = json!(route.ticks);
             }
             Err(error) => row["error"] = json!(format!("{error:?}")),

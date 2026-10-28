@@ -12,6 +12,27 @@ import t14_soak_routes as audit
 
 
 class RouteSafetyTests(unittest.TestCase):
+    def test_adjacent_ordinary_gate_passes_but_other_transports_fail_closed(self):
+        edge = dict(kind="Door", at=[2766, 3444, 0], to=[2767, 3444, 0],
+                    loc_id=1551, open_loc_id=1552, has_requirements=False)
+        route = dict(transports=1, transport_edges=[edge],
+                     tiles=[[2765, 3444, 0], edge["at"], edge["to"], [2768, 3444, 0]])
+        self.assertTrue(audit.ordinary_gate_route(route))
+        self.assertEqual(audit.route_violations(route, [(2624, 2879, 3392, 3583)], []), [])
+        for replacement in [
+            dict(to=[2768, 3444, 0]), dict(to=[2767, 3444, 1]),
+            dict(kind="Stairs"), dict(kind="AgilityShortcut"),
+            dict(kind="Teleport"), dict(has_requirements=True),
+        ]:
+            with self.subTest(replacement=replacement):
+                self.assertFalse(audit.ordinary_gate_route(
+                    route | {"transport_edges": [edge | replacement]}))
+        self.assertFalse(audit.ordinary_gate_route({"transports": 1}))
+        self.assertFalse(audit.ordinary_gate_route(route | {"transports": 2}))
+        for tile in [edge["at"], edge["to"]]:
+            hunter = dict(name="test-hunter", spawn=tile, envelope=0)
+            self.assertTrue(audit.route_violations(route, [(2624, 2879, 3392, 3583)], [hunter]))
+
     def test_safe_endpoints_do_not_hide_an_unsafe_route(self):
         areas = [(2788, 2834, 3436, 3468), (2788, 2811, 3436, 3476)]
         wolf = {"name": "pack_wolf", "spawn": [2836, 3495, 0], "envelope": 24}

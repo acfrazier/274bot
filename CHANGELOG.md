@@ -69,18 +69,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Fixed during development
 
-- The T1.4 transport soak uses radius-five normal-tree patches west of Seers.
-  Each account must have at least two eligible trees. This avoids a separate
-  Gatherer wait finding without changing the product's bounded-wait policy.
-  An offline checker tests complete host-router paths, client interaction paths,
-  walk aims, replan origins, bank alternatives and hazard retreats.
-  It also checks real Guardian flee and return paths at the content distances.
-  The guard rejects danger-envelope entry or movement beyond a wide outer bound.
-  It does not reject safe Guardian travel outside the worksite rectangle.
-  Main selected this oracle from source evidence before diagnostic launch 3.
-  Real Guardian paths rejected Seers maples and Seers bank. The replacement
-  keeps maple gathering at the authored Flax site and uses Catherby bank.
-  The fixture remains blocked until its corrected audit and diagnostic finish.
+- The T1.4 transport soak uses radius-five normal-tree Start patches in
+  Hemenster, the authored Flax maple Site, and Catherby bank. Each normal
+  account has at least two eligible trees. The best usable maple stand has
+  43-tile danger-envelope clearance. Miscellania gives approval, not logs.
+  The checker tests actual host-router routes, client BFS, Gatherer retreats,
+  and initial Guardian flee/return samples. The conservative movement bound
+  remains unproved, including continued flee growth and worst-case scene-box
+  travel. Main accepts this residual risk before diagnostic launch 3.
+  The guard rejects danger-envelope entry or movement beyond a wide outer
+  bound. It records worksite exits without rejecting safe Guardian travel.
+  Only typed, requirement-free, adjacent same-level ordinary door or gate
+  crossings pass the physical-route check. Other transports still fail.
+  The fixture remains blocked pending the scoped audit and final diagnostic.
   Unroutable client alternatives count as nonmovement. Each resource and bank
   loc still requires an accepted approach witness. Consumer-only corrections
   can recheck retained native routes with identical inputs and request batches.

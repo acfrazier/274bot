@@ -43,7 +43,7 @@
     "limits.rss_final_baseline_extra_percent": "Main soak-values.md:23",
     "limits.fixed_threads": "Main soak-values.md:24; T1-GATE/r7e/T1-GATE.md:333-348 (F ≤ 14)",
     "limits.max_request_threads": "Main soak-values.md:25, F0 ADR 0007 amendment 7: R ≤ 64 accepted-job slots",
-    "workload.site_names": "T14-SOAK-ROUTE: ten radius-five normal-tree Start patches in woodcutting.seers_village, each with at least two eligible trees, and the woodcutting.flax maple Site, both using Catherby bank. tools/t14_soak_routes.py checks actual v17 host routes, client interaction and walk BFS, stalled recovery, Gatherer retreats, and real Guardian flee/return paths at the content distances. The guard rejects every authored hunter envelope and a wide outer boundary, not the worksite census rectangle."
+    "workload.site_names": "T14-SOAK-ROUTE: ten radius-five normal-tree Start patches in woodcutting.hemenster, each with at least two eligible trees, and the woodcutting.flax maple Site, both using Catherby bank. The best usable maple access stand has 43-tile danger-envelope clearance. Miscellania gives approval, not logs. tools/t14_soak_routes.py checks actual v17 host routes, client BFS, Gatherer retreats and initial Guardian flee/return samples. Continued flee growth and the worst-case scene-box bound remain unproved. Main accepts that residual risk before diagnostic launch 3. The guard rejects every authored hunter envelope and a wide outer boundary. Worksite exits are recorded, not failures. Only requirement-free, adjacent, same-level ordinary gates or doors may pass the physical-route check."
   },
   "run": {
     "slots": 20,
@@ -104,6 +104,6 @@
     "max_request_threads": 64
   },
   "workload": {
-    "site_names": ["woodcutting.seers_village", "woodcutting.flax"]
+    "site_names": ["woodcutting.hemenster", "woodcutting.flax"]
   }
 }
