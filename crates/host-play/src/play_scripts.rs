@@ -952,6 +952,34 @@ impl Play {
         Ok(())
     }
 
+    /// Skip the active row of `name`'s running compiled Quester queue.
+    ///
+    /// This is a synchronous control transaction on the slot lock. An accepted
+    /// request wakes the target slot so its next eligible tick can cancel and
+    /// park the active quest.
+    pub fn script_skip_quest(
+        &self,
+        name: &str,
+    ) -> Result<script::native::SkippedQuest, script::native::ScriptFailure> {
+        let failure = |code, message| script::native::ScriptFailure {
+            code: code.into(),
+            message: message.into(),
+        };
+        let Some(slot) = script_slot(&self.scripts, name) else {
+            return Err(failure(
+                "not-quester",
+                "bot is not running the Quester queue",
+            ));
+        };
+        let mut slot = slot
+            .lock()
+            .map_err(|_| failure("skip-quest-refused", "script slot retiring"))?;
+        let skipped = slot.skip_quest_compiled()?;
+        drop(slot);
+        self.wake(name);
+        Ok(skipped)
+    }
+
     #[cfg(feature = "js")]
     /// Start a loaded JS bot on `name`'s slot: the isolate is spawned here,
     /// on Start (never at Load). Same slot gating as

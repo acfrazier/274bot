@@ -1527,11 +1527,59 @@ impl SlotScript {
         }
     }
 
+    /// Request an operator skip only for a live compiled Quester run.
+    pub fn skip_quest_compiled(&mut self) -> Result<crate::native::SkippedQuest, ScriptFailure> {
+        if !matches!(self.state, RunState::Running | RunState::Paused) {
+            return Err(ScriptFailure {
+                code: "not-quester".into(),
+                message: "bot is not running the Quester queue".into(),
+            });
+        }
+        let result = {
+            let Some(run) = self.compiled.as_mut() else {
+                return Err(ScriptFailure {
+                    code: "not-quester".into(),
+                    message: "bot is not running the Quester queue".into(),
+                });
+            };
+            if run.config.card() != crate::CompiledId("Quester") {
+                return Err(ScriptFailure {
+                    code: "not-quester".into(),
+                    message: "bot is not running the Quester queue".into(),
+                });
+            }
+            catch_unwind(AssertUnwindSafe(|| run.script.skip_quest()))
+        };
+        match result {
+            Ok(result) => result,
+            Err(payload) => {
+                let failure = ScriptFailure {
+                    code: "skip-quest-panic".into(),
+                    message: panic_message(&payload).into(),
+                };
+                self.fail_compiled(failure.clone());
+                Err(failure)
+            }
+        }
+    }
+
     /// Behavioral fixtures use the same compiled instance/tick path, without
     /// adding test cards or constructors to the production registry.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn start_test_script(
         &mut self,
+        script: Box<dyn Script>,
+        selected: Option<Arc<api::game_data::SelectedGameData>>,
+    ) -> Result<(), String> {
+        self.start_test_script_with_card(crate::CompiledId("test"), script, selected)
+    }
+
+    /// Start a fixture script under an explicit compiled card identity.
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub fn start_test_script_with_card(
+        &mut self,
+        card: crate::CompiledId,
         script: Box<dyn Script>,
         selected: Option<Arc<api::game_data::SelectedGameData>>,
     ) -> Result<(), String> {
@@ -1554,7 +1602,7 @@ impl SlotScript {
         self.install_compiled(CompiledRun {
             script: ScriptOwner(Some(script)),
             config: PreparedConfig::new(
-                crate::CompiledId("test"),
+                card,
                 1,
                 1,
                 Arc::new(SettingsBag::new()),
