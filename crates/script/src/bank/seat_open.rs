@@ -2288,7 +2288,7 @@ fn selected_bank(facts: &NamedBankFacts, selected: SelectedBank) -> Option<Selec
 mod tests {
     use super::*;
     use crate::native::{ledger, HostEffect};
-    use crate::quester::families::tests::{with_tick, with_tick_reach};
+    use crate::quester::families::tests::{local_player, with_tick, with_tick_reach};
     use api::snapshot::GameSnapshot;
 
     fn duel_chest(open: bool) -> LocView {
@@ -2458,7 +2458,7 @@ mod tests {
             let stand = tile(3308, 3120);
             let mut snapshot = GameSnapshot::new();
             snapshot.seed_ingame(2);
-            snapshot.seed_tile(stand);
+            snapshot.seed_local_player(local_player(stand));
             snapshot.seed_locs(vec![shantay_chest(tile(3309, 3120), 2)]);
             let reach = lone_stand_reach(stand);
             let hooks = Arc::new(Mutex::new(TransferHooks::default()));
