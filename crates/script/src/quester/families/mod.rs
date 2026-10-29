@@ -1206,7 +1206,12 @@ struct WalkPlan {
 impl WalkPlan {
     fn request(&self, cx: &StepContext<'_, '_>) -> crate::native::WalkRequest {
         let mut request = reach::walk_request(self.tile, self.radius, None, cx.required_after);
-        request.cross = self.cross.iter().cloned().collect::<Vec<_>>().into_boxed_slice();
+        request.cross = self
+            .cross
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
         request.options = self.options;
         request.protect = self.protect;
         request
@@ -1236,10 +1241,7 @@ struct WalkRun {
 impl WalkRun {
     fn begin_walk(&mut self, cx: &mut StepContext<'_, '_>) -> Result<(), ActionError> {
         let request = self.plan.request(cx);
-        let handle = cx
-            .tick
-            .actions
-            .begin::<Walk>(request, &mut cx.tick.cx)?;
+        let handle = cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?;
         self.handle = Some(handle);
         self.attempts += 1;
         self.retry_after_tick = None;
@@ -1268,22 +1270,18 @@ impl StepRun for WalkRun {
             let Some(handle) = self.handle.as_ref() else {
                 return Poll::Pending;
             };
-            while let Some(event) = cx
-                .tick
-                .actions
-                .take_walk_event(handle, &mut cx.tick.cx)
-            {
+            while let Some(event) = cx.tick.actions.take_walk_event(handle, &mut cx.tick.cx) {
                 self.warning = Some(event.detail);
             }
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
-                Poll::Ready(Ok(receipt)) => walk_step_evidence(receipt).map(|evidence| {
-                    StepOutcome {
+                Poll::Ready(Ok(receipt)) => {
+                    walk_step_evidence(receipt).map(|evidence| StepOutcome {
                         progress: None,
                         evidence,
                         receipt: None,
-                    }
-                }),
+                    })
+                }
                 Poll::Ready(Err(error)) => Err(error),
             }
         };
