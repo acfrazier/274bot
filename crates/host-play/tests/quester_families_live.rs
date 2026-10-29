@@ -1776,6 +1776,8 @@ const ENTRANA_ZOMBIE_SOURCE: &str =
     "content/maps/m44_152.jm2:8477-8481; content/scripts/_unpack/225/all.npc:1877-1894; content/scripts/drop tables/scripts/zombie.rs2:102-110";
 const JAIL_KEY_SOURCE: &str =
     "content/maps/m45_151.jm2:8528; content/scripts/drop tables/scripts/jailer.rs2:1-10";
+const JAILER_COMBAT_SOURCE: &str =
+    "content/scripts/areas/area_taverly/dungeon/configs/taverly_dungeon.npc:30-63";
 const NORMAL_TREE_SOURCE: &str =
     "content/maps/m40_50.jm2:5891; content/pack/loc.pack:1277; content/scripts/skill_woodcutting/configs/trees.dbrow:1-16";
 const SHORTBOW_MENU_SOURCE: &str = "content/scripts/skill_fletching/scripts/cut_logs.rs2:18-47";
@@ -1998,6 +2000,52 @@ fn live_quester_families_until_drop_on_entrana() {
     assert_eq!(receipt["family_receipt"]["target_item_seeded"], false);
 }
 
+fn timed_jailer_cell(
+    selected: Arc<SelectedGameData>,
+) -> (Cell, scenario::quester::QuesterSeed, Vec<String>) {
+    // These levels prepare only the fixture account against the real Jailer.
+    // They are not Scorpion Catcher quest requirements.
+    let requirements = ["attack", "defence", "strength", "hitpoints"]
+        .into_iter()
+        .map(|skill| QuestRequirementDocument {
+            id: FactKey::new(skill),
+            kind: QuestRequirementKindDocument::Skill {
+                skill: skill.to_owned(),
+                level: 99,
+            },
+            at: "Start".to_owned(),
+            source: JAILER_COMBAT_SOURCE.to_owned(),
+        })
+        .collect();
+    make_cell_with_requirements(
+        "live-quester-families-timed-jail-key-take",
+        ("cook", "Cook's Assistant", 0),
+        &[("lobster", 20)],
+        JAILER_STAND,
+        Some(FixtureLoadout::Path("family_melee")),
+        selected,
+        requirements,
+    )
+}
+
+#[test]
+fn timed_jailer_fixture_seeds_owned_food_and_combat_levels() {
+    let (selected, _) = live_data();
+    let (_, _, commands) = timed_jailer_cell(selected);
+    assert!(commands.iter().any(|command| command == "give lobster 20"));
+    for skill in ["attack", "defence", "strength", "hitpoints"] {
+        assert!(
+            commands
+                .iter()
+                .any(|command| command == &format!("setstat {skill} 99")),
+            "the timed-pickup setup must prepare {skill} before the real Jailer fight"
+        );
+    }
+    assert!(!commands
+        .iter()
+        .any(|command| command.starts_with("give jail_key ")));
+}
+
 #[test]
 #[ignore = "requires LIVE=1 and the already-running local Engine Q"]
 fn live_quester_families_timed_jail_key_take() {
@@ -2008,21 +2056,23 @@ fn live_quester_families_timed_jail_key_take() {
         .id;
     let jailer_type = usize::try_from(jailer_id).expect("selected Jailer type id is nonnegative");
     let key_id = item_id(&selected, "jail_key");
-    let (mut cell, seed, seed_commands) = make_cell(
-        "live-quester-families-timed-jail-key-take",
-        ("cook", "Cook's Assistant"),
-        0,
-        &[],
-        JAILER_STAND,
-        Some(FixtureLoadout::Path("family_melee")),
-        Arc::clone(&selected),
-    );
+    let food_id = item_id(&selected, "lobster");
+    let (mut cell, seed, seed_commands) = timed_jailer_cell(Arc::clone(&selected));
     let start_seed = seed;
     let start_selected = Arc::clone(&selected);
     cell.observe_start = Some(Box::new(move |snapshot| {
         let seed_receipt = start_seed.observe_start(snapshot)?;
         let here = common_observe_start(snapshot, JAILER_STAND)?;
         require_item(snapshot, key_id, 0, "jail_key")?;
+        require_item(snapshot, food_id, 20, "lobster")?;
+        for skill in ["attack", "defence", "strength", "hitpoints"] {
+            if stat_base(snapshot, skill) != Some(99) {
+                return Err(format!(
+                    "timed-ground fixture did not prepare {skill} 99: {:?}",
+                    stat_base(snapshot, skill)
+                ));
+            }
+        }
         if seed_commands
             .iter()
             .any(|command| command.starts_with("give jail_key "))
@@ -2042,7 +2092,7 @@ fn live_quester_families_timed_jail_key_take() {
             .find(|npc| npc.r#type == Some(jailer_type))
             .ok_or("the content Jailer was not visible before Start")?;
         Ok(json!({
-            "fixture": "cook:0 Base40",
+            "fixture": "cook:0 Base40 with owned Jailer combat preparation",
             "profile_seed": seed_receipt,
             "seed_commands": &seed_commands,
             "tile": here,
@@ -2052,6 +2102,14 @@ fn live_quester_families_timed_jail_key_take() {
             "key": "jail_key",
             "key_lifetime_ticks": JAIL_KEY_LIFETIME_TICKS,
             "drop_source": JAIL_KEY_SOURCE,
+            "combat_setup_source": JAILER_COMBAT_SOURCE,
+            "combat_setup_stats": [
+                ["attack", stat_base(snapshot, "attack")],
+                ["defence", stat_base(snapshot, "defence")],
+                ["strength", stat_base(snapshot, "strength")],
+                ["hitpoints", stat_base(snapshot, "hitpoints")],
+            ],
+            "food_setup": {"obj": "lobster", "qty": 20},
             "inventory_before_start": inventory_receipt(snapshot),
             "selected_revision": start_selected.revision().to_string(),
         }))
