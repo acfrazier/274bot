@@ -51,6 +51,14 @@ mod fair;
 #[cfg(feature = "render-test-hooks")]
 pub use fair::{test_hooks, DueOpportunity, GrantLatency, HeadFairStats};
 
+#[cfg(feature = "render-test-hooks")]
+pub(crate) fn slot_budget_scope(
+    head: Option<&Head>,
+) -> Option<client::render::budget::RenderBudgetScope> {
+    head.and_then(Head::budget_scope)
+        .or_else(fair::process_budget_scope)
+}
+
 /// How long a granted GPU head may take to consume its grant. A waiting head
 /// consumes within its wake-up latency, so this bounds only a head whose
 /// thread stalls between grant and consume. Wrap-only and unqualified: M3

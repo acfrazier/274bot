@@ -400,6 +400,13 @@ pub(super) fn head_budget() -> Option<client::render::budget::RenderBudget> {
         .map(client::render::budget::RenderBudget::for_head)
 }
 
+pub(super) fn process_budget_scope() -> Option<client::render::budget::RenderBudgetScope> {
+    BUDGET
+        .get()
+        .and_then(Option::as_ref)
+        .map(client::render::budget::RenderBudget::scope)
+}
+
 pub(super) fn enabled() -> bool {
     FIXTURE.get().is_some_and(Option::is_some)
 }

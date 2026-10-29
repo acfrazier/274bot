@@ -529,6 +529,12 @@ impl Host {
     where
         F: FnMut(&mut Client, &str, u32, &RandomStatus, &mut ScriptRunPolicy) -> bool,
     {
+        #[cfg(feature = "render-test-hooks")]
+        let _render_budget_scope = if client.draw || slot.head.is_some() {
+            render_head::slot_budget_scope(slot.head.as_ref())
+        } else {
+            None
+        };
         client.set_external_reconnect_owner(true);
         client.set_hosted_title_label(Some(username));
         if let Some(inp) = input {
