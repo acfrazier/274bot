@@ -205,6 +205,26 @@ impl api::hostlog::Sink for CampaignLogSink {
     }
 }
 
+fn campaign_catalog() -> Result<&'static api::quest_facts::QuestCatalog, String> {
+    static CATALOG: std::sync::LazyLock<
+        Result<std::sync::Arc<api::quest_facts::QuestCatalog>, String>,
+    > = std::sync::LazyLock::new(|| {
+        api::selected::FamilyPreparation::run(|worker| {
+            let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)?;
+            selected
+                .prepare_quests(worker)
+                .map_err(|error| error.to_string())
+        })
+        .map_err(|error| format!("{error:?}"))?
+        .join()
+        .map_err(|error| format!("{error:?}"))?
+    });
+    CATALOG
+        .as_ref()
+        .map(|catalog| catalog.as_ref())
+        .map_err(Clone::clone)
+}
+
 fn campaign_cells(manifest_path: &std::path::Path) -> Result<Vec<Cell>, String> {
     let manifest: CampaignManifest =
         serde_json::from_slice(&std::fs::read(manifest_path).map_err(|error| error.to_string())?)
@@ -227,7 +247,9 @@ fn campaign_cells(manifest_path: &std::path::Path) -> Result<Vec<Cell>, String> 
     if scenario::quester::reload_quester_path_source(quest, Some(&folder))? != "folder" {
         return Err("campaign must load its guide from the staging folder".into());
     }
-    let row = scenario::quester::fixture_row(quest)?;
+    let row = campaign_catalog()?
+        .quest(quest)
+        .map_err(|error| error.to_string())?;
     let (path, _) = scenario::quester::load_quester_path_document(quest)?;
     if path.partner.is_some() != (manifest.accounts.len() == 2) {
         return Err("campaign account count does not match the guide's partner declaration".into());
@@ -257,8 +279,8 @@ fn campaign_cells(manifest_path: &std::path::Path) -> Result<Vec<Cell>, String> 
             settings.insert("gang".into(), gang.clone().into());
         }
         Ok(Cell {
-            quest: row.quest,
-            display: row.display,
+            quest: row.id.0.as_ref(),
+            display: row.display.as_ref(),
             label: "campaign".into(),
             scenario,
             start_settings: settings,
@@ -539,4 +561,18 @@ mod smoke_tests {
         );
         std::fs::remove_dir_all(&root).ok();
     }
+}
+
+#[test]
+fn campaign_identity_does_not_require_a_qualification_profile() {
+    let catalog = campaign_catalog().unwrap();
+    assert_eq!(
+        catalog.quest("scorpcatcher").unwrap().display.as_ref(),
+        "Scorpion Catcher"
+    );
+    assert_eq!(
+        catalog.quest("priest").unwrap().display.as_ref(),
+        "The Restless Ghost"
+    );
+    assert!(catalog.quest("not-a-quest").is_err());
 }
