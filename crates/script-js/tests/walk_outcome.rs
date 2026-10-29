@@ -479,7 +479,10 @@ fn isolate_same_target_old_request_id_does_not_settle_new_wait() {
         serde_json::Value::Null,
         "late same-target NoPath for request id 5 must not settle the new wait"
     );
-    assert!(iso.drain_interacts().is_empty(), "the stale id starts no retry");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the stale id starts no retry"
+    );
     fail_walk(&iso, 3, request_id, far(), 2820, 3556, 1);
     assert_eq!(
         iso.probe("__rs_ok").unwrap(),
