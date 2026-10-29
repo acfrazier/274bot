@@ -1078,9 +1078,9 @@ fn wrap_heads_carry_slot_and_generation_and_only_gpu_scenes_lease_the_workspace(
     }
 }
 
-/// T4.2 wrap: two GPU heads painting at full rate share the one scene
-/// workspace. Both keep painting, every scene runs under a lease, and a head
-/// that finds the workspace held waits for its own grant (the retained wait).
+/// Two GPU heads share one scene workspace and both keep painting. Normal
+/// builds retain the synchronous wrap; the explicit fair fixture may publish
+/// Busy overlays without consuming a scene and must never wait for a grant.
 #[test]
 fn wrap_gpu_heads_share_the_scene_workspace_and_both_paint() {
     let _serial = serial();
@@ -1103,6 +1103,12 @@ fn wrap_gpu_heads_share_the_scene_workspace_and_both_paint() {
                 wait_paints(mailbox, 1);
             }
             let before = render_head::workspace_stats();
+            #[cfg(feature = "render-test-hooks")]
+            let start_samples = mailboxes.each_ref().map(|mailbox| {
+                mailbox
+                    .fair_stats()
+                    .expect("a painted fair head publishes its sample")
+            });
             let starts = mailboxes.each_ref().map(|mailbox| mailbox.generation());
             std::thread::sleep(Duration::from_millis(1500));
             let paints: Vec<u64> = mailboxes
@@ -1110,6 +1116,12 @@ fn wrap_gpu_heads_share_the_scene_workspace_and_both_paint() {
                 .zip(starts)
                 .map(|(mailbox, start)| mailbox.generation() - start)
                 .collect();
+            #[cfg(feature = "render-test-hooks")]
+            let end_samples = mailboxes.each_ref().map(|mailbox| {
+                mailbox
+                    .fair_stats()
+                    .expect("a painted fair head retains its sample")
+            });
             let after = render_head::workspace_stats();
             let leased = after.leased() - before.leased();
             let waited = after.waited() - before.waited();
@@ -1122,15 +1134,40 @@ fn wrap_gpu_heads_share_the_scene_workspace_and_both_paint() {
                 paints.iter().all(|&paints| paints >= 20),
                 "both GPU heads keep painting: {paints:?}"
             );
-            // The lease snapshots enclose the mailbox-generation snapshots.
-            // A scheduler pause between reads cannot add uncovered paints.
-            // A scene already in flight at the first snapshot may straddle
-            // that boundary; retain the conservative two-per-head allowance.
+            // Global lease snapshots enclose both the mailbox and per-head
+            // sample intervals. Keep the two-per-head boundary allowance.
             let edges = 2 * paints.len() as u64;
+            #[cfg(not(feature = "render-test-hooks"))]
             assert!(
                 leased + edges >= paints.iter().sum::<u64>(),
-                "every painted scene ran under a lease ({leased} for {paints:?})"
+                "every legacy scene paint ran under a lease ({leased} for {paints:?})"
             );
+            #[cfg(feature = "render-test-hooks")]
+            {
+                let consumes: Vec<_> = end_samples
+                    .iter()
+                    .zip(start_samples)
+                    .map(|(after, before)| {
+                        assert_eq!(after.backend(), BackendKind::Gpu);
+                        assert!(
+                            after.has_valid_scene(),
+                            "each head must complete a real scene"
+                        );
+                        assert_eq!(after.identity(), before.identity());
+                        after.scene_consumes() - before.scene_consumes()
+                    })
+                    .collect();
+                println!("fair scene consumes {consumes:?}; composite paints {paints:?}");
+                assert!(
+                    consumes.iter().all(|&count| count > 0),
+                    "both GPU heads must rebuild scenes: {consumes:?}"
+                );
+                assert!(
+                    leased + edges >= consumes.iter().sum::<u64>(),
+                    "every consumed scene ran under a lease ({leased} for {consumes:?})"
+                );
+                assert_eq!(waited, 0, "fair paints never wait for their own grant");
+            }
             assert_eq!(after.unleased(), before.unleased());
             let (first, second) = (mailboxes[0].head().unwrap(), mailboxes[1].head().unwrap());
             assert_ne!(first.slot(), second.slot(), "two slot workers, two heads");
