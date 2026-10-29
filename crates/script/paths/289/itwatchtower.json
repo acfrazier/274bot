@@ -13,7 +13,7 @@
     "items": [],
     "acquire": {},
     "bank": "nearest",
-    "coin_float": 30,
+    "coin_float": 150,
     "loadouts": {},
     "areas": {},
     "tools": [
@@ -183,6 +183,14 @@
           "terminal": false,
           "recovery_entry": null,
           "order": "authored",
+          "cross": [
+            { "id": "scorpion@2865,3156,0", "name": "Scorpion (2865,3156,0)", "reason": "The boat route to Betty crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." },
+            { "id": "scorpion@2870,3159,0", "name": "Scorpion (2870,3159,0)", "reason": "The boat route to Betty crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." },
+            { "id": "snake@2875,3164,0", "name": "Snake (2875,3164,0)", "reason": "The boat route to Betty crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." },
+            { "id": "scorpion@2861,3165,0", "name": "Scorpion (2861,3165,0)", "reason": "The boat route to Betty crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." },
+            { "id": "scorpion@2863,3169,0", "name": "Scorpion (2863,3169,0)", "reason": "The boat route to Betty crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." },
+            { "id": "scorpion@2862,3180,0", "name": "Scorpion (2862,3180,0)", "reason": "The boat route to Betty crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." }
+          ],
           "steps": [
             {
               "id": "buy-death-rune",
@@ -190,10 +198,10 @@
               "version": 1,
               "args": {
                 "shop": {
-                  "npc": "aubury",
+                  "npc": "betty",
                   "anchor": {
-                    "tile": [3253, 3402, 0],
-                    "source": "content/maps/m50_53.jm2:12919; content/pack/npc.pack:554"
+                    "tile": [3012, 3259, 0],
+                    "source": "content/maps/m47_50.jm2:10002; content/pack/npc.pack:584"
                   }
                 },
                 "obj": "deathrune",
@@ -214,7 +222,21 @@
                   "args": { "obj": "deathrune" }
                 }
               },
-              "comment": "content/scripts/areas/area_varrock/configs/varrock.inv:38-53 stocks death runes; content/scripts/skill_magic/configs/runes.obj:74-78, content/scripts/areas/area_varrock/configs/varrock.npc:26-31 and content/scripts/shop/scripts/shop.rs2:131-147,183-192 give a price of 30 coins at full stock. The stock rate of 150 is not the price.",
+              "comment": "Betty stocks death runes: content/scripts/areas/area_port_sarim/configs/port_sarim.inv:49. Base cost 30 and sell multiplier 1000 give 30 at full stock: content/scripts/skill_magic/configs/runes.obj:74-78; content/scripts/areas/area_port_sarim/configs/port_sarim.npc:219-222; content/scripts/shop/scripts/shop.rs2:131-147,183-192.",
+              "advances": false
+            },
+            {
+              "id": "GAP-itwatchtower-tower-reentry",
+              "kind": "wait",
+              "version": 1,
+              "args": {
+                "until": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2544, 3112, 2], "radius": 4 } } },
+                "max_ticks": 1,
+                "park_on_timeout": true
+              },
+              "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2544, 3112, 2], "radius": 4 } } },
+              "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2544, 3112, 2], "radius": 4 } } },
+              "comment": "GAP: after buying the rune, the return to the wizard needs loc 2299 and the pre-completion loc 2796 ladder branch. The v17 pack lacks both edges. The window requires Agility 18: content/maps/m39_48.jm2:6087; content/scripts/quests/quest_itwatchtower/scripts/quest_itwatchtower.rs2:1-8,261-266; QUEST-CAMPAIGN/triage/review-batch-5.md:283-297. The one-tick wait parks before re-entry.",
               "advances": false
             },
             {
