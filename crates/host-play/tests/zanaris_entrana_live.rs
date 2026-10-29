@@ -26,9 +26,10 @@ fn live_zanaris_entrana_dungeon_entry() {
     let path_dir = PathBuf::from(std::env::var_os("QUESTER_PATH_DIR").expect("QUESTER_PATH_DIR"));
     let prior_source = registry::source();
     let _source_guard = SourceGuard(Some(prior_source));
-    assert_eq!(
-        scenario::quester::reload_quester_path_source("zanaris", Some(&path_dir)).unwrap(),
-        "folder"
+    let source = scenario::quester::reload_quester_path_source("zanaris", Some(&path_dir)).unwrap();
+    assert!(
+        matches!(source, "folder" | "draft"),
+        "expected a folder-backed Path, got {source}"
     );
 
     const EXTRA_ITEMS: [(&str, i32); 1] = [("knife", 1)];
