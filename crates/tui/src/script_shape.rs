@@ -34,11 +34,12 @@ pub const SCRIPT_BULK_BUTTONS: [&str; 2] = ["Start fleet", "Stop fleet"];
 /// same commands the buttons emit, reachable when the pane is clipped.
 /// Pause also toggles Resume.
 #[cfg(feature = "js")]
-pub const SCRIPT_KEYS: [(&str, char); 11] = [
+pub const SCRIPT_KEYS: &[(&str, char)] = &[
     ("Browse", 'b'),
     ("Start", 't'),
     ("Pause", 'P'),
     ("Stop", 'e'),
+    #[cfg(test)]
     ("Skip quest", 'X'),
     ("Load", 'f'),
     ("Params", 'v'),
@@ -48,11 +49,12 @@ pub const SCRIPT_KEYS: [(&str, char); 11] = [
     ("Stop fleet", 'E'),
 ];
 #[cfg(not(feature = "js"))]
-pub const SCRIPT_KEYS: [(&str, char); 8] = [
+pub const SCRIPT_KEYS: &[(&str, char)] = &[
     ("Browse", 'b'),
     ("Start", 't'),
     ("Pause", 'P'),
     ("Stop", 'e'),
+    #[cfg(test)]
     ("Skip quest", 'X'),
     ("Params", 'v'),
     ("Start fleet", 'T'),
@@ -440,23 +442,30 @@ impl<'a> ScriptPane<'a> {
     }
 
     /// The main row's buttons, left to right (Pause reads Resume while
-    /// paused); Skip quest appears only for a running Quester.
+    /// paused); the test-only Skip quest button appears only while a Quester
+    /// is running or paused.
     fn main_buttons(&self) -> impl Iterator<Item = &'static str> {
         let state = self.state;
+        #[cfg(test)]
         let skip_quest = matches!(state, ScriptRunState::Running | ScriptRunState::Paused)
             && self
                 .native_status
                 .is_some_and(|status| status.card() == CompiledCardId::QUESTER);
-        SCRIPT_BUTTONS
-            .iter()
-            .map(move |b| {
-                if *b == "Pause" {
-                    pause_button_label(state)
-                } else {
-                    b
-                }
-            })
-            .chain(skip_quest.then_some("Skip quest"))
+        let buttons = SCRIPT_BUTTONS.iter().map(move |b| {
+            if *b == "Pause" {
+                pause_button_label(state)
+            } else {
+                b
+            }
+        });
+        #[cfg(test)]
+        {
+            buttons.chain(skip_quest.then_some("Skip quest"))
+        }
+        #[cfg(not(test))]
+        {
+            buttons
+        }
     }
     /// The bulk row's buttons, left to right.
     fn bulk_buttons(&self) -> impl Iterator<Item = &'static str> {

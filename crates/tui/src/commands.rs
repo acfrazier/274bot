@@ -69,6 +69,7 @@ pub enum Command {
     ScriptStart,
     ScriptPause,
     ScriptStop,
+    #[cfg(test)]
     ScriptSkipQuest,
     #[cfg(feature = "js")]
     ScriptLoad,
@@ -159,6 +160,7 @@ pub fn script_command(name: &str) -> Option<Command> {
         "Start" => Command::ScriptStart,
         "Pause" | "Resume" => Command::ScriptPause,
         "Stop" => Command::ScriptStop,
+        #[cfg(test)]
         "Skip quest" => Command::ScriptSkipQuest,
         #[cfg(feature = "js")]
         "Load" => Command::ScriptLoad,
@@ -251,6 +253,7 @@ impl Command {
         Command::ScriptStart,
         Command::ScriptPause,
         Command::ScriptStop,
+        #[cfg(test)]
         Command::ScriptSkipQuest,
         #[cfg(feature = "js")]
         Command::ScriptLoad,
@@ -319,11 +322,12 @@ impl Command {
             | Command::Loadouts
             | Command::ManualWalk
             | Command::DismissNotice => Group::Bot,
+            #[cfg(test)]
+            Command::ScriptSkipQuest => Group::Script,
             Command::ScriptBrowse
             | Command::ScriptStart
             | Command::ScriptPause
             | Command::ScriptStop
-            | Command::ScriptSkipQuest
             | Command::ScriptParams
             | Command::Fleet(
                 FleetAction::Start
@@ -398,6 +402,7 @@ impl Command {
             Command::ScriptPause if app.script_state == ScriptRunState::Paused => "Resume script",
             Command::ScriptPause => "Pause script",
             Command::ScriptStop => "Stop script",
+            #[cfg(test)]
             Command::ScriptSkipQuest => "Skip quest",
             #[cfg(feature = "js")]
             Command::ScriptLoad => "Load script file",
@@ -538,6 +543,7 @@ impl Command {
             Command::DismissNotice => &[NoNotice],
             Command::ScriptStart => &[NoFocusedBot, NoScriptPicked],
             Command::ScriptPause => &[NoFocusedBot, NoScriptToPause],
+            #[cfg(test)]
             Command::ScriptSkipQuest => &[NoFocusedBot, NoQuesterQueue],
             Command::ScriptStop => &[NoFocusedBot, NoScriptToStop],
             Command::ScriptParams => &[NoParamsCard, ParamsUnavailable, NoParams],
@@ -588,6 +594,7 @@ impl Command {
             }
             Command::ScriptPause => OperatorCommand::PauseScript,
             Command::ScriptStop => OperatorCommand::StopScript,
+            #[cfg(test)]
             Command::ScriptSkipQuest => OperatorCommand::SkipQuest {
                 target: app
                     .focused_detail()
@@ -642,6 +649,8 @@ impl Command {
     /// for a command on the selected bot, none for a fleet or app command.
     fn refused_bot(self, app: &TuiApp) -> Option<String> {
         match self {
+            #[cfg(test)]
+            Command::ScriptSkipQuest => app.focused_name(),
             Command::Login
             | Command::Logout
             | Command::Remove
@@ -649,7 +658,6 @@ impl Command {
             | Command::ScriptStart
             | Command::ScriptPause
             | Command::ScriptStop
-            | Command::ScriptSkipQuest
             | Command::MapTeleport => app.focused_name(),
             #[cfg(feature = "js")]
             Command::ScriptReload | Command::ScriptReloadCancel => app.focused_name(),
