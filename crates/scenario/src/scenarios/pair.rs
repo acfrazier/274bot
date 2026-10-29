@@ -122,9 +122,6 @@ struct ClueBankRecord {
     equipment_first: Option<u32>,
     equipment_last: Option<u32>,
     equipment_rises: u32,
-    /// The first observation after a reward deposit with no reward item left
-    /// in the pack beyond the initial pack.
-    reward_pack_clear: Option<u32>,
     /// The first observation of the bank closed after a reward deposit.
     closed: Option<u32>,
     /// The first tick of the trailing status wait.
@@ -134,13 +131,12 @@ struct ClueBankRecord {
 impl ClueBankRecord {
     /// One observation of the solver at `tick`: `open` is whether a bank modal
     /// is up, `bank` reads the open and loaded bank's count of an id (`None`:
-    /// no loaded bank), `pack` the pack's.
+    /// no loaded bank).
     fn observe(
         &mut self,
         tick: u32,
         open: bool,
         bank: Option<&dyn Fn(i32) -> i32>,
-        pack: &dyn Fn(i32) -> i32,
         reward_ids: &[i32],
         initial: &[(i32, i32)],
     ) {
@@ -179,17 +175,6 @@ impl ClueBankRecord {
                 }
             }
             self.baselined = true;
-            let in_pack_beyond_initial = reward_ids.iter().any(|id| {
-                let at_start: i32 = initial
-                    .iter()
-                    .filter(|(initial_id, _)| initial_id == id)
-                    .map(|(_, count)| *count)
-                    .sum();
-                pack(*id) > at_start
-            });
-            if self.reward_first.is_some() && !in_pack_beyond_initial {
-                self.reward_pack_clear.get_or_insert(tick);
-            }
         }
         if !open && self.reward_first.is_some() {
             self.closed.get_or_insert(tick);
@@ -210,7 +195,7 @@ impl ClueBankRecord {
         format!(
             "clue bank record (snapshot ticks): reward_ids={reward_ids:?} bank_opened={} \
              reward_deposit first={} last={} rises={} equipment_deposit first={} last={} \
-             rises={} reward_pack_clear={} bank_closed={}",
+             rises={} bank_closed={}",
             tick(self.bank_opened),
             tick(self.reward_first),
             tick(self.reward_last),
@@ -218,7 +203,6 @@ impl ClueBankRecord {
             tick(self.equipment_first),
             tick(self.equipment_last),
             self.equipment_rises,
-            tick(self.reward_pack_clear),
             tick(self.closed),
         )
     }
@@ -311,14 +295,12 @@ impl ClueFleetWitness {
         }
         if slot_index == 0 {
             let in_bank = |id| pair_bank_id(snap, id);
-            let in_pack = |id| pair_inv_id(snap, id);
             let open = snap.bank_component_id() >= 0;
             let bank_loaded = open && snap.bank_loaded();
             self.bank.observe(
                 snap.tick(),
                 open,
                 bank_loaded.then_some(&in_bank as &dyn Fn(i32) -> i32),
-                &in_pack,
                 &self.reward_ids,
                 &self.slots[0].initial_inv,
             );
@@ -2998,12 +2980,11 @@ mod clue_witness_tests {
         assert!(witness.slots[0].saw_peer, "the helper by its own name");
     }
 
-    /// One solver observation at `tick`: its pack and, when `bank` is `Some`,
-    /// the loaded bank's rows (`None`: no loaded bank). Counts are by id.
+    /// One solver observation at `tick`: `bank` is the loaded bank's rows
+    /// (`None`: no loaded bank, the modal closed). Counts are by id.
     fn record(
         record: &mut ClueBankRecord,
         tick: u32,
-        pack: &[(i32, i32)],
         bank: Option<&[(i32, i32)]>,
         reward_ids: &[i32],
         initial: &[(i32, i32)],
@@ -3014,13 +2995,12 @@ mod clue_witness_tests {
                 .map(|(_, n)| *n)
                 .sum::<i32>()
         };
-        let in_pack = |id| count(pack, id);
         match bank {
             Some(rows) => {
                 let in_bank = |id| count(rows, id);
-                record.observe(tick, true, Some(&in_bank), &in_pack, reward_ids, initial);
+                record.observe(tick, true, Some(&in_bank), reward_ids, initial);
             }
-            None => record.observe(tick, false, None, &in_pack, reward_ids, initial),
+            None => record.observe(tick, false, None, reward_ids, initial),
         }
     }
 
@@ -3036,33 +3016,17 @@ mod clue_witness_tests {
         const RUNE_DAGGER: i32 = 1213;
         let initial = [(COINS, 1_000), (DAGGER, 1)];
         let rewards = [SHORTBOW, RUNE_DAGGER];
-        let all = [(COINS, 1_000), (DAGGER, 1), (SHORTBOW, 1), (RUNE_DAGGER, 1)];
         let mut bank = ClueBankRecord::default();
         // No loaded bank: nothing is recorded.
-        record(&mut bank, 30, &all, None, &rewards, &initial);
+        record(&mut bank, 30, None, &rewards, &initial);
         assert!(bank.summary(&rewards).contains("bank_opened=none"));
         // Older stock of a watched id is the baseline of the first loaded
         // observation, never a deposit.
-        record(
-            &mut bank,
-            40,
-            &all,
-            Some(&[(DAGGER, 3)]),
-            &rewards,
-            &initial,
-        );
-        record(
-            &mut bank,
-            41,
-            &[(COINS, 1_000), (SHORTBOW, 1), (RUNE_DAGGER, 1)],
-            Some(&[(DAGGER, 4)]),
-            &rewards,
-            &initial,
-        );
+        record(&mut bank, 40, Some(&[(DAGGER, 3)]), &rewards, &initial);
+        record(&mut bank, 41, Some(&[(DAGGER, 4)]), &rewards, &initial);
         record(
             &mut bank,
             42,
-            &[(COINS, 1_000), (RUNE_DAGGER, 1)],
             Some(&[(DAGGER, 4), (SHORTBOW, 1)]),
             &rewards,
             &initial,
@@ -3073,11 +3037,9 @@ mod clue_witness_tests {
             summary.contains("reward_deposit first=42 last=42 rises=1"),
             "{summary}"
         );
-        assert!(summary.contains("reward_pack_clear=none"), "{summary}");
         record(
             &mut bank,
             45,
-            &[(COINS, 1_000)],
             Some(&[(DAGGER, 4), (SHORTBOW, 1), (RUNE_DAGGER, 1)]),
             &rewards,
             &initial,
@@ -3091,13 +3053,12 @@ mod clue_witness_tests {
             summary.contains("equipment_deposit first=41 last=41 rises=1"),
             "{summary}"
         );
-        assert!(summary.contains("reward_pack_clear=45"), "{summary}");
         assert!(summary.contains("reward_ids=[861, 1213]"), "{summary}");
         // The close before any reward deposit was not a close of the reward
         // bank; the first one after it is.
         assert!(summary.contains("bank_closed=none"), "{summary}");
-        record(&mut bank, 47, &[(COINS, 1_000)], None, &rewards, &initial);
-        record(&mut bank, 48, &[(COINS, 1_000)], None, &rewards, &initial);
+        record(&mut bank, 47, None, &rewards, &initial);
+        record(&mut bank, 48, None, &rewards, &initial);
         assert!(bank.summary(&rewards).contains("bank_closed=47"));
         assert!(!bank.status_wait_done(48, 2), "the wait starts at tick 48");
         assert!(!bank.status_wait_done(49, 2));
