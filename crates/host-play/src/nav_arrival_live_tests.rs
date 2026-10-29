@@ -445,6 +445,7 @@ fn frame_hook(
     state: Arc<parking_lot::Mutex<LiveState>>,
     account: String,
     scenario: Scenario,
+    door_state_changed: Arc<parking_lot::Condvar>,
 ) -> impl Fn(&mut client::client::Client, &str, crate::SlotFrameInput) + Send + Sync + 'static {
     let prime_tower_door = std::env::var("NAV_ARRIVAL_PRIME_TOWER_DOOR").as_deref() == Ok("1");
     move |client, username, _hold| {
@@ -497,6 +498,9 @@ fn frame_hook(
             }),
             lumbridge_door,
         };
+        if scenario == Scenario::LumbridgeDoor {
+            door_state_changed.notify_all();
+        }
         if state.samples.last().and_then(|row| row["tick"].as_u64())
             != Some(u64::from(snapshot.tick()))
         {
@@ -653,29 +657,25 @@ fn wait_for_setup(
 
 fn wait_for_lumbridge_door_closed(
     state: &Arc<parking_lot::Mutex<LiveState>>,
-    mailbox: &FrameBuf,
+    door_state_changed: &parking_lot::Condvar,
 ) -> Result<(), String> {
     let deadline = Instant::now() + LUMBRIDGE_DOOR_WAIT_TIMEOUT;
-    let mut generation = mailbox.generation();
+    let mut state = state.lock();
     let mut open_since: Option<(u32, DoorObservation)> = None;
     loop {
-        let (door, tick) = {
-            let state = state.lock();
-            let tick = state
-                .samples
-                .last()
-                .and_then(|sample| sample["tick"].as_u64())
-                .and_then(|tick| u32::try_from(tick).ok());
-            (state.scene.lumbridge_door, tick)
-        };
+        let door = state.scene.lumbridge_door;
+        let tick = state
+            .samples
+            .last()
+            .and_then(|sample| sample["tick"].as_u64())
+            .and_then(|tick| u32::try_from(tick).ok());
         if lumbridge_door_is_closed(door) {
-            let closed_tick = tick;
-            state.lock().door_close_wait = Some(match open_since {
+            state.door_close_wait = Some(match open_since {
                 Some((opened_tick, opened_door)) => json!({
                     "waited_for_normal_closure": true,
                     "opened_tick": opened_tick,
-                    "closed_tick": closed_tick,
-                    "observed_ticks": closed_tick.map(|tick| tick.wrapping_sub(opened_tick)),
+                    "closed_tick": tick,
+                    "observed_ticks": tick.map(|tick| tick.wrapping_sub(opened_tick)),
                     "opened_door": door_observation_json(Some(opened_door)),
                     "closed_door": door_observation_json(door),
                 }),
@@ -689,7 +689,7 @@ fn wait_for_lumbridge_door_closed(
         }
         if let Some(door) = door {
             if !lumbridge_door_is_open(Some(door)) {
-                state.lock().door_close_wait = Some(json!({
+                state.door_close_wait = Some(json!({
                     "waited_for_normal_closure": open_since.is_some(),
                     "unexpected_door": door_observation_json(Some(door)),
                 }));
@@ -701,7 +701,7 @@ fn wait_for_lumbridge_door_closed(
                 let (opened_tick, _) = *open_since.get_or_insert((tick, door));
                 let elapsed = tick.wrapping_sub(opened_tick);
                 if elapsed >= LUMBRIDGE_DOOR_CLOSE_TICKS {
-                    state.lock().door_close_wait = Some(json!({
+                    state.door_close_wait = Some(json!({
                         "waited_for_normal_closure": true,
                         "opened_tick": opened_tick,
                         "last_open_tick": tick,
@@ -715,7 +715,7 @@ fn wait_for_lumbridge_door_closed(
                 }
             }
         } else {
-            state.lock().door_close_wait = Some(json!({
+            state.door_close_wait = Some(json!({
                 "waited_for_normal_closure": open_since.is_some(),
                 "expected_closed_door_id": LUMBRIDGE_DOOR_CLOSED_ID,
                 "expected_closed_door_tile": LUMBRIDGE_DOOR_TILE,
@@ -725,8 +725,9 @@ fn wait_for_lumbridge_door_closed(
                 "ordinary door {LUMBRIDGE_DOOR_CLOSED_ID} was not observed at {LUMBRIDGE_DOOR_TILE:?} before native Walk"
             ));
         }
-        if Instant::now() >= deadline {
-            state.lock().door_close_wait = Some(match open_since {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            state.door_close_wait = Some(match open_since {
                 Some((opened_tick, opened_door)) => json!({
                     "waited_for_normal_closure": true,
                     "opened_tick": opened_tick,
@@ -748,10 +749,7 @@ fn wait_for_lumbridge_door_closed(
                 "ordinary door did not close within {LUMBRIDGE_DOOR_CLOSE_TICKS} observed game ticks or {LUMBRIDGE_DOOR_WAIT_TIMEOUT:?}"
             ));
         }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if let Some(_frame) = wait_frame_after(mailbox, generation, remaining) {
-            generation = mailbox.generation();
-        }
+        let _ = door_state_changed.wait_for(&mut state, remaining);
     }
 }
 
@@ -1193,6 +1191,8 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
     let mailbox = FrameBuf::new();
     let frame_mailbox = Arc::clone(&mailbox);
     let frame_state = Arc::clone(&state);
+    let door_state_changed = Arc::new(parking_lot::Condvar::new());
+    let frame_door_state_changed = Arc::clone(&door_state_changed);
     let frame_account = account.clone();
     let play = run_with_template(
         template,
@@ -1205,13 +1205,18 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
                 (None, None)
             }
         },
-        frame_hook(frame_state, account.clone(), scenario),
+        frame_hook(
+            frame_state,
+            account.clone(),
+            scenario,
+            frame_door_state_changed,
+        ),
     )
     .expect("start one-slot live Play");
 
     let setup_result = wait_for_setup(&play, &account, &state).and_then(|()| {
         if scenario == Scenario::LumbridgeDoor {
-            wait_for_lumbridge_door_closed(&state, &mailbox)
+            wait_for_lumbridge_door_closed(&state, &door_state_changed)
         } else {
             Ok(())
         }
