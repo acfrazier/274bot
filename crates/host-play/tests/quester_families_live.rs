@@ -1152,10 +1152,7 @@ fn live_quester_families_ground_use_on() {
     let empty_bucket_id = item_id(&selected, "bucket_empty");
     let cog_id = item_id(&selected, "blackcog");
     let (_, cog_varp) = quest_varp(&selected, "cog");
-    assert_eq!(
-        cog_varp, "cogquest",
-        "selected Clock Tower progress varp"
-    );
+    assert_eq!(cog_varp, "cogquest", "selected Clock Tower progress varp");
     let (mut cell, seed, seed_commands) = make_cell(
         "live-quester-families-ground-use-on",
         ("cog", "Clock Tower"),
