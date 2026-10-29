@@ -973,7 +973,6 @@ fn combat_test_run_with_radius(
 #[test]
 fn combat_run_size_stays_under_512_bytes() {
     let size = std::mem::size_of::<CombatRun>();
-    eprintln!("CombatRun size_of={size}");
     assert!(size <= 512, "CombatRun is {size} bytes");
 }
 
