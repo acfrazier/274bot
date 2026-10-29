@@ -1207,7 +1207,7 @@
                   }
                 }
               },
-              "comment": "content/scripts/quests/quest_grandtree/scripts/grandtree_black_demon.rs2:1-39; scripts/quests/quest_grandtree/scripts/glough.rs2:111-126.",
+              "comment": "The demon must die to advance: content/scripts/quests/quest_grandtree/scripts/grandtree_black_demon.rs2:24-39; content/scripts/quests/quest_grandtree/scripts/glough.rs2:111-126. The five quest points are the award, not a prerequisite: content/scripts/general/configs/quest.constant:95; content/scripts/quests/quest_grandtree/scripts/quest_grandtree.rs2:202-203.",
               "advances": true
             }
           ]

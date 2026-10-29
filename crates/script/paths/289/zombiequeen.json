@@ -3,7 +3,7 @@
   "schema": 3,
   "id": "zombiequeen",
   "display_name": "Shilo Village",
-  "required": ["quest:junglepotion", "crafting:20", "agility:32"],
+  "required": ["quest:junglepotion", "crafting:20", "agility:32", "smithing:4"],
   "tested_stats": null,
   "partner": null,
   "quest": {
@@ -11,9 +11,10 @@
     "requirements": [
       {"id":"quest:junglepotion","kind":{"Quest":"junglepotion"},"at":"start","source":"content/scripts/quests/quest_zombiequeen/scripts/mosol_rei.rs2:1-5"},
       {"id":"crafting:20","kind":{"Skill":{"skill":"crafting","level":20}},"at":"start","source":"content/scripts/quests/quest_zombiequeen/scripts/quest_zombiequeen.rs2:1283-1292"},
-      {"id":"agility:32","kind":{"Skill":{"skill":"agility","level":32}},"at":"start","source":"content/scripts/quests/quest_zombiequeen/scripts/quest_zombiequeen.rs2:390-393"}
+      {"id":"agility:32","kind":{"Skill":{"skill":"agility","level":32}},"at":"start","source":"content/scripts/quests/quest_zombiequeen/scripts/quest_zombiequeen.rs2:390-393"},
+      {"id":"smithing:4","kind":{"Skill":{"skill":"smithing","level":4}},"at":"start","source":"content/scripts/skill_smithing/configs/smithing/smithing.dbrow:1321-1330"}
     ],
-    "items": [], "acquire": {}, "bank":"nearest", "coin_float":0, "loadouts":{}, "areas":{
+    "items": [], "acquire": {}, "bank":"nearest", "coin_float":12, "loadouts":{}, "areas":{
       "ahza_lower":{"boxes":[[2880,9280,2943,9343,0]],"source":"content/maps/m45_145.jm2; content/scripts/quests/quest_zombiequeen/scripts/quest_zombiequeen.rs2:826-832"},
       "ahza_upper":{"boxes":[[2880,9344,2943,9407,0]],"source":"content/maps/m45_146.jm2; content/scripts/quests/quest_zombiequeen/scripts/quest_zombiequeen.rs2:826-832"},
       "bervirius_tomb":{"boxes":[[2752,9344,2815,9407,0]],"source":"content/scripts/quests/quest_zombiequeen/scripts/quest_zombiequeen.rs2:613-644"},
@@ -22,7 +23,7 @@
       "rash_south":{"boxes":[[2880,9472,2943,9515,0]],"source":"content/scripts/quests/quest_zombiequeen/scripts/quest_zombiequeen.rs2:278-285"},
       "rash_lower":{"boxes":[[2880,9472,2943,9511,0]],"source":"content/scripts/quests/quest_zombiequeen/scripts/quest_zombiequeen.rs2:1459-1480"}
     },
-    "tools":["obj:spade","obj:lit_candle","obj:rope","obj:chisel","obj:bronzecraftwire","obj:bones","obj:mosol_wampum_belt","obj:zqberviriusscroll","obj:zqrashiliyiascroll","obj:zqzadimusbones","obj:zqboneshard","obj:zqbonekey","obj:zqbevsword","obj:zqbonebeads","obj:zqdeadbeads","obj:zqcorpse"], "owns_inventory":true
+    "tools":["obj:spade","obj:lit_candle","obj:rope","obj:chisel","obj:hammer","obj:bronze_bar","obj:bronzecraftwire","obj:bones","obj:mosol_wampum_belt","obj:zqberviriusscroll","obj:zqrashiliyiascroll","obj:zqzadimusbones","obj:zqboneshard","obj:zqbonekey","obj:zqbevsword","obj:zqbonebeads","obj:zqdeadbeads","obj:zqcorpse"], "owns_inventory":true
   },
   "roles": [{
     "role":null,"progress_binding":"journal:zombiequeen",
@@ -62,6 +63,21 @@
          "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"zombiequeen","is":"in_progress"}}}}
       ]},
       {"stage":"zombiequeen:1","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"buy-bronze-bar","kind":"buy","version":1,
+         "comment":"At base stock Jiminua charges 12 coins: content/scripts/skill_smithing/configs/smelting/smelting.obj:1-4; content/scripts/areas/area_karamja/configs/karamja.inv:29-36,61; content/scripts/areas/area_karamja/configs/karamja.npc:168-175,198-201; content/scripts/shop/scripts/shop.rs2:131-147,183-192. Shared stock changes the price.",
+         "args":{"shop":{"npc":"jiminua","anchor":{"tile":[2767,3122,0],"source":"content/maps/m43_48.jm2:7118-7119"}},"obj":"bronze_bar","qty":1,"est_gp":12},
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bronze_bar"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bronzecraftwire"}}}]},
+         "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bronze_bar"}}}},
+        {"id":"collect-three-bones","kind":"combat","version":1,"advances":false,
+         "comment":"The nearby snakes use the default death handler and ordinary bone drop: content/maps/m43_48.jm2:7120-7124; content/pack/npc.pack:129; content/scripts/_unpack/225/all.npc:3351-3373; content/scripts/skill_combat/scripts/npc/npc_combat.rs2:1-3,95-100; content/scripts/skill_combat/configs/npc_combat.param:29-31.",
+         "args":{"target":{"npc":"snake","not_targeting_others":true,"pick":"nearest"},"stand":{"tile":[2784,3104,0],"source":"content/maps/m43_48.jm2:7123"},"lost_radius":20,"kill_budget_ticks":500,"tactic":{"kind":"open","style":"melee","engage_radius":12,"auto_retaliate":true},"loot":[{"obj":"bones","qty":3}],"until":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"bones","qty":3}}}},
+         "skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"bones","qty":3}}},
+         "settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"bones","qty":3}}}},
+        {"id":"GAP-smith-bronze-wire","kind":"wait","version":1,"advances":false,
+         "comment":"GAP: the anvil requires use of a bronze bar and then a smithing inventory-button selection. The make step only triggers a loc operation and cannot select this interface. The nearby anvil is at [2790,3101,0]. content/scripts/skill_smithing/scripts/smithing/smithing.rs2:1-30,39-75,86-103,114-123; content/scripts/skill_smithing/configs/smithing/smithing.dbrow:1321-1330; content/maps/m43_48.jm2:5323; content/pack/loc.pack:2784.",
+         "args":{"until":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bronzecraftwire"}}},"max_ticks":120,"park_on_timeout":true},
+         "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bronzecraftwire"}}},
+         "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bronzecraftwire"}}}},
         {"id":"excavate-mound","kind":"use_on","version":1,"advances":true,
          "comment":"content/scripts/quests/quest_zombiequeen/scripts/quest_zombiequeen.rs2:408-442; mound content/maps/m45_46.jm2:5855 and content/pack/loc.pack:2218.",
          "args":{"item":"spade","target":{"loc":"ahzarhoon_entrance"},"anchor":{"tile":[2921,2999,0],"source":"content/maps/m45_46.jm2:5855"},"radius":4},
