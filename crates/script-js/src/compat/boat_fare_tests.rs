@@ -632,7 +632,10 @@ fn a_staging_arrival_without_luthas_waits_one_tick_before_retrying() {
         world.post();
         let (result, ops) = recovery_step_observed(&mut recover, &mut clock, &mut logs);
         assert_eq!(result, None, "attempt {attempt} waits before ending");
-        assert!(ops.is_empty(), "the player is already within staging radius");
+        assert!(
+            ops.is_empty(),
+            "the player is already within staging radius"
+        );
         assert!(
             logs.iter()
                 .any(|line| line.contains(&format!("staging attempt {attempt}/3 failed"))),
@@ -642,7 +645,11 @@ fn a_staging_arrival_without_luthas_waits_one_tick_before_retrying() {
 
     world.post();
     let (result, ops) = recovery_step_observed(&mut recover, &mut clock, &mut logs);
-    assert_eq!(result, Some(false), "the exhausted budget ends after a tick");
+    assert_eq!(
+        result,
+        Some(false),
+        "the exhausted budget ends after a tick"
+    );
     assert!(ops.is_empty());
     assert!(
         logs.back().is_some_and(|line| {
@@ -1561,14 +1568,7 @@ fn walk_to_retries_a_failed_initial_walk_without_missing_fare_evidence() {
     let first = machine::merge_ops(Vec::new());
     let first_token = token(&first[0]);
     world.tick += 1;
-    post_walk_outcome(
-        world.tick,
-        first_token,
-        world.here,
-        PORT_SARIM,
-        2,
-        true,
-    );
+    post_walk_outcome(world.tick, first_token, world.here, PORT_SARIM, 2, true);
 
     let retry = tick();
     assert!(
@@ -1580,14 +1580,7 @@ fn walk_to_retries_a_failed_initial_walk_without_missing_fare_evidence() {
     assert_eq!(machine::take(h), Take::Pending);
 
     world.tick += 1;
-    post_walk_outcome(
-        world.tick,
-        retry_token,
-        world.here,
-        PORT_SARIM,
-        2,
-        true,
-    );
+    post_walk_outcome(world.tick, retry_token, world.here, PORT_SARIM, 2, true);
     assert!(tick().is_empty());
     assert_eq!(
         machine::take(h),
