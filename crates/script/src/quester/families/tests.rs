@@ -5398,10 +5398,7 @@ pub(crate) fn seed_dialogue_combat(snapshot: &mut GameSnapshot, in_combat: bool)
     });
 }
 
-pub(crate) fn seed_dialogue_attacker(
-    snapshot: &mut GameSnapshot,
-    kind: api::snapshot::ActorKind,
-) {
+pub(crate) fn seed_dialogue_attacker(snapshot: &mut GameSnapshot, kind: api::snapshot::ActorKind) {
     let target = api::snapshot::ActorTargetView {
         kind: api::snapshot::ActorKind::Player,
         index: 0,
@@ -5630,10 +5627,7 @@ fn dialogue_combat_interruption_covers_open_and_page_acknowledgements() {
         snapshot.seed_chat_modal(-1, vec![]);
         snapshot.seed_chat_options(vec![], -1);
         seed_dialogue_combat(&mut snapshot, true);
-        super::tests::seed_dialogue_attacker(
-            &mut snapshot,
-            api::snapshot::ActorKind::Npc,
-        );
+        super::tests::seed_dialogue_attacker(&mut snapshot, api::snapshot::ActorKind::Npc);
         with_tick(&snapshot, &mut ledger, 3, |t| {
             assert!(matches!(
                 t.actions.poll(&handle, &mut t.cx),

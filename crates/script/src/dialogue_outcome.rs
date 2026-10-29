@@ -11,11 +11,7 @@ impl DialogueOutcome {
     /// A closed chat alone does not prove combat interruption: the local
     /// health-bar window may be raised by self-damage. The snapshot does not
     /// expose hit source, so require separate attacker evidence as well.
-    pub fn combat_interrupted(
-        chat_open: bool,
-        in_combat: bool,
-        attacker_evidence: bool,
-    ) -> bool {
+    pub fn combat_interrupted(chat_open: bool, in_combat: bool, attacker_evidence: bool) -> bool {
         !chat_open && in_combat && attacker_evidence
     }
 }

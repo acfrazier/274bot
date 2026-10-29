@@ -14,8 +14,9 @@ use std::task::Poll;
 /// as over, unless the step authors `gap_ticks`. The engine closes chat with
 /// the same `IfClose` at script end (`Player.ts:2223-2229`) and at a script's
 /// own `if_close` before a `p_delay` and a later page, so the client cannot
-/// tell them apart; script end is the normal case, and a Path step whose NPC
-/// closes and reopens the chat authors its engine hole (`gap_ticks`).
+/// know whether a conversation is finished until its close gap settles. A
+/// later script that deliberately closes and reopens the chat authors its
+/// engine hole (`gap_ticks`).
 pub const DIALOG_GAP_TICKS: u64 = 1;
 pub const DIALOGUE_OPEN_MS: u64 = 8_000;
 pub const DIALOGUE_APPROACH_MS: u64 = 20_000;
@@ -294,6 +295,8 @@ pub struct Dialogue {
     chat_page_owned: bool,
     chat_advance_request_id: Option<u64>,
 }
+// Keep retained per-action dialogue state within its reviewed size budget.
+const _: () = assert!(std::mem::size_of::<Dialogue>() <= 384);
 
 impl NativeMachine for Dialogue {
     type Args = DialogueArgs;
@@ -445,11 +448,7 @@ impl NativeMachine for Dialogue {
         // The local hit window also covers self-damage. Require visible or
         // slot-owned attacker evidence before treating a closed chat as combat.
         // A visible Continue component is an active page even without a root.
-        if DialogueOutcome::combat_interrupted(
-            obs.ready,
-            obs.in_combat,
-            obs.attacker_evidence,
-        ) {
+        if DialogueOutcome::combat_interrupted(obs.ready, obs.in_combat, obs.attacker_evidence) {
             return Poll::Ready(Err(ActionError::CombatInterrupted));
         }
         match self.phase {
@@ -782,11 +781,7 @@ impl Dialogue {
         obs: &MainObs<'_>,
         now: u64,
     ) -> Poll<Result<DialogueOutcome, ActionError>> {
-        if DialogueOutcome::combat_interrupted(
-            obs.open(),
-            obs.in_combat,
-            obs.attacker_evidence,
-        ) {
+        if DialogueOutcome::combat_interrupted(obs.open(), obs.in_combat, obs.attacker_evidence) {
             return Poll::Ready(Err(ActionError::CombatInterrupted));
         }
         match self.phase {
@@ -1024,6 +1019,8 @@ struct ChatObs<'a> {
     in_combat: bool,
     attacker_evidence: bool,
 }
+// Poll observations remain borrowed stack values, not per-bot retained state.
+const _: () = assert!(std::mem::size_of::<ChatObs<'static>>() <= 64);
 
 impl ChatObs<'_> {
     // The server reuses a chat root and Continue component across successive
@@ -1057,6 +1054,7 @@ struct MainObs<'a> {
     in_combat: bool,
     attacker_evidence: bool,
 }
+const _: () = assert!(std::mem::size_of::<MainObs<'static>>() <= 96);
 
 impl MainObs<'_> {
     fn open(&self) -> bool {

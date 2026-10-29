@@ -450,6 +450,11 @@ fn append_combat_status(fields: &mut Vec<StatusField>, outcome: Option<&StepOutc
         label: "Combat target-gone restarts",
         value: StatusValue::Integer(i64::from(receipt.target_gone_restarts)),
     });
+    fields.push(StatusField {
+        key: "combat_kills",
+        label: "Confirmed kills in step",
+        value: StatusValue::Integer(i64::from(receipt.kills)),
+    });
     if let Some(mode) = report.melee_mode_fallback {
         static MODES: std::sync::LazyLock<[Arc<str>; 4]> = std::sync::LazyLock::new(|| {
             [
@@ -4104,6 +4109,7 @@ mod tests {
             receipt: Some(Arc::new(CombatReceipt {
                 report,
                 target_gone_restarts: 1,
+                kills: 0,
             })),
         });
         let mut output = Capture::default();
@@ -4161,6 +4167,7 @@ mod tests {
             receipt: Some(Arc::new(CombatReceipt {
                 report: killed,
                 target_gone_restarts: 1,
+                kills: 1,
             })),
         });
         script.publish(&mut output);
@@ -4168,6 +4175,9 @@ mod tests {
         assert!(output.0[1].fields.iter().any(|field| {
             field.key == "combat_end"
                 && matches!(&field.value, StatusValue::Text(value) if value.as_ref() == "Killed")
+        }));
+        assert!(output.0[1].fields.iter().any(|field| {
+            field.key == "combat_kills" && matches!(field.value, StatusValue::Integer(1))
         }));
         script.last_outcome = None;
         script.publish(&mut output);
@@ -4183,6 +4193,7 @@ mod tests {
             receipt: Some(Arc::new(CombatReceipt {
                 report,
                 target_gone_restarts: 1,
+                kills: 0,
             })),
         });
         script.publish(&mut output);
@@ -4190,6 +4201,9 @@ mod tests {
         assert!(output.0[3].fields.iter().any(|field| {
             field.key == "combat_end"
                 && matches!(&field.value, StatusValue::Text(value) if value.as_ref() == "TargetGone")
+        }));
+        assert!(output.0[3].fields.iter().any(|field| {
+            field.key == "combat_kills" && matches!(field.value, StatusValue::Integer(0))
         }));
     }
 
@@ -6014,10 +6028,7 @@ mod tests {
         let progress_evidence = script.progress.as_ref().unwrap().evidence;
         snapshot.seed_chat_modal(-1, vec![]);
         seed_dialogue_combat(&mut snapshot, true);
-        seed_dialogue_attacker(
-            &mut snapshot,
-            api::snapshot::ActorKind::Npc,
-        );
+        seed_dialogue_attacker(&mut snapshot, api::snapshot::ActorKind::Npc);
         let mut output = Capture::default();
         for tick in 4..=9 {
             if tick > 4 {

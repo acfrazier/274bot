@@ -1232,7 +1232,6 @@ mod walk_receipt_tests {
     }
 }
 
-
 /// Non-terminal evidence from a followed walk. The owner chooses whether to
 /// continue, cancel or replace the route; observing this never revokes it.
 #[derive(Debug, Clone, PartialEq, Eq)]

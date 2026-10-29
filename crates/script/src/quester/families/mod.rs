@@ -1540,6 +1540,8 @@ struct TalkRun {
     dialogue: Option<ActionHandle<dialogue::Dialogue>>,
     started: bool,
 }
+// Keep the boxed talk-step run compact; it adds no state for the approach fix.
+const _: () = assert!(std::mem::size_of::<TalkRun>() <= 192);
 impl StepRun for TalkRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         if let Some(handle) = &self.walk {

@@ -721,6 +721,7 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
         receipt: Some(Arc::new(CombatReceipt {
             report: aborted,
             target_gone_restarts: 0,
+            kills: 0,
         })),
     };
     super::super::tests::with_tick(&snapshot, &mut ledger, 12, |tick| {
@@ -742,6 +743,7 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
             receipt: Some(Arc::new(CombatReceipt {
                 report: killed,
                 target_gone_restarts: 0,
+                kills: 1,
             })),
         };
         let context = PredicateContext {
@@ -846,6 +848,7 @@ fn unattackable_walk_out_is_selected_after_aborted_unattackable() {
         receipt: Some(Arc::new(CombatReceipt {
             report: aborted,
             target_gone_restarts: 0,
+            kills: 0,
         })),
     };
     let mut ledger = None;
@@ -880,6 +883,7 @@ fn unattackable_outcome() -> StepOutcome {
         receipt: Some(Arc::new(CombatReceipt {
             report: aborted,
             target_gone_restarts: 0,
+            kills: 0,
         })),
     }
 }
@@ -1011,10 +1015,12 @@ fn combat_test_run(
         until,
         win: None,
         loot: Arc::from(loot),
+        until_drop: None,
         action: None,
         phase: Phase::Combat,
         loot_index: 0,
         last_report: None,
+        kills: 0,
         last_outcome: None,
         target_gone_restarts: 0,
         manual_takeover_watch: crate::native::ManualTakeoverWatch::default(),
@@ -1048,6 +1054,7 @@ pub(crate) fn imp_plan_run_for_runner(cx: &mut StepContext<'_, '_>) -> Box<dyn S
         win: None,
         loot: run.loot,
         finish: None,
+        until_drop: None,
     }
     .begin(cx)
     .unwrap()
@@ -4242,6 +4249,13 @@ fn killed_report_enters_loot_and_takes_the_observed_drop() {
         run.on_combat_report(report(CombatEnd::Killed), cx)
     })
     .is_pending());
+    let receipt = run
+        .last_outcome
+        .as_ref()
+        .and_then(|outcome| outcome.receipt.as_ref())
+        .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
+        .expect("the confirmed kill has a combat receipt");
+    assert_eq!(receipt.kills, 1);
     assert!(matches!(&run.phase, Phase::Loot));
     assert!(with_step_context(&snapshot, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
@@ -4255,6 +4269,162 @@ fn killed_report_enters_loot_and_takes_the_observed_drop() {
             ..
         }) if *x == stand.x && *z == stand.z && *id == item_id && action == "Take"
     ));
+}
+
+fn until_drop_test_run(
+    target: Target,
+    stand: Option<api::WorldTile>,
+    item_id: i32,
+    item_name: Arc<str>,
+    max_kills: u32,
+) -> CombatRun {
+    let mut run = combat_test_run(
+        target,
+        stand,
+        None,
+        vec![LootItem {
+            id: item_id,
+            name: Arc::clone(&item_name),
+            qty: 1,
+        }],
+    );
+    run.until_drop = Some(UntilDropConfig {
+        item_id,
+        max_kills,
+        stop: Arc::from("bones_not_found"),
+    });
+    run
+}
+
+fn last_test_combat_receipt(run: &CombatRun) -> &CombatReceipt {
+    run.last_outcome
+        .as_ref()
+        .and_then(|outcome| outcome.receipt.as_ref())
+        .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
+        .expect("the combat run has a receipt")
+}
+
+#[test]
+fn until_drop_stops_after_held_item_on_last_permitted_kill() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("bones").unwrap();
+    let item_name: Arc<str> = Arc::from(item.name.as_deref().unwrap_or("Bones"));
+    let mut run = until_drop_test_run(imp_target(&selected), None, item.id, item_name.clone(), 1);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(vec![inventory_item(item.id, &item_name, 1)], 28);
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    let mut ledger = None;
+
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    assert_eq!(run.kills, 1);
+    let outcome = match with_step_context(&snapshot, &mut ledger, 13, |cx| run.poll(cx)) {
+        Poll::Ready(Ok(outcome)) => outcome,
+        _ => panic!("expected the held drop to complete the combat run"),
+    };
+    let receipt = outcome
+        .receipt
+        .as_ref()
+        .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
+        .expect("completed run preserves its combat receipt");
+    assert_eq!(receipt.kills, 1);
+    assert!(matches!(receipt.report.end, CombatEnd::Killed));
+}
+
+#[test]
+fn until_drop_blocks_at_budget_after_loot_pass_and_preserves_kill_receipt() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("bones").unwrap();
+    let item_name: Arc<str> = Arc::from(item.name.as_deref().unwrap_or("Bones"));
+    let mut run = until_drop_test_run(imp_target(&selected), None, item.id, item_name, 2);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    let mut ledger = None;
+
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    run.loot_index = run.loot.len();
+    assert!(with_step_context(&snapshot, &mut ledger, 13, |cx| {
+        run.next_loot_or_reengage(cx)
+    })
+    .is_pending());
+    assert_eq!(run.kills, 1);
+    assert!(matches!(run.action.as_ref(), Some(Action::Combat(_))));
+
+    assert!(with_step_context(&snapshot, &mut ledger, 14, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    assert_eq!(run.kills, 2);
+    run.loot_index = run.loot.len();
+    match with_step_context(&snapshot, &mut ledger, 15, |cx| {
+        run.next_loot_or_reengage(cx)
+    }) {
+        Poll::Ready(Err(ActionError::Blocked(reason))) => {
+            assert_eq!(reason.as_ref(), "bones_not_found");
+        }
+        _ => panic!("expected the authored stop reason at the kill budget"),
+    }
+    assert_eq!(last_test_combat_receipt(&run).kills, 2);
+    assert!(run.action.is_none());
+}
+
+#[test]
+fn until_drop_no_kill_outcomes_do_not_spend_the_kill_budget() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("bones").unwrap();
+    let item_name: Arc<str> = Arc::from(item.name.as_deref().unwrap_or("Bones"));
+    let mut run = until_drop_test_run(imp_target(&selected), None, item.id, item_name, 2);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    let mut ledger = None;
+
+    for (offset, end) in [
+        CombatEnd::NoTarget,
+        CombatEnd::Budget,
+        CombatEnd::TargetGone,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert!(with_step_context(&snapshot, &mut ledger, 12 + offset as u64, |cx| {
+            run.on_combat_report(report(end), cx)
+        })
+        .is_pending());
+        assert_eq!(run.kills, 0);
+        assert_eq!(last_test_combat_receipt(&run).kills, 0);
+    }
+
+    assert!(with_step_context(&snapshot, &mut ledger, 15, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    assert_eq!(run.kills, 1);
+    run.loot_index = run.loot.len();
+    assert!(with_step_context(&snapshot, &mut ledger, 16, |cx| {
+        run.next_loot_or_reengage(cx)
+    })
+    .is_pending());
+    assert!(matches!(run.action.as_ref(), Some(Action::Combat(_))));
+}
+
+#[test]
+fn combat_state_size_tripwire_reports_config_run_and_receipt_sizes() {
+    println!(
+        "CombatPlan={} CombatRun={} CombatReceipt={}",
+        std::mem::size_of::<CombatPlan>(),
+        std::mem::size_of::<CombatRun>(),
+        std::mem::size_of::<CombatReceipt>(),
+    );
 }
 
 #[test]
@@ -4881,10 +5051,7 @@ fn combat_finish_tick_budget_covers_the_dialogue_and_interruption_blocks() {
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
     super::super::tests::seed_dialogue_combat(&mut snapshot, true);
-    super::super::tests::seed_dialogue_attacker(
-        &mut snapshot,
-        api::snapshot::ActorKind::Npc,
-    );
+    super::super::tests::seed_dialogue_attacker(&mut snapshot, api::snapshot::ActorKind::Npc);
     let result = with_step_context(&snapshot, &mut interrupted_ledger, 2, |cx| {
         interrupted.poll(cx)
     });
