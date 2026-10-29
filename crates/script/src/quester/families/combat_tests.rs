@@ -4614,8 +4614,8 @@ fn same_tick_loot_settle_defers_next_item_without_skipping_it() {
         for _ in 0..3 {
             assert!(run.poll(&mut cx).is_pending());
             assert_eq!(
-                run.loot_index, 0,
-                "denied loot admission must retain the active row"
+                run.loot_index, 1,
+                "denied loot admission must retain the second item"
             );
         }
         assert!(cx.tick.cx.ledger.as_ref().unwrap().outbox.is_empty());
