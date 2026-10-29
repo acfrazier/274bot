@@ -4081,6 +4081,13 @@ mod tests {
         assert!(bytes < 4096, "Quester is {bytes} bytes");
     }
     #[test]
+    fn quester_capability_status_field_size_is_bounded() {
+        let bytes = std::mem::size_of::<StatusField>();
+        eprintln!("Quester capability StatusField={bytes}; combat adds one, timed take adds two");
+        assert!(bytes <= 56, "capability status field grew to {bytes} bytes");
+    }
+
+    #[test]
     fn family_receipts_are_exposed_in_quester_status() {
         use crate::combat::{CombatEnd, CombatReport};
         use api::quest_progress::EvidenceStamp;
@@ -4246,6 +4253,13 @@ mod tests {
                 field.key == key && matches!(field.value, StatusValue::Integer(value) if value == expected)
             }));
         }
+        let allocations = allocation_counter::measure(|| {
+            for _ in 0..200 {
+                script.publish(&mut output);
+            }
+        });
+        assert_eq!(allocations.count_total, 0);
+        assert_eq!(output.0.len(), 5, "unchanged timed receipts are not republished");
     }
 
     #[test]
