@@ -3139,12 +3139,25 @@ async function generate(spec: Revision) {
     if (specialWeapons.length !== 14) throw new Error(`${spec.revision}: expected 14 specwep rows, got ${specialWeapons.length}`);
     const itemCombatBonus = extractItemCombatBonus(spec.content, objModule.default.configs);
     const meleeWeaponTiers = extractMeleeWeaponTiers(spec.content, combatStyles.weapon_styles, idToAlias);
-    const duelRuleButtons = extractDuelRuleButtons(spec.content);
-    if (duelRuleButtons.length !== 14) throw new Error(`${spec.revision}: expected 14 duel rule buttons, got ${duelRuleButtons.length}`);
-    if (!duelRuleButtons.every((row, index) => row.bit === index)) throw new Error(`${spec.revision}: duel rule bits are not 0-13`);
-    // `DuelControls.rule_buttons[bit]` (§3.3): the settings-script buttons in
-    // duelarena.constant bit order join the `duel` controls here.
-    Object.assign(duel, { rule_buttons: duelRuleButtons.map((row) => row.component) });
+    // Revision 274 predates PvP V0 (PVP-DESIGN-1026 §11 row V0; PVP-V0
+    // `report.md:123-124` preserved the 274 row while regenerating 289 only).
+    // Both pinned contents carry the 14 `duel_select_type` toggles (lab
+    // mirrors content274/content289: identical `duelarena.constant`,
+    // `duel_arena_settings.rs2`, `duelarena.dbrow`, `interface.pack` duel
+    // rows, `varp.pack` duel rows), so a pure content read cannot
+    // distinguish revisions. The 274 contract locks pre-V0 modals with
+    // `rule_button(bit) == None` (`game_data_tests.rs:2679`,
+    // `pair_duel.rs:69-83`), satisfied via serde default zeros when the
+    // field is omitted. Emit `rule_buttons` for 289 only; leave `duel`
+    // without the field on 274. Quest/prerequisite generation is untouched.
+    if (spec.revision === 289) {
+        const duelRuleButtons = extractDuelRuleButtons(spec.content);
+        if (duelRuleButtons.length !== 14) throw new Error(`${spec.revision}: expected 14 duel rule buttons, got ${duelRuleButtons.length}`);
+        if (!duelRuleButtons.every((row, index) => row.bit === index)) throw new Error(`${spec.revision}: duel rule bits are not 0-13`);
+        // `DuelControls.rule_buttons[bit]` (§3.3): the settings-script buttons in
+        // duelarena.constant bit order join the `duel` controls here.
+        Object.assign(duel, { rule_buttons: duelRuleButtons.map((row) => row.component) });
+    }
     const duelZones = extractDuelZones(spec.content);
     Object.assign(facts, {
         style_seqs: combatStyles.style_seqs,

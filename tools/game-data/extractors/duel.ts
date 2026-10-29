@@ -9,6 +9,13 @@ import { parsePack, requireGatherText } from './common.ts';
 // `minigames/game_duelarena/configs/duelarena.dbrow:1-11`, the challenge row
 // `:13-15`, and the lobby telejump of
 // `minigames/game_duelarena/scripts/duel_arena_finish.rs2:75`.
+//
+// Revision policy (see `generate.ts`): the extractor is content-pure and
+// returns the buttons for any content that carries them. Both pinned
+// contents carry them (identical `duelarena.constant`,
+// `duel_arena_settings.rs2`, `interface.pack` duel rows), so emission is
+// revision-gated in the generator: 289-only. Revision 274 predates PvP V0
+// and omits `rule_buttons` (serde default zeros → `rule_button() == None`).
 
 export type DuelRuleButtonWire = { bit: number; component: number };
 
