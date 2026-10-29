@@ -3,59 +3,22 @@
   "schema": 3,
   "id": "itwatchtower",
   "display_name": "Watch Tower",
-  "required": [
-    "thieving:15",
-    "agility:25"
-  ],
+  "required": [],
   "tested_stats": null,
   "partner": null,
   "quest": {
     "members": true,
     "quest_points": 4,
-    "requirements": [
-      {
-        "id": "thieving:15",
-        "kind": {
-          "Skill": {
-            "skill": "thieving",
-            "level": 15
-          }
-        },
-        "at": "Start",
-        "source": "content/scripts/quests/quest_itwatchtower/scripts/itwatchtower_journal.rs2:5-32"
-      },
-      {
-        "id": "agility:25",
-        "kind": {
-          "Skill": {
-            "skill": "agility",
-            "level": 25
-          }
-        },
-        "at": "Start",
-        "source": "content/scripts/quests/quest_itwatchtower/scripts/itwatchtower_journal.rs2:5-32"
-      }
-    ],
+    "requirements": [],
     "items": [],
     "acquire": {},
     "bank": "nearest",
-    "coin_float": 0,
+    "coin_float": 30,
     "loadouts": {},
     "areas": {},
     "tools": [
-      "obj:dragon_bones",
-      "obj:deathrune",
-      "obj:rope",
-      "obj:lit_candle",
-      "obj:relicpart1",
-      "obj:relicpart2",
-      "obj:relicpart3",
-      "obj:skavidmap",
       "obj:stolen_gold",
-      "obj:toban_key",
-      "obj:ogretooth",
-      "obj:ogrerelic",
-      "obj:rockcake"
+      "obj:toban_key"
     ],
     "owns_inventory": true
   },
@@ -221,6 +184,39 @@
           "recovery_entry": null,
           "order": "authored",
           "steps": [
+            {
+              "id": "buy-death-rune",
+              "kind": "buy",
+              "version": 1,
+              "args": {
+                "shop": {
+                  "npc": "aubury",
+                  "anchor": {
+                    "tile": [3253, 3402, 0],
+                    "source": "content/maps/m50_53.jm2:12919; content/pack/npc.pack:554"
+                  }
+                },
+                "obj": "deathrune",
+                "qty": 1,
+                "est_gp": 30
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": { "obj": "deathrune" }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": { "obj": "deathrune" }
+                }
+              },
+              "comment": "content/scripts/areas/area_varrock/configs/varrock.inv:38-53 stocks death runes; content/scripts/skill_magic/configs/runes.obj:74-78, content/scripts/areas/area_varrock/configs/varrock.npc:26-31 and content/scripts/shop/scripts/shop.rs2:131-147,183-192 give a price of 30 coins at full stock. The stock rate of 150 is not the price.",
+              "advances": false
+            },
             {
               "id": "start",
               "kind": "talk",
@@ -588,6 +584,38 @@
               },
               "comment": "content/scripts/quests/quest_itwatchtower/scripts/toban.rs2:19-25,50-61",
               "advances": true
+            },
+            {
+              "id": "GAP-itwatchtower-dragon-bone",
+              "kind": "wait",
+              "version": 1,
+              "args": {
+                "until": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": { "obj": "dragon_bones" }
+                  }
+                },
+                "max_ticks": 1,
+                "park_on_timeout": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": { "obj": "dragon_bones" }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": { "obj": "dragon_bones" }
+                }
+              },
+              "comment": "GAP: content/scripts/quests/quest_itwatchtower/scripts/toban.rs2:36-41,57-61 requires one dragon bone. A green dragon drops one, but the fight needs a measured minimum combat seed: content/maps/m48_59.jm2:5754-5759; content/scripts/_unpack/225/all.npc:5430-5465; content/scripts/drop tables/scripts/green_dragon.rs2:1-9; content/scripts/npc/scripts/dragon.rs2:99-130. The one-tick wait deliberately parks before the exchange.",
+              "advances": false
             },
             {
               "id": "give-dragon-bones",
