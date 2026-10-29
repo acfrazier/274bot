@@ -7013,7 +7013,7 @@ fn anchored_use_on_wall_walk_uses_network_side_then_falls_back_once() {
 }
 
 #[test]
-fn anchored_interact_wall_walk_falls_back_to_the_loc_tile_once() {
+fn anchored_interact_wall_walk_preserves_no_path_detail_at_deadline_after_one_fallback() {
     compile_context_test(|cx| {
         let wall_tile = tile(3167, 3308);
         let network = tile(wall_tile.x + 3, wall_tile.z);
@@ -7106,6 +7106,8 @@ fn anchored_interact_wall_walk_falls_back_to_the_loc_tile_once() {
             receipt.detail = Some(Arc::from("fallback route has no path"));
         }
         let result = with_tick(&snapshot, &mut ledger, 6, |tick| {
+            tick.cx.active_now =
+                Duration::from_millis(5 * 600) + crate::native::walk::WALK_DEADLINE;
             with_step(tick, |step| run.poll(step))
         });
         assert!(

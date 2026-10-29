@@ -821,11 +821,21 @@ fn route_output_detail_bound(
     let supply_bytes = missing_capacity
         .checked_mul(supply_row_bytes)?
         .checked_add(missing_capacity.saturating_sub(1).checked_mul(2)?)?;
-    let detail_len = blocked_with_context.checked_add(if supply_bytes == 0 {
-        0
-    } else {
-        supply_bytes.checked_add(2)?
-    })?;
+    let mut diagnostic_limit = TextByteCounter(0);
+    write!(
+        &mut diagnostic_limit,
+        "no route found; further gate diagnosis stopped after {} settled nodes",
+        usize::MAX
+    )
+    .ok()?;
+    let detail_len = blocked_with_context
+        .checked_add(2)?
+        .checked_add(diagnostic_limit.0)?
+        .checked_add(if supply_bytes == 0 {
+            0
+        } else {
+            supply_bytes.checked_add(2)?
+        })?;
     let detail_len = detail_len.max("candidate_goal_tier=preferred".len());
     detail_len.checked_add(arc_slice_heap_bytes::<u8>(detail_len)?)
 }
@@ -6170,6 +6180,13 @@ impl ScriptRouteRequest {
     }
 
     fn drive_route_job_output_for_test(self) -> (RouteJobOutput, Vec<WorldTile>, Arc<NavWorld>) {
+        self.drive_route_job_output_with_diagnostic_budget_for_test(FIRST_TARGET_BUDGET)
+    }
+
+    fn drive_route_job_output_with_diagnostic_budget_for_test(
+        self,
+        diagnostic_budget: usize,
+    ) -> (RouteJobOutput, Vec<WorldTile>, Arc<NavWorld>) {
         fn identity(index: u64) -> WorkIdentity {
             WorkIdentity::new(
                 RequestId::from_raw(RequestId::HOST_FIRST + index)
@@ -6194,7 +6211,7 @@ impl ScriptRouteRequest {
             let cancellation = SharedCancellation::new();
             for _ in 0..250_000 {
                 let budget = SliceBudget::new(
-                    std::num::NonZeroU32::new(64).expect("slice budget is nonzero"),
+                    std::num::NonZeroU32::new(4096).expect("slice budget is nonzero"),
                     Deadline::after(clock.now(), std::time::Duration::from_millis(10)),
                 );
                 let mut context = StepContext::new(&clock, budget, &cancellation);
@@ -6214,6 +6231,7 @@ impl ScriptRouteRequest {
             RouteDemandKind::Walk { authority: None },
         )
         .expect("test route request prepares");
+        job.diagnostic_budget = diagnostic_budget;
         job.identity = Some(identity(0));
         let mut next = Some(Box::new(job));
         for stage_index in 0..64u64 {
@@ -7218,6 +7236,10 @@ mod facade_tests;
 mod route_work_tests;
 
 #[cfg(test)]
+#[path = "route_diagnostic_corpus_tests.rs"]
+mod route_diagnostic_corpus_tests;
+
+#[cfg(test)]
 mod diagnostic_tests {
     use super::*;
 
@@ -7781,6 +7803,7 @@ mod diagnostic_tests {
     #[test]
     #[ignore = "requires BOT_ROUTE_PARITY_NAVPACK and BOT_ROUTE_PARITY_OUT; real 17-case per-goal corpus"]
     fn ordinary_and_single_candidate_routes_match_across_the_real_corpus() {
+        use sha2::Digest;
         use std::collections::{HashMap, HashSet};
 
         let pack = std::path::PathBuf::from(
@@ -8015,6 +8038,7 @@ mod diagnostic_tests {
             };
             let pair_count = selected.len();
             let mut routed = 0;
+            let mut route_digest = sha2::Sha256::new();
             for goal in selected.drain(..) {
                 let request = |candidate_goals| {
                     let mut request = stage_request(Arc::clone(&world));
@@ -8032,16 +8056,35 @@ mod diagnostic_tests {
                     request.candidate_goals = candidate_goals;
                     request
                 };
+                let (before, _, _) = request(None)
+                    .drive_route_job_output_with_diagnostic_budget_for_test(usize::MAX);
+                let before = ScriptRouteRequest::project_route_job_outcome(
+                    before.outcome,
+                    before.opts,
+                    before.bank_avoid_copy,
+                    &world,
+                );
                 let (ordinary, _) = request(None).drive_route_job_for_test();
                 let (candidate, _) =
                     request(Some(script::native::WalkGoals::new(vec![goal]).unwrap()))
                         .drive_route_job_for_test();
-                match (ordinary, candidate) {
-                    (RouteOutcome::Routed(ordinary), RouteOutcome::Routed(candidate)) => {
+                route_digest.update(goal.x.to_le_bytes());
+                route_digest.update(goal.z.to_le_bytes());
+                route_digest.update(goal.level.to_le_bytes());
+                match (before, ordinary, candidate) {
+                    (
+                        RouteOutcome::Routed(before),
+                        RouteOutcome::Routed(ordinary),
+                        RouteOutcome::Routed(candidate),
+                    ) => {
+                        assert_eq!(before, ordinary, "{name}: {from:?} -> {goal:?}");
                         assert_eq!(ordinary, candidate, "{name}: {from:?} -> {goal:?}");
+                        route_digest.update(format!("{ordinary:?}").as_bytes());
                         routed += 1;
                     }
-                    (RouteOutcome::NoPath, RouteOutcome::NoPath) => {}
+                    (RouteOutcome::NoPath, RouteOutcome::NoPath, RouteOutcome::NoPath) => {
+                        route_digest.update(b"NoPath");
+                    }
                     _ => panic!("{name}: route availability changed for {from:?} -> {goal:?}"),
                 }
             }
@@ -8051,6 +8094,8 @@ mod diagnostic_tests {
                 "arrival": "Area", "radius": 0,
                 "stride": if name.starts_with("radius_walk") { stride } else { 1 },
                 "routed_pairs": routed, "no_path_pairs": pair_count - routed,
+                "diagnostic_bound_routes_unchanged": true,
+                "routes_sha256": format!("{:x}", route_digest.finalize()),
                 "exact_path_and_cost_equal": true,
             });
             println!("{record}");
