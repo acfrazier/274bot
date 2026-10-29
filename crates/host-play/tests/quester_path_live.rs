@@ -68,6 +68,9 @@
 #[path = "common/quester_live.rs"]
 mod quester_live;
 
+#[path = "common/crossing_calibration.rs"]
+mod crossing_calibration;
+
 use api::snapshot::WorldTile;
 use quester_live::{Cell, Mode, PathCell};
 use scenario::quester::{FixtureLoadout, QuestFixtureProfile, QuesterPathSeeds, TestProfile};
