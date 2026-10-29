@@ -1963,11 +1963,17 @@ fn spawned_slot_render_uses_its_control_wake() {
         quantum: Duration::from_secs(10),
     })
     .unwrap();
+    // Play's first title-wait frame can call render_now before Host::attach
+    // initializes PROCESS. Prime the configured fair service now, so its
+    // first due timestamp and admission request share the controlled clock.
+    host::render_head::pump(Instant::now())
+        .expect("the configured fair pump is live before the first slot frame");
 
     struct Control {
         now: Instant,
         events: std::sync::mpsc::Sender<(RenderTestPoint, thread::ThreadId)>,
         hold: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+        scene_state: std::sync::atomic::AtomicI32,
     }
     impl RenderTestControl for Control {
         fn now(&self) -> Instant {
@@ -1990,12 +1996,16 @@ fn spawned_slot_render_uses_its_control_wake() {
         now,
         events: owner_events,
         hold: Mutex::new(Some(held)),
+        scene_state: std::sync::atomic::AtomicI32::new(0),
     });
     let peer_control = Arc::new(Control {
         now,
         events: peer_events,
         hold: Mutex::new(None),
+        scene_state: std::sync::atomic::AtomicI32::new(0),
     });
+    let owner_frame_control = Arc::clone(&owner_control);
+    let peer_frame_control = Arc::clone(&peer_control);
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
@@ -2007,16 +2017,22 @@ fn spawned_slot_render_uses_its_control_wake() {
         },
         vec![],
         |_| (None, None),
-        |client, _, _| {
+        move |client, name, _| {
             client.set_draw(true);
             client.ingame = true;
             client.scene_state = 2;
             client.last_response = Some(Instant::now());
+            let scene_state = match name {
+                "wake-owner" => &owner_frame_control.scene_state,
+                "wake-peer" => &peer_frame_control.scene_state,
+                _ => return,
+            };
+            scene_state.store(client.scene_state, std::sync::atomic::Ordering::SeqCst);
         },
     );
     play.set_render_test_control("wake-owner", owner_control.clone())
         .unwrap();
-    play.set_render_test_control("wake-peer", peer_control)
+    play.set_render_test_control("wake-peer", peer_control.clone())
         .unwrap();
     let spawn = |play: &mut Play, name: &str, uid| {
         let arm = SlotArm::new(uid, false);
@@ -2032,30 +2048,38 @@ fn spawned_slot_render_uses_its_control_wake() {
         .unwrap();
         output
     };
-    let receive = |events: &std::sync::mpsc::Receiver<_>, output: &FrameBuf, point, timeout| {
-        let deadline = Instant::now() + timeout;
-        let mut observed_points = Vec::new();
-        loop {
-            let (observed, thread) = events
-                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "the spawned slot reaches {point:?}: {error}; observed={observed_points:?}; generation={}; head={:?}; refusal={:?}",
-                        output.generation(),
-                        output.fair_stats(),
-                        output.refusal()
-                    )
-                });
-            observed_points.push(observed);
-            if observed == point {
-                break thread;
+    let receive =
+        |events: &std::sync::mpsc::Receiver<_>,
+         output: &FrameBuf,
+         control: &Control,
+         point,
+         timeout| {
+            let deadline = Instant::now() + timeout;
+            let mut observed_points = Vec::new();
+            loop {
+                let (observed, thread) = events
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "the spawned slot reaches {point:?}: {error}; observed={observed_points:?}; generation={}; head={:?}; refusal={:?}; scene_state={}; controlled_now={:?}",
+                            output.generation(),
+                            output.fair_stats(),
+                            output.refusal(),
+                            control.scene_state.load(std::sync::atomic::Ordering::SeqCst),
+                            control.now,
+                        )
+                    });
+                observed_points.push(observed);
+                if observed == point {
+                    break thread;
+                }
             }
-        }
-    };
+        };
     let _owner = spawn(&mut play, "wake-owner", 41);
     let owner_thread = receive(
         &owner_receive,
         &_owner,
+        &owner_control,
         RenderTestPoint::BeforeLeaseRelease,
         Duration::from_secs(30),
     );
@@ -2067,6 +2091,7 @@ fn spawned_slot_render_uses_its_control_wake() {
     receive(
         &peer_receive,
         &peer,
+        &peer_control,
         RenderTestPoint::OverlayEntry,
         Duration::from_secs(30),
     );
@@ -2076,6 +2101,7 @@ fn spawned_slot_render_uses_its_control_wake() {
     let peer_thread = receive(
         &peer_receive,
         &peer,
+        &peer_control,
         RenderTestPoint::AfterConsume,
         Duration::from_millis(500),
     );

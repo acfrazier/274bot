@@ -32,6 +32,7 @@ struct Control {
     now: Mutex<Instant>,
     loading: AtomicBool,
     title: AtomicBool,
+    scene_state: Mutex<i32>,
     draw: AtomicBool,
     stop: AtomicBool,
     resource_failure: Mutex<Option<client::render::backend::gpu::test_hooks::SceneTestPoint>>,
@@ -108,7 +109,7 @@ impl Slot {
         let control = Arc::new(Control {
             now: Mutex::new(now),
             loading: AtomicBool::new(false),
-            title: AtomicBool::new(false),
+            scene_state: Mutex::new(2),
             draw: AtomicBool::new(true),
             stop: AtomicBool::new(false),
             gate: Mutex::new(gate),
@@ -143,6 +144,7 @@ impl Slot {
                     |client, _, _, _, _| {
                         client.set_draw(control.draw.load(Ordering::SeqCst));
                         client.ingame = !control.title.load(Ordering::SeqCst);
+                        *control.scene_state.lock().unwrap() = client.scene_state;
                         false
                     },
                     |client| {
@@ -169,8 +171,34 @@ impl Slot {
         }
     }
 
+    #[track_caller]
     fn event(&self, point: RenderTestPoint) -> Observed {
-        receive(&self.events, |event| event.event.point == point)
+        let caller = std::panic::Location::caller();
+        let deadline = Instant::now() + TIMEOUT;
+        let mut observed = Vec::new();
+        loop {
+            let item = self
+                .events
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "the production slot reaches boundary requested at {}:{}: {error}; observed={observed:?}; generation={}; fair_stats={:?}; refusal={:?}; scene_state={}; controlled_now={:?}; draw={}; title={}",
+                        caller.file(),
+                        caller.line(),
+                        self.output.generation(),
+                        self.output.fair_stats(),
+                        self.output.refusal(),
+                        *self.control.scene_state.lock().unwrap(),
+                        *self.control.now.lock().unwrap(),
+                        self.control.draw.load(Ordering::SeqCst),
+                        self.control.title.load(Ordering::SeqCst),
+                    )
+                });
+            observed.push(item);
+            if item.event.point == point {
+                return item;
+            }
+        }
     }
 
     fn painted(&self, after_generation: u64) -> Completed {
@@ -226,7 +254,16 @@ fn receive<T>(receiver: &Receiver<T>, mut matches: impl FnMut(&T) -> bool) -> T 
 
 fn gpu_fixture() -> Option<MutexGuard<'static, ()>> {
     let guard = serial();
-    heads().contains(&Head::Gpu).then_some(guard)
+    if !heads().contains(&Head::Gpu) {
+        return None;
+    }
+    // The first slot tick calls render_now before Head::attach initializes
+    // PROCESS. Initialize the configured fair service first, so due_at and
+    // the first admission request both use RenderTestControl::now rather than
+    // mixing wall-clock demand with the controlled service clock.
+    render_head::pump(Instant::now())
+        .expect("the configured fair pump is live before the first slot tick");
+    Some(guard)
 }
 
 #[test]
