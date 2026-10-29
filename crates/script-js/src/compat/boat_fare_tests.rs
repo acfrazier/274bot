@@ -718,7 +718,7 @@ fn luthas_stand_selection_uses_search_rank_before_manhattan_distance() {
         assert_eq!(rank(closer), 2);
     });
     assert_eq!(
-        super::next_orthogonal_stand(npc, &super::TriedStands::default()),
+        super::next_orthogonal_stand(npc, &super::TriedStands::default(), "no stand"),
         Ok(lower_rank)
     );
     let coins = world.facts.coins;
