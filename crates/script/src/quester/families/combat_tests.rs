@@ -4911,23 +4911,14 @@ fn combat_loot_reaches_below_quantity_and_skips_at_the_requested_count() {
 }
 
 #[test]
-fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
+fn lifecycle_followups_unsettled_loot_take_skips_to_the_next_item() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let here = api::WorldTile {
         x: 3200,
         z: 3200,
         level: 0,
     };
-    let door = api::WorldTile {
-        x: 3203,
-        z: 3200,
-        level: 0,
-    };
-    let first_tile = api::WorldTile {
-        x: 3205,
-        z: 3200,
-        level: 0,
-    };
+    let first_tile = here;
     let second_tile = api::WorldTile {
         x: 3201,
         z: 3201,
@@ -4969,42 +4960,19 @@ fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_inventory(Vec::new(), 28);
-    snapshot.seed_local_player(super::super::tests::local_player(here));
     snapshot.seed_ground_items(vec![
-        ground(1, "First drop", first_tile, 5),
-        ground(2, "Second drop", second_tile, 2),
+        ground(1, "First drop", first_tile, 0),
+        ground(2, "Second drop", second_tile, 1),
     ]);
-    snapshot.seed_locs(vec![LocView {
-        id: 7,
-        name: Some("Door".into()),
-        actions: vec![Some("Open".into())],
-        tile: door,
-        distance: 3,
-        typecode: 0,
-        info: 0,
-        description: None,
-        layer: LocLayer::GroundDecoration,
-        shape: -1,
-        angle: 0,
-        width: 1,
-        length: 1,
-        footprint_width: 1,
-        footprint_length: 1,
-        block_walk: false,
-        block_range: false,
-        active: true,
-        animation: -1,
-        map_function: -1,
-        map_scene: -1,
-        force_approach: 0,
-    }]);
     let reach = seed_loot_route(&mut snapshot, here, 12);
     snapshot.seed_chat_lines(vec![]);
     let mut ledger = None;
-    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
-        run.on_combat_report(report(CombatEnd::Killed), cx)
-    })
-    .is_pending());
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 12, |cx| {
+            run.on_combat_report(report(CombatEnd::Killed), cx)
+        })
+        .is_pending()
+    );
     assert!(
         with_step_context_reach(&snapshot, &reach, &mut ledger, 13, |cx| run.poll(cx)).is_pending()
     );
@@ -5032,60 +5000,32 @@ fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
             chat_since: 0,
         },
     );
+    ledger.as_mut().unwrap().outbox.clear();
 
-    // The failed item click identifies the closed door; Reach's real recovery
-    // path emits a walk to that door before this terminal route receipt.
-    ledger.as_mut().unwrap().outbox.clear();
-    snapshot.seed_chat_lines(vec![ChatLineView {
-        type_: 0,
-        username: None,
-        text: "I can't reach that".into(),
-        sequence: 1,
-    }]);
-    assert!(
-        with_step_context_reach(&snapshot, &reach, &mut ledger, 14, |cx| run.poll(cx)).is_pending()
-    );
-    let request_id = match &ledger.as_ref().unwrap().outbox.last().unwrap().effect {
-        crate::native::HostEffect::Walk(request) => {
-            assert_eq!(request.target, door);
-            ledger
-                .as_ref()
-                .unwrap()
-                .outbox
-                .last()
-                .unwrap()
-                .request_id
-                .get()
-        }
-        _ => panic!("Reach must walk to the closed door to recover the loot path"),
-    };
-    ledger.as_mut().unwrap().outbox.clear();
-    ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
-        goal: None,
-        request_id,
-        evidence: EvidenceStamp {
-            run: RunKey {
-                slot: 1,
-                run: 1,
-                session: 1,
-            },
-            tick: 15,
-            sequence: 15,
-        },
-        end: WalkEnd::Failed,
-        blocked: None,
-        detail: Some(Arc::from("door recovery route unreachable")),
-        refusal: None,
-        assessment: None,
-        escape: None,
-    });
+    let settlement_deadline = 13 + api::ground_take::SETTLEMENT_TICKS;
+    for tick in 14..settlement_deadline {
+        assert!(
+            with_step_context_reach(&snapshot, &reach, &mut ledger, tick, |cx| run.poll(cx))
+                .is_pending()
+        );
+        assert_eq!(run.loot_index, 0);
+        assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
 
     assert!(
-        with_step_context_reach(&snapshot, &reach, &mut ledger, 15, |cx| run.poll(cx)).is_pending()
+        with_step_context_reach(
+            &snapshot,
+            &reach,
+            &mut ledger,
+            settlement_deadline,
+            |cx| run.poll(cx)
+        )
+        .is_pending()
     );
     assert_eq!(
         run.loot_index, 1,
-        "the second Take is active while its loot row remains current"
+        "the next loot item becomes active after the first Take misses"
     );
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
     assert!(matches!(
