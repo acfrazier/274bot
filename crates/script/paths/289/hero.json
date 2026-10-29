@@ -785,6 +785,27 @@
           "advances": false
         },
         {
+          "id": "phoenix-find-harralander", "kind": "combat", "version": 1, "advances": false,
+          "args": {"target": {"npc": "man", "not_targeting_others": true, "pick": "nearest"}, "tactic": {"kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true}, "stand": {"tile": [3017, 3238, 0], "source": "content/maps/m47_50.jm2:10008; content/pack/npc.pack:1"}, "lost_radius": 12, "kill_budget_ticks": 1200, "loadout": null, "loot": ["unidentified_harralander"], "until": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_harralander"}}}},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "quest_colour", "version": 1, "args": {"quest": "hero", "is": "in_progress"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_harralander"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "harralander"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "harralandervial"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_harralander"}}},
+          "comment": "Citizens drop random herbs: content/scripts/drop tables/scripts/man.rs2:2,43-44; content/scripts/drop tables/scripts/shared_droptables.rs2:18-19."
+        },
+        {
+          "id": "phoenix-identify-harralander", "kind": "interact", "version": 1, "advances": false,
+          "args": {"target": {"held": "unidentified_harralander"}, "op": "Identify"},
+          "skip_if": {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_harralander"}}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "harralander"}}},
+          "comment": "content/scripts/skill_herblore/scripts/identifying/identify.rs2:10-11; content/scripts/levelup/scripts/levelup_unlocks_herblore.rs2:8."
+        },
+        {
+          "id": "phoenix-buy-vial", "kind": "buy", "version": 1, "advances": false,
+          "args": {"shop": {"npc": "aemad", "anchor": {"tile": [2613, 3294, 0], "source": "content/maps/m40_51.jm2:10809; content/pack/npc.pack:590"}}, "obj": "vial_water", "qty": 1, "est_gp": 2},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "harralander"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "vial_water"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "vial_water"}}},
+          "comment": "Full-stock price 2: content/scripts/skill_herblore/configs/brewing/vials.obj:1-12; content/scripts/areas/area_ardougne_east/configs/ardougne_east.npc:622-657; content/scripts/shop/scripts/shop.rs2:138-147,182-187."
+        },
+        {
           "id": "phoenix-harralander",
           "kind": "use_on",
           "version": 1,
@@ -1020,6 +1041,13 @@
           },
           "comment": "scripts/quests/quest_hero/scripts/objs/oily_fishing_rod.rs2:4-12",
           "advances": false
+        },
+        {
+          "id": "phoenix-buy-bait", "kind": "buy", "version": 1, "advances": false,
+          "args": {"shop": {"npc": "harry", "anchor": {"tile": [2834, 3445, 0], "source": "content/maps/m44_53.jm2:5564; content/pack/npc.pack:576"}}, "obj": "fishing_bait", "qty": 1, "est_gp": 3},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "fishing_bait"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "fishing_bait"}}},
+          "comment": "One bait costs 3 at full stock: content/scripts/skill_fishing/configs/fishing.obj:103-113; content/scripts/areas/area_catherby/configs/catherby.npc:142-145; content/scripts/shop/scripts/shop.rs2:138-147,182-187."
         },
         {
           "id": "phoenix-fish",
@@ -1335,51 +1363,11 @@
           "recovery_entry": null,
           "steps": [
             {
-              "id": "phoenix-withdraw-shortbow",
-              "kind": "bank",
-              "version": 1,
-              "args": {
-                "op": "withdraw",
-                "at": "nearest",
-                "items": [
-                  {
-                    "obj": "shortbow",
-                    "qty": 1
-                  }
-                ]
-              },
-              "skip_if": {
-                "Any": [
-                  {
-                    "Fact": {
-                      "kind": "has_item",
-                      "version": 1,
-                      "args": {
-                        "obj": "shortbow"
-                      }
-                    }
-                  },
-                  {
-                    "Fact": {
-                      "kind": "worn",
-                      "version": 1,
-                      "args": {
-                        "obj": "shortbow"
-                      }
-                    }
-                  }
-                ]
-              },
-              "settle": {
-                "Fact": {
-                  "kind": "has_item",
-                  "version": 1,
-                  "args": {
-                    "obj": "shortbow"
-                  }
-                }
-              },
-              "comment": "scripts/skill_combat/configs/ranged/bows.obj:30-55; scripts/skill_combat/configs/ranged/arrows.obj:1-30"
+              "id": "phoenix-buy-shortbow", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "lowe", "anchor": {"tile": [3232, 3423, 0], "source": "content/maps/m50_53.jm2:12911; content/pack/npc.pack:550"}}, "obj": "shortbow", "qty": 1, "est_gp": 50},
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "shortbow"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "shortbow"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "shortbow"}}},
+              "comment": "Full-stock price 50: content/scripts/skill_combat/configs/ranged/bows.obj:30-31; content/scripts/areas/area_varrock/configs/varrock.npc:332-360; content/scripts/shop/scripts/shop.rs2:138-147,182-187."
             },
             {
               "id": "phoenix-wear-shortbow",
@@ -1409,51 +1397,11 @@
               "comment": "scripts/quests/quest_hero/scripts/npcs/grip.rs2:59-64; scripts/_unpack/225/all.loc:12815-12817"
             },
             {
-              "id": "phoenix-withdraw-bronze_arrow",
-              "kind": "bank",
-              "version": 1,
-              "args": {
-                "op": "withdraw",
-                "at": "nearest",
-                "items": [
-                  {
-                    "obj": "bronze_arrow",
-                    "qty": 100
-                  }
-                ]
-              },
-              "skip_if": {
-                "Any": [
-                  {
-                    "Fact": {
-                      "kind": "has_item",
-                      "version": 1,
-                      "args": {
-                        "obj": "bronze_arrow"
-                      }
-                    }
-                  },
-                  {
-                    "Fact": {
-                      "kind": "worn",
-                      "version": 1,
-                      "args": {
-                        "obj": "bronze_arrow"
-                      }
-                    }
-                  }
-                ]
-              },
-              "settle": {
-                "Fact": {
-                  "kind": "has_item",
-                  "version": 1,
-                  "args": {
-                    "obj": "bronze_arrow"
-                  }
-                }
-              },
-              "comment": "scripts/skill_combat/configs/ranged/bows.obj:30-55; scripts/skill_combat/configs/ranged/arrows.obj:1-30"
+              "id": "phoenix-buy-bronze-arrows", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "lowe", "anchor": {"tile": [3232, 3423, 0], "source": "content/maps/m50_53.jm2:12911; content/pack/npc.pack:550"}}, "obj": "bronze_arrow", "qty": 100, "est_gp": 100},
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_arrow"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_arrow"}}}]},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bronze_arrow", "qty": 100}}},
+              "comment": "Full-stock price 100 for 100 arrows: content/scripts/skill_combat/configs/ranged/arrows.obj:1-4; content/scripts/areas/area_varrock/configs/varrock.npc:332-360; content/scripts/shop/scripts/shop.rs2:59-68,138-147,182-187."
             },
             {
               "id": "phoenix-wear-bronze_arrow",
@@ -2476,6 +2424,27 @@
           "advances": false
         },
         {
+          "id": "blackarm-find-harralander", "kind": "combat", "version": 1, "advances": false,
+          "args": {"target": {"npc": "man", "not_targeting_others": true, "pick": "nearest"}, "tactic": {"kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true}, "stand": {"tile": [3017, 3238, 0], "source": "content/maps/m47_50.jm2:10008; content/pack/npc.pack:1"}, "lost_radius": 12, "kill_budget_ticks": 1200, "loadout": null, "loot": ["unidentified_harralander"], "until": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_harralander"}}}},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "quest_colour", "version": 1, "args": {"quest": "hero", "is": "in_progress"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_harralander"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "harralander"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "harralandervial"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_harralander"}}},
+          "comment": "Citizens drop random herbs: content/scripts/drop tables/scripts/man.rs2:2,43-44; content/scripts/drop tables/scripts/shared_droptables.rs2:18-19."
+        },
+        {
+          "id": "blackarm-identify-harralander", "kind": "interact", "version": 1, "advances": false,
+          "args": {"target": {"held": "unidentified_harralander"}, "op": "Identify"},
+          "skip_if": {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_harralander"}}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "harralander"}}},
+          "comment": "content/scripts/skill_herblore/scripts/identifying/identify.rs2:10-11; content/scripts/levelup/scripts/levelup_unlocks_herblore.rs2:8."
+        },
+        {
+          "id": "blackarm-buy-vial", "kind": "buy", "version": 1, "advances": false,
+          "args": {"shop": {"npc": "aemad", "anchor": {"tile": [2613, 3294, 0], "source": "content/maps/m40_51.jm2:10809; content/pack/npc.pack:590"}}, "obj": "vial_water", "qty": 1, "est_gp": 2},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "harralander"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "vial_water"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "vial_water"}}},
+          "comment": "Full-stock price 2: content/scripts/skill_herblore/configs/brewing/vials.obj:1-12; content/scripts/areas/area_ardougne_east/configs/ardougne_east.npc:622-657; content/scripts/shop/scripts/shop.rs2:138-147,182-187."
+        },
+        {
           "id": "blackarm-harralander",
           "kind": "use_on",
           "version": 1,
@@ -2711,6 +2680,13 @@
           },
           "comment": "scripts/quests/quest_hero/scripts/objs/oily_fishing_rod.rs2:4-12",
           "advances": false
+        },
+        {
+          "id": "blackarm-buy-bait", "kind": "buy", "version": 1, "advances": false,
+          "args": {"shop": {"npc": "harry", "anchor": {"tile": [2834, 3445, 0], "source": "content/maps/m44_53.jm2:5564; content/pack/npc.pack:576"}}, "obj": "fishing_bait", "qty": 1, "est_gp": 3},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "fishing_bait"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "fishing_bait"}}},
+          "comment": "One bait costs 3 at full stock: content/scripts/skill_fishing/configs/fishing.obj:103-113; content/scripts/areas/area_catherby/configs/catherby.npc:142-145; content/scripts/shop/scripts/shop.rs2:138-147,182-187."
         },
         {
           "id": "blackarm-fish",
@@ -3038,51 +3014,11 @@
           "recovery_entry": null,
           "steps": [
             {
-              "id": "blackarm-withdraw-black_full_helm",
-              "kind": "bank",
-              "version": 1,
-              "args": {
-                "op": "withdraw",
-                "at": "nearest",
-                "items": [
-                  {
-                    "obj": "black_full_helm",
-                    "qty": 1
-                  }
-                ]
-              },
-              "skip_if": {
-                "Any": [
-                  {
-                    "Fact": {
-                      "kind": "has_item",
-                      "version": 1,
-                      "args": {
-                        "obj": "black_full_helm"
-                      }
-                    }
-                  },
-                  {
-                    "Fact": {
-                      "kind": "worn",
-                      "version": 1,
-                      "args": {
-                        "obj": "black_full_helm"
-                      }
-                    }
-                  }
-                ]
-              },
-              "settle": {
-                "Fact": {
-                  "kind": "has_item",
-                  "version": 1,
-                  "args": {
-                    "obj": "black_full_helm"
-                  }
-                }
-              },
-              "comment": "scripts/quests/quest_hero/scripts/quest_hero.rs2:21-24"
+              "id": "blackarm-buy-helm", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "valaine", "anchor": {"tile": [3193, 3361, 1], "source": "content/maps/m49_52.jm2:8873; content/pack/npc.pack:536"}}, "obj": "black_full_helm", "qty": 1, "est_gp": 1372},
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "black_full_helm"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "black_full_helm"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "black_full_helm"}}},
+              "comment": "Full-stock price 1372: content/scripts/skill_combat/configs/melee/fullhelms.obj:192-195; content/scripts/areas/area_varrock/configs/champions_guild.npc:1-29; content/scripts/shop/scripts/shop.rs2:138-147,182-187."
             },
             {
               "id": "blackarm-equip-black_full_helm",
@@ -3112,51 +3048,11 @@
               "comment": "scripts/quests/quest_hero/scripts/quest_hero.rs2:21-24; scripts/quests/quest_hero/scripts/objs/fire_feather.rs2:6-13"
             },
             {
-              "id": "blackarm-withdraw-black_platebody",
-              "kind": "bank",
-              "version": 1,
-              "args": {
-                "op": "withdraw",
-                "at": "nearest",
-                "items": [
-                  {
-                    "obj": "black_platebody",
-                    "qty": 1
-                  }
-                ]
-              },
-              "skip_if": {
-                "Any": [
-                  {
-                    "Fact": {
-                      "kind": "has_item",
-                      "version": 1,
-                      "args": {
-                        "obj": "black_platebody"
-                      }
-                    }
-                  },
-                  {
-                    "Fact": {
-                      "kind": "worn",
-                      "version": 1,
-                      "args": {
-                        "obj": "black_platebody"
-                      }
-                    }
-                  }
-                ]
-              },
-              "settle": {
-                "Fact": {
-                  "kind": "has_item",
-                  "version": 1,
-                  "args": {
-                    "obj": "black_platebody"
-                  }
-                }
-              },
-              "comment": "scripts/quests/quest_hero/scripts/quest_hero.rs2:21-24"
+              "id": "blackarm-buy-platebody", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "horvik_the_armourer", "anchor": {"tile": [3229, 3434, 0], "source": "content/maps/m50_53.jm2:12910; content/pack/npc.pack:549"}}, "obj": "black_platebody", "qty": 1, "est_gp": 3840},
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "black_platebody"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "black_platebody"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "black_platebody"}}},
+              "comment": "Full-stock price 3840: content/scripts/skill_combat/configs/melee/platebodies.obj:159-162; content/scripts/areas/area_varrock/configs/varrock.npc:297-329; content/scripts/shop/scripts/shop.rs2:138-147,182-187."
             },
             {
               "id": "blackarm-equip-black_platebody",
@@ -3186,51 +3082,11 @@
               "comment": "scripts/quests/quest_hero/scripts/quest_hero.rs2:21-24; scripts/quests/quest_hero/scripts/objs/fire_feather.rs2:6-13"
             },
             {
-              "id": "blackarm-withdraw-black_platelegs",
-              "kind": "bank",
-              "version": 1,
-              "args": {
-                "op": "withdraw",
-                "at": "nearest",
-                "items": [
-                  {
-                    "obj": "black_platelegs",
-                    "qty": 1
-                  }
-                ]
-              },
-              "skip_if": {
-                "Any": [
-                  {
-                    "Fact": {
-                      "kind": "has_item",
-                      "version": 1,
-                      "args": {
-                        "obj": "black_platelegs"
-                      }
-                    }
-                  },
-                  {
-                    "Fact": {
-                      "kind": "worn",
-                      "version": 1,
-                      "args": {
-                        "obj": "black_platelegs"
-                      }
-                    }
-                  }
-                ]
-              },
-              "settle": {
-                "Fact": {
-                  "kind": "has_item",
-                  "version": 1,
-                  "args": {
-                    "obj": "black_platelegs"
-                  }
-                }
-              },
-              "comment": "scripts/quests/quest_hero/scripts/quest_hero.rs2:21-24"
+              "id": "blackarm-buy-platelegs", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "louie_legs", "anchor": {"tile": [3316, 3175, 0], "source": "content/maps/m51_49.jm2:9003; content/pack/npc.pack:542"}}, "obj": "black_platelegs", "qty": 1, "est_gp": 1920},
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "black_platelegs"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "black_platelegs"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "black_platelegs"}}},
+              "comment": "Full-stock price 1920: content/scripts/skill_combat/configs/melee/platelegs.obj:138-141; content/scripts/areas/area_alkharid/configs/alkharid.npc:264-294; content/scripts/shop/scripts/shop.rs2:138-147,182-187."
             },
             {
               "id": "blackarm-equip-black_platelegs",

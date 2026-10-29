@@ -1570,6 +1570,20 @@
               "advances": false
             },
             {
+              "id": "buy-priest-gown", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "tailorp", "anchor": {"tile": [3281, 3398, 0], "source": "content/maps/m51_53.jm2:6739; content/pack/npc.pack:555"}}, "obj": "priest_gown", "qty": 1, "est_gp": 6},
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "priest_gown"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "priest_gown"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "priest_gown"}}},
+              "comment": "At full stock the gown costs 6 coins: content/scripts/quests/quest_biohazard/configs/quest_biohazard.obj:159-162; content/scripts/areas/area_varrock/configs/varrock.npc:363-397; content/scripts/shop/scripts/shop.rs2:138-147,182-187."
+            },
+            {
+              "id": "buy-priest-robe", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "tailorp", "anchor": {"tile": [3281, 3398, 0], "source": "content/maps/m51_53.jm2:6739; content/pack/npc.pack:555"}}, "obj": "priest_robe", "qty": 1, "est_gp": 6},
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "priest_robe"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "priest_robe"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "priest_robe"}}},
+              "comment": "At full stock the robe costs 6 coins: content/scripts/quests/quest_biohazard/configs/quest_biohazard.obj:179-182; content/scripts/areas/area_varrock/configs/varrock.npc:363-397; content/scripts/shop/scripts/shop.rs2:138-147,182-187."
+            },
+            {
               "id": "wear-priest_gown",
               "kind": "equip",
               "version": 1,

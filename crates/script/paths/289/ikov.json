@@ -996,6 +996,19 @@
           "recovery_entry": null,
           "steps": [
             {
+              "id": "gather-limpwurt-roots", "kind": "combat", "version": 1, "advances": false,
+              "args": {
+                "target": {"npc": "hobgoblin_unarmed", "not_targeting_others": true, "pick": "nearest"},
+                "tactic": {"kind": "open", "style": "melee", "engage_radius": 18, "auto_retaliate": true},
+                "stand": {"tile": [2905, 3295, 0], "source": "content/maps/m45_51.jm2:6200-6204; content/pack/npc.pack:122"},
+                "lost_radius": 18, "kill_budget_ticks": 6000, "loadout": null, "loot": [{"obj": "limpwurt_root", "qty": 20}],
+                "until": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "limpwurt_root", "qty": 20}}}
+              },
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "limpwurt_root", "qty": 20}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "limpwurt_root", "qty": 20}}},
+              "comment": "Winelda takes 20: content/scripts/quests/quest_ikov/scripts/winelda.rs2:1-11. Hobgoblins drop roots: content/scripts/drop tables/scripts/hobgoblin.rs2:1-9,61-64."
+            },
+            {
               "id": "start-lucien",
               "kind": "talk",
               "version": 1,
