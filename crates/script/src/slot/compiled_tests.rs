@@ -873,7 +873,7 @@ fn watchdog_restart_reoffers_an_accepted_boundary_revision_to_the_new_instance()
 #[test]
 fn blocked_native_work_never_automatically_restarts() {
     let (mut slot, _) = receiver(41, SettingsApply::Applied);
-    Arc::make_mut(
+    let status = Arc::make_mut(
         slot.compiled
             .as_mut()
             .unwrap()
@@ -881,8 +881,12 @@ fn blocked_native_work_never_automatically_restarts() {
             .status
             .as_mut()
             .unwrap(),
-    )
-    .phase = NativePhase::Blocked;
+    );
+    status.phase = NativePhase::Blocked;
+    status.failure = Some(ScriptFailure {
+        code: Arc::from("test-blocked"),
+        message: Arc::from("terminal blocked fixture"),
+    });
     let run = slot.native_run();
     let now = Instant::now();
     slot.watchdog.arm_fresh(now);
@@ -3752,16 +3756,7 @@ fn gatherer_supply_park_keeps_its_run_controls_and_non_gameplay_watchdogs() {
     assert_eq!(
         slot.evidence_wait_run,
         Some(run),
-        "park admission: child={} native={} dispatch={} watchdog_frozen={} guardian={} host_hold={} session_hold={} ingame={} scene={}",
-        slot.foreground_action_active(),
-        slot.has_native_actions(),
-        slot.dispatch_open(),
-        slot.watchdog.frozen(),
-        slot.guardian_held,
-        slot.seat_host_held,
-        slot.seat_session_held,
-        snapshot.ingame(),
-        snapshot.scene_state(),
+        "a no-failure supply park admits evidence-idle gameplay suspension"
     );
     assert!(!slot.has_native_actions());
     assert!(!slot.foreground_action_active());

@@ -1877,15 +1877,17 @@ impl SlotScript {
         }
     }
 
-    /// Whether the script may dispatch at all: Running by operator intent,
-    /// not in a watchdog recovery hold, and not Blocked (which closes
-    /// dispatch until Retry, though the instance is retained).
+    /// Whether the script may dispatch: Running by operator intent, without
+    /// a watchdog recovery hold or a terminal failure. A supply park has no
+    /// failure and retains the evidence-idle protocol.
     fn dispatch_open(&self) -> bool {
         let blocked = self
             .compiled
             .as_ref()
             .and_then(|run| run.output.status.as_deref())
-            .is_some_and(|status| status.phase == crate::native::NativePhase::Blocked);
+            .is_some_and(|status| {
+                status.phase == crate::native::NativePhase::Blocked && status.failure.is_some()
+            });
         self.state == RunState::Running
             && self.want_run
             && self.has_instance()
@@ -3529,7 +3531,10 @@ impl SlotScript {
                 run.output
                     .status
                     .as_ref()
-                    .is_some_and(|status| status.phase == crate::native::NativePhase::Blocked)
+                    .is_some_and(|status| {
+                        status.phase == crate::native::NativePhase::Blocked
+                            && status.failure.is_some()
+                    })
             });
         let freeze_action = self.watchdog.set_frozen(frozen, now);
         if frozen
@@ -3689,7 +3694,10 @@ impl SlotScript {
             run.output
                 .status
                 .as_ref()
-                .is_some_and(|status| status.phase == crate::native::NativePhase::Blocked)
+                .is_some_and(|status| {
+                    status.phase == crate::native::NativePhase::Blocked
+                        && status.failure.is_some()
+                })
         }) {
             return Err("watchdog restart cancelled: blocked".into());
         }
