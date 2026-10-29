@@ -1129,7 +1129,7 @@ impl SlotScript {
         match job {
             Ok(job) => self.preparing = Some(Box::new(job)),
             Err(PrepareRunError::Full) => {
-                self.pending_compiled_start = Some(demand);
+                self.pending_compiled_start = Some(Box::new(demand));
             }
             Err(PrepareRunError::Other(error)) => return Err(error),
         }
