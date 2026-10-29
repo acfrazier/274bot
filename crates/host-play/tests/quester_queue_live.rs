@@ -1322,6 +1322,53 @@ fn quester_queue() {
 
 #[cfg(feature = "test-support")]
 #[test]
+fn skip_probe_waits_for_cook_bank_step() {
+    use script::native::StatusField;
+
+    let status = |step_id: &str, action_state: &str| ScriptStatus {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        card: script::CompiledId("Quester"),
+        phase: NativePhase::Working,
+        active_settings: 1,
+        pending_settings: None,
+        fields: Arc::from([
+            StatusField {
+                key: "quest_id",
+                label: "Quest",
+                value: StatusValue::Text("cook".into()),
+            },
+            StatusField {
+                key: "step_id",
+                label: "Step",
+                value: StatusValue::Text(step_id.into()),
+            },
+            StatusField {
+                key: "action_state",
+                label: "Action",
+                value: StatusValue::Text(action_state.into()),
+            },
+        ]),
+        failure: None,
+    };
+    let start = status("start", "talking");
+    assert!(
+        SkipQueueEvidence::active_cook_action(&start)
+            .unwrap()
+            .is_none()
+    );
+    let bank = status("cook-bank", "banking");
+    let action = SkipQueueEvidence::active_cook_action(&bank)
+        .unwrap()
+        .expect("Cook bank action");
+    assert_eq!(action.step_id, "cook-bank");
+    assert_eq!(action.action_state, "banking");
+}
+#[cfg(feature = "test-support")]
+#[test]
 fn skip_cleanup_keeps_only_the_compiled_run_owner() {
     let released = SkipCleanupOwnership {
         script_walk: None,
