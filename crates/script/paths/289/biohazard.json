@@ -469,8 +469,8 @@
               "version": 1,
               "args": {
                 "tile": [
-                  2559,
-                  3303,
+                  2564,
+                  3304,
                   0
                 ],
                 "source": "content/scripts/quests/quest_biohazard/scripts/quest_biohazard.rs2:63-64",
@@ -482,8 +482,8 @@
                   "version": 1,
                   "args": {
                     "tile": [
-                      2559,
-                      3303,
+                      2564,
+                      3304,
                       0
                     ],
                     "radius": 1
@@ -496,8 +496,8 @@
                   "version": 1,
                   "args": {
                     "tile": [
-                      2559,
-                      3303,
+                      2564,
+                      3304,
                       0
                     ],
                     "radius": 1
