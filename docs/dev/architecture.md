@@ -1181,9 +1181,14 @@ in the root `Cargo.toml` holds the set: `undocumented_unsafe_blocks` and
 firing is an error) and `allow_attributes_without_reason`, plus the six
 approved lints `redundant_clone`, `significant_drop_in_scrutinee`,
 `unchecked_time_subtraction`, `needless_collect`,
-`large_types_passed_by_value` and `assigning_clones` (deny). A crate opts
+`large_types_passed_by_value` and `assigning_clones` (deny), plus `todo`
+and `unimplemented` (deny), which stop a `todo!()` or `unimplemented!()`
+stub from shipping as a runtime panic. A crate opts
 in with `[lints] workspace = true` in its manifest when a refactor reaches
-it and stays opted in; `vault` is the first. Only `unwrap_used` is scoped
+it and stays opted in; `vault` is the first. The two stub lints also hold in
+every crate that has not opted in: CI passes `-D clippy::todo -D
+clippy::unimplemented` to every main-workspace clippy command (the client
+fork is a separate workspace and is not covered). Only `unwrap_used` is scoped
 to non-test code (via `allow-unwrap-in-tests` in `clippy.toml`): clippy
 1.98 offers no per-lint test exemption for the other lints, so opted-in
 crates keep their tests clean too.
