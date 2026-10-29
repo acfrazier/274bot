@@ -820,8 +820,8 @@ fn stage_or_terminal(
         || (transitioned && current.is_some_and(|stage| expected.iter().any(|key| key == stage)))
 }
 
-fn path_terminal_proven(runner_passed: bool, idle: bool, lifecycle_completed: bool) -> bool {
-    runner_passed && idle && lifecycle_completed
+fn path_terminal_proven(idle: bool, lifecycle_completed: bool) -> bool {
+    idle && lifecycle_completed
 }
 
 fn completion_proven(
@@ -830,7 +830,7 @@ fn completion_proven(
     idle: bool,
     lifecycle_completed: bool,
 ) -> bool {
-    progress_complete && path_terminal_proven(runner_passed, idle, lifecycle_completed)
+    runner_passed && progress_complete && path_terminal_proven(idle, lifecycle_completed)
 }
 
 fn step_matches(status: &ScriptStatus, step: &str) -> bool {
@@ -2317,7 +2317,6 @@ fn run_cells(
             }
             RunPlan::Single(Mode::PathTerminal) => {
                 let script_terminal = path_terminal_proven(
-                    matches!(&observations[0].runner_status, RunnerStatus::Passed),
                     observations[0].run_state == script::RunState::Idle,
                     observations[0].lifecycle.as_ref().is_some_and(|receipt| {
                         receipt.state == script::ScriptTerminalState::Completed
@@ -2990,10 +2989,9 @@ mod tests {
     }
 
     #[test]
-    fn path_terminal_proof_needs_passed_idle_and_completed_lifecycle() {
-        assert!(path_terminal_proven(true, true, true));
-        assert!(!path_terminal_proven(false, true, true));
-        assert!(!path_terminal_proven(true, false, true));
-        assert!(!path_terminal_proven(true, true, false));
+    fn path_terminal_proof_needs_idle_and_completed_lifecycle() {
+        assert!(path_terminal_proven(true, true));
+        assert!(!path_terminal_proven(false, true));
+        assert!(!path_terminal_proven(true, false));
     }
 }

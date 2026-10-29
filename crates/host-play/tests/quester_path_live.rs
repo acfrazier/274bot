@@ -49,8 +49,8 @@
 //! ```
 //!
 //! For clean completion, set `mode` to `clean` and `expect` to `[]`.
-//! The `stage` field stays required by the shared schema, but the fixture does
-//! not apply it to the account.
+//! The required `stage` field seeds the account in `stage` and `path_terminal`
+//! modes. Clean mode ignores it and starts from clean quest state.
 //!
 //! For a focused terminal Path probe, set `mode` to `path_terminal`. The live
 //! cell passes when the script ends, even if the quest remains in progress.
@@ -273,6 +273,11 @@ mod smoke_tests {
         let cell = cook_cell(&seeds);
         assert!(matches!(cell.mode, Mode::PathTerminal));
         assert!(cell.start_settings.contains_key("quests"));
+        assert!(cell
+            .scenario
+            .steps
+            .iter()
+            .any(|step| step.name == "reset authored content stage"));
     }
 
     #[test]
