@@ -1186,7 +1186,7 @@ fn host_asset_contention_releases_before_overlays() {
         return;
     };
     let now = Instant::now();
-    let mut peer = Slot::start(now, None);
+    let peer = Slot::start(now, None);
     let first = peer.painted(0);
     peer.event(RenderTestPoint::OverlayEntry);
     let before = render_head::workspace_stats().faults().totals();

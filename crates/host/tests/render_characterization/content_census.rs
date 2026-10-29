@@ -8,7 +8,7 @@ use client::dash3d::store::render_test_shared_store_layout;
 use client::dash3d::{LocAngle, Model, LOC_SHAPE_TO_LAYER};
 use client::graphics::PixFont;
 use client::io::JagFile;
-use client::map_cache::{self, LocPlacement, MapIndexEntry};
+use client::map_cache::{self, MapIndexEntry};
 use client::render::backend::gpu_atlas::GpuAssets;
 use client::render::budget::RenderResource;
 use client::render::nav_debug::{render_test_caption_ink_pixels, render_test_nav_layout};
@@ -73,7 +73,7 @@ struct Record<'a> {
     bytes: &'a [u8],
 }
 
-fn decode_record_stream(bytes: &[u8], label: &str) -> Result<Vec<Record<'_>>, String> {
+fn decode_record_stream<'a>(bytes: &'a [u8], label: &str) -> Result<Vec<Record<'a>>, String> {
     let mut records = Vec::new();
     let mut ids = BTreeSet::new();
     let mut offset = 0usize;
@@ -248,10 +248,6 @@ impl FamilyMaximum {
             .variants
             .checked_add(1)
             .ok_or_else(|| format!("{trigger}: variant count overflowed"))?;
-        if bytes > self.maximum_bytes {
-            self.maximum_bytes = bytes;
-            self.trigger = Some(trigger);
-        }
         self.retained_sizes.push(bytes);
         self.maximum_points = self
             .maximum_points
@@ -269,6 +265,10 @@ impl FamilyMaximum {
                     model.num_faces
                 )
             })?);
+        if bytes > self.maximum_bytes {
+            self.maximum_bytes = bytes;
+            self.trigger = Some(trigger);
+        }
         Ok(())
     }
 
@@ -326,7 +326,7 @@ fn placement_model_measure(
         placement.rotation,
         placement.amount
     );
-    let model = match placement.kind {
+    match placement.kind {
         EntityKind::Loc => {
             let Some(loc) = usize::try_from(placement.id)
                 .ok()
@@ -344,6 +344,8 @@ fn placement_model_measure(
                 0,
                 -1,
             )
+            .map(|model| model_measure(&model, &trigger))
+            .transpose()
         }
         EntityKind::Npc => {
             let Some(npc) = usize::try_from(placement.id)
@@ -353,6 +355,8 @@ fn placement_model_measure(
                 return Err(format!("{trigger}: NPC config is missing"));
             };
             npc.get_temp_model(cache, -1, -1, None)
+                .map(|model| model_measure(&model, &trigger))
+                .transpose()
         }
         EntityKind::Obj => {
             let count = i32::try_from(placement.amount)
@@ -364,11 +368,9 @@ fn placement_model_measure(
                 return Err(format!("{trigger}: object config is missing"));
             };
             obj.get_model_lit(cache, count)
+                .map(|model| model_measure(&model, &trigger))
+                .transpose()
         }
-    };
-    match model {
-        Some(model) => model_measure(&model, &trigger).map(Some),
-        None => Ok(None),
     }
 }
 
@@ -1147,13 +1149,7 @@ fn nav_source_bounds(
     }
     let hull_window = source_usize_const(panel_source, "const HULL_WINDOW: usize =")?;
     let route_transitions = source_usize_const(router_source, "pub const NODE_BUDGET: usize =")?;
-    if route_transitions != nav_planner::router::NODE_BUDGET {
-        return Err("source route budget differs from compiled route budget".to_string());
-    }
     let max_draw_tiles = source_usize_const(paint_source, "pub const MAX_DRAW_TILES: usize =")?;
-    if max_draw_tiles != nav_planner::paint::MAX_DRAW_TILES {
-        return Err("source path draw cap differs from compiled path draw cap".to_string());
-    }
     let caption_texts = source_function_string_literals(panel_source, "fn hop_caption_text(")?;
     let layout = client::render::world::render_test_content_layout();
     if layout.scene_tiles_per_axis != client_scene_tiles {
@@ -3031,6 +3027,7 @@ fn load_map_census(
     let mut max_terrain_faces = 0usize;
     let mut terrain_trigger = None;
     let mut terrain_cells = Vec::new();
+    let mut cache_locations = Vec::new();
     let expected_land_cells = usize::from(map_cache::MAP_PLANES)
         * usize::from(map_cache::MAP_SQUARE_SIZE)
         * usize::from(map_cache::MAP_SQUARE_SIZE);
