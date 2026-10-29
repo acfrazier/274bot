@@ -146,6 +146,20 @@
           "recovery_entry": null,
           "steps": [
             {
+              "id": "buy-fight-food", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "baker_merchant", "anchor": {"tile": [2654, 3311, 0], "source": "content/maps/m41_51.jm2:10991"}}, "obj": "bread", "qty": 10, "est_gp": 126},
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
+              "comment": "Buy provisions before the arena sequence: content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-25; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187."
+            },
+            {
+              "id": "pick-fight-food", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"loc": "cabbage"}, "op": "Pick", "anchor": {"tile": [3046, 3287, 0], "source": "content/maps/m47_51.jm2:5743-5756"}, "radius": 12, "wait_if_missing": true, "until": {"obj": "cabbage", "qty": 10}, "settle_ms": 180000},
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "cabbage", "qty": 10}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "cabbage", "qty": 10}}},
+              "comment": "Pick extra provisions before the chained fights: content/scripts/general_use/scripts/pickables.rs2:42-51; content/scripts/player/configs/consumption/consume_normal.dbrow:32-38."
+            },
+            {
               "id": "start",
               "kind": "talk",
               "version": 1,

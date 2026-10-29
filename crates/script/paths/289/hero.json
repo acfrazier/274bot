@@ -235,6 +235,13 @@
       },
       "prelude": [
         {
+          "id": "phoenix-buy-queen-food", "kind": "buy", "version": 1, "advances": false,
+          "args": {"shop": {"npc": "baker_merchant", "anchor": {"tile": [2654, 3311, 0], "source": "content/maps/m41_51.jm2:10991"}}, "obj": "bread", "qty": 10, "est_gp": 126},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "quest_colour", "version": 1, "args": {"quest": "hero", "is": "in_progress"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}}]},
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
+          "comment": "Buy food for the queen: content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-25; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187."
+        },
+        {
           "id": "phoenix-mine-rockslide",
           "kind": "interact",
           "version": 1,
@@ -431,6 +438,20 @@
           "advances": false
         },
         {
+          "id": "phoenix-sheathe-queen-weapon", "kind": "unequip", "version": 1, "advances": false,
+          "args": {"obj": "rune_scimitar"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}},
+          "comment": "Entrana rejects weapons: content/scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-49."
+        },
+        {
+          "id": "phoenix-bank-queen-weapon", "kind": "bank", "version": 1, "advances": false,
+          "args": {"op": "deposit", "at": "nearest", "items": [{"obj": "rune_scimitar"}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_scimitar"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_scimitar"}}}},
+          "comment": "Deposit the weapon before sailing: content/scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-49."
+        },
+        {
           "id": "phoenix-bank-pick",
           "kind": "bank",
           "version": 1,
@@ -551,6 +572,13 @@
             }
           },
           "comment": "scripts/quests/quest_hero/scripts/objs/fire_feather.rs2:6-13"
+        },
+        {
+          "id": "phoenix-buy-bird-food", "kind": "buy", "version": 1, "advances": false,
+          "args": {"shop": {"npc": "baker_merchant", "anchor": {"tile": [2654, 3311, 0], "source": "content/maps/m41_51.jm2:10991"}}, "obj": "bread", "qty": 10, "est_gp": 126},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "quest_colour", "version": 1, "args": {"quest": "hero", "is": "in_progress"}}}}, {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}}]},
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
+          "comment": "Buy food before sailing to the firebird: content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-25; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187."
         },
         {
           "id": "phoenix-sail-entrana",
@@ -1363,6 +1391,13 @@
           "recovery_entry": null,
           "steps": [
             {
+              "id": "phoenix-buy-grip-food", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "baker_merchant", "anchor": {"tile": [2654, 3311, 0], "source": "content/maps/m41_51.jm2:10991"}}, "obj": "bread", "qty": 10, "est_gp": 126},
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
+              "comment": "Buy food before the Grip encounter: content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-25; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187."
+            },
+            {
               "id": "phoenix-buy-shortbow", "kind": "buy", "version": 1,
               "args": {"shop": {"npc": "lowe", "anchor": {"tile": [3232, 3423, 0], "source": "content/maps/m50_53.jm2:12911; content/pack/npc.pack:550"}}, "obj": "shortbow", "qty": 1, "est_gp": 50},
               "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "shortbow"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "shortbow"}}}]},
@@ -1874,6 +1909,13 @@
       },
       "prelude": [
         {
+          "id": "blackarm-buy-queen-food", "kind": "buy", "version": 1, "advances": false,
+          "args": {"shop": {"npc": "baker_merchant", "anchor": {"tile": [2654, 3311, 0], "source": "content/maps/m41_51.jm2:10991"}}, "obj": "bread", "qty": 10, "est_gp": 126},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "quest_colour", "version": 1, "args": {"quest": "hero", "is": "in_progress"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}}]},
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
+          "comment": "Buy food for the queen: content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-25; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187."
+        },
+        {
           "id": "blackarm-mine-rockslide",
           "kind": "interact",
           "version": 1,
@@ -2070,6 +2112,20 @@
           "advances": false
         },
         {
+          "id": "blackarm-sheathe-queen-weapon", "kind": "unequip", "version": 1, "advances": false,
+          "args": {"obj": "rune_scimitar"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}},
+          "comment": "Entrana rejects weapons: content/scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-49."
+        },
+        {
+          "id": "blackarm-bank-queen-weapon", "kind": "bank", "version": 1, "advances": false,
+          "args": {"op": "deposit", "at": "nearest", "items": [{"obj": "rune_scimitar"}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_scimitar"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_scimitar"}}}},
+          "comment": "Deposit the weapon before sailing: content/scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-49."
+        },
+        {
           "id": "blackarm-bank-pick",
           "kind": "bank",
           "version": 1,
@@ -2190,6 +2246,13 @@
             }
           },
           "comment": "scripts/quests/quest_hero/scripts/objs/fire_feather.rs2:6-13"
+        },
+        {
+          "id": "blackarm-buy-bird-food", "kind": "buy", "version": 1, "advances": false,
+          "args": {"shop": {"npc": "baker_merchant", "anchor": {"tile": [2654, 3311, 0], "source": "content/maps/m41_51.jm2:10991"}}, "obj": "bread", "qty": 10, "est_gp": 126},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "quest_colour", "version": 1, "args": {"quest": "hero", "is": "in_progress"}}}}, {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}}]},
+          "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
+          "comment": "Buy food before sailing to the firebird: content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-25; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187."
         },
         {
           "id": "blackarm-sail-entrana",
@@ -3013,6 +3076,13 @@
           "terminal": false,
           "recovery_entry": null,
           "steps": [
+            {
+              "id": "blackarm-buy-grip-food", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "baker_merchant", "anchor": {"tile": [2654, 3311, 0], "source": "content/maps/m41_51.jm2:10991"}}, "obj": "bread", "qty": 10, "est_gp": 126},
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
+              "comment": "Buy food before the Grip encounter: content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-25; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187."
+            },
             {
               "id": "blackarm-buy-helm", "kind": "buy", "version": 1,
               "args": {"shop": {"npc": "valaine", "anchor": {"tile": [3193, 3361, 1], "source": "content/maps/m49_52.jm2:8873; content/pack/npc.pack:536"}}, "obj": "black_full_helm", "qty": 1, "est_gp": 1372},
