@@ -3938,7 +3938,7 @@ impl Script for QueuedQuester {
             let bytes = self.queue.path_bytes(index);
             let selected = Arc::clone(&self.selected);
             let quests = Arc::clone(&self.quests);
-            let nav = tick.frame().compiled().nav.clone();
+            let nav = tick.frame().compiled().nav.cloned();
             self.active_index = Some(index);
             let input = PreparationInput::new(
                 self.run.run,

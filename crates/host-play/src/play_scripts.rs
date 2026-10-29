@@ -828,8 +828,6 @@ impl Play {
                             Arc::clone(&selected),
                             Arc::clone(&banks),
                             ready,
-                            nav.as_ref()
-                                .and_then(nav_planner::contract::NavLease::zones),
                         )
                         .map(|config| PreparedScriptConfig {
                             config,

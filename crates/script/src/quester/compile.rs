@@ -525,7 +525,16 @@ pub fn compile_path_for_gang(
         .map_err(|error| CompileError::code("invalid-json").with_detail(error.to_string()))?;
     let gathering = prepare_gathering(&document, selected, worker)?;
     let compiled = Arc::new(compile_uncached(
-        &document, digest, selected, quests, gathering, gang, operator, zones,
+        &document,
+        digest,
+        CompileInputs {
+            selected,
+            quests,
+            gathering,
+            gang,
+            operator,
+            zones,
+        },
     )?);
     if let Ok(mut cache) = CACHE.lock() {
         cache.retain(|_, weak| weak.strong_count() > 0);
@@ -927,12 +936,14 @@ fn compile_uncached_for_test_with_context(
     compile_uncached(
         document,
         digest_bytes(b"test"),
-        selected,
-        quests,
-        gathering,
-        gang,
-        operator,
-        zones,
+        CompileInputs {
+            selected,
+            quests,
+            gathering,
+            gang,
+            operator,
+            zones,
+        },
     )
     .map(Arc::new)
 }
@@ -1041,16 +1052,28 @@ fn skill_index(name: &str) -> Option<u8> {
         .and_then(|id| u8::try_from(id).ok())
 }
 
+pub(super) struct CompileInputs<'a> {
+    pub selected: &'a SelectedGameData,
+    pub quests: &'a QuestCatalog,
+    pub gathering: Option<Arc<GatherCatalog>>,
+    pub gang: Option<super::pair::Gang>,
+    pub operator: &'a OperatorLoadouts,
+    pub zones: Option<ZoneTableView<'a>>,
+}
+
 pub(super) fn compile_uncached(
     document: &PathDocument,
     digest: [u8; 32],
-    selected: &SelectedGameData,
-    quests: &QuestCatalog,
-    gathering: Option<Arc<GatherCatalog>>,
-    gang: Option<super::pair::Gang>,
-    operator: &OperatorLoadouts,
-    zones: Option<ZoneTableView<'_>>,
+    inputs: CompileInputs<'_>,
 ) -> Result<CompiledPath, CompileError> {
+    let CompileInputs {
+        selected,
+        quests,
+        gathering,
+        gang,
+        operator,
+        zones,
+    } = inputs;
     if document.schema != super::path::PATH_SCHEMA {
         return Err(CompileError::code("unsupported-schema").with_path(document.id.clone()));
     }
@@ -2238,6 +2261,26 @@ pub fn decode_cook() -> Result<PathDocument, CompileError> {
 }
 
 #[cfg(test)]
+pub(crate) fn real_nav_lease() -> &'static nav_planner::contract::NavLease {
+    static NAV: std::sync::LazyLock<nav_planner::contract::NavLease> =
+        std::sync::LazyLock::new(|| {
+            let pack = std::path::PathBuf::from(
+                std::env::var_os("NAV_PACK").expect("set NAV_PACK to the real 289 nav pack"),
+            );
+            let bytes = std::fs::read(&pack)
+                .unwrap_or_else(|error| panic!("read real 289 pack {}: {error}", pack.display()));
+            let world = nav_planner::world::NavWorld::from_bytes(&bytes)
+                .unwrap_or_else(|error| panic!("load real 289 pack {}: {error}", pack.display()));
+            nav_planner::contract::NavLease::wrap(
+                Arc::new(world),
+                nav_planner::contract::PackDigest::of(&bytes),
+            )
+            .expect("create a lease for the real 289 zone catalog")
+        });
+    &NAV
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::quester::path::PredicateDocument;
@@ -2249,21 +2292,6 @@ mod tests {
 
     fn quests(data: &SelectedGameData) -> QuestCatalog {
         QuestCatalog::from_identity(data.quest_identity()).unwrap_or_else(|_| QuestCatalog::empty())
-    }
-
-    fn real_nav_lease() -> nav_planner::contract::NavLease {
-        let pack = std::path::PathBuf::from(
-            std::env::var_os("NAV_PACK").expect("set NAV_PACK to the real 289 nav pack"),
-        );
-        let bytes = std::fs::read(&pack)
-            .unwrap_or_else(|error| panic!("read real 289 pack {}: {error}", pack.display()));
-        let world = nav_planner::world::NavWorld::from_bytes(&bytes)
-            .unwrap_or_else(|error| panic!("load real 289 pack {}: {error}", pack.display()));
-        nav_planner::contract::NavLease::wrap(
-            Arc::new(world),
-            nav_planner::contract::PackDigest::of(&bytes),
-        )
-        .expect("create a lease for the real 289 zone catalog")
     }
 
     /// Reproducible release-build measurements for the admitted Path compile
@@ -2623,6 +2651,21 @@ mod tests {
         )
     }
 
+    fn cook_cross_walk(document: &PathDocument) -> StepDocument {
+        let mut walk = document
+            .quest
+            .as_ref()
+            .unwrap()
+            .acquire
+            .values()
+            .flatten()
+            .find(|step| step.id.0.as_ref() == "walk-mill-top")
+            .expect("Cook has a walk acquisition step")
+            .clone();
+        walk.id = FactKey::new("cross-test-walk");
+        walk
+    }
+
     #[test]
     fn stage_cross_compiles_exact_catalog_ids() {
         let id = "stage-zone-0";
@@ -2759,29 +2802,23 @@ mod tests {
     #[test]
     fn step_cross_rejects_unknown_catalog_ids() {
         let mut document = decode_cook().unwrap();
-        let walk = document.roles[0].sequences[0]
-            .steps
-            .iter_mut()
-            .find(|step| step.id.0.as_ref() == "walk-mill-top")
-            .expect("Cook has a walk step");
+        let mut walk = cook_cross_walk(&document);
         walk.args["cross"] = serde_json::json!(["missing-zone"]);
+        document.roles[0].sequences[0].steps.push(walk);
 
         let error = compile_with_stage_cross(&document, &["known-zone"])
             .err()
             .expect("invalid zone declaration must fail");
         assert_eq!(error.code.as_ref(), "unknown-cross-id");
-        assert_eq!(error.step, Some(FactKey::new("walk-mill-top")));
+        assert_eq!(error.step, Some(FactKey::new("cross-test-walk")));
     }
 
     #[test]
     fn step_cross_requires_a_catalog_when_declarations_exist() {
         let mut document = decode_cook().unwrap();
-        let walk = document.roles[0].sequences[0]
-            .steps
-            .iter_mut()
-            .find(|step| step.id.0.as_ref() == "walk-mill-top")
-            .expect("Cook has a walk step");
+        let mut walk = cook_cross_walk(&document);
         walk.args["cross"] = serde_json::json!(["known-zone"]);
+        document.roles[0].sequences[0].steps.push(walk);
 
         let data = selected();
         let error = compile_uncached_for_test(&document, &data, &quests(&data))
@@ -2811,12 +2848,7 @@ mod tests {
     fn nested_step_cross_is_checked_in_every_authored_step_list() {
         for location in ["acquire", "prelude", "progress_reader", "sequence"] {
             let mut document = decode_cook().unwrap();
-            let mut walk = document.roles[0].sequences[0]
-                .steps
-                .iter()
-                .find(|step| step.id.0.as_ref() == "walk-mill-top")
-                .expect("Cook has a walk step")
-                .clone();
+            let mut walk = cook_cross_walk(&document);
             walk.id = FactKey::new("parent-route");
             walk.args["nested"] = serde_json::json!({
                 "route": {
@@ -2862,13 +2894,10 @@ mod tests {
             .iter()
             .map(|id| stage_cross_declaration(id, "Stage zone", "Cross to the next room."))
             .collect();
-        let walk = document.roles[0].sequences[0]
-            .steps
-            .iter_mut()
-            .find(|step| step.id.0.as_ref() == "walk-mill-top")
-            .expect("Cook has a walk step");
+        let mut walk = cook_cross_walk(&document);
         walk.args["cross"] =
             serde_json::json!([id_refs[0], id_refs[nav_planner::contract::MAX_ZONE_KEYS],]);
+        document.roles[0].sequences[0].steps.push(walk);
 
         let error = compile_with_stage_cross(&document, &id_refs)
             .err()
@@ -2892,12 +2921,9 @@ mod tests {
             .iter()
             .map(|id| stage_cross_declaration(id, "Stage zone", "Cross to the next room."))
             .collect();
-        let walk = document.roles[0].sequences[0]
-            .steps
-            .iter_mut()
-            .find(|step| step.id.0.as_ref() == "walk-mill-top")
-            .expect("Cook has a walk step");
+        let mut walk = cook_cross_walk(&document);
         walk.args["cross"] = serde_json::json!([id_refs[0]]);
+        document.roles[0].sequences[0].steps.push(walk);
 
         compile_with_stage_cross(&document, &id_refs)
             .expect("the same grant from the step and stage counts only once");

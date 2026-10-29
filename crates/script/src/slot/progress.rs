@@ -376,7 +376,7 @@ impl SlotScript {
                 Arc::clone(selected),
                 bytes,
                 operator,
-                ctx.compiled.nav.clone(),
+                ctx.compiled.nav.cloned(),
             ) {
                 Ok(job) => {
                     seat.progress = ProgressSeat::Preparing {

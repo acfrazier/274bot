@@ -2596,7 +2596,6 @@ mod tests {
                 selected,
                 Arc::default(),
                 None,
-                None,
             )
         })
         .unwrap()
@@ -2716,7 +2715,6 @@ mod tests {
                 Arc::new(bag),
                 selected,
                 Arc::default(),
-                None,
                 None,
             )
         })
@@ -2856,7 +2854,6 @@ mod tests {
                 selected,
                 Arc::default(),
                 None,
-                None,
             )
         })
         .unwrap()
@@ -2922,7 +2919,6 @@ mod tests {
                 Arc::new(bag),
                 selected,
                 Arc::default(),
-                None,
                 None,
             )
         })
@@ -3019,7 +3015,6 @@ mod tests {
                     Arc::new(bag),
                     selected,
                     Arc::default(),
-                    None,
                     None,
                 )
             })
@@ -3486,7 +3481,6 @@ mod tests {
                 Arc::new(bag),
                 selected,
                 Arc::default(),
-                None,
                 None,
             )
         })

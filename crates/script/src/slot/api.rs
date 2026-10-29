@@ -497,16 +497,16 @@ impl SlotScript {
                 .as_ref()
                 .map_or(self.work_epoch, |seat| seat.run().session),
         };
-        match compiled::prepare_run(
-            &crate::gatherer::CARD,
+        match compiled::prepare_run(compiled::PendingCompiledStart {
+            card: &crate::gatherer::CARD,
             run,
-            Arc::clone(settings),
-            Arc::clone(&selected),
-            Arc::clone(&banks),
-            Arc::clone(&retained),
-            String::new(),
-            None,
-        ) {
+            bag: Arc::clone(settings),
+            selected: Arc::clone(&selected),
+            banks: Arc::clone(&banks),
+            retained: Arc::clone(&retained),
+            account: String::new(),
+            nav: None,
+        }) {
             Ok(job) => {
                 self.control_generation = generation;
                 seat.page = Some(Arc::new(GatherPage {
@@ -593,16 +593,16 @@ impl SlotScript {
             user_input,
         } = &seat.gather
         {
-            match compiled::prepare_run(
-                &crate::gatherer::CARD,
-                *run,
-                Arc::clone(settings),
-                Arc::clone(selected),
-                Arc::clone(banks),
-                Arc::clone(retained),
-                String::new(),
-                None,
-            ) {
+            match compiled::prepare_run(compiled::PendingCompiledStart {
+                card: &crate::gatherer::CARD,
+                run: *run,
+                bag: Arc::clone(settings),
+                selected: Arc::clone(selected),
+                banks: Arc::clone(banks),
+                retained: Arc::clone(retained),
+                account: String::new(),
+                nav: None,
+            }) {
                 Ok(job) => {
                     seat.gather = GatherSeat::Preparing {
                         token: *token,

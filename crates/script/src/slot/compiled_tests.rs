@@ -639,7 +639,6 @@ fn gatherer_config(revision: u64) -> Arc<PreparedConfig> {
             selected(),
             Arc::default(),
             None,
-            None,
         )
     })
     .unwrap()
@@ -692,7 +691,6 @@ fn permission_config(revision: u64, allow: bool) -> Arc<PreparedConfig> {
             ),
             selected(),
             Arc::default(),
-            None,
             None,
         )
     })
@@ -2339,7 +2337,6 @@ mod api_gather_seat {
                     bag,
                     Arc::clone(&cx.selected),
                     Arc::clone(&cx.banks),
-                    None,
                     None,
                 )
                 .unwrap();

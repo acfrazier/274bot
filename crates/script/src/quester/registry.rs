@@ -1189,12 +1189,14 @@ impl<'a> RegistryPreparation<'a> {
                             compile::compile_uncached(
                                 document,
                                 digest,
-                                self.selected.get(),
-                                self.quests.get(),
-                                gathering.clone(),
-                                Some(role.gang),
-                                &operator,
-                                zones,
+                                compile::CompileInputs {
+                                    selected: self.selected.get(),
+                                    quests: self.quests.get(),
+                                    gathering: gathering.clone(),
+                                    gang: Some(role.gang),
+                                    operator: &operator,
+                                    zones,
+                                },
                             )
                             .map(|_| ())
                             .map_err(|mut error| {
@@ -1211,12 +1213,14 @@ impl<'a> RegistryPreparation<'a> {
                         compile::compile_uncached(
                             document,
                             digest,
-                            self.selected.get(),
-                            self.quests.get(),
-                            gathering,
-                            None,
-                            &operator,
-                            zones,
+                            compile::CompileInputs {
+                                selected: self.selected.get(),
+                                quests: self.quests.get(),
+                                gathering,
+                                gang: None,
+                                operator: &operator,
+                                zones,
+                            },
                         )
                         .map(|_| ())
                     }

@@ -1092,6 +1092,9 @@ fn r1_bundled_non_inventory_paths_reach_first_root_from_empty_pack() {
     let _gathering =
         super::super::compile::prepare_for_test(move |worker| selected.prepare_gathering(worker))
             .expect("289 gather catalog");
+    let zones = super::super::compile::real_nav_lease()
+        .zones()
+        .expect("real 289 zone catalog");
     for entry in super::super::registry::BUNDLED_INDEX.paths.iter() {
         let Some(bytes) = super::super::registry::bundled_path(&entry.id) else {
             continue;
@@ -1104,22 +1107,25 @@ fn r1_bundled_non_inventory_paths_reach_first_root_from_empty_pack() {
             Some(declaration) => {
                 for role in declaration.roles.iter() {
                     let mut fixture = CookFixture::new(false, false);
-                    fixture.script.path = super::super::compile::compile_uncached_for_test_as(
-                        &document,
-                        &fixture.script.selected,
-                        &fixture.script.quests,
-                        role.gang,
-                    )
-                    .unwrap();
+                    fixture.script.path =
+                        super::super::compile::compile_uncached_for_test_as_with_zones(
+                            &document,
+                            &fixture.script.selected,
+                            &fixture.script.quests,
+                            role.gang,
+                            zones,
+                        )
+                        .unwrap();
                     compiled.push((format!("{} {:?}", entry.id, role.gang), fixture));
                 }
             }
             None => {
                 let mut fixture = CookFixture::new(false, false);
-                fixture.script.path = super::super::compile::compile_uncached_for_test(
+                fixture.script.path = super::super::compile::compile_uncached_for_test_with_zones(
                     &document,
                     &fixture.script.selected,
                     &fixture.script.quests,
+                    zones,
                 )
                 .unwrap();
                 compiled.push((entry.id.clone(), fixture));

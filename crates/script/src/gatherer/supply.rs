@@ -957,7 +957,6 @@ mod tests {
                 selected,
                 Arc::default(),
                 None,
-                None,
             )
         })
         .unwrap()
