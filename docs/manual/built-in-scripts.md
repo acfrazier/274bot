@@ -105,8 +105,8 @@ the guide, where it loaded from, a fingerprint of the exact file, and the first
 step's comment. Stage changes, step starts, step skips and step finishes follow.
 A skip line names the check that passed. Warnings name failed steps and the
 reason a run parked. Repeated retries fold into one line with a count. Each
-stage keeps every step line, so the log of a long run does not stop after its
-first few steps.
+stage keeps the lines of its own steps and of the collection recipes those
+steps run, so the log of a long stage does not stop after its first few steps.
 
 If a quest needs items first, the Quester collects them before the quest steps
 begin. Those lines look the same as the lines of a collect step. A step start
