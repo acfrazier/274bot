@@ -4350,6 +4350,103 @@ mod tests {
             Some("retry-stop")
         );
     }
+
+    #[test]
+    fn alternating_budgeted_steps_hit_the_runwide_failure_bound() {
+        let (mut script, snapshot) = fixture();
+        let sequence_index = script
+            .path
+            .sequences
+            .iter()
+            .position(|sequence| sequence.steps.len() >= 2)
+            .expect("Cook has a sequence with two steps");
+        let mut step_ids = Vec::with_capacity(2);
+        {
+            let path = Arc::get_mut(&mut script.path).expect("unshared path");
+            for step in path.sequences[sequence_index].steps.iter_mut().take(2) {
+                step.attempt_budget = Some(StepAttemptBudget {
+                    max_attempts: 32,
+                    stop: Arc::from("retry-stop"),
+                });
+                step_ids.push(step.id.clone());
+            }
+        }
+        script.seq_index = sequence_index;
+
+        let mut ledger = None;
+        for failed_attempt in 0..32u8 {
+            let step_index = usize::from(failed_attempt % 2);
+            script.step_index = step_index;
+            script.stage = Some(FactKey::new(if step_index == 0 {
+                "alternating-stage-a"
+            } else {
+                "alternating-stage-b"
+            }));
+            script.reset_attempt_scope_if_needed(&step_ids[step_index]);
+            super::super::families::tests::with_tick(
+                &snapshot,
+                &mut ledger,
+                u64::from(failed_attempt) + 1,
+                |tick| {
+                    script.record_step_failure(
+                        ActionError::Failed(Arc::from("alternating failure")),
+                        tick,
+                    );
+                },
+            );
+            assert_eq!(script.fail_streak, failed_attempt + 1);
+            assert_eq!(script.parked, failed_attempt == 31);
+            if failed_attempt < 31 {
+                assert_eq!(script.step_attempts, 1);
+            }
+        }
+        assert!(script
+            .last_error
+            .as_deref()
+            .is_some_and(|message| message.contains("run retry limit")));
+        assert_eq!(script.step_attempts, 1);
+    }
+
+    #[test]
+    fn budgeted_failures_still_observe_the_no_progress_watchdog() {
+        let (mut script, snapshot) = fixture();
+        let sequence_index = script
+            .path
+            .sequences
+            .iter()
+            .position(|sequence| !sequence.steps.is_empty())
+            .expect("Cook has a nonempty sequence");
+        {
+            let path = Arc::get_mut(&mut script.path).expect("unshared path");
+            path.sequences[sequence_index].steps[0].attempt_budget = Some(StepAttemptBudget {
+                max_attempts: 32,
+                stop: Arc::from("retry-stop"),
+            });
+        }
+        script.seq_index = sequence_index;
+        script.step_index = 0;
+        script.stage = Some(FactKey::new("watchdog-stage"));
+        let step_id = script.current_step().expect("current step").id.clone();
+        script.reset_attempt_scope_if_needed(&step_id);
+
+        let mut ledger = None;
+        for tick in 1..=9 {
+            super::super::families::tests::with_tick(&snapshot, &mut ledger, tick, |native| {
+                script.record_step_failure(
+                    ActionError::Failed(Arc::from("unchanged failure")),
+                    native,
+                );
+            });
+            if script.parked {
+                break;
+            }
+        }
+
+        assert!(script.parked, "the no-progress watchdog still parks the run");
+        assert_eq!(script.watchdog.unchanged(), 8);
+        assert_eq!(script.step_attempts, 9);
+    }
+
     /// The Quester holds no bank table of its own (design-bank-snapshot D8):
     /// the account's memory is the host's and reaches it as a borrow.
     #[test]

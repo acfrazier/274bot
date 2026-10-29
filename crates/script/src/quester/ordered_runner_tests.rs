@@ -188,19 +188,36 @@ impl StepPlan for CountedStep {
     }
 }
 
-struct BlockedPoll;
+#[derive(Clone, Copy)]
+enum HardPollFailure {
+    Blocked,
+    NeedsEvidence,
+    UserInput,
+}
 
-impl StepPlan for BlockedPoll {
-    fn begin(&self, _: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
-        Ok(Box::new(BlockedPollRun))
+impl HardPollFailure {
+    fn error(self) -> ActionError {
+        match self {
+            Self::Blocked => ActionError::Blocked(Arc::from("action blocked")),
+            Self::NeedsEvidence => ActionError::NeedsEvidence(Vec::new()),
+            Self::UserInput => ActionError::UserInput,
+        }
     }
 }
 
-struct BlockedPollRun;
+struct HardPoll(HardPollFailure);
 
-impl StepRun for BlockedPollRun {
+impl StepPlan for HardPoll {
+    fn begin(&self, _: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+        Ok(Box::new(HardPollRun(self.0)))
+    }
+}
+
+struct HardPollRun(HardPollFailure);
+
+impl StepRun for HardPollRun {
     fn poll(&mut self, _: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        Poll::Ready(Err(ActionError::Blocked(Arc::from("action blocked"))))
+        Poll::Ready(Err(self.0.error()))
     }
 
     fn cancel(&mut self, _: &mut NativeActions) {}
@@ -690,10 +707,10 @@ fn budgeted_step_can_settle_after_31_failures_on_attempt_32() {
     assert!(status.fields.iter().any(|field| {
         field.key == "step_attempts" && matches!(&field.value, StatusValue::Integer(32))
     }));
-    assert!(status.fields.iter().any(|field| {
-        field.key == "step_stop"
-            && matches!(&field.value, StatusValue::Text(stop) if stop.as_ref() == "retry-limit-reached")
-    }));
+    assert!(
+        !status.fields.iter().any(|field| field.key == "step_stop"),
+        "a successful settle did not reach the configured stop"
+    );
 }
 
 #[test]
@@ -738,24 +755,20 @@ fn budgeted_step_parks_on_its_named_stop_after_32_failures() {
 }
 
 #[test]
-fn budgeted_hard_poll_failure_reports_its_named_stop() {
+fn budgeted_hard_poll_failure_does_not_report_an_unspent_stop() {
     let mut document = document(SequenceOrder::Ordered, |_| never(), never());
     document.roles[0].sequences[0].steps.truncate(1);
-    document.roles[0].sequences[0].steps[0].max_attempts = Some(1);
+    document.roles[0].sequences[0].steps[0].max_attempts = Some(2);
     document.roles[0].sequences[0].steps[0].stop = Some("blocked-stop".into());
 
     let mut harness = Harness::new(document);
     harness.script_reads(&[QuestListStatus::NotStarted]);
     let path = Arc::get_mut(&mut harness.script.path).expect("unshared path");
-    path.sequences[0].steps[0].plan = Arc::new(BlockedPoll);
+    path.sequences[0].steps[0].plan = Arc::new(HardPoll(HardPollFailure::Blocked));
     harness.run_until_parked();
 
     assert_eq!(harness.script.step_attempts, 1);
-    assert!(harness
-        .script
-        .last_error
-        .as_deref()
-        .is_some_and(|error| error.contains("blocked-stop")));
+    assert_eq!(harness.script.blocked_failure().message.as_ref(), "action blocked");
     let receipt = harness
         .script
         .last_attempt_receipt
@@ -765,6 +778,56 @@ fn budgeted_hard_poll_failure_reports_its_named_stop() {
     assert_eq!(
         receipt.attempt_stop().map(|stop| stop.as_ref()),
         Some("blocked-stop")
+    );
+    let status = harness.logs.1.last().expect("blocked status is published");
+    assert!(
+        !status.fields.iter().any(|field| field.key == "step_stop"),
+        "a hard failure before the limit does not report the configured stop"
+    );
+}
+
+#[test]
+fn budgeted_needs_evidence_failure_keeps_its_failure_kind() {
+    let mut document = document(SequenceOrder::Ordered, |_| never(), never());
+    document.roles[0].sequences[0].steps.truncate(1);
+    document.roles[0].sequences[0].steps[0].max_attempts = Some(1);
+    document.roles[0].sequences[0].steps[0].stop = Some("evidence-stop".into());
+
+    let mut harness = Harness::new(document);
+    harness.script_reads(&[QuestListStatus::NotStarted]);
+    let path = Arc::get_mut(&mut harness.script.path).expect("unshared path");
+    path.sequences[0].steps[0].plan = Arc::new(HardPoll(HardPollFailure::NeedsEvidence));
+    harness.run_until_parked();
+
+    let failure = harness.script.blocked_failure();
+    assert_eq!(failure.code.as_ref(), "needs-evidence");
+    assert!(failure.message.contains("evidence-stop"));
+}
+
+#[test]
+fn user_input_cancel_does_not_spend_budget_or_release_queued_quest() {
+    let mut document = document(SequenceOrder::Ordered, |_| never(), never());
+    document.roles[0].sequences[0].steps.truncate(1);
+    document.roles[0].sequences[0].steps[0].max_attempts = Some(1);
+    document.roles[0].sequences[0].steps[0].stop = Some("movement-stop".into());
+
+    let mut harness = Harness::new(document);
+    harness.script_reads(&[QuestListStatus::NotStarted]);
+    let path = Arc::get_mut(&mut harness.script.path).expect("unshared path");
+    path.sequences[0].steps[0].plan = Arc::new(HardPoll(HardPollFailure::UserInput));
+    harness.run_until_parked();
+
+    assert_eq!(harness.script.step_attempts, 0);
+    assert!(harness.script.last_attempt_receipt.is_none());
+    assert_eq!(
+        harness.script.blocked_failure().code.as_ref(),
+        "manual-movement",
+        "QueuedQuester holds a queue row when the active quest reports manual movement"
+    );
+    let status = harness.logs.1.last().expect("manual-movement status is published");
+    assert!(
+        !status.fields.iter().any(|field| field.key == "step_stop"),
+        "user input did not spend the step budget"
     );
 }
 
