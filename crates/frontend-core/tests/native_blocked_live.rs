@@ -11,44 +11,13 @@ use frontend_core::command::Completion;
 use frontend_core::scripts::{ScriptRunState, StatusView};
 use frontend_core::views::{script_status_label, script_status_reason, script_status_rows};
 use frontend_core::{
-    fleet_row_matches, HeadlessSurface, OperationId, OperatorCommand, OperatorSession, Targets,
+    fleet_row_matches, HeadlessSurface, OperatorCommand, OperatorSession, Targets,
 };
 use host::Pump;
 use host_play::{InstancePermit, ProfileOptions, SharedClientTemplate};
 use scenario::{Proof, RunnerStatus, ScenarioRunner, Step, StepKind, Wait};
 use serde_json::json;
 use vault::{Profile, ProfileSettings, RasterMode, Vault};
-
-fn wait_operation(
-    session: &mut OperatorSession<()>,
-    operation: OperationId,
-    account: &str,
-    deadline: Instant,
-) -> Result<(), String> {
-    loop {
-        session.poll();
-        let report = session
-            .operation(operation)
-            .ok_or_else(|| format!("operation {} disappeared", operation.0))?;
-        let outcome = report
-            .outcome(account)
-            .ok_or_else(|| format!("operation {} has no row for {account}", operation.0))?;
-        if outcome.is_completed() {
-            return Ok(());
-        }
-        if outcome.is_failed() || outcome.is_cancelled() || outcome.is_skipped() {
-            return Err(format!(
-                "operation {} did not complete: {}",
-                operation.0,
-                outcome.reason().unwrap_or("cancelled or skipped")
-            ));
-        }
-        if Instant::now() >= deadline {
-            return Err(format!("operation {} deadline", operation.0));
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
 
 fn submit_and_wait(
     session: &mut OperatorSession<()>,
@@ -57,13 +26,36 @@ fn submit_and_wait(
     account: &str,
     deadline: Instant,
 ) -> Result<(), String> {
-    let submitted = session
+    let request = session
         .submit(command, Targets::Profile(account), surface)
-        .map_err(|error| format!("submit {command:?}: {error:?}"))?;
-    let operation = submitted
-        .operation()
-        .ok_or_else(|| format!("{command:?} did not create an operation"))?;
-    wait_operation(session, operation, account, deadline)
+        .map_err(|error| format!("submit {command:?}: {error:?}"))?
+        .request();
+    loop {
+        session.poll();
+        let report = session
+            .commands()
+            .report(request)
+            .ok_or_else(|| format!("{command:?} report disappeared for {account}"))?;
+        let [member] = report.members() else {
+            return Err(format!(
+                "{command:?} targeted {} members instead of only {account}",
+                report.members().len()
+            ));
+        };
+        match member.terminal() {
+            Some(Settlement::Completed(Completion::Done)) => return Ok(()),
+            Some(terminal) => {
+                return Err(format!(
+                    "{command:?} did not complete for {account}: {terminal:?}"
+                ));
+            }
+            None => {}
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("{command:?} deadline for {account}"));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 fn wait_script_state(
@@ -295,26 +287,13 @@ fn gatherer_parked_status_is_shared_and_controllable() {
             &account,
             deadline,
         )?;
-        let selection = session
-            .submit(
-                OperatorCommand::Select,
-                Targets::Profile(&account),
-                &mut surface,
-            )
-            .map_err(|error| format!("submit Select: {error:?}"))?;
-        assert!(
-            selection.operation().is_none(),
-            "Select settles at dispatch"
-        );
-        let selected = session
-            .commands()
-            .report(selection.request())
-            .ok_or("Select command report disappeared")?;
-        assert_eq!(selected.members().len(), 1);
-        assert!(matches!(
-            selected.members()[0].terminal(),
-            Some(Settlement::Completed(Completion::Done))
-        ));
+        submit_and_wait(
+            &mut session,
+            &mut surface,
+            OperatorCommand::Select,
+            &account,
+            deadline,
+        )?;
         assert_eq!(session.selected(), Some(account.as_str()));
         loop {
             session.poll();
