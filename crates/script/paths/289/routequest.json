@@ -133,7 +133,7 @@
       ]},
       {"stage":"routequest:80","required":[],"terminal":false,"recovery_entry":null,"steps":[
         {"id":"fight-hellhound","kind":"combat","version":1,"advances":true,"comment":"content/scripts/quests/quest_routequest/scripts/route_cutscene.rs2:179-188; content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:584-615.",
-         "args":{"target":{"npc":"skeleton_hellhound","pick":"nearest"},"stand":{"tile":[3506,9834,0],"source":"content/scripts/quests/quest_routequest/scripts/route_cutscene.rs2:183-184"},"lost_radius":15,"kill_budget_ticks":500,"tactic":{"kind":"open","style":"melee","engage_radius":8,"auto_retaliate":true}},
+         "args":{"target":{"npc":"skeleton_hellhound","not_targeting_others":true,"pick":"nearest"},"stand":{"tile":[3506,9834,0],"source":"content/scripts/quests/quest_routequest/scripts/route_cutscene.rs2:183-184"},"lost_radius":15,"kill_budget_ticks":500,"tactic":{"kind":"open","style":"melee","engage_radius":8,"auto_retaliate":true}},
          "skip_if":{"Fact":{"kind":"flag","version":1,"args":{"quest":"routequest","flag":"routequest:hellhound-defeated"}}},"settle":{"Fact":{"kind":"flag","version":1,"args":{"quest":"routequest","flag":"routequest:hellhound-defeated"}}}}
       ]},
       {"stage":"routequest:complete","required":[],"terminal":true,"recovery_entry":null,"steps":[]}
