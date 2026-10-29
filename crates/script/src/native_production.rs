@@ -15,11 +15,11 @@ use std::task::Poll;
 // `content/scripts/skill_crafting/scripts/pottery/pottery.rs2:62-66`.
 // Neither waits before publishing its menu.
 const MENU_OBSERVATION_TICKS: u64 = 1;
-// P_COUNTDIALOG writes and suspends in one engine operation; its response
-// resumes the script synchronously:
-// `engine/src/engine/script/handlers/PlayerOps.ts:369-371` and
-// `engine/src/network/game/client/handler/ResumePCountDialogHandler.ts:7-16`.
-const MAKE_X_SIGNAL_TICKS: u64 = 1;
+// `skill_multi2` calls `p_countdialog` after a Make-X button selection
+// (`content/scripts/interface_chat/scripts/chat.rs2:741-743`). The engine
+// opens the input dialog and suspends the script (`engine/src/engine/script/handlers/PlayerOps.ts:369-371`).
+// Allow two observed game ticks for the button and count-dialog signals.
+const MAKE_X_SIGNAL_TICKS: u64 = 2;
 // The slowest output/repeat bound is three ticks in
 // `content/scripts/skill_crafting/scripts/spinning/spinning.rs2:83-99` and
 // `content/scripts/skill_smithing/scripts/smithing/smithing.rs2:269-286`.
@@ -203,7 +203,8 @@ impl NativeMachine for MakeMachine {
                     self.phase == Phase::MakeX && self.make_x.phase() != MakeXPhase::Select;
                 let main_make_pending = self.phase == Phase::Product
                     && self.surface == Some(Surface::MainMake)
-                    && tick < self.main_make_ready_tick;
+                    && (tick < self.main_make_ready_tick
+                        || now_held.is_some_and(|count| count > self.last_held));
                 if !make_x_pending && !main_make_pending {
                     return Poll::Ready(Ok(MakeReceipt { held: current }));
                 }
@@ -280,6 +281,9 @@ impl NativeMachine for MakeMachine {
                             self.surface = Some(Surface::Chat);
                             self.active_target = self.request.qty;
                             self.last_held = current;
+                            if now_held.is_some_and(|count| count >= self.request.qty) {
+                                return Poll::Ready(Ok(MakeReceipt { held: current }));
+                            }
                             self.deadline_tick = tick.saturating_add(PRODUCT_PROGRESS_TICKS);
                             return Poll::Pending;
                         }
@@ -558,7 +562,7 @@ mod tests {
         );
         for (component_id, button_text) in button_ids.into_iter().zip(button_texts) {
             client.set_iface(
-                component_id,
+                component_id as usize,
                 IfType {
                     id: component_id,
                     layer_id: 2100,
@@ -568,7 +572,7 @@ mod tests {
                 },
             );
             client.set_iface_mut(
-                component_id,
+                component_id as usize,
                 IfTypeMut {
                     button_type: ButtonType::BUTTON_OK,
                     ..Default::default()
@@ -596,7 +600,7 @@ mod tests {
 
     fn held_product(count: i32) -> api::snapshot::ItemView {
         api::snapshot::ItemView {
-            def: api::snapshot::ItemDefView {
+            def: api::ItemDefView {
                 id: 1759,
                 name: Some("Ball of wool".into()),
                 stackable: false,

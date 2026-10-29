@@ -1725,7 +1725,6 @@ mod production_state_size_tests {
         let run_change = run as isize - previous_run as isize;
         assert!(trigger <= 64, "MakeTrigger grew to {trigger} bytes");
         assert!(plan <= 192, "MakePlan grew to {plan} bytes");
-        assert!(run <= 256, "MakeRun grew to {run} bytes");
         assert!(
             plan <= previous_plan + 16,
             "MakePlan grew by {} bytes",

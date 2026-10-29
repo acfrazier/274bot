@@ -3257,7 +3257,7 @@ fn production_menu_client(rows: &[(i32, &str)]) -> client::client::Client {
     for (row_index, (object_id, _)) in rows.iter().enumerate() {
         let row_base = 2110 + row_index as i32 * 20;
         client.set_iface(
-            row_base,
+            row_base as usize,
             IfType {
                 id: row_base,
                 layer_id: 2100,
@@ -3266,7 +3266,7 @@ fn production_menu_client(rows: &[(i32, &str)]) -> client::client::Client {
             },
         );
         client.set_iface_mut(
-            row_base,
+            row_base as usize,
             IfTypeMut {
                 model1_type: 4,
                 model1_id: *object_id,
@@ -3276,7 +3276,7 @@ fn production_menu_client(rows: &[(i32, &str)]) -> client::client::Client {
         for (index, text) in button_texts.iter().enumerate() {
             let component_id = row_base + 10 + index as i32;
             client.set_iface(
-                component_id,
+                component_id as usize,
                 IfType {
                     id: component_id,
                     layer_id: 2100,
@@ -3286,7 +3286,7 @@ fn production_menu_client(rows: &[(i32, &str)]) -> client::client::Client {
                 },
             );
             client.set_iface_mut(
-                component_id,
+                component_id as usize,
                 IfTypeMut {
                     button_type: ButtonType::BUTTON_OK,
                     ..Default::default()
@@ -3503,16 +3503,20 @@ fn item_on_item_use_on_emits_the_selected_inventory_target() {
             ],
             28,
         );
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
         assert!(matches!(
-            with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_tick(&snapshot, &mut ledger, 5, |tick| {
                 with_step(tick, |cx| run.poll(cx))
             }),
             Poll::Ready(Ok(_))
         ));
-        let mut make_run = with_tick(&snapshot, &mut ledger, 5, |tick| {
+        let mut make_run = with_tick(&snapshot, &mut ledger, 6, |tick| {
             with_step(tick, |cx| make.begin(cx).unwrap())
         });
-        assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
+        assert!(with_tick(&snapshot, &mut ledger, 7, |tick| {
             with_step(tick, |cx| make_run.poll(cx))
         })
         .is_pending());
@@ -3584,16 +3588,20 @@ fn item_on_location_use_on_opens_pottery_product_selection() {
         snapshot.rebuild_family(&client, api::snapshot::Family::Modals);
         snapshot.seed_inventory(vec![held(source_id, "Soft clay", 6, 1, None)], 28);
         assert_ne!(source_id, product_id);
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
         assert!(matches!(
-            with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_tick(&snapshot, &mut ledger, 5, |tick| {
                 with_step(tick, |cx| run.poll(cx))
             }),
             Poll::Ready(Ok(_))
         ));
-        let mut make_run = with_tick(&snapshot, &mut ledger, 5, |tick| {
+        let mut make_run = with_tick(&snapshot, &mut ledger, 6, |tick| {
             with_step(tick, |cx| make.begin(cx).unwrap())
         });
-        assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
+        assert!(with_tick(&snapshot, &mut ledger, 7, |tick| {
             with_step(tick, |cx| make_run.poll(cx))
         })
         .is_pending());
@@ -3664,16 +3672,20 @@ fn item_on_anvil_make_selects_bronze_wire_main_make_row() {
         snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake);
         snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
         assert_ne!(bar_id, product_id);
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |cx| use_on_run.poll(cx))
+        })
+        .is_pending());
         assert!(matches!(
-            with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_tick(&snapshot, &mut ledger, 5, |tick| {
                 with_step(tick, |cx| use_on_run.poll(cx))
             }),
             Poll::Ready(Ok(_))
         ));
-        let mut make_run = with_tick(&snapshot, &mut ledger, 5, |tick| {
+        let mut make_run = with_tick(&snapshot, &mut ledger, 6, |tick| {
             with_step(tick, |cx| make.begin(cx).unwrap())
         });
-        assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
+        assert!(with_tick(&snapshot, &mut ledger, 7, |tick| {
             with_step(tick, |cx| make_run.poll(cx))
         })
         .is_pending());
