@@ -228,6 +228,7 @@ if (%heroquest >= ^hero_complete) {
         assert!(edge.quest_req.is_empty(), "{edge:?}");
         assert!(edge.varp_req.is_empty(), "{edge:?}");
         let gates = edge.quest_gates.as_ref().expect("typed quest gate");
+        assert_eq!(gates.family(), &quests.family);
         let [api::selected::QuestGate::Window(window)] = gates.gates() else {
             panic!("stage comparison must retain its exact window: {gates:?}");
         };
@@ -252,12 +253,17 @@ if (%heroquest >= ^hero_complete) {
     assert_eq!(exact_edges.len(), 2);
     for edge in exact_edges {
         let gates = edge.quest_gates.as_ref().expect("typed quest gate");
+        assert_eq!(gates.family(), &quests.family);
         assert!(
             matches!(
                 gates.gates(),
-                [api::selected::QuestGate::Complete(quest)] if quest.0.as_ref() == "hero"
+                [api::selected::QuestGate::Window(window)]
+                    if window.quest.0.as_ref() == "hero"
+                        && window.signal.0.as_ref() == "heroquest"
+                        && window.values.min == Some(15)
+                        && window.values.max == Some(15)
             ),
-            "completion equality remains exact: {gates:?}"
+            "exact completion still needs an exact window when later stages exist: {gates:?}"
         );
     }
 }
@@ -276,6 +282,24 @@ fn with_authoritative_hero(check: impl FnOnce(&QuestSource<'_>)) {
         min: Some(0),
         max: Some(20),
     });
+    row.transmission = api::quest_facts::Transmission::NotTransmitted;
+    check(&QuestSource {
+        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+        facts: &facts,
+    });
+}
+
+fn with_journal_only_hero(check: impl FnOnce(&QuestSource<'_>)) {
+    let selected =
+        api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
+    let (mut facts, identity) = selected.quest_identity_for_bake().expect("verified family");
+    let row = facts
+        .rows
+        .iter_mut()
+        .find(|row| row.varp == "heroquest")
+        .unwrap();
+    row.colour_authoritative = true;
+    row.stage_domain = None;
     row.transmission = api::quest_facts::Transmission::NotTransmitted;
     check(&QuestSource {
         family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
@@ -351,17 +375,53 @@ fn post_completion_pass_through_keeps_exact_stage_and_current_player() {
         for edge in edges {
             assert_eq!(edge.kind, TransportKind::Door);
             assert_eq!(edge.to, tile(2826, 3439));
-            assert!(
-                matches!(
-                    edge.quest_gates.as_ref().unwrap().gates(),
-                    [api::selected::QuestGate::Window(window)]
-                        if window.signal.0.as_ref() == "heroquest"
-                            && window.values.min == Some(16)
-                            && window.values.max == Some(16)
-                ),
-                "{edge:?}"
+            let gates = edge.quest_gates.as_ref().expect("typed quest window");
+            assert_eq!(gates.family(), &quests.family);
+            let [api::selected::QuestGate::Window(window)] = gates.gates() else {
+                panic!("exact post-completion stage must remain a window: {gates:?}");
+            };
+            assert_eq!(window.quest, api::selected::FactKey::new("hero"));
+            assert_eq!(window.signal, api::selected::FactKey::new("heroquest"));
+            assert_eq!(
+                window.values,
+                api::selected::InclusiveRange {
+                    min: Some(16),
+                    max: Some(16),
+                }
             );
         }
+    });
+
+    // A non-current uid is unresolved and cannot authorize the same crossing.
+    let other_fx = plain_opener_fixture(
+        "[oploc1,plain_door]\n\
+         if (%heroquest = 16) {\n\
+           if (p_finduid(other_uid) = true) { p_telejump(0_44_53_10_47); }\n\
+         }\n",
+    );
+    write_open_square(&other_fx, "0 5 46: 900 10 0\n");
+    let other_defs = LocDefs::from_locs(&[LocType {
+        id: 900,
+        width: 1,
+        length: 1,
+        blockwalk: false,
+        op: vec![Some("Pass-through".to_owned())],
+        ..Default::default()
+    }]);
+    let other_collision = bake_collision(&other_fx, &other_defs, &HashSet::new());
+    with_authoritative_hero(|quests| {
+        let graph = derive_transports_with_audit(
+            other_fx.path(),
+            &other_defs,
+            &other_collision,
+            None,
+            Some(quests),
+        )
+        .0;
+        assert!(
+            !graph.edges.iter().any(|edge| edge.loc_id == 900),
+            "non-current uid lookup must fail closed"
+        );
     });
 }
 
@@ -1841,9 +1901,17 @@ fn death_plateau_rocks_cross_only_with_strictly_worn_climbing_boots() {
     ));
 }
 
-fn derive_entrance_fixture(fx: &Fixture) -> (TransportGraph, WorldCollision) {
+fn derive_entrance_fixture_with_quests(
+    fx: &Fixture,
+    quests: &QuestSource<'_>,
+) -> (TransportGraph, WorldCollision) {
     let defs = loc_defs(&[(6000, 2, 2), (6001, 2, 2)]);
     let collision = bake_collision(fx, &defs, &HashSet::new());
+    let graph = derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(quests)).0;
+    (graph, collision)
+}
+
+fn derive_entrance_fixture(fx: &Fixture) -> (TransportGraph, WorldCollision) {
     let selected =
         api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
     let (facts, identity) = selected.quest_identity_for_bake().expect("verified family");
@@ -1851,8 +1919,7 @@ fn derive_entrance_fixture(fx: &Fixture) -> (TransportGraph, WorldCollision) {
         family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
         facts: &facts,
     };
-    let graph = derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(&quests)).0;
-    (graph, collision)
+    derive_entrance_fixture_with_quests(fx, &quests)
 }
 
 #[test]
@@ -2062,17 +2129,20 @@ if(%heroquest ! ^hero_complete) { return; }
 p_teleport(0_44_53_5_46);
 "#,
         );
-        // A queue is not an entrance handler. Its writes still constrain
-        // what the completed journal row can prove.
+        // These later writes exceed the selected Hero domain (0..=15), so
+        // this synthetic uncertainty uses an authoritative journal colour
+        // with no bounded stage-domain claim.
         fx.write(
             "scripts/later.rs2",
             &format!("[queue,later]\n{later_write}\n"),
         );
-        let (graph, _) = derive_entrance_fixture(&fx);
-        assert!(
-            !graph.edges.iter().any(|edge| edge.loc_id == 6000),
-            "green means at least completion, not equality: {later_write}"
-        );
+        with_journal_only_hero(|quests| {
+            let (graph, _) = derive_entrance_fixture_with_quests(&fx, quests);
+            assert!(
+                !graph.edges.iter().any(|edge| edge.loc_id == 6000),
+                "green means at least completion, not equality: {later_write}"
+            );
+        });
     }
 }
 
@@ -2089,15 +2159,20 @@ p_teleport(0_44_53_5_46);
 %heroquest = calc(%heroquest + 1);
 "#,
     );
-    let (graph, _) = derive_entrance_fixture(&fx);
-    let edges: Vec<_> = graph
-        .edges
-        .iter()
-        .filter(|edge| edge.loc_id == 6000)
-        .collect();
-    assert!(!edges.is_empty());
-    assert!(edges.iter().all(|edge| edge.quest_gates.as_ref().is_some_and(|gates|
-        matches!(gates.gates(), [api::selected::QuestGate::Complete(quest)] if quest.0.as_ref() == "hero"))));
+    // The synthetic queue write can advance beyond the selected 0..=15
+    // domain. Journal-only facts still prove completion, hence the earlier
+    // threshold, without claiming exact progress after a possible later write.
+    with_journal_only_hero(|quests| {
+        let (graph, _) = derive_entrance_fixture_with_quests(&fx, quests);
+        let edges: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.loc_id == 6000)
+            .collect();
+        assert!(!edges.is_empty());
+        assert!(edges.iter().all(|edge| edge.quest_gates.as_ref().is_some_and(|gates|
+            matches!(gates.gates(), [api::selected::QuestGate::Complete(quest)] if quest.0.as_ref() == "hero"))));
+    });
 }
 
 #[test]

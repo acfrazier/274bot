@@ -8,6 +8,135 @@ use super::*;
 const MAX_ALTERNATIVES: usize = 65_536;
 const MAX_READ_BLOCKS: usize = 64;
 
+#[derive(Clone)]
+struct StagePartition {
+    varp: String,
+    values: api::selected::InclusiveRange,
+}
+
+struct StageDimension {
+    varp: String,
+    ranges: Vec<api::selected::InclusiveRange>,
+}
+
+fn stage_scalar(expr: &Expr, src: &Sources) -> Option<i32> {
+    match expr {
+        Expr::Num(value) => Some(*value),
+        Expr::Word(name) => name
+            .strip_prefix('^')
+            .and_then(|name| src.constants.get(name))
+            .copied(),
+        _ => None,
+    }
+}
+
+// Exact stage partitions are sound only when every read has a bounded
+// authoritative domain and every quest use is a static comparison.
+fn stage_dimensions(reads: &Reads, src: &Sources) -> Result<Option<Vec<StageDimension>>, ()> {
+    if reads.quests.is_empty()
+        || src.quest_family.is_none()
+        || !reads.stage_partitionable
+    {
+        return Ok(None);
+    }
+    let mut varps: Vec<_> = reads.quests.iter().collect();
+    varps.sort_unstable();
+    let mut dimensions = Vec::with_capacity(varps.len());
+    for varp in varps {
+        let Some(varp_name) = varp.strip_prefix('%') else {
+            return Ok(None);
+        };
+        let Some((_, complete)) = src.quest_complete.get(varp_name) else {
+            return Ok(None);
+        };
+        let Some(facts) = src.quest_stage.get(varp_name).copied() else {
+            return Ok(None);
+        };
+        let Some((min, max)) = authoritative_stage_domain(facts, *complete) else {
+            return Ok(None);
+        };
+        let mut boundaries = vec![min];
+        let thresholds = reads
+            .stage_thresholds
+            .get(varp)
+            .into_iter()
+            .flat_map(|values| values.iter().copied())
+            .chain([*complete]);
+        for threshold in thresholds {
+            for boundary in [Some(threshold), threshold.checked_add(1)] {
+                if let Some(boundary) = boundary.filter(|value| *value > min && *value <= max) {
+                    boundaries.push(boundary);
+                }
+            }
+        }
+        boundaries.sort_unstable();
+        boundaries.dedup();
+        let mut ranges = Vec::with_capacity(boundaries.len());
+        for (index, &range_min) in boundaries.iter().enumerate() {
+            let range_max = boundaries
+                .get(index + 1)
+                .map_or(max, |next| next - 1);
+            ranges.push(api::selected::InclusiveRange {
+                min: Some(range_min),
+                max: Some(range_max),
+            });
+        }
+        if ranges.len() > MAX_ALTERNATIVES {
+            return Err(());
+        }
+        dimensions.push(StageDimension {
+            varp: varp.clone(),
+            ranges,
+        });
+    }
+    Ok(Some(dimensions))
+}
+
+fn stage_variants(dimensions: &[StageDimension]) -> Vec<Vec<StagePartition>> {
+    let mut variants = vec![Vec::new()];
+    for dimension in dimensions {
+        let mut next = Vec::with_capacity(variants.len() * dimension.ranges.len());
+        for variant in &variants {
+            for &values in &dimension.ranges {
+                let mut next_variant = variant.clone();
+                next_variant.push(StagePartition {
+                    varp: dimension.varp.clone(),
+                    values,
+                });
+                next.push(next_variant);
+            }
+        }
+        variants = next;
+    }
+    variants
+}
+
+fn stage_partition<'a>(ranges: &'a [StagePartition], varp: &str) -> Option<&'a StagePartition> {
+    ranges.iter().find(|range| range.varp == varp)
+}
+
+fn quest_gate(
+    quest: &api::selected::FactKey,
+    signal: &str,
+    values: api::selected::InclusiveRange,
+    complete: i32,
+    domain_max: i32,
+) -> api::selected::QuestGate {
+    if domain_max == complete
+        && values.min == Some(complete)
+        && values.max == Some(complete)
+    {
+        api::selected::QuestGate::Complete(quest.clone())
+    } else {
+        api::selected::QuestGate::Window(api::selected::StageWindow {
+            quest: quest.clone(),
+            signal: api::selected::FactKey::new(signal),
+            values,
+        })
+    }
+}
+
+
 #[derive(Clone, Copy)]
 pub(super) struct Inputs<'a> {
     facts: &'a Facts,
@@ -16,6 +145,7 @@ pub(super) struct Inputs<'a> {
     npc_queries: &'a [Expr],
     npc_mask: usize,
     complete: bool,
+    stage_ranges: Option<&'a [StagePartition]>,
     above_queries: &'a [String],
     above_mask: usize,
 }
@@ -25,6 +155,7 @@ struct Reads {
     items: Vec<i32>,
     npc: Vec<Expr>,
     quests: HashSet<String>,
+    stage_partitionable: bool,
     seen: HashSet<String>,
     valid: bool,
 }
@@ -35,6 +166,7 @@ impl Reads {
             Expr::Word(name) if name.starts_with('%') => {
                 if src.quest_complete.contains_key(&name[1..]) {
                     self.quests.insert(name.clone());
+                    self.stage_partitionable = false;
                 }
             }
             Expr::Word(name) if name.starts_with('~') => self.procedure(&name[1..], src),
@@ -58,7 +190,41 @@ impl Reads {
                     self.expression(arg, src);
                 }
             }
-            Expr::Cmp(_, a, b) | Expr::And(a, b) | Expr::Or(a, b) | Expr::Arithmetic(_, a, b) => {
+            Expr::Cmp(_, a, b) => {
+                let stage_varp = match a.as_ref() {
+                    Expr::Word(varp)
+                        if varp.starts_with('%')
+                            && src.quest_complete.contains_key(&varp[1..]) =>
+                    {
+                        Some(varp.clone())
+                    }
+                    _ => None,
+                };
+                if let Some(varp) = stage_varp {
+                    self.quests.insert(varp.clone());
+                    if let Some(threshold) = stage_scalar(b, src) {
+                        let overflow = {
+                            let thresholds = self.stage_thresholds.entry(varp).or_default();
+                            if thresholds.contains(&threshold) {
+                                false
+                            } else if thresholds.len() >= MAX_ALTERNATIVES / 2 {
+                                true
+                            } else {
+                                thresholds.insert(threshold);
+                                false
+                            }
+                        };
+                        self.valid &= !overflow;
+                    } else {
+                        self.stage_partitionable = false;
+                    }
+                    self.expression(b, src);
+                } else {
+                    self.expression(a, src);
+                    self.expression(b, src);
+                }
+            }
+            Expr::And(a, b) | Expr::Or(a, b) | Expr::Arithmetic(_, a, b) => {
                 self.expression(a, src);
                 self.expression(b, src);
             }
@@ -296,12 +462,20 @@ impl Motion<'_> {
                     .quest_family
                     .and_then(|_| self.base.src.quest_stage.get(quest_varp).copied())
                     .and_then(|facts| authoritative_stage_domain(facts, *complete));
+                let selected_stage = input
+                    .stage_ranges
+                    .and_then(|ranges| stage_partition(ranges, varp));
                 let above = input
                     .above_queries
                     .iter()
                     .position(|name| name == varp)
                     .is_some_and(|index| input.above_mask & (1usize << index) != 0);
-                let (min, max) = if let Some((domain_min, domain_max)) = stage_domain {
+                let (min, max) = if let Some(stage) = selected_stage {
+                    let (Some(min), Some(max)) = (stage.values.min, stage.values.max) else {
+                        return Some(Cond::unknown());
+                    };
+                    (min, max)
+                } else if let Some((domain_min, domain_max)) = stage_domain {
                     if !input.complete {
                         (domain_min, complete.checked_sub(1)?)
                     } else if above {
@@ -320,40 +494,36 @@ impl Motion<'_> {
                     return Some(Cond::unknown());
                 }
                 let value = comparison_value(op, min, max, threshold);
-                let needs = if let Some((domain_min, domain_max)) = stage_domain {
-                    if op == CmpOp::Eq && threshold == *complete {
-                        if input.complete {
-                            Needs {
-                                quests: vec![api::selected::QuestGate::Complete(quest.clone())],
-                                quest_family: self.base.src.quest_family,
-                                ..Needs::default()
-                            }
-                        } else {
-                            Needs::default()
-                        }
+                let needs = if let Some((_, domain_max)) = stage_domain {
+                    let Some(quest_family) = self.base.src.quest_family else {
+                        return Some(Cond::unknown());
+                    };
+                    let values = if let Some(stage) = selected_stage {
+                        stage.values
                     } else {
                         let Some(branch_value) = value else {
                             return Some(Cond::unknown());
+                        };
+                        let Some((domain_min, domain_max)) = stage_domain else {
+                            unreachable!("matched authoritative stage domain");
                         };
                         let Some(values) =
                             comparison_window(op, branch_value, threshold, domain_min, domain_max)
                         else {
                             return Some(Cond::unknown());
                         };
-                        let Some(quest_family) = self.base.src.quest_family else {
-                            return Some(Cond::unknown());
-                        };
-                        Needs {
-                            quests: vec![api::selected::QuestGate::Window(
-                                api::selected::StageWindow {
-                                    quest: quest.clone(),
-                                    signal: api::selected::FactKey::new(quest_varp),
-                                    values,
-                                },
-                            )],
-                            quest_family: Some(quest_family),
-                            ..Needs::default()
-                        }
+                        values
+                    };
+                    Needs {
+                        quests: vec![quest_gate(
+                            quest,
+                            quest_varp,
+                            values,
+                            *complete,
+                            domain_max,
+                        )],
+                        quest_family: Some(quest_family),
+                        ..Needs::default()
                     }
                 } else if input.complete {
                     Needs {
@@ -577,6 +747,7 @@ struct TrajectoryInputs<'a> {
     npc: &'a [Expr],
     above: &'a [String],
     complete: bool,
+    stage_ranges: Option<&'a [StagePartition]>,
     above_mask: Option<usize>,
 }
 
@@ -596,6 +767,7 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
         npc,
         above,
         complete,
+        stage_ranges: selected_stages,
         above_mask: selected_above,
     } = input;
     let at = WorldTile {
@@ -608,7 +780,7 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
     // NPC presence is always universally quantified. A typed stage window
     // can distinguish completion from a later stage; legacy completion
     // evidence cannot, so it still proves every above-completion variant.
-    let above_bits = if selected_above.is_some() {
+    let above_bits = if selected_stages.is_some() || selected_above.is_some() {
         0
     } else {
         above.len()
@@ -645,6 +817,7 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
                 npc_queries: npc,
                 npc_mask,
                 complete,
+                stage_ranges: selected_stages,
                 above_queries: above,
                 above_mask,
             }),
@@ -756,6 +929,7 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                 continue;
             }
             let mut reads = Reads {
+                stage_partitionable: true,
                 valid: true,
                 ..Reads::default()
             };
@@ -772,15 +946,7 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                 .cloned()
                 .collect();
             above.sort_unstable();
-            let Some(bits) = reads
-                .items
-                .len()
-                .checked_add(reads.npc.len())
-                .and_then(|bits| bits.checked_add(above.len()))
-            else {
-                continue;
-            };
-            if !reads.valid || bits >= usize::BITS as usize || (1usize << bits) > MAX_ALTERNATIVES {
+            if !reads.valid {
                 bump(
                     skipped,
                     "loc entrance exceeds bounded content alternatives",
@@ -788,15 +954,64 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                 );
                 continue;
             }
-            let stage_variants = (!above.is_empty()
-                && above.iter().all(|name| {
-                    src.quest_family.is_some()
-                        && src.quest_stage.get(&name[1..]).is_some_and(|facts| {
-                            authoritative_stage_domain(*facts, src.quest_complete[&name[1..]].1)
-                                .is_some()
-                        })
+            // Otherwise retain the universal completion/above-stage analysis.
+            let stage_dimensions = match stage_dimensions(&reads, src) {
+                Ok(dimensions) => dimensions,
+                Err(()) => {
+                    bump(
+                        skipped,
+                        "loc entrance exceeds bounded content alternatives",
+                        1,
+                    );
+                    continue;
+                }
+            };
+            let stage_count = stage_dimensions.as_ref().map_or(Some(1), |dimensions| {
+                dimensions.iter().try_fold(1usize, |count, dimension| {
+                    count.checked_mul(dimension.ranges.len())
+                })
+            });
+            let Some(stage_count) = stage_count else {
+                bump(
+                    skipped,
+                    "loc entrance exceeds bounded content alternatives",
+                    1,
+                );
+                continue;
+            };
+            let Some(mask_bits) = reads
+                .items
+                .len()
+                .checked_add(reads.npc.len())
+                .and_then(|bits| bits.checked_add(if stage_dimensions.is_some() {
+                    0
+                } else {
+                    above.len()
                 }))
-            .then_some(1usize << above.len());
+            else {
+                bump(
+                    skipped,
+                    "loc entrance exceeds bounded content alternatives",
+                    1,
+                );
+                continue;
+            };
+            if mask_bits >= usize::BITS as usize
+                || (1usize << mask_bits)
+                    .checked_mul(stage_count)
+                    .is_none_or(|count| count > MAX_ALTERNATIVES)
+            {
+                bump(
+                    skipped,
+                    "loc entrance exceeds bounded content alternatives",
+                    1,
+                );
+                continue;
+            }
+            let stage_variants = stage_dimensions
+                .as_deref()
+                .map(stage_variants);
+            let member_path = src.has_member_reads(handler);
             let kind = if defs
                 .op_at(id, option)
                 .is_some_and(|operation| operation.eq_ignore_ascii_case("Pass-through"))
@@ -864,61 +1079,75 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                                 (mask & (1usize << index) != 0).then_some(id)
                             })
                             .collect();
-                        for above_mask in 0..stage_variants.unwrap_or(1) {
-                            let trajectory_inputs = TrajectoryInputs {
-                                src,
-                                facts,
-                                positions,
-                                proofs,
-                                supported,
-                                selectors,
-                                handler,
-                                id,
-                                placement,
-                                stand,
-                                absent: &absent,
-                                npc: &reads.npc,
-                                above: &above,
-                                complete: true,
-                                above_mask: stage_variants.map(|_| above_mask),
-                            };
-                            let complete = trajectory(trajectory_inputs);
-                            let incomplete = (reads.quests.len() == 1)
-                                .then(|| {
-                                    trajectory(TrajectoryInputs {
-                                        complete: false,
-                                        ..trajectory_inputs
-                                    })
-                                })
-                                .flatten();
-                            let incomplete = incomplete.filter(|candidate| {
-                                complete.as_ref().is_some_and(|other| {
-                                    other.to == candidate.to
-                                        && weaker_than(&other.needs, &candidate.needs)
-                                })
-                            });
-                            for result in [complete, incomplete].into_iter().flatten() {
+                        let trajectory_inputs = TrajectoryInputs {
+                            src,
+                            facts,
+                            positions,
+                            proofs,
+                            supported,
+                            selectors,
+                            handler,
+                            id,
+                            placement,
+                            stand,
+                            absent: &absent,
+                            npc: &reads.npc,
+                            above: &above,
+                            complete: true,
+                            stage_ranges: None,
+                            above_mask: None,
+                        };
+                        {
+                            let mut admit = |result: Trajectory| {
                                 if result.needs.quests.is_empty()
                                     && result.needs.forbidden_held.is_empty()
                                     && result.needs.forbidden_worn.is_empty()
                                     && result.needs.items.is_empty()
                                     && result.needs.worn.is_empty()
                                 {
-                                    continue;
+                                    return;
                                 }
                                 if !collision.standable(result.to) {
-                                    continue;
+                                    return;
                                 }
-                                let mut edge = gated_edge(kind, id, at, result.to, result.needs);
+                                let mut edge =
+                                    gated_edge(kind, id, at, result.to, result.needs);
                                 edge.takeoff = Some(stand);
                                 edge.option = option;
                                 edge.ticks = result.ticks;
-                                if observable.admit_edge(graph, edge, audit)
-                                    && src.has_member_reads(handler)
-                                {
+                                if observable.admit_edge(graph, edge, audit) && member_path {
                                     audit.record_member_path(
                                         graph.edges.last().expect("admitted edge"),
                                     );
+                                }
+                            };
+                            if let Some(variants) = &stage_variants {
+                                for stage_ranges in variants {
+                                    if let Some(result) = trajectory(TrajectoryInputs {
+                                        stage_ranges: Some(stage_ranges),
+                                        ..trajectory_inputs
+                                    }) {
+                                        admit(result);
+                                    }
+                                }
+                            } else {
+                                let complete = trajectory(trajectory_inputs);
+                                let incomplete = (reads.quests.len() == 1)
+                                    .then(|| {
+                                        trajectory(TrajectoryInputs {
+                                            complete: false,
+                                            ..trajectory_inputs
+                                        })
+                                    })
+                                    .flatten();
+                                let incomplete = incomplete.filter(|candidate| {
+                                    complete.as_ref().is_some_and(|other| {
+                                        other.to == candidate.to
+                                            && weaker_than(&other.needs, &candidate.needs)
+                                    })
+                                });
+                                for result in [complete, incomplete].into_iter().flatten() {
+                                    admit(result);
                                 }
                             }
                         }

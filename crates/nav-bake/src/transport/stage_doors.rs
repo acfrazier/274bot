@@ -1347,7 +1347,12 @@ impl Eval<'_> {
                         let Some(values) = comparison_window(op, value, c, min, max) else {
                             return Cond::unknown();
                         };
-                        let gate = if op == CmpOp::Eq && c == *complete && value {
+                        // A green journal row is canonical only when the
+                        // authoritative domain makes completion exact.
+                        let gate = if max == *complete
+                            && values.min == Some(*complete)
+                            && values.max == Some(*complete)
+                        {
                             api::selected::QuestGate::Complete(quest.clone())
                         } else {
                             api::selected::QuestGate::Window(api::selected::StageWindow {
