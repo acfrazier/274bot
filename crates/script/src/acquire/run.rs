@@ -15,6 +15,7 @@ use std::task::Poll;
 
 const MAX_OPEN_ATTEMPTS: u8 = 3;
 const MAX_CLOSE_ATTEMPTS: u8 = 3;
+const _: () = assert!(2 * MAX_MEMO <= u8::MAX as usize);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -45,6 +46,13 @@ enum Active {
     Wear(ActionHandle<OneOp>),
 }
 
+#[derive(Clone, Copy)]
+enum WearStep {
+    Ready(i32),
+    PendingPurchase(u8),
+    Skip,
+}
+
 pub struct AcquireRun {
     request: AcquireRequest,
     banks: Arc<NamedBankFacts>,
@@ -58,11 +66,8 @@ pub struct AcquireRun {
     access: Option<Arc<BankStandAccess>>,
     target: Option<WorldTile>,
     withdrawals: Option<Arc<[Withdrawal]>>,
-    wears: Option<Arc<[i32]>>,
-    // Lazily stores at most one post-purchase wear per bounded purchase.
-    shop_wears: Option<Vec<i32>>,
-    shop_wear_index: u8,
-    wear_shop_active: bool,
+    // Planned and post-purchase steps share one queue, bounded by 2 * MAX_MEMO.
+    wears: Option<Box<[WearStep]>>,
     purchases: Option<Arc<[Purchase]>>,
     // One purchase per need, bounded by MAX_MEMO (64).
     purchase_index: u8,
@@ -137,9 +142,6 @@ impl AcquireRun {
             target: None,
             withdrawals: None,
             wears: None,
-            shop_wears: None,
-            shop_wear_index: 0,
-            wear_shop_active: false,
             purchases: None,
             purchase_index: 0,
             shop: None,
@@ -424,13 +426,7 @@ impl AcquireRun {
                             })?;
                             self.complete &= !short;
                             self.short_of_target += u8::from(short);
-                            if let Some(id) = wear {
-                                let capacity =
-                                    self.purchases.as_deref().map_or(0, |items| items.len());
-                                self.shop_wears
-                                    .get_or_insert_with(|| Vec::with_capacity(capacity))
-                                    .push(id);
-                            }
+                            self.settle_shop_wear(purchase.need, wear);
                             self.shop = None;
                             self.purchase_index += 1;
                         }
@@ -441,23 +437,24 @@ impl AcquireRun {
                     }
                 }
                 Phase::Wear => {
-                    let planned_id = self
+                    let step = self
                         .wears
                         .as_deref()
-                        .and_then(|ids| ids.get(usize::from(self.wear_index)))
+                        .and_then(|steps| steps.get(usize::from(self.wear_index)))
                         .copied();
-                    let (id, from_shop) = if let Some(id) = planned_id {
-                        (id, false)
-                    } else if let Some(id) = self
-                        .shop_wears
-                        .as_deref()
-                        .and_then(|ids| ids.get(usize::from(self.shop_wear_index)))
-                        .copied()
-                    {
-                        (id, true)
-                    } else {
-                        self.phase = Phase::Child;
-                        continue;
+                    let id = match step {
+                        Some(WearStep::Ready(id)) => id,
+                        Some(WearStep::Skip) => {
+                            self.wear_index += 1;
+                            continue;
+                        }
+                        Some(WearStep::PendingPurchase(_)) => {
+                            return Poll::Ready(Err(ActionError::Stale));
+                        }
+                        None => {
+                            self.phase = Phase::Child;
+                            continue;
+                        }
                     };
                     if tick
                         .cx
@@ -466,11 +463,7 @@ impl AcquireRun {
                         .worn(id)
                         .is_some_and(|count| count > 0)
                     {
-                        if from_shop {
-                            self.shop_wear_index += 1;
-                        } else {
-                            self.wear_index += 1;
-                        }
+                        self.wear_index += 1;
                         continue;
                     }
                     if !tick.cx.may_continue_this_tick() {
@@ -511,7 +504,6 @@ impl AcquireRun {
                         OneOpArgs::wear(Arc::from(name), id, row.slot, action),
                         &mut tick.cx,
                     )?;
-                    self.wear_shop_active = from_shop;
                     self.active = Active::Wear(handle);
                 }
                 Phase::Child => {
@@ -624,13 +616,27 @@ impl AcquireRun {
                 .collect::<Vec<_>>()
                 .into()
         });
-        self.wears = (plan.wear_count > 0).then(|| {
-            plan.wears[..plan.wear_count]
+        let pending_wears = || {
+            plan.purchases[..plan.purchase_count]
                 .iter()
                 .flatten()
-                .copied()
-                .collect::<Vec<_>>()
-                .into()
+                .filter(|purchase| {
+                    let need = &self.request.needs[usize::from(purchase.need)];
+                    plan::tiered_shop_need(need) && need.presence == Presence::Wielded
+                })
+        };
+        let wear_count = plan.wear_count + pending_wears().count();
+        self.wears = (wear_count > 0).then(|| {
+            let mut steps = Vec::with_capacity(wear_count);
+            steps.extend(
+                plan.wears[..plan.wear_count]
+                    .iter()
+                    .flatten()
+                    .copied()
+                    .map(WearStep::Ready),
+            );
+            steps.extend(pending_wears().map(|purchase| WearStep::PendingPurchase(purchase.need)));
+            steps.into_boxed_slice()
         });
         self.purchases = (plan.purchase_count > 0).then(|| {
             (0..plan.purchase_count)
@@ -643,9 +649,6 @@ impl AcquireRun {
         self.child = plan.child;
         self.index = 0;
         self.wear_index = 0;
-        self.shop_wears = None;
-        self.shop_wear_index = 0;
-        self.wear_shop_active = false;
         plan.authored
             || plan.scan
             || self.withdrawals.is_some()
@@ -661,9 +664,17 @@ impl AcquireRun {
         self.child = None;
         self.index = 0;
         self.wear_index = 0;
-        self.shop_wears = None;
-        self.shop_wear_index = 0;
-        self.wear_shop_active = false;
+    }
+
+    fn settle_shop_wear(&mut self, need: u8, item: Option<i32>) {
+        if let Some(steps) = self.wears.as_mut() {
+            for step in steps.iter_mut() {
+                if matches!(*step, WearStep::PendingPurchase(index) if index == need) {
+                    *step = item.map_or(WearStep::Skip, WearStep::Ready);
+                    break;
+                }
+            }
+        }
     }
 
     fn start_stage(&mut self, bank_work: bool, cx: &ActionContext<'_>) {
@@ -813,14 +824,7 @@ impl AcquireRun {
                         "the selected item was not equipped",
                     ))))
                 }
-                Poll::Ready(Ok(true)) => {
-                    if self.wear_shop_active {
-                        self.shop_wear_index += 1;
-                    } else {
-                        self.wear_index += 1;
-                    }
-                    self.wear_shop_active = false;
-                }
+                Poll::Ready(Ok(true)) => self.wear_index += 1,
             },
         }
         if matches!(self.active, Active::None) {

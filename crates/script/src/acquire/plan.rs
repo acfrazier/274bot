@@ -215,12 +215,12 @@ impl<'a> Planner<'a> {
             if tiered_purchase {
                 match self.select_shop_tier(need, vendor, world, coins, units, minimum_units) {
                     TierDecision::Selected { id, reserve } => {
-                        let worn = worn(self.counts, need, id);
+                        let tier_worn = self::worn(self.counts, need, id);
                         self.add_purchase(Purchase {
                             need: index,
                             item: id,
-                            target: need.target.saturating_sub(worn).max(0),
-                            minimum: need.minimum.saturating_sub(worn).max(0),
+                            target: need.target.saturating_sub(tier_worn).max(0),
+                            minimum: need.minimum.saturating_sub(tier_worn).max(0),
                         })?;
                         self.coin_reserve = self.coin_reserve.saturating_add(reserve);
                         self.reserve_coins(coins)?;
@@ -815,7 +815,7 @@ fn eligible_shop_stock(
                 .is_some_and(|fact| vendor_eligible(&fact, members))
         }
         VendorChoice::Nearest => {
-            shop_facts::vendors_for(data, item_id).any(|fact| vendor_eligible(fact, members))
+            shop_facts::vendors_for(data, item_id).any(|fact| vendor_eligible(&fact, members))
         }
     }
 }

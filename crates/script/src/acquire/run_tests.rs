@@ -811,6 +811,102 @@ fn wear_only_run_waits_for_worn_evidence_without_walk_or_bank_effects() {
 }
 
 #[test]
+fn shop_wear_resolution_uses_the_actual_tier_or_skips_a_carried_tool() {
+    for wear in [Some(1351), None] {
+        let (mut snapshot, _bank, banks) = fixture();
+        let held_id = wear.unwrap_or(1359);
+        let mut row = item(
+            held_id,
+            "Observed axe",
+            1,
+            ItemContainer::Inventory,
+            &["Wield"],
+        );
+        row.slot = 7;
+        snapshot.seed_inventory(vec![row], 28);
+        let mut tool = need(
+            1349,
+            "Iron axe",
+            1,
+            1,
+            Presence::Wielded,
+            NeedKind::Required,
+            SourceSet::PACK | SourceSet::WORN | SourceSet::SHOP,
+        );
+        tool.alternatives = Arc::from([1349, 1351, 1359]);
+        let request = request(
+            BankStage::Planned,
+            vec![tool],
+            None,
+            None,
+            false,
+            false,
+            CloseBank::LeaveOpen,
+        );
+        let mut plan = AcquirePlan::empty();
+        plan.purchases[0] = Some(Purchase {
+            need: 0,
+            item: 1349,
+            target: 1,
+            minimum: 1,
+        });
+        plan.purchase_count = 1;
+        let mut ledger = None;
+        let mut run = crate::quester::families::tests::with_tick_bank(
+            &snapshot,
+            None,
+            &mut ledger,
+            1,
+            |tick| AcquireRun::new(request, plan, &banks, &tick.cx),
+        );
+        assert!(matches!(
+            run.wears.as_deref(),
+            Some([WearStep::PendingPurchase(0)])
+        ));
+        // Resolve the same private outcome seam used after the routed shop run.
+        run.settle_shop_wear(0, wear);
+        run.purchase_index = 1;
+        let outcome = poll_at(&mut run, &snapshot, None, &mut ledger, 1, OpenGate::Open);
+        if let Some(id) = wear {
+            assert!(outcome.is_pending());
+            assert!(matches!(
+                first_effect(&ledger),
+                HostEffect::Interaction(crate::shim::InteractReq::Held {
+                    slot: Some(7),
+                    target_item_id: Some(target),
+                    ..
+                }) if *target == id
+            ));
+            complete_interaction(&mut ledger, 1);
+            snapshot.seed_inventory(Vec::new(), 28);
+            snapshot.seed_equipment(vec![item(
+                id,
+                "Observed axe",
+                1,
+                ItemContainer::Equipment,
+                &[],
+            )]);
+            assert!(
+                done(poll_at(
+                    &mut run,
+                    &snapshot,
+                    None,
+                    &mut ledger,
+                    2,
+                    OpenGate::Open,
+                ))
+                .complete
+            );
+        } else {
+            assert!(done(outcome).complete);
+        }
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+    }
+}
+
+#[test]
 fn child_due_reports_need_index_then_resume_replans_from_new_inventory() {
     let (mut snapshot, _bank, banks) = fixture();
     snapshot.seed_inventory(
@@ -1255,6 +1351,8 @@ fn acquisition_owner_layout() {
     );
     // First arm64 build: 712 bytes. Keep 56 bytes of explicit headroom.
     assert!(size_of::<AcquireRun>() <= 768);
+    assert!(size_of::<WearStep>() <= 8);
+    assert_eq!(size_of::<Option<Box<[WearStep]>>>(), 2 * size_of::<usize>());
     assert_eq!(size_of::<BankReceipt>(), 8);
 }
 
