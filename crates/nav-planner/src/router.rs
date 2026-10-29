@@ -45,7 +45,7 @@ use crate::contract::{ContractError, NavLease, PackId, RouteView};
 use crate::essence::{EssenceSession, ESSENCE_MINE_EXIT_TICKS, ESSENCE_MINE_PORTALS};
 use crate::movement::step_ok;
 use crate::quest_gates::QuestFamilyMismatch;
-use crate::transport::{select_web_action, TransportEdge, TransportGraph, TransportKind};
+use crate::transport::{select_web_action, TransportEdge, TransportGraph};
 use crate::world_state::WorldState;
 use crate::zones::{ZoneExempt, ZoneFilter, ZoneFilterOwned, ZoneKey, ZoneTable};
 
