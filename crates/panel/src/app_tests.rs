@@ -5624,15 +5624,27 @@ fn a_cut_profile_name_shows_an_ellipsis_and_the_whole_name_on_hover() {
 fn the_profiles_list_adds_no_allocation_to_a_warm_frame() {
     let _guard = crate::test_support::imgui_context_guard();
     let _iso = frontend_core::test_support::IsolatedStores::enter("profiles-warm-frame");
-    let mut ui = ProfilesUi::new(
+    const LONG: &str = "averyverylongprofilenameindeed";
+    // The 220 px window cuts LONG, as in the ellipsis test above: the
+    // measured frames must run the cut-name branch.
+    let mut ui = ProfilesUi::with_geometry(
         "profiles-warm-frame",
         &[
             ("alice", "apass", 1),
-            ("averyverylongprofilenameindeed", "lpass", 2),
+            (LONG, "lpass", 2),
             ("carol", "cpass", 3),
         ],
+        [900.0, 700.0],
+        [0.0, 0.0],
+        [220.0, BASE_WINDOW_H],
     );
     ui.session.persist_ui = false;
+    let shown = ui.frame();
+    assert!(
+        shown.has("…") && !shown.has(LONG),
+        "the drawn row cuts the long name before any counting: {}",
+        shown.text
+    );
     let (carol, _) = ui.item_rect(At::List, "carol");
     let (alice, _) = ui.item_rect(At::List, "alice");
     let frame_calls = |ui: &mut ProfilesUi, frames: usize, drag: bool| {
@@ -5651,6 +5663,9 @@ fn the_profiles_list_adds_no_allocation_to_a_warm_frame() {
         for i in 0..5 {
             step(ui, i);
         }
+        // Markers from the warm-up steps prove nothing about the counted
+        // frames: the record starts empty here, at the count.
+        crate::fleet::take_drop_markers();
         let before = crate::test_alloc::alloc_calls();
         for i in 0..frames {
             step(ui, i);
@@ -5673,7 +5688,7 @@ fn the_profiles_list_adds_no_allocation_to_a_warm_frame() {
         .io_mut()
         .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, true);
     ui.raw_frame();
-    crate::fleet::take_drop_markers();
+
     assert_eq!(
         frame_calls(&mut ui, 10, true),
         closed,
@@ -7672,6 +7687,61 @@ fn fleet_frame(
     layout
 }
 
+/// One Fleet frame as in [`fleet_frame`], plus every accent-coloured
+/// vertex the rendered draw data holds, each with the clip rect of the
+/// draw command that carries it: a vertex renders only inside that rect.
+fn fleet_frame_accent_vertices(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+    size: [f32; 2],
+    point: [f32; 2],
+    pressed: bool,
+) -> (crate::fleet::FleetLayout, Vec<([f32; 2], [f32; 4])>) {
+    let io = ctx.io_mut();
+    io.add_mouse_pos_event(point);
+    io.add_mouse_button_event(dear_imgui_rs::MouseButton::Left, pressed);
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([1280.0, 720.0], 1.0 / 60.0)
+            .renderer_has_textures(),
+    );
+    let layout = {
+        let ui = ctx.frame();
+        ui.window(crate::session::PanelWindow::Fleet.title())
+            .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+            .size(size, dear_imgui_rs::Condition::Always)
+            .build(|| {});
+        crate::fleet::draw_test_window(ui, session)
+    };
+    let draw_data = ctx.render();
+    let mut accent = Vec::new();
+    for list in draw_data.draw_lists() {
+        let vertices = list.vtx_buffer();
+        let indices = list.idx_buffer();
+        for command in list.commands() {
+            let dear_imgui_rs::DrawCmd::Elements {
+                count,
+                cmd_params,
+                ..
+            } = command
+            else {
+                continue;
+            };
+            for index in &indices[cmd_params.idx_offset..cmd_params.idx_offset + count] {
+                let vertex = &vertices[cmd_params.vtx_offset + *index as usize];
+                let colour = dear_imgui_rs::Color::from_imgui_u32(vertex.col).to_array();
+                if colour
+                    .into_iter()
+                    .zip(crate::theme::ACCENT)
+                    .all(|(actual, expected)| (actual - expected).abs() <= 1.0 / 255.0)
+                {
+                    accent.push((vertex.pos, cmd_params.clip_rect));
+                }
+            }
+        }
+    }
+    (layout, accent)
+}
+
 /// The Fleet window's table shares the window's width: no sideways scroll and
 /// no column past the edge at the default size and at the minimum size, with
 /// every column on.
@@ -7926,6 +7996,72 @@ fn fleet_row_drag_reorders_the_saved_order_around_a_hidden_marked_profile() {
         "dx lands before cx: the marker sits on cx's top edge: {markers:?}"
     );
     assert_eq!(saved_order(&session), ["bob", "dx", "cx", "ax"]);
+}
+
+/// The Fleet insertion line renders across its target row, not only
+/// across the Profile column: in the rendered draw data, the accent
+/// vertices at the line's right end are carried by a draw command whose
+/// clip rect reaches that end. (Inside the table each column draws
+/// under its own clip; the recorded marker geometry alone cannot show
+/// what the renderer keeps.)
+#[test]
+fn the_fleet_insertion_line_renders_across_the_target_row() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let (mut session, _dir) = fleet_test_session(&["alice", "bob", "carol", "dave"]);
+    session.persist_ui = false;
+    session.pump_status();
+    let layout = fleet_reorder_setup(&mut ctx, &mut session);
+    assert_eq!(layout.names.len(), 4);
+    let (from, to) = (rect_centre(layout.names[0]), rect_centre(layout.names[3]));
+
+    // Press on alice and hold the drag over dave; the last held frame is
+    // the one whose draw data is read back.
+    crate::fleet::take_drop_markers();
+    fleet_reorder_frame(&mut ctx, &mut session, from, false);
+    fleet_reorder_frame(&mut ctx, &mut session, from, true);
+    for step in 1..=4 {
+        let t = step as f32 / 4.0;
+        fleet_reorder_frame(
+            &mut ctx,
+            &mut session,
+            [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t],
+            true,
+        );
+    }
+    let (layout, accent) =
+        fleet_frame_accent_vertices(&mut ctx, &mut session, [760.0, 460.0], to, true);
+    session.pump_status();
+    fleet_reorder_frame(&mut ctx, &mut session, to, false);
+
+    let markers = crate::fleet::take_drop_markers();
+    let &(lands_before, min, max) = markers
+        .last()
+        .expect("the held drag drew an insertion marker");
+    assert!(!lands_before, "alice lands after dave: {markers:?}");
+    let y = max[1];
+    let cells_per_row = layout.cells.len() / layout.names.len();
+    let profile_right = layout.cells[3 * cells_per_row + 1][1];
+    assert!(
+        max[0] > profile_right + 20.0,
+        "the marker rect {min:?}..{max:?} spans past the Profile column's right edge {profile_right}"
+    );
+    let right_end: Vec<_> = accent
+        .iter()
+        .filter(|(pos, _)| (pos[1] - y).abs() <= 2.5 && pos[0] >= max[0] - 3.0)
+        .collect();
+    assert!(
+        !right_end.is_empty(),
+        "the rendered draw data holds the line's right end at x={} y={y}: {accent:?}",
+        max[0]
+    );
+    assert!(
+        right_end.iter().any(|(_, clip)| clip[2] >= max[0] - 1.5),
+        "the line's right end renders: its vertices' clips end at {:?}, the Profile column at {profile_right}, the row at {}",
+        right_end.iter().map(|(_, clip)| clip[2]).collect::<Vec<_>>(),
+        max[0]
+    );
 }
 
 /// With the sort set to Name the same drag does nothing and the Marks
