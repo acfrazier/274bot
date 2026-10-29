@@ -3755,7 +3755,7 @@ fn gatherer_supply_park_keeps_its_run_controls_and_non_gameplay_watchdogs() {
         .find(|field| field.key == "block_reason")
         .unwrap();
     assert!(
-        matches!(&reason.value, crate::native::StatusValue::Text(text) if text.contains("supply-missing"))
+        matches!(&reason.value, crate::native::StatusValue::Text(text) if text.contains("axe") && text.contains("waiting:"))
     );
     let calls = crate::acquire::plan::calls_for_test();
     for tick in 2..12 {

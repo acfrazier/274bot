@@ -145,6 +145,7 @@ mod tests {
                 evidence: self.evidence,
                 pin: &self.pin,
                 snapshot: SnapshotView::new(None, self.evidence),
+                shop_keepers: None,
                 retained: &mut self.retained,
                 action_id: self.owner.id.get(),
                 observed_walk_outcome_seq: 0,

@@ -845,7 +845,7 @@ mod tests {
 
     fn prepare(mut settings: crate::native::SettingsBag) -> Arc<Prepared> {
         // These pre-G1 cases exercise bank-only acquisition by design.
-        settings.entry("buyTools".into()).or_insert(json!(false));
+        settings.entry("buyTools").or_insert(json!(false));
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let config = api::selected::FamilyPreparation::run(move |families| {
             crate::slot::prepare_config(

@@ -1492,8 +1492,9 @@ fn acquired_bank_deposit_failure_keeps_the_content_reason() {
             &tick.cx,
         );
         gatherer.acquire_failure(
-            &run,
+            run,
             ActionError::BankDeposit(crate::bank::ops::DepositFailure::FullStack),
+            &tick.cx,
         );
     });
     let failure = gatherer

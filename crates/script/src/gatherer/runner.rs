@@ -97,10 +97,6 @@ impl TickPacketFence {
     }
 }
 
-#[expect(
-    clippy::large_enum_variant,
-    reason = "the single acquisition owner stays inline to avoid a box per trip; the measured Gatherer size has its own tripwire"
-)]
 #[derive(Default)]
 enum Active {
     #[default]

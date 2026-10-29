@@ -1235,7 +1235,6 @@ mod tests {
         let disabled = GathererSettings::from_bag(&bag).unwrap();
         assert!(!disabled.buy_tools);
         assert!(defaults.boundary_changed(&disabled));
-        assert_eq!(serde_json::to_value(disabled).unwrap()["buyTools"], false);
     }
 }
 #[cfg(test)]

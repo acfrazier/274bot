@@ -158,6 +158,7 @@ pub(crate) fn with_tick_bank<R>(
         bank,
         None,
         snapshot,
+        None,
         |native, _, _| f(native),
     )
 }
@@ -224,6 +225,7 @@ pub(crate) fn with_tick_collision<R>(
         ledger,
         tick,
         &mut Output,
+        None,
         None,
         snapshot,
         Some(collision),
