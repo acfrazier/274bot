@@ -7,7 +7,7 @@ use std::sync::{Arc, OnceLock};
 
 use client::io::ClientRevision;
 use flate2::read::GzDecoder;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::selected::{FactError, SelectedPin};
@@ -1006,10 +1006,8 @@ pub struct QuestRequirements {
     pub unknown_as_satisfied: bool,
 }
 
-/// One seed join. `id` is the seed id. `complete` is one constant, not a range.
-/// `unknown_sides` stays empty. Enum index is not a field.
 /// Whether the progress varp is sent by content updates or remains local.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Transmission {
     PostedByContent,
@@ -1018,6 +1016,8 @@ pub enum Transmission {
     Unknown,
 }
 
+/// One seed join. `id` is the seed id. `complete` is one constant, not a range.
+/// `unknown_sides` stays empty. Enum index is not a field.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct QuestIdentityRow {
