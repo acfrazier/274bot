@@ -1349,7 +1349,8 @@ impl Script for BuyReplyProbeScript {
                     self.phase = Phase::Done;
                     ScriptFlow::Complete
                 } else {
-                    let shop = tick.cx.snapshot().shop();
+                    let snapshot = tick.cx.snapshot();
+                    let shop = snapshot.shop();
                     let Some(shop) = shop else {
                         return Ok(self.fail("ShopView unavailable before CloseModal sample", None));
                     };
@@ -1532,7 +1533,8 @@ impl Script for BuyReplyProbeScript {
                     ScriptFlow::Continue
                 }
                 Ok(true) => {
-                    let shop = tick.cx.snapshot().shop();
+                    let snapshot = tick.cx.snapshot();
+                    let shop = snapshot.shop();
                     if shop.is_some_and(|shop| shop.value.open) {
                         if shop.is_some_and(|shop| shop.value.server_closes != closes_after) {
                             self.fail("same-keeper Trade changed the server close count outside a CloseModal sample", None)
