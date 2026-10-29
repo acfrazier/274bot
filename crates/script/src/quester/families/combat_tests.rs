@@ -5018,6 +5018,20 @@ fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
             ..
         }) if *x == first_tile.x && *z == first_tile.z && *id == 1 && action == "Take"
     ));
+    let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    ledger.as_mut().unwrap().complete_interaction(
+        &authority,
+        crate::native::InteractionReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick: 13,
+                sequence: 13,
+            },
+            accepted: true,
+            chat_since: 0,
+        },
+    );
 
     // The failed item click identifies the closed door; Reach's real recovery
     // path emits a walk to that door before this terminal route receipt.
