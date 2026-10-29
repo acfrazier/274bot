@@ -1826,7 +1826,7 @@ fn live_quester_families_until_drop_on_entrana() {
         }
         if !completed_lifecycle(lifecycle) {
             return Err(format!(
-                "chance-only Entrana drop reached named stop {ENTRANA_DROP_STOP}; \
+                "chance-only Entrana route did not complete before named stop {ENTRANA_DROP_STOP}; \
                  confirmed Killed={confirmed_kills:?}; status={:?}",
                 native_status_receipt(status)
             ));
