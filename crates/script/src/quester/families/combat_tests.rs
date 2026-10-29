@@ -4129,7 +4129,7 @@ fn manual_takeover_watch_covers_return_and_loot_sublegs() {
         })
         .is_pending()
     );
-    assert_eq!(run.loot_index, 1);
+    assert_eq!(run.loot_index, 0);
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
     let interactions_before_takeover = ledger
         .as_ref()
@@ -4148,8 +4148,8 @@ fn manual_takeover_watch_covers_return_and_loot_sublegs() {
         with_step_context_at_walk_outcome(&snapshot, &mut ledger, 16, outcome, |cx| run.poll(cx));
     assert!(matches!(result, Poll::Ready(Err(ActionError::UserInput))));
     assert_eq!(
-        run.loot_index, 1,
-        "manual movement must not start the next loot leg"
+        run.loot_index, 0,
+        "manual movement must not advance the active loot row"
     );
     assert!(run.action.is_none());
     let interactions_after_takeover = ledger
@@ -4605,20 +4605,23 @@ fn same_tick_loot_settle_defers_next_item_without_skipping_it() {
             choices: &choices,
         };
         assert!(run.poll(&mut cx).is_pending());
-        assert_eq!(run.loot_index, 1);
+        assert_eq!(
+            run.loot_index, 0,
+            "the active Take keeps its row until settlement"
+        );
         assert_eq!(cx.tick.cx.ledger.as_ref().unwrap().outbox.len(), 1);
         cx.tick.cx.snapshot = api::snapshot::SnapshotView::new(Some(later), required_after);
         for _ in 0..3 {
             assert!(run.poll(&mut cx).is_pending());
             assert_eq!(
-                run.loot_index, 1,
-                "denied loot admission must retain the second item"
+                run.loot_index, 0,
+                "denied loot admission must retain the active row"
             );
         }
         assert!(cx.tick.cx.ledger.as_ref().unwrap().outbox.is_empty());
     });
     assert!(with_step_context(&later, &mut ledger, 2, |cx| run.poll(cx)).is_pending());
-    assert_eq!(run.loot_index, 2);
+    assert_eq!(run.loot_index, 1);
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
         crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
@@ -4648,7 +4651,7 @@ fn combat_loot_reaches_below_quantity_and_skips_at_the_requested_count() {
     };
 
     for (held_bones, expected_index, expected_tile, expected_id) in
-        [(1, 1, bones_tile, bones.id), (25, 2, bead_tile, bead.id)]
+        [(1, 0, bones_tile, bones.id), (25, 1, bead_tile, bead.id)]
     {
         let mut run = combat_test_run(
             imp_target(&data),
@@ -4842,7 +4845,10 @@ fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
     });
 
     assert!(with_step_context(&snapshot, &mut ledger, 15, |cx| run.poll(cx)).is_pending());
-    assert_eq!(run.loot_index, 2, "the unreachable item is skipped");
+    assert_eq!(
+        run.loot_index, 1,
+        "the second Take is active while its loot row remains current"
+    );
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
