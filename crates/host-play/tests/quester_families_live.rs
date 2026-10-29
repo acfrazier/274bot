@@ -30,8 +30,8 @@ use script::native::{NativePhase, ScriptStatus, StatusValue};
 use script::quester::compile::compile_path;
 use script::quester::path::{
     PathDocument, PredicateDocument, ProgressColourDocument, ProgressDocument,
-    ProgressRuleDocument, QuestBankDocument, QuestLoadoutDocument, SequenceDocument,
-    SequenceOrder, StepDocument,
+    ProgressRuleDocument, QuestBankDocument, QuestLoadoutDocument, SequenceDocument, SequenceOrder,
+    StepDocument,
 };
 use script::quester::runner::Quester;
 use serde_json::{json, Value};
@@ -1615,9 +1615,7 @@ fn live_dialogue_answer_once_filliman_repeated_menu() {
             }
         }
         let Some(stage_witness) = snapshot.chat_lines().iter().find(|line| {
-            line.type_ == 0
-                && line.username.is_none()
-                && line.text == "get druidspirit: 20"
+            line.type_ == 0 && line.username.is_none() && line.text == "get druidspirit: 20"
         }) else {
             return Ok(None);
         };
