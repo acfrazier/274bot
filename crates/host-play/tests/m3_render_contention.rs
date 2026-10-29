@@ -881,6 +881,7 @@ fn assert_fair_interval(
                 live: status.is_some_and(|status| {
                     status.ingame && status.scene_state == 2 && status.worker_terminal.is_none()
                 }),
+                refused: head.mailbox.refusal().is_some(),
                 attached: current_identity.is_some(),
                 stats_present: stats.is_some(),
                 identity_matches,
