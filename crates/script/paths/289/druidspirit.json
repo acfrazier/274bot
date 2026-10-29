@@ -51,6 +51,9 @@
          "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"druidspirit","is":"in_progress"}}}}
       ]},
       {"stage":"druidspirit:5","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"recover-ghostspeak","kind":"talk","version":1,"advances":false,"comment":"content/scripts/areas/area_lumbridge/scripts/father_urhney.rs2:5-6,59-64; content/maps/m50_49.jm2:6081; content/pack/npc.pack:459.",
+         "args":{"npc":"father_urhney","anchor":{"tile":[3235,3153,0],"source":"content/maps/m50_49.jm2:6081"},"leash":8,"prefer":["I've lost the amulet."],"strict":true},
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"amulet_of_ghostspeak"}}},{"Fact":{"kind":"worn","version":1,"args":{"obj":"amulet_of_ghostspeak"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"amulet_of_ghostspeak"}}}},
         {"id":"wear-ghostspeak","kind":"equip","version":1,"args":{"obj":"amulet_of_ghostspeak"},"skip_if":{"Fact":{"kind":"worn","version":1,"args":{"obj":"amulet_of_ghostspeak"}}},"settle":{"Fact":{"kind":"worn","version":1,"args":{"obj":"amulet_of_ghostspeak"}}}},
         {"id":"enter-mort-myre","kind":"interact","version":1,"advances":true,
          "comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:1-16; content/maps/m53_54.jm2:5096; content/pack/loc.pack:3507.",
@@ -69,7 +72,13 @@
          "args":{"target":{"loc":"grotto_door_druidicspirit"},"op":"Enter","anchor":{"tile":[3440,3337,0],"source":"content/maps/m53_52.jm2:5135"},"radius":4,"dialogue":{"prefer":["How long have you been a ghost?","Ok, thanks."],"answer_once":true,"strict":true}},
          "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"druidspirit","any":["druidspirit:20"]}}}}
       ]},
-      {"stage":"druidspirit:20","required":[],"terminal":false,"recovery_entry":null,"steps":[
+      {"stage":"druidspirit:20","required":[],"terminal":false,"recovery_entry":null,"order":"ordered","steps":[
+        {"id":"lift-washing-bowl","kind":"interact","version":1,"advances":false,"comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:63-75; content/maps/m53_52.jm2:5754.",
+         "args":{"target":{"ground":"bowl_empty_filliman"},"op":"Take","anchor":{"tile":[3437,3337,0],"source":"content/maps/m53_52.jm2:5754"},"radius":2,"wait_if_missing":true},
+         "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"mirror"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"bowl_empty_filliman"}}}},
+        {"id":"take-mirror","kind":"interact","version":1,"advances":false,"comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:63-75.",
+         "args":{"target":{"ground":"mirror"},"op":"Take","anchor":{"tile":[3437,3337,0],"source":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:64,73-75"},"radius":2,"wait_if_missing":true},
+         "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"mirror"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"mirror"}}}},
         {"id":"show-mirror","kind":"use_on","version":1,"advances":true,"comment":"content/scripts/quests/quest_druidspirit/scripts/filliman.rs2:271-291.",
          "args":{"item":"mirror","target":{"npc":"filliman_tarlock_spirit"},"anchor":{"tile":[3440,3336,0],"source":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:95-96"},"radius":8},
          "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"druidspirit","any":["druidspirit:25"]}}}}
