@@ -6,7 +6,7 @@
 platforms:
 
 ```sh
-TAG=0.2.7   # after `[workspace.package] version` is `0.2.7`; a numeric patch tag may begin with that version
+TAG=0.2.8   # after `[workspace.package] version` is `0.2.8`; a numeric patch tag may begin with that version
 COMMIT="$(git rev-parse HEAD)"
 python3 tools/release/release.py build --commit "$COMMIT" --platform all --dry-run
 python3 tools/release/release.py finalize --commit "$COMMIT" --platform all \
@@ -247,9 +247,9 @@ When a release section is cut, render the blocks for the next release,
 paste them over the old ones, then check:
 
 ```sh
-python3 tools/known-issues/known_issues.py render --release 0.2.7
-python3 tools/known-issues/known_issues.py check --release 0.2.7
-python3 tools/known-issues/known_issues.py carried --release 0.2.7
+python3 tools/known-issues/known_issues.py render --release 0.2.8
+python3 tools/known-issues/known_issues.py check --release 0.2.8
+python3 tools/known-issues/known_issues.py carried --release 0.2.8
 ```
 
 `check` fails when the CHANGELOG blocks differ from the render. `carried`
@@ -262,7 +262,7 @@ through development. `preflight` runs the same check against a commit's own
 tree before packaging:
 
 ```sh
-python3 tools/release/release.py preflight --commit "$COMMIT" --tag 0.2.7
+python3 tools/release/release.py preflight --commit "$COMMIT" --tag 0.2.8
 ```
 
 ### Retry and cleanup

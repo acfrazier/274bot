@@ -2027,7 +2027,7 @@ def parser():
         "preflight", help="fail-closed release readiness checks (no builder needed)"
     )
     preflight.add_argument("--commit", required=True)
-    preflight.add_argument("--tag", required=True, help="release tag to check, e.g. 0.2.7")
+    preflight.add_argument("--tag", required=True, help="release tag to check, e.g. 0.2.8")
     preflight.add_argument("--repo-root", type=Path)
     preflight.add_argument("--worker-root", type=Path, help=argparse.SUPPRESS)
     clean = commands.add_parser(

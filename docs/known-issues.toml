@@ -472,3 +472,16 @@ listed = "0.2.8"
 target = "0.2.9"
 severity = "low"
 owner = "upstream rs2b0t GnomeMagicChopper (rs2b2t/rs2b0t#897)"
+
+[[item]]
+id = "background-work-stops-after-slow-disk"
+kind = "known-issue"
+area = "Host"
+text = """Background work can stop for the rest of the session after one disk
+  operation takes longer than 60 seconds. Restart 274bot to recover. A fix is
+  planned for 0.2.9."""
+first = "0.2.6"
+listed = "0.2.8"
+target = "0.2.9"
+severity = "medium"
+owner = "host background work (WorkAdmission)"
