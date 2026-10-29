@@ -204,12 +204,20 @@ impl Drop for Slot {
     }
 }
 
+#[track_caller]
 fn receive<T>(receiver: &Receiver<T>, mut matches: impl FnMut(&T) -> bool) -> T {
+    let caller = std::panic::Location::caller();
     let deadline = Instant::now() + TIMEOUT;
     loop {
         let item = receiver
             .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .expect("the production slot reaches the requested boundary");
+            .unwrap_or_else(|error| {
+                panic!(
+                    "the production slot reaches boundary requested at {}:{}: {error}",
+                    caller.file(),
+                    caller.line()
+                )
+            });
         if matches(&item) {
             return item;
         }

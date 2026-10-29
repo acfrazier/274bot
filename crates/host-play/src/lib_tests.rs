@@ -2032,12 +2032,21 @@ fn spawned_slot_render_uses_its_control_wake() {
         .unwrap();
         output
     };
-    let receive = |events: &std::sync::mpsc::Receiver<_>, point, timeout| {
+    let receive = |events: &std::sync::mpsc::Receiver<_>, output: &FrameBuf, point, timeout| {
         let deadline = Instant::now() + timeout;
+        let mut observed_points = Vec::new();
         loop {
             let (observed, thread) = events
                 .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                .expect("the spawned slot reaches the render boundary");
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "the spawned slot reaches {point:?}: {error}; observed={observed_points:?}; generation={}; head={:?}; refusal={:?}",
+                        output.generation(),
+                        output.fair_stats(),
+                        output.refusal()
+                    )
+                });
+            observed_points.push(observed);
             if observed == point {
                 break thread;
             }
@@ -2046,6 +2055,7 @@ fn spawned_slot_render_uses_its_control_wake() {
     let _owner = spawn(&mut play, "wake-owner", 41);
     let owner_thread = receive(
         &owner_receive,
+        &_owner,
         RenderTestPoint::BeforeLeaseRelease,
         Duration::from_secs(30),
     );
@@ -2056,6 +2066,7 @@ fn spawned_slot_render_uses_its_control_wake() {
     let peer = spawn(&mut play, "wake-peer", 42);
     receive(
         &peer_receive,
+        &peer,
         RenderTestPoint::OverlayEntry,
         Duration::from_secs(30),
     );
@@ -2064,6 +2075,7 @@ fn spawned_slot_render_uses_its_control_wake() {
     release.send(()).unwrap();
     let peer_thread = receive(
         &peer_receive,
+        &peer,
         RenderTestPoint::AfterConsume,
         Duration::from_millis(500),
     );

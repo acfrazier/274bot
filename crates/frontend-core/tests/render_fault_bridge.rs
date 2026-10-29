@@ -335,7 +335,11 @@ fn panel_fault_bridge_acknowledges_only_the_selected_incident() {
         .fair_stats()
         .expect("the feature exposes real slot head statistics");
     assert_eq!(first_head.backend(), BackendKind::Gpu);
-    assert_eq!(first_head.scene_consumes(), 1);
+    assert_eq!(
+        first_head.scene_consumes(),
+        0,
+        "the held paint has not published its completed-paint statistics"
+    );
 
     let mut pump = IndependentPump::start();
     let first_fault = wait_for_overdue(first_totals);
@@ -365,9 +369,13 @@ fn panel_fault_bridge_acknowledges_only_the_selected_incident() {
     let second_head = slot
         .output
         .fair_stats()
-        .expect("the real second paint publishes updated head statistics");
+        .expect("the first completed paint publishes updated head statistics");
     assert_eq!(second_head.backend(), BackendKind::Gpu);
-    assert_eq!(second_head.scene_consumes(), 2);
+    assert_eq!(
+        second_head.scene_consumes(),
+        1,
+        "the second consume event does not publish an incomplete paint"
+    );
 
     let second_totals = one_more_overdue(first_totals);
     let second_fault = wait_for_overdue(second_totals);
