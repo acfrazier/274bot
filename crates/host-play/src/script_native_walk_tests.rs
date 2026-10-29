@@ -5371,7 +5371,13 @@ fn zero_radius_area_refuses_a_nonstandable_target() {
         .as_deref()
         .expect("NoPath diagnostic is owed");
     assert!(detail.contains("Area arrival"), "{detail}");
-    assert!(detail.contains(&format!("to {WATER_CENTER:?}")), "{detail}");
+    assert!(
+        detail.contains(&format!(
+            "to ({}, {}, {})",
+            WATER_CENTER.x, WATER_CENTER.z, WATER_CENTER.level
+        )),
+        "{detail}"
+    );
     assert!(detail.contains("within radius 0"), "{detail}");
 }
 

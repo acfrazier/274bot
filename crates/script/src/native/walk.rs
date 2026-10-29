@@ -577,33 +577,38 @@ mod tests {
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         let mut ledger = None;
-        let mut machine = with_tick(&snapshot, &mut ledger, 1, |tick| {
-            Walk::begin(
-                crate::quester::families::reach::walk_request(target, 1, None, required_after),
-                &mut tick.cx,
-            )
-            .unwrap()
+        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Walk>(
+                    crate::quester::families::reach::walk_request(target, 1, None, required_after),
+                    &mut tick.cx,
+                )
+                .unwrap()
         });
         let mut arrived = GameSnapshot::new();
         arrived.seed_ingame(2);
         arrived.seed_local_player(local_player(target));
-        assert!(machine.wait.poll(
-            machine.request_id,
-            &Frame {
-                snapshot: SnapshotView::new(Some(&arrived), required_after),
-                outcome: HostOutcome::empty(),
-                loc_id: None,
-                arrival: ArrivalKind::Reach,
-                candidate_goals: false,
-                goal: None,
-            },
-        ));
+        {
+            let mut retained = handle.machine.borrow_mut();
+            let machine = retained.as_mut().expect("the walk is active");
+            assert!(machine.wait.poll(
+                machine.request_id,
+                &Frame {
+                    snapshot: SnapshotView::new(Some(&arrived), required_after),
+                    outcome: HostOutcome::empty(),
+                    loc_id: None,
+                    arrival: ArrivalKind::Reach,
+                    candidate_goals: false,
+                    goal: None,
+                },
+            ));
+        }
         assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
-            machine.poll(&mut tick.cx)
+            tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
         let result = with_tick(&snapshot, &mut ledger, 1001, |tick| {
-            machine.poll(&mut tick.cx)
+            tick.actions.poll(&handle, &mut tick.cx)
         });
         let Poll::Ready(Ok(receipt)) = result else {
             panic!("a settled wait without its receipt must expire: {result:?}");

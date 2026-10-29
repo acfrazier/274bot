@@ -7392,7 +7392,7 @@ impl Goals<'_> {
                 }
                 *remaining == 0
             }
-            Goals::Frontier { .. } => return Settle::Continue,
+            Goals::Frontier { targets, .. } => targets.contains(&tile),
         };
         if done {
             Settle::Stop

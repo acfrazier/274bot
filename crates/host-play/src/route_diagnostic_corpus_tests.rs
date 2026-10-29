@@ -990,8 +990,18 @@ fn compares_bounded_and_unbounded_route_diagnostics_corpus() {
         .then(|| live_native_walk(case, index as u64));
         let authority = native.as_ref().map(|native| native.authority.clone());
 
-        let bounded = run_diagnostics(case, authority.clone(), FIRST_TARGET_BUDGET, index as u64);
+        let unbounded = run_diagnostics(
+            case,
+            authority.clone(),
+            usize::MAX,
+            (index as u64).saturating_add(CORPUS_CASE_COUNT as u64),
+        );
+        rows.last_mut().expect("case row was appended")["unbounded"] = unbounded.to_json();
+        write_report(&output, &navpack, CORPUS_CASE_COUNT, &rows, &started);
+        assert_expected_native_end(case, &unbounded);
+        let bounded = run_diagnostics(case, authority, FIRST_TARGET_BUDGET, index as u64);
         rows.last_mut().expect("case row was appended")["bounded"] = bounded.to_json();
+        write_report(&output, &navpack, CORPUS_CASE_COUNT, &rows, &started);
         match case.name {
             "scorpion_no_key_radius5" => assert!(
                 bounded.missing_carry.contains(&(1590, 1)),
@@ -1010,22 +1020,11 @@ fn compares_bounded_and_unbounded_route_diagnostics_corpus() {
             ),
             _ => {}
         }
-        write_report(&output, &navpack, CORPUS_CASE_COUNT, &rows, &started);
         assert!(
             bounded.diagnostic_settled <= FIRST_TARGET_BUDGET.saturating_add(64),
             "{} aggregate diagnostic count may overrun only by one cooperative slice",
             case.name,
         );
-
-        let unbounded = run_diagnostics(
-            case,
-            authority,
-            usize::MAX,
-            (index as u64).saturating_add(CORPUS_CASE_COUNT as u64),
-        );
-        rows.last_mut().expect("case row was appended")["unbounded"] = unbounded.to_json();
-        write_report(&output, &navpack, CORPUS_CASE_COUNT, &rows, &started);
-        assert_expected_native_end(case, &unbounded);
     }
 
     assert_eq!(
