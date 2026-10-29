@@ -2048,16 +2048,15 @@ fn spawned_slot_render_uses_its_control_wake() {
         .unwrap();
         output
     };
-    let receive =
-        |events: &std::sync::mpsc::Receiver<_>,
-         output: &FrameBuf,
-         control: &Control,
-         point,
-         timeout| {
-            let deadline = Instant::now() + timeout;
-            let mut observed_points = Vec::new();
-            loop {
-                let (observed, thread) = events
+    let receive = |events: &std::sync::mpsc::Receiver<_>,
+                   output: &FrameBuf,
+                   control: &Control,
+                   point,
+                   timeout| {
+        let deadline = Instant::now() + timeout;
+        let mut observed_points = Vec::new();
+        loop {
+            let (observed, thread) = events
                     .recv_timeout(deadline.saturating_duration_since(Instant::now()))
                     .unwrap_or_else(|error| {
                         panic!(
@@ -2069,12 +2068,12 @@ fn spawned_slot_render_uses_its_control_wake() {
                             control.now,
                         )
                     });
-                observed_points.push(observed);
-                if observed == point {
-                    break thread;
-                }
+            observed_points.push(observed);
+            if observed == point {
+                break thread;
             }
-        };
+        }
+    };
     let _owner = spawn(&mut play, "wake-owner", 41);
     let owner_thread = receive(
         &owner_receive,
