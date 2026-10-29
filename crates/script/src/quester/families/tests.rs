@@ -6101,7 +6101,7 @@ fn walk_protection_warning_is_status_not_a_terminal_or_rewalk() {
         tile: tile(3200, 3200),
         radius: 1,
         options: crate::native::WalkOptions::default(),
-        cross: Box::default(),
+        cross: Arc::<[Arc<str>]>::from(Vec::new()),
         protect: true,
     };
     let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
