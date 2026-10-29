@@ -1771,8 +1771,8 @@
             },
             {
               "id": "pick-banana", "kind": "interact", "version": 1, "advances": false,
-              "args": {"target": {"loc": "bananatreefull"}, "op": "Pick", "anchor": {"tile": [2909,3158,0], "source": "content/maps/m45_49.jm2:5238; content/pack/loc.pack:2074"}, "radius": 6},
-              "comment": "content/scripts/areas/area_karamja/scripts/banana_tree.rs2:1-12 adds a banana.",
+              "args": {"target": {"loc": "bananatreefull"}, "op": "Search", "anchor": {"tile": [2909,3158,0], "source": "content/maps/m45_49.jm2:5238; content/pack/loc.pack:2074"}, "radius": 6},
+              "comment": "content/scripts/areas/area_karamja/configs/plantation.loc:1-10 defines Search; content/scripts/areas/area_karamja/scripts/banana_tree.rs2:1-12 adds a banana.",
               "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "banana"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_sliced_banana"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_sliced_banana_in_karamja_rum"}}}]},
               "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "banana"}}}
             },
