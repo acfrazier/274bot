@@ -199,7 +199,7 @@ impl HardPollFailure {
     fn error(self) -> ActionError {
         match self {
             Self::Blocked => ActionError::Blocked(Arc::from("action blocked")),
-            Self::NeedsEvidence => ActionError::NeedsEvidence(Vec::new()),
+            Self::NeedsEvidence => ActionError::NeedsEvidence(Vec::new().into()),
             Self::UserInput => ActionError::UserInput,
         }
     }
