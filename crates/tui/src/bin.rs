@@ -3113,7 +3113,7 @@ impl TuiSession {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     /// Request a skip for the focused Quester through the shared command
     /// boundary; its refusal text is shown on the expiring message line.
     fn script_skip_quest(&mut self, app: &mut TuiApp, target: Option<api::selected::RunKey>) {
@@ -5054,7 +5054,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::Remove(name) => session.remove(app, &name),
         AppAction::ScriptStart(sel) => session.script_start(app, &sel),
         AppAction::ScriptPause => session.script_toggle_pause(app),
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         AppAction::ScriptSkipQuest(target) => session.script_skip_quest(app, target),
         AppAction::ScriptStop => session.script_stop(app),
         AppAction::ScriptBrowse =>

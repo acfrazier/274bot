@@ -39,7 +39,7 @@ pub const SCRIPT_KEYS: &[(&str, char)] = &[
     ("Start", 't'),
     ("Pause", 'P'),
     ("Stop", 'e'),
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     ("Skip quest", 'X'),
     ("Load", 'f'),
     ("Params", 'v'),
@@ -54,7 +54,7 @@ pub const SCRIPT_KEYS: &[(&str, char)] = &[
     ("Start", 't'),
     ("Pause", 'P'),
     ("Stop", 'e'),
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     ("Skip quest", 'X'),
     ("Params", 'v'),
     ("Start fleet", 'T'),
@@ -442,11 +442,11 @@ impl<'a> ScriptPane<'a> {
     }
 
     /// The main row's buttons, left to right (Pause reads Resume while
-    /// paused); the test-only Skip quest button appears only while a Quester
-    /// is running or paused.
+    /// paused); the `test-support` Skip quest button appears only while a
+    /// Quester is running or paused.
     fn main_buttons(&self) -> impl Iterator<Item = &'static str> {
         let state = self.state;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         let skip_quest = matches!(state, ScriptRunState::Running | ScriptRunState::Paused)
             && self
                 .native_status
@@ -458,11 +458,11 @@ impl<'a> ScriptPane<'a> {
                 b
             }
         });
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         {
             buttons.chain(skip_quest.then_some("Skip quest"))
         }
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-support")))]
         {
             buttons
         }

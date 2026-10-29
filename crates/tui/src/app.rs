@@ -318,7 +318,7 @@ pub enum AppAction {
     /// Toggle pause/resume on the focused slot's script (`Play::script_pause`
     /// / [`Play::script_resume`], like the panel's `script_toggle_pause`).
     ScriptPause,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     /// Skip the active row in the focused Quester queue.
     ScriptSkipQuest(Option<api::selected::RunKey>),
     /// Stop the focused slot's script (`Play::script_stop`).
@@ -2031,7 +2031,7 @@ impl TuiApp {
                 }),
             },
             Command::ScriptPause => AppAction::ScriptPause,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             Command::ScriptSkipQuest => AppAction::ScriptSkipQuest(
                 self.focused_detail()
                     .and_then(|detail| detail.native_status())

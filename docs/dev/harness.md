@@ -44,11 +44,17 @@ its own environment.
 
 The `quester_skip_active_cook_parks_then_sheep_completes` cell in
 `quester_queue_live` also needs `--features "live-harness test-support live-probe"`.
-`SkipQuest` is a test-only operator command. `frontend-core` exposes the
-command with its `test-support` feature; the panel and TUI controls, uppercase
-`X` key, and help row are compiled only for tests. Release-profile builds use
-the normal production feature set and omit the command and controls. Keep its
-behavior documented here rather than in user-facing release documentation.
+`test-support` on `panel` or `tui` enables the Skip quest button or key. Each
+feature forwards `frontend-core/test-support`, which enables the shared
+`SkipQuest` command. Build both control-enabled binaries with:
+
+```sh
+cargo build --locked -p panel --bin panel-play --features test-support
+cargo build --locked -p tui --bin tui-play --features test-support
+```
+
+Release-profile builds that omit `test-support` omit the command, button and
+key.
 
 
 The expected-combat Quester cell seeds Tourist Trap (`desertrescue`) at stage
