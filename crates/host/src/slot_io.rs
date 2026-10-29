@@ -200,7 +200,7 @@ fn fair_render_enabled() -> bool {
 /// head can never publish into a reattached head's mailbox.
 pub struct FrameBuf {
     inner: Mutex<Mailbox>,
-    gen: AtomicU64,
+    frame_generation: AtomicU64,
     #[cfg(feature = "journal-paint-proof")]
     proof_frames: Option<parking_lot::Mutex<JournalProofQueue>>,
 }
@@ -339,7 +339,7 @@ impl FrameBuf {
                 #[cfg(feature = "render-test-hooks")]
                 fair_stats: None,
             }),
-            gen: AtomicU64::new(0),
+            frame_generation: AtomicU64::new(0),
             #[cfg(feature = "journal-paint-proof")]
             proof_frames: None,
         })
@@ -511,7 +511,7 @@ impl FrameBuf {
         #[cfg(test)]
         tests::pause_in_publication_gap();
         let mut queue = queue.lock();
-        let Some(generation) = self.gen.load(Ordering::Relaxed).checked_add(1) else {
+        let Some(generation) = self.frame_generation.load(Ordering::Relaxed).checked_add(1) else {
             queue.last_error = Some(client::render::backend::ReadbackError::IdentityExhausted);
             return false;
         };
@@ -530,7 +530,7 @@ impl FrameBuf {
             _readback_permit: None,
         });
         queue.last_error = None;
-        self.gen.store(generation, Ordering::Relaxed);
+        self.frame_generation.store(generation, Ordering::Relaxed);
         true
     }
 
@@ -610,7 +610,7 @@ impl FrameBuf {
         }
         #[cfg(test)]
         tests::pause_in_publication_gap();
-        let Some(generation) = self.gen.load(Ordering::Relaxed).checked_add(1) else {
+        let Some(generation) = self.frame_generation.load(Ordering::Relaxed).checked_add(1) else {
             queue.last_error = Some(client::render::backend::ReadbackError::IdentityExhausted);
             return false;
         };
@@ -629,7 +629,7 @@ impl FrameBuf {
             _readback_permit: None,
         });
         queue.last_error = None;
-        self.gen.store(generation, Ordering::Relaxed);
+        self.frame_generation.store(generation, Ordering::Relaxed);
         true
     }
 
@@ -963,7 +963,7 @@ impl FrameBuf {
             drop(proof);
             return Err(error);
         }
-        let Some(generation) = self.gen.load(Ordering::Relaxed).checked_add(1) else {
+        let Some(generation) = self.frame_generation.load(Ordering::Relaxed).checked_add(1) else {
             queue_state.resolving_head = None;
             queue_state.last_error =
                 Some(client::render::backend::ReadbackError::IdentityExhausted);
@@ -980,7 +980,7 @@ impl FrameBuf {
         queue_state.frames.push_back(proof);
         queue_state.resolving_head = None;
         queue_state.last_error = None;
-        self.gen.store(generation, Ordering::Relaxed);
+        self.frame_generation.store(generation, Ordering::Relaxed);
         Ok(())
     }
 
@@ -1165,7 +1165,7 @@ impl FrameBuf {
             inner.render_fault = frame.render_fault();
             return false;
         }
-        let Some(generation) = self.gen.load(Ordering::Relaxed).checked_add(1) else {
+        let Some(generation) = self.frame_generation.load(Ordering::Relaxed).checked_add(1) else {
             inner.render_fault =
                 Some(client::render::backend::RenderFault::MailboxSequenceExhausted);
             return false;
@@ -1190,7 +1190,7 @@ impl FrameBuf {
         };
         inner.render_fault = status.recovered_fault;
         inner.frame = Some(presented);
-        self.gen.store(generation, Ordering::Relaxed);
+        self.frame_generation.store(generation, Ordering::Relaxed);
         true
     }
 
@@ -1388,7 +1388,7 @@ impl FrameBuf {
     /// Bumps on every accepted [`FrameBuf::publish`]. The panel skips uploads while
     /// this stays unchanged (avoids Poll-spin on a frozen blit).
     pub fn generation(&self) -> u64 {
-        self.gen.load(Ordering::Relaxed)
+        self.frame_generation.load(Ordering::Relaxed)
     }
 }
 
@@ -3384,7 +3384,7 @@ mod tests {
             })
         };
         assert!(buf.publish_with_status(head, pixmap(3), FramePaintStatus::new(true, None)));
-        buf.gen
+        buf.frame_generation
             .store(u64::MAX, std::sync::atomic::Ordering::Relaxed);
         assert!(!buf.publish_with_status(head, pixmap(7), FramePaintStatus::new(true, None)));
         assert_eq!(buf.generation(), u64::MAX);
@@ -3558,7 +3558,7 @@ mod tests {
         let buf = FrameBuf::new_for_journal_proof();
         let head = head_identity(76);
         buf.attach_head(head);
-        buf.gen
+        buf.frame_generation
             .store(u64::MAX, std::sync::atomic::Ordering::Relaxed);
 
         assert!(!buf.publish(
@@ -3619,16 +3619,16 @@ mod tests {
         // against the pre-T4.2 `store` shape (lock, store, unlock, bump).
         struct Unchecked {
             frame: Mutex<Option<FrameOutput>>,
-            gen: AtomicU64,
+            frame_generation: AtomicU64,
         }
         let old = Unchecked {
             frame: Mutex::new(None),
-            gen: AtomicU64::new(0),
+            frame_generation: AtomicU64::new(0),
         };
         let mut spare = Some(applet_pixmap(vec![1; 765 * 503]));
         let unchecked = per_iter(|| {
             *old.frame.lock().unwrap() = spare.take();
-            old.gen.fetch_add(1, Ordering::Relaxed);
+            old.frame_generation.fetch_add(1, Ordering::Relaxed);
             spare = black_box(old.frame.lock().unwrap().take());
         });
         let buf = FrameBuf::new();
