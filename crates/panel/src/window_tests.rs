@@ -1125,10 +1125,12 @@ fn capture_process_fixture(
     prefer_cpu: bool,
     retained_consumer: bool,
 ) -> host::render_head::test_hooks::CaptureFixture {
-    host::render_head::test_hooks::configure_process(host::render_head::test_hooks::ProcessFixture {
-        grant_ttl: std::time::Duration::from_millis(20),
-        quantum: std::time::Duration::from_millis(40),
-    })
+    host::render_head::test_hooks::configure_process(
+        host::render_head::test_hooks::ProcessFixture {
+            grant_ttl: std::time::Duration::from_millis(20),
+            quantum: std::time::Duration::from_millis(40),
+        },
+    )
     .expect("configure this child process before host initialization");
     if retained_consumer {
         client::render::backend::configure_retained_present_budget(
