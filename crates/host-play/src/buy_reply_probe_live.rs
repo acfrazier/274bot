@@ -1565,7 +1565,8 @@ impl BuyReplyProbeScript {
                 close_tick,
                 closes_after,
             } => {
-                let shop = cx.snapshot().shop();
+                let snapshot = cx.snapshot();
+                let shop = snapshot.shop();
                 if shop.is_some_and(|shop| shop.value.server_closes != closes_after) {
                     self.fail(
                         "server close counter changed outside the measured CloseModal dispatch",
@@ -2141,7 +2142,7 @@ fn run_live_probe() {
     let names = vec![account.clone()];
     runner.set_live_names(&names);
     runner.set_shot_sink(Box::new(|_, _| {}));
-    let frame = Arc::new(FrameBuf::new());
+    let frame = FrameBuf::new();
     let frame_state = Arc::new(Mutex::new(LiveState {
         account: account.clone(),
         fixture: fixture.clone(),
