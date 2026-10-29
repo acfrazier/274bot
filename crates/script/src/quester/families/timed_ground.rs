@@ -137,3 +137,17 @@ impl StepRun for TimedGroundRun {
         Some(("Waiting for timed ground pickup", obj))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timed_pickup_state_stays_bounded() {
+        let plan = std::mem::size_of::<TimedGroundPlan>();
+        let run = std::mem::size_of::<TimedGroundRun>();
+        let receipt = std::mem::size_of::<TimedGroundReceipt>();
+        eprintln!("TimedGroundPlan={plan} TimedGroundRun={run} TimedGroundReceipt={receipt}");
+        assert!(run <= 1024, "timed pickup run is {run} bytes");
+    }
+}
