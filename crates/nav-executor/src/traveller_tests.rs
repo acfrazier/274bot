@@ -1035,6 +1035,42 @@ fn follow_does_not_arrive_short_of_the_last_walk_tile() {
 }
 
 #[test]
+fn long_bent_walk_aims_at_short_path_hops() {
+    let mut tiles = Vec::with_capacity(64);
+    let (mut x, mut z) = (2576, 3299);
+    for row in 0..4 {
+        let width = if row % 2 == 0 { 20 } else { 12 };
+        for offset in 0..width {
+            if offset > 0 {
+                x += if row % 2 == 0 { 1 } else { -1 };
+            }
+            tiles.push(WorldTile { x, z, level: 0 });
+        }
+        if row < 3 {
+            z += 1;
+        }
+    }
+
+    assert_eq!(tiles.len() - 1, 63, "the bent leg has 63 steps");
+    let last = tiles[tiles.len() - 1];
+    let chebyshev_distance = (last.x - tiles[0].x)
+        .abs()
+        .max((last.z - tiles[0].z).abs());
+    assert!(chebyshev_distance <= 17, "the leg ends within 17 tiles");
+
+    let mut base = 0;
+    let mut hop_steps = Vec::new();
+    while base < tiles.len() - 1 {
+        let (aim, index) = super::pick_aim(&tiles, tiles[base], base);
+        assert_eq!(aim, tiles[index]);
+        assert!(index > base, "each hop advances along the leg");
+        hop_steps.push(index - base);
+        base = index;
+    }
+    assert_eq!(hop_steps, [15, 15, 15, 15, 3]);
+}
+
+#[test]
 fn current_aim_is_none_idle_and_the_walk_hop_aim_in_follow() {
     let mut t = Traveller::new();
     assert_eq!(t.current_aim(), None, "idle traveller has no aim");
