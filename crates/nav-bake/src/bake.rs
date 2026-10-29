@@ -1314,10 +1314,10 @@ fn openable_door_faces(
     Ok(faces)
 }
 
-/// Select one game-data revision. An unmanifested legacy bake uses revision 274.
-fn selected_game_revision(
+/// Load the selected game data. An unmanifested legacy bake uses revision 274.
+fn selected_game_data(
     revision: Option<u16>,
-) -> Result<(u16, api::selected::ClientRevision), crate::GenerationError> {
+) -> Result<std::sync::Arc<api::game_data::SelectedGameData>, crate::GenerationError> {
     let selected_revision = revision.unwrap_or(274);
     let game_revision = match selected_revision {
         274 => api::selected::ClientRevision::R274,
@@ -1326,7 +1326,13 @@ fn selected_game_revision(
             return Err(crate::GenerationError::UnsupportedRevision { revision });
         }
     };
-    Ok((selected_revision, game_revision))
+    let game_data = api::game_data::for_revision(game_revision).map_err(|detail| {
+        crate::GenerationError::SelectedGameDataUnavailable {
+            revision: selected_revision,
+            detail,
+        }
+    })?;
+    Ok(game_data)
 }
 
 /// Bake the whole world for one request. Every `.jm2` under the maps dir
@@ -1449,13 +1455,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
     let content_root = request.maps_dir.parent().unwrap_or(Path::new("."));
     // `None` is the legacy unmanifested 274 bake. Load its selected data as
     // revision 274, but do not derive revision-bound quest identity from it.
-    let (selected_revision, game_revision) = selected_game_revision(request.revision)?;
-    let game_data = api::game_data::for_revision(game_revision).map_err(|detail| {
-        crate::GenerationError::SelectedGameDataUnavailable {
-            revision: selected_revision,
-            detail,
-        }
-    })?;
+    let game_data = selected_game_data(request.revision)?;
     let selected = request
         .revision
         .map(|_| {

@@ -16,16 +16,20 @@ fn content_inputs_follow_the_content_root() {
 
 #[test]
 fn bake_revision_selection_defaults_to_274_and_rejects_unknown_revisions() {
+    assert_eq!(
+        selected_game_data(None)
+            .expect("legacy 274 game data is available")
+            .revision(),
+        274
+    );
+    assert_eq!(
+        selected_game_data(Some(289))
+            .expect("revision 289 game data is available")
+            .revision(),
+        289
+    );
     assert!(matches!(
-        selected_game_revision(None),
-        Ok((274, api::selected::ClientRevision::R274))
-    ));
-    assert!(matches!(
-        selected_game_revision(Some(289)),
-        Ok((289, api::selected::ClientRevision::R289))
-    ));
-    assert!(matches!(
-        selected_game_revision(Some(300)),
+        selected_game_data(Some(300)),
         Err(crate::GenerationError::UnsupportedRevision { revision: 300 })
     ));
 }
