@@ -5495,9 +5495,7 @@ mod tests {
             })
             .expect("the last child settles");
         assert!(
-            !lines[..last_child]
-                .iter()
-                .any(|line| *line == "quester trace truncated after the event limit"),
+            !lines[..last_child].contains(&"quester trace truncated after the event limit"),
             "the stage truncated before its last child line: {lines:#?}"
         );
     }
@@ -5574,9 +5572,7 @@ mod tests {
             "the new run keeps the current stage's budget, not the 32-line floor"
         );
         assert!(
-            fresh
-                .iter()
-                .any(|line| *line == "quester cook: run start stage=cook:0"),
+            fresh.contains(&"quester cook: run start stage=cook:0"),
             "the new run starts its own trace: {fresh:#?}"
         );
     }
