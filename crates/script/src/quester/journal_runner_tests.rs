@@ -1143,12 +1143,13 @@ fn advancing_settle_timeout_rereads_before_retrying_after_delayed_progress() {
     );
     assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
     assert_eq!(begins.load(Ordering::Relaxed), 1);
+    drive(&mut script, &snapshot, &mut ledger, 6);
     assert!(matches!(
-        ack(&mut ledger, 5),
+        ack(&mut ledger, 6),
         HostEffect::Interaction(crate::shim::InteractReq::UseOn { .. })
     ));
 
-    drive(&mut script, &snapshot, &mut ledger, 6);
+    drive(&mut script, &snapshot, &mut ledger, 7);
     assert!(script.settling && script.needs_read);
     assert!(matches!(
         ledger.as_ref().unwrap().outbox.first().map(|action| &action.effect),
@@ -1157,18 +1158,18 @@ fn advancing_settle_timeout_rereads_before_retrying_after_delayed_progress() {
         ))
     ));
     assert!(matches!(
-        ack(&mut ledger, 6),
+        ack(&mut ledger, 7),
         HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
     ));
     journal(&mut snapshot, "seeded branch");
-    drive(&mut script, &snapshot, &mut ledger, 7);
     drive(&mut script, &snapshot, &mut ledger, 8);
+    drive(&mut script, &snapshot, &mut ledger, 9);
     assert!(matches!(
-        ack(&mut ledger, 8),
+        ack(&mut ledger, 9),
         HostEffect::Interaction(crate::shim::InteractReq::CloseModal)
     ));
     snapshot.seed_main_modal(-1, vec![]);
-    drive(&mut script, &snapshot, &mut ledger, 9);
+    drive(&mut script, &snapshot, &mut ledger, 10);
     assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
     assert!(script.settling && !script.needs_read);
 
@@ -1177,7 +1178,7 @@ fn advancing_settle_timeout_rereads_before_retrying_after_delayed_progress() {
         index: 314,
         value: 1,
     }]);
-    for tick in 10..=20 {
+    for tick in 11..=21 {
         drive(&mut script, &snapshot, &mut ledger, tick);
     }
     assert!(!script.settling, "the settle window must have timed out");
@@ -1187,7 +1188,7 @@ fn advancing_settle_timeout_rereads_before_retrying_after_delayed_progress() {
         "the timeout must request a journal read before another attempt"
     );
 
-    drive(&mut script, &snapshot, &mut ledger, 21);
+    drive(&mut script, &snapshot, &mut ledger, 22);
     assert!(matches!(
         ledger.as_ref().unwrap().outbox.first().map(|action| &action.effect),
         Some(HostEffect::Interaction(
@@ -1196,19 +1197,19 @@ fn advancing_settle_timeout_rereads_before_retrying_after_delayed_progress() {
     ));
     assert_eq!(begins.load(Ordering::Relaxed), 1);
     assert!(matches!(
-        ack(&mut ledger, 21),
+        ack(&mut ledger, 22),
         HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
     ));
     journal(&mut snapshot, "next branch");
-    drive(&mut script, &snapshot, &mut ledger, 22);
     drive(&mut script, &snapshot, &mut ledger, 23);
+    drive(&mut script, &snapshot, &mut ledger, 24);
     assert!(matches!(
-        ack(&mut ledger, 23),
+        ack(&mut ledger, 24),
         HostEffect::Interaction(crate::shim::InteractReq::CloseModal)
     ));
     snapshot.seed_main_modal(-1, vec![]);
     assert_eq!(
-        drive(&mut script, &snapshot, &mut ledger, 24),
+        drive(&mut script, &snapshot, &mut ledger, 25),
         ScriptFlow::Complete
     );
     assert_eq!(script.stage().unwrap().0.as_ref(), "cook:mid");
