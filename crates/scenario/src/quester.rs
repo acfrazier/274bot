@@ -1452,7 +1452,7 @@ pub fn quester_path_scenario_from_env() -> Result<Scenario, String> {
         })
         .transpose()?;
     if let Some(mode) = seeds.as_ref().and_then(|seeds| seeds.mode.as_deref()) {
-        if !matches!(mode, "stage" | "clean") {
+        if !matches!(mode, "stage" | "clean" | "path_terminal") {
             return Err(format!("unknown smoke mode {mode:?}"));
         }
     }

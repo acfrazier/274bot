@@ -50,6 +50,9 @@
 //! The `stage` field stays required by the shared schema, but the fixture does
 //! not apply it to the account.
 //!
+//! For a focused terminal Path probe, set `mode` to `path_terminal`. The live
+//! cell passes when the script ends, even if the quest remains in progress.
+//!
 //! `seed_vars` names the stage varp for Paths with no progress varp hint
 //! (released Cook); `before_relog` holds raw fixture cheats such as
 //! `givebank` stock and prerequisite quest flags. Only the tested account is
@@ -99,6 +102,7 @@ fn smoke_cell(
             },
             Some(seeds.stage.as_str()),
         ),
+        "path_terminal" => (Mode::PathTerminal, Some(seeds.stage.as_str())),
         "clean" => (Mode::Clean, None),
         other => return Err(format!("unknown smoke mode {other:?}")),
     };
@@ -260,6 +264,16 @@ mod smoke_tests {
     }
 
     #[test]
+    fn path_terminal_smoke_uses_the_seeded_stage() {
+        let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
+        let mut seeds = parse_seeds(COOK_SEEDS).unwrap();
+        seeds.mode = Some("path_terminal".into());
+        let cell = cook_cell(&seeds);
+        assert!(matches!(cell.mode, Mode::PathTerminal));
+        assert!(cell.start_settings.contains_key("quests"));
+    }
+
+    #[test]
     fn danger_route_permission_is_opt_in() {
         let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
         let seeds = parse_seeds(COG_CLEAN_SEEDS).unwrap();
@@ -292,9 +306,13 @@ mod smoke_tests {
     }
 
     #[test]
-    fn smoke_row_rejects_unknown_quests_and_non_base40_profiles() {
+    fn smoke_row_uses_each_quest_profile() {
         assert!(smoke_row("not-a-quest").is_err());
-        assert!(smoke_row("dragon").is_err());
+        assert_eq!(smoke_row("dragon").unwrap().profile, TestProfile::Base60);
+        assert_eq!(
+            smoke_row("elemental_workshop").unwrap().profile,
+            TestProfile::Base60
+        );
         assert_eq!(smoke_row("cog").unwrap().profile, TestProfile::Base40);
         assert_eq!(smoke_row("cook").unwrap().display, "Cook's Assistant");
     }
