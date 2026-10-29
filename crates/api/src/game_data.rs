@@ -1645,7 +1645,7 @@ impl<'de> Deserialize<'de> for ChapterRootWire {
     where
         D: serde::Deserializer<'de>,
     {
-        use serde::de::{Error as _, Visitor};
+        use serde::de::Visitor;
 
         struct WireVisitor;
 
