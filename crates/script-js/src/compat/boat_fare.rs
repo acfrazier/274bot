@@ -1903,7 +1903,8 @@ impl Family for WalkTo {
             // freezes follow while it handles the event, so keep the walk
             // pending and let a later route failure enter fare recovery.
             if interrupted(cx) {
-                let first_route = matches!(&self.phase, WalkToPhase::Walking { retried: false, .. });
+                let first_route =
+                    matches!(&self.phase, WalkToPhase::Walking { retried: false, .. });
                 let owned_random =
                     observed::with(|scene| scene.since_login().ours().unwrap_or(false));
                 if first_route && owned_random && !crate::event_signal::pending() {
