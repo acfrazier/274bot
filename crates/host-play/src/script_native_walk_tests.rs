@@ -234,7 +234,9 @@ fn real_scorpcatcher_no_key_route_job_publishes_no_path_before_native_deadline()
             Some(&WalkEnd::NoPath)
         );
         assert!(
-            bot.walk_outcome_detail.as_deref().is_some_and(|detail| !detail.is_empty()),
+            bot.walk_outcome_detail
+                .as_deref()
+                .is_some_and(|detail| !detail.is_empty()),
             "a no-route result must name its reason"
         );
         assert!(!bot.has_route());
@@ -243,7 +245,10 @@ fn real_scorpcatcher_no_key_route_job_publishes_no_path_before_native_deadline()
     let shared = rig.shared.lock();
     let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
     assert_eq!(receipt.end, WalkEnd::NoPath);
-    assert!(receipt.detail.as_deref().is_some_and(|detail| !detail.is_empty()));
+    assert!(receipt
+        .detail
+        .as_deref()
+        .is_some_and(|detail| !detail.is_empty()));
     assert!(rig.driver.walked.is_none());
 }
 

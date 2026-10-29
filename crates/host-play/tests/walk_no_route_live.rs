@@ -120,7 +120,6 @@ impl Script for NativeNoRouteScript {
                     return Ok(ScriptFlow::Complete);
                 }
             }
-
         }
 
         let Some(handle) = &self.handle else {
@@ -149,7 +148,11 @@ impl Script for NativeNoRouteScript {
 fn required_path(name: &str) -> PathBuf {
     let value = std::env::var_os(name).unwrap_or_else(|| panic!("{name} is required"));
     let path = PathBuf::from(value);
-    assert!(path.is_absolute(), "{name} must be absolute: {}", path.display());
+    assert!(
+        path.is_absolute(),
+        "{name} must be absolute: {}",
+        path.display()
+    );
     path
 }
 
@@ -163,8 +166,11 @@ fn required_port(name: &str) -> u16 {
 fn copy_dir(source: &Path, destination: &Path) -> Result<(), String> {
     fs::create_dir(destination)
         .map_err(|error| format!("create {}: {error}", destination.display()))?;
-    for entry in fs::read_dir(source).map_err(|error| format!("read {}: {error}", source.display()))? {
-        let entry = entry.map_err(|error| format!("read entry in {}: {error}", source.display()))?;
+    for entry in
+        fs::read_dir(source).map_err(|error| format!("read {}: {error}", source.display()))?
+    {
+        let entry =
+            entry.map_err(|error| format!("read entry in {}: {error}", source.display()))?;
         let source_path = entry.path();
         let destination_path = destination.join(entry.file_name());
         let kind = entry
@@ -191,9 +197,10 @@ fn copy_dir(source: &Path, destination: &Path) -> Result<(), String> {
 }
 
 fn tile_json(tile: Option<WorldTile>) -> Value {
-    tile.map_or(Value::Null, |tile| {
-        json!({"x": tile.x, "z": tile.z, "level": tile.level})
-    })
+    tile.map_or(
+        Value::Null,
+        |tile| json!({"x": tile.x, "z": tile.z, "level": tile.level}),
+    )
 }
 fn within_radius(from: WorldTile, target: WorldTile, radius: u16) -> bool {
     from.level == target.level
@@ -201,14 +208,14 @@ fn within_radius(from: WorldTile, target: WorldTile, radius: u16) -> bool {
         && (from.z - target.z).abs() <= i32::from(radius)
 }
 
-
 fn wait_for_setup(play: &host_play::Play, shared: &SharedLiveState, account: &str) -> LiveState {
     let deadline = Instant::now() + SETUP_TIMEOUT;
     let mut state = shared.state.lock().expect("live state");
     loop {
-        let status_ready = play.statuses().iter().any(|status| {
-            status.username == account && status.ingame && status.scene_state == 2
-        });
+        let status_ready = play
+            .statuses()
+            .iter()
+            .any(|status| status.username == account && status.ingame && status.scene_state == 2);
         if state.ingame && state.scene_state == 2 && state.player_tile.is_some() && status_ready {
             return LiveState {
                 latest_tick: state.latest_tick,
@@ -220,7 +227,10 @@ fn wait_for_setup(play: &host_play::Play, shared: &SharedLiveState, account: &st
             };
         }
         let now = Instant::now();
-        assert!(now < deadline, "account did not enter a live scene: {state:?}");
+        assert!(
+            now < deadline,
+            "account did not enter a live scene: {state:?}"
+        );
         let (next, timeout) = shared
             .changed
             .wait_timeout(state, deadline.saturating_duration_since(now))
@@ -285,7 +295,6 @@ fn quester_action_result_json(result: &Result<WalkReceipt, ActionError>) -> Valu
     }
 }
 
-
 #[test]
 #[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, Engine L ports 47594/3080, WORLD_ENGINE_DIR, WORLD_NAV_PACK, WORLD_NAV_FLAGS, WORLD_CACHE_DIR, RS2B0T and LIVE_EVIDENCE_DIR"]
 fn live_scorpcatcher_no_key_walk_returns_no_path_with_detail_within_observed_ticks() {
@@ -294,7 +303,10 @@ fn live_scorpcatcher_no_key_walk_returns_no_path_with_detail_within_observed_tic
     let game_port = required_port("WORLD_GAME_PORT");
     let http_port = required_port("WORLD_HTTP_PORT");
     assert_eq!(game_port, ENGINE_L_GAME_PORT, "use the Engine L tunnel");
-    assert_eq!(http_port, ENGINE_L_HTTP_PORT, "use the Engine L HTTP tunnel");
+    assert_eq!(
+        http_port, ENGINE_L_HTTP_PORT,
+        "use the Engine L HTTP tunnel"
+    );
     let evidence_root = required_path("LIVE_EVIDENCE_DIR");
     fs::create_dir_all(&evidence_root).expect("create evidence root");
     let serial = SystemTime::now()
@@ -339,7 +351,10 @@ fn live_scorpcatcher_no_key_walk_returns_no_path_with_detail_within_observed_tic
         .bind_runtime()
         .expect("bind Engine L profile");
     let template = SharedClientTemplate::load(Arc::clone(&profile)).expect("load profile template");
-    assert!(template.world().is_some(), "the v17 navigation pack must load");
+    assert!(
+        template.world().is_some(),
+        "the v17 navigation pack must load"
+    );
 
     let uid = i32::try_from(serial % i32::MAX as u128).expect("bounded uid");
     let profile = Profile {
@@ -362,7 +377,9 @@ fn live_scorpcatcher_no_key_walk_returns_no_path_with_detail_within_observed_tic
             }
             let mut snapshot = GameSnapshot::new();
             snapshot.rebuild(client);
-            let tile = snapshot.tile().map(|(x, z, level)| WorldTile { x, z, level });
+            let tile = snapshot
+                .tile()
+                .map(|(x, z, level)| WorldTile { x, z, level });
             let mut state = frame_shared.state.lock().expect("live state");
             let changed = state.latest_tick != Some(snapshot.tick())
                 || state.ingame != client.ingame
@@ -397,7 +414,10 @@ fn live_scorpcatcher_no_key_walk_returns_no_path_with_detail_within_observed_tic
         "world_nav_pack": std::env::var("WORLD_NAV_PACK").expect("WORLD_NAV_PACK"),
     });
     write_receipt(&run_dir.join("setup.json"), &setup_receipt);
-    assert_eq!(dusty_key_count, 0, "fresh account must not hold the Dusty key");
+    assert_eq!(
+        dusty_key_count, 0,
+        "fresh account must not hold the Dusty key"
+    );
     assert!(
         !within_radius(origin, TARGET, RADIUS),
         "the live account must start outside the requested arrival radius"
@@ -465,13 +485,30 @@ fn live_scorpcatcher_no_key_walk_returns_no_path_with_detail_within_observed_tic
     write_receipt(&run_dir.join("receipt.json"), &report);
     drop(state);
 
-    assert_eq!(wait, RouteWait::Receipt, "route ended before a native receipt");
+    assert_eq!(
+        wait,
+        RouteWait::Receipt,
+        "route ended before a native receipt"
+    );
     let state = shared.state.lock().expect("live state");
-    assert!(state.start_error.is_none(), "native Walk start failed: {:?}", state.start_error);
+    assert!(
+        state.start_error.is_none(),
+        "native Walk start failed: {:?}",
+        state.start_error
+    );
     let result = state.result.as_ref().expect("native Walk receipt");
-    let receipt = result.as_ref().expect("native Walk must return a typed receipt");
-    assert_eq!(receipt.end, WalkEnd::NoPath, "native route must end as NoPath");
-    let detail = receipt.detail.as_deref().expect("NoPath must retain route detail");
+    let receipt = result
+        .as_ref()
+        .expect("native Walk must return a typed receipt");
+    assert_eq!(
+        receipt.end,
+        WalkEnd::NoPath,
+        "native route must end as NoPath"
+    );
+    let detail = receipt
+        .detail
+        .as_deref()
+        .expect("NoPath must retain route detail");
     assert!(!detail.trim().is_empty(), "NoPath detail must not be empty");
     let reason = normalized_detail(detail);
     assert!(

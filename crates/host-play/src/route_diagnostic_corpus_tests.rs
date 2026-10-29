@@ -1,5 +1,5 @@
-use super::*;
 use super::super::{script_observe, script_slot_or_insert, ScriptWall};
+use super::*;
 use api::interact::Driver;
 use api::selected::{FactKey, QuestGate};
 use api::snapshot::WorldTile;
@@ -263,7 +263,10 @@ fn live_native_walk(case: &DiagnosticCase, serial: u64) -> LiveNativeWalk {
         .and_then(|bot| bot.native_walk.as_ref())
         .cloned()
         .expect("script_observe queued the real native walk authority");
-    assert!(authority.live(), "native Walk action remains the authority owner");
+    assert!(
+        authority.live(),
+        "native Walk action remains the authority owner"
+    );
 
     LiveNativeWalk {
         authority,
@@ -274,14 +277,12 @@ fn live_native_walk(case: &DiagnosticCase, serial: u64) -> LiveNativeWalk {
 
 fn stage_identity(index: u64) -> WorkIdentity {
     WorkIdentity::new(
-        RequestId::from_raw(RequestId::HOST_FIRST + index)
-            .expect("test route identity is valid"),
+        RequestId::from_raw(RequestId::HOST_FIRST + index).expect("test route identity is valid"),
         api::identity::ProcessIncarnation::from_start_nonce(
             std::num::NonZeroU64::new(1).expect("test incarnation is nonzero"),
         ),
         Scope::Slot(
-            api::identity::SlotKey::from_incarnation(1)
-                .expect("test slot incarnation is valid"),
+            api::identity::SlotKey::from_incarnation(1).expect("test slot incarnation is valid"),
         ),
         None,
     )
@@ -394,15 +395,10 @@ fn run_diagnostics(
         let output = completed.unwrap_or_else(|| {
             panic!(
                 "{} RouteJob diagnostics did not complete within {} slices",
-                case.name,
-                MAX_DIAGNOSTIC_SLICES
+                case.name, MAX_DIAGNOSTIC_SLICES
             )
         });
-        (
-            output,
-            job.diagnostic_settled,
-            job.search_purpose,
-        )
+        (output, job.diagnostic_settled, job.search_purpose)
     };
     let elapsed_ms = started.elapsed().as_millis();
     let cutoff_detail = "further gate diagnosis stopped after";
@@ -467,11 +463,7 @@ fn tile_json(tile: WorldTile) -> Value {
 }
 
 fn state_json(state: &WorldState) -> Value {
-    let mut inventory: Vec<_> = state
-        .inv
-        .iter()
-        .map(|(&id, &count)| (id, count))
-        .collect();
+    let mut inventory: Vec<_> = state.inv.iter().map(|(&id, &count)| (id, count)).collect();
     inventory.sort_unstable();
     let mut worn: Vec<_> = state.worn.iter().copied().collect();
     worn.sort_unstable();
@@ -758,7 +750,8 @@ fn real_cases(world: Arc<NavWorld>) -> Vec<DiagnosticCase> {
         },
         DiagnosticCase {
             name: "lumbridge_rellekka_refused_zones_l126",
-            provenance: "17-case per-goal parity corpus; nav/examples/perf_corpus.rs zone refusal witness",
+            provenance:
+                "17-case per-goal parity corpus; nav/examples/perf_corpus.rs zone refusal witness",
             world_kind: "r289_navpack",
             world,
             from: tile(3222, 3218),
@@ -806,9 +799,10 @@ fn worst_case(rows: &[Value], run: &str, metric: &str) -> Value {
             worst = Some((row, value));
         }
     }
-    worst.map_or(Value::Null, |(row, value)| {
-        json!({"case": row.get("case"), "value": value})
-    })
+    worst.map_or(
+        Value::Null,
+        |(row, value)| json!({"case": row.get("case"), "value": value}),
+    )
 }
 
 fn write_report(
@@ -887,7 +881,10 @@ fn compares_bounded_and_unbounded_route_diagnostics_corpus() {
     assert!(navpack.is_absolute() && output.is_absolute());
 
     let loaded = NavWorld::load_pack(&navpack).unwrap_or_else(|error| {
-        panic!("cannot load diagnostic NAVPACK {}: {error:?}", navpack.display())
+        panic!(
+            "cannot load diagnostic NAVPACK {}: {error:?}",
+            navpack.display()
+        )
     });
     loaded
         .bind_named_bank_facts(
@@ -950,7 +947,11 @@ fn compares_bounded_and_unbounded_route_diagnostics_corpus() {
         assert_expected_native_end(case, &unbounded);
     }
 
-    assert_eq!(rows.len(), CORPUS_CASE_COUNT, "the whole corpus must be executed");
+    assert_eq!(
+        rows.len(),
+        CORPUS_CASE_COUNT,
+        "the whole corpus must be executed"
+    );
     assert!(
         rows.iter().all(|row| {
             row.get("bounded").is_some_and(|value| !value.is_null())
@@ -1014,13 +1015,13 @@ fn diagnostic_budget_cutoff_publishes_no_path_and_the_cutoff_detail() {
     let native = live_native_walk(&case, 30_000);
     let observation = run_diagnostics(&case, native.authority.clone(), 0, 30_001);
     assert_eq!(observation.native_end.as_deref(), Some("NoPath"));
-    assert!(observation.cutoff, "zero remaining budget cuts off post-failure diagnosis");
-    assert!(observation
-        .detail
-        .as_deref()
-        .is_some_and(|detail| {
-            detail.contains("further gate diagnosis stopped after 0 settled nodes")
-        }));
+    assert!(
+        observation.cutoff,
+        "zero remaining budget cuts off post-failure diagnosis"
+    );
+    assert!(observation.detail.as_deref().is_some_and(|detail| {
+        detail.contains("further gate diagnosis stopped after 0 settled nodes")
+    }));
     assert!(
         observation.diagnostic_settled <= 64,
         "the visible count includes the in-flight cooperative slice without hiding the cap overrun"

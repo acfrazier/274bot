@@ -142,10 +142,7 @@ impl NativeMachine for Walk {
         if !cx.evidence().meets(self.required_after) {
             if cx.active_now() >= self.deadline {
                 cx.cancel_request(self.request_id);
-                return Poll::Ready(Ok(deadline_failure_receipt(
-                    self.request_id,
-                    cx.evidence(),
-                )));
+                return Poll::Ready(Ok(deadline_failure_receipt(self.request_id, cx.evidence())));
             }
             return Poll::Pending;
         }
@@ -177,10 +174,7 @@ impl NativeMachine for Walk {
                     return Poll::Ready(Ok(receipt.clone()));
                 }
                 cx.cancel_request(self.request_id);
-                return Poll::Ready(Ok(deadline_failure_receipt(
-                    self.request_id,
-                    cx.evidence(),
-                )));
+                return Poll::Ready(Ok(deadline_failure_receipt(self.request_id, cx.evidence())));
             }
             return Poll::Pending;
         }
@@ -195,10 +189,7 @@ impl NativeMachine for Walk {
         if cx.entered_scene() {
             if cx.active_now() >= self.deadline && receipt.is_none() {
                 cx.cancel_request(self.request_id);
-                return Poll::Ready(Ok(deadline_failure_receipt(
-                    self.request_id,
-                    cx.evidence(),
-                )));
+                return Poll::Ready(Ok(deadline_failure_receipt(self.request_id, cx.evidence())));
             }
             return Poll::Pending;
         }
@@ -490,12 +481,7 @@ mod tests {
         let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
             tick.actions
                 .begin::<Walk>(
-                    crate::quester::families::reach::walk_request(
-                        target,
-                        1,
-                        None,
-                        required_after,
-                    ),
+                    crate::quester::families::reach::walk_request(target, 1, None, required_after),
                     &mut tick.cx,
                 )
                 .unwrap()
@@ -547,12 +533,7 @@ mod tests {
         let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
             tick.actions
                 .begin::<Walk>(
-                    crate::quester::families::reach::walk_request(
-                        target,
-                        1,
-                        None,
-                        required_after,
-                    ),
+                    crate::quester::families::reach::walk_request(target, 1, None, required_after),
                     &mut tick.cx,
                 )
                 .unwrap()
@@ -600,12 +581,7 @@ mod tests {
         let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
             tick.actions
                 .begin::<Walk>(
-                    crate::quester::families::reach::walk_request(
-                        target,
-                        1,
-                        None,
-                        required_after,
-                    ),
+                    crate::quester::families::reach::walk_request(target, 1, None, required_after),
                     &mut tick.cx,
                 )
                 .unwrap()
