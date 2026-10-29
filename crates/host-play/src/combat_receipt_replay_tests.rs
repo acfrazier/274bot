@@ -1210,3 +1210,339 @@ fn replay_all_retained_combat_receipts() {
     std::fs::write(output, serde_json::to_vec_pretty(&results).unwrap()).unwrap();
     println!("Replayed {} retained receipt files", results.len());
 }
+fn m2_lock_action(tick: i64, batch: u64, sequence: u64, request: Value) -> Value {
+    json!({
+        "kind": "interaction",
+        "tick": tick,
+        "batch": batch,
+        "sequence": sequence,
+        "request": request,
+    })
+}
+
+#[test]
+fn m2_prep_drink_before_a_late_first_attack_needs_no_tick_three_plan() {
+    let mut capture = CombatCapture::default();
+    capture.actions = vec![
+        m2_lock_action(40, 2, 1, json!({"op": "wear"})),
+        m2_lock_action(40, 2, 2, json!({"op": "held", "action": "drink"})),
+        m2_lock_action(51, 4, 3, json!({"op": "npc", "action": "Attack"})),
+    ];
+    assert!(
+        all_drinks_respect_lock(&capture),
+        "the Prep drink stays valid when the first attack occurs after tick 43"
+    );
+
+    for (tick, batch, sequence) in [(41, 3, 4), (42, 5, 5)] {
+        capture.actions.push(m2_lock_action(
+            tick,
+            batch,
+            sequence,
+            json!({"op": "held", "action": "eat"}),
+        ));
+        assert!(
+            !all_drinks_respect_lock(&capture),
+            "the Prep drink still blocks actions at tick {tick}"
+        );
+        assert!(capture.actions.pop().is_some());
+    }
+}
+
+#[test]
+fn m2_in_fight_drink_still_needs_a_tick_three_attack_or_drink() {
+    let mut capture = CombatCapture::default();
+    capture.actions = vec![
+        m2_lock_action(40, 2, 1, json!({"op": "wear"})),
+        m2_lock_action(40, 2, 2, json!({"op": "held", "action": "drink"})),
+        m2_lock_action(43, 4, 3, json!({"op": "npc", "action": "Attack"})),
+        m2_lock_action(60, 6, 4, json!({"op": "held", "action": "drink"})),
+    ];
+    assert!(
+        !all_drinks_respect_lock(&capture),
+        "the in-fight drink has no attack or drink plan at tick 63"
+    );
+}
+
+#[test]
+fn m2_post_attack_super_attack_does_not_qualify_as_prep() {
+    let mut capture = CombatCapture::default();
+    let mut boost = m2_lock_action(
+        43,
+        4,
+        3,
+        json!({"op": "held", "action": "drink", "slot": 0}),
+    );
+    boost["snapshot"] = json!({
+        "inventory": [{"slot": 0, "id": SUPER_ATTACK_4_ID}]
+    });
+    capture.actions = vec![
+        m2_lock_action(40, 2, 1, json!({"op": "npc", "action": "Attack"})),
+        m2_lock_action(43, 4, 2, json!({"op": "wear"})),
+        boost,
+    ];
+
+    assert!(
+        !first_prep_plan_ok(&capture),
+        "a Super Attack potion after the first attack cannot count as Prep"
+    );
+}
+
+#[test]
+#[ignore = "requires M2_OUT_OF_RANGE_RECEIPTS with two retained M2 receipts"]
+fn m2_out_of_range_receipts_pass_the_full_oracle() {
+    let paths = std::env::var("M2_OUT_OF_RANGE_RECEIPTS").expect("M2_OUT_OF_RANGE_RECEIPTS");
+    let mut count = 0;
+    let mut boost_count_mutants = 0;
+    for path in paths.split(',') {
+        let value: Value =
+            serde_json::from_slice(&std::fs::read(path).expect("read M2 receipt")).unwrap();
+        let parse_capture = capture;
+        let capture = parse_capture(&value);
+        let baseline = capture
+            .start_baseline
+            .as_ref()
+            .expect("receipt has an M2 Start baseline");
+        let distance = named_npcs(baseline, "khazard warlord")
+            .first()
+            .and_then(|warlord| warlord["distance"].as_i64())
+            .expect("receipt has a Warlord distance");
+        assert!(
+            (7_i64..=i64::from(WARLORD_WANDER_RANGE)).contains(&distance),
+            "receipt {path} starts out of range at distance {distance}"
+        );
+        assert_eq!(start_preflight(Case::M2, baseline), None, "{path}");
+        let ready = m2_ready(&capture);
+        let Some(report) = report_with_end(&capture, "Killed") else {
+            panic!("M2 receipt has no Killed report for {path}");
+        };
+        if !ready {
+            let prayer_doses = integer(report, "combat_prayer_doses").unwrap_or(-1);
+            let boost_doses = integer(report, "combat_boost_doses").unwrap_or(-1);
+            let locked_ticks = integer(report, "combat_locked_ticks").unwrap_or(-1);
+            let protected_hits = integer(report, "combat_hits_while_protected").unwrap_or(-1);
+            let plans = batch_plans(&capture);
+            let checks = [
+                (
+                    "prayer dose count exists",
+                    integer(report, "combat_prayer_doses").is_some(),
+                ),
+                (
+                    "boost dose count exists",
+                    integer(report, "combat_boost_doses").is_some(),
+                ),
+                ("prayer doses are positive", prayer_doses > 0),
+                (
+                    "locked ticks match doses",
+                    locked_ticks == 2 * (prayer_doses + boost_doses),
+                ),
+                ("no protected hits", protected_hits == 0),
+                (
+                    "killed report has corpse",
+                    every_killed_report_has_corpse(&capture),
+                ),
+                ("first prep plan", first_prep_plan_ok(&capture)),
+                ("drink lock", all_drinks_respect_lock(&capture)),
+                (
+                    "Prep boost count in report window",
+                    prep_boost_count_matches(&capture, report, boost_doses),
+                ),
+                ("prayer floor", all_prayer_drinks_at_floor(&capture, 26)),
+                (
+                    "first-floor sip timing",
+                    m2_first_floor_sip_timing_ok(&capture),
+                ),
+                ("protection timing", protection_timing_ok(&capture)),
+                ("restoration runs", m2_restoration_runs_ok(&capture, report)),
+                (
+                    "prayer off after corpse",
+                    prayer_off_plan_after_corpse(&capture, report),
+                ),
+                (
+                    "no eat at zero danger",
+                    no_eat_at_zero_danger(&capture, report),
+                ),
+                ("offensive plan", m2_offensive_plan_ok(&capture)),
+                (
+                    "multi-op count is at least two",
+                    integer(report, "combat_multi_op_plans").is_some_and(|count| count >= 2),
+                ),
+                (
+                    "multi-op count matches",
+                    report_multi_op_count_matches(&capture, report),
+                ),
+                (
+                    "multi-op plan has four or five events",
+                    plans.iter().any(|plan| {
+                        plan.rows.len() >= 2
+                            && plan_event_count(plan).is_some_and(|count| (4..=5).contains(&count))
+                    }),
+                ),
+                (
+                    "native interactions are wire-valid",
+                    native_interactions_wire_valid(&capture),
+                ),
+                ("batch plan contract", batch_plan_contract(&capture, &plans)),
+                (
+                    "no attack after report",
+                    no_attack_after_report(&capture, report),
+                ),
+                (
+                    "no death report",
+                    !capture
+                        .statuses
+                        .iter()
+                        .any(|status| status["fields"]["combat_end"].as_str() == Some("Died")),
+                ),
+                ("real attack packet", has_real_attack_packet(&capture)),
+            ];
+            eprintln!("M2 oracle failed checks for {path}:");
+            for (name, passed) in checks {
+                if !passed {
+                    eprintln!("  {name}");
+                }
+            }
+        }
+        assert!(ready, "receipt {path}; see preceding M2 oracle diagnostics");
+        let prep_tick = first_prep_tick(&capture).expect("M2 receipt has a Prep plan");
+        let report_tick =
+            integer(report, "combat_evidence_tick").expect("M2 receipt has an evidence tick");
+        let combat_ticks = integer(report, "combat_ticks")
+            .filter(|ticks| *ticks > 0)
+            .expect("M2 receipt has a positive combat duration");
+        let window_start = report_tick
+            .checked_sub(combat_ticks - 1)
+            .expect("M2 report window start does not underflow");
+        if (window_start..=report_tick).contains(&prep_tick) {
+            let boost_doses = integer(report, "combat_boost_doses").unwrap();
+            assert!(boost_doses >= 1, "in-window Prep is counted for {path}");
+            let locked_ticks = integer(report, "combat_locked_ticks").unwrap();
+            let mut mutant = value.clone();
+            let status = mutant["statuses"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|status| status["fields"]["combat_end"] == json!("Killed"))
+                .expect("M2 receipt retains its Killed report");
+            let fields = status["fields"].as_object_mut().unwrap();
+            fields.insert("combat_boost_doses".to_owned(), json!(0));
+            fields.insert(
+                "combat_locked_ticks".to_owned(),
+                json!(locked_ticks - 2 * boost_doses),
+            );
+            assert!(
+                !m2_ready(&parse_capture(&mutant)),
+                "zero reported boost dose does not pass for in-window Prep in {path}"
+            );
+            boost_count_mutants += 1;
+        }
+
+        let mut in_range = baseline.clone();
+        let warlord = in_range["nearby_npcs"]
+            .as_array_mut()
+            .expect("baseline has nearby NPCs")
+            .iter_mut()
+            .find(|npc| {
+                npc["name"]
+                    .as_str()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("khazard warlord"))
+            })
+            .expect("baseline has one Warlord");
+        warlord["distance"] = json!(6);
+        assert!(
+            start_preflight(Case::M2, &in_range).is_some(),
+            "the live M2 gate rejects an in-range start"
+        );
+        count += 1;
+    }
+    assert_eq!(count, 2, "supply the two out-of-range reviewer receipts");
+    assert_eq!(
+        boost_count_mutants, 2,
+        "both retained receipts count Prep within their combat windows"
+    );
+}
+
+/// A receipt with only the Killed report's fields edited, as a replay mutant.
+fn m2_report_field_mutant(
+    base: &Value,
+    edit: impl Fn(&mut serde_json::Map<String, Value>),
+) -> Value {
+    let mut mutant = base.clone();
+    let status = mutant["statuses"]
+        .as_array_mut()
+        .expect("receipt has statuses")
+        .iter_mut()
+        .find(|status| status["fields"]["combat_end"] == json!("Killed"))
+        .expect("receipt retains its Killed report");
+    edit(
+        status["fields"]
+            .as_object_mut()
+            .expect("Killed report has fields"),
+    );
+    mutant
+}
+
+/// Every dose locks the next two observed ticks
+/// (`crates/script/src/combat/schedule.rs:173-175`), so a Killed report's
+/// locked ticks must equal two per reported dose. The oracle must reject a
+/// report that changes the locked ticks alone, and one that changes a dose
+/// count alone.
+#[test]
+#[ignore = "requires M2_ORACLE_RECEIPTS with retained M2 receipts"]
+fn m2_locked_ticks_must_match_the_reported_doses() {
+    let paths = std::env::var("M2_ORACLE_RECEIPTS").expect("M2_ORACLE_RECEIPTS");
+    let mut count = 0;
+    for path in paths.split(',').filter(|path| !path.is_empty()) {
+        let value: Value =
+            serde_json::from_slice(&std::fs::read(path).expect("read M2 receipt")).unwrap();
+        let parse_capture = capture;
+        let capture = parse_capture(&value);
+        assert!(m2_ready(&capture), "receipt {path} passes unmutated");
+        let report = report_with_end(&capture, "Killed").expect("M2 receipt has a Killed report");
+        let prayer_doses = integer(report, "combat_prayer_doses").expect("M2 receipt has doses");
+        let boost_doses = integer(report, "combat_boost_doses").expect("M2 receipt has boosts");
+        let locked_ticks =
+            integer(report, "combat_locked_ticks").expect("M2 receipt has locked ticks");
+        assert_eq!(
+            locked_ticks,
+            2 * (prayer_doses + boost_doses),
+            "receipt {path} reports two locked ticks per dose"
+        );
+        let mutants = [
+            (
+                "locked ticks plus two",
+                m2_report_field_mutant(&value, |fields| {
+                    fields.insert("combat_locked_ticks".to_owned(), json!(locked_ticks + 2));
+                }),
+            ),
+            (
+                "locked ticks zero",
+                m2_report_field_mutant(&value, |fields| {
+                    fields.insert("combat_locked_ticks".to_owned(), json!(0));
+                }),
+            ),
+            (
+                "locked ticks times three",
+                m2_report_field_mutant(&value, |fields| {
+                    fields.insert("combat_locked_ticks".to_owned(), json!(locked_ticks * 3));
+                }),
+            ),
+            (
+                "one more prayer dose",
+                m2_report_field_mutant(&value, |fields| {
+                    fields.insert("combat_prayer_doses".to_owned(), json!(prayer_doses + 1));
+                }),
+            ),
+        ];
+        for (label, mutant) in mutants {
+            assert!(
+                !m2_ready(&parse_capture(&mutant)),
+                "{label} does not pass for {path}"
+            );
+        }
+        count += 1;
+    }
+    assert!(
+        count >= 7,
+        "supply the seven retained M2 receipts, got {count}"
+    );
+}

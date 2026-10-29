@@ -2552,11 +2552,13 @@ fn prep_wears_and_drinks_before_the_first_attack_when_the_target_starts_out_of_r
         worn.slot = 3;
         worn.container = ItemContainer::Equipment;
         scene.inventory.extend([weapon, potion]);
-        scene.refresh();
+        scene.snapshot = GameSnapshot::new();
+        scene.refresh_without_local();
         let mut request = scene.request();
         request.stand = Some(stand);
         request.engage_radius = 6;
         let mut harness = Harness::new(&scene, request);
+        scene.refresh();
         // The requested durable type earns the boost whether or not it is in
         // range, so the opening batch wears the weapon and then drinks.
         let prep = harness.pending_batch(&scene, 1);

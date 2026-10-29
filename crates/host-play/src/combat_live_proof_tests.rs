@@ -61,6 +61,7 @@ const WARLORD_ANCHOR: WorldTile = WorldTile {
     level: 0,
 };
 const WARLORD_WANDER_RANGE: i32 = 9;
+const M2_OUT_OF_RANGE_MIN_DISTANCE: i64 = 7;
 const RANGED_STAGE_DISTANCE: i32 = 9;
 const R2_STAGE_DISTANCE: i32 = 1;
 const R2_START_DISTANCE_MAX: i32 = R2_STAGE_DISTANCE + 1;
@@ -992,6 +993,30 @@ fn scenario_for(
         .position(|step| matches!(step.kind, StepKind::StartScript))
         .expect("Quester stage has StartScript");
     scenario.steps.truncate(start_index + 1);
+
+    // M2 must start outside melee range. Wait at distance eight so one
+    // Warlord step still leaves the Start baseline within the accepted range.
+    if case == Case::M2 {
+        scenario.steps.insert(
+            start_index,
+            Step {
+                name: "wait for the M2 Warlord start distance",
+                kind: StepKind::Await {
+                    evidence: "natural Warlord at distance eight",
+                    ready: Box::new(|snapshot| {
+                        let baseline = combat_proof::snapshot_facts(snapshot, None);
+                        let warlords = named_npcs(&baseline, "khazard warlord");
+                        warlords.len() == 1 && warlords[0]["distance"].as_i64() == Some(8)
+                    }),
+                    summary: None,
+                },
+                wait: Wait {
+                    arm: Proof::Stat { id: 0, min: 1 },
+                    budget_ticks: u32::MAX,
+                },
+            },
+        );
+    }
     let ready_capture = Arc::clone(&capture);
     scenario.steps.push(Step {
         name: "wait for the bounded combat proof",
@@ -2239,13 +2264,29 @@ fn start_preflight(case: Case, baseline: &Value) -> Option<String> {
                 ));
             }
             let warlords = named_npcs(baseline, "khazard warlord");
-            if warlords.len() != 1
-                || warlords[0]["distance"]
-                    .as_i64()
-                    .is_none_or(|distance| distance > 9)
-            {
+            let expected_range = if case == Case::M2 {
+                "seven to nine"
+            } else {
+                "within nine"
+            };
+            if warlords.len() != 1 {
                 return Some(format!(
-                    "{} natural-area interference: expected one natural, roaming Khazard Warlord within nine tiles of the stand near {WARLORD_ANCHOR:?}, observed {warlords:?}",
+                    "{} natural-area interference: expected one natural, roaming Khazard Warlord near {WARLORD_ANCHOR:?}, observed {warlords:?}",
+                    case.key()
+                ));
+            }
+            let distance_is_valid = warlords[0]["distance"].as_i64().is_some_and(|distance| {
+                distance <= i64::from(WARLORD_WANDER_RANGE)
+                    && (case != Case::M2 || distance >= M2_OUT_OF_RANGE_MIN_DISTANCE)
+            });
+            if !distance_is_valid {
+                let reason = if case == Case::M2 {
+                    "start-range mismatch"
+                } else {
+                    "natural-area interference"
+                };
+                return Some(format!(
+                    "{} {reason}: expected a natural, roaming Khazard Warlord {expected_range} tiles from the stand near {WARLORD_ANCHOR:?}, observed {warlords:?}",
                     case.key()
                 ));
             }
@@ -5783,9 +5824,13 @@ fn m2_ready(capture: &CombatCapture) -> bool {
     let locked_ticks = integer(report, "combat_locked_ticks").unwrap_or(-1);
     let protected_hits = integer(report, "combat_hits_while_protected").unwrap_or(-1);
     let plans = batch_plans(capture);
+    // Each drink locks the next two observed ticks
+    // (`crates/script/src/combat/schedule.rs:173-175`), and every locked tick is
+    // counted. Also require at least one boost dose when Prep lies inside the
+    // report window.
     prayer_doses > 0
-        && boost_doses > 0
         && locked_ticks == 2 * (prayer_doses + boost_doses)
+        && prep_boost_count_matches(capture, report, boost_doses)
         && protected_hits == 0
         && every_killed_report_has_corpse(capture)
         && first_prep_plan_ok(capture)
@@ -6654,9 +6699,20 @@ fn single_action_per_native_tick(capture: &CombatCapture) -> bool {
 }
 
 fn report_multi_op_count_matches(capture: &CombatCapture, report: &Value) -> bool {
+    // The report counter spans the combat machine's observed tick window.
+    // Exclude quest setup plans that ran before this report's combat started.
+    let Some(report_tick) = integer(report, "combat_evidence_tick") else {
+        return false;
+    };
+    let Some(combat_ticks) = integer(report, "combat_ticks").filter(|ticks| *ticks > 0) else {
+        return false;
+    };
+    let Some(first_tick) = report_tick.checked_sub(combat_ticks - 1) else {
+        return false;
+    };
     let observed = batch_plans(capture)
         .iter()
-        .filter(|plan| plan.rows.len() >= 2)
+        .filter(|plan| (first_tick..=report_tick).contains(&plan.tick) && plan.rows.len() >= 2)
         .count() as i64;
     integer(report, "combat_multi_op_plans") == Some(observed)
 }
@@ -6744,9 +6800,25 @@ fn last_is_attack_or_drink(plan: &BatchPlan<'_>) -> bool {
         .last()
         .is_some_and(|action| is_npc_attack(action) || is_drink(action))
 }
+fn first_prep_drink<'a>(capture: &'a CombatCapture, plans: &[BatchPlan<'a>]) -> Option<&'a Value> {
+    let first_attack_tick = first_attack_action(capture)?["tick"].as_i64()?;
+    let prep = plans.iter().find(|plan| {
+        plan.tick < first_attack_tick
+            && plan
+                .rows
+                .iter()
+                .any(|action| action["request"]["op"] == json!("wear"))
+    })?;
+    if prep.rows.len() != 2 || prep.rows[0]["request"]["op"] != json!("wear") {
+        return None;
+    }
+    let drink = prep.rows[1];
+    is_drink(drink).then_some(drink)
+}
 
 fn all_drinks_respect_lock(capture: &CombatCapture) -> bool {
     let plans = batch_plans(capture);
+    let prep_drink = first_prep_drink(capture, &plans);
     let drinks = capture
         .actions
         .iter()
@@ -6762,7 +6834,8 @@ fn all_drinks_respect_lock(capture: &CombatCapture) -> bool {
                 && !capture.actions.iter().any(|action| {
                     action["tick"] == json!(tick + 1) || action["tick"] == json!(tick + 2)
                 })
-                && batch_plan_at(&plans, tick + 3).is_some_and(last_is_attack_or_drink)
+                && (prep_drink.is_some_and(|prep| std::ptr::eq(*drink, prep))
+                    || batch_plan_at(&plans, tick + 3).is_some_and(last_is_attack_or_drink))
         })
 }
 
@@ -7299,6 +7372,40 @@ fn no_eat_at_zero_danger(capture: &CombatCapture, report: &Value) -> bool {
             })
 }
 
+fn first_prep_plan<'a, 'capture>(
+    plans: &'a [BatchPlan<'capture>],
+    first_attack_tick: i64,
+) -> Option<&'a BatchPlan<'capture>> {
+    plans.iter().find(|plan| {
+        plan.rows
+            .iter()
+            .any(|action| action["request"]["op"] == json!("wear"))
+            && plan.tick < first_attack_tick
+    })
+}
+
+fn first_prep_tick(capture: &CombatCapture) -> Option<i64> {
+    let first_attack_tick = first_attack_action(capture)?["tick"].as_i64()?;
+    let plans = batch_plans(capture);
+    first_prep_plan(&plans, first_attack_tick).map(|plan| plan.tick)
+}
+
+fn prep_boost_count_matches(capture: &CombatCapture, report: &Value, boost_doses: i64) -> bool {
+    let Some(prep_tick) = first_prep_tick(capture) else {
+        return false;
+    };
+    let Some(report_tick) = integer(report, "combat_evidence_tick") else {
+        return false;
+    };
+    let Some(combat_ticks) = integer(report, "combat_ticks").filter(|ticks| *ticks > 0) else {
+        return false;
+    };
+    let Some(window_start) = report_tick.checked_sub(combat_ticks - 1) else {
+        return false;
+    };
+    !(window_start..=report_tick).contains(&prep_tick) || boost_doses >= 1
+}
+
 fn first_prep_plan_ok(capture: &CombatCapture) -> bool {
     let plans = batch_plans(capture);
     let Some(first_attack) = first_attack_action(capture) else {
@@ -7307,12 +7414,7 @@ fn first_prep_plan_ok(capture: &CombatCapture) -> bool {
     let Some(first_attack_tick) = first_attack["tick"].as_i64() else {
         return false;
     };
-    let Some(prep) = plans.iter().find(|plan| {
-        plan.rows
-            .iter()
-            .any(|action| action["request"]["op"] == json!("wear"))
-            && plan.tick < first_attack_tick
-    }) else {
+    let Some(prep) = first_prep_plan(&plans, first_attack_tick) else {
         return false;
     };
     let Some(drink) = prep.rows.get(1).copied() else {

@@ -32,27 +32,32 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   real max hit. A cow's max hit is 1, so a bot eats at 3 hitpoints and
   stops for lack of food at 2. Imps cannot damage the bot at all (max hit
   0), so the bot does not raise Protect from Melee against them.
-- When a quest fight cannot attack its attacker, the bot now asks the route
-  planner for a safe place to walk to. It offers the quest's own stand first,
-  then places beyond the attacker's chase range, then places that are only
-  farther away. The planner picks the nearest place it can reach. Before, the
-  bot could pick a spot it could not reach, stand still, eat all its food and
-  die. The static hostile tree near Draynor Manor is one such attacker. If a
-  route fails, the bot plans again from where it stands and prefers the next
-  kind of place. A route that neither arrives nor fails also ends: the bot
-  counts game ticks, and when the walk takes longer than the measured walk
-  distance plus a margin of 12 ticks, it gives up on that route and starts
-  the next. When the walk distance cannot be measured, the limit is the
-  planner's own limit on route length, and the walk machine's ten-minute
-  deadline ends the walk first. A pass makes one request for each kind of
-  place that has candidates, so up to three requests (two when the quest
-  names no stand). The places of different kinds can overlap. A second pass
-  can follow the first when the food runs out, so the bot makes at most six
-  requests. While food remains, the first pass keeps eating as it walks; the
-  second pass, after the food is gone, does not eat. The quest's own walk
-  starts only after the bot sees that the attacker is gone. If every route
-  fails, the quest stops with the last route failure. This does not promise
-  that an escape exists.
+- When a quest fight cannot attack its target, the bot asks the route planner
+  to choose among exact escape goals. It offers the quest's stand first, then
+  tiles beyond the attacker's chase range, then tiles farther from the attacker
+  than the player is. The baked collision check removes blocked tiles,
+  including the dead-tree thicket near Draynor Manor. The route planner decides
+  which remaining goals it can reach.
+
+  After a walk fails, the bot plans again from its current tile and tries the
+  next tier with unrequested goals. Each request names one tier. Across both
+  passes, later requests never resend a tile named by an earlier failed request.
+  The second pass keeps this exclusion after food runs out. Six fixed 32-byte
+  request records and a one-byte count add 200 bytes to each bot's combat-run
+  state after alignment. The fixed history does not grow on game ticks. The
+  live Reach flood measures walking depth to a goal in that tier. It does not
+  remove goals. A walk that neither arrives nor fails ends after the measured
+  depth plus 12 game ticks. The bot counts game ticks. When it cannot measure
+  the depth, this tick limit does not apply. The route planner's own length
+  limit applies. The walk machine's ten-minute deadline ends the walk first.
+
+  Each pass makes at most one request per tier with unrequested goals. It makes
+  up to three requests, or two when the quest gives no stand. A second pass can
+  follow when food runs out, so the bot makes at most six requests. The first
+  pass keeps eating during each walk while food remains. The second pass does
+  not eat after food runs out. The quest's own walk starts only after the bot
+  sees that the attacker is gone. If every route fails, the quest stops with
+  the last route failure. The bot does not promise that an escape exists.
 
 ### Survival
 
