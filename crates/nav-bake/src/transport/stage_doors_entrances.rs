@@ -720,7 +720,8 @@ impl Motion<'_> {
         if name == "npc_facesquare" {
             // NpcOps.ts:103-106 changes only the selected NPC's facing tile.
             return Some(
-                if matches!(args, [coord] if matches!(self.value(coord, env), Some(Val::Coord(_)))) {
+                if matches!(args, [coord] if matches!(self.value(coord, env), Some(Val::Coord(_))))
+                {
                     End::Continue
                 } else {
                     End::Refused
