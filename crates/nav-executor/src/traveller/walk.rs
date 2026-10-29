@@ -370,6 +370,48 @@ impl FollowRun {
         refused.0 >= END_BLOCKED_STALL_TICKS
     }
 
+    /// A swing door can move its open leaf onto the packed approach stand.
+    /// That stand is no longer required: the next door leg already walks
+    /// through an observed open door without sending its Close operation.
+    fn open_door_occupies_walk_end(
+        &self,
+        snapshot: &GameSnapshot,
+        end: WorldTile,
+        here: WorldTile,
+    ) -> bool {
+        if end.level != here.level || cheb(end, here) > 1 {
+            return false;
+        }
+        let matches = |edge: &TransportEdge| {
+            edge.kind == TransportKind::Door
+                && edge.takeoff.is_none()
+                && find_door_loc(snapshot, edge)
+                    .is_some_and(|loc| loc.id != edge.loc_id && loc.tile == end)
+        };
+        let plan_matches = |plan: &RoutePlanLease, index| {
+            match plan_retained_leg(plan, index) {
+                Some(nav_planner::router::CompactRouteLeg::Transport(step)) => {
+                    step.source().is_some_and(matches)
+                }
+                _ => false,
+            }
+        };
+        if let Some(leg) = &self.pending_leg {
+            return match leg {
+                FollowLeg::Legacy(Leg::Transport { edge }) => matches(edge),
+                FollowLeg::Legacy(Leg::Walk { .. }) => false,
+                FollowLeg::Plan { plan, index } => plan_matches(plan, *index),
+            };
+        }
+        match &self.legs {
+            RouteLegSource::Legacy(legs) => match legs.front() {
+                Some(Leg::Transport { edge }) => matches(edge),
+                _ => false,
+            },
+            RouteLegSource::Plan { plan, next_leg, .. } => plan_matches(plan, *next_leg),
+        }
+    }
+
     pub(super) fn send_walk_hop<D: Driver>(
         &mut self,
         d: &mut D,
@@ -428,6 +470,16 @@ impl FollowRun {
                     hop.stall_idle_at = None;
                     self.walk = Some(hop);
                     return Poll::Watching;
+                }
+                SendResult::Refused {
+                    reason: SendReason::Unreachable,
+                    ..
+                } if end == Some(aim)
+                    && self.open_door_occupies_walk_end(snapshot, aim, here) =>
+                {
+                    fire_leg(options, &hop.leg(), LegPhase::Done);
+                    self.leg_index += 1;
+                    return Poll::LegDone;
                 }
                 SendResult::Refused {
                     reason: SendReason::Unreachable,

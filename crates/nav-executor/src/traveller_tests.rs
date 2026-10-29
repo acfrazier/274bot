@@ -30,6 +30,8 @@ mod door_expire_tests;
 mod entrance_exclusion_tests;
 #[path = "traveller/occupied_tests.rs"]
 mod occupied_tests;
+#[path = "traveller/open_door_approach_tests.rs"]
+mod open_door_approach_tests;
 
 // --- Task 14: pollable high-level follow (drive legs via interact+settle) ---
 
