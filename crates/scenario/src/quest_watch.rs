@@ -491,17 +491,30 @@ fn build_seed_scenario(plan: SeedPlan) -> Result<Scenario, String> {
         },
     });
     steps.push(Step {
-        name: "relog to close the bank on the start tile",
+        name: "relog to close the bank",
         kind: StepKind::Relog,
         wait: Wait {
             arm: tab,
             budget_ticks: 600,
         },
     });
+    // A live-harness boot queues the mainland hop on every login, so
+    // the relog can land the account on the Lumbridge landing instead
+    // of its saved tile. Tele back; the panel's own login never hops,
+    // so the saved start tile is what the watched session inherits.
+    steps.push(command_step(
+        "stand on the seed start tile again",
+        api::interact::tele_args(stand.level, stand.x, stand.z),
+        Proof::Arrived {
+            x: stand.x,
+            z: stand.z,
+            level: stand.level,
+        },
+    ));
     steps.push(Step {
-        name: "prove the start tile after the bank relog",
+        name: "prove the start tile and closed bank before logout",
         kind: StepKind::Await {
-            evidence: "quest-watch seed start tile after the final relog",
+            evidence: "quest-watch seed start tile and closed bank before logout",
             ready: Box::new(move |snapshot| {
                 snapshot.ingame()
                     && snapshot.scene_state() == 2
