@@ -12,7 +12,9 @@ use api::game_data::DialogueUiIds;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, FactKey};
-use api::snapshot::{ChatLineView, GameSnapshot, QuestStatusView, WidgetKind, WidgetRoot, WidgetView};
+use api::snapshot::{
+    ChatLineView, GameSnapshot, QuestStatusView, WidgetKind, WidgetRoot, WidgetView,
+};
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
@@ -94,7 +96,6 @@ fn npc_args() -> DialogueArgs {
         name: Arc::from("Aubury"),
     })
 }
-
 
 fn game_message(sequence: i32, text: &str) -> ChatLineView {
     ChatLineView {
@@ -1220,10 +1221,15 @@ fn dialogue_open_timeout_counts_observed_ticks_not_elapsed_time() {
         "one observed tick is inside the {}-tick opening budget",
         DIALOGUE_OPEN_TICK_BUDGET
     );
-    let exhausted = with_tick(&before, &mut ledger, 1 + DIALOGUE_OPEN_TICK_BUDGET, |tick| {
-        tick.cx.active_now = Duration::ZERO;
-        tick.actions.poll(&handle, &mut tick.cx)
-    });
+    let exhausted = with_tick(
+        &before,
+        &mut ledger,
+        1 + DIALOGUE_OPEN_TICK_BUDGET,
+        |tick| {
+            tick.cx.active_now = Duration::ZERO;
+            tick.actions.poll(&handle, &mut tick.cx)
+        },
+    );
     assert!(matches!(
         exhausted,
         Poll::Ready(Err(ActionError::Failed(reason)))
@@ -1265,9 +1271,12 @@ fn dialogue_open_keeps_waiting_after_npc_content_message() {
     let mut opened = snapshot();
     opened.seed_chat_modal(100, vec!["Greetings.".into()]);
     opened.seed_chat_options(vec![], 101);
-    assert!(with_tick(&opened, &mut ledger, 1 + DIALOGUE_OPEN_TICK_BUDGET, |tick| {
-        tick.actions.poll(&handle, &mut tick.cx)
-    })
+    assert!(with_tick(
+        &opened,
+        &mut ledger,
+        1 + DIALOGUE_OPEN_TICK_BUDGET,
+        |tick| { tick.actions.poll(&handle, &mut tick.cx) }
+    )
     .is_pending());
     assert!(matches!(
         last_interaction(&ledger),
@@ -1333,9 +1342,12 @@ fn dialogue_viking_refusal_replans_and_retries_talk_for_visible_npc() {
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
-    assert!(!ledger.as_ref().unwrap().outbox.iter().any(|entry| {
-        matches!(&entry.effect, HostEffect::Walk(_)) && entry.live()
-    }));
+    assert!(!ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .any(|entry| { matches!(&entry.effect, HostEffect::Walk(_)) && entry.live() }));
 
     let mut refused = snapshot();
     refused.seed_local_player(super::tests::local_player(player_tile));
@@ -1345,9 +1357,12 @@ fn dialogue_viking_refusal_replans_and_retries_talk_for_visible_npc() {
         game_message(7, "I can't reach that!"),
     ]);
     complete_talk(&mut ledger, 3, false, false);
-    assert!(with_tick(&refused, &mut ledger, 1 + DIALOGUE_OPEN_TICK_BUDGET, |tick| {
-        tick.actions.poll(&handle, &mut tick.cx)
-    })
+    assert!(with_tick(
+        &refused,
+        &mut ledger,
+        1 + DIALOGUE_OPEN_TICK_BUDGET,
+        |tick| { tick.actions.poll(&handle, &mut tick.cx) }
+    )
     .is_pending());
     assert_eq!(
         ledger
@@ -1426,9 +1441,12 @@ fn dialogue_refusal_without_replan_budget_fails_immediately_with_reason() {
         Poll::Ready(Err(ActionError::Failed(reason)))
             if reason.as_ref() == "server refused Talk-to: I can't reach that!"
     ));
-    assert!(!ledger.as_ref().unwrap().outbox.iter().any(|entry| {
-        matches!(&entry.effect, HostEffect::Walk(_)) && entry.live()
-    }));
+    assert!(!ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .any(|entry| { matches!(&entry.effect, HostEffect::Walk(_)) && entry.live() }));
 }
 #[test]
 fn dialogue_approach_replans_when_npc_moves_then_talks_after_it_settles() {
@@ -1669,7 +1687,6 @@ fn dialogue_approach_fails_immediately_when_npc_disappears() {
         .any(|entry| { matches!(&entry.effect, HostEffect::Walk(_)) && entry.live() }));
 }
 
-
 #[test]
 fn dialogue_approach_timeout_counts_observed_ticks_not_wall_time() {
     let mut before = snapshot();
@@ -1716,10 +1733,7 @@ fn dialogue_approach_timeout_counts_observed_ticks_not_wall_time() {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         if observed_tick == deadline_tick {
-            assert!(matches!(
-                result,
-                Poll::Ready(Ok(DialogueOutcome::Failed))
-            ));
+            assert!(matches!(result, Poll::Ready(Ok(DialogueOutcome::Failed))));
         } else {
             assert!(
                 result.is_pending(),

@@ -542,20 +542,21 @@ impl NativeMachine for Dialogue {
                         return Poll::Ready(Err(dialogue_refusal_error()));
                     };
                     let reachable = talk_reachable(cx, target.tile);
-                    let walk_request_id = std::task::ready!(crate::native::defer_budget(
-                        cx.walk(reach::walk_request(
+                    let walk_request_id = std::task::ready!(crate::native::defer_budget(cx.walk(
+                        reach::walk_request(
                             target.tile,
                             if reachable { 1 } else { 0 },
                             None,
                             cx.evidence(),
-                        ))
-                    ))?;
+                        )
+                    )))?;
                     self.cancel_talk_request(cx);
                     self.approach_replans_left -= 1;
                     self.walk_request_id = walk_request_id;
-                    self.content_deadline_tick = cx.evidence().tick.saturating_add(
-                        dialogue_approach_tick_budget(self.approach_replans_left),
-                    );
+                    self.content_deadline_tick = cx
+                        .evidence()
+                        .tick
+                        .saturating_add(dialogue_approach_tick_budget(self.approach_replans_left));
                     self.surface = Surface::Unselected;
                     self.phase = Phase::Approach;
                     self.chat_advanced = false;
@@ -821,8 +822,7 @@ impl Dialogue {
         let DialogueTarget::Npc { name, .. } = &self.args.target else {
             self.surface = Surface::Unselected;
             self.phase = Phase::Open;
-            self.content_deadline_tick =
-                cx.evidence().tick.saturating_add(DIALOGUE_OPEN_TICKS);
+            self.content_deadline_tick = cx.evidence().tick.saturating_add(DIALOGUE_OPEN_TICKS);
             return Ok(());
         };
         let talk_baseline = chat.as_ref().map(|obs| {
