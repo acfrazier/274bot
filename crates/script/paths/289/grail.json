@@ -1661,7 +1661,9 @@
               "version": 1,
               "args": {
                 "target": {
-                  "npc": "black_knight_titan"
+                  "npc": "black_knight_titan",
+                  "pick": "nearest",
+                  "not_targeting_others": true
                 },
                 "stand": {
                   "tile": [
