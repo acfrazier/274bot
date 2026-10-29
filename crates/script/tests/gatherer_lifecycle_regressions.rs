@@ -2777,8 +2777,7 @@ fn death_recovery_reads_loaded_stock_instead_of_skipping_a_needed_supply_trip() 
             let request_id = action.request_id.get();
             accept_trip_operation(&mut slot, &authority, request_id, now);
             death.seed_bank_observation(-1, now, None, Vec::new());
-        }
-        if slot.native_status().unwrap().phase == NativePhase::Blocked {
+        } else if closes == 1 && slot.native_status().unwrap().phase == NativePhase::Blocked {
             break;
         }
     }
