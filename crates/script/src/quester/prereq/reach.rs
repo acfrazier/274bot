@@ -1,7 +1,6 @@
 //! A step-layer Reach owner that resolves a navigation prerequisite before retrying.
 use super::run::{PrereqBudget, PrereqRun, RunEntry};
 use crate::local_state::SlotState;
-use crate::native::walk::Walk;
 use crate::native::{
     ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, PrereqAllow,
     PrereqRefusal,
@@ -92,12 +91,6 @@ impl<M: PrereqMachine> PrereqAction<M> {
         match &self.phase {
             Phase::Reaching(handle) => Some(handle.revoker()),
             Phase::Resolving(run) => run.revoker(),
-            _ => None,
-        }
-    }
-    pub fn walk_handle(&self) -> Option<&ActionHandle<Walk>> {
-        match &self.phase {
-            Phase::Resolving(run) => run.walk_handle(),
             _ => None,
         }
     }
