@@ -1492,7 +1492,8 @@ impl Recover {
             } => {
                 let settled = walk.step(cx)?;
                 if talk_row(&self.facts.luthas_name).is_some() {
-                    match Self::talk_posted(&self.facts, *second, *attempt, *tried_stands, cx, logs) {
+                    match Self::talk_posted(&self.facts, *second, *attempt, *tried_stands, cx, logs)
+                    {
                         Ok(stage) => stage,
                         Err(done) => return Some(done),
                     }
