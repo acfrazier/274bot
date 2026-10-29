@@ -33,7 +33,10 @@ const ZANARIS_CONTENT_STATS: [(u8, i32); 2] = [
     (8, 36),  // `Skill::names[8]` is Woodcutting.
     (12, 31), // `Skill::names[12]` is Crafting.
 ];
-const EXTRA_ITEMS: [(&str, i32); 1] = [("knife", 1)];
+// The R289 Path reserves 16 coins for `buy-axe-for-shamus` (`zanaris.json:42,196-200`).
+// `axes.obj:35-38` sets the axe cost to 16, and `lumbridge.inv:1-10` stocks it.
+const ZANARIS_COIN_FLOAT: i32 = 16;
+const EXTRA_ITEMS: [(&str, i32); 2] = [("knife", 1), ("coins", ZANARIS_COIN_FLOAT)];
 const STAND: WorldTile = WorldTile {
     x: 3145,
     z: 3202,
@@ -127,6 +130,10 @@ fn zanaris_navigation_cell() -> Result<Cell, String> {
         .item_by_alias("knife")
         .map(|item| item.id)
         .ok_or("selected R289 data has no knife item")?;
+    let coins_id = selected
+        .item_by_alias("coins")
+        .map(|item| item.id)
+        .ok_or("selected R289 data has no coins item")?;
 
     let mut scenario = scenario::quester_stage_with_watch(
         "zanaris-entrana-dungeon-entry",
@@ -196,11 +203,25 @@ fn zanaris_navigation_cell() -> Result<Cell, String> {
                 "Base40 fixture knife expected 1, observed {knife_count}"
             ));
         }
+        let coin_count: i32 = snapshot
+            .inventory()
+            .iter()
+            .filter(|item| item.def.id == coins_id)
+            .map(|item| item.count)
+            .sum();
+        if coin_count != ZANARIS_COIN_FLOAT {
+            return Err(format!(
+                "Base40 fixture coins expected {}, observed {coin_count}",
+                ZANARIS_COIN_FLOAT
+            ));
+        }
         Ok(json!({
             "profile": "Base40 combat + Zanaris content stats",
             "stats": observed_stats,
             "knife_id": knife_id,
             "knife_count": knife_count,
+            "coins_id": coins_id,
+            "coin_count": coin_count,
             "tile": {"x": STAND.x, "z": STAND.z, "level": STAND.level}
         }))
     });
