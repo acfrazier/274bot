@@ -1395,6 +1395,7 @@ impl FollowRun {
 }
 
 /// The outcome of one settle poll inside a follow step.
+#[derive(Debug)]
 enum Poll {
     /// The hop is still being watched: the call ends (`None` to the host).
     Watching,

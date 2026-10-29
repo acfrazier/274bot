@@ -2315,6 +2315,7 @@ mod tests {
                 script::native::WalkReceipt {
                     goal: None,
                     request_id: 1,
+                    prereq_allow: None,
                     evidence: api::quest_progress::EvidenceStamp {
                         run: RunKey {
                             slot: 1,
