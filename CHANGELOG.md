@@ -28,6 +28,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   Fresh supply evidence, Resume or a relevant setting change can start one
   new plan. A saved bank hint alone cannot. Pause, Stop, relog handling and
   connection checks remain active.
+- Bank-only navigation no longer loads the shop catalog. Shop users still
+  prepare the shared catalog before the first purchase.
 
 ### Combat
 

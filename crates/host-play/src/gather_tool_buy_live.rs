@@ -1469,6 +1469,11 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
             .bind_named_bank_facts(&selected)
             .expect("bind selected R289 service facts before Play starts");
     }
+    if world.shop_keeper_facts().is_none() {
+        world
+            .bind_shop_keeper_facts(&selected)
+            .expect("bind selected R289 shop facts before fixture lookup");
+    }
     let keepers = Arc::clone(
         world
             .shop_keeper_facts()

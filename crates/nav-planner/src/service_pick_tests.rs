@@ -350,6 +350,24 @@ fn cooperative_routed_request_owns_one_complete_target_set_with_teleports_off() 
 }
 
 #[test]
+fn bank_only_binding_does_not_initialize_shop_keeper_catalog() {
+    for revision in [
+        api::selected::ClientRevision::R274,
+        api::selected::ClientRevision::R289,
+    ] {
+        let data = api::game_data::for_revision(revision).expect("selected content");
+        let world = crate::world::NavWorld::from_parts(
+            collision(8, 8, &[]),
+            TransportGraph::default(),
+            Vec::new(),
+        );
+        world.bind_named_bank_facts(&data).expect("bank-only binding");
+        assert!(world.named_bank_facts().is_some());
+        assert!(world.shop_keeper_facts().is_none());
+    }
+}
+
+#[test]
 fn keeper_placement_cache_is_bound_once_per_world_and_shared_without_per_bot_rows() {
     use std::sync::Arc;
 
@@ -364,9 +382,15 @@ fn keeper_placement_cache_is_bound_once_per_world_and_shared_without_per_bot_row
             Vec::new(),
         );
         assert!(world.shop_keeper_facts().is_none());
-        world
-            .bind_named_bank_facts(&data)
-            .expect("bind selected facts");
+        let mut binding = Ok(());
+        let bound = allocation_counter::measure(|| {
+            binding = world.bind_shop_keeper_facts(&data);
+        });
+        binding.expect("bind selected shop facts");
+        assert!(
+            bound.bytes_max <= 64 * 1024,
+            "shared shop catalog and keeper binding exceeded 64 KiB: {bound:?}"
+        );
         let first = world.shop_keeper_facts().expect("bound shop keepers");
         let expected: usize = api::shop_facts::keepers(&data)
             .map(|keeper| {
@@ -380,6 +404,13 @@ fn keeper_placement_cache_is_bound_once_per_world_and_shared_without_per_bot_row
             .sum();
         assert!(expected > 0);
         assert_eq!(first.rows().len(), expected);
+        assert!(
+            std::mem::size_of_val(first.rows())
+                + std::mem::size_of::<api::service_pick::ShopKeeperFacts>()
+                + 2 * std::mem::size_of::<usize>()
+                <= 2 * 1024,
+            "resolved world keeper rows exceeded 2 KiB"
+        );
         let rows = first.rows().as_ptr();
         let measured = allocation_counter::measure(|| {
             for _ in 0..1_000 {
@@ -389,7 +420,12 @@ fn keeper_placement_cache_is_bound_once_per_world_and_shared_without_per_bot_row
             }
         });
         assert_eq!(measured.count_total, 0);
-        assert!(world.bind_named_bank_facts(&data).is_err());
+        assert!(
+            std::mem::size_of::<std::sync::OnceLock<Arc<api::service_pick::ShopKeeperFacts>>>()
+                <= 16,
+            "the shared world keeper cache slot grew"
+        );
+        assert!(world.bind_shop_keeper_facts(&data).is_err());
         println!(
             "A3 keeper cache {revision:?}: rows={} row_bytes={} retained_bytes={} world_slot_bytes={}",
             first.rows().len(),
@@ -413,8 +449,8 @@ fn reference_pack_routes_harpoon_to_harry_from_catherby_and_gerrant_from_port_sa
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289)
         .expect("selected 289 content");
     world
-        .bind_named_bank_facts(&data)
-        .expect("bind selected placements");
+        .bind_shop_keeper_facts(&data)
+        .expect("bind selected shop placements");
     let facts = world
         .shop_keeper_facts()
         .expect("shared resolved keeper rows");

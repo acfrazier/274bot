@@ -113,8 +113,8 @@ impl NavWorld {
             .map_or(0, |names| names.max_name_bytes)
     }
 
-    /// Bind selected-content placements once. A repeated bind is rejected,
-    /// rather than accepting a data argument whose value would be ignored.
+    /// Bind bank placements and transport-item names, without loading shops.
+    /// A repeated bind is rejected; different data is never silently ignored.
     pub fn bind_named_bank_facts(
         &self,
         data: &api::game_data::SelectedGameData,
@@ -131,12 +131,6 @@ impl NavWorld {
         self.named_banks
             .set(facts)
             .map_err(|_| "bank facts already bound")?;
-        self.shop_keepers
-            .set(Arc::new(crate::service_pick::resolve_shop_keepers(
-                data,
-                &self.collision,
-            )))
-            .map_err(|_| "shop keeper facts already bound")?;
         let mut ids: Vec<_> = self
             .graph
             .edges
@@ -163,6 +157,23 @@ impl NavWorld {
             })
             .map_err(|_| "item names already bound")?;
         Ok(())
+    }
+
+    /// Bind selected shop placements once, before a shop consumer starts.
+    /// Bank-only worlds do not need the process-wide shop catalog or these rows.
+    pub fn bind_shop_keeper_facts(
+        &self,
+        data: &api::game_data::SelectedGameData,
+    ) -> Result<(), &'static str> {
+        if self.shop_keepers.get().is_some() {
+            return Err("shop keeper facts already bound");
+        }
+        self.shop_keepers
+            .set(Arc::new(crate::service_pick::resolve_shop_keepers(
+                data,
+                &self.collision,
+            )))
+            .map_err(|_| "shop keeper facts already bound")
     }
 
     /// Decode already-read pack bytes into the router's world. Whole-world

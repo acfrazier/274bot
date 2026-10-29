@@ -1289,6 +1289,11 @@ fn run_cell(kind: CellKind) {
             .bind_named_bank_facts(&selected)
             .expect("bind selected R289 service facts before Play starts");
     }
+    if nav_world.shop_keeper_facts().is_none() {
+        nav_world
+            .bind_shop_keeper_facts(&selected)
+            .expect("bind selected R289 shop facts before fixture lookup");
+    }
     let keepers = Arc::clone(
         nav_world
             .shop_keeper_facts()
