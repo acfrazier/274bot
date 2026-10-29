@@ -111,7 +111,7 @@
     },
     "tools": [
       "obj:death_climbingboots",
-      "obj:yew_logs",
+      "obj:maple_logs",
       "obj:iron_bar",
       "obj:rope",
       "obj:bucket_wax",
@@ -332,6 +332,20 @@
           "recovery_entry": null,
           "steps": [
             {
+              "id": "buy-climbing-boots", "kind": "talk", "version": 1, "advances": false,
+              "args": {"npc": "death_sherpa", "anchor": {"tile": [2820,3556,0], "source": "content/maps/m44_55.jm2:6372; content/pack/npc.pack:1072"}, "leash": 8, "prefer": ["Can I buy some Climbing boots?", "OK, sounds good.", "Nothing, thanks!"], "strict": true},
+              "comment": "content/scripts/quests/quest_death/scripts/death_sherpa.rs2:1-24 charges 12 coins.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "death_climbingboots"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "death_climbingboots"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "death_climbingboots"}}}
+            },
+            {
+              "id": "wear-climbing-boots", "kind": "equip", "version": 1, "advances": false,
+              "args": {"obj": "death_climbingboots"},
+              "comment": "content/scripts/quests/quest_troll/scripts/quest_troll.rs2:1-14 requires worn climbing boots at the rocks.",
+              "skip_if": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "death_climbingboots"}}},
+              "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "death_climbingboots"}}}
+            },
+            {
               "id": "ask-tenzing",
               "kind": "talk",
               "version": 1,
@@ -426,6 +440,20 @@
           "recovery_entry": null,
           "steps": [
             {
+              "id": "chop-maple", "kind": "gather", "version": 1, "advances": false,
+              "args": {"skill": "woodcutting", "resource": "maple", "until": {"obj": "maple_logs", "qty": 1}, "anchor": {"tile": [2720,3475,0], "source": "content/maps/m42_54.jm2:7721; content/pack/loc.pack:1308; content/scripts/skill_woodcutting/configs/trees.dbrow:115-122"}, "radius": 4, "settle_ms": 300000},
+              "comment": "Dunstan accepts maple logs: content/scripts/quests/quest_death/scripts/death_smithy.rs2:228-257. Woodcutting 45 produces maple logs: content/scripts/skill_woodcutting/configs/trees.dbrow:115-122.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "maple_logs"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "yew_logs"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "maple_logs"}}}
+            },
+            {
+              "id": "take-iron-bar", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"ground": "iron_bar"}, "op": "Take", "anchor": {"tile": [3111,3657,0], "source": "content/maps/m48_57.jm2:5929-5940; content/pack/obj.pack:2352"}, "radius": 2, "wait_if_missing": true},
+              "comment": "The Wilderness ground spawn supplies Dunstan's iron bar: content/maps/m48_57.jm2:5929-5940; content/scripts/quests/quest_death/scripts/death_smithy.rs2:228-257.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_bar"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_bar"}}}
+            },
+            {
               "id": "collect-sled",
               "kind": "talk",
               "version": 1,
@@ -472,6 +500,48 @@
           "terminal": false,
           "recovery_entry": null,
           "steps": [
+            {
+              "id": "take-swamp-tar", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"ground": "swamp_tar"}, "op": "Take", "anchor": {"tile": [3164,3169,0], "source": "content/maps/m49_49.jm2:4870-4871; content/pack/obj.pack:1940"}, "radius": 2, "wait_if_missing": true},
+              "comment": "content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:67-82 consumes swamp tar with bucket wax.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "swamp_tar"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "swamp_tar"}}}
+            },
+            {
+              "id": "walk-to-repellent", "kind": "walk", "version": 1, "advances": false,
+              "args": {"tile": [2807,3450,0], "radius": 2, "source": "content/maps/m43_53.jm2:7283-7285; content/pack/obj.pack:29"},
+              "comment": "The Catherby ground spawn supplies the insect repellent.",
+              "skip_if": {"Any": [{"Fact": {"kind": "near", "version": 1, "args": {"tile": [2807,3450,0], "radius": 2}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "insect_repellent"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bucket_wax"}}}]},
+              "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [2807,3450,0], "radius": 2}}}
+            },
+            {
+              "id": "wait-for-repellent", "kind": "wait", "version": 1, "advances": false,
+              "args": {"until": {"Fact": {"kind": "ground_item_near", "version": 1, "args": {"obj": "insect_repellent", "radius": 12, "at": [2807,3450,0]}}}, "max_ticks": 200, "park_on_timeout": true},
+              "comment": "Allow twice the default respawn interval. content/scripts/areas/area_seers/configs/bees.obj:1-11 has no respawn override.",
+              "skip_if": {"Any": [{"Fact": {"kind": "ground_item_near", "version": 1, "args": {"obj": "insect_repellent", "radius": 12, "at": [2807,3450,0]}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "insect_repellent"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bucket_wax"}}}]},
+              "settle": {"Fact": {"kind": "ground_item_near", "version": 1, "args": {"obj": "insect_repellent", "radius": 12, "at": [2807,3450,0]}}}
+            },
+            {
+              "id": "take-repellent", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"ground": "insect_repellent"}, "op": "Take", "anchor": {"tile": [2807,3450,0], "source": "content/maps/m43_53.jm2:7283-7285; content/pack/obj.pack:29"}, "radius": 2},
+              "comment": "content/maps/m43_53.jm2:7283-7285 places the repellent.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "insect_repellent"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bucket_wax"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "insect_repellent"}}}
+            },
+            {
+              "id": "repel-bees", "kind": "use_on", "version": 1, "advances": false,
+              "args": {"item": "insect_repellent", "target": {"loc": "merlin_beehive"}, "anchor": {"tile": [2758,3440,0], "source": "content/maps/m43_53.jm2:4930; content/pack/loc.pack:69"}, "radius": 8},
+              "comment": "content/scripts/areas/area_seers/scripts/bees.rs2:8-22 sets the hive repelled state.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bucket_wax"}}},
+              "settle": {"All": []}
+            },
+            {
+              "id": "collect-beeswax", "kind": "use_on", "version": 1, "advances": false,
+              "args": {"item": "bucket_empty", "target": {"loc": "merlin_beehive"}, "anchor": {"tile": [2758,3440,0], "source": "content/maps/m43_53.jm2:4930; content/pack/loc.pack:69"}, "radius": 8, "product": "bucket_wax"},
+              "comment": "content/scripts/areas/area_seers/scripts/bees.rs2:24-36 replaces the empty bucket with wax.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bucket_wax"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bucket_wax"}}}
+            },
             {
               "id": "mix-sled-wax",
               "kind": "use_on",
@@ -1115,6 +1185,13 @@
           "terminal": false,
           "recovery_entry": null,
           "steps": [
+            {
+              "id": "wield-arrg-weapon", "kind": "equip", "version": 1, "advances": false,
+              "args": {"obj": "rune_scimitar"},
+              "comment": "The sled occupies both hands and is removed on exit: content/scripts/_unpack/289/all.obj:766-781; content/scripts/quests/quest_troll_love/scripts/quest_troll_love.rs2:34-36,100-107. Arrg's fight is required: content/scripts/quests/quest_troll_love/scripts/arrg.rs2:48-52,65-96,128-129.",
+              "skip_if": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}},
+              "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}
+            },
             {
               "id": "challenge-arrg",
               "kind": "talk",

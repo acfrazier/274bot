@@ -1705,6 +1705,13 @@
               "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:27-55; content/maps/m44_47.jm2:7573"
             },
             {
+              "id": "take-seaweed", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"ground": "seaweed"}, "op": "Take", "anchor": {"tile": [2757,3109,0], "source": "content/maps/m43_48.jm2:7135-7139; content/pack/obj.pack:402"}, "radius": 2, "wait_if_missing": true},
+              "comment": "The ground spawn supplies seaweed for the sandwich: content/maps/m43_48.jm2:7135-7139; content/scripts/quests/quest_tbwt/scripts/quest_tbwt.rs2:136-143.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "seaweed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_seaweed_in_monkey_skin_sandwich"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "seaweed"}}}
+            },
+            {
               "id": "make-sandwich",
               "kind": "use_on",
               "version": 1,
@@ -1761,6 +1768,20 @@
                 }
               },
               "comment": "content/scripts/quests/quest_tbwt/scripts/quest_tbwt.rs2:171-177"
+            },
+            {
+              "id": "pick-banana", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"loc": "bananatreefull"}, "op": "Pick", "anchor": {"tile": [2909,3158,0], "source": "content/maps/m45_49.jm2:5238; content/pack/loc.pack:2074"}, "radius": 6},
+              "comment": "content/scripts/areas/area_karamja/scripts/banana_tree.rs2:1-12 adds a banana.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "banana"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_sliced_banana"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_sliced_banana_in_karamja_rum"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "banana"}}}
+            },
+            {
+              "id": "buy-karamja-rum", "kind": "talk", "version": 1, "advances": false,
+              "args": {"npc": "deadmans_bartender", "anchor": {"tile": [2797,3155,0], "source": "content/maps/m43_49.jm2:9209; content/pack/npc.pack:736"}, "leash": 8, "prefer": ["A bottle of rum please."], "strict": true},
+              "comment": "content/scripts/areas/area_brimhaven/scripts/bartender.rs2:22-30 charges 27 coins for the rum.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "karamja_rum"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_sliced_banana_in_karamja_rum"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "karamja_rum"}}}
             },
             {
               "id": "slice-banana",
