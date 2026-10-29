@@ -678,15 +678,10 @@
                   }
                 }
               },
-              "skip_if": {
-                "Fact": {
-                  "kind": "has_item",
-                  "version": 1,
-                  "args": {
-                    "obj": "bronze_axe"
-                  }
-                }
-              },
+              "skip_if": {"Any": [
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_axe"}}},
+                {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_axe"}}}
+              ]},
               "settle": {
                 "Fact": {
                   "kind": "has_item",
@@ -696,8 +691,15 @@
                   }
                 }
               },
-              "comment": "scripts/drop tables/scripts/zombie.rs2:102-116; maps/m44_152.jm2:8477-8481; scripts/skill_combat/configs/magic/magic_combat_spells.dbrow:134-143",
+              "comment": "scripts/drop tables/scripts/zombie.rs2:102-116; maps/m44_152.jm2:8477-8481.",
               "advances": false
+            },
+            {
+              "id": "equip-entrana-axe", "kind": "equip", "version": 1,
+              "args": {"obj": "bronze_axe"},
+              "comment": "The axe is a level-1 weapon for the spirit fight. Woodcutting accepts it while worn. content/scripts/levelrequire/scripts/tier1.rs2:1-5; content/scripts/tutorial/scripts/tutorial.rs2:267-280; content/scripts/skill_woodcutting/scripts/woodcut.rs2:159-161,201-205; content/scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2:28-55.",
+              "skip_if": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_axe"}}},
+              "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_axe"}}}
             },
             {
               "id": "summon-spirit",
