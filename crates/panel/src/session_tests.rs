@@ -2284,7 +2284,16 @@ fn client_trail_retires_after_arrival_so_offpath_cannot_resurrect() {
     retire_client_trail(&mut c, Some(mid));
     assert_eq!(c.try_move_path.len(), 3, "mid-path must keep the producer");
     let trail = c.try_move_path.clone();
-    set_budgeted_nav_paint(&mut c, &world, None, Some(mid), &trail, false, None, &layers);
+    set_budgeted_nav_paint(
+        &mut c,
+        &world,
+        None,
+        Some(mid),
+        &trail,
+        false,
+        None,
+        &layers,
+    );
     let paint = c.nav_debug_paint().expect("mid-path paint is installed");
     assert_eq!(
         paint.trail,
@@ -2368,7 +2377,16 @@ fn client_trail_rearms_on_fresh_path_and_keeps_unknown_here() {
     retire_client_trail(&mut c, Some(here));
     assert_eq!(c.try_move_path.len(), 3, "a new click re-arms the producer");
     let trail = c.try_move_path.clone();
-    set_budgeted_nav_paint(&mut c, &world, None, Some(here), &trail, false, None, &layers);
+    set_budgeted_nav_paint(
+        &mut c,
+        &world,
+        None,
+        Some(here),
+        &trail,
+        false,
+        None,
+        &layers,
+    );
     let paint = c.nav_debug_paint().expect("fresh path paints");
     assert_eq!(
         paint.trail,
@@ -2383,7 +2401,9 @@ fn client_trail_rearms_on_fresh_path_and_keeps_unknown_here() {
     );
     let trail = c.try_move_path.clone();
     set_budgeted_nav_paint(&mut c, &world, None, None, &trail, false, None, &layers);
-    let paint = c.nav_debug_paint().expect("startup paint keeps a pending trail");
+    let paint = c
+        .nav_debug_paint()
+        .expect("startup paint keeps a pending trail");
     assert_eq!(
         paint.trail,
         vec![(3, 0, false), (4, 0, false), (5, 0, false)],
@@ -2711,9 +2731,7 @@ fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
         paint.path.len()
     );
     assert!(
-        paint
-            .path
-            .contains(&(tiles[300].x, tiles[300].z, true)),
+        paint.path.contains(&(tiles[300].x, tiles[300].z, true)),
         "the transport hop is never subsampled away"
     );
     let terminal = (tiles[301].x, tiles[301].z, true);

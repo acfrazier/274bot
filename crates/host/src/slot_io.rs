@@ -656,6 +656,7 @@ impl FrameBuf {
                 queue.last_error = Some(client::render::backend::ReadbackError::Limit);
                 return false;
             }
+            let timeout = policy.readback_timeout;
             if queue.pending.is_some() || queue.resolving_head.is_some() {
                 queue.last_error = Some(client::render::backend::ReadbackError::Busy);
                 return false;
@@ -669,11 +670,7 @@ impl FrameBuf {
             } else {
                 None
             };
-            (
-                policy.readback_timeout,
-                queue.registration.is_none(),
-                old_registration,
-            )
+            (timeout, queue.registration.is_none(), old_registration)
         };
         drop(old_registration);
 

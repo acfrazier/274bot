@@ -1142,7 +1142,11 @@ mod tests {
         let outcome = writer
             .wait(&job, Duration::from_secs(60))
             .expect("capture completes");
-        assert!(outcome.error().is_none(), "unexpected: {:?}", outcome.error());
+        assert!(
+            outcome.error().is_none(),
+            "unexpected: {:?}",
+            outcome.error()
+        );
         assert!(writer.flush(Duration::from_secs(60)));
         let on_disk = std::fs::read(&png_path).expect("png");
         assert_eq!(on_disk, direct_encode(16, 9, &test_pixels(16, 9)));
@@ -1176,7 +1180,11 @@ mod tests {
         let outcome = writer
             .wait(&job, Duration::from_secs(60))
             .expect("capture completes");
-        assert!(outcome.error().is_none(), "unexpected: {:?}", outcome.error());
+        assert!(
+            outcome.error().is_none(),
+            "unexpected: {:?}",
+            outcome.error()
+        );
         let file = std::io::BufReader::new(std::fs::File::open(&png_path).expect("png"));
         let mut decoder = png::Decoder::new(file);
         decoder.set_transformations(png::Transformations::normalize_to_color8());
@@ -1220,7 +1228,11 @@ mod tests {
         let outcome = writer
             .wait(&job, Duration::from_secs(60))
             .expect("capture completes");
-        assert!(outcome.error().is_none(), "unexpected: {:?}", outcome.error());
+        assert!(
+            outcome.error().is_none(),
+            "unexpected: {:?}",
+            outcome.error()
+        );
         let file = std::io::BufReader::new(std::fs::File::open(&png_path).expect("png"));
         let decoder = png::Decoder::new(file);
         let mut reader = decoder.read_info().expect("PNG info");
@@ -1317,7 +1329,11 @@ mod tests {
         let outcome = writer
             .wait(&job, Duration::from_secs(60))
             .expect("capture completes");
-        assert!(outcome.error().is_none(), "unexpected: {:?}", outcome.error());
+        assert!(
+            outcome.error().is_none(),
+            "unexpected: {:?}",
+            outcome.error()
+        );
         drop(readback_permit(2, 2));
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1387,10 +1403,7 @@ mod tests {
 
     #[test]
     fn full_queue_drops_with_a_counted_error() {
-        let writer = EvidenceWriter::with_config(WriterConfig::new(
-            0,
-            Duration::from_millis(1),
-        ));
+        let writer = EvidenceWriter::with_config(WriterConfig::new(0, Duration::from_millis(1)));
         let job = writer.submit(EvidenceRequest {
             png_path: PathBuf::from("never.png"),
             width: 2,
@@ -1522,7 +1535,11 @@ mod tests {
             let outcome = writer
                 .wait(job, Duration::from_secs(60))
                 .expect("capture completes");
-            assert!(outcome.error().is_none(), "unexpected: {:?}", outcome.error());
+            assert!(
+                outcome.error().is_none(),
+                "unexpected: {:?}",
+                outcome.error()
+            );
         }
         assert!(writer.flush(Duration::from_secs(60)));
         assert_eq!(writer.stats().dropped, 0);

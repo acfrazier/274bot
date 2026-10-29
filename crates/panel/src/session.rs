@@ -49,9 +49,9 @@ use frontend_core::{CurePoison, SurvivalEdit};
 #[cfg(test)]
 use host_play::SlotStatus;
 use nav_planner::contract::{LegView, RouteView};
-use nav_planner::paint::{collision_at_with, reached, MAX_DRAW_TILES, NEAR_FULL_DENSITY};
 #[cfg(test)]
 use nav_planner::paint::select_draw_indices;
+use nav_planner::paint::{collision_at_with, reached, MAX_DRAW_TILES, NEAR_FULL_DENSITY};
 use nav_planner::router::{FindOptions, Route};
 use nav_planner::tile::Tile;
 use nav_planner::transport::TransportKind;
@@ -548,10 +548,18 @@ fn try_build_nav_debug_paint(
     };
 
     let mut collision_count = 0usize;
-    visit_collision_facts(world, base_x, base_z, settings, side, reach_bits.as_deref(), |_| {
-        collision_count = collision_count.saturating_add(1);
-        Ok(())
-    })?;
+    visit_collision_facts(
+        world,
+        base_x,
+        base_z,
+        settings,
+        side,
+        reach_bits.as_deref(),
+        |_| {
+            collision_count = collision_count.saturating_add(1);
+            Ok(())
+        },
+    )?;
 
     let path_len = if show_path {
         route.map_or(Ok(0), |route| {
@@ -626,9 +634,15 @@ fn try_build_nav_debug_paint(
         None
     });
 
-    visit_collision_facts(world, base_x, base_z, settings, side, reach_bits.as_deref(), |cell| {
-        builder.push_collision(cell)
-    })?;
+    visit_collision_facts(
+        world,
+        base_x,
+        base_z,
+        settings,
+        side,
+        reach_bits.as_deref(),
+        |cell| builder.push_collision(cell),
+    )?;
     if show_path {
         if let Some(route) = route {
             visit_remaining_path_tiles(route, here, first_leg, |index, tile, transport| {
