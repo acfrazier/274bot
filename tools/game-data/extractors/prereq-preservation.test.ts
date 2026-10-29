@@ -121,3 +121,20 @@ withContent({
     () => assertPrereqPreservation(content, [row([0, 0], [0, 1])]),
     /unbounded add/,
 ));
+
+withContent({
+    [constants]: '^zero = 0\n^one = 1\n',
+    'scripts/dialogue-arguments.rs2': [
+        '[opnpc1,root]',
+        'if (%progress = ^zero) {',
+        '    @multi2("Sure.", write, "No.", decline);',
+        '}',
+        '[label,multi2](string $a, label $yes, string $b, label $no)',
+        'return;',
+        '[label,write] %progress = ^one;',
+        '[label,decline] return;',
+    ].join('\n'),
+}, (content) => {
+    assertPrereqPreservation(content, [row([0, 0], [0, 1])]);
+    assertPrereqPreservation(content, [row([1, 1], [1, 1])]);
+});

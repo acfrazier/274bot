@@ -289,9 +289,12 @@ function callTargets(text: string, labels: ReadonlyMap<string, BlockRef[]>, proc
     const add = (matches: readonly BlockRef[] | undefined) => { if (matches) out.push(...matches); };
     for (const match of clean.matchAll(/@([A-Za-z0-9_]+)/g)) {
         const direct = labels.get(match[1]);
-        if (direct) { add(direct); continue; }
+        if (direct) add(direct);
+        // Dialogue helpers receive labels as arguments even when the helper
+        // itself resolves. Those labels inherit the caller's guarded path.
+        const suffix = clean.slice(match.index! + match[0].length);
+        if (!suffix.trimStart().startsWith('(')) continue;
         const open = clean.indexOf('(', match.index! + match[0].length);
-        if (open < 0) continue;
         const close = matchingParen(clean, open);
         if (close < 0) continue;
         for (const name of clean.slice(open + 1, close).matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) add(labels.get(name[0]));
