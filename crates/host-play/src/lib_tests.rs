@@ -32210,8 +32210,8 @@ export default class T extends LoopingBot {
         }
 
         let run = slot.native_run().expect("compiled Gatherer run");
-        let mut snapshot = GameSnapshot::new();
-        snapshot.seed_ingame(2);
+        let mut snapshot = nav_frame_at(3200, 3200);
+        snapshot.seed_equipment(Vec::new());
         snapshot.seed_inventory(Vec::new(), 28);
         snapshot.seed_stats(vec![StatView {
             index: 3,
