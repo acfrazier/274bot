@@ -49,7 +49,7 @@
         {"id":"walk-west-shop-gate","kind":"walk","version":1,
          "comment":"The west stand is reachable from outside the compound. content/maps/m51_53.jm2:4593-4594; QUEST-CAMPAIGN/triage/review-batch-4.md:183-193.",
          "args":{"tile":[3263,3405,0],"radius":0,"source":"content/maps/m51_53.jm2:4593; west of loc 2050"},
-         "skip_if":{"Any":[{"Fact":{"kind":"in_area","version":1,"args":{"area":"fancy_shop_compound"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"leather_gloves"}}},{"Fact":{"kind":"worn","version":1,"args":{"obj":"leather_gloves"}}}]},
+         "skip_if":{"Any":[{"Fact":{"kind":"near","version":1,"args":{"tile":[3263,3405,0],"radius":0}}},{"Fact":{"kind":"in_area","version":1,"args":{"area":"fancy_shop_compound"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"leather_gloves"}}},{"Fact":{"kind":"worn","version":1,"args":{"obj":"leather_gloves"}}}]},
          "settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[3263,3405,0],"radius":0}}}},
         {"id":"open-west-shop-gate","kind":"interact","version":1,"advances":false,
          "comment":"Loc 2050 is the west gate leaf. The other leaf is loc 2051 at (3264,3406,0). From the west, the gate script teleports the player onto the clicked loc. content/maps/m51_53.jm2:4593-4594; content/pack/loc.pack:2051-2052; content/scripts/areas/area_varrock/scripts/east_gate.rs2:42-45.",
