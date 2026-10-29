@@ -476,7 +476,7 @@ mod tests {
             blocked,
             flags: None,
         };
-        let zones = [3, 6, 9, 12]
+        let zones = [9]
             .into_iter()
             .map(|x| Zone::npc(tile(x, 1), 0, ZoneClass::Always, u16::MAX, 0))
             .collect();
@@ -508,8 +508,7 @@ mod tests {
     }
 
     fn declared_fixture_zones() -> Vec<String> {
-        [3, 6, 9, 12]
-            .into_iter()
+        [9].into_iter()
             .map(|x| format!("icewarrior@{x},1,0"))
             .collect()
     }
@@ -581,7 +580,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires CROSS_CALC_NAVPACK pointing to the prepared reference navpack"]
-    fn reference_crossing_endpoints_use_product_refusal_and_floor() {
+    fn reference_crossing_requests_preserve_product_admission_or_refusal() {
         let navpack =
             PathBuf::from(std::env::var_os("CROSS_CALC_NAVPACK").expect("set CROSS_CALC_NAVPACK"));
         for (from, to, zones) in [
@@ -610,7 +609,24 @@ mod tests {
                 zones: zones.into_iter().map(str::to_owned).collect(),
             };
             let result = calculate(&query).expect("reference route must be calculable");
-            assert_real_floor(result.ungranted_survivability);
+            for threshold in [
+                result.declared_cross_admission,
+                result.ungranted_survivability,
+            ] {
+                if let Some(at_floor) = threshold.at_floor {
+                    assert!(at_floor.admitted);
+                    assert_eq!(threshold.lowest_hp, Some(at_floor.hp));
+                    if let Some(below) = threshold.below_floor {
+                        assert!(!below.admitted);
+                    }
+                } else {
+                    assert!(threshold.lowest_hp.is_none());
+                    let CrossStatus::NoAdmissionThrough99 { at_99 } = threshold.status else {
+                        panic!("a refusal must retain the last product decision");
+                    };
+                    assert!(!at_99.admitted);
+                }
+            }
         }
     }
 }

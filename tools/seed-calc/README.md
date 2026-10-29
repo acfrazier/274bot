@@ -28,6 +28,7 @@ The extractor excludes quest-gated weapons and weapons with an additional Streng
 ```json
 {"mode":"fight","npc":95,"facts":"/tmp/fight-facts.json","candidate":{"attack":40,"strength":40,"defence":40,"hitpoints":40}}
 {"mode":"fight","npc":"skeleton_unarmed","facts":"/tmp/fight-facts.json","weapon":"iron_mace","style":"accurate"}
+{"mode":"fight","npc":95,"facts":"/tmp/fight-facts.json","sequential_kills":3}
 ```
 
 Run queries from a file or standard input:
@@ -74,6 +75,12 @@ The result reports the selected timing assumption. It does not include approach 
 
 The model holds the input stats fixed. It excludes regeneration, skill-level changes during combat, movement, missed input, and other actors.
 These are conditional combat probabilities, not a guarantee for an arbitrary live engagement.
+
+Set `sequential_kills` for consecutive fights against the same NPC type.
+The solver carries remaining Hitpoints between kills. It adds no healing or regeneration.
+Each new encounter resets both attack clocks to the selected opening, with zero recovery time.
+The reported probability covers all required kills. The expected length ends at the final kill or the player's death.
+This mode does not model simultaneous attackers or the travel between encounters.
 
 ### Not modelled
 

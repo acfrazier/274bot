@@ -41,7 +41,7 @@ impl Answer {
     pub fn summary(&self) -> String {
         match self {
             Self::Fight(result) => match &result.minimum {
-                Some(minimum) => format!("fight {}: Attack/Strength/Defence {}, HP {}, win {:.9}, death {:.9}, mean {:.3} ticks", result.npc, minimum.stats.attack, minimum.stats.hitpoints, minimum.outcome.win_probability, minimum.outcome.death_probability, minimum.outcome.expected_ticks),
+                Some(minimum) => format!("fight {} ({} consecutive kills): Attack/Strength/Defence {}, HP {}, win {:.9}, death {:.9}, mean {:.3} ticks", result.npc, result.sequential_kills, minimum.stats.attack, minimum.stats.hitpoints, minimum.outcome.win_probability, minimum.outcome.death_probability, minimum.outcome.expected_ticks),
                 None => format!("fight {}: {}{}", result.npc, result.status, if result.reasons.is_empty() { String::new() } else { format!(": {}", result.reasons.join("; ")) }),
             },
             Self::Crossing(result) => result.summary(),

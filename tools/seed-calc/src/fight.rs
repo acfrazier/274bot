@@ -106,6 +106,9 @@ pub struct FightQuery {
     /// One NPC only. Larger counts are explicitly not modelled.
     #[serde(default = "one")]
     pub npc_count: u8,
+    /// Consecutive single-NPC fights, carrying HP without healing or regeneration.
+    #[serde(default = "one")]
+    pub sequential_kills: u8,
     /// Default assumes an aggressive NPC ready at tick zero. Player damage lands at tick one.
     #[serde(default)]
     pub player_initiates: bool,
@@ -171,6 +174,7 @@ pub struct FightResult {
     pub npc: String,
     pub weapon: String,
     pub style: Style,
+    pub sequential_kills: u8,
     pub poison_changes_result: &'static str,
     pub reasons: Vec<String>,
     pub candidate: Option<Evaluation>,
@@ -214,6 +218,11 @@ fn unsupported(row: &NpcNameRow, tables: &CombatTables, count: u8, weapon: &Weap
 }
 
 pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResult, FightError> {
+    if query.sequential_kills == 0 {
+        return Err(FightError::Input(
+            "sequential_kills must be positive".into(),
+        ));
+    }
     let selected = tables.selected();
     let rows = &selected
         .npc_names()
@@ -277,6 +286,7 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
         npc: row.config.clone(),
         weapon: weapon.config.clone(),
         style: query.style,
+        sequential_kills: query.sequential_kills,
         poison_changes_result: if row.poison_severity == Some(0) && !weapon.poisoned {
             "no: neither participant inflicts poison"
         } else {
@@ -320,6 +330,7 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
             weapon,
             query.style,
             query.player_initiates,
+            query.sequential_kills,
         )?);
     }
     for level in weapon.required_attack.max(1)..=99 {
@@ -330,6 +341,7 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
             weapon,
             query.style,
             query.player_initiates,
+            query.sequential_kills,
         )?;
         if evaluation.outcome.death_probability <= 0.01 {
             result.minimum = Some(evaluation);
@@ -413,6 +425,7 @@ fn evaluate(
     weapon: &Weapon,
     style: Style,
     initiates: bool,
+    sequential_kills: u8,
 ) -> Result<Evaluation, FightError> {
     if !stats.valid() || stats.attack < weapon.required_attack {
         return Err(FightError::Input(
@@ -472,7 +485,7 @@ fn evaluate(
     };
     Ok(Evaluation {
         stats,
-        outcome: solve(model)?,
+        outcome: solve(model, sequential_kills)?,
         player_hit_chance,
         npc_hit_chance,
         player_max_hit,
@@ -562,7 +575,7 @@ fn events(model: Model) -> Result<(Vec<Event>, u32), FightError> {
     }
     Ok((events, period))
 }
-fn solve(model: Model) -> Result<Outcome, FightError> {
+fn solve(model: Model, sequential_kills: u8) -> Result<Outcome, FightError> {
     let (events, period) = events(model)?;
     let phases = events.len();
     let cycle_zero = events.iter().map(|e| e.zero).product::<f64>();
@@ -582,53 +595,64 @@ fn solve(model: Model) -> Result<Outcome, FightError> {
     let mut b_win = vec![0.0; phases];
     let mut b_length = vec![0.0; phases];
     let index = |hp: usize, npc: usize, phase: usize| (hp * width + npc) * phases + phase;
-    for hp in 1..=usize::from(model.player_hp) {
-        for npc in 1..=usize::from(model.npc_hp) {
-            for (phase, event) in events.iter().enumerate() {
-                let next = (phase + 1) % phases;
-                let gap = f64::from(if next == 0 {
-                    period + events[0].tick - event.tick
-                } else {
-                    events[next].tick - event.tick
-                });
-                let mut win = 0.0;
-                let mut length = event.zero * gap;
-                for damage in 1..=usize::from(event.maximum) {
-                    if event.player && damage >= npc {
-                        win += event.positive;
-                    } else if !event.player && damage >= hp { /* Death is absorbing. */
+    let mut remaining_wins = vec![1.0; usize::from(model.player_hp) + 1];
+    let mut remaining_lengths = vec![0.0; remaining_wins.len()];
+    for _ in 0..sequential_kills {
+        for hp in 1..=usize::from(model.player_hp) {
+            for npc in 1..=usize::from(model.npc_hp) {
+                for (phase, event) in events.iter().enumerate() {
+                    let next = (phase + 1) % phases;
+                    let gap = f64::from(if next == 0 {
+                        period + events[0].tick - event.tick
                     } else {
-                        let child = if event.player {
-                            index(hp, npc - damage, next)
+                        events[next].tick - event.tick
+                    });
+                    let mut win = 0.0;
+                    let mut length = event.zero * gap;
+                    for damage in 1..=usize::from(event.maximum) {
+                        if event.player && damage >= npc {
+                            win += event.positive * remaining_wins[hp];
+                            length += event.positive * remaining_lengths[hp];
+                        } else if !event.player && damage >= hp { /* Death is absorbing. */
                         } else {
-                            index(hp - damage, npc, next)
-                        };
-                        win += event.positive * wins[child];
-                        length += event.positive * (gap + lengths[child]);
+                            let child = if event.player {
+                                index(hp, npc - damage, next)
+                            } else {
+                                index(hp - damage, npc, next)
+                            };
+                            win += event.positive * wins[child];
+                            length += event.positive * (gap + lengths[child]);
+                        }
                     }
+                    b_win[phase] = win;
+                    b_length[phase] = length;
                 }
-                b_win[phase] = win;
-                b_length[phase] = length;
+                // Compose all phase equations and solve the one remaining zero-damage loop.
+                let mut win = 0.0;
+                let mut length = 0.0;
+                let mut weight = 1.0;
+                for phase in 0..phases {
+                    win += weight * b_win[phase];
+                    length += weight * b_length[phase];
+                    weight *= events[phase].zero;
+                }
+                win /= 1.0 - cycle_zero;
+                length /= 1.0 - cycle_zero;
+                wins[index(hp, npc, 0)] = win;
+                lengths[index(hp, npc, 0)] = length;
+                for phase in (1..phases).rev() {
+                    win = b_win[phase] + events[phase].zero * win;
+                    length = b_length[phase] + events[phase].zero * length;
+                    wins[index(hp, npc, phase)] = win;
+                    lengths[index(hp, npc, phase)] = length;
+                }
             }
-            // Compose all phase equations and solve the one remaining zero-damage loop.
-            let mut win = 0.0;
-            let mut length = 0.0;
-            let mut weight = 1.0;
-            for phase in 0..phases {
-                win += weight * b_win[phase];
-                length += weight * b_length[phase];
-                weight *= events[phase].zero;
-            }
-            win /= 1.0 - cycle_zero;
-            length /= 1.0 - cycle_zero;
-            wins[index(hp, npc, 0)] = win;
-            lengths[index(hp, npc, 0)] = length;
-            for phase in (1..phases).rev() {
-                win = b_win[phase] + events[phase].zero * win;
-                length = b_length[phase] + events[phase].zero * length;
-                wins[index(hp, npc, phase)] = win;
-                lengths[index(hp, npc, phase)] = length;
-            }
+        }
+        // A new encounter resets both clocks, not the player's remaining HP.
+        for hp in 1..=usize::from(model.player_hp) {
+            let start = index(hp, usize::from(model.npc_hp), 0);
+            remaining_wins[hp] = wins[start];
+            remaining_lengths[hp] = lengths[start] + f64::from(events[0].tick);
         }
     }
     let start = index(usize::from(model.player_hp), usize::from(model.npc_hp), 0);
@@ -738,7 +762,7 @@ mod tests {
                 npc_first_tick: 1,
             },
         ] {
-            let exact = solve(model).unwrap();
+            let exact = solve(model, 1).unwrap();
             let sampled = monte_carlo(model);
             // 0.006 absolute probability and 0.25 tick tolerances, 200,000 deterministic trials per case.
             assert!(
@@ -764,9 +788,39 @@ mod tests {
             npc_interval: 4,
             npc_first_tick: 1,
         };
-        let outcome = solve(model).unwrap();
+        let outcome = solve(model, 1).unwrap();
         assert!((outcome.win_probability - 2.0 / 3.0).abs() < 1e-14);
         assert!((outcome.expected_ticks - (1.0 + 4.0 / 3.0)).abs() < 1e-14);
+    }
+    #[test]
+    fn sequential_kills_carry_remaining_hp_and_absorb_death() {
+        let model = Model {
+            player_hp: 1,
+            npc_hp: 1,
+            player_chance: 1.0,
+            npc_chance: 1.0,
+            player_max: 1,
+            npc_max: 1,
+            player_interval: 4,
+            npc_interval: 4,
+            npc_first_tick: 1,
+        };
+        let single = solve(model, 1).unwrap();
+        let triple = solve(model, 3).unwrap();
+        assert!((triple.win_probability - (2.0_f64 / 3.0).powi(3)).abs() < 1e-14);
+        assert!(
+            (triple.expected_ticks - single.expected_ticks * (1.0 + 2.0 / 3.0 + 4.0 / 9.0)).abs()
+                < 1e-14
+        );
+        let two_hp = solve(
+            Model {
+                player_hp: 2,
+                ..model
+            },
+            2,
+        )
+        .unwrap();
+        assert!((two_hp.win_probability - 20.0 / 27.0).abs() < 1e-14);
     }
     #[test]
     fn harmless_npc_and_retaliation_flinch_have_finite_exact_lengths() {
@@ -781,7 +835,7 @@ mod tests {
             npc_interval: 4,
             npc_first_tick: 0,
         };
-        let outcome = solve(harmless).unwrap();
+        let outcome = solve(harmless, 1).unwrap();
         assert_eq!(outcome.win_probability, 1.0);
         assert!((outcome.expected_ticks - 5.0).abs() < 1e-14);
         let passive = Model {
@@ -847,6 +901,7 @@ mod tests {
             candidate: None,
             npc_count: 1,
             player_initiates: false,
+            sequential_kills: 1,
         };
         assert!(calculate(&query, &tables)
             .unwrap_err()
