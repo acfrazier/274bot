@@ -375,7 +375,10 @@ fn bundled_paths_decode_and_compile() {
             }
         };
         if document.id.0.as_ref() != entry.id {
-            failures.push(format!("{file} id mismatch: {} != {}", document.id.0, entry.id));
+            failures.push(format!(
+                "{file} id mismatch: {} != {}",
+                document.id.0, entry.id
+            ));
             continue;
         }
         // A partner Path compiles only for a gang member, so check it as each declared gang.

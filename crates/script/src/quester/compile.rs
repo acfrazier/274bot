@@ -1825,7 +1825,9 @@ pub fn path_bytes(id: &str) -> Option<&'static [u8]> {
         "fortress" => Some(include_str!("../../paths/289/fortress.json").as_bytes()),
         "haunted" => Some(include_str!("../../paths/289/haunted.json").as_bytes()),
         "fishingcompo" => Some(include_str!("../../paths/289/fishingcompo.json").as_bytes()),
-        "elemental_workshop" => Some(include_str!("../../paths/289/elemental_workshop.json").as_bytes()),
+        "elemental_workshop" => {
+            Some(include_str!("../../paths/289/elemental_workshop.json").as_bytes())
+        }
         "arthur" => Some(include_str!("../../paths/289/arthur.json").as_bytes()),
         "zanaris" => Some(include_str!("../../paths/289/zanaris.json").as_bytes()),
         "tree" => Some(include_str!("../../paths/289/tree.json").as_bytes()),
