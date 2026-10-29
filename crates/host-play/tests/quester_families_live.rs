@@ -737,6 +737,17 @@ fn status_text<'a>(status: &'a ScriptStatus, key: &str) -> Option<&'a str> {
         })
 }
 
+fn status_integer(status: Option<&ScriptStatus>, key: &str) -> Option<i64> {
+    status?
+        .fields
+        .iter()
+        .find(|field| field.key == key)
+        .and_then(|field| match &field.value {
+            StatusValue::Integer(value) => Some(*value),
+            _ => None,
+        })
+}
+
 fn completed_lifecycle(lifecycle: Option<&script::ScriptLifecycleReceipt>) -> bool {
     lifecycle.is_some_and(|receipt| receipt.state == script::ScriptTerminalState::Completed)
 }
@@ -1653,4 +1664,587 @@ fn live_dialogue_answer_once_filliman_repeated_menu() {
     assert_eq!(receipt["family_receipt"]["menu_pages"], 2);
     assert_eq!(receipt["family_receipt"]["quest_varp_after"], 20);
     assert_eq!(receipt["family_receipt"]["chat_modal_after"], -1);
+}
+
+const ENTRANA_ZOMBIE_STAND: WorldTile = WorldTile {
+    x: 2842,
+    z: 9765,
+    level: 0,
+};
+const JAILER_STAND: WorldTile = WorldTile {
+    x: 2932,
+    z: 9693,
+    level: 0,
+};
+const JAIL_KEY_TILE: WorldTile = WorldTile {
+    x: 2933,
+    z: 9693,
+    level: 0,
+};
+const FLETCHING_STAND: WorldTile = WorldTile {
+    x: 2612,
+    z: 3251,
+    level: 0,
+};
+const NORMAL_TREE_TILE: WorldTile = WorldTile {
+    x: 2613,
+    z: 3252,
+    level: 0,
+};
+const ENTRANA_DROP_MAX_KILLS: u32 = 12;
+const ENTRANA_DROP_STOP: &str = "bronze-axe-not-found-after-12-kills";
+const JAIL_KEY_LIFETIME_TICKS: u32 = 100;
+const ENTRANA_ZOMBIE_SOURCE: &str =
+    "content/maps/m44_152.jm2:8477-8481; content/scripts/_unpack/225/all.npc:1877-1894; content/scripts/drop tables/scripts/zombie.rs2:102-110";
+const JAIL_KEY_SOURCE: &str =
+    "content/maps/m45_151.jm2:8528; content/scripts/drop tables/scripts/jailer.rs2:1-10";
+const NORMAL_TREE_SOURCE: &str =
+    "content/maps/m40_50.jm2:5891; content/pack/loc.pack:1277; content/scripts/skill_woodcutting/configs/trees.dbrow:1-16";
+const SHORTBOW_MENU_SOURCE: &str =
+    "content/scripts/skill_fletching/scripts/cut_logs.rs2:18-41";
+const SHORTBOW_RECIPE_SOURCE: &str =
+    "content/scripts/skill_fletching/configs/cut_logs/cut_logs.dbrow:1-7";
+
+#[test]
+#[ignore = "requires LIVE=1 and the already-running local Engine Q"]
+fn live_quester_families_until_drop_on_entrana() {
+    let (selected, quests) = live_data();
+    let zombie_id = selected
+        .npc_by_config("zombie_entranan")
+        .expect("selected R289 Entrana zombie config")
+        .id;
+    let zombie_type =
+        usize::try_from(zombie_id).expect("selected zombie type id is nonnegative");
+    let axe_id = item_id(&selected, "bronze_axe");
+    let (mut cell, seed, seed_commands) = make_cell(
+        "live-quester-families-until-drop-entrana",
+        ("cook", "Cook's Assistant"),
+        0,
+        &[],
+        ENTRANA_ZOMBIE_STAND,
+        Some(FixtureLoadout::Path("family_melee")),
+        Arc::clone(&selected),
+    );
+    cell.scenario.settings.deadline = Duration::from_secs(600);
+    let start_seed = seed;
+    let start_selected = Arc::clone(&selected);
+    cell.observe_start = Some(Box::new(move |snapshot| {
+        let seed_receipt = start_seed.observe_start(snapshot)?;
+        let here = common_observe_start(snapshot, ENTRANA_ZOMBIE_STAND)?;
+        require_item(snapshot, axe_id, 0, "bronze_axe")?;
+        if seed_commands
+            .iter()
+            .any(|command| command.starts_with("give bronze_axe "))
+        {
+            return Err("chance-only fixture seeded the target bronze axe".into());
+        }
+        if snapshot
+            .ground_items()
+            .iter()
+            .any(|item| item.def.id == axe_id && item.distance <= 12)
+        {
+            return Err("a bronze axe was already on the ground at the fight site".into());
+        }
+        let visible_zombie = snapshot
+            .npcs()
+            .iter()
+            .find(|npc| npc.r#type == Some(zombie_type))
+            .ok_or("no zombie_entranan spawn was visible before Start")?;
+        let local = snapshot
+            .local_player()
+            .ok_or("pre-Start Entrana snapshot has no local player")?;
+        Ok(json!({
+            "fixture": "cook:0 Base40",
+            "profile_seed": seed_receipt,
+            "seed_commands": &seed_commands,
+            "tile": here,
+            "npc_config": "zombie_entranan",
+            "npc_type_id": zombie_id,
+            "visible_spawn_index": visible_zombie.index,
+            "drop": "bronze_axe",
+            "drop_chance": [50, 128],
+            "drop_source": ENTRANA_ZOMBIE_SOURCE,
+            "local_in_combat_before_start": local.player.actor.in_combat,
+            "inventory_before_start": inventory_receipt(snapshot),
+            "selected_revision": start_selected.revision().to_string(),
+        }))
+    }));
+
+    let mut document = family_path(
+        "cook",
+        "Entrana zombie chance-only drop family fixture",
+        "cook:0",
+        vec![step(
+            "until-drop-bronze-axe",
+            "combat",
+            json!({
+                "target": {
+                    "npc": "zombie_entranan",
+                    "not_targeting_others": true,
+                    "pick": "nearest"
+                },
+                "stand": {
+                    "tile": [ENTRANA_ZOMBIE_STAND.x, ENTRANA_ZOMBIE_STAND.z, 0],
+                    "source": ENTRANA_ZOMBIE_SOURCE
+                },
+                "lost_radius": 12,
+                "kill_budget_ticks": 600,
+                "tactic": {
+                    "kind": "open",
+                    "style": "melee",
+                    "engage_radius": 10,
+                    "auto_retaliate": true
+                },
+                "until_drop": {
+                    "obj": "bronze_axe",
+                    "max_kills": ENTRANA_DROP_MAX_KILLS,
+                    "stop": ENTRANA_DROP_STOP
+                }
+            }),
+            false,
+            empty_any(),
+            fact("has_item", json!({"obj": "bronze_axe"})),
+        )],
+        true,
+    );
+    document.roles[0].sequences[0].steps[0].comment = Some(format!(
+        "{ENTRANA_ZOMBIE_SOURCE}. The step must loot the chance-only drop itself."
+    ));
+    let start = family_start(document, Arc::clone(&selected), Arc::clone(&quests));
+    let mut combat_step_seen = false;
+    let mut confirmed_kills = None;
+    let observe: ObserveFamily = Box::new(move |snapshot, status, lifecycle| {
+        if let Some(status) = status {
+            combat_step_seen |= status.phase == NativePhase::Working
+                && status_text(status, "step_id") == Some("until-drop-bronze-axe");
+            if let Some(kills) = status_integer(Some(status), "combat_kills") {
+                confirmed_kills = Some(confirmed_kills.unwrap_or(0).max(kills));
+            }
+        }
+        if lifecycle.is_none() {
+            return Ok(None);
+        }
+        if !completed_lifecycle(lifecycle) {
+            return Err(format!(
+                "chance-only Entrana drop reached named stop {ENTRANA_DROP_STOP}; \
+                 confirmed Killed={confirmed_kills:?}; status={:?}",
+                native_status_receipt(status)
+            ));
+        }
+        let kills = confirmed_kills
+            .ok_or("completed until_drop step exposed no combat_kills status")?;
+        if !combat_step_seen || kills <= 0 || kills > i64::from(ENTRANA_DROP_MAX_KILLS) {
+            return Err(format!(
+                "until_drop receipt was not a confirmed bounded fight: \
+                 step_seen={combat_step_seen}, confirmed_kills={kills}"
+            ));
+        }
+        require_item(snapshot, axe_id, 1, "bronze_axe")?;
+        Ok(Some(json!({
+            "family_step": "combat",
+            "step_id": "until-drop-bronze-axe",
+            "npc_config": "zombie_entranan",
+            "npc_type_id": zombie_id,
+            "drop": "bronze_axe",
+            "drop_chance": [50, 128],
+            "max_kills": ENTRANA_DROP_MAX_KILLS,
+            "named_stop": ENTRANA_DROP_STOP,
+            "combat_step_seen": combat_step_seen,
+            "confirmed_kills": kills,
+            "target_item_seeded": false,
+            "inventory_after": inventory_receipt(snapshot),
+            "source": ENTRANA_ZOMBIE_SOURCE,
+            "native_status": native_status_receipt(status),
+        })))
+    });
+    let receipt = quester_live::run_family(cell, start, observe)
+        .unwrap_or_else(|error| panic!("Entrana until_drop live proof failed: {error}"));
+    assert!(receipt["family_receipt"]["confirmed_kills"].as_i64().unwrap() > 0);
+    assert_eq!(receipt["family_receipt"]["target_item_seeded"], false);
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the already-running local Engine Q"]
+fn live_quester_families_timed_jail_key_take() {
+    let (selected, quests) = live_data();
+    let jailer_id = selected
+        .npc_by_config("jailer")
+        .expect("selected R289 Jailer config")
+        .id;
+    let jailer_type = usize::try_from(jailer_id).expect("selected Jailer type id is nonnegative");
+    let key_id = item_id(&selected, "jail_key");
+    let (mut cell, seed, seed_commands) = make_cell(
+        "live-quester-families-timed-jail-key-take",
+        ("cook", "Cook's Assistant"),
+        0,
+        &[],
+        JAILER_STAND,
+        Some(FixtureLoadout::Path("family_melee")),
+        Arc::clone(&selected),
+    );
+    let start_seed = seed;
+    let start_selected = Arc::clone(&selected);
+    cell.observe_start = Some(Box::new(move |snapshot| {
+        let seed_receipt = start_seed.observe_start(snapshot)?;
+        let here = common_observe_start(snapshot, JAILER_STAND)?;
+        require_item(snapshot, key_id, 0, "jail_key")?;
+        if seed_commands
+            .iter()
+            .any(|command| command.starts_with("give jail_key "))
+        {
+            return Err("timed-ground fixture seeded the Jailer key".into());
+        }
+        if snapshot
+            .ground_items()
+            .iter()
+            .any(|item| item.def.id == key_id && item.tile == JAIL_KEY_TILE)
+        {
+            return Err("a Jailer key was already on its content drop tile".into());
+        }
+        let visible_jailer = snapshot
+            .npcs()
+            .iter()
+            .find(|npc| npc.r#type == Some(jailer_type))
+            .ok_or("the content Jailer was not visible before Start")?;
+        Ok(json!({
+            "fixture": "cook:0 Base40",
+            "profile_seed": seed_receipt,
+            "seed_commands": &seed_commands,
+            "tile": here,
+            "npc_config": "jailer",
+            "npc_type_id": jailer_id,
+            "visible_spawn_index": visible_jailer.index,
+            "key": "jail_key",
+            "key_lifetime_ticks": JAIL_KEY_LIFETIME_TICKS,
+            "drop_source": JAIL_KEY_SOURCE,
+            "inventory_before_start": inventory_receipt(snapshot),
+            "selected_revision": start_selected.revision().to_string(),
+        }))
+    }));
+
+    let mut document = family_path(
+        "cook",
+        "Jailer timed ground-item family fixture",
+        "cook:0",
+        vec![
+            step(
+                "kill-jailer-for-key",
+                "combat",
+                json!({
+                    "target": {
+                        "npc": "jailer",
+                        "not_targeting_others": true,
+                        "pick": "nearest"
+                    },
+                    "stand": {
+                        "tile": [JAILER_STAND.x, JAILER_STAND.z, 0],
+                        "source": JAIL_KEY_SOURCE
+                    },
+                    "lost_radius": 12,
+                    "kill_budget_ticks": 600,
+                    "tactic": {
+                        "kind": "open",
+                        "style": "melee",
+                        "engage_radius": 6,
+                        "auto_retaliate": true
+                    }
+                }),
+                false,
+                empty_any(),
+                empty_all(),
+            ),
+            step(
+                "take-timed-jail-key",
+                "interact",
+                json!({
+                    "target": {"ground": "jail_key"},
+                    "op": "Take",
+                    "anchor": {
+                        "tile": [JAIL_KEY_TILE.x, JAIL_KEY_TILE.z, 0],
+                        "source": JAIL_KEY_SOURCE
+                    },
+                    "radius": 2,
+                    "max_ticks": JAIL_KEY_LIFETIME_TICKS
+                }),
+                false,
+                empty_any(),
+                fact("has_item", json!({"obj": "jail_key"})),
+            ),
+        ],
+        true,
+    );
+    document.roles[0].sequences[0].steps[0].comment = Some(format!(
+        "{JAIL_KEY_SOURCE}. The combat step deliberately does not loot."
+    ));
+    document.roles[0].sequences[0].steps[1].comment = Some(format!(
+        "{JAIL_KEY_SOURCE}. Take the content drop within its observed 100-tick lifetime."
+    ));
+    let start = family_start(document, Arc::clone(&selected), Arc::clone(&quests));
+    let mut combat_step_seen = false;
+    let mut take_step_seen = false;
+    let mut ground_item_seen_during_take = false;
+    let mut confirmed_kills = None;
+    let mut ground_waited_ticks = None;
+    let mut ground_held = None;
+    let observe: ObserveFamily = Box::new(move |snapshot, status, lifecycle| {
+        if let Some(status) = status {
+            let step_id = status_text(status, "step_id");
+            combat_step_seen |= step_id == Some("kill-jailer-for-key");
+            take_step_seen |= step_id == Some("take-timed-jail-key");
+            ground_item_seen_during_take |= step_id == Some("take-timed-jail-key")
+                && snapshot
+                    .ground_items()
+                    .iter()
+                    .any(|item| item.def.id == key_id && item.tile == JAIL_KEY_TILE);
+            if let Some(kills) = status_integer(Some(status), "combat_kills") {
+                confirmed_kills = Some(confirmed_kills.unwrap_or(0).max(kills));
+            }
+            if let Some(ticks) = status_integer(Some(status), "ground_waited_ticks") {
+                ground_waited_ticks = Some(ticks);
+            }
+            if let Some(held) = status_integer(Some(status), "ground_held") {
+                ground_held = Some(held);
+            }
+        }
+        if lifecycle.is_none() {
+            return Ok(None);
+        }
+        if !completed_lifecycle(lifecycle) {
+            return Err(format!(
+                "timed Jailer key take did not complete: kills={confirmed_kills:?}, \
+                 ground_waited_ticks={ground_waited_ticks:?}, ground_held={ground_held:?}, \
+                 status={:?}",
+                native_status_receipt(status)
+            ));
+        }
+        if !combat_step_seen || !take_step_seen {
+            return Err(format!(
+                "timed-ground sequence skipped an authored step: combat_seen={combat_step_seen}, \
+                 take_seen={take_step_seen}"
+            ));
+        }
+        let kills = confirmed_kills.ok_or("Jailer fight exposed no combat_kills status")?;
+        if kills <= 0 {
+            return Err(format!("Jailer take had no confirmed kill: {kills}"));
+        }
+        let waited = ground_waited_ticks
+            .ok_or("successful timed take exposed no ground_waited_ticks status")?;
+        if !(0..=i64::from(JAIL_KEY_LIFETIME_TICKS)).contains(&waited) {
+            return Err(format!(
+                "timed take waited {waited} ticks beyond the content 100-tick lifetime"
+            ));
+        }
+        let held = ground_held.ok_or("successful timed take exposed no ground_held status")?;
+        if held < 1 {
+            return Err(format!("timed take reported only {held} held keys"));
+        }
+        require_item(snapshot, key_id, 1, "jail_key")?;
+        Ok(Some(json!({
+            "family_steps": ["combat", "interact"],
+            "jailer_config": "jailer",
+            "jailer_type_id": jailer_id,
+            "confirmed_kills": kills,
+            "ground_target": "jail_key",
+            "operation": "Take",
+            "max_ticks": JAIL_KEY_LIFETIME_TICKS,
+            "key_lifetime_ticks": JAIL_KEY_LIFETIME_TICKS,
+            "ground_waited_ticks": waited,
+            "ground_held": held,
+            "ground_item_seen_during_take": ground_item_seen_during_take,
+            "interact_args_excluded": ["until", "dialogue", "settle_ms", "wait_until"],
+            "jail_key_count_after": item_count(snapshot, key_id),
+            "drop_source": JAIL_KEY_SOURCE,
+            "native_status": native_status_receipt(status),
+        })))
+    });
+    let receipt = quester_live::run_family(cell, start, observe)
+        .unwrap_or_else(|error| panic!("timed Jailer key live proof failed: {error}"));
+    assert!(
+        receipt["family_receipt"]["ground_waited_ticks"]
+            .as_i64()
+            .unwrap()
+            <= i64::from(JAIL_KEY_LIFETIME_TICKS)
+    );
+    assert!(receipt["family_receipt"]["ground_held"].as_i64().unwrap() >= 1);
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the already-running local Engine Q"]
+fn live_quester_families_make_from_open_fletching_menu() {
+    let (selected, quests) = live_data();
+    let axe_id = item_id(&selected, "bronze_axe");
+    let knife_id = item_id(&selected, "knife");
+    let logs_id = item_id(&selected, "logs");
+    let product_id = item_id(&selected, "unstrung_shortbow");
+    let (mut cell, seed, seed_commands) = make_cell(
+        "live-quester-families-open-fletching-menu",
+        ("cook", "Cook's Assistant"),
+        0,
+        &[("bronze_axe", 1), ("knife", 1)],
+        FLETCHING_STAND,
+        None,
+        Arc::clone(&selected),
+    );
+    let start_seed = seed;
+    let start_selected = Arc::clone(&selected);
+    cell.observe_start = Some(Box::new(move |snapshot| {
+        let seed_receipt = start_seed.observe_start(snapshot)?;
+        let here = common_observe_start(snapshot, FLETCHING_STAND)?;
+        require_item(snapshot, axe_id, 1, "bronze_axe")?;
+        require_item(snapshot, knife_id, 1, "knife")?;
+        require_item(snapshot, logs_id, 0, "logs")?;
+        require_item(snapshot, product_id, 0, "unstrung_shortbow")?;
+        if seed_commands.iter().any(|command| {
+            command.starts_with("give logs ") || command.starts_with("give unstrung_shortbow ")
+        }) {
+            return Err("fletching fixture seeded a content-acquired material or product".into());
+        }
+        if snapshot.modals().main != -1 {
+            return Err(format!(
+                "fletching fixture began with a modal already open: {}",
+                snapshot.modals().main
+            ));
+        }
+        Ok(json!({
+            "fixture": "cook:0 Base40",
+            "profile_seed": seed_receipt,
+            "seed_commands": &seed_commands,
+            "tile": here,
+            "tools_seeded": ["bronze_axe", "knife"],
+            "logs_seeded": false,
+            "product_seeded": false,
+            "main_modal_before_start": snapshot.modals().main,
+            "stats": [
+                ["woodcutting", stat_base(snapshot, "woodcutting")],
+                ["fletching", stat_base(snapshot, "fletching")],
+            ],
+            "selected_revision": start_selected.revision().to_string(),
+        }))
+    }));
+
+    let mut document = family_path(
+        "cook",
+        "Fletching open-menu Make family fixture",
+        "cook:0",
+        vec![
+            step(
+                "gather-normal-log",
+                "gather",
+                json!({
+                    "skill": "woodcutting",
+                    "resource": "normal",
+                    "until": {"obj": "logs", "qty": 1},
+                    "anchor": {
+                        "tile": [NORMAL_TREE_TILE.x, NORMAL_TREE_TILE.z, 0],
+                        "source": NORMAL_TREE_SOURCE
+                    },
+                    "radius": 2
+                }),
+                false,
+                empty_any(),
+                fact("has_item", json!({"obj": "logs"})),
+            ),
+            step(
+                "open-fletching-menu",
+                "use_on",
+                json!({
+                    "item": "knife",
+                    "target": {"item": "logs"}
+                }),
+                false,
+                empty_any(),
+                fact("modal_open", json!({})),
+            ),
+            step(
+                "make-unstrung-shortbow",
+                "make",
+                json!({
+                    "product": "unstrung_shortbow",
+                    "menu": {
+                        "obj": "shortbow",
+                        "source": SHORTBOW_MENU_SOURCE
+                    },
+                    "qty": 1,
+                    "make_x": false
+                }),
+                false,
+                empty_any(),
+                fact("has_item", json!({"obj": "unstrung_shortbow"})),
+            ),
+        ],
+        true,
+    );
+    document.roles[0].sequences[0].steps[0].comment = Some(format!(
+        "{NORMAL_TREE_SOURCE}; content/scripts/skill_woodcutting/scripts/woodcut.rs2:1-14,91-148 yields logs."
+    ));
+    document.roles[0].sequences[0].steps[1].comment = Some(format!(
+        "{SHORTBOW_MENU_SOURCE} opens the fletching production menu after knife -> logs."
+    ));
+    document.roles[0].sequences[0].steps[2].comment = Some(format!(
+        "{SHORTBOW_MENU_SOURCE}; {SHORTBOW_RECIPE_SOURCE} selects the shortbow menu row for one unstrung_shortbow."
+    ));
+    let start = family_start(document, Arc::clone(&selected), Arc::clone(&quests));
+    let mut gather_step_seen = false;
+    let mut use_on_step_seen = false;
+    let mut menu_open_after_use_on = false;
+    let mut make_step_seen = false;
+    let observe: ObserveFamily = Box::new(move |snapshot, status, lifecycle| {
+        if let Some(status) = status {
+            let step_id = status_text(status, "step_id");
+            gather_step_seen |= step_id == Some("gather-normal-log");
+            use_on_step_seen |= step_id == Some("open-fletching-menu");
+            menu_open_after_use_on |= step_id == Some("open-fletching-menu")
+                && snapshot.modals().main != -1;
+            make_step_seen |= step_id == Some("make-unstrung-shortbow");
+        }
+        if lifecycle.is_none() {
+            return Ok(None);
+        }
+        if !completed_lifecycle(lifecycle) {
+            return Err(format!(
+                "gather/use_on/menu-only Make path did not complete: \
+                 gather={gather_step_seen}, use_on={use_on_step_seen}, \
+                 modal_open={menu_open_after_use_on}, make={make_step_seen}; status={:?}",
+                native_status_receipt(status)
+            ));
+        }
+        if !gather_step_seen || !use_on_step_seen || !menu_open_after_use_on || !make_step_seen {
+            return Err(format!(
+                "open-menu production evidence is incomplete: gather={gather_step_seen}, \
+                 use_on={use_on_step_seen}, modal_open={menu_open_after_use_on}, \
+                 make={make_step_seen}"
+            ));
+        }
+        require_item(snapshot, logs_id, 0, "logs")?;
+        require_item(snapshot, product_id, 1, "unstrung_shortbow")?;
+        Ok(Some(json!({
+            "family_steps": ["gather", "use_on", "make"],
+            "resource": "normal",
+            "tree_tile": NORMAL_TREE_TILE,
+            "tree_source": NORMAL_TREE_SOURCE,
+            "gather_step_seen": gather_step_seen,
+            "use_on_step_seen": use_on_step_seen,
+            "modal_open_after_use_on": menu_open_after_use_on,
+            "make_step_seen": make_step_seen,
+            "make": {
+                "product": "unstrung_shortbow",
+                "menu": {"obj": "shortbow", "source": SHORTBOW_MENU_SOURCE},
+                "qty": 1,
+                "make_x": false,
+                "loc": null,
+                "anchor": null
+            },
+            "recipe_source": SHORTBOW_RECIPE_SOURCE,
+            "logs_after": item_count(snapshot, logs_id),
+            "shortbow_count_after": item_count(snapshot, product_id),
+            "inventory_after": inventory_receipt(snapshot),
+            "native_status": native_status_receipt(status),
+        })))
+    });
+    let receipt = quester_live::run_family(cell, start, observe)
+        .unwrap_or_else(|error| panic!("open-menu Make live proof failed: {error}"));
+    assert_eq!(receipt["family_receipt"]["logs_after"], 0);
+    assert_eq!(receipt["family_receipt"]["shortbow_count_after"], 1);
+    assert_eq!(receipt["family_receipt"]["make"]["loc"], Value::Null);
+    assert_eq!(receipt["family_receipt"]["make"]["anchor"], Value::Null);
 }
