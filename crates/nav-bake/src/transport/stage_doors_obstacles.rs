@@ -155,6 +155,7 @@ impl Motion<'_> {
                     _ => None,
                 }
             }
+            "~agility_climb_up" | "~climb_ladder" | "~set_forcemove_bas" | "~update_bas" => None,
             _ => return None,
         };
         Some(result.map_or(End::Refused, |()| End::Continue))

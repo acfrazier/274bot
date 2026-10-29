@@ -99,8 +99,10 @@ fn quest_state(
     snapshot.seed_quest_statuses(
         catalog
             .iter()
-            // Exact stage witnesses do not also assert completion for that quest.
-            .filter(|quest| !signals.iter().any(|(id, _, _)| quest.id.0.as_ref() == *id))
+            // A stage witness asserts completion only at the selected terminal value.
+            .filter(|quest| signals.iter().find(|(id, _, _)| quest.id.0.as_ref() == *id)
+                .is_none_or(|(_, _, value)| facts.rows.iter().any(|row|
+                    row.id == quest.id.0.as_ref() && row.complete == *value)))
             .enumerate()
             .map(|(index, quest)| QuestStatusView {
                 component_id: index as i32,
@@ -489,6 +491,109 @@ fn main() -> Result<(), String> {
             }
         }
     }
+    let mut obstacle_row = |name: String, id: i32, from: WorldTile, to: WorldTile,
+                            state: &WorldState, account: &str, options: FindOptions| {
+        let mut row = first(&world, Case {
+            name: &name, from, goals: &[to], options, state, account,
+        });
+        row["crossing_edges"] = json!(world.graph.edges.iter().filter(|edge|
+            edge.loc_id == id && edge.takeoff == Some(from) && edge.to == to)
+            .map(|edge| json!({"edge": format!("{edge:?}"), "allowed": state.allows(edge)}))
+            .collect::<Vec<_>>());
+        cases.push(row);
+    };
+    for (direction, from, to) in [
+        ("north", tile(2817, 3561, 0), tile(2817, 3564, 0)),
+        ("south", tile(2817, 3564, 0), tile(2817, 3561, 0)),
+    ] {
+        obstacle_row(format!("obstacle_stile_{direction}"), 3730, from, to, &observed, "unresolved", legacy);
+    }
+    for x in [2856, 2857] {
+        for (direction, from, to) in [
+            ("north", tile(x, 3611, 0), tile(x, 3613, 0)),
+            ("south", tile(x, 3613, 0), tile(x, 3611, 0)),
+        ] {
+            for (account, progress, agility, worn) in [
+                ("ready", 10, 15, true), ("stage9", 9, 15, true),
+                ("agility14", 10, 14, true), ("carried_boots", 10, 15, false),
+                ("unresolved", -1, 15, true),
+            ] {
+                let mut state = if progress < 0 { observed.clone() } else {
+                    quest_state(&data, &[("troll", "troll_quest", progress)])?
+                };
+                state.stats.insert(16, agility);
+                state.inv.insert(3105, 1);
+                if worn { state.worn.insert(3105); }
+                obstacle_row(format!("obstacle_lower_{x}_{direction}_{account}"), 3748, from, to, &state, account, legacy);
+            }
+        }
+    }
+    for (west, east, top_west, zs) in [
+        (2858, 2861, true, [3626, 3627]), (2877, 2880, false, [3622, 3623]),
+    ] {
+        for z in zs {
+            for (direction, id, from, to) in [
+                ("east", if top_west { 3790 } else { 3791 }, tile(west, z, 0), tile(east, z, 0)),
+                ("west", if top_west { 3791 } else { 3790 }, tile(east, z, 0), tile(west, z, 0)),
+            ] {
+                for agility in [14, 15] {
+                    let mut state = observed.clone();
+                    state.stats.insert(16, agility);
+                    obstacle_row(format!("obstacle_upper_{west}_{z}_{direction}_agility{agility}"), id, from, to, &state, "skill_only", legacy);
+                }
+            }
+        }
+    }
+    for (id, from, to) in [
+        (2049, tile(2556, 3299, 0), tile(2559, 3299, 0)),
+        (2048, tile(2556, 3300, 0), tile(2559, 3300, 0)),
+        (2048, tile(2559, 3299, 0), tile(2556, 3299, 0)),
+        (2049, tile(2559, 3300, 0), tile(2556, 3300, 0)),
+    ] {
+        for (account, stage) in [("stage15", 15), ("stage16", 16), ("stage17", 17), ("unresolved", -1)] {
+            let state = if stage < 0 { observed.clone() } else {
+                quest_state(&data, &[("biohazard", "biohazard", stage)])?
+            };
+            obstacle_row(format!("obstacle_wall_{}_{}_{account}", from.x, from.z), id, from, to, &state, account, legacy);
+        }
+    }
+    for agility in [17, 18] {
+        let mut state = observed.clone();
+        state.stats.insert(16, agility);
+        obstacle_row(format!("obstacle_window_agility{agility}"), 2299,
+            tile(2548, 3119, 0), tile(2548, 3117, 1), &state, "skill_only", legacy);
+    }
+    for (account, stage) in [("stage12", 12), ("stage13", 13), ("unresolved", -1)] {
+        let state = if stage < 0 { observed.clone() } else {
+            quest_state(&data, &[("itwatchtower", "itwatchtower", stage)])?
+        };
+        obstacle_row(format!("obstacle_tower_ladder_{account}"), 2796,
+            tile(2549, 3112, 1), tile(2549, 3112, 2), &state, account, legacy);
+    }
+    for (id, z) in [(2866, 9873), (2865, 9874)] {
+        for (direction, from, to) in [
+            ("east", tile(2902, z, 0), tile(2903, z, 0)),
+            ("west", tile(2903, z, 0), tile(2902, z, 0)),
+        ] {
+            for (account, worn) in [("worn_gloves", true), ("carried_gloves", false)] {
+                let mut state = observed.clone();
+                state.inv.insert(1059, 1);
+                if worn { state.worn.insert(1059); }
+                obstacle_row(format!("obstacle_cellar_{z}_{direction}_{account}"), id, from, to, &state, account, legacy);
+            }
+        }
+    }
+    let mut troll = quest_state(&data, &[("troll", "troll_quest", 10)])?;
+    troll.stats.insert(16, 15);
+    troll.worn.insert(3105);
+    troll.combat_level = Some(3);
+    obstacle_row("obstacle_troll_hut_to_arena_strict".into(), 0,
+        tile(2820, 3555, 0), tile(2896, 3618, 0), &troll, "stage10_boots_agility15_combat3", FindOptions::default());
+    let mut tower = quest_state(&data, &[("itwatchtower", "itwatchtower", 12)])?;
+    tower.stats.insert(16, 18);
+    tower.combat_level = Some(3);
+    obstacle_row("obstacle_tower_street_to_wizard_strict".into(), 0,
+        tile(2612, 3093, 0), tile(2544, 3112, 2), &tower, "stage12_agility18_combat3", FindOptions::default());
     let mut transports: Vec<_> = world
         .graph
         .edges

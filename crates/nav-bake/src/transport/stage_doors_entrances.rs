@@ -1248,7 +1248,7 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                                     continue;
                                 }
                                 if covered.contains(&(id, option))
-                                    && graph.edges.iter().any(|edge| edge.loc_id == id
+                                    && graph.edges[..first_new_edge].iter().any(|edge| edge.loc_id == id
                                         && edge.option == option && edge.to == result.to) {
                                     continue;
                                 }

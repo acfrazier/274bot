@@ -30,6 +30,7 @@ fn obstacle_fixture(script: &str) -> Fixture {
     for (name, locs) in [
         ("m44_55", "0 1 42: 3730 10\n"),
         ("m44_56", "0 40 28: 3748 10 2\n0 41 28: 3748 10\n0 43 42: 3790 22 2\n0 43 43: 3790 22 1\n0 44 42: 3791 22 2\n0 44 43: 3791 22 1\n0 62 38: 3791 22 3\n0 62 39: 3791 22\n0 63 38: 3790 22 1\n0 63 39: 3790 22 1\n"),
+        ("m45_56", ""),
         ("m39_51", "0 61 35: 2049 10 1\n0 61 36: 2048 10 3\n0 62 35: 2048 10 1\n0 62 36: 2049 10 3\n"),
         ("m39_48", "0 52 47: 2299 4 3\n1 53 39: 2796 10\n"),
         ("m45_73", ""),
@@ -179,4 +180,32 @@ fn obstacle_cellar_gate_requires_worn_leather_gloves_in_both_directions() {
             assert!(state.allows(edge));
         }
     }
+}
+
+#[test]
+fn obstacle_proofs_refuse_changed_rolls_labels_and_movement_primitives() {
+    for (script, id) in [
+        (HANDLERS.replace("~damage_self(3);", "~damage_self(4);"), 3748),
+        (HANDLERS.replace("170, 253", "170, 254"), 3790),
+        (HANDLERS.replace("~forcemove(movecoord($loc_coord, 2, 0, 0));",
+            "~forcemove(movecoord($loc_coord, 3, 0, 0));"), 2048),
+    ] {
+        let graph = obstacle_graph(&obstacle_fixture(&script));
+        assert!(!graph.edges.iter().any(|edge| edge.loc_id == id));
+    }
+    let fx = obstacle_fixture(HANDLERS);
+    fx.write("scripts/appearance.rs2", &include_str!("engine_obstacle_procs.rs2")
+        .replace("p_telejump($coord);", "p_telejump(movecoord($coord, 1, 0, 0));"));
+    assert!(!obstacle_graph(&fx).edges.iter().any(|edge| edge.loc_id == 2299));
+}
+
+#[test]
+fn obstacle_wall_equality_stays_a_window_without_the_completion_upper_bound() {
+    let fx = obstacle_fixture(HANDLERS);
+    fx.write("scripts/future.rs2", "[proc,future_stage]\n%biohazard = 17;\n");
+    let graph = obstacle_graph(&fx);
+    let edge = crossing(&graph, 2049, tile(2556, 3299), tile(2559, 3299));
+    assert!(obstacle_state(&graph, "biohazard", 16).allows(edge));
+    assert!(!obstacle_state(&graph, "biohazard", 17).allows(edge));
+    assert!(format!("{:?}", edge.quest_gates).contains("Window"));
 }
