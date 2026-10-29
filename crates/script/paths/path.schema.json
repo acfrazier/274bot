@@ -2069,6 +2069,15 @@
           "minimum": 1,
           "description": "Optional settle-window override in milliseconds; must be at least 1."
         },
+        "max_ticks": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null,
+          "minimum": 1,
+          "description": "Total observed game-tick budget for a ground-item Take, including spawn wait.\nWith this field, the step completes only after the inventory gains the item."
+        },
         "dialogue": {
           "anyOf": [
             {
@@ -2864,12 +2873,26 @@
       "additionalProperties": false,
       "properties": {
         "loc": {
-          "$ref": "#/$defs/MakeLoc",
-          "description": "Location action used to start production."
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MakeLoc"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional location action used to start production. When omitted, select\nfrom a production menu opened by an earlier `use_on` step."
         },
         "anchor": {
-          "$ref": "#/$defs/AnchorArg",
-          "description": "Authored approach anchor with a source citation."
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnchorArg"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Required with `loc`; the authored approach anchor and its source."
         },
         "product": {
           "type": "string",
@@ -2884,21 +2907,19 @@
               "type": "null"
             }
           ],
-          "description": "Optional production menu choice."
+          "description": "Optional production-menu row, when it differs from the product."
         },
         "qty": {
           "$ref": "#/$defs/QuantityDocument",
-          "description": "Fixed or journal-count-backed production quantity."
+          "description": "Held-target quantity after this production step."
         },
         "make_x": {
           "type": "boolean",
-          "description": "Use the game's make-X option when available.",
+          "description": "Use the game's Make-X option when available.",
           "default": false
         }
       },
       "required": [
-        "loc",
-        "anchor",
         "product",
         "qty"
       ]
@@ -3308,6 +3329,17 @@
           ],
           "description": "Optional success predicate that ends the combat loop when true.",
           "default": null
+        },
+        "until_drop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UntilDropArgs"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Loot one selected item until held, re-engaging up to `max_kills`."
         }
       },
       "required": [
@@ -3618,6 +3650,32 @@
         "max_ticks"
       ],
       "description": "Dialogue which completes the post-combat transformation phase."
+    },
+    "UntilDropArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "obj": {
+          "type": "string",
+          "description": "Selected item alias to loot and hold."
+        },
+        "max_kills": {
+          "type": "integer",
+          "description": "Maximum confirmed kills, including the kill whose loot is collected.",
+          "minimum": 1
+        },
+        "stop": {
+          "type": "string",
+          "description": "Authored stop name reported when the kill budget is spent without the item.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "obj",
+        "max_kills",
+        "stop"
+      ],
+      "description": "Item and confirmed-kill budget for a combat step that waits for its drop."
     },
     "step.combat.v1": {
       "type": "object",
