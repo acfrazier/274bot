@@ -508,11 +508,21 @@ mod tests {
         ProfileOrder::of_names_for_test(names)
     }
 
+    /// Process-only state (never per bot): the order projection and one
+    /// staged reorder stay these sizes. The session's created-since-
+    /// reconcile list is one more `Vec` beside them, empty in steady
+    /// state, so expected per-bot RSS / Rust-live / V8 delta is zero.
     #[cfg(target_pointer_width = "64")]
     #[test]
     fn order_projection_keeps_its_process_only_size() {
         assert_eq!(std::mem::size_of::<ProfileOrder>(), 80);
         assert_eq!(std::mem::size_of::<super::Reconciled>(), 2);
+        assert_eq!(std::mem::size_of::<super::ReorderSurface>(), 1);
+        assert!(std::mem::size_of::<super::ReorderOp>() <= 32);
+        assert!(
+            std::mem::size_of::<(super::ReorderOp, super::ReorderSurface)>() <= 40,
+            "one staged reorder per process"
+        );
     }
 
     fn names(order: &ProfileOrder) -> Vec<&str> {
