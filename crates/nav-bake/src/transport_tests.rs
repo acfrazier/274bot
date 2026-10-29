@@ -305,19 +305,84 @@ if($entering = false) {
         "the same Zanaris edge is usable on a members world"
     );
 }
-#[test]
-fn entrana_boat_members_and_item_guards_control_world_behavior() {
-    let fx = Fixture::new();
-    fx.write("pack/npc.pack", "657=shipmonk\n658=shipmonk2\n");
-    fx.write(
-        "scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2",
-        "\
+const ENTRANA_PROC_SOURCE: &str = r#"
+[proc,has_entrana_restricted_items]()(boolean)
+if ((inv_totalcat(inv, armour_hands) > 0 | inv_totalcat(worn, armour_hands) > 0)
+    | (inv_totalcat(inv, weapon_staff) > 0 | inv_totalcat(worn, weapon_staff) > 0)
+    | (inv_totalcat(inv, armour_helmet) > 0 | inv_totalcat(worn, armour_helmet) > 0)
+    | (inv_totalcat(inv, armour_body) > 0 | inv_totalcat(worn, armour_body) > 0)
+    | (inv_totalcat(inv, armour_legs) > 0 | inv_totalcat(worn, armour_legs) > 0)
+    | (inv_totalcat(inv, armour_shield) > 0 | inv_totalcat(worn, armour_shield) > 0)
+    | (inv_totalcat(inv, armour_cape) > 0 | inv_totalcat(worn, armour_cape) > 0)
+    | (inv_totalcat(inv, armour_godcape) > 0 | inv_totalcat(worn, armour_godcape) > 0)
+    | (inv_totalcat(inv, weapon_slash) > 0 | inv_totalcat(worn, weapon_slash) > 0)
+    | (inv_totalcat(inv, weapon_blunt) > 0 | inv_totalcat(worn, weapon_blunt) > 0)
+    | (inv_totalcat(inv, weapon_stab) > 0 | inv_totalcat(worn, weapon_stab) > 0)
+    | (inv_totalcat(inv, weapon_crossbow) > 0 | inv_totalcat(worn, weapon_crossbow) > 0)
+    | (inv_totalcat(inv, weapon_axe) > 0 | inv_totalcat(worn, weapon_axe) > 0)
+    | (inv_totalcat(inv, weapon_pickaxe) > 0 | inv_totalcat(worn, weapon_pickaxe) > 0)
+    | (inv_totalcat(inv, weapon_javelin) > 0 | inv_totalcat(worn, weapon_javelin) > 0)
+    | (inv_totalcat(inv, weapon_2h_sword) > 0 | inv_totalcat(worn, weapon_2h_sword) > 0)
+    | (inv_totalcat(inv, weapon_spear) > 0 | inv_totalcat(worn, weapon_spear) > 0)
+    | (inv_totalcat(inv, weapon_spiked) > 0 | inv_totalcat(worn, weapon_spiked) > 0)
+    | (inv_totalcat(inv, weapon_thrown) > 0 | inv_totalcat(worn, weapon_thrown) > 0)
+    | (inv_totalcat(inv, weapon_scythe) > 0 | inv_totalcat(worn, weapon_scythe) > 0)
+    | (inv_totalcat(inv, weapon_bow) > 0 | inv_totalcat(worn, weapon_bow) > 0)
+    | (inv_totalcat(inv, weapon_claws) > 0 | inv_totalcat(worn, weapon_claws) > 0)
+    | (inv_totalcat(inv, weapon_polearm) > 0 | inv_totalcat(worn, weapon_polearm) > 0)
+    | (inv_totalcat(inv, cannon_parts) > 0)) {
+    return(true);
+}
+return(false);
+"#;
+
+const MONK_MEMBER_HANDLER: &str = "\
 [opnpc1,shipmonk]
 if(map_members = ^false) {
     mes(\"You need to be on a members' world to access this content.\");
     return;
 }
-:",
+";
+
+fn inv_totalcat_categories<'a>(source: &'a str, container: &str) -> HashSet<&'a str> {
+    source
+        .split("inv_totalcat(")
+        .skip(1)
+        .filter_map(|call| {
+            let arguments = call.split_once(')')?.0;
+            let (observed_container, category) = arguments.split_once(',')?;
+            (observed_container.trim() == container).then_some(category.trim())
+        })
+        .collect()
+}
+fn entrana_proc_source() -> String {
+    let Some(content_root) = std::env::var_os("BOT_NAV_CONTENT_DIR").map(PathBuf::from) else {
+        return ENTRANA_PROC_SOURCE.to_owned();
+    };
+    let path = content_root.join("scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2");
+    let source = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "read configured Entrana content {}: {error}",
+            path.display()
+        )
+    });
+    let start = source
+        .find("[proc,has_entrana_restricted_items]")
+        .expect("configured Entrana content has the restricted-items proc");
+    let end = source[start..]
+        .find("\n[proc,")
+        .map_or(source.len(), |offset| start + offset);
+    source[start..end].to_owned()
+}
+
+#[test]
+fn entrana_boat_members_and_item_guards_control_world_behavior() {
+    let proc_source = entrana_proc_source();
+    let fx = Fixture::new();
+    fx.write("pack/npc.pack", "657=shipmonk\n658=shipmonk2\n");
+    fx.write(
+        "scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2",
+        &format!("{MONK_MEMBER_HANDLER}{proc_source}"),
     );
     // The return monk's handler exists and has no guard.
     fx.write(
@@ -325,7 +390,7 @@ if(map_members = ^false) {
         "\
 [opnpc1,shipmonk2]
 ~chatnpc(\"<p,neutral>Do you wish to leave holy Entrana?\");
-:",
+",
     );
     let graph = derive_static_routes_for(&fx);
     let outbound = graph
@@ -350,45 +415,28 @@ if(map_members = ^false) {
         "the Entrana monk searches worn weapon categories"
     );
 
-    const RESTRICTED_CATEGORIES: &[&str] = &[
-        "armour_hands",
-        "weapon_staff",
-        "armour_helmet",
-        "armour_body",
-        "armour_legs",
-        "armour_shield",
-        "armour_cape",
-        "armour_godcape",
-        "weapon_slash",
-        "weapon_blunt",
-        "weapon_stab",
-        "weapon_crossbow",
-        "weapon_axe",
-        "weapon_pickaxe",
-        "weapon_javelin",
-        "weapon_2h_sword",
-        "weapon_spear",
-        "weapon_spiked",
-        "weapon_thrown",
-        "weapon_scythe",
-        "weapon_bow",
-        "weapon_claws",
-        "weapon_polearm",
-        "cannon_parts",
-    ];
+    let held_categories = inv_totalcat_categories(&proc_source, "inv");
+    let worn_categories = inv_totalcat_categories(&proc_source, "worn");
+    assert_eq!(
+        held_categories.len(),
+        24,
+        "read every inventory category check"
+    );
+    assert_eq!(worn_categories.len(), 23, "read every worn category check");
     for item in selected.items() {
         let category = item.category.as_deref();
-        let restricted = category.is_some_and(|category| RESTRICTED_CATEGORIES.contains(&category));
+        let restricted_held = category.is_some_and(|category| held_categories.contains(category));
+        let restricted_worn = category.is_some_and(|category| worn_categories.contains(category));
         assert_eq!(
             outbound.forbidden_held.contains(&item.id),
-            restricted,
+            restricted_held,
             "carried restriction for item {} category {:?}",
             item.id,
             category
         );
         assert_eq!(
             outbound.forbidden_worn.contains(&item.id),
-            restricted && category != Some("cannon_parts"),
+            restricted_worn,
             "worn restriction for item {} category {:?}",
             item.id,
             category
@@ -1035,7 +1083,9 @@ p_telejump(0_50_50_20_20);
 fn derive_static_routes_for(fx: &Fixture) -> TransportGraph {
     let defs = loc_defs(&[]);
     let wc = bake_collision(fx, &defs, &HashSet::new());
-    derive_transports(fx.path(), &defs, &wc)
+    let data =
+        api::game_data::for_revision(api::selected::ClientRevision::R289).expect("R289 item data");
+    derive_transports_with_audit(fx.path(), &defs, &wc, None, None, Some(&data)).0
 }
 
 fn write_static_route_journal(fx: &Fixture) {

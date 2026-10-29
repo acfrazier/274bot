@@ -106,7 +106,7 @@ pub(crate) fn derive_transports_for_bake(
     configured_door_ids: &HashSet<i32>,
     parsed_door_configs: &[PathBuf],
     quests: Option<&QuestSource<'_>>,
-    revision: Option<u16>,
+    game_data: &api::game_data::SelectedGameData,
 ) -> (TransportGraph, VarpGateAudit) {
     let (graph, skipped, audit) = derive_transports_with_audit(
         content_root,
@@ -114,7 +114,7 @@ pub(crate) fn derive_transports_for_bake(
         collision,
         Some((configured_door_ids, parsed_door_configs)),
         quests,
-        revision,
+        Some(game_data),
     );
     report(content_root, &graph, &skipped);
     (graph, audit)
@@ -137,7 +137,7 @@ fn derive_transports_with_audit(
     collision: &WorldCollision,
     preloaded_doors: Option<(&HashSet<i32>, &[PathBuf])>,
     quests: Option<&QuestSource<'_>>,
-    revision: Option<u16>,
+    game_data: Option<&api::game_data::SelectedGameData>,
 ) -> (TransportGraph, HashMap<&'static str, usize>, VarpGateAudit) {
     let mut graph = TransportGraph {
         quest_family: quests.map(|quests| quests.family),
@@ -221,7 +221,7 @@ fn derive_transports_with_audit(
         collision,
         &mut skipped,
     );
-    boat_edges(&mut graph, &gates, &mut audit, revision);
+    boat_edges(&mut graph, &gates, &mut audit, game_data);
     cart_edges(
         &mut graph,
         gates.completed_quest_name("zombiequeen", "zombiequeen_complete"),

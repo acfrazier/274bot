@@ -378,14 +378,7 @@ const ENTRANA_RESTRICTED_CATEGORIES: &[&str] = &[
     "cannon_parts",
 ];
 
-fn entrana_restrictions(revision: Option<u16>) -> (Vec<i32>, Vec<i32>) {
-    let game_revision = match revision {
-        Some(274) => api::selected::ClientRevision::R274,
-        None | Some(289) => api::selected::ClientRevision::R289,
-        Some(other) => unreachable!("unsupported revision {other} reached transport baking"),
-    };
-    let data = api::game_data::for_revision(game_revision)
-        .expect("selected game item categories are available for supported revisions");
+fn entrana_restrictions(data: &api::game_data::SelectedGameData) -> (Vec<i32>, Vec<i32>) {
     let mut forbidden_held = Vec::new();
     let mut forbidden_worn = Vec::new();
     for item in data.items() {
@@ -415,17 +408,15 @@ pub(super) fn boat_edges(
     graph: &mut TransportGraph,
     gates: &ObservableGates,
     audit: &mut VarpGateAudit,
-    revision: Option<u16>,
+    game_data: Option<&api::game_data::SelectedGameData>,
 ) {
-    let mut entrana = Some(entrana_restrictions(revision));
     for r in BOAT_ROUTES {
         let (forbidden_held, forbidden_worn) = if r.npc == ENTRANA_SAIL_NPC {
-            entrana
-                .take()
-                .expect("the Port Sarim -> Entrana boat route occurs once")
+            game_data.map(entrana_restrictions).unwrap_or_default()
         } else {
             (Vec::new(), Vec::new())
         };
+
         gates.admit_edge(
             graph,
             TransportEdge {
