@@ -113,11 +113,7 @@ impl SessionMemory {
 
     /// Owned storage estimate, including the inline `Fact` array but not Arc targets.
     pub fn retained_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-            + self
-                .facts
-                .as_deref()
-                .map_or(0, |facts| facts.len() * std::mem::size_of::<Fact>())
+        std::mem::size_of::<Self>() + self.facts.as_deref().map_or(0, std::mem::size_of_val)
     }
 
     /// Current-run facts answer authoritatively; facts from another run remain hints.
@@ -214,12 +210,10 @@ pub fn compose(
         },
         (Some(memory), None) => memory,
         (None, Some(explicit)) => explicit,
-        (None, None) => ordinary
-            .observe_gate(gate, floor)
-            .unwrap_or(Observation {
-                truth: Truth::Unknown,
-                observed: None,
-            }),
+        (None, None) => ordinary.observe_gate(gate, floor).unwrap_or(Observation {
+            truth: Truth::Unknown,
+            observed: None,
+        }),
     }
 }
 
@@ -334,7 +328,10 @@ mod tests {
         QuestGate::Window(StageWindow {
             quest: FactKey::new("druidspirit"),
             signal: FactKey::new("druidspirit"),
-            values: InclusiveRange { min: Some(min), max },
+            values: InclusiveRange {
+                min: Some(min),
+                max,
+            },
         })
     }
 
@@ -342,8 +339,14 @@ mod tests {
     fn refusal_falsifies_only_windows_inside_its_refused_range() {
         let mut memory = SessionMemory::default();
         assert!(memory.record(fact((0, 0), (0, 110), stamp(5, 1), true)));
-        assert_eq!(memory.observe(&gate(1, None), stamp(5, 1)).unwrap().truth, Truth::False);
-        assert_eq!(memory.observe(&gate(0, None), stamp(5, 1)).unwrap().truth, Truth::True);
+        assert_eq!(
+            memory.observe(&gate(1, None), stamp(5, 1)).unwrap().truth,
+            Truth::False
+        );
+        assert_eq!(
+            memory.observe(&gate(0, None), stamp(5, 1)).unwrap().truth,
+            Truth::True
+        );
     }
 
     #[test]
@@ -353,7 +356,10 @@ mod tests {
         assert!(memory.record(refusal.clone()));
         assert!(!memory.record(refusal));
         assert!(memory.record(fact((5, 5), (5, 110), stamp(6, 1), false)));
-        assert_eq!(memory.observe(&gate(1, None), stamp(6, 1)).unwrap().truth, Truth::True);
+        assert_eq!(
+            memory.observe(&gate(1, None), stamp(6, 1)).unwrap().truth,
+            Truth::True
+        );
     }
 
     #[test]
@@ -362,7 +368,19 @@ mod tests {
         assert!(memory.record(fact((5, 5), (5, 110), stamp(8, 1), false)));
         assert!(!memory.record(fact((0, 110), (0, 110), stamp(7, 1), false)));
         assert!(memory.record(fact((1, 110), (1, 110), stamp(9, 1), false)));
-        assert_eq!(memory.facts()[0].possible, InclusiveRange { min: Some(5), max: Some(5) });
-        assert_eq!(memory.facts()[0].after, InclusiveRange { min: Some(5), max: Some(110) });
+        assert_eq!(
+            memory.facts()[0].possible,
+            InclusiveRange {
+                min: Some(5),
+                max: Some(5)
+            }
+        );
+        assert_eq!(
+            memory.facts()[0].after,
+            InclusiveRange {
+                min: Some(5),
+                max: Some(110)
+            }
+        );
     }
 }
