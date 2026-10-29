@@ -5835,7 +5835,8 @@ fn skip_quest_acceptance_uses_the_shared_driver_command_and_reports_the_identity
         .expect("load");
     settle(&mut d, load.request());
     let calls = Arc::new(AtomicUsize::new(0));
-    d.session()
+    let target = d
+        .session()
         .play_for_test()
         .expect("play")
         .script_start_handle()
@@ -5848,13 +5849,6 @@ fn skip_quest_acceptance_uses_the_shared_driver_command_and_reports_the_identity
         .expect("start native probe");
     wait_state(&mut d, "alice", ScriptRunState::Running);
 
-    let target = d
-        .session()
-        .play_for_test()
-        .expect("play")
-        .script_native_status("alice")
-        .expect("running native status")
-        .run;
     let refusals = d.session().refusals();
     let skip = d
         .submit(
@@ -5913,14 +5907,16 @@ fn skip_quest_without_a_running_queue_is_refused_with_one_shared_log_line() {
     );
     assert_eq!(d.session().refusals(), refusals + 1);
     let mut view = crate::log::LogView::new(crate::log::LogScope::Process);
-    view.edit_filter(|filter| filter.set_text("command refused: SkipQuest on skiprefusal"));
+    view.edit_filter(|filter| filter.set_text("skiprefusal"));
     crate::log::global().refresh(&mut view);
     let refused = view
         .rows()
         .iter()
         .filter(|row| {
-            row.message()
-                .contains("bot is not running the Quester queue")
+            let message = row.message();
+            message.contains("command refused: SkipQuest")
+                && message.contains("skiprefusal")
+                && message.contains("bot is not running the Quester queue")
         })
         .count();
     assert_eq!(refused, 1, "one shared command refusal log line");
