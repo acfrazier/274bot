@@ -622,6 +622,31 @@ mod tests {
     }
 
     #[test]
+    fn operator_park_is_not_reselected_after_later_quest_completion() {
+        let index = index();
+        let settings = settings(&["cook", "sheep"], &["cook", "sheep"], &[]);
+        let mut queue = Queue::from_index(&index, settings.clone()).unwrap();
+        queue.mark_running(0);
+        queue.mark_parked(0, Arc::from("skipped by operator"));
+        assert_eq!(queue.reason(0), Some("skipped by operator"));
+        assert_eq!(queue.status(0), Some(QueueStatus::Parked));
+        let next = queue.next_candidate().unwrap();
+        assert_eq!(queue.id(next), Some("sheep"));
+        queue.mark_done(next);
+        queue.refresh_blocked();
+        assert_eq!(queue.next_candidate(), None);
+        assert!(
+            !queue.all_done(),
+            "a parked row keeps the normal blocked ending"
+        );
+        assert_eq!(queue.reason(0), Some("skipped by operator"));
+
+        let restarted = Queue::from_index(&index, settings).unwrap();
+        assert_eq!(restarted.next_candidate(), Some(0));
+        assert_eq!(restarted.reason(0), None);
+    }
+
+    #[test]
     fn partner_account_and_gang_are_carried_in_queue_settings() {
         let index = index();
         let queue = Queue::from_index(

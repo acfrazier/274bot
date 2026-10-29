@@ -2386,6 +2386,38 @@ mod tests {
         }
     }
     #[test]
+    fn quester_skip_fixture_runs_the_two_quest_queue() {
+        let scenario = super::Scenario::get("quester_skip").expect("skip scenario");
+        assert!(super::Scenario::try_get("quester_skip")
+            .expect("scenario lookup")
+            .is_some());
+        let settings = scenario.settings_inject().expect("queue settings");
+        assert_eq!(
+            settings.get("quests"),
+            Some(&serde_json::json!(["cook", "sheep"]))
+        );
+        assert_eq!(
+            settings.get("order_override"),
+            Some(&serde_json::json!(["cook", "sheep"]))
+        );
+        let start = scenario
+            .0
+            .steps
+            .iter()
+            .position(|step| matches!(&step.kind, scenario::StepKind::StartScript))
+            .expect("compiled start");
+        assert_eq!(scenario.0.steps.len(), start + 2);
+        assert!(matches!(
+            &scenario.0.steps[start + 1].wait.arm,
+            scenario::Proof::QuestDone { name } if *name == "Sheep Shearer"
+        ));
+        assert!(matches!(
+            &scenario.0.proof,
+            scenario::Proof::QuestDone { name } if *name == "Sheep Shearer"
+        ));
+        assert!(scenario.view().terminal_shot().is_some());
+    }
+    #[test]
     fn pair_script_elapsed_starts_only_after_both_catalog_slots_start() {
         let started = std::time::Instant::now();
         let mut timing = Some(host_play::live_gate::LiveTiming::new(

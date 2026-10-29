@@ -15350,6 +15350,45 @@ fn quester_queue_watches_every_selected_quest() {
     assert!(watches.iter().all(|proof| proof.check(&snapshot, None)));
 }
 
+#[test]
+fn quester_skip_is_registered_with_cook_and_sheep_start_settings() {
+    let scenario = get("quester_skip").expect("registered skip fixture");
+    assert_eq!(scenario.name, "quester_skip");
+    assert_eq!(scenario.settings.start_script, Some("Quester"));
+    assert_eq!(
+        serde_json::Value::Object(
+            settings_inject_map(scenario.settings.script_settings_inject)
+                .expect("compiled Start settings")
+        ),
+        serde_json::json!({
+            "quests": ["cook", "sheep"],
+            "order_override": ["cook", "sheep"],
+            "skip": [],
+        })
+    );
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("compiled Quester Start");
+    let watches: Vec<_> = scenario.steps[start + 1..]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect();
+    assert_eq!(
+        watches,
+        [Proof::QuestDone {
+            name: "Sheep Shearer"
+        }]
+    );
+    assert_eq!(
+        scenario.proof,
+        Proof::QuestDone {
+            name: "Sheep Shearer"
+        }
+    );
+}
+
 /// The 10/21 nightly ended these cells on their whole-cell wall deadline
 /// without a failed step witness, after the runner began charging wait
 /// budgets in observed game ticks. Each committed deadline is the largest

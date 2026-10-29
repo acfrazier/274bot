@@ -419,11 +419,24 @@ impl ScriptStartHandle {
         script: Box<dyn script::native::Script>,
         selected: Option<Arc<api::game_data::SelectedGameData>>,
     ) -> Result<api::selected::RunKey, String> {
+        self.start_test_script_with_card(name, script::CompiledId("test"), script, selected)
+    }
+
+    /// Install a fixture under an explicit compiled card identity.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn start_test_script_with_card(
+        &self,
+        name: &str,
+        card: script::CompiledId,
+        script: Box<dyn script::native::Script>,
+        selected: Option<Arc<api::game_data::SelectedGameData>>,
+    ) -> Result<api::selected::RunKey, String> {
         let slot = script_slot_or_insert(&self.scripts, name);
         let mut slot = slot
             .lock()
             .map_err(|_| format!("script slot retiring: {name}"))?;
-        slot.start_test_script(script, selected)?;
+        slot.start_test_script_with_card(card, script, selected)?;
         slot.native_run()
             .ok_or_else(|| format!("test script did not publish a run: {name}"))
     }
@@ -950,6 +963,46 @@ impl Play {
         self.script_start_handle().read_journal(name, target)?;
         self.wake(name);
         Ok(())
+    }
+
+    #[cfg(feature = "test-support")]
+    /// Skip the active row of `name`'s running compiled Quester queue.
+    ///
+    /// `target` binds the request to the run identity shown by native status;
+    /// a missing or stale identity is refused before the queue is changed.
+    /// This is a synchronous control transaction on the slot lock. An accepted
+    /// request wakes the target slot so its next eligible tick can cancel and
+    /// park the active quest.
+    pub fn script_skip_quest(
+        &self,
+        name: &str,
+        target: Option<api::selected::RunKey>,
+    ) -> Result<script::native::SkippedQuest, script::native::ScriptFailure> {
+        let failure = |code: &str, message: &str| script::native::ScriptFailure {
+            code: code.into(),
+            message: message.into(),
+        };
+        let Some(slot) = script_slot(&self.scripts, name) else {
+            return Err(failure(
+                "not-quester",
+                "bot is not running the Quester queue",
+            ));
+        };
+        let mut slot = slot
+            .lock()
+            .map_err(|_| failure("skip-quest-refused", "script slot retiring"))?;
+        let skipped = slot.skip_quest_compiled(target)?;
+        drop(slot);
+        host_log!(
+            Category::Lifecycle,
+            Level::Info,
+            slot = name,
+            "command accepted: SkipQuest on {name}: {name}: quest_id={} step_id={}",
+            skipped.quest_id,
+            skipped.step_id
+        );
+        self.wake(name);
+        Ok(skipped)
     }
 
     #[cfg(feature = "js")]
