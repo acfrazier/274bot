@@ -800,8 +800,11 @@ fn route_output_detail_bound(
     let mut context = TextByteCounter(0);
     write!(
         &mut context,
-        "native walk route failed: {:?} arrival from {:?} to {:?} within radius {}",
-        request.arrival, request.from, request.to, request.radius
+        "native walk route failed: {:?} arrival from ({}, {}, {}) to ({}, {}, {}) within radius {}",
+        request.arrival,
+        request.from.x, request.from.z, request.from.level,
+        request.to.x, request.to.z, request.to.level,
+        request.radius
     )
     .ok()?;
     let blocked = if let Some(table) = request.world.graph.zones.as_ref() {
@@ -824,7 +827,7 @@ fn route_output_detail_bound(
     let mut diagnostic_limit = TextByteCounter(0);
     write!(
         &mut diagnostic_limit,
-        "no route found; further gate diagnosis stopped after {} settled nodes",
+        "no route found; the route check stopped after {} places before it found the cause",
         usize::MAX
     )
     .ok()?;
@@ -1832,8 +1835,8 @@ impl RouteJob {
                 .saturating_add(cursor.forward_settled());
         }
         let reason = format!(
-            "no route found; further gate diagnosis stopped after {} settled nodes",
-            self.diagnostic_budget()
+            "no route found; the route check stopped after {} places before it found the cause",
+            self.diagnostic_settled
         );
         self.detail = Some(match self.detail.take() {
             Some(detail) => format!("{detail}; {reason}"),
@@ -1998,10 +2001,10 @@ impl RouteJob {
                         )?;
                     } else {
                         self.native_failure = Some(script::native::WalkEnd::Refused);
-                        self.schedule_search(RouteSearchPurpose::MissingCarry);
+                        self.stage = RouteJobStage::Diagnostics;
                     }
                 } else {
-                    self.schedule_search(RouteSearchPurpose::MissingCarry);
+                    self.stage = RouteJobStage::Diagnostics;
                 }
             }
             (RouteSearchPurpose::Unresolved, SearchOutcome::UnresolvedQuestGates(result)) => {
@@ -2012,19 +2015,31 @@ impl RouteJob {
                     Ok(_) => script::native::WalkEnd::NoPath,
                     Err(_) => script::native::WalkEnd::Refused,
                 });
-                self.schedule_search(RouteSearchPurpose::MissingCarry);
+                self.stage = RouteJobStage::Diagnostics;
             }
             (RouteSearchPurpose::MissingCarry, SearchOutcome::MissingItemReqs(missing)) => {
                 self.missing_requirements = missing;
                 self.missing_diag_index = 0;
-                self.prepare_goal_copy(RouteGoalCopy::Diagnostics, RouteSearchPurpose::Entrance)?;
+                if self
+                    .missing_requirements
+                    .as_ref()
+                    .is_some_and(|requirements| !requirements.is_empty())
+                {
+                    // A concrete item shortfall is actionable by both the user
+                    // and compat recovery. Broader searches add no useful cause.
+                    self.stage = RouteJobStage::Diagnostics;
+                } else {
+                    self.prepare_goal_copy(RouteGoalCopy::Diagnostics, RouteSearchPurpose::Entrance)?;
+                }
             }
             (RouteSearchPurpose::Entrance, SearchOutcome::EntranceRequirements(requirement)) => {
                 if let Some(requirement) = requirement {
                     self.native_failure = Some(script::native::WalkEnd::Blocked);
                     self.detail = Some(requirement.to_string());
+                    self.stage = RouteJobStage::Diagnostics;
+                } else {
+                    self.prepare_goal_copy(RouteGoalCopy::Diagnostics, RouteSearchPurpose::Blocking)?;
                 }
-                self.stage = RouteJobStage::Diagnostics;
             }
             _ => return Err(RouteJobError::ResultShape),
         }
@@ -2280,8 +2295,11 @@ impl RouteJob {
                 .is_some_and(|kind| matches!(kind, RouteDemandKind::Walk { authority: Some(_) }))
             {
                 let context = format!(
-                    "native walk route failed: {:?} arrival from {:?} to {:?} within radius {}",
-                    self.request.arrival, self.request.from, self.request.to, self.request.radius
+                    "native walk route failed: {:?} arrival from ({}, {}, {}) to ({}, {}, {}) within radius {}",
+                    self.request.arrival,
+                    self.request.from.x, self.request.from.z, self.request.from.level,
+                    self.request.to.x, self.request.to.z, self.request.to.level,
+                    self.request.radius
                 );
                 route_detail = Some(match route_detail {
                     Some(detail) => format!("{detail}; {context}"),
@@ -2312,8 +2330,10 @@ impl RouteJob {
         }
         if matches!(&outcome, RouteJobOutcome::NoPath) && detail.is_none() {
             detail = Some(format!(
-                "no route found from {:?} to {:?} within radius {}",
-                self.request.from, self.request.to, self.request.radius
+                "no route found from ({}, {}, {}) to ({}, {}, {}) within radius {}",
+                self.request.from.x, self.request.from.z, self.request.from.level,
+                self.request.to.x, self.request.to.z, self.request.to.level,
+                self.request.radius
             ));
         }
         RouteJobOutput {
@@ -2714,11 +2734,9 @@ impl CooperativeJob for RouteJob {
                     }
                 }
                 RouteJobStage::BeginDiagnostics => {
-                    if let Err(error) = self
-                        .prepare_goal_copy(RouteGoalCopy::Diagnostics, RouteSearchPurpose::Blocking)
-                    {
-                        return StepOutcome::Failed(error);
-                    }
+                    // Item diagnosis uses the goal-side region, which is small
+                    // for gated rooms. Do it before mainland-wide policy checks.
+                    self.schedule_search(RouteSearchPurpose::MissingCarry);
                     continue;
                 }
                 RouteJobStage::Diagnostics => {
@@ -6209,9 +6227,11 @@ impl ScriptRouteRequest {
 
             let clock = SystemClock;
             let cancellation = SharedCancellation::new();
-            for _ in 0..250_000 {
+            // Keep production's 64-unit yields, including in the real-pack
+            // parity driver. Its finite 4M-settlement queries need more slices.
+            for _ in 0..25_000_000 {
                 let budget = SliceBudget::new(
-                    std::num::NonZeroU32::new(4096).expect("slice budget is nonzero"),
+                    std::num::NonZeroU32::new(64).expect("slice budget is nonzero"),
                     Deadline::after(clock.now(), std::time::Duration::from_millis(10)),
                 );
                 let mut context = StepContext::new(&clock, budget, &cancellation);

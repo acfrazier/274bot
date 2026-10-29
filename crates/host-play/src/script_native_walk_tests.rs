@@ -239,6 +239,12 @@ fn real_scorpcatcher_no_key_route_job_publishes_no_path_before_native_deadline()
                 .is_some_and(|detail| !detail.is_empty()),
             "a no-route result must name its reason"
         );
+        assert!(
+            bot.walk_missing_carry
+                .iter()
+                .any(|row| row.id == 1590 && row.count == 1),
+            "the admitted Scorpion route must publish the missing Dusty key row"
+        );
         assert!(!bot.has_route());
     }
     rig.observe_at(2, from);

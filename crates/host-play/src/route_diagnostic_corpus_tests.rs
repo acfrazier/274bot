@@ -304,6 +304,7 @@ struct DiagnosticObservation {
 
 #[cfg(target_os = "linux")]
 fn thread_cpu_time_us() -> Option<u64> {
+    // SAFETY: Linux rusage contains integer fields for which zero is valid.
     let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
     // SAFETY: `usage` is writable for getrusage, and RUSAGE_THREAD selects this test thread.
     if unsafe { libc::getrusage(libc::RUSAGE_THREAD, &mut usage) } != 0 {
@@ -984,9 +985,11 @@ fn compares_bounded_and_unbounded_route_diagnostics_corpus() {
         });
         rows.push(row);
         write_report(&output, &navpack, CORPUS_CASE_COUNT, &rows, &started);
-        let native = (case.world_kind == "synthetic_route_fixture"
-            || case.expected_unbounded_native_end.is_some())
-            .then(|| live_native_walk(case, index as u64));
+        let native = (!matches!(
+            case.name,
+            "karamja_exit_without_coins" | "desert_walk_without_shantay_pass"
+        ))
+        .then(|| live_native_walk(case, index as u64));
         let authority = native.as_ref().map(|native| native.authority.clone());
 
         let bounded = run_diagnostics(
@@ -1053,7 +1056,7 @@ fn native_diagnostic_reasons_preserve_unknown_quest_carry_and_entrance_requireme
         let native = live_native_walk(&case, 10_000 + index as u64);
         let observation = run_diagnostics(
             &case,
-            native.authority.clone(),
+            Some(native.authority.clone()),
             FIRST_TARGET_BUDGET,
             20_000 + index as u64,
         );
@@ -1097,20 +1100,30 @@ fn diagnostic_budget_cutoff_publishes_no_path_and_the_cutoff_detail() {
         .into_iter()
         .next()
         .expect("synthetic generic no-path case exists");
-    let native = live_native_walk(&case, 30_000);
-    let observation = run_diagnostics(&case, native.authority.clone(), 0, 30_001);
-    assert_eq!(observation.native_end.as_deref(), Some("NoPath"));
-    assert!(
-        observation.cutoff,
-        "zero remaining budget cuts off post-failure diagnosis"
-    );
-    assert!(observation.detail.as_deref().is_some_and(|detail| {
-        detail.starts_with("no route found; the route check stopped after ")
-            && detail
-                == "no route found; the route check stopped after 0 places before it found the cause"
-    }));
-    assert!(
-        observation.diagnostic_settled <= 64,
-        "the visible count includes the in-flight cooperative slice without hiding the cap overrun"
-    );
+    for budget in [0, 1] {
+        let native = live_native_walk(&case, 30_000 + budget as u64);
+        let observation = run_diagnostics(
+            &case,
+            Some(native.authority.clone()),
+            budget,
+            30_100 + budget as u64,
+        );
+        assert_eq!(observation.native_end.as_deref(), Some("NoPath"));
+        assert!(
+            observation.cutoff,
+            "an exhausted allowance cuts off post-failure diagnosis"
+        );
+        let expected = format!(
+            "no route found; the route check stopped after {} places before it found the cause",
+            observation.diagnostic_settled
+        );
+        assert!(observation
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.starts_with(&expected)));
+        assert!(
+            observation.diagnostic_settled <= budget + 64,
+            "the visible count includes the in-flight slice without hiding the cap overrun"
+        );
+    }
 }

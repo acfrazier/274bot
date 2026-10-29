@@ -509,8 +509,8 @@ fn live_scorpcatcher_no_key_walk_returns_no_path_with_detail_within_observed_tic
     assert!(!detail.trim().is_empty(), "NoPath detail must not be empty");
     let reason = normalized_detail(detail);
     assert!(
-        reason.contains("dusty key") || reason.contains("further gate diagnosis stopped after"),
-        "NoPath must retain the diagnosed gate or the explicit diagnostic-budget reason: {detail:?}"
+        reason.contains("dusty key"),
+        "the real map must report the missing Dusty key, not a generic cutoff: {detail:?}"
     );
     let quester_error = receipt
         .clone()

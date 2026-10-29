@@ -207,6 +207,10 @@ impl NativeMachine for Walk {
         }
         match receipt {
             Some(receipt) => Poll::Ready(Ok(receipt.clone())),
+            None if cx.active_now() >= self.deadline => {
+                cx.cancel_request(self.request_id);
+                Poll::Ready(Ok(deadline_failure_receipt(self.request_id, cx.evidence())))
+            }
             None => Poll::Pending,
         }
     }
@@ -552,6 +556,63 @@ mod tests {
         assert_eq!(receipt.request_id, request_id);
         assert_eq!(receipt.end, WalkEnd::NoPath);
         assert_eq!(receipt.failure_detail().as_deref(), Some(detail));
+    }
+
+    #[test]
+    fn settled_wait_without_a_receipt_still_obeys_the_deadline() {
+        let required_after = EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 1,
+        };
+        let target = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let mut ledger = None;
+        let mut machine = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            Walk::begin(
+                crate::quester::families::reach::walk_request(target, 1, None, required_after),
+                &mut tick.cx,
+            )
+            .unwrap()
+        });
+        let mut arrived = GameSnapshot::new();
+        arrived.seed_ingame(2);
+        arrived.seed_local_player(local_player(target));
+        assert!(machine.wait.poll(
+            machine.request_id,
+            &Frame {
+                snapshot: SnapshotView::new(Some(&arrived), required_after),
+                outcome: HostOutcome::empty(),
+                loc_id: None,
+                arrival: ArrivalKind::Reach,
+                candidate_goals: false,
+                goal: None,
+            },
+        ));
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            machine.poll(&mut tick.cx)
+        })
+        .is_pending());
+        let result = with_tick(&snapshot, &mut ledger, 1001, |tick| {
+            machine.poll(&mut tick.cx)
+        });
+        let Poll::Ready(Ok(receipt)) = result else {
+            panic!("a settled wait without its receipt must expire: {result:?}");
+        };
+        assert_eq!(receipt.end, WalkEnd::Failed);
+        assert_eq!(
+            receipt.failure_detail().as_deref(),
+            Some("walk receipt deadline expired before the host reported a terminal result")
+        );
     }
 
     #[test]
