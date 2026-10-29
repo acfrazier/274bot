@@ -15,6 +15,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   native clue rewrite, although Sherlock itself creates no V8 isolate.
 - The terminal app's script pane now marks the selected compiled (native)
   script card with `>` the same way as a selected JavaScript card.
+- Profiles and Fleet now share one saved order. The **Profiles** window
+  lists your profiles in your saved Load order (not alphabetically), and
+  dragging a row there changes the same order as a Fleet drag in the panel
+  or **Alt-Up** / **Alt-Down** in the terminal app. A Profiles drag also
+  works while the Fleet is sorted by Name or Status, and leaves that sort
+  alone. Importing rs2b0t profiles now keeps the export file's order: new
+  profiles join the end of your saved order in the file's sequence, and a
+  profile you already have keeps its place.
 
 ### Combat
 

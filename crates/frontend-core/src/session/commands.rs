@@ -359,8 +359,12 @@ pub(super) struct CommandDesk {
     quester_game_data: Option<Arc<api::game_data::SelectedGameData>>,
     /// The rows the next MarkAll marks (reused buffer).
     mark_all: Vec<crate::selection::ProfileIdentity>,
-    /// The reorder the next ReorderProfiles applies.
-    reorder: Option<crate::profile_order::ReorderOp>,
+    /// The reorder the next ReorderProfiles applies, and the list it came
+    /// from.
+    reorder: Option<(
+        crate::profile_order::ReorderOp,
+        crate::profile_order::ReorderSurface,
+    )>,
     /// What the next vault row commits.
     vault: Option<super::vault_rows::StagedVault>,
     /// The next Select also brings the member's worker up (the panel's
@@ -409,11 +413,20 @@ impl CommandDesk {
         &mut self.mark_all
     }
 
-    pub(super) fn stage_reorder(&mut self, op: crate::profile_order::ReorderOp) {
-        self.reorder = Some(op);
+    pub(super) fn stage_reorder(
+        &mut self,
+        op: crate::profile_order::ReorderOp,
+        surface: crate::profile_order::ReorderSurface,
+    ) {
+        self.reorder = Some((op, surface));
     }
 
-    pub(super) fn take_reorder(&mut self) -> Option<crate::profile_order::ReorderOp> {
+    pub(super) fn take_reorder(
+        &mut self,
+    ) -> Option<(
+        crate::profile_order::ReorderOp,
+        crate::profile_order::ReorderSurface,
+    )> {
         self.reorder.take()
     }
 

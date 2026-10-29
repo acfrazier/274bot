@@ -1882,7 +1882,7 @@ fn apply_tile_click(session: &mut Session, clicked: Option<TileClick>) {
         | TileClick::Select(index)
         | TileClick::World(index) => index,
         TileClick::Move(op) => {
-            session.reorder_profiles(op);
+            session.reorder_profiles(op, frontend_core::ReorderSurface::Fleet);
             return;
         }
     };
@@ -6512,21 +6512,25 @@ const PROFILES_REGION_MIN_H: f32 = 72.0;
 /// One profile row.
 const PROFILE_ROW_H: f32 = 24.0;
 
-/// What the operator did in the profile list this frame.
+/// What the operator did in the profile list this frame. A delivered
+/// reorder drop stands alone: it never also picks, edits or deletes.
 #[derive(Default)]
 struct ListPick {
     picked: Option<String>,
     removed: Option<String>,
     edit: Option<String>,
+    reorder: Option<ReorderOp>,
 }
 
-/// Profile picker (single-bot and MultiBox). Click a row to focus it
-/// (and load onto the wall while MultiBox is on); Edit opens the form;
-/// ✕ deletes the vault row only. Load all is MultiBox-only. The list and
-/// the editor pane (the edit form or the rs2b0t import, one at a time)
-/// each scroll on their own, side by side when the window is wide enough
-/// ([`PROFILES_SIDE_BY_SIDE_W`]) and stacked otherwise, with a draggable
-/// divider between them; Close stays at the bottom.
+/// Profile picker (single-bot and MultiBox), in the one saved order the
+/// Fleet uses. Click a row to focus it (and load onto the wall while
+/// MultiBox is on); drag a row's name to reorder the saved order; Edit
+/// opens the form; ✕ deletes the vault row only. Load all is
+/// MultiBox-only. The list and the editor pane (the edit form or the
+/// rs2b0t import, one at a time) each scroll on their own, side by side
+/// when the window is wide enough ([`PROFILES_SIDE_BY_SIDE_W`]) and
+/// stacked otherwise, with a draggable divider between them; Close stays
+/// at the bottom.
 fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if !session.wall.chooser_open {
         #[cfg(feature = "js")]
@@ -6562,7 +6566,10 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 let region_h = (ui.content_region_avail()[1] - footer)
                     .max(scale_px(ui, PROFILES_REGION_MIN_H));
                 let pick = profiles_regions(ui, session, right, region_h);
-                if let Some(name) = pick.edit {
+                if let Some(op) = pick.reorder {
+                    // A delivered drop changes the saved order only.
+                    session.reorder_profiles(op, frontend_core::ReorderSurface::Profiles);
+                } else if let Some(name) = pick.edit {
                     session.begin_edit_profile(Some(&name));
                 } else if let Some(name) = pick.removed {
                     session.delete_understood = false;
@@ -6716,7 +6723,7 @@ fn profiles_regions(ui: &Ui, session: &mut Session, right: f32, region_h: f32) -
 
 /// The height the whole profile list needs: its heading and every row.
 fn profile_list_height(ui: &Ui, session: &Session) -> f32 {
-    let rows = session.core.profiles().count().max(1);
+    let rows = session.core.profile_order().names().len().max(1);
     ui.text_line_height_with_spacing() + scale_px(ui, rows as f32 * PROFILE_ROW_H + 8.0)
 }
 
@@ -6750,13 +6757,11 @@ fn profiles_divider(ui: &Ui, id: &str, size: [f32; 2], vertical: bool) -> Option
     (active && delta != 0.0).then_some(delta)
 }
 
-/// The profile list in its own scrolling region of `size`.
+/// The profile list in its own scrolling region of `size`, in the one
+/// saved order (the same rows, in the same sequence, as the Fleet's Load
+/// order). It borrows the core's order entries: no per-frame copy.
 fn profile_list(ui: &Ui, session: &Session, right: f32, size: [f32; 2]) -> ListPick {
-    let names: Vec<String> = session
-        .core
-        .profiles()
-        .map(|p| p.username().to_string())
-        .collect();
+    let order = session.core.profile_order();
     let focused = session.focused_name();
     let members = session.core.members();
     let multibox = session.multibox;
@@ -6766,38 +6771,49 @@ fn profile_list(ui: &Ui, session: &Session, right: f32, size: [f32; 2]) -> ListP
     #[cfg(not(feature = "js"))]
     let edit_waits = false;
     let mut pick = ListPick::default();
+    let mut dropped: Option<(u64, ProfileIdentity)> = None;
     ui.child_window("##profiles-list")
         .size(size)
         .child_flags(ChildFlags::NAV_FLATTENED)
         .build(ui, || {
             ui.text_colored(ACCENT, "Vault profiles");
-            if names.is_empty() {
+            if order.names().is_empty() {
                 ui.text_disabled("vault is empty — New profile then Save");
                 return;
             }
-            for name in &names {
+            for (name, identity) in order.entries() {
                 let selected = if multibox {
-                    members.iter().any(|m| m == name)
+                    members.iter().any(|member| member.as_str() == name)
                 } else {
-                    focused.as_deref() == Some(name.as_str())
+                    focused.as_deref() == Some(name)
                 };
                 // A profile whose first save is still being written is not
-                // selectable, editable or deletable until the write settles.
+                // selectable, editable, deletable or draggable until the
+                // write settles.
                 let saving = session.core.profile_saving(name);
                 let _saving = saving.then(|| ui.begin_disabled());
-                let (p, r, e) = chooser_row(ui, name, selected, right, edit_waits);
+                let (p, r, e, d) = chooser_row(ui, name, identity, selected, right, edit_waits);
                 if saving {
                     continue;
                 }
-                if e {
-                    pick.edit = Some(name.clone());
+                if let Some(moving) = d {
+                    dropped = Some((moving, identity));
+                } else if e {
+                    pick.edit = Some(name.to_owned());
                 } else if r {
-                    pick.removed = Some(name.clone());
+                    pick.removed = Some(name.to_owned());
                 } else if p {
-                    pick.picked = Some(name.clone());
+                    pick.picked = Some(name.to_owned());
                 }
             }
         });
+    if let Some((moving, target)) = dropped {
+        // The drag payload is an identity's raw value; only a profile in
+        // this order can be its source.
+        if let Some((_, moving)) = order.entries().find(|(_, id)| id.raw() == moving) {
+            pick.reorder = order.drop_op(moving, target);
+        }
+    }
     pick
 }
 
@@ -7597,18 +7613,23 @@ fn lamp_skill_presets() -> Vec<&'static str> {
         .collect()
 }
 
-/// One picker row: name (click focuses / loads), Edit, then red ✕ (vault
-/// delete, confirm). Sibling buttons so an Edit/✕ click never also picks.
-/// The row ends at `right` (see [`chooser_right_edge`]), so Edit and ✕ stay
-/// on screen when the docked window runs past the display. `edit_waits`
-/// disables Edit (an import's writes keep the editor pane).
+/// One picker row: name (click focuses / loads; drag reorders the saved
+/// order, with the same profile payload as a Fleet drag), Edit, then red
+/// ✕ (vault delete, confirm). Sibling buttons so an Edit/✕ click never
+/// also picks. The row ends at `right` (see [`chooser_right_edge`]), so
+/// Edit and ✕ stay on screen when the docked window runs past the
+/// display. A name too wide for its slot is clipped by the renderer only:
+/// its tooltip always shows the whole name. `edit_waits` disables Edit
+/// (an import's writes keep the editor pane). Returns (picked, removed,
+/// edit, dropped-profile-raw).
 fn chooser_row(
     ui: &Ui,
     name: &str,
+    identity: ProfileIdentity,
     selected: bool,
     right: f32,
     edit_waits: bool,
-) -> (bool, bool, bool) {
+) -> (bool, bool, bool, Option<u64>) {
     const EDIT_W: f32 = 44.0;
     const X_W: f32 = 28.0;
     let avail = on_screen_avail(ui, right);
@@ -7621,6 +7642,18 @@ fn chooser_row(
         .close_popups(false)
         .size([name_w, 0.0])
         .build();
+    if ui.is_item_hovered() {
+        let text_w = ui
+            .current_font()
+            .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, name)[0];
+        ui.set_item_tooltip(if text_w > name_w {
+            name
+        } else {
+            "drag to reorder"
+        });
+    }
+    crate::fleet::profile_drag_source(ui, identity, name);
+    let dropped = crate::fleet::profile_drop_target(ui);
     gap_line(ui);
     let edit = {
         let _waits = ui.begin_disabled_with_cond(edit_waits);
@@ -7629,7 +7662,7 @@ fn chooser_row(
     gap_line(ui);
     let _red = ui.push_style_color(StyleColor::Text, ERROR);
     let removed = ui.button_with_size(format!("✕##{name}"), [x_w, 0.0]);
-    (loaded, removed, edit)
+    (loaded, removed, edit, dropped)
 }
 
 /// Offline prepare: mint isolated identity, write server-native `.sav` via

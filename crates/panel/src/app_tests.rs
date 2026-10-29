@@ -4974,6 +4974,30 @@ impl ProfilesUi {
         self.frame()
     }
 
+    /// Press at `from`, move over several frames, release at `to`, as a
+    /// mouse drag makes it; the last frame shows the result.
+    fn drag_at(&mut self, from: [f32; 2], to: [f32; 2]) -> Shown {
+        self.ctx.io_mut().add_mouse_pos_event(from);
+        self.frame();
+        self.ctx
+            .io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, true);
+        self.frame();
+        for step in 1..=4 {
+            let t = step as f32 / 4.0;
+            self.ctx.io_mut().add_mouse_pos_event([
+                from[0] + (to[0] - from[0]) * t,
+                from[1] + (to[1] - from[1]) * t,
+            ]);
+            self.frame();
+        }
+        self.ctx
+            .io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, false);
+        self.frame();
+        self.frame()
+    }
+
     /// Type `c` into the edit form, as the keyboard would: Tab to one of
     /// its text fields, then the character.
     fn type_char(&mut self, c: char) -> Shown {
@@ -5308,6 +5332,76 @@ fn close_needs_no_prompt_once_the_save_settled() {
 
     let closed = ui.click(At::Window, "#CLOSE");
     assert!(closed.text.trim().is_empty(), "the ✕ shut Profiles");
+}
+
+/// The Profiles list shows the one saved order (here seeded by uid:
+/// zed, anna, mike), not the vault's alphabetical order.
+#[test]
+fn the_profiles_list_shows_the_saved_order_not_the_vaults() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(
+        "profiles-saved-order",
+        &[("zed", "zpass", 1), ("anna", "apass", 2), ("mike", "mpass", 3)],
+    );
+    let shown = ui.frame();
+    let at = |name: &str| shown.text.find(name).unwrap_or_else(|| panic!("{name} in {}", shown.text));
+    assert!(
+        at("zed") < at("anna") && at("anna") < at("mike"),
+        "saved order, not alphabetical:\n{}",
+        shown.text
+    );
+    assert_eq!(
+        ui.session.core.profile_order().names(),
+        ["zed", "anna", "mike"]
+    );
+}
+
+/// A real drag of a Profiles row's name onto another reorders the one
+/// saved order (the Fleet's rows follow it), and the drop neither picks
+/// or loads a profile nor opens its edit form.
+#[test]
+fn dragging_a_profiles_row_reorders_the_saved_order_only() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(
+        "profiles-drag-order",
+        &[("alice", "apass", 1), ("bob", "bpass", 2), ("carol", "cpass", 3)],
+    );
+    ui.frame();
+    assert_eq!(ui.session.core.profile_order().names(), ["alice", "bob", "carol"]);
+    let (carol, _) = ui.item_rect(At::List, "carol");
+    let (alice, _) = ui.item_rect(At::List, "alice");
+    let members = ui.session.core.members().to_vec();
+    let focused = ui.session.focused_name();
+    let before = crate::session::reorders_submitted();
+    ui.drag_at(rect_center(carol), rect_center(alice));
+    ui.finish_writes();
+    ui.frame();
+    assert_eq!(
+        crate::session::reorders_submitted(),
+        before + 1,
+        "one reorder submitted"
+    );
+    assert_eq!(
+        ui.session.core.profile_order().names(),
+        ["carol", "alice", "bob"],
+        "the saved order moved"
+    );
+    assert_eq!(ui.session.core.members(), members, "a drop loads nothing");
+    assert_eq!(ui.session.focused_name(), focused, "a drop picks nothing");
+    assert!(
+        !ui.session.profile_editor.is_open(),
+        "a drop opens no edit form"
+    );
+    assert!(ui.session.error.is_none(), "{:?}", ui.session.error);
+    ui.session.fleet_model.refresh(&ui.session.core);
+    let rows: Vec<&str> = ui
+        .session
+        .fleet_model
+        .rows()
+        .iter()
+        .map(|row| row.name())
+        .collect();
+    assert_eq!(rows, ["carol", "alice", "bob"], "the Fleet follows");
 }
 
 /// A save whose write fails after it was accepted shows in the form it came

@@ -101,7 +101,7 @@ pub use profile_editor::{FormLeave, FormOpen, LeavePrompt, ProfileEditor, SaveRe
 pub use profile_form::{
     FailedSave, FormNotice, FormSettled, ProfileFormSave, SavedProfile, NOTHING_SAVED,
 };
-pub use profile_order::{Placement, ProfileOrder, ReorderOp, PROFILE_ORDER_KEY};
+pub use profile_order::{Placement, ProfileOrder, ReorderOp, ReorderSurface, PROFILE_ORDER_KEY};
 pub use profile_saves::{SaveRecord, SaveResult, SaveSettled, WriteFailure};
 pub use quester_paths::{
     QuesterPathsController, QuesterPathsView, LOAD_PATHS_LABEL, QUESTER_HEADING,

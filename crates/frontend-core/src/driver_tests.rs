@@ -1330,9 +1330,18 @@ fn id(d: &HeadlessDriver, name: &str) -> crate::ProfileIdentity {
     d.session().profile_identity_or_synthetic(name)
 }
 
-/// Stage and submit one reorder; its settled terminal.
+/// Stage and submit one Fleet-list reorder; its settled terminal.
 fn reorder(d: &mut HeadlessDriver, op: crate::ReorderOp) -> Option<Terminal> {
-    d.session_mut().stage_reorder(op);
+    reorder_from(d, op, crate::ReorderSurface::Fleet)
+}
+
+/// Stage and submit one reorder from `surface`; its settled terminal.
+fn reorder_from(
+    d: &mut HeadlessDriver,
+    op: crate::ReorderOp,
+    surface: crate::ReorderSurface,
+) -> Option<Terminal> {
+    d.session_mut().stage_reorder(op, surface);
     let submitted = d
         .submit(OperatorCommand::ReorderProfiles, Targets::Application)
         .expect("admitted");
@@ -1405,6 +1414,140 @@ fn view_sorts_never_write_the_order_and_refuse_a_reorder() {
     }
     assert_eq!(std::fs::read(&path).expect("file"), before, "byte for byte");
     assert_eq!(order_names(&d), ["carol", "alice", "bob"]);
+}
+
+/// The Profiles list and the Fleet share the one saved order: a
+/// Profiles-list move applies while the Fleet shows a temporary view
+/// sort, leaves that sort untouched, writes the same stored order, and
+/// the Fleet rows show it on return to Load order. Profiles has no
+/// marks, so Move marked to top from there is refused. A restart over
+/// the same state shows the order at once, before any Load.
+#[test]
+fn a_profiles_move_shares_the_fleet_order_under_a_view_sort_and_a_restart() {
+    let dir = scratch("order-profiles-surface");
+    let mut d = driver_in(&dir, &["alice", "bob", "carol"]);
+    d.poll();
+    // The Profiles list's rows are the order's entries, saved sequence.
+    let listed: Vec<&str> = d
+        .session()
+        .profile_order()
+        .entries()
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(listed, ["alice", "bob", "carol"]);
+    d.submit(
+        OperatorCommand::SetFleetSort(crate::FleetOrder::Name),
+        Targets::Application,
+    )
+    .expect("sort");
+    assert_eq!(
+        reorder_from(
+            &mut d,
+            crate::ReorderOp::MarkedToTop,
+            crate::ReorderSurface::Profiles,
+        ),
+        Some(rejected(crate::command::Rejection::NotApplicable)),
+        "no marks in Profiles"
+    );
+    let op = d
+        .session()
+        .profile_order()
+        .drop_op(id(&d, "carol"), id(&d, "alice"))
+        .expect("a Profiles drop");
+    assert_eq!(
+        reorder_from(&mut d, op, crate::ReorderSurface::Profiles),
+        Some(done()),
+        "a Profiles move does not need the Fleet's sort"
+    );
+    assert_eq!(order_names(&d), ["carol", "alice", "bob"]);
+    assert_eq!(stored_order(&d), ["carol", "alice", "bob"]);
+    assert_eq!(
+        d.models().fleet().order(),
+        crate::FleetOrder::Name,
+        "the Fleet's view sort is untouched"
+    );
+    d.submit(
+        OperatorCommand::SetFleetSort(crate::FleetOrder::LoadOrder),
+        Targets::Application,
+    )
+    .expect("back to Load order");
+    d.poll();
+    assert_eq!(row_names(&d), ["carol", "alice", "bob"], "one shared order");
+    d.session_mut().flush_writes();
+    drop(d);
+    let mut again = open_driver(&dir);
+    again.session_mut().set_spawn_workers(false);
+    again
+        .unlock(dir.join("vault"), PASSPHRASE, &play())
+        .expect("unlock");
+    // Immediately after startup, before a poll or a Load, the Profiles
+    // list already shows the saved order.
+    let listed: Vec<&str> = again
+        .session()
+        .profile_order()
+        .entries()
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(listed, ["carol", "alice", "bob"], "at startup, at once");
+    again.poll();
+    assert_eq!(row_names(&again), ["carol", "alice", "bob"]);
+}
+
+/// One durable order write logs exactly one audit line (the preferences
+/// service's info line for the commit), from either list.
+#[test]
+fn one_order_write_logs_one_audit_line() {
+    let mut d = driver("order-audit", &["alice", "bob", "carol"]);
+    d.poll();
+    let audits = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let hook = std::sync::Arc::clone(&audits);
+    d.session()
+        .local_state()
+        .expect("local state")
+        .set_audit_hook(std::sync::Arc::new(move |commit| {
+            hook.lock().expect("audits").push(commit.to_string());
+        }));
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(
+        reorder_from(&mut d, op, crate::ReorderSurface::Profiles),
+        Some(done())
+    );
+    d.session_mut().flush_writes();
+    d.poll();
+    let audits = audits.lock().expect("audits");
+    assert_eq!(
+        audits.len(),
+        1,
+        "one info line for the one order write: {audits:?}"
+    );
+}
+
+/// A Profiles-list move whose write is refused fails and puts back the
+/// last durable order, exactly as a Fleet-list one does.
+#[test]
+fn a_failed_profiles_order_write_restores_the_durable_order() {
+    let mut d = driver("order-profiles-failed", &["alice", "bob", "carol"]);
+    d.poll();
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(
+        reorder_from(&mut d, op, crate::ReorderSurface::Profiles),
+        Some(done())
+    );
+    let path = d.session().preferences().expect("prefs").path();
+    std::fs::write(
+        &path,
+        vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
+    )
+    .expect("oversize the preferences file");
+    let _ = d.session().preferences().expect("prefs").reload();
+    let op = move_op(&d, "bob", "carol", false);
+    let terminal = reorder_from(&mut d, op, crate::ReorderSurface::Profiles);
+    assert!(
+        matches!(terminal, Some(Settlement::Failed(_))),
+        "the write is refused: {terminal:?}"
+    );
+    d.poll();
+    assert_eq!(order_names(&d), ["carol", "alice", "bob"], "durable again");
 }
 
 /// A drag while a filter hides rows lands relative to its target in the
@@ -1515,7 +1658,8 @@ fn a_held_order_write_stays_pending_until_durable() {
     d.poll();
     let release = hold_first_write(&d);
     let op = move_op(&d, "bob", "alice", false);
-    d.session_mut().stage_reorder(op);
+    d.session_mut()
+        .stage_reorder(op, crate::ReorderSurface::Fleet);
     let submitted = d
         .submit(OperatorCommand::ReorderProfiles, Targets::Application)
         .expect("admitted");
@@ -1603,12 +1747,14 @@ fn a_superseded_order_write_settles_and_the_newest_order_wins() {
     d.poll();
     let release = hold_first_write(&d);
     let op = move_op(&d, "carol", "alice", false);
-    d.session_mut().stage_reorder(op);
+    d.session_mut()
+        .stage_reorder(op, crate::ReorderSurface::Fleet);
     let first = d
         .submit(OperatorCommand::ReorderProfiles, Targets::Application)
         .expect("first");
     let op = move_op(&d, "alice", "bob", true);
-    d.session_mut().stage_reorder(op);
+    d.session_mut()
+        .stage_reorder(op, crate::ReorderSurface::Fleet);
     let second = d
         .submit(OperatorCommand::ReorderProfiles, Targets::Application)
         .expect("second");

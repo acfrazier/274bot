@@ -47,7 +47,8 @@ const PROFILE_DND: &str = "274bot-profile";
 
 /// Make the last item a drag source for the profile `identity`; the drag
 /// tooltip shows `name`. Returns whether this item is being dragged now.
-/// Call it only while the fleet shows Load order.
+/// Call it only where a drop may reorder: the Fleet in Load order, or the
+/// Profiles list (always the saved order).
 pub(crate) fn profile_drag_source(ui: &Ui, identity: ProfileIdentity, name: &str) -> bool {
     match ui
         .drag_drop_source_config(PROFILE_DND)
@@ -63,7 +64,7 @@ pub(crate) fn profile_drag_source(ui: &Ui, identity: ProfileIdentity, name: &str
 
 /// Make the last item a drop target for a dragged profile. Returns the
 /// dropped profile's [`ProfileIdentity::raw`] on the frame the button is
-/// released over it. Call it only while the fleet shows Load order.
+/// released over it. Same call sites as [`profile_drag_source`].
 pub(crate) fn profile_drop_target(ui: &Ui) -> Option<u64> {
     let target = ui.drag_drop_target()?;
     match target.accept_payload::<u64, _>(PROFILE_DND, DragDropTargetFlags::NONE) {
@@ -557,7 +558,7 @@ fn table(ui: &Ui, session: &mut Session) {
     }
     if let Some((moving, target)) = dropped {
         if let Some(op) = drop_op(&session.fleet_model, moving, target) {
-            session.reorder_profiles(op);
+            session.reorder_profiles(op, frontend_core::ReorderSurface::Fleet);
         }
     }
     let row_name = |session: &Session, index: usize| {
