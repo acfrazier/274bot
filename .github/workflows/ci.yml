@@ -164,7 +164,7 @@ jobs:
         run: |
           set -euo pipefail
           checker_root="$RUNNER_TEMP/274bot-arch"
-          git clone --depth 1 --branch main https://github.com/acfrazier/274bot-arch.git "$checker_root"
+          git clone --depth 1 --branch release-0.2.8 https://github.com/acfrazier/274bot-arch.git "$checker_root"
           parser="$(command -v rust-analyzer)"
           printf '%s  %s\n' \
             fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49 \
