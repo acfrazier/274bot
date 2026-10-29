@@ -994,7 +994,9 @@ parse its text.
 `Traveller::current_wait_status()` reports what the active follow is waiting
 for as `Option<(TravelWaitReason, Option<WorldTile>, Option<LocId>)>`: a
 typed `nav_executor::TravelWaitReason` (`as_str()` keeps the previous log
-text), the precise walk/click target tile when there is one, and the packed
+text), the associated tile when there is one — for a pending transport
+this is the edge anchor `at`, not the click target; the precise click
+target remains `current_aim()` — and the packed
 loc identity as `nav_executor::LocId` (`get()` returns the raw `i32`) for a
 pending transport. Consumers match the reason variant rather than parse its
 text. The host logs one info line after 10 observed game ticks without tile
