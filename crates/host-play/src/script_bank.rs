@@ -38,7 +38,10 @@ use std::time::{Duration, Instant};
 // Host-worker ranking has a wall-time bound, not an observed-tick budget.
 // Per-frame polls signal admitted work's fallback without PLAYER_INFO.
 // Unadmitted non-walking picks publish the fallback at the same deadline.
-const BANK_SELECTION_WINDOW: Duration = Duration::from_secs(5);
+// The window is the host-job contract the native `Select` kernel counts its
+// own fallback from (`script::native_bank::BANK_PICK_HOST_WINDOW_MS`).
+const BANK_SELECTION_WINDOW: Duration =
+    Duration::from_millis(script::native_bank::BANK_PICK_HOST_WINDOW_MS);
 
 const BANK_PICK_JOB_BYTES: usize = 192 * 1024 * 1024;
 

@@ -8,7 +8,7 @@
 use crate::bank::npc;
 use crate::bank::ops::{
     self, deposit_option, CloseBaseline, CloseScan, DepositKind, DepositScan, DepositSpec,
-    NoteIntent, Progress, WithdrawGoal, DEPOSIT_VIEW_MS, MAX_DEPOSITS, MAX_MEMO,
+    NoteIntent, Progress, WithdrawGoal, MAX_DEPOSITS, MAX_MEMO,
 };
 use crate::native::{ActionContext, ActionError, BankDepositTrace, NativeMachine, WalkOptions};
 use crate::shim::InteractReq;
@@ -21,15 +21,40 @@ use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::task::Poll;
 
-/// Frozen bound of a required side-view wait, in server ticks (12 s at 600 ms).
-/// Separate from the 2-tick until-empty side-view wait.
-const DEPOSIT_SIDE_VIEW_WAIT_MS: u64 = 12_000;
-/// The until-empty side-view wait, in observed ticks: the frozen 1.2 s, rounded
-/// up to whole server ticks.
-const DEPOSIT_VIEW_TICKS: u64 = ops::observed_ticks_for_millis(DEPOSIT_VIEW_MS);
-/// The wait for the bank pick job before the air-distance fallback, in
-/// observed ticks: the former 5 s bound, rounded up to whole server ticks.
-const SELECT_FALLBACK_TICKS: u64 = ops::observed_ticks_for_millis(5_000);
+/// Observed ticks a deposit waits for the bank side view after the open
+/// session's table is up (the view the deposit click is read from, and the
+/// pack it must agree with).
+///
+/// Bound from the engine and content, not from a clock: the `openbank` label
+/// raises the side root and starts the backpack's transmission in the same
+/// script run as the main modal (`bank.rs2:18-23`: `inv_transmit(inv,
+/// bank_side:inv)`, `inv_transmit(bank, bank_main:inv)`,
+/// `if_openmain_side(bank_main, bank_side)`). The engine writes every
+/// first-seen or changed inventory listener in one pass at the end of the
+/// server cycle (`NetworkPlayer.ts:332-377`, called from
+/// `World.ts:1109-1116`), so the side backpack, the main table and each
+/// deposit's change to both reach the client in one flush; the deposit script
+/// applies a click inline (`bank_deposit.rs2:27`, `bank.rs2:102`). The side
+/// view is therefore observed in the same observed tick as the table. The
+/// bound allows the next observed tick for a flush that the host read in two
+/// parts; a view still missing one full server cycle later was not sent, so
+/// the request fails instead of waiting. Real-engine measurement of this
+/// bound: `EVENT-RUNTIME-WAKE/r1/report.md` "Side view".
+const SIDE_VIEW_TICKS: u64 = 1;
+/// The window in which the host's bank pick job must publish a receipt, in
+/// wall milliseconds. It is the host-job contract, written once here and read
+/// by the host worker (`host-play` `script_bank.rs` `BANK_SELECTION_WINDOW`):
+/// the worker ranks candidates under this bound and, when it is spent,
+/// publishes its own air-distance fallback receipt of the same kind that
+/// [`Select`] holds. The window is a host-job bound, so it is a wall time by
+/// contract; the kernel counts it in observed ticks from its dispatch.
+pub const BANK_PICK_HOST_WINDOW_MS: u64 = 5_000;
+/// The observed ticks after its dispatch at which [`Select`] takes its own
+/// air-distance fallback when no receipt came: the host window, rounded up to
+/// whole production server ticks (`ops::SERVER_TICK_MS`), so the kernel never
+/// gives up before the host job's own window has closed at the production
+/// tick length. A receipt that arrives with the bound tick still wins.
+const SELECT_FALLBACK_TICKS: u64 = ops::observed_ticks_for_millis(BANK_PICK_HOST_WINDOW_MS);
 /// Re-opens of a lost session within one transfer request (deposit or
 /// withdrawal), after the first open; exhausted, the loss is terminal with
 /// its original message.
@@ -1334,19 +1359,11 @@ impl NativeMachine for BankMachine {
                                 {
                                     if !self.view_armed {
                                         self.view_armed = true;
-                                        self.deadline = Some(BankDeadline::after(
-                                            cx.evidence().tick,
-                                            DEPOSIT_VIEW_TICKS,
-                                        ));
+                                        self.arm_deadline(cx.evidence().tick, SIDE_VIEW_TICKS);
                                     }
                                 } else {
                                     if self.deadline.is_none() {
-                                        self.arm_deadline(
-                                            cx.evidence().tick,
-                                            ops::observed_ticks_for_millis(
-                                                DEPOSIT_SIDE_VIEW_WAIT_MS,
-                                            ),
-                                        );
+                                        self.arm_deadline(cx.evidence().tick, SIDE_VIEW_TICKS);
                                     }
                                     if self.deadline_reached(cx.evidence().tick) {
                                         return Poll::Ready(Err(ActionError::Failed(Arc::from(
@@ -2393,7 +2410,8 @@ pub struct Select {
 
 struct SelectFallback {
     selected: SelectedBank,
-    deadline: BankDeadline,
+    /// Set when the pick request is dispatched; none before.
+    deadline: Option<BankDeadline>,
 }
 
 impl NativeMachine for Select {
@@ -2435,7 +2453,7 @@ impl NativeMachine for Select {
                         kind: PickKind::AirFallback,
                         access: None,
                     },
-                    deadline: BankDeadline::after(cx.evidence().tick, SELECT_FALLBACK_TICKS),
+                    deadline: None,
                 })
         } else {
             None
@@ -2471,7 +2489,8 @@ impl NativeMachine for Select {
         if self
             .fallback
             .as_ref()
-            .is_some_and(|fallback| fallback.deadline.reached(cx.evidence().tick))
+            .and_then(|fallback| fallback.deadline)
+            .is_some_and(|deadline| deadline.reached(cx.evidence().tick))
         {
             return Poll::Ready(Ok(self.fallback.take().expect("checked fallback").selected));
         }
@@ -2482,6 +2501,13 @@ impl NativeMachine for Select {
             return match cx.bank_pick(request) {
                 Ok(request_id) => {
                     self.request_id = Some(request_id);
+                    // The bound counts from the dispatch, the host job's start.
+                    if let Some(fallback) = self.fallback.as_mut() {
+                        fallback.deadline = Some(BankDeadline::after(
+                            cx.evidence().tick,
+                            SELECT_FALLBACK_TICKS,
+                        ));
+                    }
                     Poll::Pending
                 }
                 Err(error) => Poll::Ready(Err(error)),
@@ -2664,6 +2690,21 @@ mod tests {
     type PickHandle = crate::native::ActionHandle<Select>;
 
     fn select_waiter(allow_air_fallback: bool) -> (GameSnapshot, PickLedger, PickHandle) {
+        let (snapshot, ledger, handle, _) = select_waiter_dispatched_at(allow_air_fallback, 1);
+        (snapshot, ledger, handle)
+    }
+
+    /// A Select built at observed tick 1 whose request is dispatched by its
+    /// first poll at `dispatch_tick`.
+    fn select_waiter_dispatched_at(
+        allow_air_fallback: bool,
+        dispatch_tick: u64,
+    ) -> (
+        GameSnapshot,
+        PickLedger,
+        PickHandle,
+        crate::native::HostAuthority,
+    ) {
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         let facts = Arc::new(NamedBankFacts::from_banks(vec![
@@ -2716,8 +2757,11 @@ mod tests {
                     &mut frame.cx,
                 )
                 .unwrap();
-            assert!(frame.actions.poll(&handle, &mut frame.cx).is_pending());
             handle
+        });
+        // The first poll, at its own observed tick, dispatches the request.
+        with_tick(&snapshot, &mut ledger, dispatch_tick, |frame| {
+            assert!(frame.actions.poll(&handle, &mut frame.cx).is_pending());
         });
         let pending = ledger.as_mut().unwrap();
         assert_eq!(pending.outbox.len(), 1);
@@ -2733,9 +2777,11 @@ mod tests {
             },
             "only select-only requests capture a stable air-ranked eligible roster"
         );
-        // Drop the real action without dispatch or receipt: the host never admits it.
+        // Drop the real action without dispatch or receipt: the host never
+        // admits it. Its authority stays for a test that answers it.
+        let authority = pending.outbox[0].authority();
         pending.outbox.clear();
-        (snapshot, ledger, handle)
+        (snapshot, ledger, handle, authority)
     }
 
     fn poll_select_waiter(
@@ -2751,8 +2797,8 @@ mod tests {
         })
     }
 
-    /// The waiter began at observed tick 1, so its fallback bound is 9 ticks
-    /// (the former 5 s, rounded up to whole server ticks).
+    /// The waiter's request was dispatched at observed tick 1, so its
+    /// fallback bound is `SELECT_FALLBACK_TICKS` (9) ticks later.
     #[test]
     fn select_only_dropped_request_settles_at_nine_observed_ticks_without_access() {
         for allow_air_fallback in [false, true] {
@@ -2835,6 +2881,93 @@ mod tests {
                 }))
             ),
             "the bound tick settles the captured fallback with no elapsed time: {result:?}"
+        );
+    }
+
+    /// The derived bounds: the select fallback is the host job's window in
+    /// whole production ticks, and no smaller (the kernel never gives up
+    /// before the host job's own window has closed); the side-view wait is
+    /// the one observed tick after the flush that carries the table.
+    #[test]
+    fn derived_bounds_match_their_authorities() {
+        let window = BANK_PICK_HOST_WINDOW_MS;
+        assert!(SELECT_FALLBACK_TICKS * ops::SERVER_TICK_MS >= window);
+        assert!((SELECT_FALLBACK_TICKS - 1) * ops::SERVER_TICK_MS < window);
+        assert_eq!(SELECT_FALLBACK_TICKS, 9);
+        assert_eq!(SIDE_VIEW_TICKS, 1);
+    }
+
+    /// The bound counts from the dispatch, not from construction: a request
+    /// built at tick 1 and dispatched at tick 4 is still waiting at tick
+    /// `1 + SELECT_FALLBACK_TICKS` (its old construction-anchored bound) and
+    /// one tick short of its own, and settles on its own bound tick.
+    #[test]
+    fn select_fallback_bound_counts_from_the_dispatch_not_from_construction() {
+        let (snapshot, mut ledger, handle, _) = select_waiter_dispatched_at(true, 4);
+        for tick in [1 + SELECT_FALLBACK_TICKS, 4 + SELECT_FALLBACK_TICKS - 1] {
+            assert!(
+                poll_select_waiter(&snapshot, &mut ledger, &handle, tick, Duration::ZERO)
+                    .is_pending(),
+                "tick {tick}"
+            );
+        }
+        let result = poll_select_waiter(
+            &snapshot,
+            &mut ledger,
+            &handle,
+            4 + SELECT_FALLBACK_TICKS,
+            Duration::ZERO,
+        );
+        assert!(
+            matches!(
+                result,
+                Poll::Ready(Ok(SelectedBank {
+                    kind: PickKind::AirFallback,
+                    access: None,
+                    ..
+                }))
+            ),
+            "{result:?}"
+        );
+    }
+
+    /// The host job's receipt is the signal: one that is published by the
+    /// bound tick wins over the kernel's own fallback.
+    #[test]
+    fn select_receipt_published_by_the_bound_tick_beats_the_fallback() {
+        let (snapshot, mut ledger, handle, authority) = select_waiter_dispatched_at(true, 1);
+        let selected = SelectedBank {
+            bank_index: 0,
+            access_tile: WorldTile {
+                x: 10,
+                z: 5,
+                level: 0,
+            },
+            kind: PickKind::Reachable,
+            access: None,
+        };
+        ledger.as_mut().unwrap().complete_bank_pick(
+            &authority,
+            BankPickReceipt {
+                request_id: authority.request_id().get(),
+                evidence: EvidenceStamp {
+                    run: authority.run(),
+                    tick: 1 + SELECT_FALLBACK_TICKS,
+                    sequence: 1 + SELECT_FALLBACK_TICKS,
+                },
+                selected: selected.clone(),
+            },
+        );
+        let result = poll_select_waiter(
+            &snapshot,
+            &mut ledger,
+            &handle,
+            1 + SELECT_FALLBACK_TICKS,
+            Duration::ZERO,
+        );
+        assert!(
+            matches!(&result, Poll::Ready(Ok(got)) if *got == selected),
+            "{result:?}"
         );
     }
 
@@ -5105,10 +5238,10 @@ mod tests {
             poll.is_pending(),
             "a posted empty side cannot hide a held candidate"
         );
-        with_tick(&snapshot, &mut ledger, 2, |tick| {
+        with_tick(&snapshot, &mut ledger, 1 + SIDE_VIEW_TICKS - 1, |tick| {
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         });
-        let poll = with_tick(&snapshot, &mut ledger, 3, |tick| {
+        let poll = with_tick(&snapshot, &mut ledger, 1 + SIDE_VIEW_TICKS, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(matches!(
@@ -5122,10 +5255,10 @@ mod tests {
         let mut ledger = None;
         let (handle, poll) = begin_bank(&snapshot, &mut ledger, all());
         assert!(poll.is_pending(), "a side root still down is not posted");
-        with_tick(&snapshot, &mut ledger, 2, |tick| {
+        with_tick(&snapshot, &mut ledger, 1 + SIDE_VIEW_TICKS - 1, |tick| {
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         });
-        let poll = with_tick(&snapshot, &mut ledger, 3, |tick| {
+        let poll = with_tick(&snapshot, &mut ledger, 1 + SIDE_VIEW_TICKS, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(matches!(
@@ -5135,7 +5268,7 @@ mod tests {
         ));
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
 
-        // Required never settles on the UntilEmpty view bound.
+        // The required wait has the same bound: its view is the same flush.
         let mut ledger = None;
         let (handle, poll) = begin_bank(
             &snapshot,
@@ -5149,9 +5282,61 @@ mod tests {
             ),
         );
         assert!(poll.is_pending());
-        with_tick(&snapshot, &mut ledger, 3, |tick| {
+        with_tick(&snapshot, &mut ledger, 1 + SIDE_VIEW_TICKS - 1, |tick| {
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         });
+        let poll = with_tick(&snapshot, &mut ledger, 1 + SIDE_VIEW_TICKS, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(
+            poll,
+            Poll::Ready(Err(ActionError::Failed(message)))
+                if message.as_ref() == "bank deposit view did not post"
+        ));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    /// A side view that posts with the bound tick still settles the wait: the
+    /// awaited state is checked before the deadline.
+    #[test]
+    fn a_side_view_posting_on_the_bound_tick_settles_the_wait() {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(vec![item(526, "Bones", 1, ItemContainer::Inventory)], 28);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            bank_request(
+                BankAction::DepositAll {
+                    keep: Arc::from([]),
+                },
+                false,
+            ),
+        );
+        assert!(poll.is_pending(), "the view has not posted at the arm tick");
+        snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(Vec::new()),
+            vec![row_with(
+                item(526, "Bones", 1, ItemContainer::BankSide),
+                &["Deposit-1", "Deposit-All"],
+                0,
+            )],
+        );
+        let poll = with_tick(&snapshot, &mut ledger, 1 + SIDE_VIEW_TICKS, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            poll.is_pending(),
+            "the click went out instead of the wait failing: {poll:?}"
+        );
+        assert!(matches!(
+            acknowledge(&mut ledger, 1 + SIDE_VIEW_TICKS),
+            HostEffect::Interaction(InteractReq::InvButton { id: 526, .. })
+        ));
     }
 
     /// P-close (native): already shut is true with no verb. A Close is done

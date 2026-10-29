@@ -3852,16 +3852,19 @@ pub(crate) fn resume_seat(js: &mut impl Js, stepped: &SteppedRows) {
 /// The handles of the outcomes whose seat terminal is above `release_floor`:
 /// the terminals the seat published after the last accepted seat answer
 /// dispatch. An unstamped outcome and an older one stay for the next global
-/// settle.
-pub(crate) fn settled_above(release_floor: u64) -> Vec<Handle> {
+/// settle. The list holds as many as the seat has live or just-started
+/// requests; one beyond that would stay for the next global settle too.
+pub(crate) fn settled_above(release_floor: u64) -> ReleasedRows {
+    let mut released = ReleasedRows::default();
     HOST.with(|host| {
-        host.borrow()
-            .settled
-            .iter()
-            .filter(|entry| entry.seat_seq > release_floor)
-            .map(|entry| entry.handle)
-            .collect()
-    })
+        for entry in &host.borrow().settled {
+            if entry.seat_seq > release_floor {
+                let kept = released.push(entry.handle);
+                debug_assert!(kept, "an ended request holds a live or a started slot");
+            }
+        }
+    });
+    released
 }
 
 /// Whether an outcome waits for its JS await.
@@ -3939,35 +3942,43 @@ enum Pass<'a> {
     ResumeSeat(&'a [Handle]),
 }
 
-/// The rows a [`Pass::Seat`] stepped, kept on the stack: each holds a live
-/// seat entry, and the seat holds at most `MAX_LIVE` of them.
-pub(crate) struct SteppedRows {
-    handles: [Handle; api::script_contract::MAX_LIVE],
+/// A bounded list of row handles kept on the stack, so a seat dispatch
+/// builds no heap list.
+pub(crate) struct HandleList<const N: usize> {
+    handles: [Handle; N],
     len: usize,
 }
 
-impl Default for SteppedRows {
+/// The rows a [`Pass::Seat`] stepped: each holds a live seat entry, and the
+/// seat holds at most `MAX_LIVE` of them.
+pub(crate) type SteppedRows = HandleList<{ api::script_contract::MAX_LIVE }>;
+
+/// The outcomes a seat dispatch releases: one per request that ended, and a
+/// request is live (`MAX_LIVE`) or was just started (`MAX_PENDING_STARTS`).
+pub(crate) type ReleasedRows =
+    HandleList<{ api::script_contract::MAX_LIVE + api::script_contract::MAX_PENDING_STARTS }>;
+
+impl<const N: usize> Default for HandleList<N> {
     fn default() -> Self {
         Self {
-            handles: [0; api::script_contract::MAX_LIVE],
+            handles: [0; N],
             len: 0,
         }
     }
 }
 
-impl SteppedRows {
-    fn push(&mut self, handle: Handle) {
-        debug_assert!(
-            self.len < self.handles.len(),
-            "every stepped row holds a seat entry"
-        );
-        if let Some(slot) = self.handles.get_mut(self.len) {
-            *slot = handle;
-            self.len += 1;
-        }
+impl<const N: usize> HandleList<N> {
+    /// `false` when the list is full; the handle is not kept.
+    fn push(&mut self, handle: Handle) -> bool {
+        let Some(slot) = self.handles.get_mut(self.len) else {
+            return false;
+        };
+        *slot = handle;
+        self.len += 1;
+        true
     }
 
-    fn as_slice(&self) -> &[Handle] {
+    pub(crate) fn as_slice(&self) -> &[Handle] {
         &self.handles[..self.len]
     }
 }
@@ -3984,7 +3995,10 @@ fn pass(js: &mut impl Js, pass: Pass<'_>) -> SteppedRows {
             return None;
         }
         let rows = std::mem::take(&mut host.rows);
-        host.stepping = rows.iter().map(Row::stepping_record).collect();
+        // Reuse the allocation of the previous pass: `clear` keeps the
+        // capacity, so a pass allocates nothing once the row count is warm.
+        host.stepping.clear();
+        host.stepping.extend(rows.iter().map(Row::stepping_record));
         Some(rows)
     }) else {
         return stepped;
@@ -4050,7 +4064,8 @@ fn pass(js: &mut impl Js, pass: Pass<'_>) -> SteppedRows {
             return true;
         }
         if matches!(pass, Pass::Seat) {
-            stepped.push(row.handle);
+            let kept = stepped.push(row.handle);
+            debug_assert!(kept, "every stepped row holds a seat entry");
         }
         let outcome = match pass {
             Pass::Snapshot { .. } => drive_snapshot(row, js, &mut at),

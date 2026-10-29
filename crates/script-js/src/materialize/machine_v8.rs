@@ -101,14 +101,16 @@ pub(super) fn settle_waits(
 
 /// Settle only the awaits of outcomes whose seat terminal is above
 /// `release_floor`: the terminals the seat published after the last accepted
-/// seat answer dispatch. The handle list is built for this call and dropped
-/// with it; the shim re-parks every other machine wait without taking it.
+/// seat answer dispatch. The handle list lives on the stack; the JS array of
+/// it exists only when a terminal qualifies (once per ended request, not per
+/// wake), and the shim re-parks every other machine wait without taking it.
 pub(super) fn settle_waits_seat(
     runtime: &mut Runtime,
     release_floor: u64,
     claimed: &dyn Fn() -> bool,
 ) -> Result<(), rustyscript::Error> {
-    let handles = machine::settled_above(release_floor);
+    let released = machine::settled_above(release_floor);
+    let handles = released.as_slice();
     if !handles.is_empty() && !claimed() {
         super::lineage_v8::call_function_immediate::<()>(
             runtime,

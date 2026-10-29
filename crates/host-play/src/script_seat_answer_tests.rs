@@ -581,6 +581,37 @@ fn seat_answer_final_terminal_survives_a_refused_dispatch() {
     assert_eq!(frames.seat().seat_pages.accepted, after.seat_pages.accepted);
 }
 
+/// The JS handle list of a seat release exists only for a qualifying
+/// terminal: over the five visits and the final terminal of one burst, the
+/// shim's release entry point receives a list exactly once, and it holds the
+/// one ended request.
+#[test]
+fn seat_release_materializes_its_handle_list_once_per_ended_request() {
+    let frames = Frames::new(KEEP_ALL, 5);
+    let tick = frames.first_visit();
+    frames.probe(
+        "(() => { const settle = globalThis.__rs2b0t_settle_machines; globalThis.__lists = []; \
+         globalThis.__rs2b0t_settle_machines = (...args) => { \
+         globalThis.__lists.push(args.length === 0 ? null : args[0]); return settle(...args); }; \
+         return true; })()",
+    );
+    let dispatched = frames.seat().seat_pages.accepted;
+    frames.run_to_done(tick);
+    assert!(
+        frames.seat().seat_pages.accepted >= dispatched + 4,
+        "the burst dispatched a page per remaining prompt and the terminal"
+    );
+    let lists = frames.probe("globalThis.__lists");
+    let lists = lists.as_array().expect("recorded calls");
+    let with_handles: Vec<_> = lists.iter().filter(|list| !list.is_null()).collect();
+    assert_eq!(
+        with_handles.len(),
+        1,
+        "one list for the one ended request: {lists:?}"
+    );
+    assert_eq!(with_handles[0].as_array().map(Vec::len), Some(1));
+}
+
 /// Sol N1 and Grok F1 through the whole host path: a slow game tick makes the
 /// isolate thread skip the ticks queued behind it, and the seat page that
 /// carries an accepted answer survives the skip. Every step goes through the
@@ -596,6 +627,7 @@ fn seat_answer_wake_survives_a_slow_tick_skip() {
     assert_eq!(frames.matches(), 1, "one visit before the slow tick");
     frames.probe("globalThis.__spin_next_tick = true");
     let before = frames.seat();
+    let ran = frames.iso(script_js::LoadIsolate::executed_seat_pages_for_test);
 
     // The slow tick starts on the tick edge and spins in its listener.
     assert!(frames.frame(tick + 1, true), "the tick edge dispatches");
@@ -628,8 +660,8 @@ fn seat_answer_wake_survives_a_slow_tick_skip() {
     );
     assert_eq!(
         frames.iso(script_js::LoadIsolate::executed_seat_pages_for_test),
-        0,
-        "no seat page has run yet: the thread is inside the slow tick"
+        ran,
+        "no new seat page has run: the thread is inside the slow tick"
     );
 
     // The next tick's snapshot and tick queue behind the page: the skip
@@ -637,7 +669,7 @@ fn seat_answer_wake_survives_a_slow_tick_skip() {
     assert!(frames.frame(tick + 2, true));
     assert_eq!(
         frames.iso(script_js::LoadIsolate::executed_seat_pages_for_test),
-        0,
+        ran,
         "still inside the slow tick"
     );
 
@@ -662,7 +694,7 @@ fn seat_answer_wake_survives_a_slow_tick_skip() {
         "the skipped tick never ran"
     );
     assert!(
-        frames.iso(script_js::LoadIsolate::executed_seat_pages_for_test) >= 1,
+        frames.iso(script_js::LoadIsolate::executed_seat_pages_for_test) > ran,
         "the retained page ran"
     );
     let after = frames.seat();
