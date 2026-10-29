@@ -12,6 +12,7 @@ pub mod evidence_writer;
 pub mod external_loader;
 pub mod fd_limit;
 pub mod live_gate;
+pub mod live_ports;
 pub mod live_start;
 pub mod local_state;
 pub mod login_readiness;

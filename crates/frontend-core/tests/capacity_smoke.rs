@@ -205,8 +205,8 @@ fn live_host_capacity_warning_appears_under_real_load_and_clears() {
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(44594),
-        http_port: Some(1080),
+        port: Some(host_play::live_ports::game_port()),
+        http_port: Some(host_play::live_ports::http_port()),
         engine_dir: Some(engine.into()),
         nav_pack: Some(pack.into()),
         ..ProfileOptions::default()

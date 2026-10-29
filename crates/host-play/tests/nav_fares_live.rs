@@ -23,8 +23,8 @@ fn live_profile_options() -> ProfileOptions {
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(44594),
-        http_port: Some(1080),
+        port: Some(host_play::live_ports::game_port()),
+        http_port: Some(host_play::live_ports::http_port()),
         cache_dir: Some(PathBuf::from(
             std::env::var_os("BOT_CACHE_DIR").expect("disposable cache"),
         )),

@@ -295,8 +295,8 @@ fn local_family_reads_real_content() {
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(44594),
-        http_port: Some(1080),
+        port: Some(host_play::live_ports::game_port()),
+        http_port: Some(host_play::live_ports::http_port()),
         cache_dir: Some(required("BOT_CACHE_DIR")),
         unpack_dir: Some(home.join(".274bot/unpack-289")),
         vault_path: Some(home.join("vault")),
@@ -428,8 +428,8 @@ fn local_family_reads_real_content() {
         "source_sha256": source_sha,
         "expected_source": expected_path,
         "result": observed,
-        "game_port": 44594,
-        "http_port": 1080,
+        "game_port": host_play::live_ports::game_port(),
+        "http_port": host_play::live_ports::http_port(),
         "stopped": true,
     });
     if let Some((path, seed)) = seed_config.as_ref() {
