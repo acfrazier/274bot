@@ -105,12 +105,105 @@ struct ClueSlotWitness {
     returned: bool,
 }
 
+/// The clue solver's reward-bank record, in the snapshot ticks of the host log
+/// (`seat-page tick=`, `native-packet ... tick=`), so each field lines up with
+/// the host's receipts. The reward ids are the pack's new items when the casket
+/// opened; every other id of the solver's initial pack is its equipment.
+/// Read-only reporting state: no witness latch reads it.
+#[derive(Default)]
+struct ClueBankRecord {
+    /// The bank counts of the watched ids at the previous loaded observation.
+    banked: Vec<(i32, i32)>,
+    baselined: bool,
+    bank_opened: Option<u32>,
+    reward_first: Option<u32>,
+    reward_last: Option<u32>,
+    reward_rises: u32,
+    equipment_first: Option<u32>,
+    equipment_last: Option<u32>,
+    equipment_rises: u32,
+    /// The first observation after a reward deposit with no reward item left
+    /// in the pack beyond the initial pack.
+    reward_pack_clear: Option<u32>,
+}
+
+impl ClueBankRecord {
+    fn observe(&mut self, snap: &GameSnapshot, reward_ids: &[i32], initial: &[(i32, i32)]) {
+        let tick = snap.tick();
+        if snap.bank_component_id() >= 0 && snap.bank_loaded() {
+            self.bank_opened.get_or_insert(tick);
+            let equipment = initial.iter().map(|(id, _)| *id);
+            let watched: Vec<i32> = reward_ids
+                .iter()
+                .copied()
+                .chain(equipment.filter(|id| !reward_ids.contains(id)))
+                .collect();
+            for id in watched {
+                let now = pair_bank_id(snap, id);
+                let before = self
+                    .banked
+                    .iter()
+                    .find(|(seen, _)| *seen == id)
+                    .map(|(_, count)| *count);
+                match self.banked.iter_mut().find(|(seen, _)| *seen == id) {
+                    Some((_, count)) => *count = now,
+                    None => self.banked.push((id, now)),
+                }
+                // The first loaded observation is the baseline, never a
+                // deposit: a bank may hold older stock.
+                if !self.baselined || before.is_none_or(|before| now <= before) {
+                    continue;
+                }
+                if reward_ids.contains(&id) {
+                    self.reward_first.get_or_insert(tick);
+                    self.reward_last = Some(tick);
+                    self.reward_rises += 1;
+                } else {
+                    self.equipment_first.get_or_insert(tick);
+                    self.equipment_last = Some(tick);
+                    self.equipment_rises += 1;
+                }
+            }
+            self.baselined = true;
+            let in_pack_beyond_initial = reward_ids.iter().any(|id| {
+                let at_start: i32 = initial
+                    .iter()
+                    .filter(|(initial_id, _)| initial_id == id)
+                    .map(|(_, count)| *count)
+                    .sum();
+                pair_inv_id(snap, *id) > at_start
+            });
+            if self.reward_first.is_some() && !in_pack_beyond_initial {
+                self.reward_pack_clear.get_or_insert(tick);
+            }
+        }
+    }
+
+    fn summary(&self, reward_ids: &[i32]) -> String {
+        let tick = |tick: Option<u32>| tick.map_or_else(|| "none".to_owned(), |t| t.to_string());
+        format!(
+            "clue bank record (snapshot ticks): reward_ids={reward_ids:?} bank_opened={} \
+             reward_deposit first={} last={} rises={} equipment_deposit first={} last={} \
+             rises={} reward_pack_clear={}",
+            tick(self.bank_opened),
+            tick(self.reward_first),
+            tick(self.reward_last),
+            self.reward_rises,
+            tick(self.equipment_first),
+            tick(self.equipment_last),
+            self.equipment_rises,
+            tick(self.reward_pack_clear),
+        )
+    }
+}
+
 #[derive(Default)]
 struct ClueFleetWitness {
     started: bool,
     slots: [ClueSlotWitness; 2],
     reward_ids: Vec<i32>,
     reward_banked: bool,
+    bank: ClueBankRecord,
 }
 
 impl ClueFleetWitness {
@@ -189,6 +282,16 @@ impl ClueFleetWitness {
         if slot_index == 0 && snap.bank_component_id() >= 0 && snap.bank_loaded() {
             self.reward_banked |= self.reward_ids.iter().any(|id| pair_bank_id(snap, *id) > 0);
         }
+        if slot_index == 0 {
+            self.bank
+                .observe(snap, &self.reward_ids, &self.slots[0].initial_inv);
+        }
+    }
+
+    /// The solver's bank record for the receipt (deferred-acceptance item 7
+    /// of the native seat answer wake): read-only, never a gate.
+    fn terminal_summary(&self) -> String {
+        self.bank.summary(&self.reward_ids)
     }
 
     fn identities_ready(&self) -> bool {
@@ -2360,7 +2463,7 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
                 witness.observe(0, snap);
                 witness.complete()
             }),
-            summary: None,
+            summary: clue_terminal_summary(&witness),
         },
         wait: Wait {
             arm: Proof::Stat { id: 16, min: 0 },
@@ -2405,6 +2508,21 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
             ..Default::default()
         },
     }
+}
+
+/// The clue witness step's read-only terminal summary: the solver's reward
+/// deposits and equipment deposits in snapshot ticks, read at terminal time
+/// only, on a pass and on a failure alike.
+fn clue_terminal_summary(
+    witness: &Arc<Mutex<ClueFleetWitness>>,
+) -> Option<Box<dyn Fn() -> String + Send + Sync>> {
+    let witness = Arc::clone(witness);
+    Some(Box::new(move || {
+        witness
+            .lock()
+            .expect("clue witness mutex")
+            .terminal_summary()
+    }))
 }
 
 /// The KQ witness steps' read-only terminal summary closure: one
@@ -2810,6 +2928,125 @@ mod clue_witness_tests {
         assert!(!witness.slots[0].saw_peer, "a stranger is not the helper");
         witness.observe(0, &seen("Solver", &["Stranger", "helper one"]));
         assert!(witness.slots[0].saw_peer, "the helper by its own name");
+    }
+
+    fn view(id: i32, count: i32, container: api::snapshot::ItemContainer) -> api::snapshot::ItemView {
+        api::snapshot::ItemView {
+            def: api::obj_names::ItemDefView {
+                id,
+                name: None,
+                stackable: false,
+                members: false,
+                base_value: 0,
+                noted: false,
+                certificate_link: -1,
+                certificate_template: -1,
+            },
+            container,
+            action_family: api::snapshot::ItemActionFamily::None,
+            slot: 0,
+            count,
+            actions: Vec::new(),
+            component_id: -1,
+        }
+    }
+
+    /// One solver observation: its pack and, when `bank` is `Some`, an open
+    /// bank holding those rows (a closed bank is `None`).
+    fn observe_solver(
+        witness: &mut ClueFleetWitness,
+        tick: u32,
+        pack: &[(i32, i32)],
+        bank: Option<&[(i32, i32)]>,
+    ) {
+        use api::snapshot::ItemContainer;
+        let mut snap = seen("Solver", &[]);
+        snap.seed_tick(tick);
+        snap.seed_inventory(
+            pack.iter()
+                .map(|(id, count)| view(*id, *count, ItemContainer::Inventory))
+                .collect(),
+            28,
+        );
+        match bank {
+            Some(rows) => snap.seed_bank_observation(
+                10,
+                1,
+                Some(
+                    rows.iter()
+                        .map(|(id, count)| view(*id, *count, ItemContainer::Bank))
+                        .collect(),
+                ),
+                Vec::new(),
+            ),
+            None => snap.seed_bank_observation(-1, 1, None, Vec::new()),
+        }
+        witness.observe(0, &snap);
+    }
+
+    /// Contract item 7 (native seat answer wake): the record separates the
+    /// first reward deposit from the final one, and both from the initial
+    /// equipment's deposits, in snapshot ticks; an older bank stock is a
+    /// baseline, never a deposit.
+    #[test]
+    fn the_bank_record_separates_reward_deposits_from_equipment_deposits() {
+        const COINS: i32 = 995;
+        const DAGGER: i32 = 1231;
+        const SHORTBOW: i32 = 861;
+        const RUNE_DAGGER: i32 = 1213;
+        let mut witness = ClueFleetWitness::default();
+        witness.start();
+        let equipment = [(COINS, 1_000), (DAGGER, 1)];
+        observe_solver(&mut witness, 10, &equipment, None);
+        let casket = [(COINS, 1_000), (DAGGER, 1), (3555, 1)];
+        observe_solver(&mut witness, 20, &casket, None);
+        let reward = [
+            (COINS, 1_000),
+            (DAGGER, 1),
+            (SHORTBOW, 1),
+            (RUNE_DAGGER, 1),
+        ];
+        observe_solver(&mut witness, 30, &reward, None);
+        assert_eq!(witness.reward_ids, vec![SHORTBOW, RUNE_DAGGER]);
+        // Older stock of a watched id is the baseline of the first loaded
+        // observation.
+        observe_solver(&mut witness, 40, &reward, Some(&[(DAGGER, 3)]));
+        observe_solver(
+            &mut witness,
+            41,
+            &[(COINS, 1_000), (SHORTBOW, 1), (RUNE_DAGGER, 1)],
+            Some(&[(DAGGER, 4)]),
+        );
+        observe_solver(
+            &mut witness,
+            42,
+            &[(COINS, 1_000), (RUNE_DAGGER, 1)],
+            Some(&[(DAGGER, 4), (SHORTBOW, 1)]),
+        );
+        let summary = witness.terminal_summary();
+        assert!(summary.contains("bank_opened=40"), "{summary}");
+        assert!(
+            summary.contains("reward_deposit first=42 last=42 rises=1"),
+            "{summary}"
+        );
+        assert!(summary.contains("reward_pack_clear=none"), "{summary}");
+        observe_solver(
+            &mut witness,
+            45,
+            &[(COINS, 1_000)],
+            Some(&[(DAGGER, 4), (SHORTBOW, 1), (RUNE_DAGGER, 1)]),
+        );
+        let summary = witness.terminal_summary();
+        assert!(
+            summary.contains("reward_deposit first=42 last=45 rises=2"),
+            "{summary}"
+        );
+        assert!(
+            summary.contains("equipment_deposit first=41 last=41 rises=1"),
+            "{summary}"
+        );
+        assert!(summary.contains("reward_pack_clear=45"), "{summary}");
+        assert!(summary.contains("reward_ids=[861, 1213]"), "{summary}");
     }
 
     #[test]

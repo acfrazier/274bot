@@ -764,10 +764,20 @@ impl SlotScript {
                         |(selected, generation)| (selected, generation, row.runtime_generation),
                     );
                 let id = row.id;
+                let family = row.family;
                 bank.rows.remove(index);
                 if bank.action_owner == Some(id) {
                     bank.action_owner = None;
                 }
+                // The typed result the seat publishes for this request: the
+                // live cell's record of what a close or a deposit answered.
+                api::host_log!(
+                    api::hostlog::Category::Echo,
+                    api::hostlog::Level::Debug,
+                    "bank-terminal request={} family={family} tick={} result={result:?}",
+                    id.get(),
+                    ctx.tick,
+                );
                 self.finish_bank(id, result, selection, &mut bank);
                 continue;
             }

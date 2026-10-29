@@ -319,6 +319,34 @@ fn emit_script_debug_logs(slot: &mut SlotScript, name: &str) {
     for line in logs {
         host_log!(Category::Echo, Level::Debug, slot = name, "{line}");
     }
+    emit_script_paint_title(slot, name);
+}
+
+/// Under `BOT_DEBUG=1`, one echo line each time the script's painted title
+/// changes. A script publishes its status line there (`ClueSolver` paints
+/// `ClueSolver — <status>`), so the live cells' receipts show the status the
+/// script moved to after an event, such as the bank close.
+fn emit_script_paint_title(slot: &SlotScript, name: &str) {
+    static LAST: std::sync::LazyLock<Mutex<HashMap<String, Option<String>>>> =
+        std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+    let Some(paint) = slot.paint() else {
+        return;
+    };
+    let mut last = LAST.lock().unwrap();
+    if last
+        .get(name)
+        .is_some_and(|title| title.as_deref() == paint.title.as_deref())
+    {
+        return;
+    }
+    last.insert(name.to_owned(), paint.title.clone());
+    host_log!(
+        Category::Echo,
+        Level::Debug,
+        slot = name,
+        "script-paint title={:?}",
+        paint.title
+    );
 }
 
 /// One observe of a slot's script wiring: gate [`SlotScript::on_is_up`],
