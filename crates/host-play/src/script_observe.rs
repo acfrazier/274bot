@@ -2300,6 +2300,15 @@ impl NavWorldStateCache {
     }
 }
 
+// The cost probe's baseline arm forces a fresh backing on every active observe.
+#[cfg(feature = "observe-cost-profile")]
+fn world_state_cache_bypassed() -> bool {
+    static BYPASS: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+        std::env::var("BOT_WORLD_STATE_CACHE_BYPASS").is_ok_and(|value| value == "1")
+    });
+    *BYPASS
+}
+
 /// Whether this observe pass needs a [`WorldState`] from the slot snapshot.
 /// The cache belongs to one slot and only retains facts while navigation is
 /// active. Family generations catch changes within a game tick.
@@ -2318,6 +2327,11 @@ pub(crate) fn nav_world_state_for_observe(
     quest_run_generation: u64,
     quest_freshness_tick: u64,
 ) -> Option<Arc<WorldState>> {
+    #[cfg(feature = "observe-cost-profile")]
+    if world_state_cache_bypassed() {
+        cache.clear();
+    }
+
     if here.is_none() || !(script_running || nav_armed) {
         cache.clear();
         return None;
@@ -2760,6 +2774,49 @@ mod world_state_cache_tests {
             Some(&69),
             "an unrelated player generation must not invalidate gating facts"
         );
+    }
+
+    #[test]
+    fn cache_hits_reuse_the_backing_without_allocating() {
+        let snapshot = stats_snapshot(1, 68);
+        let cache_key = key(&snapshot, false, 1, 1, 1);
+        let mut cache = NavWorldStateCache::default();
+        let first = cache.get_or_build(cache_key, &snapshot, false);
+        let mut reused = None;
+        let allocations = allocation_counter::measure(|| {
+            reused = Some(cache.get_or_build(cache_key, &snapshot, false));
+        });
+        assert_eq!(allocations.count_total, 0, "{allocations:?}");
+        assert!(
+            Arc::ptr_eq(&first, reused.as_ref().expect("cache hit")),
+            "unchanged fact generations retain the same immutable backing"
+        );
+    }
+
+    #[test]
+    fn world_state_cache_and_arc_backing_stay_within_size_budgets() {
+        assert!(
+            std::mem::size_of::<NavWorldStateCache>() <= 160,
+            "cache metadata grew beyond its 160-byte inline budget"
+        );
+        assert!(
+            std::mem::size_of::<nav_planner::WorldState>() <= 352,
+            "WorldState inline representation grew beyond the measured 352-byte size"
+        );
+
+        let snapshot = stats_snapshot(1, 68);
+        let state = nav_planner::WorldState::from_snapshot(&snapshot);
+        let mut backing = None;
+        let allocation = allocation_counter::measure(|| {
+            backing = Some(Arc::new(state));
+        });
+        assert_eq!(allocation.count_total, 1, "{allocation:?}");
+        assert_eq!(
+            usize::try_from(allocation.bytes_total).expect("Arc allocation size fits usize"),
+            std::mem::size_of::<nav_planner::WorldState>() + 2 * std::mem::size_of::<usize>(),
+            "one cached Arc backing is the inline state plus its two counters"
+        );
+        drop(backing);
     }
 
     #[test]
