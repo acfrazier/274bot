@@ -38,10 +38,26 @@ for (const marker of ['book:com_87', 'book:page_right_button']) {
     }
 }
 
+{
+    const source = fixture();
+    try {
+        source.files.set(dialogueUiContentFiles[0], source.files.get(dialogueUiContentFiles[0])!.replace('11104=inter_199\n', ''));
+        source.save();
+        assert.deepEqual(extractDialogueUiFacts(source.root), {
+            scroll_root: 1136, quest_scroll_root: 297, chapter_root: null, book_root: 837, book_forward: 841,
+            book_close: 10162, book_forward_marker: 842,
+        }, 'a revision whose pack has no inter_199 row publishes no chapter page');
+    } finally {
+        fs.rmSync(source.root, { recursive: true, force: true });
+    }
+}
+
 for (const [mutate, reason] of [
     [(files: Map<string, string>) => files.set(dialogueUiContentFiles[0], files.get(dialogueUiContentFiles[0])!.replace('841=book:com_86\n', '')), /missing or invalid interface alias/],
     [(files: Map<string, string>) => files.set(dialogueUiContentFiles[0], files.get(dialogueUiContentFiles[0])!.replace('297=questscroll\n', '')), /missing or invalid interface alias/],
-    [(files: Map<string, string>) => files.set(dialogueUiContentFiles[0], files.get(dialogueUiContentFiles[0])!.replace('11104=inter_199\n', '')), /missing or invalid interface alias/],
+    [(files: Map<string, string>) => files.set(dialogueUiContentFiles[0], files.get(dialogueUiContentFiles[0])!.replace('11104=inter_199\n', '0=inter_199\n')), /missing or invalid interface alias inter_199/],
+    [(files: Map<string, string>) => files.set(dialogueUiContentFiles[0], files.get(dialogueUiContentFiles[0])!.replace('11104=inter_199\n', 'x=inter_199\n')), /missing or invalid interface alias inter_199/],
+    [(files: Map<string, string>) => files.set(dialogueUiContentFiles[0], files.get(dialogueUiContentFiles[0])!.replace('11104=inter_199\n', '11104=inter_199\n11105=inter_199\n')), /ambiguous interface alias inter_199/],
     [(files: Map<string, string>) => files.set(dialogueUiContentFiles[0], files.get(dialogueUiContentFiles[0])!.replace('11104=inter_199\n', '1136=inter_199\n')), /ambiguous packed identities/],
     [(files: Map<string, string>) => files.set(dialogueUiContentFiles[0], files.get(dialogueUiContentFiles[0])!.replace('297=questscroll', '0=questscroll')), /missing or invalid interface alias/],
     [(files: Map<string, string>) => files.set(dialogueUiContentFiles[0], files.get(dialogueUiContentFiles[0])!.replace('297=questscroll', '1136=questscroll')), /ambiguous packed identities/],
