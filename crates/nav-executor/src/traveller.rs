@@ -515,10 +515,11 @@ impl Traveller {
         if let Some(walk) = &run.walk {
             if !walk.sent {
                 return Some((
-                    if walk.end_refused_ticks > 0 {
-                        "walk send refused"
-                    } else {
-                        "walk not sent"
+                    match walk.send_refusal {
+                        Some(SendReason::Unreachable) => "local walk route",
+                        Some(SendReason::OffScene | SendReason::SceneUnavailable) => "scene",
+                        Some(_) => "walk send refused",
+                        None => "walk not sent",
                     },
                     Some(walk.aim),
                     None,
@@ -975,6 +976,7 @@ impl FollowRun {
                     aim: here,
                     aim_index: 0,
                     sent: false,
+                    send_refusal: None,
                     ticks_waited: 0,
                     sent_tile: None,
                     sent_tick: snapshot.tick(),
@@ -1452,6 +1454,7 @@ struct WalkHop {
     /// Whether the walk for `aim` has been sent; a matched mid-leg hop is
     /// re-armed with `sent: false` and sent on the same poll (click-ahead).
     sent: bool,
+    send_refusal: Option<SendReason>,
     sent_tick: u32,
     /// Original send for this aim, retained across stall-recovery resends.
     start_tile: WorldTile,
@@ -1651,6 +1654,7 @@ mod wait_status_tests {
             aim,
             aim_index: 1,
             sent: false,
+            send_refusal: Some(SendReason::Unreachable),
             sent_tick: 0,
             start_tile: here,
             first_sent_tick: 0,
@@ -1668,7 +1672,7 @@ mod wait_status_tests {
 
         assert_eq!(
             traveller.current_wait_status(),
-            Some(("walk send refused", Some(aim), None))
+            Some(("local walk route", Some(aim), None))
         );
     }
 }

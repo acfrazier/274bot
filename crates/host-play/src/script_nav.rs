@@ -4028,12 +4028,6 @@ fn captured_route_quests(
     }
 }
 
-/// Per-uid nav state: the whole-world traveller plus the route it is
-/// following. `ctx.walk` stores the route, produced by the shared route-work
-/// service over [`NavWorld`]. The slot pump polls [`Traveller::follow`] with a
-/// clone of it one step per player-info tick. [`NavBot::has_route`] is the
-/// "armed" gate the walk hook and the busy flag read. A pending BankBudget
-/// session freezes follow until its steps finish.
 /// Ten distinct observed ticks identify a sustained wait before the default
 /// 60-tick hop budget. This controls logging only and never delays or retries.
 pub(crate) const WALK_NO_PROGRESS_INFO_TICKS: u32 = 10;
@@ -4098,7 +4092,7 @@ impl WalkNoProgress {
         }
 
         self.last_tick = tick;
-        self.ticks = self.ticks.saturating_add(1);
+        self.ticks = self.ticks.saturating_add(elapsed);
         if !self.reported && self.ticks >= WALK_NO_PROGRESS_INFO_TICKS {
             self.reported = true;
             Some(self.ticks)
@@ -4109,6 +4103,12 @@ impl WalkNoProgress {
 }
 
 
+/// Per-uid nav state: the whole-world traveller plus the route it is
+/// following. `ctx.walk` stores the route, produced by the shared route-work
+/// service over [`NavWorld`]. The slot pump polls [`Traveller::follow`] with a
+/// clone of it one step per player-info tick. [`NavBot::has_route`] is the
+/// "armed" gate the walk hook and the busy flag read. A pending BankBudget
+/// session freezes follow until its steps finish.
 #[derive(Default)]
 pub(crate) struct NavBot {
     /// The slot-thread condition owner, also read by admission at arm time.

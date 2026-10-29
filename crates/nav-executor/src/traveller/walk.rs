@@ -460,6 +460,7 @@ impl FollowRun {
                     hop.aim = aim;
                     hop.aim_index = idx;
                     hop.sent = true;
+                    hop.send_refusal = None;
                     hop.sent_tick = snapshot.tick();
                     hop.start_tile = here;
                     hop.first_sent_tick = snapshot.tick();
@@ -506,13 +507,15 @@ impl FollowRun {
                     aim = tiles[idx];
                 }
                 SendResult::Refused {
-                    reason:
-                        SendReason::OffScene | SendReason::Unreachable | SendReason::SceneUnavailable,
+                    reason: reason @ (SendReason::OffScene | SendReason::Unreachable | SendReason::SceneUnavailable),
                     ..
                 } => {
                     // Rebuild (`scene_state != 2`) refuses the walk before
                     // a packet goes out — wait, do not fail the follow.
                     (hop.end_refused_ticks, hop.end_refused_last_tick) = refused;
+                    hop.aim = aim;
+                    hop.aim_index = idx;
+                    hop.send_refusal = Some(reason);
                     self.walk = Some(hop);
                     return Poll::Watching;
                 }

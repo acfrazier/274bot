@@ -54,6 +54,20 @@ fn lines() -> Vec<String> {
 }
 
 #[test]
+fn no_progress_counts_batched_observed_ticks_and_clock_wrap() {
+    let mut wait = super::super::script_nav::WalkNoProgress::default();
+    let at = tile(10, 20);
+    assert_eq!(wait.observe(1, at, 100), None);
+    assert_eq!(wait.observe(1, at, 109), None);
+    assert_eq!(wait.observe(1, at, 109), None);
+    assert_eq!(wait.observe(1, at, 110), Some(10));
+    assert_eq!(wait.observe(1, at, 500), None);
+    wait.reset();
+    assert_eq!(wait.observe(1, at, u32::MAX - 4), None);
+    assert_eq!(wait.observe(1, at, 5), Some(10));
+}
+
+#[test]
 fn no_progress_info_logs_once_for_each_observed_episode() {
     const CHILD: &str = "WALK_NO_PROGRESS_LOG_TEST_CHILD";
     if std::env::var(CHILD).as_deref() != Ok("1") {
@@ -144,7 +158,7 @@ fn no_progress_info_logs_once_for_each_observed_episode() {
         observe(&mut bot, tick, moved);
     }
     observe(&mut bot, 310, moved);
-    assert_eq!(lines().len(), 4);
+    assert_eq!(lines().len(), 3, "route publication does not repeat an episode");
     apply_nav_follow_outcome(
         &mut bot,
         Some(nav_executor::TravelOutcome::Arrived { at: moved }),
@@ -156,9 +170,9 @@ fn no_progress_info_logs_once_for_each_observed_episode() {
     for tick in 401..410 {
         observe(&mut bot, tick, moved);
     }
-    assert_eq!(lines().len(), 4, "the ended route starts a clean count");
+    assert_eq!(lines().len(), 3, "the ended route starts a clean count");
     observe(&mut bot, 410, moved);
-    assert_eq!(lines().len(), 5, "route end resets the reported episode");
+    assert_eq!(lines().len(), 4, "route end resets the reported episode");
 
     abort_walk_on_bot(&mut bot);
     bot.walk_request_id = 8;
@@ -176,9 +190,9 @@ fn no_progress_info_logs_once_for_each_observed_episode() {
     for tick in 501..510 {
         observe(&mut bot, tick, moved);
     }
-    assert_eq!(lines().len(), 5, "abort resets the episode state");
+    assert_eq!(lines().len(), 4, "abort resets the episode state");
     observe(&mut bot, 510, moved);
-    assert_eq!(lines().len(), 6);
+    assert_eq!(lines().len(), 5);
 
     let route_wait = walk_wait_details(&bot, None, None);
     assert_eq!(route_wait.reason, "route");
@@ -203,12 +217,12 @@ fn no_progress_info_logs_once_for_each_observed_episode() {
     log_walk_no_progress("walk-wait-test", 8, moved, 10, door_wait);
 
     let captured = CAPTURE.0.lock().unwrap();
-    assert_eq!(captured.len(), 7);
+    assert_eq!(captured.len(), 6);
     assert!(captured.iter().all(|(source, level, _)| {
         *source == api::hostlog::Source::Nav && *level == api::hostlog::Level::Info
     }));
     assert!(captured[0].2.contains("reason=route"));
-    assert!(captured[6].2.contains("reason=door"));
-    assert!(captured[6].2.contains("target_id=Some(1530)"));
-    assert!(captured[6].2.contains("target=Some(WorldTile { x: 12, z: 20, level: 0 })"));
+    assert!(captured[5].2.contains("reason=door"));
+    assert!(captured[5].2.contains("target_id=Some(1530)"));
+    assert!(captured[5].2.contains("target=Some(WorldTile { x: 12, z: 20, level: 0 })"));
 }

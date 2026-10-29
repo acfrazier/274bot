@@ -49,6 +49,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Navigation
 
+- Bots now cross an open door when its shifted leaf blocks the packed
+  approach tile. They no longer wait for that door to reset before leaving
+  the Wizards' Tower basement. The walker still checks the next door's
+  identity and follows its normal crossing rules.
+- A walk with no tile progress for 10 observed game ticks now logs one
+  info line. The line identifies the current route, door, scene, or stall
+  wait and its target. Movement, a new request, or the walk ending resets
+  this log limit.
+
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
   used") stays held for at most 9 game ticks after a refusal, so the bot

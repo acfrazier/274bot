@@ -44,6 +44,7 @@ enum Scenario {
     Yew,
     TowerTop,
     TowerBasement,
+    LumbridgeDoor,
 }
 
 impl Scenario {
@@ -53,6 +54,7 @@ impl Scenario {
             Ok("yew") => Self::Yew,
             Ok("tower-top") => Self::TowerTop,
             Ok("tower-basement") => Self::TowerBasement,
+            Ok("lumbridge-door") => Self::LumbridgeDoor,
             other => panic!("unknown NAV_ARRIVAL_SCENARIO: {other:?}"),
         }
     }
@@ -63,6 +65,7 @@ impl Scenario {
             Self::Yew => "yew",
             Self::TowerTop => "tower-top",
             Self::TowerBasement => "tower-basement",
+            Self::LumbridgeDoor => "lumbridge-door",
         }
     }
 
@@ -80,6 +83,12 @@ impl Scenario {
             Self::TowerBasement => WorldTile {
                 x: 3104,
                 z: 9576,
+                level: 0,
+            },
+            // Ordinary north-facing door 1534 at 0_50_50_14_45.
+            Self::LumbridgeDoor => WorldTile {
+                x: 3214,
+                z: 3244,
                 level: 0,
             },
         }
@@ -883,6 +892,13 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
         target: match scenario {
             Scenario::Return => Some(WalkSpec::return_walk()),
             Scenario::TowerTop | Scenario::TowerBasement => Some(WalkSpec::crypt_walk()),
+            Scenario::LumbridgeDoor => Some(WalkSpec {
+                target: WorldTile { x: 3213, z: 3246, level: 0 },
+                radius: 0,
+                loc_id: None,
+                loc_name: None,
+                loc_actions: Vec::new(),
+            }),
             Scenario::Yew => None,
         },
         ..LiveState::default()
