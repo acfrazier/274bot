@@ -916,10 +916,7 @@ fn record_walk_no_progress(
     tick: u32,
     override_reason: Option<&'static str>,
 ) {
-    if bot.walk_request_id == 0
-        || bot.requested_route.is_none()
-        || !bot.walk_work_live()
-    {
+    if bot.walk_request_id == 0 || bot.requested_route.is_none() || !bot.walk_work_live() {
         bot.walk_no_progress.reset();
         return;
     }
@@ -928,7 +925,9 @@ fn record_walk_no_progress(
         return;
     };
     let tile = WorldTile { x, z, level };
-    let Some(no_progress_ticks) = bot.walk_no_progress.observe(bot.walk_request_id, tile, tick)
+    let Some(no_progress_ticks) = bot
+        .walk_no_progress
+        .observe(bot.walk_request_id, tile, tick)
     else {
         return;
     };
@@ -956,7 +955,6 @@ fn log_walk_no_progress(
         wait.route_target,
     );
 }
-
 
 /// Publish a script walk's destination into `name`'s status row. The caller
 /// must still hold the navigation lock it read `destination` under, so that
@@ -1065,13 +1063,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
     if hold {
         let mut all = navs.lock().unwrap();
         if let Some(bot) = all.get_mut(name) {
-            record_walk_no_progress(
-                name,
-                bot,
-                here,
-                snapshot.tick(),
-                Some("random-event hold"),
-            );
+            record_walk_no_progress(name, bot, here, snapshot.tick(), Some("random-event hold"));
         }
         return;
     }
@@ -1100,13 +1092,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
                 // Close. Walk with a stand sub-route armed falls through
                 // to Traveller::follow — never final_route mid-session.
                 if bank_fetch_freezes_follow(bot) {
-                    record_walk_no_progress(
-                        name,
-                        bot,
-                        here,
-                        snapshot.tick(),
-                        Some("bank step"),
-                    );
+                    record_walk_no_progress(name, bot, here, snapshot.tick(), Some("bank step"));
                     publish_script_walk(statuses, name, bot.route_destination());
                     return;
                 }

@@ -4044,7 +4044,11 @@ impl Default for WalkNoProgress {
     fn default() -> Self {
         Self {
             request_id: 0,
-            tile: WorldTile { x: 0, z: 0, level: 0 },
+            tile: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
             last_tick: 0,
             ticks: 0,
             reported: false,
@@ -4059,12 +4063,7 @@ impl WalkNoProgress {
 
     /// Return the tick count once, on the first threshold crossing in an
     /// episode. Repeated snapshots do not count. Movement starts a new episode.
-    pub(crate) fn observe(
-        &mut self,
-        request_id: u64,
-        tile: WorldTile,
-        tick: u32,
-    ) -> Option<u32> {
+    pub(crate) fn observe(&mut self, request_id: u64, tile: WorldTile, tick: u32) -> Option<u32> {
         if request_id == 0 {
             self.reset();
             return None;
@@ -4101,7 +4100,6 @@ impl WalkNoProgress {
         }
     }
 }
-
 
 /// Per-uid nav state: the whole-world traveller plus the route it is
 /// following. `ctx.walk` stores the route, produced by the shared route-work

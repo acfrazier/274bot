@@ -6,11 +6,10 @@ struct Capture(Mutex<Vec<(api::hostlog::Source, api::hostlog::Level, String)>>);
 impl api::hostlog::Sink for Capture {
     fn record(&self, record: &api::hostlog::Record<'_>) {
         if record.message.starts_with("walk no-progress ") {
-            self.0.lock().unwrap().push((
-                record.source,
-                record.level,
-                record.message.to_owned(),
-            ));
+            self.0
+                .lock()
+                .unwrap()
+                .push((record.source, record.level, record.message.to_owned()));
         }
     }
 }
@@ -40,7 +39,13 @@ fn pending_bot(request_id: u64, destination: WorldTile) -> NavBot {
 }
 
 fn observe(bot: &mut NavBot, tick: u32, at: WorldTile) {
-    record_walk_no_progress("walk-wait-test", bot, Some((at.x, at.z, at.level)), tick, None);
+    record_walk_no_progress(
+        "walk-wait-test",
+        bot,
+        Some((at.x, at.z, at.level)),
+        tick,
+        None,
+    );
 }
 
 fn lines() -> Vec<String> {
@@ -158,7 +163,11 @@ fn no_progress_info_logs_once_for_each_observed_episode() {
         observe(&mut bot, tick, moved);
     }
     observe(&mut bot, 310, moved);
-    assert_eq!(lines().len(), 3, "route publication does not repeat an episode");
+    assert_eq!(
+        lines().len(),
+        3,
+        "route publication does not repeat an episode"
+    );
     apply_nav_follow_outcome(
         &mut bot,
         Some(nav_executor::TravelOutcome::Arrived { at: moved }),
@@ -206,11 +215,7 @@ fn no_progress_info_logs_once_for_each_observed_episode() {
     bot.pending_route = None;
     bot.route_request_id = bot.walk_request_id;
     let door_at = tile(12, 20);
-    let door_wait = walk_wait_details(
-        &bot,
-        None,
-        Some(("door", Some(door_at), Some(1530))),
-    );
+    let door_wait = walk_wait_details(&bot, None, Some(("door", Some(door_at), Some(1530))));
     assert_eq!(door_wait.reason, "door");
     assert_eq!(door_wait.target, Some(door_at));
     assert_eq!(door_wait.target_id, Some(1530));
@@ -224,5 +229,7 @@ fn no_progress_info_logs_once_for_each_observed_episode() {
     assert!(captured[0].2.contains("reason=route"));
     assert!(captured[5].2.contains("reason=door"));
     assert!(captured[5].2.contains("target_id=Some(1530)"));
-    assert!(captured[5].2.contains("target=Some(WorldTile { x: 12, z: 20, level: 0 })"));
+    assert!(captured[5]
+        .2
+        .contains("target=Some(WorldTile { x: 12, z: 20, level: 0 })"));
 }

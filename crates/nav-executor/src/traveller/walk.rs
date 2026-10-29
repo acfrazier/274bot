@@ -388,13 +388,11 @@ impl FollowRun {
                 && find_door_loc(snapshot, edge)
                     .is_some_and(|loc| loc.id != edge.loc_id && loc.tile == end)
         };
-        let plan_matches = |plan: &RoutePlanLease, index| {
-            match plan_retained_leg(plan, index) {
-                Some(nav_planner::router::CompactRouteLeg::Transport(step)) => {
-                    step.source().is_some_and(matches)
-                }
-                _ => false,
+        let plan_matches = |plan: &RoutePlanLease, index| match plan_retained_leg(plan, index) {
+            Some(nav_planner::router::CompactRouteLeg::Transport(step)) => {
+                step.source().is_some_and(matches)
             }
+            _ => false,
         };
         if let Some(leg) = &self.pending_leg {
             return match leg {
@@ -475,9 +473,7 @@ impl FollowRun {
                 SendResult::Refused {
                     reason: SendReason::Unreachable,
                     ..
-                } if end == Some(aim)
-                    && self.open_door_occupies_walk_end(snapshot, aim, here) =>
-                {
+                } if end == Some(aim) && self.open_door_occupies_walk_end(snapshot, aim, here) => {
                     fire_leg(options, &hop.leg(), LegPhase::Done);
                     self.leg_index += 1;
                     return Poll::LegDone;
@@ -507,7 +503,10 @@ impl FollowRun {
                     aim = tiles[idx];
                 }
                 SendResult::Refused {
-                    reason: reason @ (SendReason::OffScene | SendReason::Unreachable | SendReason::SceneUnavailable),
+                    reason:
+                        reason @ (SendReason::OffScene
+                        | SendReason::Unreachable
+                        | SendReason::SceneUnavailable),
                     ..
                 } => {
                     // Rebuild (`scene_state != 2`) refuses the walk before

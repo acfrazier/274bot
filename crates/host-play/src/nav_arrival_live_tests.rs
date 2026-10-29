@@ -390,17 +390,32 @@ fn frame_hook(
             }
             if snapshot.locs().iter().any(|loc| {
                 loc.id == 1537
-                    && loc.tile == (WorldTile { x: 3106, z: 3162, level: 0 })
+                    && loc.tile
+                        == (WorldTile {
+                            x: 3106,
+                            z: 3162,
+                            level: 0,
+                        })
             }) {
                 // Preserve the prior tower-entry door state, as in the quest.
                 // Never Close or reset a shared-engine door.
                 state.prime_complete = true;
             } else if !state.prime_open_sent
-                && tile == Some(WorldTile { x: 3106, z: 3161, level: 0 })
+                && tile
+                    == Some(WorldTile {
+                        x: 3106,
+                        z: 3161,
+                        level: 0,
+                    })
             {
                 if let Some(door) = snapshot.locs().iter().find(|loc| {
                     loc.id == 1536
-                        && loc.tile == (WorldTile { x: 3107, z: 3162, level: 0 })
+                        && loc.tile
+                            == (WorldTile {
+                                x: 3107,
+                                z: 3162,
+                                level: 0,
+                            })
                 }) {
                     state.prime_open_sent = matches!(
                         api::interact::Interactions::new(&snapshot, client).interact(
@@ -415,7 +430,11 @@ fn frame_hook(
         }
         if !state.teleport_sent {
             if matches!(scenario, Scenario::TowerTop | Scenario::TowerBasement) {
-                for command in ["setvar priest 4", "give ghostskull 1", "setstat hitpoints 30"] {
+                for command in [
+                    "setvar priest 4",
+                    "give ghostskull 1",
+                    "setstat hitpoints 30",
+                ] {
                     assert!(api::interact::cheat(client, command).is_sent());
                 }
             }
@@ -893,7 +912,11 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
             Scenario::Return => Some(WalkSpec::return_walk()),
             Scenario::TowerTop | Scenario::TowerBasement => Some(WalkSpec::crypt_walk()),
             Scenario::LumbridgeDoor => Some(WalkSpec {
-                target: WorldTile { x: 3213, z: 3246, level: 0 },
+                target: WorldTile {
+                    x: 3213,
+                    z: 3246,
+                    level: 0,
+                },
                 radius: 0,
                 loc_id: None,
                 loc_name: None,

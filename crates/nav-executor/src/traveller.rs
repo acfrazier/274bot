@@ -505,9 +505,7 @@ impl Traveller {
     /// The active follow's wait reason, target tile, and target id, in that
     /// order. A wait target may be a transport anchor; [`Self::current_aim`]
     /// remains the precise walk/click target.
-    pub fn current_wait_status(
-        &self,
-    ) -> Option<(&'static str, Option<WorldTile>, Option<i32>)> {
+    pub fn current_wait_status(&self) -> Option<(&'static str, Option<WorldTile>, Option<i32>)> {
         let run = self.follow.as_ref()?;
         if run.stun_wait.is_some() {
             return Some(("stun recovery", self.current_aim(), None));
@@ -527,11 +525,7 @@ impl Traveller {
             }
             let recovering = walk.stall_idle_ticks > 0 || walk.tries > 1;
             return Some((
-                if recovering {
-                    "stall recovery"
-                } else {
-                    "walk"
-                },
+                if recovering { "stall recovery" } else { "walk" },
                 Some(walk.aim),
                 None,
             ));
@@ -743,9 +737,7 @@ impl FollowLeg {
     }
 }
 
-fn wait_status_for_leg(
-    leg: &FollowLeg,
-) -> Option<(&'static str, Option<WorldTile>, Option<i32>)> {
+fn wait_status_for_leg(leg: &FollowLeg) -> Option<(&'static str, Option<WorldTile>, Option<i32>)> {
     match leg {
         FollowLeg::Legacy(Leg::Walk { tiles }) => Some(("walk", tiles.last().copied(), None)),
         FollowLeg::Legacy(Leg::Transport { edge }) => Some((
