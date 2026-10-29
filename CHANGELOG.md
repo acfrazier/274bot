@@ -70,6 +70,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   Spirit's Filliman Tarlock conversation once and leave. It defaults to false
   and no bundled guide sets it, so every shipped guide keeps its answers.
   With the option on, `prefer` holds at most 32 entries.
+- Quester's anchored prewalk for an unseen loc now accepts any standable tile
+  within the anchor radius, leaving the final, live-loc approach to select an
+  accessible interaction side.
 
 ### Scripting
 
