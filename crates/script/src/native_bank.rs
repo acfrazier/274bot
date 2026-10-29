@@ -2896,6 +2896,19 @@ mod tests {
         assert_eq!(SIDE_VIEW_TICKS, 1);
     }
 
+    /// Size tripwire: a wait deadline is one observed tick (no clock), so a
+    /// select fallback that holds one costs the deadline's own eight bytes.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn wait_deadlines_hold_one_tick_and_no_clock() {
+        assert_eq!(std::mem::size_of::<BankDeadline>(), 8);
+        assert_eq!(std::mem::size_of::<Option<BankDeadline>>(), 8);
+        assert_eq!(
+            std::mem::size_of::<SelectFallback>(),
+            std::mem::size_of::<SelectedBank>() + 8
+        );
+    }
+
     /// The bound counts from the dispatch, not from construction: a request
     /// built at tick 1 and dispatched at tick 4 is still waiting at tick
     /// `1 + SELECT_FALLBACK_TICKS` (its old construction-anchored bound) and

@@ -4491,6 +4491,29 @@ pub(crate) mod tests {
         assert_eq!(std::mem::size_of::<Settled>(), 88);
     }
 
+    /// The seat wake's handle lists live on the isolate thread's stack: the
+    /// eight bytes per handle that the seat can hold, plus one length, and
+    /// no heap (EVENT-RUNTIME-WAKE-R1 F5). The row snapshot that a pass
+    /// publishes for `live` reuses one `Vec` whose capacity is the largest
+    /// row count seen, so a row record's size bounds that heap.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn seat_wake_handle_lists_are_stack_only_and_bounded() {
+        use api::script_contract::{MAX_LIVE, MAX_PENDING_STARTS};
+        assert_eq!(std::mem::size_of::<SteppedRows>(), 8 * MAX_LIVE + 8);
+        assert_eq!(
+            std::mem::size_of::<ReleasedRows>(),
+            8 * (MAX_LIVE + MAX_PENDING_STARTS) + 8
+        );
+        assert_eq!(std::mem::size_of::<SteppingRow>(), 112);
+        let mut list = SteppedRows::default();
+        for handle in 0..MAX_LIVE as u64 {
+            assert!(list.push(handle + 1));
+        }
+        assert!(!list.push(99), "a full list keeps nothing more");
+        assert_eq!(list.as_slice().len(), MAX_LIVE);
+    }
+
     #[test]
     fn seat_terminal_values_use_the_bounded_channel_codec_not_json_text() {
         use crate::wire::generated::rs_2b_0t::isolate::{SeatOutcomeArgs, SeatResultArgs};
