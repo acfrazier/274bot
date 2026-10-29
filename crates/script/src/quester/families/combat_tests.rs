@@ -4070,6 +4070,101 @@ fn unreachable_stand_ends_quester_step_with_the_last_walk_failure() {
     );
 }
 
+/// A kill-budget end during the stand approach starts a new fight attempt
+/// inside the same quest step (`paths/289`'s farm-imps step runs a 50-tick
+/// budget with a named fight spot). The step's three-failure bound must span
+/// that boundary: the new attempt cannot buy a fresh three walks, and the
+/// step still stops with the last route failure.
+#[test]
+fn stand_walk_bound_spans_the_kill_budget_attempt_boundary() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let here = api::WorldTile {
+        x: 3000,
+        z: 3000,
+        level: 0,
+    };
+    let stand = api::WorldTile {
+        x: 3010,
+        z: 3000,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    seed_abort_scene(&mut snapshot, here, 40, Vec::new(), None, None);
+    let mut run = combat_test_run(
+        imp_target(&data),
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    Arc::make_mut(&mut run.request).budget_ticks = 50;
+    let mut ledger = None;
+    with_step_context(&snapshot, &mut ledger, 1, |cx| {
+        run.begin_combat(cx).unwrap()
+    });
+
+    // Two failed approaches inside the first attempt's kill budget.
+    for (tick, detail) in [(2, "first route failure"), (3, "second route failure")] {
+        assert!(
+            with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending(),
+            "the walk request must remain pending"
+        );
+        assert_eq!(last_walk(&ledger).target, stand);
+        post_walk_end(&mut ledger, tick, WalkEnd::NoPath, Some(detail));
+    }
+    // The third walk is still in flight when the 50-tick budget ends.
+    assert!(with_step_context(&snapshot, &mut ledger, 4, |cx| run.poll(cx)).is_pending());
+    let in_flight = last_walk(&ledger);
+    assert_eq!(in_flight.target, stand);
+
+    // The budget end rebegins the fight. Drive polls to the new attempt's
+    // first walk, which is a fresh request; the step must still count the two
+    // walks the previous attempt spent.
+    let mut tick = 4;
+    while pending_walk(&ledger).is_some_and(|walk| walk.request_id == in_flight.request_id) {
+        tick += 1;
+        assert!(
+            tick < 60,
+            "the kill budget must end the attempt and the new attempt must walk"
+        );
+        assert!(
+            with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending(),
+            "the budget end must rebegin the fight, not end the step"
+        );
+    }
+    assert_eq!(last_walk(&ledger).target, stand);
+    post_walk_end(
+        &mut ledger,
+        tick,
+        WalkEnd::NoPath,
+        Some("third route failure"),
+    );
+
+    let result = with_step_context(&snapshot, &mut ledger, tick + 1, |cx| run.poll(cx));
+    match result {
+        Poll::Ready(Err(ActionError::Blocked(reason))) => {
+            assert_eq!(reason.as_ref(), "third route failure");
+        }
+        Poll::Ready(Err(other)) => panic!("expected the third route failure, got {other:?}"),
+        Poll::Ready(Ok(_)) => panic!("the unreachable stand must not complete the step"),
+        Poll::Pending => {
+            panic!("three stand-walk failures across the kill-budget end must end the step")
+        }
+    }
+    assert!(
+        run.action.is_none(),
+        "the Quester must not start another fight"
+    );
+}
+
+/// The run is inlined into the compiled step and lives for a whole combat
+/// step. Its step-local counts must fit the layout the machine's own sizes
+/// were measured at; 1176 bytes is the size before the stand-walk count.
+#[test]
+fn combat_run_layout_stays_compact() {
+    assert!(std::mem::size_of::<CombatRun>() <= 1176);
+    println!("CombatRun={}", std::mem::size_of::<CombatRun>());
+}
+
 #[test]
 fn return_to_stand_route_ended_at_network_tile_is_arrival() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
