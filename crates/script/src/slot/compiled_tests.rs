@@ -1739,8 +1739,7 @@ fn gatherer_exclusive_heap_stays_inside_the_eight_kib_target() {
     // Charge preparation on its owning worker and installation on this thread.
     // Polling the preparation broker inside this measurement can free worker-
     // allocated handoff values here, making its thread-local net timing-dependent.
-    let previous_status_log_suppression =
-        compiled::set_heap_test_status_logging_suppressed(true);
+    let previous_status_log_suppression = compiled::set_heap_test_status_logging_suppressed(true);
     let main = allocation_counter::measure(|| {
         let mut slot = SlotScript::new();
         slot.bind_incarnation(93);

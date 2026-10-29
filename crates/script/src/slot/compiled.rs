@@ -21,7 +21,6 @@ pub(super) fn set_heap_test_status_logging_suppressed(suppressed: bool) -> bool 
     STATUS_LOGGING_SUPPRESSED_FOR_HEAP_TEST.with(|current| current.replace(suppressed))
 }
 
-
 pub(super) struct CompiledRun {
     pub script: ScriptOwner,
     pub config: Arc<PreparedConfig>,
