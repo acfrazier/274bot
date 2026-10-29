@@ -769,7 +769,27 @@ fn fruit_chat_pairs_with_count_loss_after_a_k_two_drain() {
 }
 
 #[test]
-fn review_probe_same_edge_fruit_then_newer_poison_line_is_onset() {
+fn fruit_chat_pairs_with_count_loss_in_a_later_non_edge_frame() {
+    // The line of tick 3 can be read at the edge of tick 2, and the inventory of
+    // tick 3 can arrive after PLAYER_INFO(3) in a frame without PLAYER_INFO.
+    let (mut owner, mut snapshot) = poisoned_owner_with_fruit();
+    snapshot.seed_tick(2);
+    chat(&mut snapshot, 1, FRUIT_LINE);
+    owner.observe_frame(&snapshot, &drain(true, true), false);
+
+    snapshot.seed_tick(3);
+    owner.observe_frame(&snapshot, &drain(true, true), false);
+
+    inventory(&mut snapshot, 2, &[]);
+    owner.observe_frame(&snapshot, &drain(false, true), false);
+    assert_eq!(
+        owner.current().unwrap().poison,
+        PoisonState::Immune { until_lower: 2 }
+    );
+}
+
+#[test]
+fn same_edge_fruit_then_newer_poison_line_is_onset() {
     let (mut owner, mut snapshot) = poisoned_owner_with_fruit();
     snapshot.seed_tick(2);
     inventory(&mut snapshot, 2, &[]);
@@ -785,7 +805,7 @@ fn review_probe_same_edge_fruit_then_newer_poison_line_is_onset() {
 }
 
 #[test]
-fn review_probe_split_fruit_chat_then_poison_line_with_count_loss_is_onset() {
+fn split_fruit_chat_then_poison_line_with_count_loss_is_onset() {
     let (mut owner, mut snapshot) = poisoned_owner_with_fruit();
     snapshot.seed_tick(2);
     chat(&mut snapshot, 1, FRUIT_LINE);
@@ -802,20 +822,30 @@ fn review_probe_split_fruit_chat_then_poison_line_with_count_loss_is_onset() {
 }
 
 #[test]
-fn newer_poison_line_clears_waiting_fruit_chat() {
+fn newer_poison_line_cancels_waiting_fruit_chat() {
+    // One edge holds the fruit line (older) and a newer poison line; the count
+    // loss comes on the next edge. The clear must stand, or the loss would cure
+    // the newer onset.
     let (mut owner, mut snapshot) = poisoned_owner_with_fruit();
     snapshot.seed_tick(2);
-    chat(&mut snapshot, 1, FRUIT_LINE);
-    owner.observe_frame(&snapshot, &drain(true, true), false);
-
-    snapshot.seed_tick(3);
     chat_pair(&mut snapshot, (1, FRUIT_LINE), (2, POISON_LINE));
     owner.observe_frame(&snapshot, &drain(true, true), false);
-    assert!(matches!(owner.pending_fruit, PendingFruit::None));
     assert!(matches!(
         owner.current().unwrap().poison,
-        PoisonState::Onset { .. }
+        PoisonState::Onset { since: 2, .. }
     ));
+
+    snapshot.seed_tick(3);
+    inventory(&mut snapshot, 2, &[]);
+    owner.observe_frame(&snapshot, &drain(true, true), false);
+    assert_eq!(
+        owner.current().unwrap().poison,
+        PoisonState::Onset {
+            since: 2,
+            q: Some(11),
+            hit_since_line: false
+        }
+    );
 }
 
 #[test]

@@ -50,8 +50,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 ### Survival
 
 - After a bot eats a Strange fruit, it now counts its poison as cured even
-  when the game shows the eat message one game tick before it removes the
-  fruit. Before, the bot and scripts that read its poison state could still
+  when it sees the eat message and the loss of the fruit in different game
+  ticks. Before, the bot and scripts that read its poison state could still
   see it as poisoned.
 
 ### Navigation
