@@ -376,7 +376,7 @@ fn run_fixture() -> Result<(), String> {
     .map_err(|error| error.to_string())?;
     configure_render_fixture_budgets(budgets.limits()).map_err(|error| error.to_string())?;
     client::render::backend::configure_retained_present_budget(retained)
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| format!("retained-present fixture budget: {error:?}"))?;
     configure_render_fixture_control(control.clone()).map_err(|error| error.to_string())?;
     let args = panel::parse_args(
         std::env::args().skip(1),
