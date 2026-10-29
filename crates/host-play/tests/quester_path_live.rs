@@ -1,4 +1,4 @@
-//! Generic Path live smoke: one Base40 cell for a content quest id.
+//! Generic Path live smoke: one qualification-profile cell for a content quest id.
 //!
 //! This is the permanent form of the PATHS-OVERNIGHT throwaway runner. It
 //! runs the Path id in `QUESTER_PATH` from the embedded release index, or
@@ -61,7 +61,7 @@ mod quester_live;
 
 use api::snapshot::WorldTile;
 use quester_live::{Cell, Mode, PathCell};
-use scenario::quester::{FixtureLoadout, QuestFixtureProfile, QuesterPathSeeds, TestProfile};
+use scenario::quester::{FixtureLoadout, QuestFixtureProfile, QuesterPathSeeds};
 use script::quester::registry;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -72,15 +72,10 @@ use std::time::Duration;
 /// ran about 31 minutes overnight).
 const DEADLINE: Duration = Duration::from_secs(2700);
 
-/// The harness row for an env-driven quest: static id, display and profile,
-/// so the cell needs no allocation to satisfy fixture lifetimes. Refuses
-/// quests the profile table moved off Base40.
+/// Resolve the harness row and use the qualification profile it declares.
+/// This also allows Base60 Paths such as Elemental Workshop.
 fn smoke_row(quest: &str) -> Result<QuestFixtureProfile, String> {
-    let row = scenario::quester::fixture_row(quest)?;
-    if row.profile != TestProfile::Base40 {
-        return Err(format!("{quest} is not a Base40 smoke quest"));
-    }
-    Ok(row)
+    scenario::quester::fixture_row(quest)
 }
 
 /// Select the same embedded or folder-backed source the headed entry uses.

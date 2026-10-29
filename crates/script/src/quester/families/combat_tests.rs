@@ -4173,6 +4173,70 @@ fn killed_report_enters_loot_and_takes_the_observed_drop() {
 }
 
 #[test]
+fn killed_report_waits_for_a_late_drop_before_reengaging() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("elemental_workshop_ore").unwrap();
+    let item_id = item.id;
+    let item_name = item.name.as_deref().unwrap();
+    let stand = api::WorldTile {
+        x: 2693,
+        z: 9906,
+        level: 0,
+    };
+    let mut absent = GameSnapshot::new();
+    absent.seed_ingame(2);
+    absent.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut absent, false);
+    absent.seed_ground_items(Vec::new());
+    let mut appeared = GameSnapshot::new();
+    appeared.seed_ingame(2);
+    appeared.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut appeared, false);
+    appeared.seed_ground_items(vec![ground_item(item_id, item_name, stand, 0)]);
+    let mut run = combat_test_run(
+        imp_target(&selected),
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        vec![LootItem {
+            id: item_id,
+            name: Arc::from(item_name),
+            qty: 1,
+        }],
+    );
+    let mut ledger = None;
+    assert!(
+        with_step_context(&absent, &mut ledger, 12, |cx| {
+            run.on_combat_report(report(CombatEnd::Killed), cx)
+        })
+        .is_pending()
+    );
+    assert!(with_step_context(&absent, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+    assert!(with_step_context(&absent, &mut ledger, 14, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(&run.phase, Phase::Loot));
+    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+
+    assert!(with_step_context(&appeared, &mut ledger, 15, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+    assert!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .any(|entry| matches!(
+                &entry.effect,
+                crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+                    id: Some(id),
+                    action,
+                    ..
+                }) if *id == item_id && action == "Take"
+            )),
+        "the delayed ore should be taken before the combat step re-engages"
+    );
+}
+
+#[test]
 fn same_tick_loot_settle_defers_next_item_without_skipping_it() {
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let first = selected.item_by_alias("white_bead").unwrap();
