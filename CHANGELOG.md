@@ -61,6 +61,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   of polls inside one tick no longer ends a crossing early, and a slow
   poll that misses several ticks no longer extends it.
 
+### Quester
+
+- A quest's fixed-destination walk step now retries a route failure on the
+  next observed game tick, up to three attempts in all. Each attempt starts a
+  fresh route from the player's latest observed position. If all three fail,
+  the step stops with the last route's detail; other failure types still stop
+  the step at once.
+
 ### Scripting
 
 - The script API documentation now states that moving the bot by hand during a

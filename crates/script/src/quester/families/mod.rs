@@ -44,8 +44,7 @@ pub(super) fn manual_movement_message() -> Arc<str> {
     Arc::clone(&REASON)
 }
 
-/// A route refusal is a terminal for the owning step, not permission to
-/// silently re-arm its approach. Park until an explicit owner retry.
+/// Preserve the native walk's typed refusal; `WalkRun` owns bounded retries.
 fn walk_step_evidence(
     receipt: WalkReceipt,
 ) -> Result<api::quest_progress::EvidenceStamp, ActionError> {
@@ -1174,12 +1173,12 @@ fn parse_walk_plan(arg: WalkArgs) -> Result<WalkPlan, CompileError> {
     };
     validate_tile(arg.tile, &arg.source)?;
     let options = arg.options();
-    let cross = arg
+    let cross: Arc<[Arc<str>]> = arg
         .cross
         .into_iter()
-        .map(Arc::from)
+        .map(Arc::<str>::from)
         .collect::<Vec<_>>()
-        .into_boxed_slice();
+        .into();
     Ok(WalkPlan {
         tile: WorldTile {
             x: arg.tile[0],
@@ -1193,50 +1192,112 @@ fn parse_walk_plan(arg: WalkArgs) -> Result<WalkPlan, CompileError> {
     })
 }
 
+/// Match the three-request cap of the combat escape pass.
+const WALK_STEP_MAX_ATTEMPTS: u8 = 3;
+
+#[derive(Clone)]
 struct WalkPlan {
     tile: WorldTile,
     radius: u16,
     options: WalkOptions,
-    cross: Box<[Arc<str>]>,
+    cross: Arc<[Arc<str>]>,
     protect: bool,
+}
+impl WalkPlan {
+    fn request(&self, cx: &StepContext<'_, '_>) -> crate::native::WalkRequest {
+        let mut request = reach::walk_request(self.tile, self.radius, None, cx.required_after);
+        request.cross = self.cross.iter().cloned().collect::<Vec<_>>().into_boxed_slice();
+        request.options = self.options;
+        request.protect = self.protect;
+        request
+    }
 }
 impl StepPlan for WalkPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
-        let mut request = reach::walk_request(self.tile, self.radius, None, cx.required_after);
-        request.cross = self.cross.clone();
-        request.options = self.options;
-        request.protect = self.protect;
-        let handle = cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?;
-        Ok(Box::new(WalkRun {
-            handle,
+        let mut run = WalkRun {
+            plan: self.clone(),
+            handle: None,
+            attempts: 0,
+            retry_after_tick: None,
             warning: None,
-        }))
+        };
+        run.begin_walk(cx)?;
+        Ok(Box::new(run))
     }
 }
 
 struct WalkRun {
-    handle: ActionHandle<Walk>,
+    plan: WalkPlan,
+    handle: Option<ActionHandle<Walk>>,
+    attempts: u8,
+    retry_after_tick: Option<u64>,
     warning: Option<Arc<str>>,
+}
+impl WalkRun {
+    fn begin_walk(&mut self, cx: &mut StepContext<'_, '_>) -> Result<(), ActionError> {
+        let request = self.plan.request(cx);
+        let handle = cx
+            .tick
+            .actions
+            .begin::<Walk>(request, &mut cx.tick.cx)?;
+        self.handle = Some(handle);
+        self.attempts += 1;
+        self.retry_after_tick = None;
+        self.warning = None;
+        Ok(())
+    }
 }
 impl StepRun for WalkRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        while let Some(event) = cx
-            .tick
-            .actions
-            .take_walk_event(&self.handle, &mut cx.tick.cx)
-        {
-            self.warning = Some(event.detail);
-        }
-        match cx.tick.actions.poll(&self.handle, &mut cx.tick.cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(receipt)) => {
-                Poll::Ready(walk_step_evidence(receipt).map(|evidence| StepOutcome {
-                    progress: None,
-                    evidence,
-                    receipt: None,
-                }))
+        let now = cx.tick.cx.evidence().tick;
+        if let Some(failed_tick) = self.retry_after_tick {
+            if now <= failed_tick {
+                return Poll::Pending;
             }
-            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            match crate::native::defer_budget(self.begin_walk(cx)) {
+                Poll::Pending => {
+                    self.retry_after_tick = Some(now);
+                    return Poll::Pending;
+                }
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(())) => {}
+            }
+        }
+
+        let result = {
+            let Some(handle) = self.handle.as_ref() else {
+                return Poll::Pending;
+            };
+            while let Some(event) = cx
+                .tick
+                .actions
+                .take_walk_event(handle, &mut cx.tick.cx)
+            {
+                self.warning = Some(event.detail);
+            }
+            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(receipt)) => walk_step_evidence(receipt).map(|evidence| {
+                    StepOutcome {
+                        progress: None,
+                        evidence,
+                        receipt: None,
+                    }
+                }),
+                Poll::Ready(Err(error)) => Err(error),
+            }
+        };
+        match result {
+            Err(error @ ActionError::Blocked(_)) => {
+                self.handle = None;
+                if self.attempts < WALK_STEP_MAX_ATTEMPTS {
+                    self.retry_after_tick = Some(now);
+                    Poll::Pending
+                } else {
+                    Poll::Ready(Err(error))
+                }
+            }
+            result => Poll::Ready(result),
         }
     }
     fn cancel(&mut self, _actions: &mut NativeActions) {}
