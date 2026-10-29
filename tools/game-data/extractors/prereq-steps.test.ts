@@ -44,6 +44,15 @@ assert.deepEqual(facts.rows[1].crossings.map((entry) => [
     [3506, 3444, 3457, 3444, 3458, 0],
 ]);
 
+// The reverse gate edge starts south of the fixed loc and lands on its tile.
+// A neighboring parallel edge is not proved by that loc's placement citation.
+const misplaced = structuredClone(facts);
+const reverse = misplaced.rows[1].crossings[2];
+reverse.crossing.at.x -= 1;
+reverse.crossing.to.x -= 1;
+reverse.pass.landing.x -= 1;
+assert.throws(() => assertPrereqStepFacts(content, misplaced, quests.rows), /cited map tile/);
+
 const inputs = prereqStepInputs(content, facts).map((input) => input.path);
 assert.deepEqual(inputs, [...inputs].sort());
 for (const source of [

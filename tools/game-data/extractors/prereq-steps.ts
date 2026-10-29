@@ -265,7 +265,12 @@ function verifyPlacements(content: string, rows: PrereqRowWire[]) {
                 const placement = parseJm2LocPlacements(`==== LOC ====\n${mapText[line - 1]}`, new Set([crossing.crossing.loc_id]))[0];
                 return placement ? [worldFromMapsquare(mx, mz, placement.lx, placement.lz, placement.plane)] : [];
             });
-            if (placements.length !== 1 || placements[0].x !== crossing.crossing.at.x || placements[0].z !== crossing.crossing.at.z || placements[0].plane !== crossing.crossing.at.level) {
+            // A directed door crossing starts on either side of its fixed loc.
+            // The adjacent-door check below still requires these two endpoints.
+            const endpoints = crossing.crossing.kind === 'door'
+                ? [crossing.crossing.at, crossing.crossing.to] : [crossing.crossing.at];
+            if (placements.length !== 1 || !endpoints.some((tile) =>
+                placements[0].x === tile.x && placements[0].z === tile.z && placements[0].plane === tile.level)) {
                 throw new Error(`prereq_steps: ${row.id} crossing ${crossing.crossing.loc_id} does not match its cited map tile`);
             }
             const jumps = [...citedText(content, crossing.pass.source).matchAll(/\bp_telejump\((\d+)_(\d+)_(\d+)_(\d+)_(\d+)\)/g)];
