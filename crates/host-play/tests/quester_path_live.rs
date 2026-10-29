@@ -474,7 +474,13 @@ fn prior_started_steps_settled(
             "begin" => {
                 let key = (event.stage.as_str(), event.step_id.as_str());
                 if steps
-                    .insert(key, StepSettlement { begin: event, settled: false })
+                    .insert(
+                        key,
+                        StepSettlement {
+                            begin: event,
+                            settled: false,
+                        },
+                    )
                     .is_some()
                 {
                     return None;
@@ -1236,9 +1242,7 @@ mod campaign_gap_tests {
             messages
                 .iter()
                 .enumerate()
-                .map(|(index, message)| {
-                    (index, parse_root_step_trace(QUEST, message).unwrap())
-                })
+                .map(|(index, message)| (index, parse_root_step_trace(QUEST, message).unwrap()))
                 .collect::<Vec<_>>()
         };
         let ordered = events(&[begin_0, settle_1, begin_1, settle_peer]);
