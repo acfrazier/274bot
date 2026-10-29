@@ -32,11 +32,11 @@ LIVE=1 cargo test -p e2e -- --ignored
 ```
 
 Cells behind Cargo features do not build without them. `quester_dev_paths_live`,
-`quester_families_live`, `quester_path_live`, `quester_sheep_live` and
-`cook_bank_loop_live` need `--features "live-harness test-support"`;
-`bank_choice_live`, `quester_queue_live`, `quester_squire_live` and
-`quester_vampire_live` need `live-harness`; `script_api_live` needs
-`test-support`; `debug_panel_live` needs `debug-catalog`;
+`quester_families_live`, `quester_path_live`, `quester_sheep_live`,
+`quester_queue_live` and `cook_bank_loop_live` need
+`--features "live-harness test-support"`; `bank_choice_live`,
+`quester_squire_live` and `quester_vampire_live` need `live-harness`;
+`script_api_live` needs `test-support`; `debug_panel_live` needs `debug-catalog`;
 `catalog_boundary_live` and `world_boundary_live` need `memory-profile`. The
 `--lib` cells (`walk_guard_live_tests`, `quester_journal_live_tests` and the
 other `*_live*` modules) run under `cargo test`. Each cell file's header lists
