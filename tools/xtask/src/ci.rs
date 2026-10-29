@@ -485,9 +485,9 @@ fn configure_common_environment(process: &mut Command) {
         Ok("nav-reference-v17") | Err(_) => Some(
             "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
         ),
-        _ => Some(
-            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
-        ),
+        _ => {
+            Some("/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack")
+        }
     };
     let pack = env::var("NAV_PACK")
         .or_else(|_| env::var("WORLD_NAV_PACK"))
@@ -841,7 +841,8 @@ fn inspect_workflow(contents: &str) -> Vec<String> {
     }
     for step in step_specs
         .iter()
-        .filter(|step| !step.name.starts_with("test-")) {
+        .filter(|step| !step.name.starts_with("test-"))
+    {
         if !called.contains(step.name.as_str()) {
             problems.push(format!("CI does not call cargo xtask step `{}`", step.name));
         }
