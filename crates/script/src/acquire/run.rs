@@ -476,7 +476,7 @@ impl AcquireRun {
                             ))
                         })?;
                     let handle = tick.actions.begin::<OneOp>(
-                        OneOpArgs::wear(Arc::from(name), id, action),
+                        OneOpArgs::wear(Arc::from(name), id, row.slot, action),
                         &mut tick.cx,
                     )?;
                     self.active = Active::Wear(handle);

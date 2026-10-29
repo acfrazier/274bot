@@ -49,12 +49,12 @@ impl OneOpArgs {
         }
     }
 
-    pub fn wear(name: Arc<str>, item_id: i32, action: &str) -> Self {
+    pub fn wear(name: Arc<str>, item_id: i32, item_slot: i32, action: &str) -> Self {
         Self {
             request: InteractReq::Held {
                 name: name.to_string(),
                 action: action.into(),
-                slot: None,
+                slot: Some(item_slot),
                 target_item_id: Some(item_id),
             },
             kind: OneOpKind::Wear { item_id },

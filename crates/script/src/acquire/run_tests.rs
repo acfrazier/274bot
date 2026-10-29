@@ -766,7 +766,16 @@ fn wear_only_run_waits_for_worn_evidence_without_walk_or_bank_effects() {
 
     assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 1, OpenGate::Open).is_pending());
     assert!(
-        matches!(first_effect(&ledger), HostEffect::Interaction(crate::shim::InteractReq::Held { action, .. }) if action.as_str() == "Wield")
+        matches!(
+            first_effect(&ledger),
+            HostEffect::Interaction(crate::shim::InteractReq::Held {
+                action,
+                slot: Some(0),
+                target_item_id: Some(ITEM),
+                ..
+            }) if action.as_str() == "Wield"
+        ),
+        "wear must preserve the exact observed inventory id/slot for host resolution"
     );
     assert!(!ledger
         .as_ref()
