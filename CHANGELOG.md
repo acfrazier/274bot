@@ -96,6 +96,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   fight ends `api.combat.fight` as `aborted` with reason `user-input`. The host
   has settled it that way since 0.2.4; the declarations and pages still
   described an `interrupted` result.
+- Fare recovery chooses a free tile next to Luthas that the bot can reach,
+  using the shortest route and the closest tile as a tie-breaker.
+  If Luthas is not in view, the bot first walks to where he works, then chooses
+  a free tile next to him.
+  The bot makes up to three attempts each time the bot goes to talk to Luthas.
+  The bot logs each failed attempt and the final failure.
 
 - A saved setting now takes effect only after its save has reached the disk.
   Before, the panel and the terminal app applied a checkbox at once and kept it

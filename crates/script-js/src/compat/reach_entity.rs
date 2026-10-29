@@ -28,7 +28,7 @@ const DOOR_ATTEMPTS: u32 = 8;
 /// Frozen `PROBE_RADIUS`.
 const PROBE_RADIUS: i32 = 10;
 /// Frozen `REACH_BFS_STEPS`.
-const BFS_STEPS: u32 = 400;
+pub(crate) const BFS_STEPS: u32 = 400;
 /// Frozen `towardDest` slack.
 const TOWARD_SLACK: i32 = 4;
 /// Door-open settle wait.
@@ -1215,14 +1215,25 @@ pub(crate) struct NpcReach {
 
 /// The nearest posted `npc` row with a talk op (frozen
 /// `Npcs.query().name(n).where(talkOp !== null).nearest()`).
-struct TalkRow {
+pub(crate) struct TalkRow {
     name: String,
     action: String,
     index: i32,
     tile: Tile,
+    pub(crate) reachable_adj: bool,
 }
 
-fn talk_row(npc: &str) -> Option<TalkRow> {
+impl TalkRow {
+    pub(crate) fn world_tile(&self) -> WorldTile {
+        self.tile.world()
+    }
+}
+
+fn npc_name_matches(name: Option<&str>, want: &str) -> bool {
+    name.is_some_and(|name| name.trim().eq_ignore_ascii_case(want))
+}
+
+pub(crate) fn talk_row(npc: &str) -> Option<TalkRow> {
     let want = npc.trim();
     if want.is_empty() {
         return None;
@@ -1230,11 +1241,7 @@ fn talk_row(npc: &str) -> Option<TalkRow> {
     observed::with(|scene| {
         let rows = scene.since_login().npcs()?;
         rows.iter()
-            .filter(|row| {
-                row.name
-                    .as_deref()
-                    .is_some_and(|name| name.trim().eq_ignore_ascii_case(want))
-            })
+            .filter(|row| npc_name_matches(row.name.as_deref(), want))
             .filter_map(|row| crate::dialog::talk_op(&row.actions).map(|op| (row, op)))
             .min_by_key(|(row, _)| row.distance)
             .map(|(row, op)| TalkRow {
@@ -1246,13 +1253,18 @@ fn talk_row(npc: &str) -> Option<TalkRow> {
                     z: row.z,
                     level: row.level,
                 },
+                reachable_adj: row.reachable_adj,
             })
     })
 }
 
+/// The nearest posted tile for an NPC with a talk operation.
+pub(crate) fn nearest_npc_tile(npc: &str) -> Option<WorldTile> {
+    talk_row(npc).map(|row| row.world_tile())
+}
 /// Whether a posted `npc` row has a talk op (frozen `openDialogue`'s `find()`).
 pub(crate) fn npc_talkable(npc: &str) -> bool {
-    talk_row(npc).is_some()
+    nearest_npc_tile(npc).is_some()
 }
 
 /// The posted chat modal id and Continue flag.
