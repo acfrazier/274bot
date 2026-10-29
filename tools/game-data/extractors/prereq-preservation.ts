@@ -370,8 +370,10 @@ function switchRanges(block: Rs2Block): SwitchRange[] {
 
 function switchStatements(block: Rs2Block, variable: string, constants: ReadonlyMap<string, number>, ranges: readonly SwitchRange[]): Statement[] {
     const out: Statement[] = [];
-    const allSwitchLines = new Set(ranges.flatMap((range) => block.body.slice(range.start, range.end + 1).map((line) => line.line)));
     for (const range of ranges) {
+        const nestedSwitchLines = new Set(ranges
+            .filter((nested) => nested.start > range.start && nested.end < range.end)
+            .flatMap((nested) => block.body.slice(nested.start, nested.end + 1).map((line) => line.line)));
         let depth = 0;
         const cases: { header: string; body: { line: number; text: string }[] }[] = [];
         let active: { header: string; body: { line: number; text: string }[] } | null = null;
@@ -418,9 +420,9 @@ function switchStatements(block: Rs2Block, variable: string, constants: Readonly
             const nodes = parseBody(entry.body);
             const prior = priorReturns(nodes);
             walkStatements(nodes, (statement, path) => {
-                if (allSwitchLines.has(statement.line)) return;
+                if (nestedSwitchLines.has(statement.line)) return;
                 const guards = [...(guard ? [guard] : []), ...path.map((part: PathCond) => ({ expression: part.cond, polarity: part.polarity }))];
-                for (const previous of prior) if (previous.through < statement.line) guards.push({ expression: previous.condition, polarity: previous.polarity });
+                for (const previous of prior) if (previous.through < statement.line && statement.line <= previous.within) guards.push({ expression: previous.condition, polarity: previous.polarity });
                 out.push({ text: statement.text, line: statement.line, guards });
             });
         }
