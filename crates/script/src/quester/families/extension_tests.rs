@@ -48,6 +48,7 @@ fn strict_line_rules_select_current_page_before_fixed_and_preferred_choices() {
                         choose: Arc::from("Carlem Aber Camerinthum Purchai Gabindo"),
                     }]),
                     strict: true,
+                    answer_once: false,
                     chat_only: false,
                     gap_ticks: None,
                 }),
@@ -358,6 +359,7 @@ fn shipped_talk_options(json: &str, step: &str) -> dialogue::DialogueOptions {
         choose: args.choose,
         line_rules: args.line_rules,
         strict: args.strict,
+        answer_once: args.answer_once,
         gap_ticks: args.gap_ticks,
     })
     .unwrap()

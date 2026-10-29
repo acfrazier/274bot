@@ -61,6 +61,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   of polls inside one tick no longer ends a crossing early, and a slow
   poll that misses several ticks no longer extends it.
 
+### Quester
+
+- Quest guides can now answer a question on a repeated menu once and then leave. `answer_once: true` skips a preference that already answered a page in the same conversation, so a guide such as Nature Spirit's Filliman Tarlock conversation no longer repeats the question until it gives up.
+
 ### Scripting
 
 - The script API documentation now states that moving the bot by hand during a

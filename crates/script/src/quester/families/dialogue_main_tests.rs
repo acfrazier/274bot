@@ -1302,3 +1302,298 @@ fn dialogue_gap_rearms_share_one_per_tick_marker_across_evidence_and_animation()
         Poll::Ready(Ok(DialogueOutcome::Completed))
     ));
 }
+
+/// One chat page with option rows. `continue_id` >= 0 makes it a Continue
+/// page; -1 makes it a menu page.
+fn menu_page(root: i32, texts: &[&str], options: &[&str], continue_id: i32) -> GameSnapshot {
+    let mut page = snapshot();
+    page.seed_chat_modal(root, texts.iter().map(|text| (*text).to_owned()).collect());
+    page.seed_chat_options(
+        options
+            .iter()
+            .enumerate()
+            .map(|(index, text)| api::snapshot::ChatOptionView {
+                component_id: root + 1 + index as i32,
+                text: (*text).to_owned(),
+            })
+            .collect(),
+        continue_id,
+    );
+    page
+}
+
+fn continuation_with(options: DialogueOptions) -> DialogueArgs {
+    DialogueArgs {
+        target: DialogueTarget::Continuation,
+        options,
+    }
+}
+
+fn answer_options(prefer: &[&str], answer_once: bool, strict: bool) -> DialogueOptions {
+    DialogueOptions {
+        prefer: prefer.iter().map(|fragment| Arc::from(*fragment)).collect(),
+        answer_once,
+        strict,
+        ..DialogueOptions::default()
+    }
+}
+
+fn answers(ledger: &Option<Box<ledger::Ledger>>) -> Vec<i32> {
+    ledger
+        .as_ref()
+        .expect("dialogue test ledger")
+        .outbox
+        .iter()
+        .filter_map(|entry| match &entry.effect {
+            HostEffect::Interaction(InteractReq::Answer { option }) => Some(*option),
+            _ => None,
+        })
+        .collect()
+}
+
+const FILLIMAN_MENU: [&str; 4] = [
+    "I'm wearing an amulet of ghost speak!",
+    "How long have you been a ghost?",
+    "What's it like being a ghost?",
+    "Ok, thanks.",
+];
+
+/// Filliman's shape (`filliman.rs2:14,255-269,233-234`): every question
+/// reopens the same four-option menu, and "Ok, thanks." leaves. Returns the
+/// answers sent and whether the conversation completed.
+fn drive_filliman(answer_once: bool) -> (Vec<i32>, bool) {
+    let first = menu_page(100, &["Oh, I understand you!"], &FILLIMAN_MENU, -1);
+    let mut ledger = None;
+    let handle = with_tick(&first, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(
+                continuation_with(answer_options(
+                    &[FILLIMAN_MENU[1], FILLIMAN_MENU[3]],
+                    answer_once,
+                    false,
+                )),
+                &mut tick.cx,
+            )
+            .unwrap()
+    });
+    let poll = |page: &GameSnapshot, tick: u64, ledger: &mut Option<Box<ledger::Ledger>>| {
+        with_tick(page, ledger, tick, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+    };
+    assert!(poll(&first, 2, &mut ledger).is_pending());
+    assert_eq!(answers(&ledger), [2]);
+
+    let question = menu_page(100, &["How long have you been a ghost?"], &[], 101);
+    assert!(poll(&question, 3, &mut ledger).is_pending());
+    assert!(poll(&question, 4, &mut ledger).is_pending());
+    let reply = menu_page(
+        100,
+        &["What?! Don't be preposterous! I'm not a ghost!"],
+        &[],
+        101,
+    );
+    assert!(poll(&reply, 5, &mut ledger).is_pending());
+    let second_menu = menu_page(
+        100,
+        &["What?! Don't be preposterous! I'm not a ghost!"],
+        &FILLIMAN_MENU,
+        -1,
+    );
+    assert!(poll(&second_menu, 6, &mut ledger).is_pending());
+
+    let thanks = menu_page(100, &["Ok, thanks."], &[], 101);
+    assert!(poll(&thanks, 7, &mut ledger).is_pending());
+    assert!(poll(&thanks, 8, &mut ledger).is_pending());
+    let closed = menu_page(-1, &[], &[], -1);
+    assert!(poll(&closed, 9, &mut ledger).is_pending());
+    let completed = matches!(
+        poll(&closed, 10, &mut ledger),
+        Poll::Ready(Ok(DialogueOutcome::Completed))
+    );
+    (answers(&ledger), completed)
+}
+
+#[test]
+fn answer_once_answers_a_repeated_menu_question_once_then_leaves() {
+    let (answers, completed) = drive_filliman(true);
+    assert_eq!(answers, [2, 4]);
+    assert!(completed, "the conversation leaves after Ok, thanks.");
+}
+
+#[test]
+fn answer_once_false_repeats_the_first_preferred_answer() {
+    let (answers, completed) = drive_filliman(false);
+    assert_eq!(
+        answers,
+        [2, 2],
+        "without answer_once the first preference answers every menu"
+    );
+    assert!(completed);
+}
+
+#[test]
+fn answer_once_marks_one_prefer_entry_per_page_even_for_one_option_text() {
+    let first = menu_page(100, &["Choose."], &["Yes", "No"], -1);
+    let mut ledger = None;
+    let handle = with_tick(&first, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(
+                continuation_with(answer_options(&["Yes", "Yes"], true, false)),
+                &mut tick.cx,
+            )
+            .unwrap()
+    });
+    assert!(with_tick(&first, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    let second = menu_page(100, &["Choose again."], &["Yes", "No"], -1);
+    assert!(with_tick(&second, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(with_tick(&second, &mut ledger, 4, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(
+        answers(&ledger),
+        [1, 1],
+        "the second entry answers with the same option, not the fallback"
+    );
+}
+
+#[test]
+fn answer_once_skips_a_used_entry_and_uses_an_unused_entry_on_a_changed_menu() {
+    let first = menu_page(100, &["Choose."], &["Buy", "Leave"], -1);
+    let mut ledger = None;
+    let handle = with_tick(&first, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(
+                continuation_with(answer_options(&["Buy", "Sell"], true, false)),
+                &mut tick.cx,
+            )
+            .unwrap()
+    });
+    assert!(with_tick(&first, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    let second = menu_page(100, &["Choose again."], &["Sell", "Leave"], -1);
+    assert!(with_tick(&second, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(with_tick(&second, &mut ledger, 4, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(answers(&ledger), [1, 1]);
+}
+
+#[test]
+fn answer_once_strict_fails_when_every_matching_entry_was_used() {
+    let first = menu_page(100, &["Choose."], &["Yes", "No"], -1);
+    let mut ledger = None;
+    let handle = with_tick(&first, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(
+                continuation_with(answer_options(&["Yes"], true, true)),
+                &mut tick.cx,
+            )
+            .unwrap()
+    });
+    assert!(with_tick(&first, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(answers(&ledger), [1]);
+    let second = menu_page(100, &["Choose again."], &["Yes", "No"], -1);
+    assert!(with_tick(&second, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    let sent_before = ledger.as_ref().unwrap().outbox.len();
+    assert!(matches!(
+        with_tick(&second, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(DialogueOutcome::Failed))
+    ));
+    assert_eq!(answers(&ledger), [1]);
+    assert_eq!(
+        ledger.as_ref().unwrap().outbox.len(),
+        sent_before,
+        "a failed answer rule sends nothing"
+    );
+}
+
+#[test]
+fn answer_once_line_rules_take_precedence_without_consuming_a_prefer_entry() {
+    let first = menu_page(
+        100,
+        &["What is the correct incantation?"],
+        &["Rule answer", "Other"],
+        -1,
+    );
+    let mut ledger = None;
+    let handle = with_tick(&first, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(
+                continuation_with(DialogueOptions {
+                    prefer: Arc::from([Arc::from("Rule answer")]),
+                    line_rules: Arc::from([super::dialogue::LineRule {
+                        when_line: Arc::from("incantation"),
+                        choose: Arc::from("Other"),
+                    }]),
+                    answer_once: true,
+                    ..DialogueOptions::default()
+                }),
+                &mut tick.cx,
+            )
+            .unwrap()
+    });
+    assert!(with_tick(&first, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(answers(&ledger), [2], "the line rule answers first");
+    let second = menu_page(100, &["Choose an option."], &["Rule answer", "Other"], -1);
+    assert!(with_tick(&second, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(with_tick(&second, &mut ledger, 4, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(
+        answers(&ledger),
+        [2, 1],
+        "the prefer entry stays unused after the line rule answers"
+    );
+}
+
+#[test]
+fn answer_once_rejects_more_prefer_entries_than_the_mask_width() {
+    let document = |answer_once: bool| super::DialogueOptionsDocument {
+        prefer: (0..=super::dialogue::ANSWER_ONCE_PREFER_MAX)
+            .map(|index| format!("option {index}"))
+            .collect(),
+        choose: None,
+        line_rules: Vec::new(),
+        strict: false,
+        answer_once,
+        gap_ticks: None,
+    };
+    let error = match super::compile_dialogue_options(document(true)) {
+        Err(error) => error,
+        Ok(_) => panic!("answer_once must cap prefer at the mask width"),
+    };
+    assert_eq!(error.code.as_ref(), "invalid-dialogue-options");
+    assert!(
+        super::compile_dialogue_options(document(false)).is_ok(),
+        "without answer_once the preference list keeps its existing width"
+    );
+}
