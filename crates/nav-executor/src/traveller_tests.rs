@@ -1053,9 +1053,7 @@ fn long_bent_walk_aims_at_short_path_hops() {
 
     assert_eq!(tiles.len() - 1, 63, "the bent leg has 63 steps");
     let last = tiles[tiles.len() - 1];
-    let chebyshev_distance = (last.x - tiles[0].x)
-        .abs()
-        .max((last.z - tiles[0].z).abs());
+    let chebyshev_distance = (last.x - tiles[0].x).abs().max((last.z - tiles[0].z).abs());
     assert!(chebyshev_distance <= 17, "the leg ends within 17 tiles");
 
     let mut base = 0;
