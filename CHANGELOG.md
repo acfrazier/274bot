@@ -63,6 +63,29 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Scripting
 
+- A script that waits for its bank no longer waits for an extra game tick. When
+  the bank answers a script's request, the script's next step now runs at the
+  tick that saw the answer. That step may publish the next prompt or the end
+  of the request in the same tick. Before, the answer reached the script only
+  at the next game tick or the next change in the game, so a script that
+  tests items one by one in `Bank.depositAllMatching` could handle only about
+  one item per tick, or stall when the game stood still. Only the script
+  that waits for the answer runs: the wake dispatches no other hook, resumes
+  no other waiting script step and spends none of the tick's interaction
+  budget. This closes the known issue "`Bank.depositAllMatching` checks about
+  one item per game tick".
+
+- Grinch's bank trip no longer waits for fixed amounts of time. The bank
+  steps of the compiled scripts (open, withdraw, deposit, select, close) now
+  end a wait only by counting game ticks that the bot has seen. Before, a
+  wait also needed a minimum of real time to pass, so a slow or paused
+  computer could hold a wait open after its tick count was reached. The
+  bounds are the former ones in whole ticks (8 ticks for a transfer, 2 for
+  the deposit view, 9 for the select fallback). The
+  JavaScript `Bank` API still keeps the millisecond minimum that its frozen
+  documentation states for its own waits. This closes the known issue
+  "Grinch's bank trip still waits up to a fixed time".
+
 - The script API documentation now states that moving the bot by hand during a
   fight ends `api.combat.fight` as `aborted` with reason `user-input`. The host
   has settled it that way since 0.2.4; the declarations and pages still
