@@ -1,0 +1,191 @@
+// 289 source handlers. Paths and line ranges are recorded in obstacle tests.
+[oploc1,death_fullstyle]
+def_coord $start_coord = loc_coord;
+def_int $mod = 1;
+def_int $dir = ^exact_north;
+def_coord $end_coord = movecoord($start_coord, 0, 0, 1);
+if(coordz(coord) > coordz(loc_coord)) {
+    $start_coord = movecoord(loc_coord, 0, 0, 1);
+    $mod = -1;
+    $dir = ^exact_south;
+    $end_coord = movecoord(loc_coord, 0, 0, 0);
+}
+def_coord $walk_coord = movecoord($end_coord, 0, 0, $mod);
+p_teleport($start_coord);
+p_delay(0);
+~agility_exactmove(human_walk_style, 30, 2, $start_coord, $end_coord, 30, 94, $dir, true);
+p_teleport($walk_coord);
+
+[oploc1,troll_climbingrocks]
+if(%troll_quest < ^troll_started) {
+    mes("That looks dangerous. I'll need a good reason before I venture that way.");
+    return;
+}
+if(stat(agility) < 15) {
+    mes("You need an Agility level of at least 15 to attempt this.");
+    return;
+}
+if(inv_total(worn, death_climbingboots) = 0 & coordz(coord) = 3611) {
+    mes("You'll need some climbing boots to go that way.");
+    return;
+}
+@rockslide_obstacle;
+
+[label,rockslide_obstacle]
+def_int $dir;
+def_coord $end;
+if(coordz(coord) > coordz(loc_coord)) {
+    $dir = ^exact_south;
+    $end = movecoord(loc_coord, 0, 0, -1);
+} else if(coordz(coord) < coordz(loc_coord)) {
+    $dir = ^exact_north;
+    $end = movecoord(loc_coord, 0, 0, 1);
+} else if(coordx(coord) > coordx(loc_coord)) {
+    $dir = ^exact_west;
+    $end = movecoord(loc_coord, -1, 0, 0);
+} else {
+    $dir = ^exact_east;
+    $end = movecoord(loc_coord, 1, 0, 0);
+}
+p_arrivedelay;
+mes("You climb onto the rock...");
+facesquare(loc_coord);
+if(stat_random(agility, 160, 300) = false) {
+    p_delay(0);
+    anim(human_stumble_back, 0);
+    mes("...but you slip back down.");
+    ~damage_self(3);
+    return;
+}
+mes("...and step down the other side.");
+sound_synth(climbing_loop, 3, 4);
+~agility_exactmove(human_walk_style, 0, 2, coord, $end, 0, 60, $dir, true);
+
+[oploc1,troll_climbingrocks_top]
+if(stat(agility) < 15) {
+    mes("You need an Agility level of at least 15 to attempt this.");
+    return;
+}
+def_int $dx = 3;
+def_int $dir = ^exact_west;
+if(coordx(coord) > coordx(loc_coord)) {
+    $dx = -3;
+    $dir = ^exact_east;
+}
+p_delay(0);
+~agility_exactmove(human_climbing_down, 15, 0, coord, movecoord(coord, $dx, 0, 0), 0, 90, $dir, false);
+if(stat_random(agility, 170, 253) = false) {
+    sound_synth(stumble_loop, 10, 0);
+    anim(human_climbing_fall, 0);
+    p_delay(1);
+    anim(null, 0);
+    mes("You fall and hurt yourself.");
+    say("Ouch");
+    stat_advance(agility, 10);
+    ~damage_self(calc(((stat(hitpoints) * 5) / 100) + 1));
+    return;
+}
+p_delay(1);
+stat_advance(agility, 10);
+anim(null, 0);
+
+[oploc1,troll_climbingrocks_bottom]
+if(stat(agility) < 15) {
+    mes("You need an Agility level of at least 15 to attempt this.");
+    return;
+}
+def_int $dx = -1;
+def_int $dir = ^exact_west;
+if(coordx(coord) < coordx(loc_coord)) {
+    $dx = 1;
+    $dir = ^exact_east;
+}
+p_delay(0);
+~set_forcemove_bas(human_climbing);
+~forcemove(movecoord(coord, multiply(2, $dx), 0, 0));
+if(stat_random(agility, 170, 253) = false) {
+    sound_synth(stumble_loop, 10, 0);
+    ~agility_exactmove(human_climbing_fall, 0, 1, coord, movecoord(coord, multiply(-2, $dx), 0, 0), 0, 50, $dir, false);
+    anim(null, 0);
+    ~update_bas;
+    mes("You fall and hurt yourself.");
+    say("Ouch");
+    stat_advance(agility, 10);
+    ~damage_self(calc(((stat(hitpoints) * 5) / 100) + 1));
+    return;
+}
+~forcemove(movecoord(coord, $dx, 0, 0));
+~update_bas;
+stat_advance(agility, 10);
+
+[oploc1,ardougnewalldoor_left] @west_ardougne_open_city_doors;
+[oploc1,ardougnewalldoor_right] @west_ardougne_open_city_doors;
+[label,west_ardougne_open_city_doors]
+mes("You pull on the large wooden doors...");
+if(%biohazard = ^biohazard_complete) {
+    def_coord $loc_coord = loc_coord;
+    mes("...You open them and walk through.");
+    if(loc_find(0_39_51_62_36, ardougnewalldoor_right) = true) {
+        loc_add(loc_coord, ardougnewalldoor_left, 2, loc_shape, 5);
+    }
+    if(loc_find(0_39_51_61_36, ardougnewalldoor_left) = true) {
+        loc_add(loc_coord, ardougnewalldoor_right, 0, loc_shape, 5);
+    }
+    if(loc_find(0_39_51_62_35, ardougnewalldoor_left) = true) {
+        loc_add(loc_coord, ardougnewalldoor_right, 2, loc_shape, 5);
+    }
+    if(loc_find(0_39_51_61_35, ardougnewalldoor_right) = true) {
+        loc_add(loc_coord, ardougnewalldoor_left, 0, loc_shape, 5);
+    }
+    sound_synth(coffin_open, 1, 0);
+    if(coordx(coord) < coordx(loc_coord)) {
+        ~forcemove(movecoord($loc_coord, 2, 0, 0));
+    } else {
+        ~forcemove(movecoord($loc_coord, -2, 0, 0));
+    }
+    return;
+}
+p_delay(1);
+mes("...But they will not open.");
+
+[oploc1,loc_2299]
+if(stat(agility) < 18) {
+    ~mesbox("You need an Agility level of 18 to climb this wall.");
+    return;
+}
+mes("You climb up the wall...");
+mes("...and squeeze in through the window.");
+~agility_climb_up(310, 1_39_48_52_45);
+
+[oploc1,watchladderup]
+if(%itwatchtower >= ^itwatchtower_complete) {
+    ~climb_ladder(2_45_73_53_40, true);
+    return;
+}
+~climb_ladder(2_39_48_53_40, true);
+
+[oploc1,_ball_irongate]
+if(inv_total(worn, leather_gloves) = 0) {
+    queue(damage_player, 0, calc((stat(hitpoints) / 10) + 1));
+    ~mesbox("As your bare hands touch the gate you feel a shock.");
+    return;
+}
+def_boolean $entering = ~check_axis(coord, loc_coord, loc_angle);
+def_int $x;
+def_int $z;
+def_locshape $shape = loc_shape;
+def_coord $loc_coord = loc_coord;
+def_int $next_angle = calc(loc_angle - 1);
+def_loc $next_loc = loc_param(next_loc_stage);
+$x, $z = ~door_open(loc_angle, loc_shape);
+sound_synth(iron_door_open, 1, 0);
+def_coord $dest = $loc_coord;
+if ($entering = true) {
+    $dest = movecoord($loc_coord, $x, 0, $z);
+}
+if($next_loc = loc_1563) {
+    $next_angle = calc(loc_angle + 1);
+}
+p_teleport($dest);
+loc_change(inviswall, 3);
+loc_add(movecoord($loc_coord, 1, 0, 0), $next_loc, $next_angle, $shape, 3);
