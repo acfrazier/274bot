@@ -59,6 +59,10 @@ struct Witness {
     resumed_step: Option<String>,
 }
 
+fn new_witness() -> Arc<Mutex<Witness>> {
+    Arc::new(Mutex::new(Witness::default()))
+}
+
 fn status_text<'a>(status: Option<&'a ScriptStatus>, key: &str) -> Option<&'a str> {
     status?.fields.iter().find_map(|field| match &field.value {
         StatusValue::Text(value) if field.key == key => Some(value.as_ref()),
@@ -238,7 +242,7 @@ fn add_poison_chest_steps(scenario: &mut scenario::Scenario) {
             scenario::Step {
                 name: "use the account-owned sinister key on the real chest",
                 kind: scenario::StepKind::Perform {
-                    send: Box::new(trigger_twisted_chest),
+                    send: Box::new(|client, snapshot| trigger_twisted_chest(client, snapshot)),
                 },
                 wait: scenario::Wait {
                     arm: scenario::Proof::FreshChat {
