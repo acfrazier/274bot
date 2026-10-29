@@ -17,7 +17,9 @@
     "loadouts": {},
     "areas": {
       "house": {"boxes": [[2901,3468,2907,3476,0]], "source":"content/maps/m45_54.jm2:5146-5157,5185,5193,5232,5241,5264,5274,5301,5309,5330,5336,5361-5369; outer walls"},
-      "garden_entry": {"boxes": [[2901,3465,2901,3465,0]], "source":"content/maps/m45_54.jm2:5145; content/scripts/quests/quest_ball/scripts/quest_ball.rs2:125; back-door enter force-move landing"}
+      "garden_entry": {"boxes": [[2901,3465,2901,3465,0]], "source":"content/maps/m45_54.jm2:5145; content/scripts/quests/quest_ball/scripts/quest_ball.rs2:125; back-door enter force-move landing"},
+      "cellar_west": {"boxes": [[2898,9870,2902,9877,0]], "source":"content/maps/m45_154.jm2:5968-5969,5681-5688,5735,5744,5962; walls 1658 at x=2897 angle 2, z=9869 angle 1, z=9878 angle 3; wall 997 at x=2902 angle 2; GameMap.ts:27,225-227 and CollisionEngine.ts changeWallStraight: floor and wall flags; content/scripts/quests/quest_ball/scripts/quest_ball.rs2:48-55"},
+      "cellar_gate_east": {"boxes": [[2903,9873,2903,9873,0]], "source":"content/maps/m45_154.jm2:5968; content/scripts/quests/quest_ball/scripts/quest_ball.rs2:46-50; content/scripts/doors/scripts/door_procs.rs2:6"}
     },
     "tools": ["obj:witches_doorkey","obj:magnet"],
     "owns_inventory": true
@@ -60,7 +62,7 @@
         {"id":"open-cellar-gate","kind":"interact","version":1,"advances":false,
          "comment":"content/scripts/quests/quest_ball/scripts/quest_ball.rs2:33-58; content/maps/m45_154.jm2:5968-5969",
          "args":{"target":{"loc":"shockgater"},"op":"Open","anchor":{"tile":[2902,9873,0],"source":"content/maps/m45_154.jm2:5968"},"radius":5},
-         "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[2900,9873,0],"radius":1}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2900,9873,0],"radius":1}}}},
+         "skip_if":{"Fact":{"kind":"in_area","version":1,"args":{"area":"cellar_west"}}},"settle":{"Fact":{"kind":"in_area","version":1,"args":{"area":"cellar_west"}}}},
         {"id":"open-cupboard","kind":"interact","version":1,"advances":false,
          "comment":"content/scripts/quests/quest_ball/scripts/quest_ball.rs2:60-63; content/maps/m45_154.jm2:5739",
          "args":{"target":{"loc":"magnetcbshut"},"op":"Open","anchor":{"tile":[2898,9873,0],"source":"content/maps/m45_154.jm2:5739"},"radius":6},
@@ -71,6 +73,10 @@
          "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"magnet"}}},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"ball","any":["ball:2"]}}}}
       ]},
       {"stage":"ball:2","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"leave-cellar","kind":"interact","version":1,"advances":false,
+         "comment":"content/scripts/quests/quest_ball/scripts/quest_ball.rs2:33-58; content/maps/m45_154.jm2:5968",
+         "args":{"target":{"loc":"shockgater"},"op":"Open","anchor":{"tile":[2902,9873,0],"source":"content/maps/m45_154.jm2:5968"},"radius":5},
+         "skip_if":{"Not":{"Fact":{"kind":"in_area","version":1,"args":{"area":"cellar_west"}}}},"settle":{"Fact":{"kind":"in_area","version":1,"args":{"area":"cellar_gate_east"}}}},
         {"id":"lure-mouse","kind":"use_on","version":1,"advances":false,
          "comment":"content/scripts/quests/quest_ball/scripts/quest_ball.rs2:80-93; content/maps/m45_54.jm2:5228",
          "args":{"item":"cheese","target":{"loc":"witchmousehole"},"anchor":{"tile":[2903,3466,0],"source":"content/maps/m45_54.jm2:5228"},"radius":5},
