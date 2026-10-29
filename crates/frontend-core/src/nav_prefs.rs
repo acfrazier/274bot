@@ -43,6 +43,7 @@ impl NavPreference {
             Self::AllowDangerZones => ("allow_danger_zones", false),
             Self::AllowPrereqDialogue => ("allow_prereq_dialogue", true),
             Self::AllowQuestStart => ("allow_quest_start", true),
+            Self::SurvivableRouting => ("survivable_routing", true),
             Self::ScriptScopeNoticeAck => ("script_scope_notice_ack", false),
             Self::SurvivableRoutingNoticeAck => ("survivable_routing_notice_ack", false),
         }
