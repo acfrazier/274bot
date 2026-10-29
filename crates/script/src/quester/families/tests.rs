@@ -543,14 +543,19 @@ fn walk_retry_plan(target: WorldTile) -> WalkPlan {
     .expect("valid walk retry plan")
 }
 
-fn walk_request_count(ledger: &Option<Box<ledger::Ledger>>) -> usize {
-    ledger
+fn latest_walk_request(ledger: &Option<Box<ledger::Ledger>>) -> (u64, u64) {
+    let action = ledger
         .as_ref()
         .expect("ledger must be present")
         .outbox
         .iter()
-        .filter(|action| matches!(&action.effect, HostEffect::Walk(_)))
-        .count()
+        .rev()
+        .find(|action| matches!(&action.effect, HostEffect::Walk(_)))
+        .expect("walk request must be queued");
+    let HostEffect::Walk(request) = &action.effect else {
+        unreachable!();
+    };
+    (action.request_id.get(), request.required_after.tick)
 }
 
 
@@ -613,17 +618,22 @@ fn quest_walk_step_retries_a_failed_route_and_completes_on_arrival() {
     let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
         with_step(tick, |cx| plan.begin(cx).unwrap())
     });
-    assert_eq!(walk_request_count(&ledger), 1);
+    let initial_request = latest_walk_request(&ledger).0;
 
     let first_request =
         post_walk_receipt(&mut ledger, 2, WalkEnd::NoPath, Some("temporary route failure"));
+    assert_eq!(first_request, initial_request);
     assert!(
         with_tick(&snapshot, &mut ledger, 2, |tick| {
             with_step(tick, |cx| run.poll(cx))
         })
         .is_pending()
     );
-    assert_eq!(walk_request_count(&ledger), 1, "retry waits for a new game tick");
+    assert_eq!(
+        latest_walk_request(&ledger).0,
+        first_request,
+        "retry waits for a new game tick"
+    );
     snapshot.seed_local_player(local_player(next));
     assert!(
         with_tick(&snapshot, &mut ledger, 3, |tick| {
@@ -631,14 +641,14 @@ fn quest_walk_step_retries_a_failed_route_and_completes_on_arrival() {
         })
         .is_pending()
     );
-    assert_eq!(walk_request_count(&ledger), 2);
     let outbox = &ledger.as_ref().unwrap().outbox;
     let second = outbox
         .iter()
         .rev()
         .find(|action| matches!(&action.effect, HostEffect::Walk(_)))
         .unwrap();
-    assert_ne!(first_request, second.request_id.get());
+    let second_request = second.request_id.get();
+    assert_ne!(first_request, second_request);
     let HostEffect::Walk(request) = &second.effect else {
         unreachable!();
     };
@@ -653,7 +663,6 @@ fn quest_walk_step_retries_a_failed_route_and_completes_on_arrival() {
         }),
         Poll::Ready(Ok(_))
     ));
-    assert_eq!(walk_request_count(&ledger), 2);
 }
 
 #[test]
@@ -666,27 +675,33 @@ fn quest_walk_step_blocks_after_three_failures_with_the_last_detail() {
         with_step(tick, |cx| plan.begin(cx).unwrap())
     });
 
+    let mut active_request = latest_walk_request(&ledger).0;
     for attempt in 1u8..=3 {
         let failure_tick = u64::from(attempt) * 2;
         let detail = format!("route failure {attempt}");
-        post_walk_receipt(
+        let failed_request = post_walk_receipt(
             &mut ledger,
             failure_tick,
             WalkEnd::NoPath,
             Some(&detail),
         );
+        assert_eq!(failed_request, active_request);
         let result = with_tick(&snapshot, &mut ledger, failure_tick, |tick| {
             with_step(tick, |cx| run.poll(cx))
         });
         if attempt < 3 {
             assert!(result.is_pending(), "attempt {attempt} must be retried");
-            assert_eq!(walk_request_count(&ledger), usize::from(attempt));
+            assert_eq!(latest_walk_request(&ledger).0, failed_request);
             assert!(
                 with_tick(&snapshot, &mut ledger, failure_tick + 1, |tick| {
                     with_step(tick, |cx| run.poll(cx))
                 })
                 .is_pending()
             );
+            let (retry_request, required_after_tick) = latest_walk_request(&ledger);
+            assert_ne!(retry_request, failed_request);
+            assert_eq!(required_after_tick, failure_tick + 1);
+            active_request = retry_request;
         } else {
             assert!(
                 matches!(result, Poll::Ready(Err(ActionError::Blocked(reason))) if reason.as_ref() == detail),
@@ -694,7 +709,7 @@ fn quest_walk_step_blocks_after_three_failures_with_the_last_detail() {
             );
         }
     }
-    assert_eq!(walk_request_count(&ledger), 3);
+    assert_eq!(latest_walk_request(&ledger).0, active_request);
 }
 
 #[test]
@@ -707,32 +722,40 @@ fn quest_walk_step_retry_budget_resets_for_a_new_step() {
     let mut first = with_tick(&snapshot, &mut ledger, 1, |tick| {
         with_step(tick, |cx| first_plan.begin(cx).unwrap())
     });
+    let mut active_request = latest_walk_request(&ledger).0;
 
     for attempt in 1u8..=2 {
         let failure_tick = u64::from(attempt) * 2;
         let detail = format!("first step failure {attempt}");
-        post_walk_receipt(
+        let failed_request = post_walk_receipt(
             &mut ledger,
             failure_tick,
             WalkEnd::NoPath,
             Some(&detail),
         );
+        assert_eq!(failed_request, active_request);
         assert!(
             with_tick(&snapshot, &mut ledger, failure_tick, |tick| {
                 with_step(tick, |cx| first.poll(cx))
             })
             .is_pending()
         );
+        assert_eq!(latest_walk_request(&ledger).0, failed_request);
         assert!(
             with_tick(&snapshot, &mut ledger, failure_tick + 1, |tick| {
                 with_step(tick, |cx| first.poll(cx))
             })
             .is_pending()
         );
+        let (retry_request, required_after_tick) = latest_walk_request(&ledger);
+        assert_ne!(retry_request, failed_request);
+        assert_eq!(required_after_tick, failure_tick + 1);
+        active_request = retry_request;
     }
 
     snapshot.seed_local_player(local_player(first_target));
-    post_walk_receipt(&mut ledger, 6, WalkEnd::Arrived, None);
+    let completed_request = post_walk_receipt(&mut ledger, 6, WalkEnd::Arrived, None);
+    assert_eq!(completed_request, active_request);
     assert!(matches!(
         with_tick(&snapshot, &mut ledger, 6, |tick| {
             with_step(tick, |cx| first.poll(cx))
@@ -744,12 +767,14 @@ fn quest_walk_step_retry_budget_resets_for_a_new_step() {
     let mut second = with_tick(&snapshot, &mut ledger, 7, |tick| {
         with_step(tick, |cx| second_plan.begin(cx).unwrap())
     });
-    post_walk_receipt(
+    let second_initial_request = latest_walk_request(&ledger).0;
+    let failed_request = post_walk_receipt(
         &mut ledger,
         8,
         WalkEnd::NoPath,
         Some("second step first failure"),
     );
+    assert_eq!(failed_request, second_initial_request);
     assert!(
         with_tick(&snapshot, &mut ledger, 8, |tick| {
             with_step(tick, |cx| second.poll(cx))
@@ -757,13 +782,16 @@ fn quest_walk_step_retry_budget_resets_for_a_new_step() {
         .is_pending(),
         "a new step must receive its full retry budget"
     );
+    assert_eq!(latest_walk_request(&ledger).0, failed_request);
     assert!(
         with_tick(&snapshot, &mut ledger, 9, |tick| {
             with_step(tick, |cx| second.poll(cx))
         })
         .is_pending()
     );
-    assert_eq!(walk_request_count(&ledger), 5);
+    let (second_retry_request, required_after_tick) = latest_walk_request(&ledger);
+    assert_ne!(second_retry_request, second_initial_request);
+    assert_eq!(required_after_tick, 9);
 }
 
 #[test]
