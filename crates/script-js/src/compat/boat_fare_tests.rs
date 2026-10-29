@@ -306,6 +306,18 @@ fn token(op: &InteractReq) -> u64 {
         other => panic!("not a walk: {other:?}"),
     }
 }
+fn walk_tile(op: &InteractReq) -> WorldTile {
+    match op {
+        InteractReq::Walk { x, z, level, .. } | InteractReq::WalkNear { x, z, level, .. } => {
+            WorldTile {
+                x: *x,
+                z: *z,
+                level: *level,
+            }
+        }
+        other => panic!("not a walk: {other:?}"),
+    }
+}
 fn walk_radius(op: &InteractReq) -> i32 {
     match op {
         InteractReq::WalkNear { radius, .. } => *radius,
