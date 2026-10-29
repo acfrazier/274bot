@@ -6,6 +6,8 @@
 //! Optional account seeds come from the `QUESTER_SEEDS` JSON file.
 //! Stage mode checks the expected stage after Start. Clean mode checks terminal
 //! completion without seeding the target Path's stage.
+//! Path-terminal mode checks that the runner completes without completing the
+//! quest.
 //! Set `QUESTER_ALLOW_DANGER_ZONES=1` to run a separate cell with the Quester
 //! card's `allow_danger_zones` setting enabled; unset keeps the default.
 //! The cell runs under a fixed deadline.
