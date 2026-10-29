@@ -1920,7 +1920,7 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
     ]);
     let mut gate_edge = edge(TransportKind::Door, crossing.at, crossing.to);
     gate_edge.loc_id = crossing.loc_id;
-    gate_edge.option = crossing.option;
+    gate_edge.option = i32::from(crossing.option);
     gate_edge.quest_gates = Some(
         QuestGates::new(
             family(7),
@@ -2000,5 +2000,5 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
         .unwrap()
         .route
         .is_none());
-    assert!(!play.script_blocks_walk("alice"));
+    assert_eq!(play.script_state("alice"), script::RunState::Idle);
 }
