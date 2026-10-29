@@ -40,6 +40,11 @@ use script::work_admission::{cancellation::WorkCancellation, WorkService};
 
 use crate::walk_plan::{PendingBankFetch, RouteOutcome, RoutePath};
 
+// The real v17 Dusty-key diagnosis needs 679,226 settlements before it
+// finds the actionable item. Two first-goal allowances retain that result
+// while bounding all post-failure searches together (about 180 MB of tables).
+const DIAGNOSTIC_BUDGET: usize = 2 * FIRST_TARGET_BUDGET;
+
 #[derive(Default)]
 pub(crate) struct RouteCompletion {
     #[cfg(test)]
@@ -1231,7 +1236,7 @@ impl RouteJob {
             diagnostics_started: false,
             diagnostic_settled: 0,
             #[cfg(test)]
-            diagnostic_budget: FIRST_TARGET_BUDGET,
+            diagnostic_budget: DIAGNOSTIC_BUDGET,
             outcome: None,
             assessment_future: None,
             assessment: None,
@@ -1820,15 +1825,15 @@ impl RouteJob {
     }
 
     fn diagnostic_budget(&self) -> usize {
-        // Diagnosis cannot change the failed strict route. Share the planner's
-        // smaller first-goal allowance across all post-failure searches.
+        // Diagnosis cannot change the failed strict route. Share one finite
+        // allowance across all post-failure searches.
         #[cfg(test)]
         {
             self.diagnostic_budget
         }
         #[cfg(not(test))]
         {
-            FIRST_TARGET_BUDGET
+            DIAGNOSTIC_BUDGET
         }
     }
 
@@ -6216,7 +6221,7 @@ impl ScriptRouteRequest {
     }
 
     fn drive_route_job_output_for_test(self) -> (RouteJobOutput, Vec<WorldTile>, Arc<NavWorld>) {
-        self.drive_route_job_output_with_diagnostic_budget_for_test(FIRST_TARGET_BUDGET)
+        self.drive_route_job_output_with_diagnostic_budget_for_test(DIAGNOSTIC_BUDGET)
     }
 
     fn drive_route_job_output_with_diagnostic_budget_for_test(

@@ -6,7 +6,7 @@ use api::snapshot::WorldTile;
 use api::work::{MonotonicClock, SharedCancellation, SliceBudget, SystemClock};
 use nav_planner::grid::StepGrid;
 use nav_planner::quest_gates::{QuestFamilyId, QuestGates};
-use nav_planner::router::{FindOptions, FIRST_TARGET_BUDGET};
+use nav_planner::router::FindOptions;
 use nav_planner::world::NavWorld;
 use nav_planner::world_state::WorldState;
 use nav_planner::zones::{ZoneExempt, ZoneKey};
@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 // The comparator retains the former per-query 4M-node budgets. Keep the same
 // 64-unit cooperative slices while allowing those finite queries to finish.
 const MAX_DIAGNOSTIC_SLICES: usize = 25_000_000;
-const CORPUS_CASE_COUNT: usize = 9;
+const CORPUS_CASE_COUNT: usize = 10;
 const TEST_CARRY_ID: i32 = 8003;
 const TEST_FORBIDDEN_ID: i32 = 8001;
 
@@ -721,7 +721,7 @@ fn real_cases(world: Arc<NavWorld>) -> Vec<DiagnosticCase> {
         allow_danger_zones: script::native::WalkBit::Allow,
     };
 
-    vec![
+    let mut cases = vec![
         DiagnosticCase {
             name: "scorpion_no_key_radius5",
             provenance: "real_scorpcatcher_no_key_route_job regression",
@@ -828,7 +828,14 @@ fn real_cases(world: Arc<NavWorld>) -> Vec<DiagnosticCase> {
             state: rich_289_state(),
             expected_unbounded_native_end: Some("Refused"),
         },
-    ]
+    ];
+    let mut live_scorpion = cases[0].clone();
+    live_scorpion.name = "scorpion_no_key_live_spawn";
+    live_scorpion.provenance =
+        "Engine L live no-route receipt starts at the selected account's spawn";
+    live_scorpion.from = tile(3094, 3106);
+    cases.push(live_scorpion);
+    cases
 }
 
 fn changed_reason_rows(rows: &[Value]) -> Vec<Value> {
@@ -891,7 +898,7 @@ fn write_report(
         "navpack": navpack.display().to_string(),
         "route_selection_timed": false,
         "timing_boundary": "RouteJob preparation and target construction are excluded; timing starts immediately after begin_diagnostics() and ends when that RouteJob completes.",
-        "aggregate_budget": FIRST_TARGET_BUDGET,
+        "aggregate_budget": DIAGNOSTIC_BUDGET,
         "unbounded_budget": usize::MAX,
         "slice_backstop": {
             "max_slices_per_job": MAX_DIAGNOSTIC_SLICES,
@@ -999,11 +1006,11 @@ fn compares_bounded_and_unbounded_route_diagnostics_corpus() {
         rows.last_mut().expect("case row was appended")["unbounded"] = unbounded.to_json();
         write_report(&output, &navpack, CORPUS_CASE_COUNT, &rows, &started);
         assert_expected_native_end(case, &unbounded);
-        let bounded = run_diagnostics(case, authority, FIRST_TARGET_BUDGET, index as u64);
+        let bounded = run_diagnostics(case, authority, DIAGNOSTIC_BUDGET, index as u64);
         rows.last_mut().expect("case row was appended")["bounded"] = bounded.to_json();
         write_report(&output, &navpack, CORPUS_CASE_COUNT, &rows, &started);
         match case.name {
-            "scorpion_no_key_radius5" => assert!(
+            "scorpion_no_key_radius5" | "scorpion_no_key_live_spawn" => assert!(
                 bounded.missing_carry.contains(&(1590, 1)),
                 "real Scorpion route must diagnose the exact missing key row: {:?}",
                 bounded.missing_carry,
@@ -1021,7 +1028,7 @@ fn compares_bounded_and_unbounded_route_diagnostics_corpus() {
             _ => {}
         }
         assert!(
-            bounded.diagnostic_settled <= FIRST_TARGET_BUDGET.saturating_add(64),
+            bounded.diagnostic_settled <= DIAGNOSTIC_BUDGET.saturating_add(64),
             "{} aggregate diagnostic count may overrun only by one cooperative slice",
             case.name,
         );
@@ -1049,7 +1056,7 @@ fn native_diagnostic_reasons_preserve_unknown_quest_carry_and_entrance_requireme
         let observation = run_diagnostics(
             &case,
             Some(native.authority.clone()),
-            FIRST_TARGET_BUDGET,
+            DIAGNOSTIC_BUDGET,
             20_000 + index as u64,
         );
         assert_expected_native_end(&case, &observation);
@@ -1118,4 +1125,59 @@ fn diagnostic_budget_cutoff_publishes_no_path_and_the_cutoff_detail() {
             "the visible count includes the in-flight slice without hiding the cap overrun"
         );
     }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "Linux release measurement; one real-pack diagnosis in a fresh process"]
+fn measures_one_bounded_route_diagnosis_rss() {
+    let navpack = std::env::var_os("BOT_ROUTE_DIAGNOSTIC_NAVPACK")
+        .expect("BOT_ROUTE_DIAGNOSTIC_NAVPACK is required");
+    let world = Arc::new(NavWorld::load_pack(Path::new(&navpack)).expect("real v17 pack"));
+    let name = std::env::var("BOT_ROUTE_DIAGNOSTIC_MEMORY_CASE")
+        .expect("BOT_ROUTE_DIAGNOSTIC_MEMORY_CASE is required");
+    let case = real_cases(world)
+        .into_iter()
+        .find(|case| case.name == name)
+        .expect("the selected real corpus case exists");
+    let native = (!matches!(
+        case.name,
+        "karamja_exit_without_coins" | "desert_walk_without_shantay_pass"
+    ))
+    .then(|| live_native_walk(&case, 40_000));
+    let authority = native.as_ref().map(|native| native.authority.clone());
+    let rss_kib = |field: &str| {
+        std::fs::read_to_string("/proc/self/status")
+            .expect("Linux process memory status")
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix(field)
+                    .and_then(|value| value.split_whitespace().next())
+                    .and_then(|value| value.parse::<u64>().ok())
+            })
+            .expect("the requested process memory field is present")
+    };
+    let before = rss_kib("VmRSS:");
+    // Linux clear_refs value 5 resets only this process's RSS high-water mark.
+    // This excludes the earlier pack-load peak, not live diagnosis memory.
+    std::fs::write("/proc/self/clear_refs", b"5").expect("reset own RSS high-water mark");
+    let observation = run_diagnostics(&case, authority, DIAGNOSTIC_BUDGET, 40_001);
+    let peak = rss_kib("VmHWM:");
+    let after = rss_kib("VmRSS:");
+    let report = json!({
+        "case": case.name,
+        "profile": if cfg!(debug_assertions) { "debug" } else { "release" },
+        "aggregate_budget": DIAGNOSTIC_BUDGET,
+        "rss_before_kib": before,
+        "peak_rss_kib": peak,
+        "rss_after_kib": after,
+        "peak_rss_increase_kib": peak.saturating_sub(before),
+        "scope": "one diagnosis plus RouteJob preparation; real pack and native owner loaded before RSS reset; no strict route selection",
+        "diagnosis": observation.to_json(),
+    });
+    let output = std::env::var_os("BOT_ROUTE_DIAGNOSTIC_MEMORY_OUT")
+        .expect("BOT_ROUTE_DIAGNOSTIC_MEMORY_OUT is required");
+    std::fs::write(output, serde_json::to_vec_pretty(&report).unwrap())
+        .expect("write the one-diagnosis memory measurement");
+    assert!(observation.diagnostic_settled <= DIAGNOSTIC_BUDGET.saturating_add(64));
 }
