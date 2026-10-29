@@ -9,9 +9,7 @@ use api::game_data::SelectedGameData;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, FactKey, RunKey, Truth};
-use api::snapshot::{
-    GameSnapshot, GroundItemView, QuestListStatus, QuestStatusView, SnapshotView,
-};
+use api::snapshot::{GameSnapshot, GroundItemView, QuestListStatus, QuestStatusView, SnapshotView};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -5013,13 +5011,9 @@ fn lifecycle_followups_unsettled_loot_take_skips_to_the_next_item() {
     }
 
     assert!(
-        with_step_context_reach(
-            &snapshot,
-            &reach,
-            &mut ledger,
-            settlement_deadline,
-            |cx| run.poll(cx)
-        )
+        with_step_context_reach(&snapshot, &reach, &mut ledger, settlement_deadline, |cx| {
+            run.poll(cx)
+        })
         .is_pending()
     );
     assert_eq!(
