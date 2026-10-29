@@ -425,11 +425,7 @@
                 "op": "deposit_all",
                 "at": "nearest",
                 "keep": [
-                  "knife",
-                  "chaosrune",
-                  "airrune",
-                  "firerune",
-                  "lobster"
+                  "knife"
                 ]
               },
               "skip_if": {
@@ -460,11 +456,7 @@
                           "version": 1,
                           "args": {
                             "objs": [
-                              "knife",
-                              "chaosrune",
-                              "airrune",
-                              "firerune",
-                              "lobster"
+                              "knife"
                             ]
                           }
                         }
@@ -500,11 +492,7 @@
                       "version": 1,
                       "args": {
                         "objs": [
-                          "knife",
-                          "chaosrune",
-                          "airrune",
-                          "firerune",
-                          "lobster"
+                          "knife"
                         ]
                       }
                     }
