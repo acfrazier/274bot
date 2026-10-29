@@ -32,6 +32,7 @@ use std::sync::Arc;
 use std::task::Poll;
 
 use std::fmt::{self, Write as _};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::time::Duration;
 
 // A read has at most three transactions (each can emit at most one row
@@ -144,13 +145,27 @@ fn stage_event_limit(steps: usize) -> usize {
     )
 }
 
+/// One distinct trace line of the current stage: a 64-bit hash of the line and
+/// how many times it repeated. The line text is not kept here; only an entry
+/// that repeats keeps its text, in `RunTrace::repeated`. A hash collision
+/// merges two different lines' repeat counts, which can only fold one line's
+/// summary into another's, so it is accepted rather than checked.
 struct TraceEntry {
-    line: String,
+    hash: u64,
     repeats: u32,
+}
+
+/// The text of a trace entry that repeated, kept so `flush_repeats` can print
+/// the line with its count. A stage of distinct lines keeps none.
+struct RepeatedLine {
+    entry: usize,
+    line: Box<str>,
 }
 
 struct RunTrace {
     entries: Vec<TraceEntry>,
+    /// Texts of the current stage's entries that repeated; see `TraceEntry`.
+    repeated: Vec<RepeatedLine>,
     /// Distinct lines the current stage keeps; see `stage_event_limit`.
     limit: usize,
     started: bool,
@@ -162,6 +177,7 @@ impl Default for RunTrace {
     fn default() -> Self {
         Self {
             entries: Vec::new(),
+            repeated: Vec::new(),
             limit: RUN_TRACE_EVENT_MIN,
             started: false,
             truncated: false,
@@ -212,6 +228,14 @@ fn trace_line(args: fmt::Arguments<'_>, limit: usize) -> (String, bool) {
     (line, truncated)
 }
 
+/// The table's identity for one trace line. `DefaultHasher` is deterministic
+/// for a run, so equal lines always meet the same entry.
+fn trace_hash(line: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    line.hash(&mut hasher);
+    hasher.finish()
+}
+
 impl RunTrace {
     fn record(
         &mut self,
@@ -221,8 +245,19 @@ impl RunTrace {
     ) {
         let (line, truncated) = trace_line(args, RUN_TRACE_LINE_LIMIT);
         self.truncated |= truncated;
-        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.line == line) {
-            entry.repeats = entry.repeats.saturating_add(1);
+        let hash = trace_hash(&line);
+        if let Some(index) = self.entries.iter().position(|entry| entry.hash == hash) {
+            let repeats = self.entries[index].repeats.saturating_add(1);
+            self.entries[index].repeats = repeats;
+            if repeats == 1 {
+                // The first repeat keeps the line text this log call already
+                // built; it is the same text as the first, and `flush_repeats`
+                // prints it with the count.
+                self.repeated.push(RepeatedLine {
+                    entry: index,
+                    line: line.into_boxed_str(),
+                });
+            }
             return;
         }
         if self.entries.len() >= self.limit {
@@ -230,7 +265,7 @@ impl RunTrace {
             return;
         }
         output.log(level, &line);
-        self.entries.push(TraceEntry { line, repeats: 0 });
+        self.entries.push(TraceEntry { hash, repeats: 0 });
     }
 
     /// Start a stage's fresh budget, sized from its compiled step count. The
@@ -245,14 +280,19 @@ impl RunTrace {
     }
 
     fn flush_repeats(&mut self, output: &mut dyn NativeOutput) {
-        for entry in &mut self.entries {
+        self.repeated
+            .sort_unstable_by_key(|repeated| repeated.entry);
+        for repeated in std::mem::take(&mut self.repeated) {
+            let Some(entry) = self.entries.get_mut(repeated.entry) else {
+                continue;
+            };
             if entry.repeats == 0 {
                 continue;
             }
             let (line, _) = trace_line(
                 format_args!(
                     "{} (repeated {} additional times)",
-                    entry.line, entry.repeats
+                    repeated.line, entry.repeats
                 ),
                 RUN_TRACE_LINE_LIMIT + 64,
             );
@@ -4583,13 +4623,16 @@ mod tests {
             .unwrap_or_else(|| panic!("the wait step settles on tick 5000: {lines:#?}"));
         assert!(first < settled);
         // The authored sequence selects the same wait again; the run trace
-        // folds that repeated `begin` line into its entry's repeat count.
+        // folds that repeated `begin` line into its entry's repeat count and
+        // keeps the line text for it.
         let begins = script
             .trace
-            .entries
+            .repeated
             .iter()
-            .find(|entry| entry.line.ends_with("(wait) begin"))
-            .map_or(0, |entry| entry.repeats + 1);
+            .find(|repeated| repeated.line.ends_with("(wait) begin"))
+            .map_or(0, |repeated| {
+                script.trace.entries[repeated.entry].repeats + 1
+            });
         assert!(
             begins >= 2,
             "the next step begins on the settle tick: {begins} begin(s), {lines:#?}"
@@ -5114,6 +5157,7 @@ mod tests {
         );
         assert!(!trace.truncated);
         assert!(trace.entries.is_empty());
+        assert!(trace.repeated.is_empty());
         for event in 0..trace.limit {
             trace.record(
                 &mut output,
@@ -5132,7 +5176,8 @@ mod tests {
         assert!(!trace.truncated);
     }
 
-    /// Repeated identical lines still fold into one line plus a count.
+    /// Repeated identical lines still fold into one line plus a count, and
+    /// only then is the line text kept for the summary.
     #[test]
     fn run_trace_folds_repeated_lines() {
         let mut trace = RunTrace::default();
@@ -5153,9 +5198,99 @@ mod tests {
         );
         assert_eq!(trace.entries.len(), 1);
         assert_eq!(trace.entries[0].repeats, 2);
+        assert_eq!(
+            trace.repeated.len(),
+            1,
+            "only the repeated entry keeps its text"
+        );
+        assert_eq!(
+            &*trace.repeated[0].line,
+            "quester test: stage long:0 step retry (wait) begin"
+        );
         trace.flush_repeats(&mut output);
         assert_eq!(output.logs.len(), 2);
         assert!(output.logs[1].1.ends_with("(repeated 2 additional times)"));
+        assert!(
+            trace.repeated.is_empty(),
+            "the flushed summary drops the text it printed"
+        );
+    }
+
+    /// A line logged once keeps no text: the table holds only its hash and a
+    /// zero repeat count until the same line repeats.
+    #[test]
+    fn run_trace_keeps_no_text_until_a_line_repeats() {
+        let mut trace = RunTrace::default();
+        let mut output = TraceCapture::default();
+        trace.begin_stage(&mut output, 4);
+        for event in ["begin", "settled"] {
+            trace.record(
+                &mut output,
+                api::hostlog::Level::Info,
+                format_args!("quester test: stage long:0 step once (wait) {event}"),
+            );
+        }
+        assert_eq!(trace.entries.len(), 2);
+        assert!(trace.repeated.is_empty(), "distinct lines keep no text");
+        trace.record(
+            &mut output,
+            api::hostlog::Level::Info,
+            format_args!("quester test: stage long:0 step once (wait) begin"),
+        );
+        assert_eq!(
+            trace.repeated.len(),
+            1,
+            "the first repeat keeps the line text"
+        );
+        assert_eq!(trace.entries[trace.repeated[0].entry].repeats, 1);
+        assert_eq!(
+            &*trace.repeated[0].line,
+            "quester test: stage long:0 step once (wait) begin"
+        );
+    }
+
+    /// The worst bundled stage is `fluffs:4` with 27 steps, so its budget is
+    /// 116 distinct lines. The table keeps a hash and a count per line and no
+    /// text for a distinct line, so the retained heap is the entry vector.
+    #[test]
+    fn run_trace_worst_stage_table_stays_under_four_kib() {
+        let mut trace = RunTrace::default();
+        // `StatusCapture` ignores log lines, so the measured closure counts
+        // only the trace's own allocations.
+        let mut output = StatusCapture::default();
+        trace.begin_stage(&mut output, 27);
+        assert_eq!(trace.limit, 116);
+        let measured = allocation_counter::measure(|| {
+            for line in 0..trace.limit {
+                trace.record(
+                    &mut output,
+                    api::hostlog::Level::Info,
+                    format_args!("quester test: stage fluffs:4 step fluffs-{line} (walk) begin"),
+                );
+            }
+        });
+        let retained = usize::try_from(measured.bytes_current).unwrap();
+        let table = trace.entries.capacity() * std::mem::size_of::<TraceEntry>()
+            + trace.repeated.capacity() * std::mem::size_of::<RepeatedLine>();
+        println!(
+            "RunTrace worst stage: {} distinct lines, {}B retained, {} entries x {}B + {} repeats x {}B",
+            trace.entries.len(),
+            retained,
+            trace.entries.capacity(),
+            std::mem::size_of::<TraceEntry>(),
+            trace.repeated.capacity(),
+            std::mem::size_of::<RepeatedLine>()
+        );
+        assert_eq!(trace.entries.len(), 116);
+        assert!(trace.repeated.is_empty(), "no line repeats in this stage");
+        assert_eq!(
+            retained, table,
+            "the retained heap is the table's own buffers"
+        );
+        assert!(
+            retained < 4096,
+            "a 116-line stage keeps {retained}B, over the 4 KiB budget"
+        );
     }
 
     /// A stage longer than the old 32-line run budget logs every step line in
@@ -5628,12 +5763,8 @@ mod tests {
         assert_eq!(messages[0], "quester cook: run start stage=unknown");
         assert_eq!(messages[1], "quester cook: stage unknown → cook:0");
         assert_eq!(
-            script
-                .trace
-                .entries
-                .first()
-                .map(|entry| entry.line.as_str()),
-            Some("quester cook: stage unknown → cook:0"),
+            script.trace.entries.first().map(|entry| entry.hash),
+            Some(trace_hash("quester cook: stage unknown → cook:0")),
             "a stage change starts a fresh trace table with its own line"
         );
         assert_eq!(
