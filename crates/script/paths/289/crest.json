@@ -3,63 +3,13 @@
   "schema": 3,
   "id": "crest",
   "display_name": "Family Crest",
-  "required": [
-    "mining-40",
-    "crafting-40",
-    "smithing-40",
-    "magic-59"
-  ],
+  "required": [],
   "tested_stats": null,
   "partner": null,
   "quest": {
     "members": true,
     "quest_points": 1,
-    "requirements": [
-      {
-        "id": "mining-40",
-        "kind": {
-          "Skill": {
-            "skill": "mining",
-            "level": 40
-          }
-        },
-        "at": "start",
-        "source": "content/scripts/quests/quest_crest/scripts/crest_journal.rs2:9-14"
-      },
-      {
-        "id": "crafting-40",
-        "kind": {
-          "Skill": {
-            "skill": "crafting",
-            "level": 40
-          }
-        },
-        "at": "start",
-        "source": "content/scripts/quests/quest_crest/scripts/crest_journal.rs2:9-14"
-      },
-      {
-        "id": "smithing-40",
-        "kind": {
-          "Skill": {
-            "skill": "smithing",
-            "level": 40
-          }
-        },
-        "at": "start",
-        "source": "content/scripts/quests/quest_crest/scripts/crest_journal.rs2:9-14"
-      },
-      {
-        "id": "magic-59",
-        "kind": {
-          "Skill": {
-            "skill": "magic",
-            "level": 59
-          }
-        },
-        "at": "start",
-        "source": "content/scripts/quests/quest_crest/scripts/crest_journal.rs2:9-14"
-      }
-    ],
+    "requirements": [],
     "items": [],
     "acquire": {},
     "bank": "nearest",
