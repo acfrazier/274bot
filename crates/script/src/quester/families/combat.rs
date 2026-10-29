@@ -122,6 +122,7 @@ fn has_live_attacker(
 pub struct CombatReceipt {
     pub report: CombatReport,
     pub target_gone_restarts: u8,
+    pub kills: u32,
 }
 
 impl FamilyReceipt for CombatReceipt {
@@ -469,19 +470,16 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
         .map(|name| compile_kit(name, cx))
         .transpose()?;
     let mut loot = compile_loot(&args.loot, cx)?;
-    let until_drop = args
-        .until_drop
-        .map(|args| compile_until_drop(args, cx))
-        .transpose()?;
-    if let Some((item_id, item_name)) = &until_drop {
-        if !loot.iter().any(|item| item.id == *item_id) {
-            loot.push(LootItem {
-                id: *item_id,
-                name: Arc::clone(item_name),
-                qty: 1,
-            });
+    let until_drop = match args.until_drop {
+        Some(args) => {
+            let (required, loot_item) = compile_until_drop(args, cx)?;
+            if !loot.iter().any(|item| item.id == required.item_id) {
+                loot.push(loot_item);
+            }
+            Some(required)
         }
-    }
+        None => None,
+    };
     let until = args
         .until
         .as_ref()
@@ -550,6 +548,7 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
         win,
         loot: Arc::from(loot),
         finish,
+        until_drop,
     })
 }
 
@@ -775,18 +774,29 @@ fn compile_loot(loot: &[LootArg], cx: &CompileContext<'_>) -> Result<Vec<LootIte
     Ok(rows)
 }
 
-
 fn compile_until_drop(
     args: UntilDropArgs,
     cx: &CompileContext<'_>,
-) -> Result<(i32, Arc<str>), CompileError> {
+) -> Result<(UntilDropConfig, LootItem), CompileError> {
     if args.max_kills == 0 {
         return Err(CompileError::code("invalid-combat-until-drop-kill-budget"));
     }
     if args.stop.trim().is_empty() {
         return Err(CompileError::code("invalid-combat-until-drop-stop"));
     }
-    resolve_loadout_item(cx, &args.obj)
+    let (item_id, item_name) = resolve_loadout_item(cx, &args.obj)?;
+    Ok((
+        UntilDropConfig {
+            item_id,
+            max_kills: args.max_kills,
+            stop: Arc::from(args.stop),
+        },
+        LootItem {
+            id: item_id,
+            name: item_name,
+            qty: 1,
+        },
+    ))
 }
 
 fn resolve_loadout_item(
@@ -823,6 +833,13 @@ struct LootItem {
     qty: u32,
 }
 
+#[derive(Clone)]
+struct UntilDropConfig {
+    item_id: i32,
+    max_kills: u32,
+    stop: Arc<str>,
+}
+
 struct CombatPlan {
     request: Arc<CombatRequest>,
     tables: Arc<CombatTables>,
@@ -832,6 +849,7 @@ struct CombatPlan {
     win: Option<Arc<dyn PredicatePlan>>,
     loot: Arc<[LootItem]>,
     finish: Option<FinishConfig>,
+    until_drop: Option<UntilDropConfig>,
 }
 
 impl StepPlan for CombatPlan {
@@ -845,10 +863,12 @@ impl StepPlan for CombatPlan {
             win: self.win.as_ref().map(Arc::clone),
             loot: Arc::clone(&self.loot),
             finish: self.finish.clone(),
+            until_drop: self.until_drop.clone(),
             action: None,
             phase: Phase::Combat,
             loot_index: 0,
             last_report: None,
+            kills: 0,
             last_outcome: None,
             target_gone_restarts: 0,
             raised_prayers: RaisedPrayers::empty(),
@@ -859,7 +879,9 @@ impl StepPlan for CombatPlan {
             trace_event: None,
             abort_escape: AbortEscape::new(),
         };
-        run.begin_combat(cx)?;
+        if !run.until_drop_item_held(cx) {
+            run.begin_combat(cx)?;
+        }
         run.manual_takeover_watch = crate::native::ManualTakeoverWatch::begin(&cx.tick.cx);
 
         Ok(Box::new(run))
@@ -1183,10 +1205,12 @@ struct CombatRun {
     until: Option<Arc<dyn PredicatePlan>>,
     win: Option<Arc<dyn PredicatePlan>>,
     loot: Arc<[LootItem]>,
+    until_drop: Option<UntilDropConfig>,
     action: Option<Action>,
     phase: Phase,
     loot_index: usize,
     last_report: Option<CombatReport>,
+    kills: u32,
     last_outcome: Option<StepOutcome>,
     target_gone_restarts: u8,
     raised_prayers: RaisedPrayers,
@@ -1732,6 +1756,9 @@ impl CombatRun {
     ) -> Poll<Result<StepOutcome, ActionError>> {
         self.action = None;
         self.raised_prayers = RaisedPrayers::empty();
+        if matches!(report.end, CombatEnd::Killed) {
+            self.kills = self.kills.saturating_add(1);
+        }
         self.last_report = Some(report);
         self.refresh_outcome();
         self.trace_event = Some(StepTraceEvent::CombatSubOperationEnd {
@@ -1755,7 +1782,9 @@ impl CombatRun {
                 // Imp's next attempt is anchored at stand, so wait for its
                 // observed arrival before re-beginning (design-combat.md §1.1,
                 // §2.6; design-combat-s3.md §5.1).
-                if (self.until.is_none() && self.win.is_none()) || self.should_stop(cx) {
+                if (self.until.is_none() && self.win.is_none() && self.until_drop.is_none())
+                    || self.should_stop(cx)
+                {
                     return self.finish(cx);
                 }
                 if let Some(stand) = self.request.stand {
@@ -1768,7 +1797,9 @@ impl CombatRun {
                 }
             }
             CombatEnd::NoTarget | CombatEnd::Budget => {
-                if (self.until.is_none() && self.win.is_none()) || self.should_stop(cx) {
+                if (self.until.is_none() && self.win.is_none() && self.until_drop.is_none())
+                    || self.should_stop(cx)
+                {
                     self.finish(cx)
                 } else {
                     self.rebegin_combat(cx, false)
@@ -1790,13 +1821,18 @@ impl CombatRun {
         }
     }
 
-    fn outcome_for(report: CombatReport, target_gone_restarts: u8) -> StepOutcome {
+    fn outcome_for(
+        report: CombatReport,
+        target_gone_restarts: u8,
+        kills: u32,
+    ) -> StepOutcome {
         StepOutcome {
             progress: None,
             evidence: report.evidence,
             receipt: Some(Arc::new(CombatReceipt {
                 report,
                 target_gone_restarts,
+                kills,
             })),
         }
     }
@@ -1806,7 +1842,11 @@ impl CombatRun {
             self.last_outcome = None;
             return;
         };
-        self.last_outcome = Some(Self::outcome_for(report, self.target_gone_restarts));
+        self.last_outcome = Some(Self::outcome_for(
+            report,
+            self.target_gone_restarts,
+            self.kills,
+        ));
     }
 
     fn rebegin_combat(
@@ -1958,14 +1998,31 @@ impl CombatRun {
     ) -> Poll<Result<StepOutcome, ActionError>> {
         match std::task::ready!(crate::native::defer_budget(self.begin_loot(cx))) {
             Ok(LootStart::Waiting | LootStart::Started) => Poll::Pending,
-            Ok(LootStart::Complete) => {
-                if (self.until.is_none() && self.win.is_none()) || self.should_stop(cx) {
-                    self.finish(cx)
-                } else {
-                    self.rebegin_combat(cx, false)
-                }
-            }
+            Ok(LootStart::Complete) => self.after_loot_complete(cx),
             Err(error) => Poll::Ready(Err(error)),
+        }
+    }
+
+    /// Decide whether a settled loot pass completed the step or may re-engage.
+    fn after_loot_complete(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Poll<Result<StepOutcome, ActionError>> {
+        if self.should_stop(cx) {
+            return self.finish(cx);
+        }
+        if let Some(until_drop) = &self.until_drop {
+            if self.kills >= until_drop.max_kills {
+                return Poll::Ready(Err(ActionError::Blocked(Arc::clone(
+                    &until_drop.stop,
+                ))));
+            }
+            return self.rebegin_combat(cx, false);
+        }
+        if self.until.is_none() && self.win.is_none() {
+            self.finish(cx)
+        } else {
+            self.rebegin_combat(cx, false)
         }
     }
 
@@ -1987,14 +2044,36 @@ impl CombatRun {
         predicate.evaluate(&context)
     }
 
+    fn until_drop_item_held(&self, cx: &StepContext<'_, '_>) -> bool {
+        let Some(required) = self.until_drop.as_ref() else {
+            return false;
+        };
+        cx.tick
+            .cx
+            .snapshot()
+            .inventory()
+            .is_some_and(|inventory| {
+                inventory
+                    .value
+                    .iter()
+                    .filter(|item| item.def.id == required.item_id)
+                    .map(|item| i64::from(item.count))
+                    .sum::<i64>()
+                    > 0
+            })
+    }
+
     fn should_stop(&self, cx: &StepContext<'_, '_>) -> bool {
-        self.until
-            .as_ref()
-            .is_some_and(|predicate| self.evaluate_predicate(predicate, cx) == Truth::True)
+        self.until_drop_item_held(cx)
+            || self
+                .until
+                .as_ref()
+                .is_some_and(|predicate| self.evaluate_predicate(predicate, cx) == Truth::True)
             || self
                 .win
                 .as_ref()
                 .is_some_and(|predicate| self.evaluate_predicate(predicate, cx) == Truth::True)
+
     }
 
     fn finish(&mut self, cx: &StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
@@ -2040,12 +2119,7 @@ impl StepRun for CombatRun {
         if matches!(self.phase, Phase::Loot) && self.action.is_none() {
             match std::task::ready!(crate::native::defer_budget(self.begin_loot(cx))) {
                 Ok(LootStart::Waiting | LootStart::Started) => return Poll::Pending,
-                Ok(LootStart::Complete) => {
-                    if (self.until.is_none() && self.win.is_none()) || self.should_stop(cx) {
-                        return self.finish(cx);
-                    }
-                    return self.rebegin_combat(cx, false);
-                }
+                Ok(LootStart::Complete) => return self.after_loot_complete(cx),
                 Err(error) => return Poll::Ready(Err(error)),
             }
         }
