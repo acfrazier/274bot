@@ -1383,6 +1383,7 @@ fn drive_filliman(answer_once: bool) -> (Vec<i32>, bool) {
     };
     assert!(poll(&first, 2, &mut ledger).is_pending());
     assert_eq!(answers(&ledger), [2]);
+    complete_last_interaction(&mut ledger, 2, true);
 
     let question = menu_page(100, &["How long have you been a ghost?"], &[], 101);
     assert!(poll(&question, 3, &mut ledger).is_pending());
@@ -1433,6 +1434,133 @@ fn answer_once_false_repeats_the_first_preferred_answer() {
 }
 
 #[test]
+fn answer_once_refused_answer_does_not_consume_the_entry() {
+    let first = menu_page(100, &["Choose."], &["Buy", "Sell", "Leave"], -1);
+    let mut ledger = None;
+    let handle = with_tick(&first, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(
+                continuation_with(answer_options(&["Buy", "Sell"], true, false)),
+                &mut tick.cx,
+            )
+            .unwrap()
+    });
+    assert!(with_tick(&first, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(answers(&ledger), [1]);
+    // The host refuses the answer, yet another page arrives: queueing is not
+    // acceptance, so the entry stays unused and answers again.
+    complete_last_interaction(&mut ledger, 2, false);
+    let second = menu_page(100, &["Choose again."], &["Buy", "Sell", "Leave"], -1);
+    assert!(with_tick(&second, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(with_tick(&second, &mut ledger, 4, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(
+        answers(&ledger),
+        [1, 1],
+        "a refused answer leaves its prefer entry unused for the next menu"
+    );
+}
+
+#[test]
+fn answer_once_accepted_answer_consumes_the_entry() {
+    let first = menu_page(100, &["Choose."], &["Buy", "Sell", "Leave"], -1);
+    let mut ledger = None;
+    let handle = with_tick(&first, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(
+                continuation_with(answer_options(&["Buy", "Sell"], true, false)),
+                &mut tick.cx,
+            )
+            .unwrap()
+    });
+    assert!(with_tick(&first, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(answers(&ledger), [1]);
+    complete_last_interaction(&mut ledger, 2, true);
+    let second = menu_page(100, &["Choose again."], &["Buy", "Sell", "Leave"], -1);
+    assert!(with_tick(&second, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(with_tick(&second, &mut ledger, 4, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(
+        answers(&ledger),
+        [1, 2],
+        "an accepted answer consumes its prefer entry"
+    );
+}
+
+/// Runs a dialogue and reports the conversation's used-`prefer` mask when
+/// the driver finishes.
+struct AnswerMaskProbe {
+    dialogue: Dialogue,
+}
+
+impl NativeMachine for AnswerMaskProbe {
+    type Args = DialogueArgs;
+    type Output = (DialogueOutcome, u32);
+
+    fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+        Ok(Self {
+            dialogue: <Dialogue as NativeMachine>::begin(args, cx)?,
+        })
+    }
+
+    fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
+        match self.dialogue.poll(cx) {
+            Poll::Ready(Ok(outcome)) => Poll::Ready(Ok((outcome, self.dialogue.answers_used()))),
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    fn cancel(&mut self) {}
+}
+
+#[test]
+fn answer_once_timeout_without_acknowledgement_does_not_consume_the_entry() {
+    let page = menu_page(100, &["Choose."], &["Buy", "Leave"], -1);
+    let mut ledger = None;
+    let handle = with_tick(&page, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<AnswerMaskProbe>(
+                continuation_with(answer_options(&["Buy"], true, false)),
+                &mut tick.cx,
+            )
+            .unwrap()
+    });
+    assert!(with_tick(&page, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(answers(&ledger), [1]);
+    // The page never changes and no receipt arrives. The answer was sent at
+    // 1_200 ms with PAGE_ACK_MS to acknowledge, so tick 8 fails the page.
+    match with_tick(&page, &mut ledger, 8, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    }) {
+        Poll::Ready(Ok((DialogueOutcome::Failed, used))) => assert_eq!(
+            used, 0,
+            "an unacknowledged answer must not consume its prefer entry"
+        ),
+        _ => panic!("an unacknowledged answer must fail the conversation"),
+    }
+}
+
+#[test]
 fn answer_once_marks_one_prefer_entry_per_page_even_for_one_option_text() {
     let first = menu_page(100, &["Choose."], &["Yes", "No"], -1);
     let mut ledger = None;
@@ -1448,6 +1576,7 @@ fn answer_once_marks_one_prefer_entry_per_page_even_for_one_option_text() {
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
+    complete_last_interaction(&mut ledger, 2, true);
     let second = menu_page(100, &["Choose again."], &["Yes", "No"], -1);
     assert!(with_tick(&second, &mut ledger, 3, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
@@ -1480,6 +1609,7 @@ fn answer_once_skips_a_used_entry_and_uses_an_unused_entry_on_a_changed_menu() {
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
+    complete_last_interaction(&mut ledger, 2, true);
     let second = menu_page(100, &["Choose again."], &["Sell", "Leave"], -1);
     assert!(with_tick(&second, &mut ledger, 3, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
@@ -1509,6 +1639,7 @@ fn answer_once_strict_fails_when_every_matching_entry_was_used() {
     })
     .is_pending());
     assert_eq!(answers(&ledger), [1]);
+    complete_last_interaction(&mut ledger, 2, true);
     let second = menu_page(100, &["Choose again."], &["Yes", "No"], -1);
     assert!(with_tick(&second, &mut ledger, 3, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)

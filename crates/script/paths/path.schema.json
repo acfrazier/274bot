@@ -1901,7 +1901,7 @@
         },
         "answer_once": {
           "type": "boolean",
-          "description": "Skip a `prefer` entry that already answered a page in this\nconversation, so a repeated menu can be answered once and left.\n`line_rules` and `choose` are unaffected.",
+          "description": "Skip a `prefer` entry that already answered a page in this\nconversation, so a repeated menu can be answered once and left.\n`line_rules` and `choose` are unaffected. With this option on,\n`prefer` holds at most 32 entries; a longer list fails compilation.",
           "default": false
         },
         "gap_ticks": {
@@ -2244,7 +2244,7 @@
         },
         "answer_once": {
           "type": "boolean",
-          "description": "Skip a `prefer` entry that already answered a page in this\nconversation, so a repeated menu can be answered once and left.\n`line_rules` and `choose` are unaffected.",
+          "description": "Skip a `prefer` entry that already answered a page in this\nconversation, so a repeated menu can be answered once and left.\n`line_rules` and `choose` are unaffected. With this option on,\n`prefer` holds at most 32 entries; a longer list fails compilation.",
           "default": false
         },
         "gap_ticks": {
@@ -3604,7 +3604,7 @@
         },
         "answer_once": {
           "type": "boolean",
-          "description": "Skip a `prefer` entry that already answered a page in this\nconversation, so a repeated menu can be answered once and left.\n`line_rules` and `choose` are unaffected.",
+          "description": "Skip a `prefer` entry that already answered a page in this\nconversation, so a repeated menu can be answered once and left.\n`line_rules` and `choose` are unaffected. With this option on,\n`prefer` holds at most 32 entries; a longer list fails compilation.",
           "default": false
         },
         "max_ticks": {
