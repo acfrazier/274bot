@@ -856,7 +856,7 @@ fn button_analysis(actions: &[Value], frames: &[Value]) -> (Vec<Value>, Vec<Stri
         }
         if let Some(edges) = reply_edges {
             if edges > script::acquire::buy::BUY_REPLY_TICKS {
-                failures.push(format!("ShopButton sequence {} observed reply after {edges} ticks, above unverified patience cap {}", button.sequence, script::acquire::buy::BUY_REPLY_TICKS));
+                failures.push(format!("ShopButton sequence {} observed reply after {edges} ticks, above Engine L probe-qualified patience cap {}", button.sequence, script::acquire::buy::BUY_REPLY_TICKS));
             }
         }
         if let Some(next) = next {
@@ -890,7 +890,7 @@ fn button_analysis(actions: &[Value], frames: &[Value]) -> (Vec<Value>, Vec<Stri
             "observed_reply_tick": response_tick,
             "observed_reply_edges": reply_edges,
             "reply_tick_cap": script::acquire::buy::BUY_REPLY_TICKS,
-            "reply_cap_status": "unverified patience cap; this run fails if an observed reply exceeds it",
+            "reply_cap_status": "Engine L probe-qualified patience cap; this run fails if an observed reply exceeds it",
             "resolved_tick": resolved.map(|(tick, _, _, _)| *tick),
             "resolved_by": resolved.map(|(_, _, _, source)| *source),
             "observed_transfer": transferred,
@@ -1558,7 +1558,7 @@ fn run_cell(kind: CellKind) {
         "interaction_packets_by_tick": interaction_packets,
         "max_interaction_packets_in_observed_tick": max_interaction_packets,
         "buy_reply_tick_cap": script::acquire::buy::BUY_REPLY_TICKS,
-        "buy_reply_cap_status": "unverified patience; each observed dispatch reply above the cap fails this run and is reported per button",
+        "buy_reply_cap_status": "Engine L probe-qualified patience; each observed dispatch reply above the cap fails this run and is reported per button",
         "typed_service_pick_limit": "The test-only action capture does not expose the internal ServicePickReceipt index/access/cost; nearest evidence records its input and actual Trade NPC type/index/tile correlated to pinned keeper facts.",
         "terminal_error": terminal_error,
     });
