@@ -74,8 +74,9 @@ impl ShopRun {
         let snapshot = cx.snapshot();
         let need = &request.needs[usize::from(purchase.need)];
         let tiered = plan::tiered_shop_need(need);
-        let candidate_index =
-            plan::acceptable_ids(need).position(|id| id == purchase.item).unwrap_or(0);
+        let candidate_index = plan::acceptable_ids(need)
+            .position(|id| id == purchase.item)
+            .unwrap_or(0);
         let item_name = plan::item_name(Some(&data), need, purchase.item);
         let best_item = purchase.item;
         let looked = plan::looked(&snapshot.stock(), need, purchase.item);
@@ -124,8 +125,7 @@ impl ShopRun {
                     .value;
                 let members = snapshot.world().is_some_and(|world| world.value.members);
                 let stock = snapshot.stock();
-                let (held_coins, banked_coins, _) =
-                    plan::purchase_coins(&stock, request.coins);
+                let (held_coins, banked_coins, _) = plan::purchase_coins(&stock, request.coins);
                 let budget = i64::from(held_coins).saturating_add(i64::from(banked_coins));
                 let units = need
                     .minimum
@@ -223,9 +223,9 @@ impl ShopRun {
                                     match self.advance_tier(request, tick) {
                                         TierAdvance::Advanced => {}
                                         TierAdvance::Exhausted => {
-                                            return Poll::Ready(Ok(self.block(
-                                                request, reason, tick,
-                                            )));
+                                            return Poll::Ready(Ok(
+                                                self.block(request, reason, tick)
+                                            ));
                                         }
                                         TierAdvance::Undecided => {
                                             return Poll::Ready(Ok(self.block(
@@ -358,8 +358,7 @@ impl ShopRun {
     }
 
     fn owned_tier(&self, need: &Need, stock: &Stock<'_>) -> Option<i32> {
-        plan::acceptable_ids(need)
-            .find(|&id| plan::present(stock, need, id) >= need.target)
+        plan::acceptable_ids(need).find(|&id| plan::present(stock, need, id) >= need.target)
     }
 
     fn wear_after_shop(&self, need: &Need, id: i32) -> Option<i32> {
@@ -372,11 +371,7 @@ impl ShopRun {
         .then_some(id)
     }
 
-    fn advance_tier(
-        &mut self,
-        request: &AcquireRequest,
-        tick: &NativeTick<'_>,
-    ) -> TierAdvance {
+    fn advance_tier(&mut self, request: &AcquireRequest, tick: &NativeTick<'_>) -> TierAdvance {
         if !self.tiered || !self.nearest || !matches!(&request.vendor, VendorChoice::Nearest) {
             return TierAdvance::Exhausted;
         }
@@ -392,8 +387,7 @@ impl ShopRun {
             return TierAdvance::Undecided;
         };
         let members = snapshot.world().is_some_and(|world| world.value.members);
-        let (held_coins, banked_coins, unknown_bank) =
-            plan::purchase_coins(&stock, request.coins);
+        let (held_coins, banked_coins, unknown_bank) = plan::purchase_coins(&stock, request.coins);
         let budget = i64::from(held_coins).saturating_add(i64::from(banked_coins));
         let need = &request.needs[usize::from(self.purchase.need)];
         for (index, id) in plan::acceptable_ids(need)
@@ -418,13 +412,8 @@ impl ShopRun {
                 }
                 continue;
             }
-            let eligible = vendor::eligible_indices(
-                &facts,
-                &data,
-                id,
-                members,
-                from,
-                |candidate| {
+            let eligible =
+                vendor::eligible_indices(&facts, &data, id, members, from, |candidate| {
                     plan::keeper_minimum_shop_quote(
                         &data,
                         candidate.keeper.keeper_config,
@@ -433,8 +422,7 @@ impl ShopRun {
                         units,
                     )
                     .is_some_and(|price| price <= budget)
-                },
-            );
+                });
             if eligible.is_empty() {
                 continue;
             }

@@ -1377,7 +1377,10 @@ fn shop_tier_skips_an_unaffordable_best_price_for_a_wearable_lower_tier() {
 
     let plan = shop_plan(&request, &counts, &data, false);
     assert_eq!(purchase_at(&plan, 0).item, iron_axe);
-    assert_eq!(plan.wear_count, 0, "the selected purchased tier is worn after routing");
+    assert_eq!(
+        plan.wear_count, 0,
+        "the selected purchased tier is worn after routing"
+    );
 }
 
 #[test]
@@ -1469,12 +1472,7 @@ fn shop_tier_unknown_coin_bank_scans_before_skipping_the_best_price() {
     };
     let mut planner = Planner::new(&counts, world);
     planner
-        .require_with_purchase(
-            &request.needs[0],
-            &request.vendor,
-            request.coins,
-            world,
-        )
+        .require_with_purchase(&request.needs[0], &request.vendor, request.coins, world)
         .unwrap();
     assert_eq!(planner.scan().map(|detail| detail.id), Some(steel_axe));
     let acquire_plan = planned(planner.verdict(None));
@@ -1494,11 +1492,7 @@ fn tiered_no_vendor_detail_names_the_best_tier_and_failed_condition() {
         SourceSet::PACK | SourceSet::SHOP,
     );
     need.name = Arc::from("Mithril axe");
-    let request = shop_request(
-        vec![need],
-        VendorChoice::Nearest,
-        SourceSet::PACK,
-    );
+    let request = shop_request(vec![need], VendorChoice::Nearest, SourceSet::PACK);
     let counts = fixture(&[(COINS, 1_000)], &[], Origin::Unknown);
 
     let block = shop_block(&request, &counts, &data, false);

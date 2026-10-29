@@ -388,14 +388,13 @@ impl AcquireRun {
                         continue;
                     };
                     if self.shop.is_none() {
-                        if !plan::tiered_shop_need(
-                            &self.request.needs[usize::from(purchase.need)],
-                        ) && tick
-                            .cx
-                            .snapshot()
-                            .stock()
-                            .held(purchase.item)
-                            .is_some_and(|held| held >= purchase.target)
+                        if !plan::tiered_shop_need(&self.request.needs[usize::from(purchase.need)])
+                            && tick
+                                .cx
+                                .snapshot()
+                                .stock()
+                                .held(purchase.item)
+                                .is_some_and(|held| held >= purchase.target)
                         {
                             self.purchase_index += 1;
                             continue;

@@ -75,15 +75,23 @@ pub struct Planner<'a> {
 }
 
 enum TierDecision {
-    Selected { id: i32, reserve: i64 },
-    Scan { id: i32 },
+    Selected {
+        id: i32,
+        reserve: i64,
+    },
+    Scan {
+        id: i32,
+    },
     TooFewCoins {
         id: i32,
         needed: i64,
         held: i32,
         banked: i32,
     },
-    NoVendor { id: i32, reason: Arc<str> },
+    NoVendor {
+        id: i32,
+        reason: Arc<str>,
+    },
 }
 
 impl<'a> Planner<'a> {
@@ -205,14 +213,7 @@ impl<'a> Planner<'a> {
                 .saturating_sub(take)
                 .max(0);
             if tiered_purchase {
-                match self.select_shop_tier(
-                    need,
-                    vendor,
-                    world,
-                    coins,
-                    units,
-                    minimum_units,
-                ) {
+                match self.select_shop_tier(need, vendor, world, coins, units, minimum_units) {
                     TierDecision::Selected { id, reserve } => {
                         let worn = worn(self.counts, need, id);
                         self.add_purchase(Purchase {
@@ -406,7 +407,9 @@ impl<'a> Planner<'a> {
         let reason = if world.data.is_none() {
             format!("best tier {name} fails condition: pinned vendor price facts are unavailable")
         } else if !wearable_tier {
-            format!("best tier {name} fails condition: no tier meets the selected wield requirement")
+            format!(
+                "best tier {name} fails condition: no tier meets the selected wield requirement"
+            )
         } else if !stocked_tier {
             format!("best tier {name} fails condition: no eligible vendor stocks it")
         } else {
@@ -417,7 +420,6 @@ impl<'a> Planner<'a> {
             reason: Arc::from(reason),
         }
     }
-
 
     pub fn withdrawal_count(&self) -> usize {
         self.plan.withdrawal_count
@@ -718,7 +720,6 @@ pub(crate) fn looked(counts: &dyn Counts, need: &Need, id: i32) -> Looked {
     }
 }
 
-
 pub(super) fn tiered_shop_need(need: &Need) -> bool {
     need.sources.contains(SourceSet::SHOP) && !need.alternatives.is_empty()
 }
@@ -746,26 +747,20 @@ pub(super) fn wieldable_for_need(
         static_wield_attack(data, id),
         static_wield_attack(data, need.item),
     ) {
-        (Some(candidate), Some(selected)) => candidate
-            .is_none_or(|candidate| selected.is_some_and(|selected| candidate <= selected)),
+        (Some(candidate), Some(selected)) => {
+            candidate.is_none_or(|candidate| selected.is_some_and(|selected| candidate <= selected))
+        }
         _ => true,
     }
 }
 
-fn should_wear(
-    data: Option<&api::game_data::SelectedGameData>,
-    need: &Need,
-    id: i32,
-) -> bool {
-    need.presence == Presence::Wielded
-        && data.is_none_or(|data| wieldable_for_need(data, need, id))
+fn should_wear(data: Option<&api::game_data::SelectedGameData>, need: &Need, id: i32) -> bool {
+    need.presence == Presence::Wielded && data.is_none_or(|data| wieldable_for_need(data, need, id))
 }
 
-
 fn minimum_fact_quote(fact: &VendorFact<'_>, units: i32) -> Option<i64> {
-    (fact.item.baseline > 0).then(|| {
-        shop_facts::quote(fact.record, fact.item, units, fact.item.baseline)
-    })
+    (fact.item.baseline > 0)
+        .then(|| shop_facts::quote(fact.record, fact.item, units, fact.item.baseline))
 }
 
 pub(super) fn minimum_shop_quote(
@@ -819,8 +814,9 @@ fn eligible_shop_stock(
             shop_facts::vendor_by_keeper_config(data, keeper_config, item_id)
                 .is_some_and(|fact| vendor_eligible(&fact, members))
         }
-        VendorChoice::Nearest => shop_facts::vendors_for(data, item_id)
-            .any(|fact| vendor_eligible(fact, members)),
+        VendorChoice::Nearest => {
+            shop_facts::vendors_for(data, item_id).any(|fact| vendor_eligible(fact, members))
+        }
     }
 }
 

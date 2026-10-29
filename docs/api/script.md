@@ -1342,8 +1342,9 @@ use gate. Shop choice uses the nearest reachable keeper for the chosen tier.
 Route permissions and access gates still apply. An undecided route search does
 not prove that a keeper is unreachable. The content price rule determines the
 coin reserve, capped by coins in the pack and observed bank. A usable partial
-refill can still continue gathering. If no tier qualifies, `no-vendor` names
-the best tier found and the condition that failed.
+refill can still continue gathering. A `no-vendor` refusal names the best tier
+found and the condition that failed. Coin, route and stock refusals retain
+their specific codes.
 
 Supply refusals keep the slot `Running` with native phase `Blocked` and no
 terminal failure. `block_reason` names the refused need and the evidence

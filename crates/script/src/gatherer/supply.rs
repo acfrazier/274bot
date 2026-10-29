@@ -1316,7 +1316,10 @@ mod tests {
 
         assert_eq!(tool.item, best);
         assert_eq!(tool.name.as_ref(), expected_name);
-        assert!(tool.alternatives.contains(&1359), "Rune remains a usable tier");
+        assert!(
+            tool.alternatives.contains(&1359),
+            "Rune remains a usable tier"
+        );
         assert_eq!(tool.presence, Presence::Wielded);
     }
 
