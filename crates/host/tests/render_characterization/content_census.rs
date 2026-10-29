@@ -2640,7 +2640,6 @@ fn render_budget_content_census() {
             LocAngle::EAST,
             LocAngle::SOUTH,
         ];
-        let mut loc_variant_bytes = BTreeMap::<(u32, u8, u8), usize>::new();
 
         for loc in &cache.locs {
             let shapes = match loc.shape.as_deref() {
@@ -2973,7 +2972,7 @@ fn render_budget_content_census() {
 
 const MAP_WORLD_TILES: usize = 256 * 64;
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct LocIdentity {
     world_x: u16,
     world_z: u16,
