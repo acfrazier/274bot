@@ -1,0 +1,147 @@
+{
+  "source_revision": "0e2a27faa80ac04d489f1b2455ce9a868583360e",
+  "gap": {
+    "stage": "viking:peer",
+    "step_id": "GAP-peer-riddle-ui",
+    "park_reason": "wait exhausted"
+  },
+  "error": "qcvi5uiskq_0 Quester parked/blocked: phase Blocked: Some(ScriptFailure { code: \"queue-blocked\", message: \"wait exhausted; resolve the condition, then Stop/Start Quester\" })",
+  "receipt": {
+    "account": "qcvi5uiskq_0",
+    "quest": "viking",
+    "quest_complete": false,
+    "deaths": 0,
+    "death_sent": false,
+    "death_injections": 0,
+    "death_observed": false,
+    "error": null,
+    "capture_error": null,
+    "end_captured": true,
+    "stages_seen": [
+      "viking:0",
+      "viking:1",
+      "viking:peer"
+    ],
+    "step_observations": [
+      {
+        "run": "RunKey { slot: 1, run: 1, session: 3 }",
+        "tick": 24,
+        "stage": "viking:0",
+        "sequence": 0,
+        "step_index": 0,
+        "remaining_steps": 1,
+        "step_id": "ask-brundt-to-start",
+        "child_step_id": "",
+        "action_state": "talking",
+        "waiting_for": null,
+        "owned_combat": null,
+        "inventory": []
+      },
+      {
+        "run": "RunKey { slot: 1, run: 1, session: 3 }",
+        "tick": 48,
+        "stage": "viking:1",
+        "sequence": 1,
+        "step_index": 0,
+        "remaining_steps": 1,
+        "step_id": "accept-peer-trial",
+        "child_step_id": "",
+        "action_state": "talking",
+        "waiting_for": null,
+        "owned_combat": null,
+        "inventory": []
+      },
+      {
+        "run": "RunKey { slot: 1, run: 1, session: 3 }",
+        "tick": 107,
+        "stage": "viking:peer",
+        "sequence": 2,
+        "step_index": 0,
+        "remaining_steps": 2,
+        "step_id": "walk-peer-door",
+        "child_step_id": "",
+        "action_state": "walking",
+        "waiting_for": null,
+        "owned_combat": null,
+        "inventory": []
+      }
+    ],
+    "final_status": {
+      "run": "RunKey { slot: 1, run: 1, session: 3 }",
+      "phase": "Blocked",
+      "fields": {
+        "queue": "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPB",
+        "completed": 0,
+        "session_deaths": 0,
+        "path_validation": "Reload Paths: 39 folder documents, 68 registry rows, 3 validation errors (/Volumes/dev-scratch/274bot-evidence/QUEST-TERRA/paths)\n/Volumes/dev-scratch/274bot-evidence/QUEST-TERRA/paths/eadgar.json step=salarin-sinister-key code=invalid-args detail=unknown field `until_drop`, expected one of `target`, `tactic`, `melee_mode`, `loadout`, `spells`, `fallback_spells`, `anchor`, `stand`, `cross`, `guard`, `area`, `lost_radius`, `kill_budget_ticks`, `loot`, `finish`, `until`, `win`\n/Volumes/dev-scratch/274bot-evidence/QUEST-TERRA/paths/tbwt.json step=hunt-jogre-for-iron-spear code=invalid-args detail=unknown field `until_drop`, expected one of `target`, `tactic`, `melee_mode`, `loadout`, `spells`, `fallback_spells`, `anchor`, `stand`, `cross`, `guard`, `area`, `lost_radius`, `kill_budget_ticks`, `loot`, `finish`, `until`, `win`\n/Volumes/dev-scratch/274bot-evidence/QUEST-TERRA/paths/zanaris.json step=zombie-bronze-axe code=invalid-args detail=unknown field `until_drop`, expected one of `target`, `tactic`, `melee_mode`, `loadout`, `spells`, `fallback_spells`, `anchor`, `stand`, `cross`, `guard`, `area`, `lost_radius`, `kill_budget_ticks`, `loot`, `finish`, `until`, `win`",
+        "path_source": "folder",
+        "block_reason": "wait exhausted",
+        "required_vs_live": 0,
+        "deaths": 0
+      },
+      "failure": "ScriptFailure { code: \"queue-blocked\", message: \"wait exhausted; resolve the condition, then Stop/Start Quester\" }"
+    }
+  },
+  "logs": [
+    {
+      "account": "qcvi5uiskq_0",
+      "message": "quester viking: run start stage=unknown"
+    },
+    {
+      "account": "qcvi5uiskq_0",
+      "message": "quester viking: stage unknown → viking:0"
+    },
+    {
+      "account": "qcvi5uiskq_0",
+      "message": "quester viking: stage viking:0 step ask-brundt-to-start (talk) begin"
+    },
+    {
+      "account": "qcvi5uiskq_0",
+      "message": "quester viking: stage viking:0 → viking:1"
+    },
+    {
+      "account": "qcvi5uiskq_0",
+      "message": "quester viking: stage viking:1 step ask-brundt-to-start (talk) settled"
+    },
+    {
+      "account": "qcvi5uiskq_0",
+      "message": "quester viking: stage viking:1 step accept-peer-trial (talk) begin"
+    },
+    {
+      "account": "qcvi5uiskq_0",
+      "message": "quester viking: stage viking:1 → viking:peer"
+    },
+    {
+      "account": "qcvi5uiskq_0",
+      "message": "quester viking: stage viking:peer step accept-peer-trial (talk) settled"
+    },
+    {
+      "account": "qcvi5uiskq_0",
+      "message": "quester viking: stage viking:peer step walk-peer-door (walk) begin"
+    },
+    {
+      "account": "qcvi5uiskq_0",
+      "message": "quester viking: stage viking:peer step walk-peer-door (walk) settled"
+    },
+    {
+      "account": "qcvi5uiskq_0",
+      "message": "quester viking: stage viking:peer step walk-peer-door skipped: near({\"tile\":[2632,3667,0],\"radius\":2}) evaluated true"
+    },
+    {
+      "account": "qcvi5uiskq_0",
+      "message": "quester viking: stage viking:peer step GAP-peer-riddle-ui (wait) begin"
+    },
+    {
+      "account": "qcvi5uiskq_0",
+      "message": "quester viking: stage viking:peer step GAP-peer-riddle-ui (wait) failed: wait exhausted"
+    },
+    {
+      "account": "qcvi5uiskq_0",
+      "message": "quester viking: park context step=GAP-peer-riddle-ui child_recipe= child="
+    },
+    {
+      "account": "qcvi5uiskq_0",
+      "message": "quester viking: park: wait exhausted"
+    }
+  ]
+}

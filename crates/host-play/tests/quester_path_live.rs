@@ -1156,6 +1156,43 @@ mod campaign_gap_tests {
         ]
     }
 
+    fn recorded_viking_packet() -> serde_json::Value {
+        // Oracle inputs and native messages from QUEST-CAMPAIGN/viking/gap-1,
+        // without changing its missing death alias or lean Blocked status.
+        serde_json::from_str(include_str!("fixtures/campaign-viking-gap-1.json")).unwrap()
+    }
+
+    #[test]
+    fn recorded_viking_gap_packet_proves_advancing_settlements() {
+        let packet = recorded_viking_packet();
+        let gap = campaign_gap(&serde_json::json!({"gap": packet["gap"]}))
+            .unwrap()
+            .unwrap();
+        let actor = packet["receipt"].clone();
+        assert!(actor.get("death_count_total_across_runs").is_none());
+        assert!(actor["final_status"]["fields"].get("quest").is_none());
+        let account = actor["account"].as_str().unwrap().to_owned();
+        let receipts = std::collections::BTreeMap::from([(account, actor)]);
+        let result = Err(packet["error"].as_str().unwrap().to_owned());
+        let proof = campaign_gap_proof(
+            &result,
+            &[Some(gap)],
+            QUEST,
+            packet["logs"].as_array().unwrap(),
+            &receipts,
+        )
+        .expect("the recorded clean Viking boundary must be proven");
+        assert_eq!(proof["stage"], "viking:peer");
+        assert_eq!(
+            proof["accounts"][0]["prior_steps"],
+            serde_json::json!([
+                {"stage": "viking:0", "step_id": "ask-brundt-to-start", "kind": "talk", "settled": true},
+                {"stage": "viking:1", "step_id": "accept-peer-trial", "kind": "talk", "settled": true},
+                {"stage": "viking:peer", "step_id": "walk-peer-door", "kind": "walk", "settled": true},
+            ])
+        );
+    }
+
     fn receipts(actor: serde_json::Value) -> std::collections::BTreeMap<String, serde_json::Value> {
         std::collections::BTreeMap::from([(ACCOUNT.to_owned(), actor)])
     }
