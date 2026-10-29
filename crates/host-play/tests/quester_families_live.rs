@@ -30,7 +30,8 @@ use script::native::{NativePhase, ScriptStatus, StatusValue};
 use script::quester::compile::compile_path;
 use script::quester::path::{
     PathDocument, PredicateDocument, ProgressColourDocument, ProgressDocument,
-    ProgressRuleDocument, QuestBankDocument, QuestLoadoutDocument, SequenceDocument, StepDocument,
+    ProgressRuleDocument, QuestBankDocument, QuestLoadoutDocument, SequenceDocument,
+    SequenceOrder, StepDocument,
 };
 use script::quester::runner::Quester;
 use serde_json::{json, Value};
@@ -1552,7 +1553,7 @@ fn live_dialogue_answer_once_filliman_repeated_menu() {
                     "tile": door.tile, "distance": door.distance, "actions": &door.actions},
         }))
     }));
-    let document = family_path(
+    let mut document = family_path(
         "cook",
         "Nature Spirit answer-once family fixture",
         "cook:0",
@@ -1575,14 +1576,15 @@ fn live_dialogue_answer_once_filliman_repeated_menu() {
                 }
             }),
             true,
-            fact(
-                "npc_present",
-                json!({"npc": "filliman_tarlock_spirit"}),
-            ),
+            empty_any(),
             empty_all(),
         )],
         true,
     );
+    // The one step's completion has no account-local evidence to author as
+    // skip_if; ordered order advances its cursor at settle, so the terminal
+    // sequence finishes instead of replaying the door.
+    document.roles[0].sequences[0].order = SequenceOrder::Ordered;
     let start = family_start(document, Arc::clone(&selected), Arc::clone(&quests));
     let mut menu_openings = 0;
     let mut first_menu_pages = None;
@@ -1650,5 +1652,7 @@ fn live_dialogue_answer_once_filliman_repeated_menu() {
     });
     let receipt = quester_live::run_family(cell, start, observe)
         .unwrap_or_else(|error| panic!("answer_once Filliman family live proof failed: {error}"));
-    assert_eq!(receipt["menu_pages"], 2);
+    assert_eq!(receipt["family_receipt"]["menu_pages"], 2);
+    assert_eq!(receipt["family_receipt"]["quest_varp_after"], 20);
+    assert_eq!(receipt["family_receipt"]["chat_modal_after"], -1);
 }
