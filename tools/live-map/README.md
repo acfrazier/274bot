@@ -53,10 +53,29 @@ All cells not listed below normally run on merlot. Engine A uses game port
 |---|---|
 | `host.npc-hop-engine-b` | Run on chardonnay. The command sets `WORLD_CACHE_DIR` and `LIVE_EVIDENCE_DIR`. Engine B is reached through the loopback tunnel at game port `45594` and HTTP port `2080`. |
 | `host.sherlock-search-live` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. The cell uses loopback ports and has no host-specific code. Use chardonnay when merlot is measured or reserved. It needs `LIVE=1`, `BOT_CPU=1`, `BOT_LIVE_NAME_PREFIX`, `WORLD_NAV_PACK`, `WORLD_ENGINE_DIR`, `BOT_CACHE_DIR`, `RS2B0T`, `WORLD_GAME_PORT`, `WORLD_HTTP_PORT`, and `LIVE_EVIDENCE_DIR`. The command also uses `ISOHOME`. Leave `QUESTER_TICK_MS` unset. |
-| `host.quester-path-engine-q`, `scenario.quester-engine-q` | Run on the Engine Q host. This setup uses merlot at `127.0.0.1:44694` and `127.0.0.1:1180`. Set `QUESTER_TICK_MS=300` only for these cells. |
+| `host.quester-path-engine-q`, `scenario.quester-engine-q` | Run these cells only through Engine Q at `127.0.0.1:44694` and `127.0.0.1:1180`. Leave `QUESTER_TICK_MS` unset. Engine Q uses its fixed 300 ms tick. |
 | `nav.essence-follow` | The orchestrator must start a 274 engine on the cell host at `127.0.0.1:43594`. The orchestrator supplies `ENGINE_274_DIR` and `NAV_PACK_274`. Do not run this cell until the orchestrator provides both inputs and starts the engine. |
 | `nav.essence-289-engine-a` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. Use chardonnay when merlot is measured or reserved. |
 | `panel.headed-render` | Run on merlot with its interactive GPU and display. The command removes `BOT_CPU` so the client uses the GPU renderer. |
+
+## Gatherer Shop lab routing
+
+The shared runner reads `tools/live-map/map.toml` from the `--repo` path.
+It does not read the map from the runner checkout.
+
+On Aubaine, ports `44594/1080` relay to Engine L at `47594/3080`. Use
+`--engine-game-port 44594 --engine-http-port 1080`. This keeps the older
+hard-coded A cells on the relay to L.
+
+Export `ENGINE_L_DIR` to the local Engine L directory. The runner has no
+default for this alias.
+
+On chardonnay, use Engine L only at `47594/3080`. Do not use `44594/1080`.
+Those ports belong to the Windows drivers. Set the runner engine ports to
+`47594/3080`.
+
+Use Engine Q only for quest cells at `44694/1180`. Leave
+`QUESTER_TICK_MS` unset. The runner routes quest cells to Q.
 
 
 Client submodule paths have separate coverage. The gitlink and the client
