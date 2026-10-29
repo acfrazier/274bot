@@ -1156,6 +1156,13 @@ impl ObjectOpen {
                 }
                 ObjectPhase::NearRetry { attempt, loc } => {
                     self.retry_beside(attempt, Some(loc), cx);
+                    // A spent action budget leaves the phase at `NearRetry`.
+                    // It resets only with the next observed tick, so wait for
+                    // that tick. Looping here would never end: nothing inside
+                    // this poll can restore the budget.
+                    if matches!(self.phase, ObjectPhase::NearRetry { .. }) {
+                        return Poll::Pending;
+                    }
                 }
                 ObjectPhase::Continue {
                     attempt,
