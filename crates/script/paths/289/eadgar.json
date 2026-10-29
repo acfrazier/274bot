@@ -242,8 +242,8 @@
               "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "death_climbingboots"}}}
             },
             {
-              "id": "pickpocket-eadgar-key", "kind": "interact", "version": 1, "advances": false,
-              "args": {"target": {"npc": "troll_prison_guard2"}, "op": "Pickpocket", "anchor": {"tile": [2832,10083,0], "source": "content/maps/m44_157.jm2:15956; content/pack/npc.pack:1130"}, "radius": 5},
+              "id": "pickpocket-eadgar-key", "kind": "thieve", "version": 1, "advances": false,
+              "args": {"target": {"npc": "troll_prison_guard2"}, "until": {"obj": "troll_key_eadgar", "qty": 1}, "anchor": {"tile": [2832,10083,0], "source": "content/maps/m44_157.jm2:15956; content/pack/npc.pack:1130"}, "radius": 5, "settle_ms": 300000},
               "comment": "content/scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2:38-75. A failed attempt wakes the guard; success gives the key.",
               "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "troll_key_eadgar"}}},
               "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "troll_key_eadgar"}}}
