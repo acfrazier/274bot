@@ -934,6 +934,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(&*first.eligible, &[0], "Rune is sold only by Nurmof");
+        let mut picks = vec![Arc::clone(&first.eligible)];
         complete_service_pick(
             &mut ledger,
             0,
@@ -947,25 +948,21 @@ mod tests {
         with_tick_shop(&snapshot, &facts, None, &mut ledger, 4, |tick| {
             assert!(run.poll(&request, tick, OpenGate::Open).is_pending());
         });
-        let picks: Vec<_> = ledger
-            .as_ref()
-            .unwrap()
-            .outbox
-            .iter()
-            .filter_map(|action| match &action.effect {
-                HostEffect::ServicePick(pick) => Some(pick),
+        picks.extend(ledger.as_ref().unwrap().outbox.iter().filter_map(
+            |action| match &action.effect {
+                HostEffect::ServicePick(pick) => Some(Arc::clone(&pick.eligible)),
                 _ => None,
-            })
-            .collect();
+            },
+        ));
         assert_eq!(picks.len(), 2);
         assert_eq!(
-            &*picks[1].eligible,
+            &*picks[1],
             &[0, 1],
             "the lower tier keeps every stocked eligible placement"
         );
         complete_service_pick(
             &mut ledger,
-            1,
+            0,
             4,
             crate::native_bank::ServicePickOutcome::Routed {
                 index: 1,
