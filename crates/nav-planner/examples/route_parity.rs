@@ -717,10 +717,13 @@ fn main() -> Result<(), String> {
     );
     // Reused locs and additional operable stands follow the same handlers.
     // Keep these input rows on both packs, even when the baseline has no edge.
-    let mut reused = quest_state(&data, &[
-        ("troll", "troll_quest", 10),
-        ("itwatchtower", "itwatchtower", 12),
-    ])?;
+    let mut reused = quest_state(
+        &data,
+        &[
+            ("troll", "troll_quest", 10),
+            ("itwatchtower", "itwatchtower", 12),
+        ],
+    )?;
     reused.worn.extend([3105, 1059]);
     for (id, from, to) in [
         (3730, tile(2816, 3563, 0), tile(2817, 3561, 0)),
@@ -743,8 +746,15 @@ fn main() -> Result<(), String> {
         (2796, tile(2933, 4712, 1), tile(2549, 3112, 2)),
         (2796, tile(2934, 4711, 1), tile(2549, 3112, 2)),
     ] {
-        obstacle_row(format!("obstacle_reused_{id}_{}_{}_{}", from.x, from.z, from.level),
-            id, from, to, &reused, "ready", legacy);
+        obstacle_row(
+            format!("obstacle_reused_{id}_{}_{}_{}", from.x, from.z, from.level),
+            id,
+            from,
+            to,
+            &reused,
+            "ready",
+            legacy,
+        );
     }
     let mut transports: Vec<_> = world
         .graph
