@@ -218,7 +218,7 @@ fn build_seed_scenario(plan: SeedPlan) -> Result<Scenario, String> {
     let mut expected_inventory: BTreeMap<i32, (String, i32)> = BTreeMap::new();
     let mut expected_bank: BTreeMap<i32, (String, i32)> = BTreeMap::new();
     let mut worn: Vec<(i32, String)> = Vec::new();
-    let mut merge = |map: &mut BTreeMap<i32, (String, i32)>,
+    let merge = |map: &mut BTreeMap<i32, (String, i32)>,
                      alias: &str,
                      count: i32|
      -> Result<(), String> {
@@ -616,6 +616,10 @@ pub fn quest_watch_speed_scenario_from_env() -> Result<Scenario, String> {
     let ms: u32 = raw
         .parse()
         .map_err(|error| format!("QUEST_WATCH_SPEED_MS {raw:?}: {error}"))?;
+    build_speed_scenario(ms)
+}
+
+pub(crate) fn build_speed_scenario(ms: u32) -> Result<Scenario, String> {
     if !(50..=5000).contains(&ms) {
         return Err(format!("QUEST_WATCH_SPEED_MS {ms} is outside 50..=5000"));
     }
@@ -688,6 +692,19 @@ pub fn quest_watch_speed_scenario_from_env() -> Result<Scenario, String> {
             ..Default::default()
         },
     })
+}
+
+/// Minimal seed scenario for registry-wide tests, beside
+/// `quester_path`'s default fixture. Neither builder requests a
+/// world-speed change through scenario nav settings: the speed
+/// scenario's `::speed` is an explicit env-selected step.
+#[cfg(test)]
+pub(crate) fn seed_scenario_for_test() -> Scenario {
+    let plan: SeedPlan = serde_json::from_str(
+        r#"{"quest":"priest","quest_varp":"prieststart","quest_display":"The Restless Ghost","stats":{"hitpoints":30,"defence":30},"start_tile":[3243,3206,0]}"#,
+    )
+    .expect("test plan parses");
+    build_seed_scenario(plan).expect("test seed scenario builds")
 }
 
 #[cfg(test)]
