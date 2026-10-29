@@ -193,8 +193,12 @@ impl PrereqWalk {
         loop {
             match &mut self.phase {
                 Phase::Walking(handle) => {
-                    let receipt = std::task::ready!(actions.poll(handle, cx))?;
-                    self.allow = receipt.prereq_allow.unwrap_or_default();
+                    let mut receipt = std::task::ready!(actions.poll(handle, cx))?;
+                    // The original admission fixes consent for the whole logical walk.
+                    if self.budget.re_issues == 0 && self.outer.is_none() {
+                        self.allow = receipt.prereq_allow.unwrap_or_default();
+                    }
+                    receipt.prereq_allow = Some(self.allow);
                     let entry = match &receipt.end {
                         WalkEnd::NeedsStep(gates) => {
                             Some(HandoverEntry::NeedsStep(Arc::clone(gates)))

@@ -1383,6 +1383,66 @@ fn resolve_probe_in_walk(
 }
 
 #[test]
+fn reissued_walks_keep_the_original_effective_prerequisite_grants() {
+    let (_, holy) = row(ConsentSwitch::PrereqDialogue);
+    let (_, mort) = row(ConsentSwitch::QuestStart);
+    let crossing = &holy.crossings[0];
+    let original = PrereqAllow {
+        dialogue: true,
+        quest_start: false,
+    };
+    for reissued in [
+        None,
+        Some(PrereqAllow::default()),
+        Some(PrereqAllow {
+            dialogue: true,
+            quest_start: true,
+        }),
+    ] {
+        let state = state();
+        let mut snapshot = crossing_snapshot(crossing);
+        let (mut walk, mut ledger) = walk_wrapper(&snapshot);
+        wrapper_terminal(
+            &mut ledger,
+            2,
+            WalkEnd::NeedsStep(vec![gate(holy, crossing, Truth::Unknown)].into()),
+        );
+        ledger.as_mut().unwrap().walk.as_mut().unwrap().prereq_allow = Some(original);
+        assert!(wrapper_poll(&mut walk, &snapshot, &mut ledger, 2, &state).is_pending());
+        assert!(matches!(last_interaction(&ledger), InteractReq::Loc { .. }));
+        accept_last(&mut ledger, 2, 100);
+        snapshot.seed_local_player(local_player(crossing.pass.landing));
+        message(&mut snapshot, 101, &crossing.pass.message);
+        assert!(wrapper_poll(&mut walk, &snapshot, &mut ledger, 3, &state).is_pending());
+
+        wrapper_terminal(
+            &mut ledger,
+            4,
+            WalkEnd::NeedsStep(vec![gate(mort, &mort.crossings[0], Truth::False)].into()),
+        );
+        ledger.as_mut().unwrap().walk.as_mut().unwrap().prereq_allow = reissued;
+        let emitted = ledger.as_ref().unwrap().outbox.len();
+        let Poll::Ready(Ok(receipt)) = wrapper_poll(&mut walk, &snapshot, &mut ledger, 4, &state)
+        else {
+            panic!("a reissued walk must not grant the originally forbidden quest start");
+        };
+        assert_eq!(receipt.prereq_allow, Some(original));
+        let Some(crate::native::WalkRefusal::Prerequisite(refusal)) = receipt.refusal else {
+            panic!("the owner must receive the typed consent refusal");
+        };
+        assert!(matches!(
+            refusal.as_ref(),
+            PrereqRefusal::NotAllowed {
+                switch: ConsentSwitch::QuestStart,
+                ..
+            }
+        ));
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), emitted);
+        assert!(!ledger.as_ref().unwrap().test_owner_live());
+    }
+}
+
+#[test]
 fn cancel_during_prerequisite_handover_revokes_the_replacement_owner() {
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let snapshot = crossing_snapshot(&row.crossings[0]);
