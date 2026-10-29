@@ -1456,8 +1456,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("scratch");
         let gate = Arc::new(WriteGate::default());
         let writer = Arc::new(EvidenceWriter::with_config(
-            WriterConfig::new(1, Duration::from_secs(60))
-                .with_before_write(Arc::clone(&gate)),
+            WriterConfig::new(1, Duration::from_secs(60)).with_before_write(Arc::clone(&gate)),
         ));
         let request = |name: &str| EvidenceRequest {
             png_path: dir.join(name),

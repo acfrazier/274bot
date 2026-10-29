@@ -26,9 +26,9 @@ use crate::render::{HeadIdentity, RenderRefusal};
 
 /// OS socket handle used by the idle park (`poll` / `WSAPoll`).
 #[cfg(unix)]
-pub(crate) type WaitHandle = RawFd;
+pub(crate) use std::os::unix::io::RawFd as WaitHandle;
 #[cfg(windows)]
-pub(crate) type WaitHandle = RawSocket;
+pub(crate) use std::os::windows::io::RawSocket as WaitHandle;
 
 /// Maximum handles one wait/park may observe (control + client socket).
 /// Fixed so wait/park stay stack-only — no heap per idle park.

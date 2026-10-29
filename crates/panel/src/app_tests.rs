@@ -2966,8 +2966,8 @@ fn typed_capture_refusals_fail_terminal_pair_and_soak_drains_without_waiting() {
         );
         return;
     }
-    frontend_core::surface::configure_render_fixture(
-        frontend_core::surface::ProcessFixture {
+    host::render_head::test_hooks::configure_process(
+        host::render_head::test_hooks::ProcessFixture {
             grant_ttl: std::time::Duration::from_millis(20),
             quantum: std::time::Duration::from_millis(40),
         },

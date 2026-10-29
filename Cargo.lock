@@ -3419,6 +3419,7 @@ dependencies = [
  "dear-imgui-wgpu",
  "dear-imgui-winit",
  "frontend-core",
+ "host",
  "host-play",
  "libc",
  "nav-bake",

@@ -1124,8 +1124,8 @@ fn run_capture_fixture_child(test_name: &str, include_ignored: bool) {
 fn capture_process_fixture(
     prefer_cpu: bool,
     retained_consumer: bool,
-) -> frontend_core::surface::CaptureFixture {
-    frontend_core::surface::configure_render_fixture(frontend_core::surface::ProcessFixture {
+) -> host::render_head::test_hooks::CaptureFixture {
+    host::render_head::test_hooks::configure_process(host::render_head::test_hooks::ProcessFixture {
         grant_ttl: std::time::Duration::from_millis(20),
         quantum: std::time::Duration::from_millis(40),
     })
@@ -1136,7 +1136,7 @@ fn capture_process_fixture(
         )
         .expect("one retained present is enough for this isolated head");
     }
-    frontend_core::surface::CaptureFixture::new(
+    host::render_head::test_hooks::CaptureFixture::new(
         api::identity::SlotKey::from_incarnation(501).unwrap(),
         prefer_cpu,
         false,

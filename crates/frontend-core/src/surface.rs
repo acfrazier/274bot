@@ -10,14 +10,6 @@ use vault::Profile;
 /// each slot every frame (named re-exports by ruling D1).
 pub use host::{FrameBuf, FrameStamp, PresentedFrame, SlotInput};
 
-#[cfg(feature = "render-test-hooks")]
-pub use host::render_head::test_hooks::{
-    configure_process as configure_render_fixture,
-    configure_process_control as configure_render_fixture_control,
-    configure_render_budgets as configure_render_fixture_budgets, CaptureFixture, ProcessFixture,
-    RenderTestControl, RenderTestCross, RenderTestEvent, RenderTestPoint,
-};
-
 /// One operator input event for a slot's client, in applet coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputEv {

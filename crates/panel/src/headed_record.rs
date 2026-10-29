@@ -2944,8 +2944,8 @@ mod tests {
     fn recorder_fixture_child() {
         let mode = std::env::var("RECORDER_CHILD_MODE").expect("recorder fixture mode");
         if mode != "legacy" {
-            frontend_core::surface::configure_render_fixture(
-                frontend_core::surface::ProcessFixture {
+            host::render_head::test_hooks::configure_process(
+                host::render_head::test_hooks::ProcessFixture {
                     grant_ttl: Duration::from_millis(20),
                     quantum: Duration::from_millis(40),
                 },

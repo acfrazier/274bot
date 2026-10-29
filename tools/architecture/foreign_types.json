@@ -2,6 +2,21 @@
   "schema_version": 1,
   "foreign_types": [
     {
+      "path": "client::render::backend::PresentToken",
+      "classification": "scalar",
+      "reason": "Copy non-zero u64 presentation identity with no payload or handle (client/src/render/backend/present.rs:13-14)."
+    },
+    {
+      "path": "client::render::backend::FrameOutput",
+      "classification": "owning",
+      "reason": "By-value backend output owns either a PixMap pixel buffer or a TextureHandle; the Refused variant contains only a typed fault (client/src/render/backend/mod.rs:257-269)."
+    },
+    {
+      "path": "client::render::diagnostics::PixelRoiMeta",
+      "classification": "owning",
+      "reason": "By-value pixel-production diagnostics may own an upload label through PixelRoiMeta.upload: Option<PixelRoiUpload> and PixelRoiUpload.slot: String (client/src/render/diagnostics.rs:231-249)."
+    },
+    {
       "path": "client::render::diagnostics::PixelRoiShotBind",
       "classification": "owning",
       "reason": "By-value capture diagnostics. PixelRoiMeta.upload may own PixelRoiUpload.slot: String (client/src/render/diagnostics.rs:231-249,271-275); no additional allocation is introduced at the frontend seam."

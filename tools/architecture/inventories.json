@@ -2258,6 +2258,22 @@
       "reason": "T3.3 ruling D1: named re-export of the per-slot frame mailbox and input channel."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/surface.rs|FrameStamp",
+      "path": "crates/frontend-core/src/surface.rs",
+      "symbol": "FrameStamp",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T4.4-S4 immutable Copy authority stamped with one accepted frame: head identity, sequence, present token and valid-scene bit."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/surface.rs|PresentedFrame",
+      "path": "crates/frontend-core/src/surface.rs",
+      "symbol": "PresentedFrame",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T4.4-S4 single-consumer owner of a frame payload, its scalar authority and optional owned pixel diagnostics; private fields and explicit accessors."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/surface.rs|SlotInput",
       "path": "crates/frontend-core/src/surface.rs",
       "symbol": "SlotInput",

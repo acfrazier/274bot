@@ -9,9 +9,9 @@ use std::time::{Duration, Instant};
 use api::identity::SlotKey;
 use client::render::backend::BackendKind;
 use client::render::budget::RenderBudgetLimits;
-use frontend_core::surface::{
-    configure_render_fixture, configure_render_fixture_budgets, configure_render_fixture_control,
-    ProcessFixture, RenderTestControl, RenderTestCross, RenderTestEvent, RenderTestPoint,
+use host::render_head::test_hooks::{
+    configure_process, configure_process_control, configure_render_budgets, ProcessFixture,
+    RenderTestControl, RenderTestCross, RenderTestEvent, RenderTestPoint,
 };
 
 #[cfg(feature = "memory-profile")]
@@ -369,15 +369,15 @@ fn run_fixture() -> Result<(), String> {
             "scope": "diagnostic fixture only; excluded from renderer owner totals",
         })
     );
-    configure_render_fixture(ProcessFixture {
+    configure_process(ProcessFixture {
         grant_ttl: Duration::from_millis(ttl),
         quantum: Duration::from_millis(quantum),
     })
     .map_err(|error| error.to_string())?;
-    configure_render_fixture_budgets(budgets.limits()).map_err(|error| error.to_string())?;
+    configure_render_budgets(budgets.limits()).map_err(|error| error.to_string())?;
     client::render::backend::configure_retained_present_budget(retained)
         .map_err(|error| format!("retained-present fixture budget: {error:?}"))?;
-    configure_render_fixture_control(control.clone()).map_err(|error| error.to_string())?;
+    configure_process_control(control.clone()).map_err(|error| error.to_string())?;
     let args = panel::parse_args(
         std::env::args().skip(1),
         std::env::var("BOT_LIVE").ok().as_deref(),
