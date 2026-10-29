@@ -555,12 +555,12 @@ fn synthetic_case(
     name: &'static str,
     provenance: &'static str,
     world: Arc<NavWorld>,
-    from: WorldTile,
-    to: WorldTile,
+    endpoints: (WorldTile, WorldTile),
     state_name: &'static str,
     state: WorldState,
     expected_unbounded_native_end: &'static str,
 ) -> DiagnosticCase {
+    let (from, to) = endpoints;
     DiagnosticCase {
         name,
         provenance,
@@ -652,8 +652,7 @@ fn synthetic_cases() -> Vec<DiagnosticCase> {
             "unknown_quest_evidence",
             "synthetic one-door corridor with an unevidenced Complete quest gate",
             quest_world,
-            from,
-            to,
+            (from, to),
             "empty_without_quest_evidence",
             WorldState::empty(),
             "NeedsEvidence",
@@ -662,8 +661,7 @@ fn synthetic_cases() -> Vec<DiagnosticCase> {
             "missing_carry_requirement",
             "synthetic one-door corridor with item_req and observed empty inventory",
             carry_world,
-            from,
-            to,
+            (from, to),
             "observed_empty_inventory",
             WorldState {
                 inventory_ready: true,
@@ -676,8 +674,7 @@ fn synthetic_cases() -> Vec<DiagnosticCase> {
             "entrance_requirement",
             "synthetic one-door corridor with forbidden_held item",
             entrance_world,
-            from,
-            to,
+            (from, to),
             "observed_forbidden_held_item",
             entrance_state,
             "Blocked",
@@ -699,7 +696,6 @@ fn real_cases(world: Arc<NavWorld>) -> Vec<DiagnosticCase> {
         allow_teleports: script::native::WalkBit::Allow,
         allow_wilderness: script::native::WalkBit::Allow,
         allow_danger_zones: script::native::WalkBit::Allow,
-        ..script::native::WalkOptions::default()
     };
 
     vec![

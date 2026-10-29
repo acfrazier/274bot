@@ -277,10 +277,7 @@ fn write_receipt(path: &Path, receipt: &Value) {
 }
 
 fn normalized_detail(detail: &str) -> String {
-    detail
-        .to_ascii_lowercase()
-        .replace('_', " ")
-        .replace('-', " ")
+    detail.to_ascii_lowercase().replace(['_', '-'], " ")
 }
 fn quester_action_result_json(result: &Result<WalkReceipt, ActionError>) -> Value {
     match result {
