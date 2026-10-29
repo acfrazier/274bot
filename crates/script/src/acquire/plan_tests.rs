@@ -1401,12 +1401,14 @@ fn shop_tier_filters_unwieldable_items_and_existing_tiers_still_win() {
         SourceSet::PACK | SourceSet::BANK,
     );
     let coins = [(COINS, 1_000)];
+    let held_rows = [(rune_axe, 1), (COINS, 1_000)];
+    let rune_rows = [(rune_axe, 1)];
     let no_tools = fixture(&coins, &[], Origin::Session);
     let purchase_plan = shop_plan(&request, &no_tools, &data, false);
     assert_eq!(purchase_at(&purchase_plan, 0).item, iron_axe);
     assert_eq!(purchase_plan.wear_count, 0);
 
-    let held_rune = fixture(&[(rune_axe, 1), (COINS, 1_000)], &[], Origin::Unknown);
+    let held_rune = fixture(&held_rows, &[], Origin::Unknown);
     assert!(matches!(
         plan(
             &request,
@@ -1422,7 +1424,7 @@ fn shop_tier_filters_unwieldable_items_and_existing_tiers_still_win() {
 
     let worn_rune = CountsFixture {
         held: &coins,
-        worn: &[(rune_axe, 1)],
+        worn: &rune_rows,
         banked: &[],
         unknown_bank_ids: &[],
         origin: Origin::Unknown,
@@ -1441,7 +1443,7 @@ fn shop_tier_filters_unwieldable_items_and_existing_tiers_still_win() {
         AcquireVerdict::Satisfied
     ));
 
-    let banked_rune = fixture(&coins, &[(rune_axe, 1)], Origin::Session);
+    let banked_rune = fixture(&coins, &rune_rows, Origin::Session);
     let plan = shop_plan(&request, &banked_rune, &data, false);
     assert_eq!(plan.purchase_count, 0);
     assert_eq!(plan.wear_count, 0);
