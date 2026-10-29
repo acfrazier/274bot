@@ -470,7 +470,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/host-play/src/script_nav.rs", "crates/script/src/native/walk.rs"]
+globs = ["crates/host-play/src/script_nav.rs", "crates/script/src/native/walk.rs", "crates/host-play/tests/walk_no_route_live.rs"]
 cells = [
   "host.walk-no-route-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_GAME_PORT=47594 WORLD_HTTP_PORT=3080 WORLD_ENGINE_DIR=${BOT_ENGINE_DIR:?} WORLD_CACHE_DIR=${BOT_CACHE_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked --release -p host-play --features live-harness,test-support,live-probe --test walk_no_route_live -- --ignored --exact live_scorpcatcher_no_key_walk_returns_no_path_with_detail_within_observed_ticks --nocapture --test-threads=1",
 ]
