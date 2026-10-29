@@ -369,7 +369,7 @@ impl WorkService {
                     api::host_log!(
                         api::hostlog::Category::Lifecycle,
                         api::hostlog::Level::Warn,
-                        "background work is slow: step has not returned after {elapsed:?} job={:?}. Background work remains admitted.",
+                        "background work is slow: step has not returned after {elapsed:?} job={:?}",
                         active.entry,
                     );
                 }
