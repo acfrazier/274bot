@@ -501,13 +501,15 @@ fn live_gatherer_cures_yanille_chest_poison_and_resumes_yew_work() {
         observe_start(snapshot, &mut witness)
     }));
     let start_settings = settings;
-    let start = Box::new(move |handle: &host_play::ScriptStartHandle, account: &str, _| {
-        handle.start_compiled(account, script::CompiledId("Gatherer"), start_settings.clone())
-    });
-    let observe = Box::new(move |snapshot: &GameSnapshot, status: Option<&ScriptStatus>, _| {
-        let mut witness = witness.lock().map_err(|_| "survival witness poisoned")?;
-        gathered_receipt(snapshot, status, &mut witness)
-    });
+    let start: quester_live::StartFamily =
+        Box::new(move |handle: &host_play::ScriptStartHandle, account: &str, _| {
+            handle.start_compiled(account, script::CompiledId("Gatherer"), start_settings.clone())
+        });
+    let observe: quester_live::ObserveFamily =
+        Box::new(move |snapshot: &GameSnapshot, status: Option<&ScriptStatus>, _| {
+            let mut witness = witness.lock().map_err(|_| "survival witness poisoned")?;
+            gathered_receipt(snapshot, status, &mut witness)
+        });
     let receipt = quester_live::run_family(cell, start, observe).expect("Gatherer cure live proof");
     assert!(receipt["woodcutting_xp_after"].as_i64().unwrap() > receipt["woodcutting_xp_at_need"].as_i64().unwrap());
     assert!(receipt["resumed_work_ticks"].as_u64().unwrap() <= 360);
@@ -570,13 +572,15 @@ fn live_quester_cures_yanille_chest_poison_and_resumes_mid_step() {
         observe_start(snapshot, &mut witness)
     }));
     let start_settings = settings;
-    let start = Box::new(move |handle: &host_play::ScriptStartHandle, account: &str, _| {
-        handle.start_compiled(account, script::CompiledId("Quester"), start_settings.clone())
-    });
-    let observe = Box::new(move |snapshot: &GameSnapshot, status: Option<&ScriptStatus>, _| {
-        let mut witness = witness.lock().map_err(|_| "survival witness poisoned")?;
-        quester_receipt(snapshot, status, &mut witness)
-    });
+    let start: quester_live::StartFamily =
+        Box::new(move |handle: &host_play::ScriptStartHandle, account: &str, _| {
+            handle.start_compiled(account, script::CompiledId("Quester"), start_settings.clone())
+        });
+    let observe: quester_live::ObserveFamily =
+        Box::new(move |snapshot: &GameSnapshot, status: Option<&ScriptStatus>, _| {
+            let mut witness = witness.lock().map_err(|_| "survival witness poisoned")?;
+            quester_receipt(snapshot, status, &mut witness)
+        });
     let receipt = quester_live::run_family(cell, start, observe).expect("Quester cure live proof");
     drop(restore);
     assert_eq!(receipt["resumed_step"], "survival-work");
