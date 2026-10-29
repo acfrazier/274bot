@@ -124,8 +124,9 @@ pub(crate) use quester::{
     quester_cook_login_scenario, quester_cook_restart_scenario, quester_cook_resume_scenario,
     quester_cook_scenario, quester_path_scenario, quester_queue_scenario,
     quester_romeo_and_juliet_scenario, quester_rune_mysteries_scenario, quester_sheep_scenario,
-    quester_skip_scenario,
 };
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) use quester::quester_skip_scenario;
 pub use quester::{quester_stage, quester_stage_with_watch};
 pub(crate) use ranging_guild::{
     ranging_guild_bank_scenario, ranging_guild_full_scenario, ranging_guild_redeem_scenario,

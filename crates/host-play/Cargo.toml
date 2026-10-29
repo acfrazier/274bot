@@ -94,6 +94,11 @@ required-features = ["live-harness", "test-support", "live-probe"]
 name = "seat_live"
 required-features = ["live-harness", "test-support", "live-probe"]
 
+# The Skip quest cell needs the `test-support` control path it drives.
+[[test]]
+name = "quester_queue_live"
+required-features = ["live-harness", "test-support"]
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
@@ -118,7 +123,7 @@ live-harness = ["dep:scenario"]
 
 # Test-only Play fixtures. Enabled from frontend dev-dependencies, never
 # production builds.
-test-support = ["api/test-support", "script/test-hooks", "script-js?/test-hooks", "nav-planner/test-support"]
+test-support = ["api/test-support", "script/test-hooks", "script/test-support", "script-js?/test-hooks", "nav-planner/test-support", "scenario?/test-support"]
 
 # Read-only probe for the manual-click LIVE harnesses. Enabled from frontend
 # dev-dependencies, never production builds.

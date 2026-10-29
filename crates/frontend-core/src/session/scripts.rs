@@ -867,6 +867,7 @@ fn broadcast_script_result(names: &[String], applied: Applied) -> Vec<(String, A
 fn duplicate_applied(applied: &Applied) -> Applied {
     match applied {
         Applied::Done => Applied::Done,
+        #[cfg(feature = "test-support")]
         Applied::DoneWithDetail(detail) => Applied::DoneWithDetail(detail.clone()),
         Applied::Skipped(reason) => Applied::Skipped(*reason),
         Applied::Rejected(reason, detail) => Applied::Rejected(*reason, detail.clone()),
@@ -879,7 +880,9 @@ fn duplicate_applied(applied: &Applied) -> Applied {
 
 fn bulk_outcome(applied: &Applied) -> crate::BulkOutcome {
     match applied {
-        Applied::Done | Applied::DoneWithDetail(_) => crate::BulkOutcome::Done,
+        Applied::Done => crate::BulkOutcome::Done,
+        #[cfg(feature = "test-support")]
+        Applied::DoneWithDetail(_) => crate::BulkOutcome::Done,
         Applied::Skipped(reason) => crate::BulkOutcome::skipped(skip_label(*reason)),
         Applied::Rejected(_, detail) | Applied::Failed(_, detail) => {
             crate::BulkOutcome::failed(detail.as_deref().unwrap_or("command failed"))

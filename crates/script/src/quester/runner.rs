@@ -3287,6 +3287,7 @@ pub struct QueuedQuester {
     choices: super::choices::QuestChoices,
     queue: super::queue::Queue,
     active: Option<Box<Quester>>,
+    #[cfg(any(test, feature = "test-support"))]
     skip_requested: bool,
     active_index: Option<usize>,
     preparing: Option<PreparedTask<Result<Arc<CompiledPath>, Arc<str>>>>,
@@ -3329,6 +3330,7 @@ impl QueuedQuester {
             choices: super::choices::QuestChoices::default(),
             queue,
             active: None,
+            #[cfg(any(test, feature = "test-support"))]
             skip_requested: false,
             active_index: None,
             preparing: None,
@@ -3678,13 +3680,16 @@ impl Script for QueuedQuester {
         }
         // Revoking the old step is safe even during a host hold. Prayer
         // cleanup still waits for eligible gameplay through the park path.
-        if self.skip_requested {
-            if let Some(active) = self.active.as_mut().filter(|active| !active.parked) {
-                active.cancel_step(tick);
-                active.parked = true;
-                active.park_reason = "skipped by operator";
-                active.clear_last_error();
-                active.dirty = true;
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            if self.skip_requested {
+                if let Some(active) = self.active.as_mut().filter(|active| !active.parked) {
+                    active.cancel_step(tick);
+                    active.parked = true;
+                    active.park_reason = "skipped by operator";
+                    active.clear_last_error();
+                    active.dirty = true;
+                }
             }
         }
         if !tick.cx.eligible {
@@ -3711,15 +3716,20 @@ impl Script for QueuedQuester {
                 ScriptFlow::Blocked(failure)
                     if matches!(failure.code.as_ref(), "manual-movement" | "max-deaths") =>
                 {
-                    self.skip_requested = false;
+                    #[cfg(any(test, feature = "test-support"))]
+                    {
+                        self.skip_requested = false;
+                    }
                     return Ok(flow);
                 }
                 ScriptFlow::Complete | ScriptFlow::Blocked(_) => {
                     let active = self.active.take().expect("active quest");
                     let index = self.active_index.expect("active queue row");
                     self.deaths = self.deaths.saturating_add(active.deaths);
+                    #[cfg(any(test, feature = "test-support"))]
                     let skip_requested = std::mem::take(&mut self.skip_requested);
                     match flow {
+                        #[cfg(any(test, feature = "test-support"))]
                         ScriptFlow::Complete if skip_requested => {
                             self.queue
                                 .mark_parked(index, Arc::from("skipped by operator"));
@@ -3730,22 +3740,28 @@ impl Script for QueuedQuester {
                             self.anchor = None;
                             self.queue.refresh_blocked();
                         }
-                        ScriptFlow::Blocked(failure) => self.queue.mark_parked(
-                            index,
-                            if skip_requested {
+                        ScriptFlow::Blocked(failure) => {
+                            #[cfg(any(test, feature = "test-support"))]
+                            let reason = if skip_requested {
                                 Arc::from("skipped by operator")
                             } else {
                                 failure.message
-                            },
-                        ),
+                            };
+                            #[cfg(not(any(test, feature = "test-support")))]
+                            let reason = failure.message;
+                            self.queue.mark_parked(index, reason);
+                        }
                         ScriptFlow::Continue => unreachable!(),
                     }
                     self.refresh_fields();
                     self.sync_retained(tick);
-                    if skip_requested {
-                        self.active_index = None;
-                        self.publish(tick.output, NativePhase::Working);
-                        return Ok(ScriptFlow::Continue);
+                    #[cfg(any(test, feature = "test-support"))]
+                    {
+                        if skip_requested {
+                            self.active_index = None;
+                            self.publish(tick.output, NativePhase::Working);
+                            return Ok(ScriptFlow::Continue);
+                        }
                     }
                 }
             }
@@ -3980,6 +3996,7 @@ impl Script for QueuedQuester {
             .map_or_else(RaisedPrayers::empty, |active| active.prayer_cleanup())
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn skip_quest(&mut self) -> Result<crate::native::SkippedQuest, ScriptFailure> {
         let active = self.active.as_ref().ok_or_else(|| ScriptFailure {
             code: Arc::from("no-active-quest"),

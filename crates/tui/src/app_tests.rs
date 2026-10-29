@@ -1877,12 +1877,24 @@ fn running_quester_skip_control_is_clickable_at_both_terminal_sizes_and_in_help(
             footer.contains("X skip"),
             "{width}x{height}: missing skip hint: {footer}"
         );
+        // The base tail keeps its place at both sizes: the Skip hint never
+        // replaces `? help · mouse`.
+        assert!(
+            footer.contains("? help · mouse"),
+            "{width}x{height}: missing footer tail: {footer}"
+        );
+        // Only the standard width holds the whole hint row; at 80 columns
+        // the row truncates after `X skip`, as the base row did.
         #[cfg(feature = "js")]
-        for key in ["f load", "v params", "R reload"] {
-            assert!(
-                footer.contains(key),
-                "{width}x{height}: missing {key:?}: {footer}"
-            );
+        {
+            if width >= 100 {
+                for key in ["b browse", "f load", "v params", "R reload"] {
+                    assert!(
+                        footer.contains(key),
+                        "{width}x{height}: missing {key:?}: {footer}"
+                    );
+                }
+            }
         }
         if let Some(dir) = capture_dir.as_deref() {
             crate::bin::manual_click_live_tests::capture(

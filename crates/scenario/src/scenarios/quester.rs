@@ -50,7 +50,9 @@ const QUEUE_SETTINGS: &[ScriptSettingInject] = &[
         value: ScriptInjectValue::StrList(&[]),
     },
 ];
+#[cfg(any(test, feature = "test-support"))]
 const SKIP_QUESTS: &[&str] = &["cook", "sheep"];
+#[cfg(any(test, feature = "test-support"))]
 const SKIP_SETTINGS: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "quests",
@@ -515,6 +517,10 @@ pub(crate) fn quester_queue_scenario() -> Scenario {
     }
 }
 /// Start Cook, skip it, then prove that the queue completes Sheep Shearer.
+///
+/// A live cell only: the release build registers no `quester_skip`, and the
+/// steps themselves never skip (the host cell drives the Skip quest control).
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn quester_skip_scenario() -> Scenario {
     let mut steps = script_live_seed_steps();
     steps.push(s2_reset_step());
