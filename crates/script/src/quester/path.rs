@@ -259,6 +259,9 @@ pub struct RequiredZoneDocument {
     pub reason: String,
 }
 
+/// Maximum number of counted attempts allowed for one Quester step.
+pub const MAX_STEP_ATTEMPTS: u32 = 32;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StepDocument {
@@ -277,12 +280,11 @@ pub struct StepDocument {
     /// Required for Explicit handler kinds; omitted Default kinds behave as false.
     #[serde(default)]
     pub advances: Option<bool>,
-    /// Maximum number of attempts for this step before it parks.
-    /// Requires `stop` and must be greater than zero.
+    /// Maximum number of counted attempts for this step before it parks.
+    /// The compiler caps this value at `MAX_STEP_ATTEMPTS`.
     #[serde(default)]
     pub max_attempts: Option<u32>,
     /// Named stop reported when `max_attempts` is exhausted.
-    #[serde(default)]
     pub stop: Option<String>,
     /// Predicate which skips this step when proven true.
     pub skip_if: PredicateDocument,

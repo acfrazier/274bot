@@ -23,7 +23,10 @@ A guide is one JSON file with schema 3. It names the quest, the checks the Quest
 - `roles[]`: `role` (`null` for solo), `progress_binding`, `progress`, an optional owned `progress_reader` step (required for `Miniquest`; invoked initially and after every advancing step), guarded `prelude[]`, and `sequences[]`. `progress` declares quest colours, journal stage rules, flags, and monotonicity. Keep the prelude short.
 - `sequences[]`: `stage`, `required`, `terminal`, `recovery_entry`, optional `cross` declarations, optional `order` (`"authored"` default, `"nearest"`, or `"ordered"`), and `steps[]`.
 - `steps[]`: `id`, `kind`, `version`, `args`, `skip_if`, and `settle` are required. `comment` is optional. `advances` is required for Explicit handler kinds (`talk`, `interact`, `use_on`, `make`, `combat`, `gather`, `thieve`, and `x:*`); Default kinds compile as `false` when it is omitted.
-  Optional `max_attempts` is a positive per-step attempt limit and must be paired with a nonblank `stop` name. If that many attempts fail, the runner parks the guide and reports the named stop. Without this pair, the existing five-failure park limit applies. After a settle timeout, an advancing step rereads progress before retrying.
+  Optional `max_attempts` sets a per-step limit from 1 to 32. Pair it with a nonblank `stop` name. Choose and justify the limit from quest content. Use this pair only in `prelude[]` and `sequences[].steps[]`. The compiler rejects the pair on `quest.acquire` recipe steps and `progress_reader` steps.
+  The runner counts failed begins, soft poll failures, and settle timeouts. It also parks after 32 consecutive counted failures across budgeted steps, even if another step runs after a failure. A successful settle resets this run-wide count.
+  Hard poll failures (`Blocked`, `CombatInterrupted`, or `NeedsEvidence`) and user input still stop the guide at once. User input does not spend an attempt. If the per-step limit is spent, the runner reports its named stop. Without the pair, the existing five-failure park limit applies.
+  After a settle timeout, an advancing step rereads progress before it retries.
 
 `skip_if` and `settle` use externally tagged predicate documents: `{"All":[...]}`, `{"Any":[...]}`, `{"Not":...}`, and `{"Fact":{"kind":"...","version":1,"args":{...}}}`. Keep this envelope as written.
 

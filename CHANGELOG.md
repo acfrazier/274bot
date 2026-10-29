@@ -69,6 +69,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - Quest guides can now kill until a required item drops, with a total kill
   budget and a named stop. The final allowed kill still gets its loot wait.
   The receipt records confirmed kills across re-engagements.
+- After an advancing step's settle timeout, the Quester rereads quest progress
+  before it retries. Steps can also set their own attempt limit and a named
+  stop.
 - Quest guides can select a product and quantity from a production menu
   opened by using an item on another item or on a location.
 - Ground-item Take steps can now use an observed game-tick budget. This

@@ -1416,7 +1416,7 @@ pub(super) fn compile_uncached(
         .progress_reader
         .as_ref()
         .map(|reader| {
-            compile_steps(std::slice::from_ref(reader), &recipe_ctx, document)
+            compile_steps(std::slice::from_ref(reader), &recipe_ctx, document, false)
                 .map(|mut steps| Box::new(steps.remove(0)))
         })
         .transpose()?;
@@ -1424,7 +1424,7 @@ pub(super) fn compile_uncached(
     if role.prelude.len() > 4 {
         warnings.push(Arc::from("prelude-size"));
     }
-    let prelude = compile_steps(&role.prelude, &recipe_ctx, document)?;
+    let prelude = compile_steps(&role.prelude, &recipe_ctx, document, true)?;
     let mut sequences = Vec::new();
     let mut seen_stages = std::collections::HashSet::new();
     let mut global_ids = std::collections::HashSet::new();
@@ -1464,7 +1464,7 @@ pub(super) fn compile_uncached(
         if sequence.steps.is_empty() && !sequence.terminal {
             return Err(CompileError::code("empty-nonterminal").with_path(document.id.clone()));
         }
-        let steps = compile_steps(&sequence.steps, &recipe_ctx, document)?;
+        let steps = compile_steps(&sequence.steps, &recipe_ctx, document, true)?;
         if sequence.order == super::path::SequenceOrder::Nearest
             && steps.iter().any(|step| step.plan.anchor().is_none())
         {
@@ -1653,6 +1653,7 @@ fn compile_steps(
     steps: &[StepDocument],
     cx: &CompileContext<'_>,
     document: &PathDocument,
+    supports_attempt_budget: bool,
 ) -> Result<Vec<CompiledStep>, CompileError> {
     let mut out = Vec::new();
     let mut ids = std::collections::HashSet::new();
@@ -1682,9 +1683,15 @@ fn compile_steps(
             error.step = Some(step.id.clone());
             error
         };
+        if !supports_attempt_budget && (step.max_attempts.is_some() || step.stop.is_some()) {
+            return Err(step_error("step-attempt-budget-unsupported"));
+        }
         let attempt_budget = match (step.max_attempts, step.stop.as_deref()) {
             (None, None) => None,
             (Some(0), _) => return Err(step_error("step-max-attempts-zero")),
+            (Some(max_attempts), Some(_)) if max_attempts > super::path::MAX_STEP_ATTEMPTS => {
+                return Err(step_error("step-max-attempts-too-large"));
+            }
             (Some(max_attempts), Some(stop)) if !stop.trim().is_empty() => {
                 Some(StepAttemptBudget {
                     max_attempts,
@@ -2086,7 +2093,7 @@ fn compile_recipe<'a>(
     }
     let context = CompileContext { recipes, ..*base };
     let compiled: Arc<[CompiledAcquireStep]> = Arc::from(
-        compile_steps(steps, &context, document)?
+        compile_steps(steps, &context, document, false)?
             .into_iter()
             .map(|step| CompiledAcquireStep {
                 id: step.id,
@@ -3414,10 +3421,15 @@ mod tests {
         assert_eq!(contradiction.code.as_ref(), "settle-needs-advance");
     }
     #[test]
-    fn step_attempt_budget_requires_positive_limit_and_nonblank_stop() {
+    fn step_attempt_budget_requires_positive_bounded_limit_and_nonblank_stop() {
         let _home = crate::IsolatedEnv::enter("quester-step-attempt-budget");
         for (max_attempts, stop, expected) in [
             (Some(0u32), Some("retry-stop"), "step-max-attempts-zero"),
+            (
+                Some(super::path::MAX_STEP_ATTEMPTS + 1),
+                Some("retry-stop"),
+                "step-max-attempts-too-large",
+            ),
             (Some(1), None, "step-max-attempts-needs-stop"),
             (Some(1), Some(" \t"), "step-max-attempts-needs-stop"),
             (None, Some("retry-stop"), "step-stop-without-max-attempts"),
@@ -3435,6 +3447,31 @@ mod tests {
             });
             assert_eq!(error.code.as_ref(), expected);
         }
+    }
+
+    #[test]
+    fn attempt_budgets_are_rejected_for_recipes_and_progress_readers() {
+        let recipe = compile_err(|document| {
+            let step = &mut document
+                .quest
+                .as_mut()
+                .unwrap()
+                .acquire
+                .get_mut("acquire:egg")
+                .expect("Cook has an egg recipe")[0];
+            step.max_attempts = Some(2);
+            step.stop = Some("recipe-stop".into());
+        });
+        assert_eq!(recipe.code.as_ref(), "step-attempt-budget-unsupported");
+
+        let reader = compile_err(|document| {
+            let mut step = document.roles[0].sequences[0].steps[0].clone();
+            step.id = FactKey::new("budgeted-progress-reader");
+            step.max_attempts = Some(2);
+            step.stop = Some("reader-stop".into());
+            document.roles[0].progress_reader = Some(step);
+        });
+        assert_eq!(reader.code.as_ref(), "step-attempt-budget-unsupported");
     }
 
     #[test]

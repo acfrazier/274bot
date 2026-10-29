@@ -1313,6 +1313,10 @@ impl Quester {
                 value: StatusValue::Integer(value),
             });
         }
+        let budget_stop_spent = parked_step.is_some()
+            && current
+                .and_then(|step| step.attempt_budget.as_ref())
+                .is_some_and(|budget| self.step_attempts >= budget.max_attempts);
         if let Some(receipt) = self.last_attempt_receipt.as_deref() {
             if let Some(attempts) = receipt.attempt_count() {
                 fields.push(StatusField {
@@ -1321,12 +1325,14 @@ impl Quester {
                     value: StatusValue::Integer(i64::from(attempts)),
                 });
             }
-            if let Some(stop) = receipt.attempt_stop() {
-                fields.push(StatusField {
-                    key: "step_stop",
-                    label: "Step stop",
-                    value: StatusValue::Text(Arc::clone(stop)),
-                });
+            if budget_stop_spent {
+                if let Some(stop) = receipt.attempt_stop() {
+                    fields.push(StatusField {
+                        key: "step_stop",
+                        label: "Step stop",
+                        value: StatusValue::Text(Arc::clone(stop)),
+                    });
+                }
             }
         }
         fields.extend_from_slice(&self.queue_fields);
@@ -2371,21 +2377,60 @@ impl Quester {
             id: Arc::clone(&step_id),
         });
         self.parked = true;
-        self.set_last_error(
-            QuesterFailureKind::Other,
-            Arc::from(format!(
-                "{}: step {} stopped after {} attempts: {}",
-                budget.stop, step_id, self.step_attempts, reason
-            )),
-        );
+        self.last_error = Some(Arc::from(format!(
+            "{}: step {} stopped after {} attempts: {}",
+            budget.stop, step_id, self.step_attempts, reason
+        )));
+        self.dirty = true;
+    }
+
+    fn park_at_run_retry_limit(&mut self) {
+        let Some((sequence_index, step_index, in_prelude, step_id)) =
+            self.current_step().map(|step| {
+                (
+                    self.seq_index,
+                    self.step_index,
+                    self.in_prelude,
+                    Arc::clone(&step.id.0),
+                )
+            })
+        else {
+            return;
+        };
+        let reason = self
+            .last_error
+            .as_deref()
+            .map(Arc::<str>::from)
+            .unwrap_or_else(|| Arc::from("step failed"));
+        self.parked_step = Some(ParkedStep {
+            sequence_index,
+            step_index,
+            in_prelude,
+            id: step_id,
+        });
+        self.parked = true;
+        self.last_error = Some(Arc::from(format!(
+            "run retry limit reached after {} consecutive failures: {}",
+            self.fail_streak, reason
+        )));
+        self.dirty = true;
     }
 
     fn record_step_begin_failure(&mut self, error: ActionError) {
+        if matches!(&error, ActionError::UserInput) {
+            self.record_failure(error);
+            self.parked = true;
+            return;
+        }
         self.attempts = self.attempts.saturating_add(1);
         self.record_failure(error);
         if let Some(budget) = self.current_attempt_budget() {
+            self.fail_streak = self.fail_streak.saturating_add(1);
             self.record_budgeted_attempt(&budget, false);
             self.park_at_attempt_budget(&budget);
+            if !self.parked && u32::from(self.fail_streak) >= super::path::MAX_STEP_ATTEMPTS {
+                self.park_at_run_retry_limit();
+            }
         } else if self.attempts >= 5 {
             self.parked = true;
         }
@@ -2409,16 +2454,26 @@ impl Quester {
         tick: &NativeTick<'_>,
         include_outcome: bool,
     ) {
-        self.fail_streak = self.fail_streak.saturating_add(1);
+        let user_input = matches!(&error, ActionError::UserInput);
+        if !user_input {
+            self.fail_streak = self.fail_streak.saturating_add(1);
+        }
         self.record_failure(error);
         let budget = self.current_attempt_budget();
-        if let Some(budget) = &budget {
-            self.record_budgeted_attempt(budget, include_outcome);
-            self.park_at_attempt_budget(budget);
-        } else if self.fail_streak >= 5 {
-            self.parked = true;
+        if !user_input {
+            if let Some(budget) = &budget {
+                self.record_budgeted_attempt(budget, include_outcome);
+                self.park_at_attempt_budget(budget);
+                if !self.parked
+                    && u32::from(self.fail_streak) >= super::path::MAX_STEP_ATTEMPTS
+                {
+                    self.park_at_run_retry_limit();
+                }
+            } else if self.fail_streak >= 5 {
+                self.parked = true;
+            }
         }
-        self.on_step_boundary_with_watchdog(tick, budget.is_none());
+        self.on_step_boundary_with_watchdog(tick, true);
     }
 
     fn on_step_boundary(&mut self, tick: &NativeTick<'_>) {
@@ -3103,7 +3158,9 @@ impl Quester {
                 self.capture_failed_acquisition_child();
                 let budget = self.current_attempt_budget();
                 if let Some(budget) = &budget {
-                    self.record_budgeted_attempt(budget, false);
+                    if !matches!(&error, ActionError::UserInput) {
+                        self.record_budgeted_attempt(budget, false);
+                    }
                 }
                 self.record_failure(error);
                 self.step = None;
@@ -4348,6 +4405,31 @@ mod tests {
         assert_eq!(
             receipt.attempt_stop().map(|stop| stop.as_ref()),
             Some("retry-stop")
+        );
+    }
+
+    #[test]
+    fn begin_user_input_parks_without_spending_the_step_budget() {
+        let (mut script, _) = fixture();
+        {
+            let path = Arc::get_mut(&mut script.path).expect("unshared path");
+            path.sequences[0].steps[0].attempt_budget = Some(StepAttemptBudget {
+                max_attempts: 1,
+                stop: Arc::from("retry-stop"),
+            });
+        }
+        let attempt_step = script.path.sequences[0].steps[0].id.clone();
+        script.reset_attempt_scope_if_needed(&attempt_step);
+
+        script.record_step_begin_failure(ActionError::UserInput);
+
+        assert_eq!(script.step_attempts, 0);
+        assert_eq!(script.fail_streak, 0);
+        assert!(script.parked);
+        assert!(script.last_attempt_receipt.is_none());
+        assert_eq!(
+            script.blocked_failure().code.as_ref(),
+            "manual-movement"
         );
     }
 

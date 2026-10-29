@@ -74,7 +74,7 @@ impl schemars::JsonSchema for super::path::StepDocument {
                     "args": (handler.args_schema)(generator),
                     "comment": generator.subschema_for::<Option<String>>(),
                     "advances": { "type": "boolean" },
-                    "max_attempts": { "type": "integer", "minimum": 1, "maximum": u32::MAX },
+                    "max_attempts": { "type": "integer", "minimum": 1, "maximum": super::path::MAX_STEP_ATTEMPTS },
                     "stop": { "type": "string", "minLength": 1, "pattern": "\\S" },
                     "skip_if": generator.subschema_for::<super::path::PredicateDocument>(),
                     "settle": generator.subschema_for::<super::path::PredicateDocument>()

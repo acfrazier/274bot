@@ -1822,7 +1822,7 @@
         "max_attempts": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 4294967295
+          "maximum": 32
         },
         "stop": {
           "type": "string",
@@ -2030,7 +2030,7 @@
         "max_attempts": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 4294967295
+          "maximum": 32
         },
         "stop": {
           "type": "string",
@@ -2352,7 +2352,7 @@
         "max_attempts": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 4294967295
+          "maximum": 32
         },
         "stop": {
           "type": "string",
@@ -2559,7 +2559,7 @@
         "max_attempts": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 4294967295
+          "maximum": 32
         },
         "stop": {
           "type": "string",
@@ -2643,7 +2643,7 @@
         "max_attempts": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 4294967295
+          "maximum": 32
         },
         "stop": {
           "type": "string",
@@ -2727,7 +2727,7 @@
         "max_attempts": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 4294967295
+          "maximum": 32
         },
         "stop": {
           "type": "string",
@@ -2864,7 +2864,7 @@
         "max_attempts": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 4294967295
+          "maximum": 32
         },
         "stop": {
           "type": "string",
@@ -2980,7 +2980,7 @@
         "max_attempts": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 4294967295
+          "maximum": 32
         },
         "stop": {
           "type": "string",
@@ -3132,7 +3132,7 @@
         "max_attempts": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 4294967295
+          "maximum": 32
         },
         "stop": {
           "type": "string",
@@ -3212,7 +3212,7 @@
         "max_attempts": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 4294967295
+          "maximum": 32
         },
         "stop": {
           "type": "string",
@@ -3272,7 +3272,7 @@
         "max_attempts": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 4294967295
+          "maximum": 32
         },
         "stop": {
           "type": "string",
@@ -3332,7 +3332,7 @@
         "max_attempts": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 4294967295
+          "maximum": 32
         },
         "stop": {
           "type": "string",
@@ -3392,7 +3392,7 @@
         "max_attempts": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 4294967295
+          "maximum": 32
         },
         "stop": {
           "type": "string",
@@ -3939,7 +3939,7 @@
         "max_attempts": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 4294967295
+          "maximum": 32
         },
         "stop": {
           "type": "string",
@@ -4086,7 +4086,7 @@
         "max_attempts": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 4294967295
+          "maximum": 32
         },
         "stop": {
           "type": "string",
@@ -4243,7 +4243,7 @@
         "max_attempts": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 4294967295
+          "maximum": 32
         },
         "stop": {
           "type": "string",
@@ -4369,7 +4369,7 @@
         "max_attempts": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 4294967295
+          "maximum": 32
         },
         "stop": {
           "type": "string",
@@ -4477,7 +4477,7 @@
         "max_attempts": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 4294967295
+          "maximum": 32
         },
         "stop": {
           "type": "string",

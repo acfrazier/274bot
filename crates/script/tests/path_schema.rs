@@ -56,7 +56,9 @@ fn nested_step_parts(value: &Value) -> Option<(&str, &Value)> {
         || max_attempts.is_some_and(|attempts| {
             attempts
                 .as_u64()
-                .is_none_or(|attempts| attempts == 0 || attempts > u64::from(u32::MAX))
+                .is_none_or(|attempts| {
+                    attempts == 0 || attempts > u64::from(script::quester::path::MAX_STEP_ATTEMPTS)
+                })
         })
         || stop.is_some_and(|stop| stop.as_str().is_none_or(|stop| stop.trim().is_empty()))
         || max_attempts.is_some() != stop.is_some()
@@ -445,7 +447,7 @@ fn generated_schema_uses_numeric_bounds_without_rust_formats() {
     assert_eq!(step["properties"]["max_attempts"]["minimum"], json!(1));
     assert_eq!(
         step["properties"]["max_attempts"]["maximum"],
-        json!(u32::MAX)
+        json!(script::quester::path::MAX_STEP_ATTEMPTS)
     );
     assert_eq!(step["properties"]["stop"]["pattern"], json!("\\S"));
     assert_eq!(step["dependentRequired"]["max_attempts"], json!(["stop"]));
