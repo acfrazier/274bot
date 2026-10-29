@@ -110,6 +110,18 @@ fn bronze_wire_smithing_requirement() -> QuestRequirementDocument {
     }
 }
 
+fn shortbow_fletching_requirement() -> QuestRequirementDocument {
+    QuestRequirementDocument {
+        id: FactKey::new("fletching"),
+        kind: QuestRequirementKindDocument::Skill {
+            skill: "fletching".to_owned(),
+            level: 5,
+        },
+        at: "Start".to_owned(),
+        source: SHORTBOW_RECIPE_SOURCE.to_owned(),
+    }
+}
+
 fn live_data() -> (Arc<SelectedGameData>, Arc<QuestCatalog>) {
     let selected = api::game_data::for_revision(ClientRevision::R289).expect("selected R289 data");
     let quests = Arc::new(
@@ -1871,6 +1883,8 @@ fn live_quester_families_until_drop_on_entrana() {
         )],
         true,
     );
+    // This proof consumes its steps once while the fixture journal stays cook:0.
+    document.roles[0].sequences[0].order = SequenceOrder::Ordered;
     document.roles[0].sequences[0].steps[0].comment = Some(format!(
         "{ENTRANA_ZOMBIE_SOURCE}. The step must loot the chance-only drop itself."
     ));
@@ -2037,6 +2051,7 @@ fn live_quester_families_timed_jail_key_take() {
         ],
         true,
     );
+    document.roles[0].sequences[0].order = SequenceOrder::Ordered;
     document.roles[0].sequences[0].steps[0].comment = Some(format!(
         "{JAIL_KEY_SOURCE}. The combat step deliberately does not loot."
     ));
@@ -2140,7 +2155,7 @@ fn live_quester_families_make_from_open_fletching_menu() {
     let knife_id = item_id(&selected, "knife");
     let logs_id = item_id(&selected, "logs");
     let product_id = item_id(&selected, "unstrung_shortbow");
-    let (mut cell, seed, seed_commands) = make_cell(
+    let (mut cell, seed, seed_commands) = make_cell_with_requirements(
         "live-quester-families-open-fletching-menu",
         ("cook", "Cook's Assistant"),
         0,
@@ -2148,6 +2163,7 @@ fn live_quester_families_make_from_open_fletching_menu() {
         FLETCHING_STAND,
         None,
         Arc::clone(&selected),
+        vec![shortbow_fletching_requirement()],
     );
     let start_seed = seed;
     let start_selected = Arc::clone(&selected);
@@ -2238,6 +2254,12 @@ fn live_quester_families_make_from_open_fletching_menu() {
         ],
         true,
     );
+    document.roles[0].sequences[0].order = SequenceOrder::Ordered;
+    document
+        .quest
+        .as_mut()
+        .expect("Cook quest header")
+        .requirements = vec![shortbow_fletching_requirement()];
     document.roles[0].sequences[0].steps[0].comment = Some(format!(
         "{NORMAL_TREE_SOURCE}; content/scripts/skill_woodcutting/scripts/woodcut.rs2:1-14,91-148 yields logs."
     ));
@@ -2487,6 +2509,7 @@ fn live_quester_families_bronze_bar_on_anvil_makes_wire() {
         ],
         true,
     );
+    document.roles[0].sequences[0].order = SequenceOrder::Ordered;
     document
         .quest
         .as_mut()

@@ -730,7 +730,8 @@ mod tests {
         let mut snapshot = GameSnapshot::new();
         assert!(SnapshotView::new(Some(&snapshot), stamp).main_make().is_none());
         snapshot.seed_ingame(2);
-        let rows = SnapshotView::new(Some(&snapshot), stamp).main_make().unwrap();
+        let view = SnapshotView::new(Some(&snapshot), stamp);
+        let rows = view.main_make().unwrap();
         assert!(std::ptr::eq(rows.value, snapshot.main_make()));
         assert_eq!(rows.stamp, stamp);
     }
