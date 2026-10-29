@@ -1561,6 +1561,41 @@ fn walk_to_does_not_recover_a_short_that_is_not_the_boat_fare() {
 }
 
 #[test]
+fn walk_to_waits_for_owned_random_event_before_fare_recovery() {
+    reset();
+    let mut world = World::new(MUSA, 5);
+    install_luthas_reach_view(world.facts.luthas_anchor, None);
+    let luthas = world.facts.luthas_anchor;
+    let coins = world.facts.coins;
+    let fare = world.facts.coin_payout;
+    let h = start_walk_to(&mut world);
+    let first = machine::merge_ops(Vec::new());
+    assert!(matches!(first.as_slice(), [op] if walk_near(PORT_SARIM, 2)(op)));
+    let first_token = token(&first[0]);
+
+    world.ours = true;
+    world.post();
+    assert!(
+        tick().is_empty(),
+        "an owned random event must not abort the initial walk"
+    );
+    assert_eq!(machine::take(h), Take::Pending);
+
+    world.ours = false;
+    world.post();
+    fail_short(&mut world, first_token, PORT_SARIM, 2, (coins, fare));
+    let luthas_walk = until(&mut world, "walk to Luthas after the event", is_walk);
+    let luthas_npc = WorldTile {
+        x: luthas.x,
+        z: luthas.z + 1,
+        level: luthas.level,
+    };
+    assert_ne!(token(&luthas_walk), first_token);
+    assert!(orthogonally_adjacent(walk_tile(&luthas_walk), luthas_npc));
+    assert_eq!(machine::take(h), Take::Pending);
+}
+
+#[test]
 fn walk_to_retries_a_failed_initial_walk_without_missing_fare_evidence() {
     reset();
     let mut world = World::new(BRIMHAVEN_CART, 5);
