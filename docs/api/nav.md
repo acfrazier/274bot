@@ -991,6 +991,17 @@ Each reason keeps the previous diagnostic text through `Display`.
 Consumers match the reason variant when they need a decision, rather than
 parse its text.
 
+`Traveller::current_wait_status()` reports what the active follow is waiting
+for as `Option<(TravelWaitReason, Option<WorldTile>, Option<LocId>)>`: a
+typed `nav_executor::TravelWaitReason` (`as_str()` keeps the previous log
+text), the precise walk/click target tile when there is one, and the packed
+loc identity as `nav_executor::LocId` (`get()` returns the raw `i32`) for a
+pending transport. Consumers match the reason variant rather than parse its
+text. The host logs one info line after 10 observed game ticks without tile
+progress, naming the request, tile, wait reason, target, target id, aim and
+route destination; movement, a new request, or the walk ending resets that
+log limit.
+
 The shared `host_play::WalkArm` exposes `current_aim()` and `essence()` for
 overlay and route-planning reads. Its `traveller` field remains public for
 existing struct literals, but readers use these accessors.
@@ -1006,6 +1017,19 @@ radius 2 and glider landings radius 1 whatever the runner passes.
   each reissue starts a fresh idle window, not a new hop budget. Movement
   resets the idle window, duplicate observations do not advance it, and
   recovery does not consume another `max_hops` slot.
+- **Planned-step walk budget:** each walk hop is allowed the larger of
+  `budget_ticks_per_hop` and the planned steps from the current route tile
+  to the accepted aim. Walk speed consumes one route step per game tick
+  (engine `PathingEntity.ts:144-149`). The count uses observed game ticks
+  through the shared tick counter: duplicate polls inside one tick add
+  nothing, batched ticks add each elapsed tick, and a backward clock
+  credits one tick. Recovery keeps the original allowance, so a stopped
+  walk still ends after a finite wait.
+- **Progress holds the budget open:** a hop does not expire while the
+  player keeps reaching a new best position for this hop: a new maximum
+  route index on the hop's tiles, or a new minimum Chebyshev distance to
+  the aim on its level. Movement elsewhere — pacing between the same
+  tiles, or drifting away from the aim — does not extend the budget.
 - **`Stalled { why: EndBlocked }`:** no walk of the follow was accepted,
   the player stands within one tile of the route's last tile on its level,
   and the client refused the click onto it on five distinct ticks (frozen
@@ -1065,6 +1089,14 @@ radius 2 and glider landings radius 1 whatever the runner passes.
   a last hopeless Open or a second full wait budget. Losing the connection
   reports `Dropped` only if the attempt made no tile progress; otherwise the
   hop is `Expired`.
+- **Blocked approach onto the next door's open leaf:** when the client
+  refuses the walk leg's final endpoint as unreachable, the end tile is
+  adjacent on the same level, the next leg is a door with no exact
+  takeoff, the matching live open leaf stands on that end tile, and the
+  scene can reach the door's far side from the refused end, the walker
+  completes the walk leg and starts the door leg. It never clicks the
+  open leaf's Close operation. The door leg then runs its normal
+  crossing rules inside the original hop budget.
 - **Entrance refusal before sending:** the traveller rechecks a transport
   leg's content exclusions against the live snapshot before any transport
   send. A failed exclusion ends the leg at once as
