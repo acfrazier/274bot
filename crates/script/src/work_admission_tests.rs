@@ -1436,10 +1436,15 @@ fn nonreturning_worker_warns_then_latches_at_shutdown_without_releasing_credit()
     );
     let condition = {
         let mut service = shared.lock();
-        let condition = service.health().expect("shutdown publishes the permanent condition");
+        let condition = service
+            .health()
+            .expect("shutdown publishes the permanent condition");
         assert_eq!(
-            service.conditions().latched(ProcessServiceCode::WorkAdmissionUnavailable)
-                .unwrap().cause(),
+            service
+                .conditions()
+                .latched(ProcessServiceCode::WorkAdmissionUnavailable)
+                .unwrap()
+                .cause(),
             ConditionCause::ProgressLost
         );
         assert_eq!(
@@ -1455,7 +1460,9 @@ fn nonreturning_worker_warns_then_latches_at_shutdown_without_releasing_credit()
         .recv_timeout(Duration::from_secs(2))
         .expect("job cleanup is held before worker-return accounting");
     assert_eq!(shared.lock().capacity().jobs(), 1);
-    drop_resume_tx.send(()).expect("allow worker-return accounting");
+    drop_resume_tx
+        .send(())
+        .expect("allow worker-return accounting");
     wait_for_jobs(&shared, 0);
     assert_eq!(shared.lock().health(), Some(condition));
     assert_eq!(WorkService::shutdown(&shared), Ok(()));
@@ -1529,7 +1536,12 @@ fn background_step_warns_at_exact_stall_limit_without_settling_the_job() {
     let ticket = submit(
         &shared,
         &input,
-        QueueJob::new(9, Arc::new(Mutex::new(Vec::new())), 0, Some((entered_tx, release_rx))),
+        QueueJob::new(
+            9,
+            Arc::new(Mutex::new(Vec::new())),
+            0,
+            Some((entered_tx, release_rx)),
+        ),
         &conditions,
     );
     entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
@@ -1584,8 +1596,11 @@ fn worker_panic_latches_unavailable_and_refuses_later_background_work() {
     let mut service = shared.lock();
     let condition = service.health().expect("worker panic is permanent");
     assert_eq!(
-        service.conditions().latched(ProcessServiceCode::WorkAdmissionUnavailable)
-            .unwrap().cause(),
+        service
+            .conditions()
+            .latched(ProcessServiceCode::WorkAdmissionUnavailable)
+            .unwrap()
+            .cause(),
         ConditionCause::Panicked
     );
     assert!(matches!(
@@ -1594,12 +1609,14 @@ fn worker_panic_latches_unavailable_and_refuses_later_background_work() {
             if terminal.condition() == condition
     ));
     let identity = service.mint_identity(Scope::Process, None).unwrap();
-    let refused = service.try_submit::<TestSpec, _>(
-        identity,
-        &input,
-        QueueJob::new(7, Arc::new(Mutex::new(Vec::new())), 0, None),
-        &conditions,
-    ).expect_err("worker panic refuses later background work");
+    let refused = service
+        .try_submit::<TestSpec, _>(
+            identity,
+            &input,
+            QueueJob::new(7, Arc::new(Mutex::new(Vec::new())), 0, None),
+            &conditions,
+        )
+        .expect_err("worker panic refuses later background work");
     assert!(matches!(
         refused.refusal(),
         SubmissionRefusal::Unavailable(refusal) if refusal.condition() == condition
