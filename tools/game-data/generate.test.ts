@@ -642,6 +642,15 @@ const styleObjects = [
 ];
 const extractStyleFacts = () => extractCombatStyleFacts(content, styleObjects, npcFacts.combatNpcs, combatScripts);
 const styleFacts = extractStyleFacts();
+// A pre-V0 revision omits the PvP special-attack spotanim rows.
+const preV0StyleFacts = extractCombatStyleFacts(content, styleObjects, npcFacts.combatNpcs, combatScripts, false);
+assert.deepEqual(
+    styleFacts.style_spotanims
+        .map((row) => row.spotanim_id)
+        .filter((id) => !preV0StyleFacts.style_spotanims.some((row) => row.spotanim_id === id)),
+    [20, 21, 22, 23, 24, 25, 26, 27, 28, 29],
+    'a pre-V0 revision omits the special-attack spotanim rows',
+);
 const sequenceStyle = (name: string) => styleFacts.style_seqs.find((row) => row.seq_id === new Map([
     ['shared_seq', 1], ['staff_seq', 2], ['test_attack_seq', 5], ['test_range_seq', 6],
     ['test_magic_seq', 7], ['dragon_seq', 8],
