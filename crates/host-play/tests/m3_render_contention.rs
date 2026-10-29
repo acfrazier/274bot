@@ -527,7 +527,8 @@ fn pump_metrics(from: Option<PumpSnapshot>, to: Option<PumpSnapshot>) -> Option<
     let (from, to) = (from?, to?);
     let intervals = to.intervals.saturating_sub(from.intervals);
     let interval_ns = to.interval_ns.saturating_sub(from.interval_ns);
-    let histogram = std::array::from_fn(|i| to.histogram[i].saturating_sub(from.histogram[i]));
+    let histogram: [u64; BUCKETS] =
+        std::array::from_fn(|i| to.histogram[i].saturating_sub(from.histogram[i]));
     Some(json!({
         "schedule": "earlier-of-returned-deadline-and-consumer-period",
         "consumer_period_ms": CONSUMER_PERIOD.as_millis(),
@@ -1348,12 +1349,12 @@ fn live_m3_render_contention() {
         } else {
             full_rate.clone()
         };
-        for ((head, &full_rate), &focused) in heads.iter().zip(&full_rate).zip(&focused) {
+        for (i, head) in heads.iter().enumerate() {
             #[cfg(feature = "render-test-hooks")]
             if probe.is_some() {
-                head.input.set_render_focused(focused);
+                head.input.set_render_focused(focused[i]);
             }
-            head.input.set_full_rate(full_rate);
+            head.input.set_full_rate(full_rate[i]);
         }
         thread::sleep(warmup);
         let cell = format!("{backend}-n{n}-{policy}");
