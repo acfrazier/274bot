@@ -19,6 +19,8 @@
     "progress":{
       "colour":{"not_started":"routequest:0","in_progress":"routequest:5","complete":"routequest:complete"},
       "rules":[
+        {"stage":"routequest:80","all":["hell hound"],"any":["i have to try and kill the","i killed the hell hound"],"not":[],"varp":80},
+        {"stage":"routequest:70","all":["i tried talking to veliaf"],"any":[],"not":["a mist cloud appeared"],"varp":70},
         {"stage":"routequest:65","all":["i met veliaf"],"any":[],"not":["i tried talking to veliaf"],"varp":65},
         {"stage":"routequest:60","all":["i entered an underground area"],"any":[],"not":["i met veliaf"],"varp":60},
         {"stage":"routequest:55","all":["i need to find the", "entrance"],"any":[],"not":["i entered an underground"],"varp":55},
@@ -28,7 +30,7 @@
         {"stage":"routequest:15","all":["i've persuaded", "the boatman"],"any":[],"not":["came across a guard"],"varp":15},
         {"stage":"routequest:10","all":["the boatman", "won't take me"],"any":[],"not":["came across a guard"],"varp":10},
         {"stage":"routequest:5","all":["the weapons i need to collect are"],"any":[],"not":["came across a guard"],"varp":5}
-      ],"flags":[{"flag":"routequest:all-introduced","all":["i've introduced myself to all the members now"],"any":[]}],"monotonic":false
+      ],"flags":[{"flag":"routequest:all-introduced","all":["i've introduced myself to all the members now"],"any":[]},{"flag":"routequest:hellhound-defeated","all":["i killed the hell hound"],"any":[]}],"monotonic":false
     },
     "prelude":[],"sequences":[
       {"stage":"routequest:0","required":[],"terminal":false,"recovery_entry":null,"steps":[
@@ -119,7 +121,20 @@
         {"id":"meet-polmafi","kind":"talk","version":1,"advances":false,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:307-317,333-335,353-355; content/maps/m54_153.jm2:9250.",
          "args":{"npc":"route_polmafi_ferdygris","anchor":{"tile":[3514,9838,3],"source":"content/maps/m54_153.jm2:9250"},"leash":8,"prefer":["Ok, thanks."],"strict":true},"skip_if":{"Any":[]},"settle":{"All":[]}},
         {"id":"meet-ivan","kind":"talk","version":1,"advances":true,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:359-370,386-388,403-405; content/scripts/quests/quest_routequest/scripts/routequest_journal.rs2:193-195; content/maps/m54_153.jm2:9249.",
-         "args":{"npc":"route_ivan_strom","anchor":{"tile":[3513,9843,3],"source":"content/maps/m54_153.jm2:9249"},"leash":8,"prefer":["Ok, thanks."],"strict":true},"skip_if":{"Fact":{"kind":"flag","version":1,"args":{"quest":"routequest","flag":"routequest:all-introduced"}}},"settle":{"Fact":{"kind":"flag","version":1,"args":{"quest":"routequest","flag":"routequest:all-introduced"}}}}
+         "args":{"npc":"route_ivan_strom","anchor":{"tile":[3513,9843,3],"source":"content/maps/m54_153.jm2:9249"},"leash":8,"prefer":["Ok, thanks."],"strict":true},"skip_if":{"Fact":{"kind":"flag","version":1,"args":{"quest":"routequest","flag":"routequest:all-introduced"}}},"settle":{"Fact":{"kind":"flag","version":1,"args":{"quest":"routequest","flag":"routequest:all-introduced"}}}},
+        {"id":"deliver-weapons","kind":"talk","version":1,"advances":true,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:417-429; content/scripts/quests/quest_routequest/scripts/route_cutscene.rs2:1-23,73-188.",
+         "args":{"npc":"route_veliaf_hurtz","anchor":{"tile":[3506,9838,3],"source":"content/maps/m54_153.jm2:9246"},"leash":8,"prefer":["Ok, I'll go get them."],"strict":true,"expect_combat":{"npc":"skeleton_hellhound"}},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:70","routequest:80"]}}}}
+      ]},
+      {"stage":"routequest:70","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"retry-cutscene","kind":"talk","version":1,"advances":true,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:463-464; content/scripts/quests/quest_routequest/scripts/route_cutscene.rs2:1-23,179-188.",
+         "args":{"npc":"route_veliaf_hurtz","anchor":{"tile":[3506,9838,3],"source":"content/maps/m54_153.jm2:9246"},"leash":8,"expect_combat":{"npc":"skeleton_hellhound"}},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:80"]}}}}
+      ]},
+      {"stage":"routequest:80","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"fight-hellhound","kind":"combat","version":1,"advances":true,"comment":"content/scripts/quests/quest_routequest/scripts/route_cutscene.rs2:179-188; content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:584-615.",
+         "args":{"target":{"npc":"skeleton_hellhound","pick":"nearest"},"stand":{"tile":[3506,9834,0],"source":"content/scripts/quests/quest_routequest/scripts/route_cutscene.rs2:183-184"},"lost_radius":15,"kill_budget_ticks":500,"tactic":{"kind":"open","style":"melee","engage_radius":8,"auto_retaliate":true}},
+         "skip_if":{"Fact":{"kind":"flag","version":1,"args":{"quest":"routequest","flag":"routequest:hellhound-defeated"}}},"settle":{"Fact":{"kind":"flag","version":1,"args":{"quest":"routequest","flag":"routequest:hellhound-defeated"}}}}
       ]},
       {"stage":"routequest:complete","required":[],"terminal":true,"recovery_entry":null,"steps":[]}
     ]
