@@ -406,12 +406,18 @@ fn keeper_placement_cache_is_bound_once_per_world_and_shared_without_per_bot_row
             .sum();
         assert!(expected > 0);
         assert_eq!(first.rows().len(), expected);
+        // One shared process/profile Arc owns 24 placements, measured 2,720 B (api/src/shop_facts.rs:1065-1082), not per bot.
         assert!(
             std::mem::size_of_val(first.rows())
                 + std::mem::size_of::<api::service_pick::ShopKeeperFacts>()
                 + 2 * std::mem::size_of::<usize>()
-                <= 2 * 1024,
-            "resolved world keeper rows exceeded 2 KiB"
+                <= 3 * 1024,
+            "shared process/profile keeper rows exceeded 3 KiB"
+        );
+        // Shared process/profile rows measured 112 B each for 24 placements (api/src/shop_facts.rs:1065-1082), not per bot.
+        assert!(
+            std::mem::size_of::<api::service_pick::ResolvedShopKeeper>() <= 112,
+            "a shared keeper placement row exceeded 112 B"
         );
         let rows = first.rows().as_ptr();
         let measured = allocation_counter::measure(|| {

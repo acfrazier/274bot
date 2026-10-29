@@ -3625,6 +3625,8 @@ fn compiled_gatherer_paint_controls_pause_resume_and_stop() {
         xp: 0,
         xp_per_hour: None,
         bank: Arc::from(""),
+        bank_seen: None,
+        block_reason: Arc::from(""),
         last_progress: 0,
         deaths: 0,
         recoveries: 0,

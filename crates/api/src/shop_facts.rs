@@ -1079,6 +1079,7 @@ mod tests {
             })
             .sum();
         assert_eq!(keepers.len(), 23);
+        assert_eq!(placed_candidates, 24);
         println!(
             "D1a inventories={} keeper_blocks={} placed_candidates={placed_candidates}",
             shops_for(&catalog).len(),
