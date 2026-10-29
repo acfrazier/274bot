@@ -151,11 +151,10 @@ fn new_witness(
             .unwrap_or_else(|| panic!("missing selected item alias {alias}"))
             .id
     };
-    let resource_id = resource_id.map(|id| {
+    let resource_id = resource_id.inspect(|&id| {
         selected
             .item_by_id(id)
             .unwrap_or_else(|| panic!("missing selected resource item id {id}"));
-        id
     });
     Arc::new(Mutex::new(Witness {
         activity,
@@ -559,9 +558,8 @@ fn add_poison_steps(
                     return false;
                 }
                 if witness.poison_during_provisioning {
-                    witness.poison_seed_bank_open = Some(
-                        snapshot.bank_component_id() >= 0 && snapshot.bank_loaded(),
-                    );
+                    witness.poison_seed_bank_open =
+                        Some(snapshot.bank_component_id() >= 0 && snapshot.bank_loaded());
                     witness.poison_seed_tool_count =
                         witness.tool_id.map(|id| item_count(snapshot, id));
                 }
@@ -1042,7 +1040,9 @@ fn work_receipt(
         return Err("authored work did not start before poison seed".to_owned());
     };
     let invalid_work_evidence = if witness.poison_during_provisioning {
-        witness.provisioning_tick.is_none_or(|tick| tick > seed_tick)
+        witness
+            .provisioning_tick
+            .is_none_or(|tick| tick > seed_tick)
             || work_active_tick <= seed_tick
             || witness.poison_seed_bank_open != Some(true)
             || witness.poison_seed_tool_count != Some(witness.baseline_tool)
@@ -1100,8 +1100,7 @@ fn work_receipt(
     receipt["resource_count_at_need"] = json!(need_resource);
     receipt["resource_count_after"] = json!(resource);
     receipt["tool_count_at_start"] = json!(witness.baseline_tool);
-    receipt["tool_count_after"] =
-        json!(witness.tool_id.map_or(0, |id| item_count(snapshot, id)));
+    receipt["tool_count_after"] = json!(witness.tool_id.map_or(0, |id| item_count(snapshot, id)));
     receipt["work_active_tick"] = json!(witness.work_active_tick);
     receipt["work_animation_tick"] = json!(witness.work_animation_tick);
     receipt["work_animation"] = json!(witness.work_animation);
@@ -1610,7 +1609,7 @@ fn live_l_cure_quester_dialogue_updates_policy_on_desert_captain_page() {
         settings,
         Arc::clone(&witness),
         vault::CurePoison::Never,
-        move |snapshot, status, witness| dialogue_receipt(snapshot, status, witness),
+        dialogue_receipt,
     );
     let proof = &receipt["family_receipt"];
     assert_eq!(proof["family"], "Quester");
