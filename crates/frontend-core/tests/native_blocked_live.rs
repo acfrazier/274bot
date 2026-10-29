@@ -352,10 +352,8 @@ fn gatherer_parked_status_is_shared_and_controllable() {
             reason.to_ascii_lowercase().contains("feather"),
             "unexpected supply block reason: {reason}"
         );
-        let core_label = script_status_label(
-            run_state(play, &account),
-            Some(status_view(&blocked)),
-        );
+        let core_label =
+            script_status_label(run_state(play, &account), Some(status_view(&blocked)));
         assert_eq!(core_label, "blocked");
         let status_rows = script_status_rows(status_view(&blocked)).collect::<Vec<_>>();
         assert!(
@@ -372,11 +370,7 @@ fn gatherer_parked_status_is_shared_and_controllable() {
             assert_eq!(row.brief(), "blocked");
             row.snapshot()
         };
-        assert!(fleet_row_matches(
-            &account,
-            Some(&projected),
-            "blocked"
-        ));
+        assert!(fleet_row_matches(&account, Some(&projected), "blocked"));
         {
             let view = session.fleet_view();
             let phase = view
@@ -429,21 +423,19 @@ fn gatherer_parked_status_is_shared_and_controllable() {
             &account,
             deadline,
         )?;
-        wait_script_state(
-            &mut session,
-            &account,
-            script::RunState::Paused,
-            deadline,
-        )?;
+        wait_script_state(&mut session, &account, script::RunState::Paused, deadline)?;
         let paused = session
             .play_for_test()
             .and_then(|play| play.script_native_status(&account))
             .ok_or("Pause removed the parked script status")?;
         assert_eq!(
-            script_status_label(run_state(
-                session.play_for_test().expect("Play remains attached"),
-                &account
-            ), Some(status_view(&paused))),
+            script_status_label(
+                run_state(
+                    session.play_for_test().expect("Play remains attached"),
+                    &account
+                ),
+                Some(status_view(&paused))
+            ),
             "paused"
         );
         let paused_row = session
@@ -462,12 +454,7 @@ fn gatherer_parked_status_is_shared_and_controllable() {
             &account,
             deadline,
         )?;
-        wait_script_state(
-            &mut session,
-            &account,
-            script::RunState::Running,
-            deadline,
-        )?;
+        wait_script_state(&mut session, &account, script::RunState::Running, deadline)?;
         let resumed = loop {
             session.poll();
             let row = session
@@ -498,12 +485,7 @@ fn gatherer_parked_status_is_shared_and_controllable() {
             &account,
             deadline,
         )?;
-        wait_script_state(
-            &mut session,
-            &account,
-            script::RunState::Idle,
-            deadline,
-        )?;
+        wait_script_state(&mut session, &account, script::RunState::Idle, deadline)?;
         let stopped_play = session
             .play_for_test()
             .ok_or("OperatorSession lost its Play after Stop")?;

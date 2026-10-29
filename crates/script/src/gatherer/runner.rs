@@ -20,8 +20,8 @@ use super::widen::{
 use super::{GatherRetained, RecoveryState};
 use crate::acquire::run::AcquireRun;
 use crate::acquire::{
-    AcquireBlock, AcquireOutcome, AcquirePlan, AcquireRequest, AcquireVerdict, BankChoice, BankStage,
-    CloseBank, CoinPolicy, DepositSpec, Need, OpenGate, SourceSet, VendorChoice,
+    AcquireBlock, AcquireOutcome, AcquirePlan, AcquireRequest, AcquireVerdict, BankChoice,
+    BankStage, CloseBank, CoinPolicy, DepositSpec, Need, OpenGate, SourceSet, VendorChoice,
 };
 use crate::native::walk::Walk;
 use crate::native::{
@@ -37,10 +37,10 @@ use nav_planner::contract::ArrivalKind;
 use std::sync::Arc;
 use std::task::Poll;
 
-#[path = "recover.rs"]
-mod recover;
 #[path = "park.rs"]
 mod park;
+#[path = "recover.rs"]
+mod recover;
 use park::Park;
 
 const MAX_AVOID: usize = 8;
@@ -494,7 +494,13 @@ impl Gatherer {
     ) {
         let bank_work = plan.scan || plan.withdrawal_count > 0;
         let continuing_return = self.trip == TripStep::Validate
-            || matches!(self.trip, TripStep::Supply { return_to_work: true, .. });
+            || matches!(
+                self.trip,
+                TripStep::Supply {
+                    return_to_work: true,
+                    ..
+                }
+            );
         if bank_work {
             if let Some(inventory) = cx.snapshot().inventory() {
                 request.deposit = Some(self.deposit_spec(inventory.value));
@@ -510,12 +516,7 @@ impl Gatherer {
             self.start_trip(step);
         }
         self.scratch.needs = Some(Arc::clone(&request.needs));
-        self.active = Active::Acquire(AcquireRun::new(
-            request,
-            plan,
-            &self.prepared.banks,
-            cx,
-        ));
+        self.active = Active::Acquire(AcquireRun::new(request, plan, &self.prepared.banks, cx));
     }
 
     fn start_dispose(&mut self, tick: &mut NativeTick<'_>) {
@@ -861,7 +862,8 @@ impl Gatherer {
         if !parked && changed_bank && self.trip != TripStep::Deposit && !next_disposal {
             return None;
         }
-        if !parked && current.disposition != next.settings.disposition
+        if !parked
+            && current.disposition != next.settings.disposition
             && (!disposal_due || self.trip != TripStep::Idle)
         {
             return None;
@@ -2335,10 +2337,11 @@ impl Gatherer {
                 Arc::from(format!("{}; {stage}", self.bank_label))
             },
             bank_seen: None,
-            block_reason: self.scratch.parked.as_ref().map_or_else(
-                || Arc::from(""),
-                |park| Arc::clone(&park.block.message),
-            ),
+            block_reason: self
+                .scratch
+                .parked
+                .as_ref()
+                .map_or_else(|| Arc::from(""), |park| Arc::clone(&park.block.message)),
             last_progress: self.last_gameplay_tick,
             deaths: self.retained.deaths,
             recoveries: self.retained.recoveries,
@@ -3594,7 +3597,8 @@ mod tests {
         );
         fixture.assert_missing(
             gatherer
-                .scratch.parked
+                .scratch
+                .parked
                 .as_ref()
                 .map(|park| &park.block)
                 .expect("the second request parks on the observed empty bank"),
@@ -3634,7 +3638,11 @@ mod tests {
             if in_place {
                 assert_eq!(validation, Validation::Pending, "{origin:?}");
                 assert!(gatherer.failure.is_none());
-                let park = gatherer.scratch.parked.as_ref().expect("a Session shortage parks");
+                let park = gatherer
+                    .scratch
+                    .parked
+                    .as_ref()
+                    .expect("a Session shortage parks");
                 fixture.assert_missing(&park.block);
                 assert_eq!(gatherer.trip, TripStep::Idle, "no walk is armed");
             } else {
@@ -3674,7 +3682,11 @@ mod tests {
             let origin = bank.map(api::bank_memory::BankMemory::origin);
             if in_place {
                 assert!(gatherer.failure.is_none());
-                let park = gatherer.scratch.parked.as_ref().expect("a Session shortage parks");
+                let park = gatherer
+                    .scratch
+                    .parked
+                    .as_ref()
+                    .expect("a Session shortage parks");
                 fixture.assert_missing(&park.block);
                 assert_eq!(gatherer.trip, TripStep::Idle, "no reprovision walk");
             } else {

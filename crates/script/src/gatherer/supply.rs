@@ -720,7 +720,10 @@ fn tool_need(
             Presence::Carried
         },
         kind: NeedKind::Required,
-        sources: purchase_sources(prepared, SourceSet::PACK | SourceSet::WORN | SourceSet::BANK),
+        sources: purchase_sources(
+            prepared,
+            SourceSet::PACK | SourceSet::WORN | SourceSet::BANK,
+        ),
         alternatives: Arc::from(alternatives),
     }))
 }
@@ -2058,13 +2061,16 @@ mod tests {
             assert!(needs.iter().any(|need| need.item == FISHING_ROD));
             assert!(needs.iter().any(|need| need.item == bait.id));
             assert!(needs.iter().any(|need| need.item == COINS_ID));
-            assert!(needs.iter().any(|need| need.item != FISHING_ROD && need.item != bait.id && need.item != COINS_ID));
+            assert!(needs.iter().any(|need| need.item != FISHING_ROD
+                && need.item != bait.id
+                && need.item != COINS_ID));
             for need in needs.iter() {
                 let tool_or_bait = need.item == FISHING_ROD || need.item == bait.id;
                 assert_eq!(
                     need.sources.contains(SourceSet::SHOP),
                     enabled && tool_or_bait,
-                    "id={} enabled={enabled}", need.item
+                    "id={} enabled={enabled}",
+                    need.item
                 );
             }
         }

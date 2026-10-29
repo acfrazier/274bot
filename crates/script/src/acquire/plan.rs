@@ -4,7 +4,6 @@ use super::*;
 use api::shop_facts::{self, VendorFact};
 use api::stock::Stock;
 
-
 #[cfg(test)]
 std::thread_local! {
     static PLAN_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

@@ -374,7 +374,9 @@ impl PickResult {
             }) => arc_slice_heap_bytes::<api::selected::QuestGate>(gates.len())?,
             _ => 0,
         };
-        nav_planner::producer::OwnerResultLedger::owner_result_bytes::<Self>(route.checked_add(service)?)
+        nav_planner::producer::OwnerResultLedger::owner_result_bytes::<Self>(
+            route.checked_add(service)?,
+        )
     }
 
     fn into_owner_result(
@@ -1726,9 +1728,7 @@ fn service_pick_context(input: NativeServicePickInput) -> NativeServicePickConte
         evidence: input.evidence,
     }
 }
-fn service_first_route_error(
-    error: nav_planner::router::RouteError,
-) -> Option<ServicePickOutcome> {
+fn service_first_route_error(error: nav_planner::router::RouteError) -> Option<ServicePickOutcome> {
     match error {
         nav_planner::router::RouteError::NoPath => None,
         nav_planner::router::RouteError::BudgetExhausted => {

@@ -10,12 +10,7 @@ pub(super) struct Park {
 }
 
 impl Gatherer {
-    pub(super) fn park_supply(
-        &mut self,
-        request: AcquireRequest,
-        block: AcquireBlock,
-        now: u64,
-    ) {
+    pub(super) fn park_supply(&mut self, request: AcquireRequest, block: AcquireBlock, now: u64) {
         let code = block.code();
         let since_tick = self
             .scratch
@@ -53,12 +48,7 @@ impl Gatherer {
             .is_some_and(|bank| bank.value.open)
         {
             if tick.cx.may_continue_this_tick() {
-                let request = self.acquire_request(
-                    Arc::from([]),
-                    None,
-                    CloseBank::Close,
-                    &tick.cx,
-                );
+                let request = self.acquire_request(Arc::from([]), None, CloseBank::Close, &tick.cx);
                 self.active = Active::ParkClose(AcquireRun::new(
                     request,
                     AcquirePlan::empty(),
@@ -90,17 +80,14 @@ impl Gatherer {
             let Some(stats) = tick.cx.snapshot().stats() else {
                 return true;
             };
-            let needs = match SupplyPlan::build(
-                &self.prepared,
-                stats.value,
-                tick.cx.snapshot().stock(),
-            ) {
-                Ok(needs) => needs,
-                Err(error) => {
-                    self.action_failure(error);
-                    return true;
-                }
-            };
+            let needs =
+                match SupplyPlan::build(&self.prepared, stats.value, tick.cx.snapshot().stock()) {
+                    Ok(needs) => needs,
+                    Err(error) => {
+                        self.action_failure(error);
+                        return true;
+                    }
+                };
             Some(self.acquire_request(needs, None, CloseBank::Close, &tick.cx))
         } else {
             None
@@ -117,7 +104,13 @@ impl Gatherer {
                 if self.retained.recovery == (RecoveryState::Pending { step: 3 }) {
                     self.advance_trip(TripStep::Idle);
                     self.advance_recovery(RecoveryState::Pending { step: 4 }, tick);
-                } else if matches!(self.trip, TripStep::Supply { return_to_work: true, .. }) {
+                } else if matches!(
+                    self.trip,
+                    TripStep::Supply {
+                        return_to_work: true,
+                        ..
+                    }
+                ) {
                     self.advance_trip(TripStep::Validate);
                 } else {
                     self.advance_trip(TripStep::Idle);

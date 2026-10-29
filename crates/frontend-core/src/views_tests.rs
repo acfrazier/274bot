@@ -1074,7 +1074,10 @@ fn bank_seen_and_draft_path_are_projected_to_short_status_rows() {
     assert_eq!(
         script_status_rows(StatusView::new(&status)).collect::<Vec<_>>(),
         vec![
-            ("Bank seen (at status update)", "Session, 12 min ago, 6 rows"),
+            (
+                "Bank seen (at status update)",
+                "Session, 12 min ago, 6 rows"
+            ),
             ("Path status", "Untested draft Path")
         ]
     );

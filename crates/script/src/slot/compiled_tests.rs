@@ -3704,12 +3704,20 @@ fn vendor_facts_frame_port_borrows_the_world_arc_without_clones_or_allocations()
         assert_eq!(Arc::strong_count(&facts), 1);
     };
     check(super::compiled::frame_context(
-        &ctx, run, &pin, &mut retained, &mut runtime,
+        &ctx,
+        run,
+        &pin,
+        &mut retained,
+        &mut runtime,
     ));
     let measured = allocation_counter::measure(|| {
         for _ in 0..1_000 {
             check(super::compiled::frame_context(
-                &ctx, run, &pin, &mut retained, &mut runtime,
+                &ctx,
+                run,
+                &pin,
+                &mut retained,
+                &mut runtime,
             ));
         }
     });
@@ -3741,8 +3749,14 @@ fn gatherer_supply_park_keeps_its_run_controls_and_non_gameplay_watchdogs() {
     assert_eq!(slot.evidence_wait_run, Some(run));
     assert!(!slot.has_native_actions());
     assert!(!slot.foreground_action_active());
-    let reason = parked.fields.iter().find(|field| field.key == "block_reason").unwrap();
-    assert!(matches!(&reason.value, crate::native::StatusValue::Text(text) if text.contains("supply-missing")));
+    let reason = parked
+        .fields
+        .iter()
+        .find(|field| field.key == "block_reason")
+        .unwrap();
+    assert!(
+        matches!(&reason.value, crate::native::StatusValue::Text(text) if text.contains("supply-missing"))
+    );
     let calls = crate::acquire::plan::calls_for_test();
     for tick in 2..12 {
         gatherer_tick_with_bank(&mut slot, &snapshot, tick, Some(&memory));
@@ -3786,7 +3800,10 @@ fn gatherer_supply_park_keeps_its_run_controls_and_non_gameplay_watchdogs() {
     assert_eq!(rekeyed.run, run.run);
     assert_ne!(rekeyed.session, run.session);
     assert_eq!(slot.native_status().unwrap().phase, NativePhase::Blocked);
-    assert!(!slot.has_native_actions(), "a saved bank hint cannot wake a park");
+    assert!(
+        !slot.has_native_actions(),
+        "a saved bank hint cannot wake a park"
+    );
 
     let stalled = packet_gap + crate::watchdog::HARD_STALL;
     slot.note_game_packet_tick(stalled);

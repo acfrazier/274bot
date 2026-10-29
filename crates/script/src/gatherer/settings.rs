@@ -1224,7 +1224,10 @@ mod tests {
         let defaults = GathererSettings::from_bag(&SettingsBag::new()).unwrap();
         assert!(defaults.buy_tools);
         assert!(GathererSettings::default().buy_tools);
-        let setting = schema().iter().find(|setting| setting.id == "buyTools").unwrap();
+        let setting = schema()
+            .iter()
+            .find(|setting| setting.id == "buyTools")
+            .unwrap();
         assert_eq!(setting.ty, "boolean");
         assert_eq!(setting.default.as_deref(), Some("true"));
         let mut bag = SettingsBag::new();

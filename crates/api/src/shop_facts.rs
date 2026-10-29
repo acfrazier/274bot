@@ -1353,11 +1353,16 @@ param=shop_title,Fishing shop 2"#,
             let catalog = data(revision);
             let shops = shops_for(&catalog);
             assert_eq!(
-                shops[..12].iter().map(|shop| shop.inv.as_str()).collect::<Vec<_>>(),
+                shops[..12]
+                    .iter()
+                    .map(|shop| shop.inv.as_str())
+                    .collect::<Vec<_>>(),
                 POSTED_INVS[..12],
             );
-            let bytes = serde_json::to_vec(&ContentShops { shops: &shops[..12] })
-                .expect("original posted shops");
+            let bytes = serde_json::to_vec(&ContentShops {
+                shops: &shops[..12],
+            })
+            .expect("original posted shops");
             assert_eq!(bytes.len(), 18_481, "{revision:?}");
             assert_eq!(
                 format!("{:x}", Sha256::digest(&bytes)),
