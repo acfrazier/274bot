@@ -70,10 +70,9 @@ const TALK_WALK_MS: u64 = 120_000;
 /// Frozen `walkResilient(..., { attempts: 3, timeoutMs: 180_000 })` legs.
 const LEG_ATTEMPTS: u32 = 3;
 const LEG_MS: u64 = 180_000;
-/// The frozen `walkResilient(..., { attempts: 3 })` limit
-/// (`Traversal.ts:160–170`) supplies the talk retry budget.
+/// The frozen three-approach limit. Staging failures use the same budget.
 const TALK_ATTEMPTS: u32 = LEG_ATTEMPTS;
-/// Orthogonal candidate offsets for posted stands and initial staging.
+/// Orthogonal candidates for talk stands beside the posted Luthas tile.
 const TALK_STAND_OFFSETS: [(i32, i32); 4] = [(0, -1), (1, 0), (0, 1), (-1, 0)];
 /// Frozen `settleScene` (`prompts.ts:30–32`).
 const SETTLE_TICKS: u32 = 2;
@@ -1235,9 +1234,24 @@ fn log_approach_failure(
     record_recovery_log(logs, line);
 }
 
+fn log_staging_failure(
+    logs: &mut VecDeque<String>,
+    attempt: u32,
+    tile: WorldTile,
+    detail: &str,
+) {
+    record_recovery_log(
+        logs,
+        format!(
+            "boat fare Luthas staging attempt {attempt}/{TALK_ATTEMPTS} failed tile=({},{},{}) detail={detail}",
+            tile.x, tile.z, tile.level
+        ),
+    );
+}
+
 fn log_terminal_failure(logs: &mut VecDeque<String>, attempt: u32, detail: &str) {
     let line = format!(
-        "boat fare Luthas recovery ended after approach {attempt}/{TALK_ATTEMPTS}: {detail}"
+        "boat fare Luthas recovery ended after attempt {attempt}/{TALK_ATTEMPTS}: {detail}"
     );
     record_recovery_log(logs, line);
 }
@@ -1247,8 +1261,7 @@ enum Stage {
         second: bool,
         attempt: u32,
         tried_stands: TriedStands,
-        tried_staging_stands: TriedStands,
-        stand: WorldTile,
+        staging_tile: WorldTile,
         walk: Walk,
     },
     TalkWalk {
@@ -1307,7 +1320,7 @@ impl Recover {
         })
     }
 
-    /// Frozen `talk()`'s first route, with bounded retries from fresh plans.
+    /// The first route to Luthas. Each failure spends the shared retry budget.
     fn talk(
         facts: &BoatFacts,
         second: bool,
@@ -1317,58 +1330,28 @@ impl Recover {
         logs: &mut VecDeque<String>,
     ) -> Result<Stage, bool> {
         if talk_row(&facts.luthas_name).is_none() {
-            return Self::locate_luthas(
-                facts,
-                second,
-                attempt,
-                tried_stands,
-                TriedStands::default(),
-                cx,
-                logs,
-            );
+            return Self::locate_luthas(facts, second, attempt, tried_stands, cx, logs);
         }
         Self::talk_posted(facts, second, attempt, tried_stands, cx, logs)
     }
 
-    /// Walk to a content-derived staging stand without interacting; the NPC
-    /// row is re-read before an orthogonal talk stand is selected.
+    /// Walk to Luthas's spawn tile without interacting.
     fn locate_luthas(
         facts: &BoatFacts,
         second: bool,
-        attempt: u32,
+        mut attempt: u32,
         tried_stands: TriedStands,
-        mut tried_staging_stands: TriedStands,
         cx: &mut Cx<'_>,
         logs: &mut VecDeque<String>,
     ) -> Result<Stage, bool> {
-        let mut walk_failed_to_start = false;
+        let staging_tile = facts.luthas_anchor;
         loop {
             if interrupted(cx) {
                 return Err(false);
             }
-            let stand = match next_orthogonal_stand(
-                facts.luthas_anchor,
-                &tried_staging_stands,
-                "no untried reachable orthogonal Luthas staging stand is available",
-            ) {
-                Ok(stand) => stand,
-                Err(reason) => {
-                    let detail = if walk_failed_to_start {
-                        "the host could not start a walk to any reachable staging stand"
-                    } else {
-                        reason
-                    };
-                    record_recovery_log(
-                        logs,
-                        format!("boat fare Luthas recovery could not start: {detail}"),
-                    );
-                    return Err(false);
-                }
-            };
-            tried_staging_stands.insert(stand);
             match Walk::begin_compat_avoiding(
-                stand,
-                0,
+                staging_tile,
+                2,
                 TALK_WALK_MS,
                 false,
                 Vec::new(),
@@ -1380,13 +1363,22 @@ impl Recover {
                         second,
                         attempt,
                         tried_stands,
-                        tried_staging_stands,
-                        stand,
+                        staging_tile,
                         walk,
                     });
                 }
-                Err(true) => {}
-                Err(false) => walk_failed_to_start = true,
+                Err(true) => {
+                    return Self::talk_posted(facts, second, attempt, tried_stands, cx, logs);
+                }
+                Err(false) => {
+                    let detail = "the host could not start the walk to Luthas's spawn tile";
+                    log_staging_failure(logs, attempt, staging_tile, detail);
+                    if attempt >= TALK_ATTEMPTS {
+                        log_terminal_failure(logs, attempt, detail);
+                        return Err(false);
+                    }
+                    attempt += 1;
+                }
             }
         }
     }
@@ -1500,30 +1492,38 @@ impl Recover {
                 second,
                 attempt,
                 tried_stands,
-                tried_staging_stands,
-                stand,
+                staging_tile,
                 walk,
             } => {
-                if walk.step(cx)? {
-                    match Self::talk_posted(&self.facts, *second, *attempt, *tried_stands, cx, logs)
-                    {
-                        Ok(stage) => stage,
-                        Err(done) => return Some(done),
-                    }
-                } else {
-                    record_recovery_log(
-                        logs,
-                        format!(
-                            "boat fare Luthas staging walk failed stand=({},{},{})",
-                            stand.x, stand.z, stand.level
-                        ),
-                    );
-                    match Self::locate_luthas(
+                let settled = walk.step(cx)?;
+                if talk_row(&self.facts.luthas_name).is_some() {
+                    match Self::talk_posted(
                         &self.facts,
                         *second,
                         *attempt,
                         *tried_stands,
-                        *tried_staging_stands,
+                        cx,
+                        logs,
+                    ) {
+                        Ok(stage) => stage,
+                        Err(done) => return Some(done),
+                    }
+                } else {
+                    let detail = if settled {
+                        "the staging walk ended without Luthas in view"
+                    } else {
+                        "the host walk did not reach Luthas's spawn tile"
+                    };
+                    log_staging_failure(logs, *attempt, *staging_tile, detail);
+                    if *attempt >= TALK_ATTEMPTS {
+                        log_terminal_failure(logs, *attempt, detail);
+                        return Some(false);
+                    }
+                    match Self::locate_luthas(
+                        &self.facts,
+                        *second,
+                        *attempt + 1,
+                        *tried_stands,
                         cx,
                         logs,
                     ) {

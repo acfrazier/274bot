@@ -531,7 +531,14 @@ fn a_far_start_walks_to_luthas_spawn_without_a_scene_reach_gate() {
     let fare = world.facts.coin_payout;
     fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
 
-    let (_recover, _clock, _logs, ops) = start_recovery();
+    let mut ops = Vec::new();
+    let mut clock = InstantTaskClock::new();
+    let mut logs = VecDeque::new();
+    let recovery = {
+        let mut cx = Cx::test(&mut ops, &mut clock, None);
+        Recover::start(PORT_SARIM, &mut cx, &mut logs)
+    };
+    assert!(recovery.is_ok(), "far-start fare recovery should start: {logs:?}");
     assert!(
         matches!(ops.as_slice(), [op] if walk_near(anchor, 2)(op)),
         "a far start walks to Luthas's spawn tile with radius 2: {ops:?}"
@@ -1321,7 +1328,7 @@ fn dialogue_timeout_retries_within_the_talk_budget() {
         3
     );
     assert!(logs.back().is_some_and(|line| {
-        line.contains("recovery ended after approach 3/3")
+        line.contains("recovery ended after attempt 3/3")
             && line.contains("never opened a dialogue")
     }));
 }
@@ -1372,7 +1379,7 @@ fn a_failed_talk_walk_retries_and_logs_the_terminal_failure() {
         3
     );
     assert!(logs.back().is_some_and(|line| {
-        line.contains("recovery ended after approach 3/3")
+        line.contains("recovery ended after attempt 3/3")
             && line.contains("did not reach the selected stand")
     }));
 }

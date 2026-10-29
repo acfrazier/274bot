@@ -67,14 +67,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   fight ends `api.combat.fight` as `aborted` with reason `user-input`. The host
   has settled it that way since 0.2.4; the declarations and pages still
   described an `interrupted` result.
-- Fare recovery now selects a walkable, reachable, untried orthogonal stand
-  next to Luthas's posted tile for every approach. It selects the shortest
-  route and uses Manhattan distance to break ties.
-  If Luthas is not posted yet, recovery first uses a non-interacting
-  orthogonal staging walk near his content anchor, then selects the talk stand
-  from the posted row.
+- Fare recovery chooses a free tile next to Luthas that the bot can reach,
+  using the shortest route and the closest tile as a tie-breaker.
+  If Luthas is not in view, the bot first walks to where he works, then chooses
+  a free tile next to him.
   Failed walks, "I can't reach that!" replies and dialogue timeouts share a
-  limit of three approaches. The bot logs each failed approach and the final
+  limit of three attempts. The bot logs each failed attempt and the final
   failure.
 
 ## [0.2.7] — 2026-10-26 — Beta 2

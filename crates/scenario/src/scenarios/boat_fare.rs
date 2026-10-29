@@ -11,6 +11,13 @@ pub(crate) const MUSA_DOCK: WorldTile = WorldTile {
     z: 3146,
     level: 0,
 };
+/// The Shilo→Brimhaven cart landing on Karamja's west coast, from
+/// `navigation.rs`'s packed route.
+const BRIMHAVEN_CART_LANDING: WorldTile = WorldTile {
+    x: 2776,
+    z: 3214,
+    level: 0,
+};
 /// Luthas's stand (frozen `LUTHAS.anchor`).
 const LUTHAS_ANCHOR: WorldTile = WorldTile {
     x: 2939,
@@ -35,22 +42,28 @@ const BOAT_FARE_V1_WATCH: u32 = 3600;
 /// PRESTART: an emptied pack holding only 5 coins (short of the 30-coin
 /// fare), the plantation job reset (`%hunt_store_employed`, `%crate_bananas`
 /// and `%crate_rum` cleared; `luthas.rs2` offers employment whenever the
-/// employed bit is clear), standing on the Musa Point dock. After Start the
-/// only way to Port Sarim is to earn the fare from Luthas and pay the
-/// customs officer; the example stops with its named reason once
+/// employed bit is clear), standing on the selected Karamja start tile. After
+/// Start the only way to Port Sarim is to earn the fare from Luthas and pay
+/// the customs officer; the example stops with its named reason once
 /// `Traversal.walkTo` returns true on the Port Sarim dock.
 pub(crate) fn boat_fare_v1_scenario() -> Scenario {
-    boat_fare_scenario("boat_fare_v1_ts", false)
+    boat_fare_scenario("boat_fare_v1_ts", MUSA_DOCK, false)
+}
+
+/// The fare recovery starting at the Brimhaven-side cart landing, outside
+/// Luthas's view.
+pub(crate) fn boat_fare_far_start_v1_scenario() -> Scenario {
+    boat_fare_scenario("boat_fare_far_start_v1_ts", BRIMHAVEN_CART_LANDING, false)
 }
 
 /// [`boat_fare_v1_scenario`] with the connection dropped (`::serverdrop`)
 /// while the recovery walks to Luthas: the reconnect holds the script, the
 /// relogged session carries the walk, and the fare is still earned.
 pub(crate) fn boat_fare_reconnect_v1_scenario() -> Scenario {
-    boat_fare_scenario("boat_fare_reconnect_v1_ts", true)
+    boat_fare_scenario("boat_fare_reconnect_v1_ts", MUSA_DOCK, true)
 }
 
-fn boat_fare_scenario(name: &'static str, drop_mid_walk: bool) -> Scenario {
+fn boat_fare_scenario(name: &'static str, start_tile: WorldTile, drop_mid_walk: bool) -> Scenario {
     let mainland = Proof::ArrivedNear {
         x: PORT_SARIM_DOCK.x,
         z: PORT_SARIM_DOCK.z,
@@ -94,18 +107,21 @@ fn boat_fare_scenario(name: &'static str, drop_mid_walk: bool) -> Scenario {
         },
     });
     steps.push(Step {
-        name: "tele to the Musa Point dock before Start",
+        name: "tele to the selected Karamja tile before Start",
         kind: StepKind::Perform {
-            send: Box::new(|c, _| {
-                cheat(c, &tele_args(MUSA_DOCK.level, MUSA_DOCK.x, MUSA_DOCK.z));
+            send: Box::new(move |c, _| {
+                cheat(
+                    c,
+                    &tele_args(start_tile.level, start_tile.x, start_tile.z),
+                );
                 true
             }),
         },
         wait: Wait {
             arm: Proof::ArrivedNear {
-                x: MUSA_DOCK.x,
-                z: MUSA_DOCK.z,
-                level: MUSA_DOCK.level,
+                x: start_tile.x,
+                z: start_tile.z,
+                level: start_tile.level,
                 radius: 4,
             },
             budget_ticks: 120,
