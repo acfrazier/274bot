@@ -126,18 +126,28 @@ pub(crate) fn profile_insertion_marker(ui: &Ui, min: [f32; 2], max: [f32; 2], be
     DROP_MARKERS.with_borrow_mut(|markers| markers.push((before, min, max)));
 }
 
+/// One drawn insertion marker, recorded for tests: whether the drop
+/// would land before its target, and the target item's rect.
+#[cfg(test)]
+type DropMarker = (bool, [f32; 2], [f32; 2]);
+
 #[cfg(test)]
 thread_local! {
-    /// Every insertion marker drawn on this test thread, as
-    /// `(before, rect min, rect max)`.
-    static DROP_MARKERS: RefCell<Vec<(bool, [f32; 2], [f32; 2])>> =
-        const { RefCell::new(Vec::new()) };
+    /// Every insertion marker drawn on this test thread.
+    static DROP_MARKERS: RefCell<Vec<DropMarker>> = const { RefCell::new(Vec::new()) };
 }
 
-/// Take the insertion markers drawn so far on this test thread.
+/// Take the insertion markers drawn so far on this test thread. The
+/// recording buffer keeps its capacity (grown once), so recording a
+/// marker on a warm frame allocates nothing either.
 #[cfg(test)]
-pub(crate) fn take_drop_markers() -> Vec<(bool, [f32; 2], [f32; 2])> {
-    DROP_MARKERS.with_borrow_mut(std::mem::take)
+pub(crate) fn take_drop_markers() -> Vec<DropMarker> {
+    DROP_MARKERS.with_borrow_mut(|markers| {
+        if markers.capacity() < 64 {
+            markers.reserve(64 - markers.capacity());
+        }
+        markers.drain(..).collect()
+    })
 }
 
 /// The move a drop of profile `moving` (a [`ProfileIdentity::raw`]) onto the

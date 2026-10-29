@@ -5430,10 +5430,7 @@ fn dragging_a_profiles_row_reorders_the_saved_order_only() {
     crate::fleet::take_drop_markers();
     ui.drag_at(rect_center(carol), rect_center(alice));
     let markers = crate::fleet::take_drop_markers();
-    assert!(
-        !markers.is_empty(),
-        "the hover showed an insertion marker"
-    );
+    assert!(!markers.is_empty(), "the hover showed an insertion marker");
     let (lands_before, min, max) = *markers.last().unwrap();
     assert!(
         lands_before,
@@ -5517,7 +5514,9 @@ fn a_profiles_order_save_shows_saving_then_the_failure_then_clears() {
         ui.session.poll_panel_preferences();
         match ui.session.core.setting_status(Setting::ProfileOrder) {
             SettingStatus::Failed(_) => Ok(()),
-            other => Err(format!("the order setting is {other:?}, not failed")),
+            other => Err(format!(
+                "not durable within the wait: the order setting is {other:?}, not failed"
+            )),
         }
     })
     .expect("the failed write settles");
@@ -5528,7 +5527,12 @@ fn a_profiles_order_save_shows_saving_then_the_failure_then_clears() {
         shown.text
     );
     assert!(!shown.has("Saving…"), "nothing still saves: {}", shown.text);
-    let at = |name: &str| shown.text.find(name).unwrap_or_else(|| panic!("{name} in {}", shown.text));
+    let at = |name: &str| {
+        shown
+            .text
+            .find(name)
+            .unwrap_or_else(|| panic!("{name} in {}", shown.text))
+    };
     assert!(
         at("alice") < at("bob") && at("bob") < at("carol"),
         "the rows are the durable order again:\n{}",
@@ -5549,7 +5553,9 @@ fn a_profiles_order_save_shows_saving_then_the_failure_then_clears() {
         ui.session.poll_panel_preferences();
         match ui.session.core.setting_status(Setting::ProfileOrder) {
             SettingStatus::Saved => Ok(()),
-            other => Err(format!("the order setting is {other:?}, not saved")),
+            other => Err(format!(
+                "not durable within the wait: the order setting is {other:?}, not saved"
+            )),
         }
     })
     .expect("the retry saves");
@@ -5582,17 +5588,17 @@ fn a_cut_profile_name_shows_an_ellipsis_and_the_whole_name_on_hover() {
         [220.0, BASE_WINDOW_H],
     );
     let shown = ui.frame();
-    assert!(
-        shown.has("…"),
-        "the cut is marked: {}",
-        shown.text
-    );
+    assert!(shown.has("…"), "the cut is marked: {}", shown.text);
     assert!(
         !shown.has(LONG),
         "the whole name does not fit and is not drawn clipped: {}",
         shown.text
     );
-    assert!(shown.has("aver"), "the visible prefix shows: {}", shown.text);
+    assert!(
+        shown.has("aver"),
+        "the visible prefix shows: {}",
+        shown.text
+    );
 
     // Hover the long row (found by its Edit button, whose rect is on the
     // same row): the tooltip carries the whole name.
@@ -7880,10 +7886,7 @@ fn fleet_row_drag_reorders_the_saved_order_around_a_hidden_marked_profile() {
         rect_centre(layout.names[2]),
     );
     let markers = crate::fleet::take_drop_markers();
-    assert!(
-        !markers.is_empty(),
-        "the hover showed an insertion marker"
-    );
+    assert!(!markers.is_empty(), "the hover showed an insertion marker");
     let (lands_before, min, max) = *markers.last().unwrap();
     assert!(
         !lands_before,

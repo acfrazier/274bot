@@ -6075,8 +6075,8 @@ fn rail_cap(
     record_test_rail_item(ui);
     if let Some(drag) = drag {
         drag.dragging = crate::fleet::profile_drag_source(ui, drag.identity, row.name());
-        drag.dropped = crate::fleet::profile_drop_target(ui)
-            .and_then(crate::fleet::ProfileDrop::dropped);
+        drag.dropped =
+            crate::fleet::profile_drop_target(ui).and_then(crate::fleet::ProfileDrop::dropped);
         // A drag is not a click: it must not focus the bot.
         clicked &= !drag.dragging;
     }
@@ -7697,7 +7697,9 @@ fn chooser_row(
                 .find(|(_, id)| id.raw() == raw)
                 .map(|(_, id)| id);
             if let Some(before) = crate::fleet::insertion_before(
-                moving.and_then(|moving| order.drop_op(moving, identity)).as_ref(),
+                moving
+                    .and_then(|moving| order.drop_op(moving, identity))
+                    .as_ref(),
             ) {
                 crate::fleet::profile_insertion_marker(ui, rect_min, rect_max, before);
             }
