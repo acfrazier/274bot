@@ -1376,9 +1376,7 @@ fn drive_filliman(answer_once: bool) -> (Vec<i32>, bool) {
             )
             .unwrap()
     });
-    let poll = |page: &GameSnapshot,
-                tick: u64,
-                ledger: &mut Option<Box<ledger::Ledger>>| {
+    let poll = |page: &GameSnapshot, tick: u64, ledger: &mut Option<Box<ledger::Ledger>>| {
         with_tick(page, ledger, tick, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })

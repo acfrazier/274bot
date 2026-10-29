@@ -1545,7 +1545,7 @@ fn live_dialogue_answer_once_filliman_repeated_menu() {
         }) {
             observed_step.store(1, Ordering::Relaxed);
         }
-        let chat = snapshot.chat_modal()?;
+        let chat = snapshot.chat_modal()?.value;
         // Count a menu opening once, not each poll of the same page. Text
         // frames may still arrive after the option rows; the rows identify
         // the menu. The bug would open the menu until DRIVE_STEPS fails.
