@@ -1,108 +1,37 @@
 # Changelog
 
-All notable public changes to 274bot. Host workspace crate versions are `0.2.7` and
+All notable public changes to 274bot. Host workspace crate versions are `0.2.8` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
 ## Unreleased
+
+## [0.2.8] — 2026-10-29 — Beta 2
 
 ### Panel and terminal app
 
 - In the panel, **Copy settings** now follows a bot if you rename it in
   **Profiles** before **Confirm**. The copy is still cancelled if the
   target is deleted or the vault becomes unavailable.
-
 - Source builds can now omit the JavaScript runtime with
   `--no-default-features`. These builds keep Gatherer, Grinch and Quester,
   their settings, and native Start, Pause, Stop and paint controls. They do
   not offer Load, Reload, catalog or rs2b0t profile import. Default builds
-  still include JavaScript. Sherlock needs the JS-runtime build until its
-  native clue rewrite, although Sherlock itself creates no V8 isolate.
+  still include JavaScript. Sherlock needs a build with the JavaScript runtime
+  until its native clue rewrite.
 - When a `--live` or `--smoke` run of the panel fails during startup, the panel
   now stops its bot workers before it closes its window. Before, the panel
   could crash while it exited.
 - The terminal app's script pane now marks the selected compiled (native)
   script card with `>` the same way as a selected JavaScript card.
-- On Linux, the known issue where the panel could close right after start
-  on a desktop with two graphics chips no longer happens with current
-  graphics drivers and desktop versions, so it is no longer listed. 274bot
-  did not change for this. If you still see "importing the supplied dmabufs
-  failed", start the panel with `WGPU_POWER_PREF=high ./panel-play`.
-
-### Combat
-
-- Bots now drink their boost potion before the first hit even when the target
-  starts out of reach.
-- Bots now know how hard common monsters such as cows, chickens, rats and
-  imps hit. The eat line and the no-food stop line follow each monster's
-  real max hit. A cow's max hit is 1, so a bot eats at 3 hitpoints and
-  stops for lack of food at 2. Imps cannot damage the bot at all (max hit
-  0), so the bot does not raise Protect from Melee against them.
-- When a quest fight cannot attack its target, the bot asks the route planner
-  to choose among exact escape goals. It offers the quest's stand first, then
-  tiles beyond the attacker's chase range, then tiles farther from the attacker
-  than the player is. The baked collision check removes blocked tiles,
-  including the dead-tree thicket near Draynor Manor. The route planner decides
-  which remaining goals it can reach.
-
-  After a walk fails, the bot plans again from its current tile and tries the
-  next tier with unrequested goals. Each request names one tier. Across both
-  passes, later requests never resend a tile named by an earlier failed request.
-  The second pass keeps this exclusion after food runs out. Six fixed 32-byte
-  request records and a one-byte count add 200 bytes to each bot's combat-run
-  state after alignment. The fixed history does not grow on game ticks. The
-  live Reach flood measures walking depth to a goal in that tier. It does not
-  remove goals. A walk that neither arrives nor fails ends after the measured
-  depth plus 12 game ticks. The bot counts game ticks. When it cannot measure
-  the depth, this tick limit does not apply. The route planner's own length
-  limit applies. The walk machine's ten-minute deadline ends the walk first.
-
-  Each pass makes at most one request per tier with unrequested goals. It makes
-  up to three requests, or two when the quest gives no stand. A second pass can
-  follow when food runs out, so the bot makes at most six requests. The first
-  pass keeps eating during each walk while food remains. The second pass does
-  not eat after food runs out. The quest's own walk starts only after the bot
-  sees that the attacker is gone. If every route fails, the quest stops with
-  the last route failure. The bot does not promise that an escape exists.
-
-### Survival
-
-- After a bot eats a Strange fruit, it now counts its poison as cured even
-  when it sees the eat message and the loss of the fruit in different game
-  ticks. Before, the bot and scripts that read its poison state could still
-  see it as poisoned.
-
-### Navigation
-
-- Bots now wait and try again when another player is using a shortcut,
-  instead of giving up. The Yanille dungeon ledge ("The ledge is being
-  used") stays held for at most 9 game ticks after a refusal, so the bot
-  waits that long and crosses again. A busy rope swing works the same way
-  with a wait of 5 game ticks. The bot stops after 60 game ticks in total
-  for one crossing (refused tries, waits, the crossing itself and the pause
-  after landing) and never tries again after that limit. The failure then
-  reports how many times it tried and the last refusal.
-  Transport time limits now count game ticks instead of polls, so a burst
-  of polls inside one tick no longer ends a crossing early, and a slow
-  poll that misses several ticks no longer extends it.
-
-### Scripting
-
-- Bank opening now waits for its own walk to finish. A completed walk from
-  a script could reuse the bank walk's request number and end the bank walk
-  before the bot reached the bank. The host now checks the route generation
-  before it sends a walk result to a native action.
-
-- The script API documentation now states that moving the bot by hand during a
-  fight ends `api.combat.fight` as `aborted` with reason `user-input`. The host
-  has settled it that way since 0.2.4; the declarations and pages still
-  described an `interrupted` result.
-- Fare recovery chooses a free tile next to Luthas that the bot can reach,
-  using the shortest route and the closest tile as a tie-breaker.
-  If Luthas is not in view, the bot first walks to where he works, then chooses
-  a free tile next to him.
-  The bot makes up to three attempts each time the bot goes to talk to Luthas.
-  The bot logs each failed attempt and the final failure.
-
+- On Linux, the panel closing right after start on a desktop with two graphics
+  chips ("importing the supplied dmabufs failed") did not happen again on the
+  desktop where it was first seen, after driver and desktop updates, so it is
+  no longer listed as a known issue. 274bot did not change for this, so it may
+  still happen elsewhere. If you see it, start the panel with
+  `WGPU_POWER_PREF=high ./panel-play`.
+- The 0.2.7 known issue that WalkTo keeps its earlier selection when you change
+  Fleet marks while it is open is no longer listed. WalkTo follows those
+  changes, and a new test checks this. 274bot did not change WalkTo for this.
 - A saved setting now takes effect only after its save has reached the disk.
   Before, the panel and the terminal app applied a checkbox at once and kept it
   even when the save then failed. This covers capture input and the 50 fps
@@ -111,7 +40,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   "Don't show again" on the notices. In the panel it also covers the remembered
   server revision, the Game pane's none/GPU/CPU raster and its highmem/lowmem
   mode: the revision a session binds with, the saved raster and memory mode and
-  the slot's GPU/CPU latch change only when the save lands, and the control
+  the GPU/CPU choice in use change only when the save lands, and the control
   shows your choice meanwhile. While a save is pending the control shows your
   choice and "Saving…". A save that fails puts the control back to the saved
   value and shows the reason beside it, for example "Not saved: …". The reason
@@ -143,17 +72,92 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   above or below, and PgUp and PgDn scroll through them, so a failed dismiss
   can be read to its end on an 80x24 terminal. A setting the save queue
   refuses outright (it is full) is logged as a refused command. A failed
-  automatic save of the Load order shows
-  in the Fleet window (panel) and on the message line (terminal app), which
-  also says "Load order: saving…" while it is written. A failed save is final:
-  nothing saves it again by itself, also not after the other program releases
-  the preferences file; only a new change of that setting starts a new save.
+  automatic save of the Load order shows in the Fleet window (panel) and on the
+  message line (terminal app), which also says "Load order: saving…" while it
+  is written. A failed save is final: nothing saves it again by itself, also
+  not after the other program releases the preferences file; only a new change
+  of that setting starts a new save.
   Before, the panel's Browse window saved the category order again in each
   frame after a failure, so its category chips and the General config's
   Global section said "Saving…" without end, and the order was written later
   without a new action. "Don't show again" in the panel's render-all warning
   now renders every wall member only when the acknowledgement is saved; if
   the save fails, **only render focused** stays on.
+
+### Combat
+
+- Bots now drink their boost potion before the first hit even when the target
+  starts out of reach.
+- Bots now know how hard common monsters such as cows, chickens, rats and
+  imps hit. The eat line and the no-food stop line follow each monster's
+  real max hit. A cow's max hit is 1, so a bot eats at 3 hitpoints and
+  stops for lack of food at 2. Imps cannot damage the bot at all (max hit
+  0), so the bot does not raise Protect from Melee against them.
+- When a quest fight cannot attack its target, the bot now asks the route
+  planner for an escape walk to places the bot can reach. The planner tries
+  three groups of tiles in order: the quest's stand, tiles beyond the
+  attacker's chase range, and tiles farther from the attacker than the player
+  is. Blocked tiles, such as the dead-tree thicket near Draynor Manor, are left
+  out.
+
+  If a walk fails, the bot plans again from where it stands and tries the next
+  group. A tile that an earlier failed request named is never requested again,
+  also in the second pass. A walk that neither arrives nor fails ends after the
+  measured walking distance plus 12 game ticks. When the bot cannot measure the
+  distance, this limit does not apply: the route planner's own length limit
+  applies, and the walk's ten-minute deadline ends the walk first.
+
+  Each pass makes at most one request per group: up to three requests, or two
+  when the quest gives no stand. A second pass can follow when food runs out,
+  so the bot makes at most six requests. The first pass keeps eating during
+  each walk while food remains. The second pass does not eat after food runs
+  out. The quest's own walk starts only after the bot sees that the attacker is
+  gone. If every route fails, the quest stops with the last route failure. The
+  bot does not promise that an escape exists.
+
+### Survival
+
+- After a bot eats a Strange fruit, it now counts its poison as cured even
+  when it sees the eat message and the loss of the fruit in different game
+  ticks. Before, the bot and scripts that read its poison state could still
+  see it as poisoned.
+
+### Navigation
+
+- Bots now wait and try again when another player is using a shortcut,
+  instead of giving up. The Yanille dungeon ledge ("The ledge is being
+  used") stays held for at most 9 game ticks after a refusal, so the bot
+  waits that long and crosses again. A busy rope swing works the same way
+  with a wait of 5 game ticks. The bot stops after 60 game ticks in total
+  for one crossing (refused tries, waits, the crossing itself and the pause
+  after landing) and never tries again after that limit. The failure then
+  reports how many times it tried and the last refusal.
+  Transport time limits now count game ticks instead of polls, so a burst
+  of polls inside one tick no longer ends a crossing early, and a slow
+  poll that misses several ticks no longer extends it.
+
+### Scripts
+
+- Bank opening now waits for its own walk to finish. Before, a walk that a
+  script had finished could be taken for the end of the bank walk, and the bank
+  walk then ended before the bot reached the bank.
+- When a script walks from Karamja to the mainland without the 30 coins for the
+  boat, the bot now tries again if it cannot reach Luthas, instead of stopping
+  at once. It chooses a free tile next to Luthas that it can reach, using the
+  shortest route and the closest tile as a tie-breaker. If Luthas is not in
+  view, the bot first walks to where he works, then chooses a free tile next to
+  him. The bot makes up to three attempts each time it goes to talk to Luthas,
+  and logs each failed attempt and the final failure. This does not fix every
+  failure: the trip can still fail when all three attempts fail, and when the
+  first walk fails at once from some places on Karamja. Both stay known issues;
+  see Known issues.
+
+### Documentation
+
+- The script API documentation now states that moving the bot by hand during a
+  fight ends `api.combat.fight` as `aborted` with reason `user-input`. The host
+  has settled it that way since 0.2.4; the declarations and pages still
+  described an `interrupted` result.
 
 ### Fixed during development
 
@@ -165,6 +169,107 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   restart the same 150-tick combat window. Each return follows a fresh bank
   visit. A stalled return or a spent restart limit still fails. The 12-minute
   deadline is the outer wall-clock limit.
+
+### Not in this release
+
+- Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk`), pack
+  purging at a bank (`purgePackAtBank`) and coin withdrawal (`withdrawCoins`)
+  are **Planned**, not included here. These calls still report `not impl`;
+  moving existing banking into the native seat does not implement them. 0.2.4 to
+  0.2.7 have the same problem.
+- Caller-supplied bank-cost routers (`nearestWalkableBank`,
+  `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
+  random bank pacing (`bankPace`, `bankPaceTicks`) remain deliberately
+  unavailable. The host does not recreate the foreign router or random pacing.
+  0.2.4 to 0.2.7 have the same problem.
+- The JiveKBD hunting script (King Black Dragon) does not yet bring back Dragon
+  bones reliably. In long fights it can run out of food before the dragon dies
+  and return to the bank without the bones. A fix is planned with the native
+  hunting rewrite. 0.2.4 to 0.2.7 have the same problem.
+- When Grinch banks, it uses the shared bank trip, which still waits up to a
+  fixed time for some bank steps. These waits are planned to become game-timed.
+  0.2.5 to 0.2.7 have the same problem.
+- A bot can't get through a door that another player closes again on every tick,
+  when that player's moves are handled before the bot's. The bot tries the door
+  until its retries run out and then stops at the door. Finding another way
+  around, changing worlds when allowed, and a clear "door held shut" result are
+  planned for a later release. 0.2.5 to 0.2.7 have the same problem.
+- Sherlock was meant to be a native clue solver. In practice it runs on the clue
+  machine ported for rs2b0t clue scripts, so it is available only in builds that
+  include the JS script runtime (every release build does). A native clue solver
+  is planned. 0.1.8 to 0.2.7 have the same problem.
+- The northern Desert Mining Camp mine stays hidden. Its minecart needs dialogue
+  and a chance-gated crossing that the bot does not yet support. There are still
+  85 hidden gathering sites on revision 289 and 66 on 274. 0.2.5 to 0.2.7 have
+  the same problem.
+- After a super antipoison the bot counts only the ordinary immunity time (120
+  game ticks instead of 570), so it may drink again sooner than needed. It is
+  still immune for the real time. Counting the super immunity is planned for a
+  later release. 0.2.7 has the same problem.
+- Cure poison does not interrupt Gatherer or Quester steps to drink a held
+  antipoison when poison makes a cure necessary. This behavior is not included.
+  0.2.7 has the same problem.
+- The panel and terminal app do not show a status row for a poison-related cure
+  need. A poison-need status row is not included. 0.2.7 has the same problem.
+
+### Known issues
+
+- **Navigation:** With the default Danger routing setting, **When survivable**,
+  bots can refuse walks and bank trips through dangerous monsters instead of
+  checking whether the account can survive the trip. For example, a bot at Rock
+  Crabs can report that no bank is reachable instead of walking to Seers'
+  Village. **Workaround:** set Nav → Danger routing to **Always** (allow danger
+  zones). This permits dangerous routes. Use it only when the account can handle
+  the monsters on the route. 0.2.0 to 0.2.7 have the same problem.
+- **Quester:** The Quester has routes for 20 of the 68 quests. Routes for the
+  other quests are planned in waves. 0.2.0 to 0.2.7 have the same problem.
+- **Quester:** When the Quester cannot start a walk between quest steps, it can
+  stop the quest at once instead of trying again, and asks you to resolve the
+  condition and restart the Quester. 0.2.0 to 0.2.7 have the same problem.
+- **Scripts:** The Brimhaven Agility Arena script can stop at a plank or pillar
+  it cannot use. The cause is under investigation. 0.2.0 to 0.2.7 have the same
+  problem.
+- **Banking:** `Bank.depositAllMatching` checks about one item per game tick, so
+  large deposits can be slow. A fix is planned for a later release. 0.2.4 to
+  0.2.7 have the same problem.
+- **Scripts:** The rs2b0t Thiever script waits about three game ticks longer
+  than the game requires after each stun, so it gains Thieving XP more slowly
+  than it could. A fix is planned with the native thieving rework. 0.2.4 to
+  0.2.7 have the same problem.
+- **Gatherer:** The lower Desert Mining Camp mine supports Power mode only and
+  requires The Tourist Trap complete. Bank mode refuses this site because the
+  bot cannot remove the slave kit to leave the camp. 0.2.5 to 0.2.7 have the
+  same problem.
+- **Scripts:** With "Pause script on manual movement" off, a script that acts in
+  place can continue after you move the bot yourself. This affects rs2b0t
+  scripts without a Gather or Combat session and built-in scripts other than
+  Quester fights. With the setting on, any running rs2b0t script pauses. A
+  built-in script pauses while it walks or acts, but not between actions. 0.2.6
+  to 0.2.7 have the same problem.
+- **Scripts:** During a Karamja trip to the mainland without the 30-coin boat
+  fare, the bot earns the fare by working for Luthas. You may see "I can't reach
+  that!" when the bot approaches Luthas or after he pays and before the boat
+  boards. The bot makes up to three attempts each time the bot goes to talk to
+  Luthas. If all three fail, the fare is not paid and the trip does not cross.
+  After payment, the fare is paid. In observed cases, the bot still boards. No
+  workaround is known.
+- **Scripts:** When a script starts a trip to the mainland without the boat fare
+  from some places on Karamja, for example near the Brimhaven cart, the first
+  walk can fail at once. The bot then does not earn the fare and does not cross.
+  No workaround is known.
+- **Scripts:** The rs2b0t FireGiant script can keep fighting after it eats its
+  last piece of food instead of leaving to bank, and it can attack a giant other
+  than the one hitting it. The bot can die in the fire giant room with an empty
+  pack. Watch the bot's food and stop the script when it runs low until the
+  script is fixed upstream. 0.2.6 to 0.2.7 have the same problem.
+- **Scripts:** The rs2b0t GnomeMagicChopper script can stop chopping when a
+  Strange fruit from a random event fills the last free backpack slot before it
+  holds a Magic log: it only goes to the bank when it holds logs. Clear one
+  backpack slot and the script resumes. The fix is in review upstream; update
+  your rs2b0t folder once it is merged. 0.2.7 has the same problem.
+- **Host:** Background work can stop for the rest of the session after one disk
+  operation takes longer than 60 seconds. Restart 274bot to recover. A fix is
+  planned for 0.2.9. 0.2.6 to 0.2.7 have the same problem.
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 
