@@ -1472,7 +1472,7 @@ fn stalled_worker_publishes_unavailable_before_return_without_releasing_credit()
 }
 
 #[test]
-fn slow_step_returns_after_ten_seconds_without_latching_outage() {
+fn slow_step_returns_after_stall_limit_without_latching_outage() {
     let clock = Arc::new(ManualClock::new());
     let shared = new_service(Arc::clone(&clock));
     let conditions = conditions(&shared);
@@ -1492,7 +1492,7 @@ fn slow_step_returns_after_ten_seconds_without_latching_outage() {
         .recv_timeout(Duration::from_secs(2))
         .expect("worker enters the slow step");
 
-    clock.advance(Duration::from_secs(10));
+    clock.advance(WORKER_STALL_LIMIT + Duration::from_millis(1));
     let health_during_slow_step = {
         let service = shared.lock();
         service.observe_health();
@@ -1511,6 +1511,19 @@ fn slow_step_returns_after_ten_seconds_without_latching_outage() {
     assert!(shared.lock().health().is_none());
     assert_eq!(settlement, Settlement::Completed(10));
     assert_eq!(*trace.lock(), [10]);
+    let following = submit(
+        &shared,
+        &input,
+        QueueJob::new(11, Arc::clone(&trace), 0, None),
+        &conditions,
+    );
+    WorkService::wait_terminal(&shared, &following).expect("later background work completes");
+    assert_eq!(
+        shared.lock().consume(&following),
+        Ok(Settlement::Completed(11))
+    );
+    wait_for_jobs(&shared, 0);
+    assert!(shared.lock().worker_available());
 }
 
 #[test]
