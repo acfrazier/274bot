@@ -8188,6 +8188,7 @@ mod bank_conservation_tests {
             let selected =
                 api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
             let mut cx = script::native::PrepareContext {
+                zones: None,
                 pin: selected.selected_pin().unwrap(),
                 selected,
                 banks: Arc::default(),
@@ -8509,6 +8510,7 @@ mod bank_conservation_tests {
             let selected =
                 api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
             let mut cx = script::native::PrepareContext {
+                zones: None,
                 pin: selected.selected_pin().unwrap(),
                 selected,
                 banks: Arc::default(),

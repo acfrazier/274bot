@@ -403,6 +403,19 @@ const CORE: &[(&str, Decision)] = &[
     ),
     ("scripts/paint_layout.rs::clipped_prefix", Excluded(FORMAT)),
     ("scripts/paint_style.rs::parse_accent", Excluded(FORMAT)),
+    // scripts/prestart_zones.rs: derived disclosure, not operator commands.
+    (
+        "scripts/prestart_zones.rs::QuesterStartZoneCache::update",
+        Excluded(PROJECTION),
+    ),
+    (
+        "scripts/prestart_zones.rs::QuesterStartZoneCache::set_unavailable",
+        Excluded(PROJECTION),
+    ),
+    (
+        "scripts/prestart_zones.rs::QuesterStartZoneCache::clear",
+        Excluded(PROJECTION),
+    ),
     // scripts/paths.rs: operator file locations.
     ("scripts/paths.rs::bot_home", Excluded(PATH_READ)),
     ("scripts/paths.rs::bot_file", Excluded(PATH_READ)),

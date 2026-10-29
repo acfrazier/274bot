@@ -522,17 +522,22 @@ mod tests {
             "name": "Fixture desert pass",
             "reason": "The guide needs this pass to reach the cave."
         }]);
-        let steps = document["roles"][0]["sequences"][0]["steps"]
-            .as_array_mut()
-            .unwrap();
-        let walk = steps
-            .iter_mut()
+        let mut walk = document["quest"]["acquire"]
+            .as_object()
+            .expect("Cook has acquire recipes")
+            .values()
+            .flat_map(|recipe| recipe.as_array().into_iter().flatten())
             .find(|step| step["kind"] == "walk")
-            .expect("Cook has a walk step");
+            .expect("Cook has an acquire walk step")
+            .clone();
         walk["id"] = json!("fixture-sequence-walk");
         walk["args"]["cross"] = json!(["fixture-river-bank"]);
         walk["comment"] = json!("The guide crosses this bank to reach the mill.");
-        let mut prelude_walk = walk.clone();
+        document["roles"][0]["sequences"][0]["steps"]
+            .as_array_mut()
+            .unwrap()
+            .push(walk.clone());
+        let mut prelude_walk = walk;
         prelude_walk["id"] = json!("fixture-prelude-walk");
         document["roles"][0]["prelude"] = json!([prelude_walk]);
         std::fs::write(
@@ -668,11 +673,15 @@ mod tests {
             concat!(env!("CARGO_MANIFEST_DIR"), "/../script/paths/289/cook.json")
         ))
         .unwrap();
-        let walk = document.roles[0].sequences[0]
-            .steps
-            .iter()
+        let walk = document
+            .quest
+            .as_ref()
+            .expect("Cook has a quest header")
+            .acquire
+            .values()
+            .flatten()
             .find(|step| step.kind == "walk")
-            .expect("Cook has a walk step")
+            .expect("Cook has an acquire walk step")
             .clone();
         let mut nested = walk.clone();
         nested.id = api::selected::FactKey::new("nested-recipe-walk");
