@@ -1616,13 +1616,14 @@ pub struct GatherSiteKey {
     pub count: usize,
 }
 
-/// Source-proven identities for generic and quest-completion scrolls and book continuation.
+/// Source-proven identities for generic, quest-completion, and chapter scrolls and book continuation.
 /// Chat message/objbox pages continue through the snapshot's chat controls.
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct DialogueUiIds {
     pub scroll_root: i32,
     pub quest_scroll_root: i32,
+    pub chapter_root: i32,
     pub book_root: i32,
     pub book_forward: i32,
     pub book_close: i32,
@@ -1634,6 +1635,7 @@ impl DialogueUiIds {
         let ids = [
             self.scroll_root,
             self.quest_scroll_root,
+            self.chapter_root,
             self.book_root,
             self.book_forward,
             self.book_close,

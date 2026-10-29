@@ -1197,7 +1197,10 @@ fn observe_main<'a>(
     let kind = if root == -1 {
         MainKind::Closed
     } else if let Some(ids) = ids {
-        if root == ids.scroll_root || root == ids.quest_scroll_root {
+        if root == ids.scroll_root
+            || root == ids.quest_scroll_root
+            || root == ids.chapter_root
+        {
             MainKind::Scroll
         } else if root == ids.book_root {
             MainKind::Book
