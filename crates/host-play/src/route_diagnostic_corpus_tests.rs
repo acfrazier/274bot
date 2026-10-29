@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 // The comparator retains the former per-query 4M-node budgets. Keep the same
 // 64-unit cooperative slices while allowing those finite queries to finish.
 const MAX_DIAGNOSTIC_SLICES: usize = 25_000_000;
-const CORPUS_CASE_COUNT: usize = 7;
+const CORPUS_CASE_COUNT: usize = 9;
 const TEST_CARRY_ID: i32 = 8003;
 const TEST_FORBIDDEN_ID: i32 = 8001;
 
@@ -296,9 +296,31 @@ struct DiagnosticObservation {
     blocked_zone_ids: Vec<Value>,
     diagnostic_settled: usize,
     elapsed_ms: u128,
+    cpu_time_us: Option<u64>,
     cutoff: bool,
     cutoff_stage: Option<String>,
     cutoff_search_purpose: Option<String>,
+}
+
+#[cfg(target_os = "linux")]
+fn thread_cpu_time_us() -> Option<u64> {
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    // SAFETY: `usage` is writable for getrusage, and RUSAGE_THREAD selects this test thread.
+    if unsafe { libc::getrusage(libc::RUSAGE_THREAD, &mut usage) } != 0 {
+        return None;
+    }
+    let timeval_us = |time: libc::timeval| {
+        time.tv_sec
+            .max(0)
+            .saturating_mul(1_000_000)
+            .saturating_add(time.tv_usec.max(0)) as u64
+    };
+    Some(timeval_us(usage.ru_utime).saturating_add(timeval_us(usage.ru_stime)))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn thread_cpu_time_us() -> Option<u64> {
+    None
 }
 
 impl DiagnosticObservation {
@@ -323,6 +345,7 @@ impl DiagnosticObservation {
             "blocked_zone_ids": self.blocked_zone_ids,
             "diagnostic_settled": self.diagnostic_settled,
             "elapsed_ms": self.elapsed_ms,
+            "cpu_time_us": self.cpu_time_us,
             "cutoff": self.cutoff,
             "cutoff_stage": self.cutoff_stage,
             "cutoff_search_purpose": self.cutoff_search_purpose,
@@ -333,7 +356,7 @@ impl DiagnosticObservation {
 
 fn run_diagnostics(
     case: &DiagnosticCase,
-    authority: HostAuthority,
+    authority: Option<HostAuthority>,
     diagnostic_budget: usize,
     identity_index: u64,
 ) -> DiagnosticObservation {
@@ -348,9 +371,7 @@ fn run_diagnostics(
         RouteJob::prepare(
             case.name,
             request,
-            RouteDemandKind::Walk {
-                authority: Some(authority),
-            },
+            RouteDemandKind::Walk { authority },
         )
         .unwrap_or_else(|error| panic!("{} job preparation failed: {error}", case.name)),
     );
@@ -359,6 +380,7 @@ fn run_diagnostics(
     job.diagnostic_budget = diagnostic_budget;
     job.begin_diagnostics();
     let started = Instant::now();
+    let cpu_started_us = thread_cpu_time_us();
 
     let clock = SystemClock;
     let cancellation = SharedCancellation::new();
@@ -401,7 +423,10 @@ fn run_diagnostics(
         (output, job.diagnostic_settled, job.search_purpose)
     };
     let elapsed_ms = started.elapsed().as_millis();
-    let cutoff_detail = "further gate diagnosis stopped after";
+    let cpu_time_us = cpu_started_us
+        .zip(thread_cpu_time_us())
+        .map(|(started, finished)| finished.saturating_sub(started));
+    let cutoff_detail = "no route found; the route check stopped after";
     let RouteJobOutput {
         outcome,
         native_failure,
@@ -417,7 +442,7 @@ fn run_diagnostics(
     );
     let cutoff = detail
         .as_deref()
-        .is_some_and(|text| text.contains(cutoff_detail));
+        .is_some_and(|text| text.starts_with(cutoff_detail));
     let mut blocked_zone_ids: Vec<_> = blocked.iter().copied().map(zone_key_json).collect();
     blocked_zone_ids.sort_by_key(zone_json_sort_key);
     DiagnosticObservation {
@@ -431,6 +456,7 @@ fn run_diagnostics(
         blocked_zone_ids,
         diagnostic_settled,
         elapsed_ms,
+        cpu_time_us,
         cutoff,
         cutoff_stage: cutoff.then(|| "Search -> Diagnostics".to_owned()),
         cutoff_search_purpose: cutoff.then(|| format!("{search_purpose:?}")),
@@ -729,6 +755,48 @@ fn real_cases(world: Arc<NavWorld>) -> Vec<DiagnosticCase> {
             expected_unbounded_native_end: None,
         },
         DiagnosticCase {
+            name: "karamja_exit_without_coins",
+            provenance: "R289 sailors.rs2:13-30 charges 30 coins before sailing from Karamja to Port Sarim",
+            world_kind: "r289_navpack",
+            world: Arc::clone(&world),
+            from: tile(2663, 3302),
+            to: tile(3028, 3217),
+            radius: 0,
+            arrival: ArrivalKind::Reach,
+            candidate_goals: None,
+            opts: legacy,
+            walk_options: allow_legacy_zones,
+            state_name: "members_empty_inventory",
+            state: WorldState {
+                map_members: true,
+                inventory_ready: true,
+                equipment_ready: true,
+                ..WorldState::empty()
+            },
+            expected_unbounded_native_end: None,
+        },
+        DiagnosticCase {
+            name: "desert_walk_without_shantay_pass",
+            provenance: "R289 shantay_pass.rs2:76-97 requires and consumes one pass entering the desert",
+            world_kind: "r289_navpack",
+            world: Arc::clone(&world),
+            from: tile(3302, 3116),
+            to: tile(3304, 3115),
+            radius: 0,
+            arrival: ArrivalKind::Reach,
+            candidate_goals: None,
+            opts: legacy,
+            walk_options: allow_legacy_zones,
+            state_name: "members_empty_inventory",
+            state: WorldState {
+                map_members: true,
+                inventory_ready: true,
+                equipment_ready: true,
+                ..WorldState::empty()
+            },
+            expected_unbounded_native_end: None,
+        },
+        DiagnosticCase {
             name: "unreachable_fail_closed",
             provenance: "17-case per-goal parity corpus: unreachable_fail_closed",
             world_kind: "r289_navpack",
@@ -916,15 +984,36 @@ fn compares_bounded_and_unbounded_route_diagnostics_corpus() {
         });
         rows.push(row);
         write_report(&output, &navpack, CORPUS_CASE_COUNT, &rows, &started);
-        let native = live_native_walk(case, index as u64);
+        let native = (case.world_kind == "synthetic_route_fixture"
+            || case.expected_unbounded_native_end.is_some())
+            .then(|| live_native_walk(case, index as u64));
+        let authority = native.as_ref().map(|native| native.authority.clone());
 
         let bounded = run_diagnostics(
             case,
-            native.authority.clone(),
+            authority.clone(),
             FIRST_TARGET_BUDGET,
             index as u64,
         );
         rows.last_mut().expect("case row was appended")["bounded"] = bounded.to_json();
+        match case.name {
+            "scorpion_no_key_radius5" => assert!(
+                bounded.missing_carry.contains(&(1590, 1)),
+                "real Scorpion route must diagnose the exact missing key row: {:?}",
+                bounded.missing_carry,
+            ),
+            "karamja_exit_without_coins" => assert!(
+                bounded.missing_carry.contains(&(995, 30)),
+                "Karamja exit must diagnose its exact 30-coin fare row: {:?}",
+                bounded.missing_carry,
+            ),
+            "desert_walk_without_shantay_pass" => assert!(
+                bounded.missing_carry.contains(&(1854, 1)),
+                "desert entry must diagnose its exact Shantay pass row: {:?}",
+                bounded.missing_carry,
+            ),
+            _ => {}
+        }
         write_report(&output, &navpack, CORPUS_CASE_COUNT, &rows, &started);
         assert!(
             bounded.diagnostic_settled <= FIRST_TARGET_BUDGET.saturating_add(64),
@@ -934,7 +1023,7 @@ fn compares_bounded_and_unbounded_route_diagnostics_corpus() {
 
         let unbounded = run_diagnostics(
             case,
-            native.authority.clone(),
+            authority,
             usize::MAX,
             (index as u64).saturating_add(CORPUS_CASE_COUNT as u64),
         );
@@ -1016,7 +1105,9 @@ fn diagnostic_budget_cutoff_publishes_no_path_and_the_cutoff_detail() {
         "zero remaining budget cuts off post-failure diagnosis"
     );
     assert!(observation.detail.as_deref().is_some_and(|detail| {
-        detail.contains("further gate diagnosis stopped after 0 settled nodes")
+        detail.starts_with("no route found; the route check stopped after ")
+            && detail
+                == "no route found; the route check stopped after 0 places before it found the cause"
     }));
     assert!(
         observation.diagnostic_settled <= 64,
