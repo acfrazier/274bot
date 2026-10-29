@@ -1819,7 +1819,7 @@ fn run_supervisor(
     let writer_sidecar_path = Arc::clone(&sidecar_path);
     let writer_settings_path = Arc::clone(&settings_path);
     let writer_settings_incomplete = Arc::clone(&settings_incomplete);
-    let mut writer = match thread::Builder::new()
+    let writer = match thread::Builder::new()
         .name("headed-record-writer".to_string())
         .spawn(move || {
             run_writer(
@@ -1845,6 +1845,7 @@ fn run_supervisor(
             return;
         }
     };
+    let mut writer = Some(writer);
 
     let mut stdin_sender = Some(stdin_sender);
     let mut writer_ready = false;
@@ -1895,7 +1896,9 @@ fn run_supervisor(
                         set_finish_status(&outcome, RecordFinish::Failed);
                     }
                 }
-                Err(TryRecvError::Disconnected) if writer.is_finished() => {
+                Err(TryRecvError::Disconnected)
+                    if writer.as_ref().is_none_or(JoinHandle::is_finished) =>
+                {
                     failed = true;
                     close_frame_sender(&sender);
                     stdin_sender.take();
@@ -1974,7 +1977,7 @@ fn run_supervisor(
             }
         }
 
-        if writer_result.is_none() && writer.is_finished() {
+        if let Some(writer) = writer.take_if(|writer| writer.is_finished()) {
             writer_result = Some(match writer.join() {
                 Ok(result) => result,
                 Err(_) => Err(RecordFailure::WriterPanicked),
