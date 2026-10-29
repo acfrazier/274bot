@@ -38,16 +38,44 @@ fn dialogue_ui() -> DialogueUiIds {
         .expect("the selected test revision has source-proven dialogue UI ids")
 }
 
+/// Revision 289 publishes the chapter page root; the test harness pins 289.
+fn chapter_root(ids: DialogueUiIds) -> i32 {
+    ids.chapter_root
+        .expect("revision 289 publishes the chapter page root")
+}
+
+#[test]
+fn a_revision_without_chapter_pages_never_treats_a_root_as_a_chapter_page() {
+    let ids = dialogue_ui();
+    let without_chapters = DialogueUiIds {
+        chapter_root: None,
+        ..ids
+    };
+    assert!(super::dialogue::is_scroll_root(
+        ids.scroll_root,
+        without_chapters
+    ));
+    assert!(super::dialogue::is_scroll_root(
+        ids.quest_scroll_root,
+        without_chapters
+    ));
+    assert!(!super::dialogue::is_scroll_root(
+        chapter_root(ids),
+        without_chapters
+    ));
+    assert!(super::dialogue::is_scroll_root(chapter_root(ids), ids));
+}
+
 #[test]
 fn operation_page_gate_adopts_only_chat_and_selected_documents() {
     let ids = dialogue_ui();
-    let unsupported = ids.chapter_root.max(ids.scroll_root.max(ids.book_root)) + 100;
+    let unsupported = chapter_root(ids).max(ids.scroll_root.max(ids.book_root)) + 100;
     for (root, expected) in [
         (-1, false),
         (unsupported, false),
         (ids.scroll_root, true),
         (ids.book_root, true),
-        (ids.chapter_root, true),
+        (chapter_root(ids), true),
     ] {
         let mut snapshot = snapshot();
         snapshot.seed_main_modal(root, vec![]);
@@ -241,7 +269,7 @@ fn close_chapter_page_after_accepted_advance(
     complete_last_interaction(ledger, 4, true);
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
-    snapshot.seed_main_modal(ids.chapter_root, vec![]);
+    snapshot.seed_main_modal(chapter_root(ids), vec![]);
     assert!(with_tick(snapshot, ledger, 5, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })
@@ -952,7 +980,7 @@ fn refused_chat_advance_does_not_adopt_a_main_scroll() {
 #[test]
 fn a_main_scroll_without_an_owned_chat_page_stays_fail_closed() {
     let ids = dialogue_ui();
-    for root in [ids.scroll_root, ids.quest_scroll_root, ids.chapter_root] {
+    for root in [ids.scroll_root, ids.quest_scroll_root, chapter_root(ids)] {
         let mut snapshot = snapshot();
         let mut ledger = None;
         let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -982,7 +1010,7 @@ fn a_main_scroll_without_an_owned_chat_page_stays_fail_closed() {
 #[test]
 fn a_main_modal_opened_by_our_accepted_advance_completes_the_dialogue() {
     let ids = dialogue_ui();
-    let ship_journey = ids.chapter_root.max(ids.scroll_root.max(ids.book_root)) + 100;
+    let ship_journey = chapter_root(ids).max(ids.scroll_root.max(ids.book_root)) + 100;
     for (advance, accepted, expected) in [
         (true, true, DialogueOutcome::Completed),
         (true, false, DialogueOutcome::Failed),

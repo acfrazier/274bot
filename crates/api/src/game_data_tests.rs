@@ -1442,7 +1442,20 @@ fn dialogue_ui_controls_are_optional_and_refuse_invalid_identities() {
     assert_eq!(data.dialogue_ui().unwrap().quest_scroll_root, 297);
     assert_eq!(data.dialogue_ui().unwrap().book_forward, 841);
     assert_eq!(data.dialogue_ui().unwrap().book_forward_marker, 842);
-    assert_eq!(data.dialogue_ui().unwrap().chapter_root, 11104);
+    assert_eq!(data.dialogue_ui().unwrap().chapter_root, Some(11104));
+    let mut without_chapters = valid.clone();
+    without_chapters["chapter_root"] = serde_json::Value::Null;
+    let without_chapters = decode(&without_chapters).unwrap();
+    assert_eq!(
+        without_chapters.dialogue_ui().unwrap().chapter_root,
+        None,
+        "an explicit null is a revision with no chapter page, not a guessed id"
+    );
+    assert_eq!(
+        without_chapters.dialogue_ui().unwrap().scroll_root,
+        1136,
+        "the other source-proven identities are unchanged"
+    );
     for field in [
         "scroll_root",
         "quest_scroll_root",
@@ -1475,14 +1488,20 @@ fn dialogue_ui_controls_are_optional_and_refuse_invalid_identities() {
 
 #[test]
 fn generated_dialogue_ui_roles_match_both_pinned_sources() {
-    for revision in [ClientRevision::R274, ClientRevision::R289] {
+    // Revision 289's pack publishes `11104=inter_199`: the Monkey Madness
+    // chapter page. Revision 274's pack has no `inter_199` row, so its
+    // chapter root is absent instead of a copied 289 id.
+    for (revision, chapter_root) in [
+        (ClientRevision::R274, None),
+        (ClientRevision::R289, Some(11104)),
+    ] {
         let data = for_revision(revision).unwrap();
         assert_eq!(
             data.dialogue_ui(),
             Some(&DialogueUiIds {
                 scroll_root: 1136,
                 quest_scroll_root: 297,
-                chapter_root: 11104,
+                chapter_root,
                 book_root: 837,
                 book_forward: 841,
                 book_close: 10162,
@@ -1491,6 +1510,21 @@ fn generated_dialogue_ui_roles_match_both_pinned_sources() {
             "{revision:?} forward is the handler, not the visibility marker"
         );
     }
+    let without_chapters = for_revision(ClientRevision::R274).unwrap();
+    let ids = without_chapters.dialogue_ui().unwrap();
+    assert!(
+        [
+            ids.scroll_root,
+            ids.quest_scroll_root,
+            ids.book_root,
+            ids.book_forward,
+            ids.book_close,
+            ids.book_forward_marker,
+        ]
+        .iter()
+        .all(|id| *id != 11104),
+        "274 never reuses 289's chapter page id"
+    );
 }
 
 #[test]

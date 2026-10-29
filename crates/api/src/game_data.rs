@@ -1632,32 +1632,128 @@ pub struct GatherSiteKey {
 
 /// Source-proven identities for generic, quest-completion, and chapter scrolls and book continuation.
 /// Chat message/objbox pages continue through the snapshot's chat controls.
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DialogueUiIds {
     pub scroll_root: i32,
     pub quest_scroll_root: i32,
-    pub chapter_root: i32,
+    /// Chapter-page main root. `None` only when the revision's interface pack
+    /// has no `inter_199` row: that revision publishes no chapter pages at all,
+    /// so no id here means "chapter page" (never a guessed one).
+    pub chapter_root: Option<i32>,
     pub book_root: i32,
     pub book_forward: i32,
     pub book_close: i32,
     pub book_forward_marker: i32,
 }
 
+/// Generated chapter identity: an interface id, or the explicit `null` that
+/// says this revision publishes no chapter page. The generated key itself is
+/// required; an absent key is a decode error, never a silent `None`.
+enum ChapterRootWire {
+    Id(i32),
+    Absent,
+}
+
+impl<'de> Deserialize<'de> for ChapterRootWire {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{Error as _, Visitor};
+
+        struct WireVisitor;
+
+        impl<'de> Visitor<'de> for WireVisitor {
+            type Value = ChapterRootWire;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a dialogue interface id or null")
+            }
+
+            fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+                Ok(ChapterRootWire::Absent)
+            }
+
+            fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+                Ok(ChapterRootWire::Absent)
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                deserializer.deserialize_any(WireVisitor)
+            }
+
+            fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                i32::try_from(value)
+                    .map(ChapterRootWire::Id)
+                    .map_err(|_| E::custom("dialogue interface id is out of range"))
+            }
+
+            fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                i32::try_from(value)
+                    .map(ChapterRootWire::Id)
+                    .map_err(|_| E::custom("dialogue interface id is out of range"))
+            }
+        }
+
+        // `deserialize_any` is also what serde's missing-field deserializer
+        // reports, so a generated object that omits the key fails to decode.
+        deserializer.deserialize_any(WireVisitor)
+    }
+}
+
+impl<'de> Deserialize<'de> for DialogueUiIds {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            scroll_root: i32,
+            quest_scroll_root: i32,
+            chapter_root: ChapterRootWire,
+            book_root: i32,
+            book_forward: i32,
+            book_close: i32,
+            book_forward_marker: i32,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        Ok(DialogueUiIds {
+            scroll_root: wire.scroll_root,
+            quest_scroll_root: wire.quest_scroll_root,
+            chapter_root: match wire.chapter_root {
+                ChapterRootWire::Id(id) => Some(id),
+                ChapterRootWire::Absent => None,
+            },
+            book_root: wire.book_root,
+            book_forward: wire.book_forward,
+            book_close: wire.book_close,
+            book_forward_marker: wire.book_forward_marker,
+        })
+    }
+}
+
 impl DialogueUiIds {
     fn available(&self) -> bool {
-        let ids = [
+        let required = [
             self.scroll_root,
             self.quest_scroll_root,
-            self.chapter_root,
             self.book_root,
             self.book_forward,
             self.book_close,
             self.book_forward_marker,
         ];
-        ids.iter()
+        required
+            .iter()
             .enumerate()
-            .all(|(index, id)| *id > 0 && !ids[..index].contains(id))
+            .all(|(index, id)| *id > 0 && !required[..index].contains(id))
+            && self
+                .chapter_root
+                .is_none_or(|chapter| chapter > 0 && !required.contains(&chapter))
     }
 }
 
