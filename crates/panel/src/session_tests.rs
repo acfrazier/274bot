@@ -1,10 +1,9 @@
 use super::{
-    combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, live_client_trail,
-    live_or_walk_paint, null_raster_live_entries, parse_getvar_line, publish_nav_debug,
-    retire_client_trail, script_active, script_pause_enabled, script_stop_enabled,
-    seed_on_first_world, stress_live_entries, temp_live_vault_from, FeedbackOwner,
-    PanelPreferenceMember, PreparationCompletion, SceneRoutePaint, Session, SlotIo,
-    PANEL_SETTING_EVENTS_CAP,
+    combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, live_or_walk_paint,
+    null_raster_live_entries, parse_getvar_line, retire_client_trail, script_active,
+    script_pause_enabled, script_stop_enabled, seed_on_first_world, stress_live_entries,
+    temp_live_vault_from, try_build_nav_debug_paint, update_nav_debug_flags, FeedbackOwner,
+    PanelPreferenceMember, PreparationCompletion, Session, SlotIo, PANEL_SETTING_EVENTS_CAP,
 };
 use crate::focus::draw_for_slot;
 use crate::picker::{
@@ -1742,6 +1741,33 @@ fn paint_client() -> client::client::Client {
     c
 }
 
+fn set_budgeted_nav_paint(
+    client: &mut Client,
+    world: &NavWorld,
+    route: Option<frontend_core::walk_map::WalkRoutePath<'_>>,
+    here: Option<WorldTile>,
+    trail: &[(i32, i32)],
+    run_on: bool,
+    click: Option<WorldTile>,
+    settings: &NavSettings,
+) {
+    update_nav_debug_flags(true, true, settings);
+    let candidate = try_build_nav_debug_paint(
+        world,
+        route,
+        here,
+        trail,
+        run_on,
+        click,
+        settings,
+        client.map_build_base_x,
+        client.map_build_base_z,
+    );
+    client
+        .set_budgeted_nav_debug_paint(candidate)
+        .expect("fixture nav paint fits the client budget");
+}
+
 /// A 64×64 level-0 world at (3200, 3200) with a face wall and a
 /// WR_GRND ground block inside the scene region.
 fn walled_world() -> NavWorld {
@@ -1845,22 +1871,24 @@ fn compact_script_route_paints_its_scene_path_and_click_ahead_of_walkto() {
         show_nav_path: true,
         ..NavSettings::default()
     };
-    let outputs = SceneRoutePaint::build(&world, Some(route.projection()), Some(from), true, true);
-    // The scene painter consumes only outputs. It does not retain the compact
-    // route borrow or require the route owner to remain locked or alive.
-    drop(completion);
-    drop(lease);
-    publish_nav_debug(
-        &mut client,
+    let candidate = try_build_nav_debug_paint(
         &world,
-        Some(outputs),
+        Some(route.projection()),
+        Some(from),
         &[],
         false,
         click,
         &settings,
-        true,
-        false,
+        client.map_build_base_x,
+        client.map_build_base_z,
     );
+    // The production builder returns owned paint. The client setter does not
+    // retain the compact route borrow or require its owner to remain locked.
+    drop(completion);
+    drop(lease);
+    client
+        .set_budgeted_nav_debug_paint(candidate)
+        .expect("compact route paint fits the client budget");
     let paint = client.nav_debug_paint().expect("focused scene paint");
     assert_eq!(
         paint.path,
@@ -1920,22 +1948,15 @@ fn focused_slot_publishes_scene_collision_for_loaded_map() {
         z: 3252,
         level: 0,
     });
-    publish_nav_debug(
+    set_budgeted_nav_paint(
         &mut c,
         &world,
-        Some(SceneRoutePaint::build(
-            &world,
-            Some(frontend_core::walk_map::WalkRoutePath::Legacy(&route)),
-            here,
-            true,
-            true,
-        )),
+        Some(frontend_core::walk_map::WalkRoutePath::Legacy(&route)),
+        here,
         &[],
         false,
         click,
         &layers,
-        true,
-        true,
     );
     let paint = c.nav_debug_paint().expect("focused drawing slot publishes");
     assert!(
@@ -1983,7 +2004,7 @@ fn focused_slot_publishes_scene_collision_for_loaded_map() {
 }
 
 #[test]
-fn publish_nav_debug_carries_reach_from_the_bitset() {
+fn production_nav_debug_paint_carries_reach_from_the_bitset() {
     let _guard = crate::picker::lock_nav_statics();
     let mut c = paint_client();
     // A 65×65 world (a distinct grid from `walled_world`, so the cached
@@ -2050,7 +2071,7 @@ fn publish_nav_debug_carries_reach_from_the_bitset() {
         nsew_labels: true,
         ..NavSettings::default()
     };
-    publish_nav_debug(&mut c, &world, None, &[], false, None, &layers, true, true);
+    set_budgeted_nav_paint(&mut c, &world, None, None, &[], false, None, &layers);
     let paint = c.nav_debug_paint().expect("focused drawing slot publishes");
     // The blocked door loc is a reach seed: reached despite the ground
     // block, so the client keeps its collision fill.
@@ -2089,21 +2110,12 @@ fn unfocused_slot_clears_nav_debug_paint() {
     let mut c = paint_client();
     let world = walled_world();
     let layers = effective(&NavSettings::default(), true);
-    publish_nav_debug(&mut c, &world, None, &[], false, None, &layers, true, true);
+    set_budgeted_nav_paint(&mut c, &world, None, None, &[], false, None, &layers);
     assert!(c.nav_debug_paint().is_some());
     // Unfocused / skip-paint / renderer-off slots must not linger on a
     // stale paint.
-    publish_nav_debug(
-        &mut c,
-        &world,
-        None,
-        &[],
-        false,
-        None,
-        &layers,
-        false,
-        false,
-    );
+    update_nav_debug_flags(true, false, &layers);
+    c.set_nav_debug_paint(None);
     assert!(
         c.nav_debug_paint().is_none(),
         "a non-drawing slot stores None"
@@ -2140,17 +2152,8 @@ fn saved_collision_prefs_without_drawing_do_not_load_navflags() {
     };
 
     // Boot-like: prefs on, no drawing surface.
-    publish_nav_debug(
-        &mut c,
-        &world,
-        None,
-        &[],
-        false,
-        None,
-        &layers,
-        false,
-        true, // focused owner, but not drawing
-    );
+    update_nav_debug_flags(true, false, &layers);
+    c.set_nav_debug_paint(None);
     assert_eq!(
         crate::picker::flags_load_count(),
         0,
@@ -2163,7 +2166,7 @@ fn saved_collision_prefs_without_drawing_do_not_load_navflags() {
     assert!(c.nav_debug_paint().is_none());
 
     // Enabling a drawn layer loads exactly once.
-    publish_nav_debug(&mut c, &world, None, &[], false, None, &layers, true, true);
+    set_budgeted_nav_paint(&mut c, &world, None, None, &[], false, None, &layers);
     assert_eq!(crate::picker::flags_load_count(), 1);
     assert_eq!(
         crate::picker::flags_sidecar_state(),
@@ -2172,11 +2175,12 @@ fn saved_collision_prefs_without_drawing_do_not_load_navflags() {
     assert!(c.nav_debug_paint().is_some());
 
     // Second drawn frame does not reload.
-    publish_nav_debug(&mut c, &world, None, &[], false, None, &layers, true, true);
+    set_budgeted_nav_paint(&mut c, &world, None, None, &[], false, None, &layers);
     assert_eq!(crate::picker::flags_load_count(), 1);
 
     // Last drawer off releases ownership.
-    publish_nav_debug(&mut c, &world, None, &[], false, None, &layers, false, true);
+    update_nav_debug_flags(true, false, &layers);
+    c.set_nav_debug_paint(None);
     assert_eq!(
         crate::picker::flags_sidecar_state(),
         crate::picker::FlagsSidecarState::Unloaded
@@ -2187,8 +2191,8 @@ fn saved_collision_prefs_without_drawing_do_not_load_navflags() {
 
 #[test]
 fn remove_only_focused_drawing_slot_releases_flags() {
-    // When the last focused slot is rail-removed, no remaining drawer publishes
-    // publish_nav_debug — the remove path must drop the flags sidecar.
+    // When the last focused slot is rail-removed, no frame hook remains to
+    // own navflags demand; the remove path must release the sidecar.
     let _guard = crate::picker::lock_nav_statics();
     let dir = TestDir::new("flags-last-slot-remove");
     let path = dir.join("flags.navflags");
@@ -2237,35 +2241,17 @@ fn focused_slot_publishes_client_trail_tones() {
         client_trail: true,
         ..NavSettings::default()
     };
-    // The local player's last tryMove path, world tiles (the route
-    // buffer minus the base), run on.
-    let trail_world = vec![
-        WorldTile {
-            x: 3200,
-            z: 3200,
-            level: 0,
-        },
-        WorldTile {
-            x: 3201,
-            z: 3200,
-            level: 0,
-        },
-        WorldTile {
-            x: 3202,
-            z: 3200,
-            level: 0,
-        },
-    ];
-    publish_nav_debug(
+    // The local player's last tryMove path uses route-buffer scene offsets.
+    let trail = [(0, 0), (1, 0), (2, 0)];
+    set_budgeted_nav_paint(
         &mut c,
         &world,
         None,
-        &trail_world,
+        Some(wt(3200, 3200)),
+        &trail,
         true,
         None,
         &layers,
-        true,
-        true,
     );
     let paint = c.nav_debug_paint().expect("focused drawing slot publishes");
     assert_eq!(
@@ -2281,7 +2267,7 @@ fn wt(x: i32, z: i32) -> WorldTile {
 }
 
 #[test]
-fn live_client_trail_retires_after_arrival_so_offpath_cannot_resurrect() {
+fn client_trail_retires_after_arrival_so_offpath_cannot_resurrect() {
     let mut c = paint_client();
     let world = walled_world();
     let layers = NavSettings {
@@ -2294,14 +2280,34 @@ fn live_client_trail_retires_after_arrival_so_offpath_cannot_resurrect() {
     // Producer: last successful tryMove BFS, scene tiles src→dest.
     c.try_move_path = vec![(0, 0), (1, 0), (2, 0)];
 
-    let mid = live_client_trail(&mut c, Some(wt(3201, 3200)));
-    assert_eq!(mid, vec![wt(3201, 3200), wt(3202, 3200)]);
+    let mid = wt(3201, 3200);
+    retire_client_trail(&mut c, Some(mid));
     assert_eq!(c.try_move_path.len(), 3, "mid-path must keep the producer");
+    let trail = c.try_move_path.clone();
+    set_budgeted_nav_paint(&mut c, &world, None, Some(mid), &trail, false, None, &layers);
+    let paint = c.nav_debug_paint().expect("mid-path paint is installed");
+    assert_eq!(
+        paint.trail,
+        vec![(1, 0, false), (2, 0, false)],
+        "the production painter trims the trail to the current tile"
+    );
 
-    let arrived = live_client_trail(&mut c, Some(wt(3202, 3200)));
-    assert!(arrived.is_empty(), "dest occupancy must hide the trail");
-    publish_nav_debug(
-        &mut c, &world, None, &arrived, false, None, &layers, true, true,
+    let arrived = wt(3202, 3200);
+    retire_client_trail(&mut c, Some(arrived));
+    assert!(
+        c.try_move_path.is_empty(),
+        "arrival must retire the producer, not only the paint trim"
+    );
+    let trail = c.try_move_path.clone();
+    set_budgeted_nav_paint(
+        &mut c,
+        &world,
+        None,
+        Some(arrived),
+        &trail,
+        false,
+        None,
+        &layers,
     );
     let paint = c.nav_debug_paint().expect("arrival still publishes");
     assert!(
@@ -2312,29 +2318,31 @@ fn live_client_trail_retires_after_arrival_so_offpath_cannot_resurrect() {
         !paint.collision.is_empty(),
         "retiring the trail must not drop the collision layer"
     );
+
+    // A later off-path step and revisit of an old BFS tile cannot resurrect
+    // the cyan/yellow trail after its producer has been cleared.
+    retire_client_trail(&mut c, Some(wt(3203, 3200)));
+    assert!(c.try_move_path.is_empty());
+    retire_client_trail(&mut c, Some(wt(3201, 3200)));
     assert!(
         c.try_move_path.is_empty(),
-        "arrival must retire the producer, not only the paint trim"
-    );
-
-    // Fire-lane shape: dest, then a west/off-path step, then a revisit
-    // of an old BFS tile. Without producer clear, remaining_trail would
-    // trim from that tile and republish the cyan/yellow trail.
-    let off = live_client_trail(&mut c, Some(wt(3203, 3200)));
-    assert!(off.is_empty());
-    let revisit = live_client_trail(&mut c, Some(wt(3201, 3200)));
-    assert!(
-        revisit.is_empty(),
         "revisit of a retired click must not resurrect the trail"
     );
-    assert!(c.try_move_path.is_empty());
-    publish_nav_debug(
-        &mut c, &world, None, &revisit, false, None, &layers, true, true,
+    let trail = c.try_move_path.clone();
+    set_budgeted_nav_paint(
+        &mut c,
+        &world,
+        None,
+        Some(wt(3201, 3200)),
+        &trail,
+        false,
+        None,
+        &layers,
     );
     let paint = c.nav_debug_paint().expect("off-path still publishes");
     assert!(
         paint.trail.is_empty(),
-        "publisher must not resurrect a retired trail"
+        "the production painter must not resurrect a retired trail"
     );
     assert!(
         !paint.collision.is_empty(),
@@ -2343,23 +2351,43 @@ fn live_client_trail_retires_after_arrival_so_offpath_cannot_resurrect() {
 }
 
 #[test]
-fn live_client_trail_rearms_on_fresh_path_and_keeps_unknown_here() {
+fn client_trail_rearms_on_fresh_path_and_keeps_unknown_here() {
     let mut c = paint_client();
+    let world = walled_world();
+    let layers = NavSettings {
+        show_nav_path: true,
+        client_trail: true,
+        ..NavSettings::default()
+    };
     c.try_move_path = vec![(0, 0), (1, 0), (2, 0)];
-    let _ = live_client_trail(&mut c, Some(wt(3202, 3200)));
+    retire_client_trail(&mut c, Some(wt(3202, 3200)));
     assert!(c.try_move_path.is_empty());
 
     c.try_move_path = vec![(3, 0), (4, 0), (5, 0)];
-    let fresh = live_client_trail(&mut c, Some(wt(3203, 3200)));
-    assert_eq!(fresh, vec![wt(3203, 3200), wt(3204, 3200), wt(3205, 3200)]);
+    let here = wt(3203, 3200);
+    retire_client_trail(&mut c, Some(here));
     assert_eq!(c.try_move_path.len(), 3, "a new click re-arms the producer");
+    let trail = c.try_move_path.clone();
+    set_budgeted_nav_paint(&mut c, &world, None, Some(here), &trail, false, None, &layers);
+    let paint = c.nav_debug_paint().expect("fresh path paints");
+    assert_eq!(
+        paint.trail,
+        vec![(3, 0, false), (4, 0, false), (5, 0, false)]
+    );
 
-    let pending = live_client_trail(&mut c, None);
-    assert_eq!(pending.len(), 3);
+    retire_client_trail(&mut c, None);
     assert_eq!(
         c.try_move_path.len(),
         3,
         "unknown here must not retire a pending trail"
+    );
+    let trail = c.try_move_path.clone();
+    set_budgeted_nav_paint(&mut c, &world, None, None, &trail, false, None, &layers);
+    let paint = c.nav_debug_paint().expect("startup paint keeps a pending trail");
+    assert_eq!(
+        paint.trail,
+        vec![(3, 0, false), (4, 0, false), (5, 0, false)],
+        "unknown here keeps the complete pending trail"
     );
 }
 
@@ -2477,7 +2505,7 @@ fn face_only_cells_publish_with_fill_without_labels() {
         nsew_labels: false,
         ..NavSettings::default()
     };
-    publish_nav_debug(&mut c, &world, None, &[], false, None, &layers, true, true);
+    set_budgeted_nav_paint(&mut c, &world, None, None, &[], false, None, &layers);
     let paint = c.nav_debug_paint().expect("focused drawing slot publishes");
     let face_only = paint
         .collision
@@ -2514,11 +2542,7 @@ fn show_nav_path_masters_hulls_click_and_trail() {
         z: 3252,
         level: 0,
     });
-    let trail_world = [WorldTile {
-        x: 3200,
-        z: 3200,
-        level: 0,
-    }];
+    let trail = [(0, 0)];
 
     // Master off: hulls/click/trail stay off even with their own
     // toggles on.
@@ -2527,22 +2551,15 @@ fn show_nav_path_masters_hulls_click_and_trail() {
         client_trail: true,
         ..NavSettings::default()
     };
-    publish_nav_debug(
+    set_budgeted_nav_paint(
         &mut c,
         &world,
-        Some(SceneRoutePaint::build(
-            &world,
-            Some(frontend_core::walk_map::WalkRoutePath::Legacy(&route)),
-            None,
-            true,
-            true,
-        )),
-        &trail_world,
+        Some(frontend_core::walk_map::WalkRoutePath::Legacy(&route)),
+        None,
+        &trail,
         false,
         click,
         &layers,
-        true,
-        true,
     );
     let paint = c.nav_debug_paint().unwrap();
     assert!(
@@ -2563,22 +2580,15 @@ fn show_nav_path_masters_hulls_click_and_trail() {
         client_trail: false,
         ..NavSettings::default()
     };
-    publish_nav_debug(
+    set_budgeted_nav_paint(
         &mut c,
         &world,
-        Some(SceneRoutePaint::build(
-            &world,
-            Some(frontend_core::walk_map::WalkRoutePath::Legacy(&route)),
-            None,
-            true,
-            true,
-        )),
-        &trail_world,
+        Some(frontend_core::walk_map::WalkRoutePath::Legacy(&route)),
+        None,
+        &trail,
         false,
         click,
         &layers,
-        true,
-        true,
     );
     let paint = c.nav_debug_paint().unwrap();
     assert!(
@@ -2602,22 +2612,15 @@ fn show_nav_path_masters_hulls_click_and_trail() {
         client_trail: true,
         ..NavSettings::default()
     };
-    publish_nav_debug(
+    set_budgeted_nav_paint(
         &mut c,
         &world,
-        Some(SceneRoutePaint::build(
-            &world,
-            Some(frontend_core::walk_map::WalkRoutePath::Legacy(&route)),
-            None,
-            true,
-            true,
-        )),
-        &trail_world,
+        Some(frontend_core::walk_map::WalkRoutePath::Legacy(&route)),
+        None,
+        &trail,
         true,
         click,
         &layers,
-        true,
-        true,
     );
     let paint = c.nav_debug_paint().unwrap();
     assert!(
@@ -2636,24 +2639,21 @@ fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
     // draw budget, full density near, keeping the transport hop and
     // the terminal.
     let mut c = paint_client();
-    let world = walled_world();
-    let mut tiles: Vec<WorldTile> = (0..300)
-        .map(|x| WorldTile {
-            x: 3200 + x,
-            z: 3200,
-            level: 0,
+    c.map_build_base_x = 0;
+    c.map_build_base_z = 0;
+    let world = open_world(64, 64);
+    let tiles: Vec<WorldTile> = (0..302)
+        .map(|index| {
+            let row = (index / 50) as i32;
+            let col = (index % 50) as i32;
+            let x = if row % 2 == 0 { col } else { 49 - col };
+            WorldTile {
+                x,
+                z: row,
+                level: 0,
+            }
         })
         .collect();
-    tiles.push(WorldTile {
-        x: 3500,
-        z: 3200,
-        level: 0,
-    });
-    tiles.push(WorldTile {
-        x: 3501,
-        z: 3200,
-        level: 0,
-    });
     let route = Route {
         legs: vec![
             Leg::Walk {
@@ -2694,22 +2694,15 @@ fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
         show_nav_path: true,
         ..NavSettings::default()
     };
-    publish_nav_debug(
+    set_budgeted_nav_paint(
         &mut c,
         &world,
-        Some(SceneRoutePaint::build(
-            &world,
-            Some(frontend_core::walk_map::WalkRoutePath::Legacy(&route)),
-            None,
-            true,
-            true,
-        )),
+        Some(frontend_core::walk_map::WalkRoutePath::Legacy(&route)),
+        None,
         &[],
         false,
         None,
         &layers,
-        true,
-        true,
     );
     let paint = c.nav_debug_paint().unwrap();
     assert!(
@@ -2718,20 +2711,21 @@ fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
         paint.path.len()
     );
     assert!(
-        paint.path.contains(&(300, 0, true)),
+        paint
+            .path
+            .contains(&(tiles[300].x, tiles[300].z, true)),
         "the transport hop is never subsampled away"
     );
+    let terminal = (tiles[301].x, tiles[301].z, true);
     assert_eq!(
         paint.path.last(),
-        Some(&(301, 0, true)),
+        Some(&terminal),
         "the terminal hop tile always survives"
     );
+    let near_full = tiles[NEAR_FULL_DENSITY - 1];
     assert!(
         paint.path.contains(&(0, 0, false))
-            && paint
-                .path
-                .iter()
-                .any(|&p| p == (NEAR_FULL_DENSITY as i32 - 1, 0, false)),
+            && paint.path.contains(&(near_full.x, near_full.z, false)),
         "the near path stays at full density"
     );
 }

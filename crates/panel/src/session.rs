@@ -21,11 +21,10 @@ use std::time::{Duration, Instant};
 
 use api::hostlog::{Category, Level, Source};
 use api::snapshot::WorldTile;
+use client::client::Client;
 use client::render::budget::{BudgetCharge, RenderLimit};
-#[cfg(test)]
-use client::render::nav_debug::NavDebugPaint;
 use client::render::nav_debug::{
-    NavDebugCell, NavDebugColors, NavDebugHull, NavDebugPaintBuilder, CORNER_NE, CORNER_NW,
+    NavDebugCell, NavDebugHull, NavDebugPaint, NavDebugPaintBuilder, CORNER_NE, CORNER_NW,
     CORNER_SE, CORNER_SW, FACE_E, FACE_N, FACE_S, FACE_W,
 };
 use client::sound::output::AudioOut;
@@ -52,10 +51,7 @@ use host_play::SlotStatus;
 use nav_planner::contract::{LegView, RouteView};
 use nav_planner::paint::{collision_at_with, reached, MAX_DRAW_TILES, NEAR_FULL_DENSITY};
 #[cfg(test)]
-use nav_planner::paint::{
-    hop_captions, hull_targets, remaining_path_tiles, remaining_trail, select_draw_indices,
-    trail_tones, HopCaption, HullTarget, PathTile, TrailTone,
-};
+use nav_planner::paint::select_draw_indices;
 use nav_planner::router::{FindOptions, Route};
 use nav_planner::tile::Tile;
 use nav_planner::transport::TransportKind;
@@ -459,55 +455,6 @@ fn scene_route_fingerprint(route: Option<&ScenePaintRoute<'_>>) -> u64 {
     }
 }
 
-/// Route-only outputs. No route borrow or owner lock reaches the scene painter
-/// or the camera update.
-#[cfg(test)]
-#[derive(Default)]
-struct SceneRoutePaint {
-    path: Vec<PathTile>,
-    captions: Vec<HopCaption>,
-    hulls: Vec<HullTarget>,
-}
-
-#[cfg(test)]
-impl SceneRoutePaint {
-    fn build(
-        world: &NavWorld,
-        route: Option<WalkRoutePath<'_>>,
-        here: Option<WorldTile>,
-        path: bool,
-        hops: bool,
-    ) -> Self {
-        let route = match route {
-            Some(WalkRoutePath::Legacy(route)) => {
-                nav_planner::producer::route_view(world, route).ok()
-            }
-            Some(WalkRoutePath::Compact(route)) => Some(route),
-            None => None,
-        };
-        let Some(route) = route else {
-            return Self::default();
-        };
-        Self {
-            path: if path {
-                remaining_path_tiles(route, here)
-            } else {
-                Vec::new()
-            },
-            captions: if hops {
-                hop_captions(route, here)
-            } else {
-                Vec::new()
-            },
-            hulls: if hops {
-                hull_targets(route, here, HULL_WINDOW)
-            } else {
-                Vec::new()
-            },
-        }
-    }
-}
-
 /// Shared nav-paint settings and their content generation. Slot threads
 /// clone the `Arc` cheaply; UI pumping advances the generation only when a
 /// setting actually changes.
@@ -517,8 +464,8 @@ struct NavPublishCfg {
     generation: u64,
 }
 
-/// Retire the debug-only producer on arrival or after leaving its route,
-/// even while the slot is unfocused and no paint is being materialized.
+/// Retire the client trail after arrival or after leaving its route, even
+/// while the slot is unfocused and no paint is being materialized.
 fn retire_client_trail(client: &mut Client, here: Option<WorldTile>) {
     let Some(here) = here else {
         return;
@@ -532,234 +479,6 @@ fn retire_client_trail(client: &mut Client, here: Option<WorldTile>) {
     if position.is_none() || position.is_some_and(|i| i + 1 == client.try_move_path.len()) {
         client.try_move_path.clear();
     }
-}
-
-/// Map the client's last tryMove BFS into world tiles and trim it for
-/// paint. The producer (`try_move_path`) is debug-only; retirement runs
-/// independently every frame so an inactive slot cannot retain a stale
-/// trail. `here == None` keeps a pending trail during startup/network wait.
-#[cfg(test)]
-fn live_client_trail(client: &mut Client, here: Option<WorldTile>) -> Vec<WorldTile> {
-    let base_x = client.map_build_base_x;
-    let base_z = client.map_build_base_z;
-    let trail_all: Vec<WorldTile> = client
-        .try_move_path
-        .iter()
-        .map(|&(sx, sz)| WorldTile {
-            x: base_x + sx,
-            z: base_z + sz,
-            level: 0,
-        })
-        .collect();
-    let trail_world = remaining_trail(&trail_all, here);
-    if here.is_some() && trail_world.is_empty() {
-        client.try_move_path.clear();
-    }
-    trail_world
-}
-
-/// Publish nav-debug scene facts for the focused GPU drawing slot. The
-/// caller demand-gates this function by settings and visible nav facts, so
-/// collision traversal and paint allocation occur only when the retained
-/// view changes. Non-GPU, unfocused, skip-paint and renderer-off slots
-/// publish `None` once when demand drops, preventing stale paint.
-///
-/// `world` is the baked pack, `route` contains the projected route buffers,
-/// `trail_world` is the local player's last `tryMove` route buffer,
-/// `run_on` its two-tone state, and `click` the
-/// traveller's current walk aim. World-to-scene is
-/// `(x - map_build_base_x, z - map_build_base_z)`.
-#[cfg(test)]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the scene painter consumes these facts at one call site"
-)]
-fn publish_nav_debug(
-    client: &mut Client,
-    world: &NavWorld,
-    route: Option<SceneRoutePaint>,
-    trail_world: &[WorldTile],
-    run_on: bool,
-    click: Option<WorldTile>,
-    settings: &NavSettings,
-    drawing: bool,
-    // True when this call may ensure/drop the shared sidecar: the focused
-    // drawer owns demand so a non-drawing peer cannot drop under it; when
-    // focus is None any remaining slot (or the remove path) may release.
-    flags_owner: bool,
-) {
-    // Flags sidecar lifecycle: decoded once while a collision paint toggle
-    // is on **and** a surface actually draws it (the paint prefers the raw
-    // flags — visibility bits the packed walk word drops — when the sidecar
-    // is mapped). Saved prefs alone never load. The owner drops the sidecar
-    // when it stops drawing or both toggles go off so the last drawer
-    // releases ownership — including when focus is cleared and no slot
-    // draws. Never opened for a pack the session only walks.
-    if flags_owner {
-        if drawing && (settings.collision_fill || settings.nsew_labels) {
-            crate::picker::ensure_flags_sidecar();
-        } else {
-            crate::picker::drop_flags_sidecar();
-        }
-    }
-    if !drawing {
-        client.set_nav_debug_paint(None);
-        return;
-    }
-    let base_x = client.map_build_base_x;
-    let base_z = client.map_build_base_z;
-    let mut colors = NavDebugColors::default();
-    colors.collision = parse_html_color(&settings.color_collision, colors.collision);
-    colors.nsew = parse_html_color(&settings.color_text, colors.nsew);
-    colors.path = parse_html_color(&settings.color_path, colors.path);
-    colors.path_hop = parse_html_color(&settings.color_transport, colors.path_hop);
-    colors.trail = parse_html_color(&settings.color_client, colors.trail);
-    colors.trail_run = parse_html_color(&settings.color_client_run_alt, colors.trail_run);
-    colors.hull = parse_html_color(&settings.color_transport, colors.hull);
-    colors.click = parse_html_color(&settings.color_click, colors.click);
-    let mut paint = NavDebugPaint {
-        colors,
-        show_collision: settings.collision_fill,
-        show_nsew: settings.nsew_labels,
-        show_path: settings.show_nav_path,
-        // `show_nav_path` is the master for the path / hull / trail paints
-        // (spec Display row); the layer toggles opt each one in.
-        show_trail: settings.show_nav_path && settings.client_trail,
-        show_hulls: settings.show_nav_path && settings.hop_labels,
-        ..NavDebugPaint::default()
-    };
-    // Collision: every tile of the loaded scene region whose
-    // `collision_fill` (blocked ground) or `nsew_labels` (face letters)
-    // toggle paints it, in scene coords. Tiles outside the pack grid read
-    // as open — no phantom wall at the bake's edge.
-    if settings.collision_fill || settings.nsew_labels {
-        let level = world.collision.origin.level;
-        let ox = world.collision.origin.x;
-        let oz = world.collision.origin.z;
-        let (ow, oh) = (world.collision.width as i32, world.collision.height as i32);
-        // Prefer the decoded flags sidecar when it matches this world's
-        // grid; otherwise the walk word answers (the shared world's
-        // `flags` field stays `None` — no walk-grid clone).
-        let side = crate::picker::flags_sidecar_for(
-            world.collision.origin,
-            world.collision.width,
-            world.collision.height,
-        );
-        let side = side.as_ref().map(|v| v.as_slice());
-        // The paint-only reach bitset, baked once per world. A missing
-        // bitset defaults every cell to reached — no unreached tint.
-        let reach_bits = crate::picker::reach_bitset(world);
-        for lz in 0..SCENE_TILES {
-            for lx in 0..SCENE_TILES {
-                let x = base_x + lx;
-                let z = base_z + lz;
-                if x < ox || z < oz || x - ox >= ow || z - oz >= oh {
-                    continue;
-                }
-                let wt = WorldTile { x, z, level };
-                let fb = collision_at_with(&world.collision, wt, side);
-                let mut bits = 0u8;
-                if fb.n {
-                    bits |= FACE_N;
-                }
-                if fb.s {
-                    bits |= FACE_S;
-                }
-                if fb.e {
-                    bits |= FACE_E;
-                }
-                if fb.w {
-                    bits |= FACE_W;
-                }
-                if fb.ne {
-                    bits |= CORNER_NE;
-                }
-                if fb.se {
-                    bits |= CORNER_SE;
-                }
-                if fb.nw {
-                    bits |= CORNER_NW;
-                }
-                if fb.sw {
-                    bits |= CORNER_SW;
-                }
-                if (settings.collision_fill && (fb.blocked || bits != 0))
-                    || (settings.nsew_labels && bits != 0)
-                {
-                    paint.collision.push(NavDebugCell {
-                        lx,
-                        lz,
-                        bits,
-                        // The client fills only blocked ground; a face-only
-                        // cell keeps its NSEW letters without a fill quad.
-                        blocked: fb.blocked,
-                        // True when the transport network reaches the tile
-                        // (or the bitset is missing): the client's reach
-                        // fill draws only `show_collision && !reach`.
-                        reach: reach_bits
-                            .as_deref()
-                            .is_none_or(|bits| reached(bits, &world.collision, wt)),
-                    });
-                }
-            }
-        }
-    }
-    if let Some(route) = route {
-        // Path: the remaining route subsampled to the 3D draw budget.
-        // Full density near, stride after, always keeping the transport
-        // hops and the terminal (the pack map keeps the full path).
-        if settings.show_nav_path {
-            let tiles = &route.path;
-            let force: Vec<usize> = tiles
-                .iter()
-                .enumerate()
-                .filter_map(|(i, p)| p.transport.then_some(i))
-                .collect();
-            paint.path = select_draw_indices(0, tiles.len(), &force)
-                .into_iter()
-                .map(|i| {
-                    let p = tiles[i];
-                    (p.tile.x - base_x, p.tile.z - base_z, p.transport)
-                })
-                .collect();
-        }
-        // Hulls: the loc-backed transport hops ahead, scene coords.
-        // `show_nav_path` masters them; the hop-labels toggle also
-        // strokes the transport loc hulls (the client's transport colour
-        // family covers both).
-        if settings.show_nav_path && settings.hop_labels {
-            paint.hulls = route
-                .hulls
-                .into_iter()
-                .map(|h| NavDebugHull {
-                    loc_id: h.loc_id,
-                    scene_x: h.at.x - base_x,
-                    scene_z: h.at.z - base_z,
-                })
-                .collect();
-            paint.labels = route
-                .captions
-                .into_iter()
-                .map(|c| (c.at.x - base_x, c.at.z - base_z, c.text))
-                .collect();
-        }
-    }
-    // Trail: client trail tones (two-tone while running). `show_nav_path`
-    // is the master (spec Display row); `client_trail` opts the layer in.
-    if settings.show_nav_path && settings.client_trail {
-        paint.trail = trail_tones(trail_world, run_on)
-            .into_iter()
-            .map(|(t, tone)| (t.x - base_x, t.z - base_z, tone == TrailTone::RunAlt))
-            .collect();
-    }
-    // Click: the traveller's current walk aim, scene coords. `show_nav_path`
-    // masters it like the hulls (no nav path, no walk-target paint).
-    if settings.show_nav_path {
-        if let Some(aim) = click {
-            paint.click = Some((aim.x - base_x, aim.z - base_z));
-        }
-    }
-    client.set_nav_debug_paint(Some(paint));
 }
 
 fn update_nav_debug_flags(flags_owner: bool, drawing: bool, settings: &NavSettings) {
@@ -829,7 +548,7 @@ fn try_build_nav_debug_paint(
     };
 
     let mut collision_count = 0usize;
-    visit_collision_facts(world, base_x, base_z, settings, side, reach_bits, |_| {
+    visit_collision_facts(world, base_x, base_z, settings, side, reach_bits.as_deref(), |_| {
         collision_count = collision_count.saturating_add(1);
         Ok(())
     })?;
@@ -907,7 +626,7 @@ fn try_build_nav_debug_paint(
         None
     });
 
-    visit_collision_facts(world, base_x, base_z, settings, side, reach_bits, |cell| {
+    visit_collision_facts(world, base_x, base_z, settings, side, reach_bits.as_deref(), |cell| {
         builder.push_collision(cell)
     })?;
     if show_path {
@@ -1801,9 +1520,9 @@ pub struct Session {
     nav_paints_override: Option<bool>,
     /// Optional headed/live memory override; never persisted with operator UI.
     memory_override: Option<bool>,
-    /// Per-frame nav-paint mirror the slot threads publish from each
-    /// observe (see [`publish_nav_debug`]); `pump_status` re-copies it
-    /// from `ui.nav` / [`Session::nav_overlay`] every UI frame.
+    /// Per-frame nav-paint mirror the slot threads publish from each frame;
+    /// `pump_status` re-copies it from `ui.nav` / [`Session::nav_overlay`]
+    /// every UI frame.
     nav_publish: Arc<Mutex<NavPublishCfg>>,
     /// Overlay generation: bumped whenever the focused traveller's route
     /// can change (a new arm, or the focused profile switching). The path
