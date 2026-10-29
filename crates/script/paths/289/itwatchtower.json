@@ -1428,7 +1428,7 @@
                 "target": {
                   "loc": "tanothjump1"
                 },
-                "op": "Jump",
+                "op": "Jump-From",
                 "anchor": {
                   "tile": [
                     2530,
