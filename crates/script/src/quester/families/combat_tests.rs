@@ -4131,6 +4131,17 @@ fn manual_takeover_watch_covers_return_and_loot_sublegs() {
     );
     assert_eq!(run.loot_index, 1);
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+    let interactions_before_takeover = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .filter(|action| matches!(&action.effect, crate::native::HostEffect::Interaction(_)))
+        .count();
+    assert_eq!(
+        interactions_before_takeover, 1,
+        "the visible drop should start one take before manual input"
+    );
 
     let outcome = publish_walk_outcome(42, WalkCancelReason::UserInput);
     let result =
@@ -4141,12 +4152,17 @@ fn manual_takeover_watch_covers_return_and_loot_sublegs() {
         "manual movement must not start the next loot leg"
     );
     assert!(run.action.is_none());
-    assert!(ledger
+    let interactions_after_takeover = ledger
         .as_ref()
         .unwrap()
         .outbox
         .iter()
-        .all(|action| { !matches!(&action.effect, crate::native::HostEffect::Interaction(_)) }));
+        .filter(|action| matches!(&action.effect, crate::native::HostEffect::Interaction(_)))
+        .count();
+    assert_eq!(
+        interactions_after_takeover, interactions_before_takeover,
+        "manual movement must not emit another interaction"
+    );
 }
 
 #[test]
