@@ -14,6 +14,10 @@ pub enum Query {
 }
 #[derive(Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "One stack-owned query result avoids a heap allocation before JSON serialization."
+)]
 pub enum Answer {
     Fight(fight::FightResult),
     Crossing(crossing::CrossResult),
