@@ -125,7 +125,7 @@
          "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"druidspirit","any":["druidspirit:75"]}}}}
       ]},
       {"stage":"druidspirit:75","required":[],"terminal":false,"recovery_entry":null,"steps":[
-        {"id":"GAP-ghast-harvest","kind":"wait","version":1,"args":{"until":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"druidspirit","is":"complete"}}},"max_ticks":20,"park_on_timeout":true},"comment":"GAP REPEATED HARVEST AND OWNED GHAST: content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:235-268,290-331,383-394 needs three bloom items and prayer. ghast.rs2:1-26,86-88,131-141 requires three owned kills after a pouch reveals an attacker. This guide does not yet coordinate the repeated harvest and owned targets.","skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"druidspirit","is":"complete"}}}}
+        {"id":"GAP-ghast-harvest","kind":"wait","version":1,"advances":true,"args":{"until":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"druidspirit","is":"complete"}}},"max_ticks":20,"park_on_timeout":true},"comment":"GAP REPEATED HARVEST AND OWNED GHAST: content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:235-268,290-331,383-394 needs three bloom items and prayer. ghast.rs2:1-26,86-88,131-141 requires three owned kills after a pouch reveals an attacker. This guide does not yet coordinate the repeated harvest and owned targets.","skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"druidspirit","is":"complete"}}}}
       ]},
       {"stage":"druidspirit:complete","required":[],"terminal":true,"recovery_entry":null,"steps":[]}
     ]

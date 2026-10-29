@@ -79,7 +79,7 @@
          "args":{"target":{"held":"bloated_toad"},"op":"Drop"},"skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"chompybird","any":["chompybird:30"]}}}}
       ]},
       {"stage":"chompybird:30","required":[],"terminal":false,"recovery_entry":null,"steps":[
-        {"id":"GAP-rebait-owned-chompy","kind":"wait","version":1,"args":{"until":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"chompybird","is":"complete"}}},"max_ticks":120,"park_on_timeout":true},"comment":"GAP REBAIT AND OWNERSHIP: content/scripts/quests/quest_chompybird/scripts/bloated_toad.rs2:89-116 can expire without spawning a bird. chompy_bird.rs2:86-128 restricts attacks to the bait owner. The path cannot yet coordinate replacement bait and an owned target.","skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"chompybird","is":"complete"}}}}
+        {"id":"GAP-rebait-owned-chompy","kind":"wait","version":1,"advances":true,"args":{"until":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"chompybird","is":"complete"}}},"max_ticks":120,"park_on_timeout":true},"comment":"GAP REBAIT AND OWNERSHIP: content/scripts/quests/quest_chompybird/scripts/bloated_toad.rs2:89-116 can expire without spawning a bird. chompy_bird.rs2:86-128 restricts attacks to the bait owner. The path cannot yet coordinate replacement bait and an owned target.","skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"chompybird","is":"complete"}}}}
       ]},
       {"stage":"chompybird:65","required":[],"terminal":true,"recovery_entry":null,"steps":[]}
     ]
