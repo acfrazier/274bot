@@ -125,15 +125,20 @@ struct ClueBankRecord {
     /// The first observation after a reward deposit with no reward item left
     /// in the pack beyond the initial pack.
     reward_pack_clear: Option<u32>,
+    /// The first observation of the bank closed after a reward deposit.
+    closed: Option<u32>,
+    /// The first tick of the trailing status wait.
+    status_from: Option<u32>,
 }
 
 impl ClueBankRecord {
-    /// One observation of the solver at `tick`: `bank` reads the open and
-    /// loaded bank's count of an id (`None`: no loaded bank), `pack` the
-    /// pack's.
+    /// One observation of the solver at `tick`: `open` is whether a bank modal
+    /// is up, `bank` reads the open and loaded bank's count of an id (`None`:
+    /// no loaded bank), `pack` the pack's.
     fn observe(
         &mut self,
         tick: u32,
+        open: bool,
         bank: Option<&dyn Fn(i32) -> i32>,
         pack: &dyn Fn(i32) -> i32,
         reward_ids: &[i32],
@@ -186,6 +191,18 @@ impl ClueBankRecord {
                 self.reward_pack_clear.get_or_insert(tick);
             }
         }
+        if !open && self.reward_first.is_some() {
+            self.closed.get_or_insert(tick);
+        }
+    }
+
+    /// The trailing status wait: `true` once `ticks` observed ticks have
+    /// passed since its first call. It starts when the oracle's own close
+    /// step has ended, so it counts from the observed close and needs no
+    /// latch of the record to be set.
+    fn status_wait_done(&mut self, tick: u32, ticks: u32) -> bool {
+        let from = *self.status_from.get_or_insert(tick);
+        tick >= from + ticks
     }
 
     fn summary(&self, reward_ids: &[i32]) -> String {
@@ -193,7 +210,7 @@ impl ClueBankRecord {
         format!(
             "clue bank record (snapshot ticks): reward_ids={reward_ids:?} bank_opened={} \
              reward_deposit first={} last={} rises={} equipment_deposit first={} last={} \
-             rises={} reward_pack_clear={}",
+             rises={} reward_pack_clear={} bank_closed={}",
             tick(self.bank_opened),
             tick(self.reward_first),
             tick(self.reward_last),
@@ -202,6 +219,7 @@ impl ClueBankRecord {
             tick(self.equipment_last),
             self.equipment_rises,
             tick(self.reward_pack_clear),
+            tick(self.closed),
         )
     }
 }
@@ -294,9 +312,11 @@ impl ClueFleetWitness {
         if slot_index == 0 {
             let in_bank = |id| pair_bank_id(snap, id);
             let in_pack = |id| pair_inv_id(snap, id);
-            let bank_loaded = snap.bank_component_id() >= 0 && snap.bank_loaded();
+            let open = snap.bank_component_id() >= 0;
+            let bank_loaded = open && snap.bank_loaded();
             self.bank.observe(
                 snap.tick(),
+                open,
                 bank_loaded.then_some(&in_bank as &dyn Fn(i32) -> i32),
                 &in_pack,
                 &self.reward_ids,
@@ -2507,6 +2527,27 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
             budget_ticks: 120,
         },
     });
+    // Contract item 7 asks for ClueSolver's next status after the close. The
+    // script moves on in the game tick that follows the close, so the run
+    // observes three more game ticks (the host log prints the status the
+    // script paints). It gates nothing: the oracle is the close above.
+    let status_witness = Arc::clone(&witness);
+    steps.push(Step {
+        name: "observe ClueSolver's next status after the bank closes",
+        kind: StepKind::Await {
+            evidence: "clue_solver_next_status_after_close",
+            ready: Box::new(move |snap| {
+                let mut witness = status_witness.lock().expect("clue witness mutex");
+                witness.observe(0, snap);
+                witness.bank.status_wait_done(snap.tick(), 3)
+            }),
+            summary: clue_terminal_summary(&witness),
+        },
+        wait: Wait {
+            arm: Proof::Stat { id: 16, min: 0 },
+            budget_ticks: 30,
+        },
+    });
     Scenario {
         name: "clue_duel_3554",
         seed: pair_fleet_seed(),
@@ -2977,9 +3018,9 @@ mod clue_witness_tests {
         match bank {
             Some(rows) => {
                 let in_bank = |id| count(rows, id);
-                record.observe(tick, Some(&in_bank), &in_pack, reward_ids, initial);
+                record.observe(tick, true, Some(&in_bank), &in_pack, reward_ids, initial);
             }
-            None => record.observe(tick, None, &in_pack, reward_ids, initial),
+            None => record.observe(tick, false, None, &in_pack, reward_ids, initial),
         }
     }
 
@@ -3052,6 +3093,15 @@ mod clue_witness_tests {
         );
         assert!(summary.contains("reward_pack_clear=45"), "{summary}");
         assert!(summary.contains("reward_ids=[861, 1213]"), "{summary}");
+        // The close before any reward deposit was not a close of the reward
+        // bank; the first one after it is.
+        assert!(summary.contains("bank_closed=none"), "{summary}");
+        record(&mut bank, 47, &[(COINS, 1_000)], None, &rewards, &initial);
+        record(&mut bank, 48, &[(COINS, 1_000)], None, &rewards, &initial);
+        assert!(bank.summary(&rewards).contains("bank_closed=47"));
+        assert!(!bank.status_wait_done(48, 2), "the wait starts at tick 48");
+        assert!(!bank.status_wait_done(49, 2));
+        assert!(bank.status_wait_done(50, 2));
     }
 
     #[test]
