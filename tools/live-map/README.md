@@ -307,6 +307,9 @@ flags from the reference pack. Quest cells use the quest ports, set
 `_GAME_PORT`, `_HTTP_PORT`, `--port`, and `--http-port` values to the selected ports.
 `ISOHOME` comes from the host wrapper where the map command names it. Each cell runs
 by `bash -lc` from the repo root.
+Non-quest lab cells use Engine L. On aubaine the 44594/1080 defaults reach Engine L
+through the relay. On chardonnay pass `--engine-game-port 47594 --engine-http-port 3080`
+(the forwarded Engine L) and never use 44594/1080 there. Quest cells use Engine Q.
 
 Each cell and pass writes `passN/cell.log` and `passN/receipt.txt` with `cell`, `pass`,
 repo `head`, `command`, `start`, `end`, `exit_code`, and `log`. The runner prints a
