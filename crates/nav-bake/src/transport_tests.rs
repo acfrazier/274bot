@@ -306,7 +306,7 @@ if($entering = false) {
     );
 }
 #[test]
-fn entrana_boat_members_guard_controls_world_behavior() {
+fn entrana_boat_members_and_item_guards_control_world_behavior() {
     let fx = Fixture::new();
     fx.write("pack/npc.pack", "657=shipmonk\n658=shipmonk2\n");
     fx.write(
@@ -317,7 +317,7 @@ if(map_members = ^false) {
     mes(\"You need to be on a members' world to access this content.\");
     return;
 }
-",
+:",
     );
     // The return monk's handler exists and has no guard.
     fx.write(
@@ -325,7 +325,7 @@ if(map_members = ^false) {
         "\
 [opnpc1,shipmonk2]
 ~chatnpc(\"<p,neutral>Do you wish to leave holy Entrana?\");
-",
+:",
     );
     let graph = derive_static_routes_for(&fx);
     let outbound = graph
@@ -334,16 +334,89 @@ if(map_members = ^false) {
         .find(|edge| edge.kind == TransportKind::Boat && edge.loc_id == 657)
         .expect("Port Sarim -> Entrana boat");
     assert!(outbound.members_req, "shipmonk is members-gated");
+
+    let selected =
+        api::game_data::for_revision(api::selected::ClientRevision::R289).expect("R289 item data");
+    let bronze_axe = selected
+        .item_by_alias("bronze_axe")
+        .expect("bronze axe in R289 item data")
+        .id;
     assert!(
-        !nav_planner::world_state::WorldState::empty().allows(outbound),
+        outbound.forbidden_held.contains(&bronze_axe),
+        "the Entrana monk searches carried weapon categories"
+    );
+    assert!(
+        outbound.forbidden_worn.contains(&bronze_axe),
+        "the Entrana monk searches worn weapon categories"
+    );
+
+    const RESTRICTED_CATEGORIES: &[&str] = &[
+        "armour_hands",
+        "weapon_staff",
+        "armour_helmet",
+        "armour_body",
+        "armour_legs",
+        "armour_shield",
+        "armour_cape",
+        "armour_godcape",
+        "weapon_slash",
+        "weapon_blunt",
+        "weapon_stab",
+        "weapon_crossbow",
+        "weapon_axe",
+        "weapon_pickaxe",
+        "weapon_javelin",
+        "weapon_2h_sword",
+        "weapon_spear",
+        "weapon_spiked",
+        "weapon_thrown",
+        "weapon_scythe",
+        "weapon_bow",
+        "weapon_claws",
+        "weapon_polearm",
+        "cannon_parts",
+    ];
+    for item in selected.items() {
+        let category = item.category.as_deref();
+        let restricted =
+            category.is_some_and(|category| RESTRICTED_CATEGORIES.contains(&category));
+        assert_eq!(
+            outbound.forbidden_held.contains(&item.id),
+            restricted,
+            "carried restriction for item {} category {:?}",
+            item.id,
+            category
+        );
+        assert_eq!(
+            outbound.forbidden_worn.contains(&item.id),
+            restricted && category != Some("cannon_parts"),
+            "worn restriction for item {} category {:?}",
+            item.id,
+            category
+        );
+    }
+
+    let mut observed_clear = nav_planner::world_state::WorldState::empty();
+    observed_clear.inventory_ready = true;
+    observed_clear.equipment_ready = true;
+    assert!(
+        !observed_clear.clone().allows(outbound),
         "F2P cannot take the Entrana boat"
     );
     assert!(
-        nav_planner::world_state::WorldState::empty()
-            .with_map_members(true)
-            .allows(outbound),
-        "members worlds can take the Entrana boat"
+        observed_clear.clone().with_map_members(true).allows(outbound),
+        "members worlds can take the Entrana boat when inventory and equipment are clear"
     );
+
+    let mut axe_in_inventory = observed_clear.clone().with_map_members(true);
+    axe_in_inventory.inv.insert(bronze_axe, 1);
+    assert!(
+        !axe_in_inventory.allows(outbound),
+        "a carried axe blocks the outbound boat"
+    );
+    let mut axe_worn = observed_clear.with_map_members(true);
+    axe_worn.worn.insert(bronze_axe);
+    assert!(!axe_worn.allows(outbound), "a worn axe blocks the outbound boat");
 
     let return_boat = graph
         .edges
@@ -353,6 +426,10 @@ if(map_members = ^false) {
     assert!(
         !return_boat.members_req,
         "the return script has no map_members guard"
+    );
+    assert!(
+        return_boat.forbidden_held.is_empty() && return_boat.forbidden_worn.is_empty(),
+        "the no-weapons rule applies only when travelling to Entrana"
     );
 }
 

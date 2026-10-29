@@ -1663,7 +1663,8 @@ fn derive_entrance_fixture(fx: &Fixture) -> (TransportGraph, WorldCollision) {
         family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
         facts: &facts,
     };
-    let graph = derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(&quests)).0;
+    let graph =
+        derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(&quests), None).0;
     (graph, collision)
 }
 
