@@ -1654,6 +1654,7 @@ impl NativeMachine for BankMachine {
                                 continue;
                             }
                             Err(error) => return Poll::Ready(Err(error)),
+                        }
                     }
                     let snapshot = cx.snapshot();
                     let pack = snapshot.inventory().map(|rows| rows.value);
