@@ -1,7 +1,7 @@
 //! §3.2 tick loop with colour-first, boundary-triggered journal evidence.
 use super::compile::{
-    AcquisitionTraceOutcome, CompiledPath, CompiledStep, PredicateContext, StepContext,
-    StepOutcome, StepRun, StepTraceEvent,
+    AcquisitionTraceOutcome, CompiledPath, CompiledStep, PredicateContext, StepAttemptBudget,
+    StepAttemptReceipt, StepContext, StepOutcome, StepRun, StepTraceEvent,
 };
 use super::families::combat::CombatReceipt;
 use super::families::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget};
@@ -333,6 +333,7 @@ pub struct Quester {
     /// (design-combat.md:664).
     last_combat: Option<StepOutcome>,
     published_receipt: Option<Arc<dyn super::compile::FamilyReceipt>>,
+    last_attempt_receipt: Option<Arc<dyn super::compile::FamilyReceipt>>,
     advances: bool,
     in_prelude: bool,
     settling: bool,
@@ -353,6 +354,8 @@ pub struct Quester {
     prior_deaths: u16,
     max_deaths: u8,
     attempts: u8,
+    step_attempts: u32,
+    attempt_step: Option<FactKey>,
     fail_streak: u8,
     parked: bool,
     journal_opened: bool,
@@ -664,6 +667,7 @@ impl Quester {
             last_outcome: None,
             last_combat: None,
             published_receipt: None,
+            last_attempt_receipt: None,
             advances: false,
             in_prelude: false,
             settling: false,
@@ -687,6 +691,8 @@ impl Quester {
             max_deaths: default_max_deaths(),
             prior_deaths: 0,
             attempts: 0,
+            step_attempts: 0,
+            attempt_step: None,
             fail_streak: 0,
             parked: false,
             journal_opened: false,
@@ -1307,6 +1313,22 @@ impl Quester {
                 value: StatusValue::Integer(value),
             });
         }
+        if let Some(receipt) = self.last_attempt_receipt.as_deref() {
+            if let Some(attempts) = receipt.attempt_count() {
+                fields.push(StatusField {
+                    key: "step_attempts",
+                    label: "Step attempts",
+                    value: StatusValue::Integer(i64::from(attempts)),
+                });
+            }
+            if let Some(stop) = receipt.attempt_stop() {
+                fields.push(StatusField {
+                    key: "step_stop",
+                    label: "Step stop",
+                    value: StatusValue::Text(Arc::clone(stop)),
+                });
+            }
+        }
         fields.extend_from_slice(&self.queue_fields);
         fields.extend_from_slice(&self.required_vs_live);
         fields.push(StatusField {
@@ -1546,6 +1568,9 @@ impl Quester {
         self.gang_reader.cancel();
         self.advances = false;
         self.attempts = 0;
+        self.step_attempts = 0;
+        self.attempt_step = None;
+        self.last_attempt_receipt = None;
         self.settling = false;
         self.settle_deadline = Duration::ZERO;
         if self.waiting.take().is_some() {
@@ -2280,16 +2305,127 @@ impl Quester {
         }
     }
 
-    fn record_step_failure(&mut self, error: ActionError, tick: &NativeTick<'_>) {
-        self.fail_streak = self.fail_streak.saturating_add(1);
+    fn current_attempt_budget(&self) -> Option<StepAttemptBudget> {
+        let budget = self.current_step()?.attempt_budget.as_ref()?;
+        Some(StepAttemptBudget {
+            max_attempts: budget.max_attempts,
+            stop: Arc::clone(&budget.stop),
+        })
+    }
+
+    fn reset_attempt_scope_if_needed(&mut self, step: &FactKey) {
+        if self.attempt_step.as_ref() != Some(step) {
+            self.attempt_step = Some(step.clone());
+            self.step_attempts = 0;
+            self.last_attempt_receipt = None;
+        }
+    }
+
+    fn record_budgeted_attempt(&mut self, budget: &StepAttemptBudget, include_outcome: bool) {
+        self.step_attempts = self.step_attempts.saturating_add(1);
+        let inner = if include_outcome {
+            self.last_outcome
+                .as_mut()
+                .and_then(|outcome| outcome.receipt.take())
+        } else {
+            None
+        };
+        let receipt: Arc<dyn super::compile::FamilyReceipt> = Arc::new(StepAttemptReceipt::new(
+            inner,
+            self.step_attempts,
+            Arc::clone(&budget.stop),
+        ));
+        if include_outcome {
+            if let Some(outcome) = self.last_outcome.as_mut() {
+                outcome.receipt = Some(Arc::clone(&receipt));
+            }
+        }
+        self.last_attempt_receipt = Some(receipt);
+    }
+
+    fn park_at_attempt_budget(&mut self, budget: &StepAttemptBudget) {
+        if self.step_attempts < budget.max_attempts {
+            return;
+        }
+        let Some((sequence_index, step_index, in_prelude, step_id)) =
+            self.current_step().map(|step| {
+                (
+                    self.seq_index,
+                    self.step_index,
+                    self.in_prelude,
+                    Arc::clone(&step.id.0),
+                )
+            })
+        else {
+            return;
+        };
+        let reason = self
+            .last_error
+            .as_deref()
+            .map(Arc::<str>::from)
+            .unwrap_or_else(|| Arc::from("step failed"));
+        self.parked_step = Some(ParkedStep {
+            sequence_index,
+            step_index,
+            in_prelude,
+            id: Arc::clone(&step_id),
+        });
+        self.parked = true;
+        self.set_last_error(
+            QuesterFailureKind::Other,
+            Arc::from(format!(
+                "{}: step {} stopped after {} attempts: {}",
+                budget.stop, step_id, self.step_attempts, reason
+            )),
+        );
+    }
+
+    fn record_step_begin_failure(&mut self, error: ActionError) {
+        self.attempts = self.attempts.saturating_add(1);
         self.record_failure(error);
-        if self.fail_streak >= 5 {
+        if let Some(budget) = self.current_attempt_budget() {
+            self.record_budgeted_attempt(&budget, false);
+            self.park_at_attempt_budget(&budget);
+        } else if self.attempts >= 5 {
             self.parked = true;
         }
-        self.on_step_boundary(tick);
+    }
+
+    fn record_step_success(&mut self) {
+        if let Some(budget) = self.current_attempt_budget() {
+            self.record_budgeted_attempt(&budget, true);
+        }
+        self.attempt_step = None;
+        self.step_attempts = 0;
+    }
+
+    fn record_step_failure(&mut self, error: ActionError, tick: &NativeTick<'_>) {
+        self.record_step_failure_with_outcome(error, tick, false);
+    }
+
+    fn record_step_failure_with_outcome(
+        &mut self,
+        error: ActionError,
+        tick: &NativeTick<'_>,
+        include_outcome: bool,
+    ) {
+        self.fail_streak = self.fail_streak.saturating_add(1);
+        self.record_failure(error);
+        let budget = self.current_attempt_budget();
+        if let Some(budget) = &budget {
+            self.record_budgeted_attempt(budget, include_outcome);
+            self.park_at_attempt_budget(budget);
+        } else if self.fail_streak >= 5 {
+            self.parked = true;
+        }
+        self.on_step_boundary_with_watchdog(tick, budget.is_none());
     }
 
     fn on_step_boundary(&mut self, tick: &NativeTick<'_>) {
+        self.on_step_boundary_with_watchdog(tick, true);
+    }
+
+    fn on_step_boundary_with_watchdog(&mut self, tick: &NativeTick<'_>, observe_watchdog: bool) {
         let mut inv = [(0, 0); 28];
         let mut inv_len = 0usize;
         if let Some(rows) = tick.cx.snapshot().inventory() {
@@ -2316,16 +2452,18 @@ impl Quester {
             .stats()
             .map(|stats| stats.value.iter().map(|s| s.xp).sum())
             .unwrap_or(0);
-        if matches!(
-            self.watchdog.observe(
-                self.stage.as_ref(),
-                tile,
-                &inv[..inv_len],
-                &worn[..worn_len],
-                xp,
-            ),
-            WatchdogAction::Park
-        ) {
+        if observe_watchdog
+            && matches!(
+                self.watchdog.observe(
+                    self.stage.as_ref(),
+                    tile,
+                    &inv[..inv_len],
+                    &worn[..worn_len],
+                    xp,
+                ),
+                WatchdogAction::Park
+            )
+        {
             self.parked = true;
             self.dirty = true;
         }
@@ -2449,6 +2587,7 @@ impl Quester {
                 self.settling = false;
                 self.settle_deadline = Duration::ZERO;
                 self.fail_streak = 0;
+                self.record_step_success();
                 self.retarget_after_settle(true);
                 self.on_step_boundary(tick);
                 // Select on the snapshot that proved the settle instead of a
@@ -2474,7 +2613,6 @@ impl Quester {
             } else {
                 if tick.cx.active_now() >= self.settle_deadline {
                     self.settling = false;
-                    self.fail_streak = self.fail_streak.saturating_add(1);
                     let error = ActionError::Failed(Arc::from("step settle timeout"));
                     let step = if self.in_prelude {
                         self.path.prelude.get(self.step_index)
@@ -2505,11 +2643,10 @@ impl Quester {
                             format_args!("failed: step settle timeout"),
                         );
                     }
-                    self.record_failure(error);
-                    if self.fail_streak >= 5 {
-                        self.parked = true;
-                    }
-                    self.on_step_boundary(tick);
+                    self.record_step_failure_with_outcome(error, tick, true);
+                    // Progress may land after the earlier read while an advancing step settles.
+                    self.needs_read = !self.parked && (self.needs_read || self.advances);
+                    self.dirty = true;
                     if self.parked {
                         self.parked_step = failed_step;
                     }
@@ -2718,6 +2855,12 @@ impl Quester {
                 self.publish(tick.output);
                 return Ok(ScriptFlow::Continue);
             }
+            let step_id = if prelude {
+                self.path.prelude[index].id.clone()
+            } else {
+                self.path.sequences[self.seq_index].steps[index].id.clone()
+            };
+            self.reset_attempt_scope_if_needed(&step_id);
             let step = if prelude {
                 &self.path.prelude[index]
             } else {
@@ -2793,11 +2936,7 @@ impl Quester {
                     );
                     self.pair_begin_since = None;
                     self.waiting = None;
-                    self.attempts = self.attempts.saturating_add(1);
-                    self.record_failure(error);
-                    if self.attempts >= 5 {
-                        self.parked = true;
-                    }
+                    self.record_step_begin_failure(error);
                 }
             }
             // A begun step is polled on its begin tick unless the begin
@@ -2962,11 +3101,18 @@ impl Quester {
                 }
                 self.capture_prayer_cleanup();
                 self.capture_failed_acquisition_child();
+                let budget = self.current_attempt_budget();
+                if let Some(budget) = &budget {
+                    self.record_budgeted_attempt(budget, false);
+                }
                 self.record_failure(error);
                 self.step = None;
                 self.last_outcome = None;
                 self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
                 self.parked = true;
+                if let Some(budget) = &budget {
+                    self.park_at_attempt_budget(budget);
+                }
                 self.update_wait();
                 self.publish(tick.output);
                 return Ok(ScriptFlow::Blocked(self.blocked_failure()));
@@ -4167,6 +4313,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn budget_counts_begin_and_poll_failures_together() {
+        let (mut script, snapshot) = fixture();
+        {
+            let path = Arc::get_mut(&mut script.path).expect("unshared path");
+            path.sequences[0].steps[0].attempt_budget = Some(StepAttemptBudget {
+                max_attempts: 2,
+                stop: Arc::from("retry-stop"),
+            });
+        }
+        let attempt_step = script.path.sequences[0].steps[0].id.clone();
+        script.reset_attempt_scope_if_needed(&attempt_step);
+
+        script.record_step_begin_failure(ActionError::Failed(Arc::from("begin failed")));
+        assert_eq!(script.step_attempts, 1);
+        assert!(!script.parked);
+
+        let mut ledger = None;
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+            script.record_step_failure(ActionError::Failed(Arc::from("poll failed")), tick);
+        });
+        assert_eq!(script.step_attempts, 2);
+        assert!(script.parked);
+        assert!(script
+            .last_error
+            .as_deref()
+            .is_some_and(|error| error.contains("retry-stop")));
+        let receipt = script
+            .last_attempt_receipt
+            .as_deref()
+            .expect("the exhausted attempt has a receipt");
+        assert_eq!(receipt.attempt_count(), Some(2));
+        assert_eq!(
+            receipt.attempt_stop().map(|stop| stop.as_ref()),
+            Some("retry-stop")
+        );
+    }
     /// The Quester holds no bank table of its own (design-bank-snapshot D8):
     /// the account's memory is the host's and reaches it as a borrow.
     #[test]
@@ -4757,6 +4940,8 @@ mod tests {
                 args: serde_json::json!({ "retaliate": retaliate }),
                 comment: None,
                 advances: Some(false),
+                max_attempts: None,
+                stop: None,
                 skip_if: PredicateDocument::Any(vec![]),
                 settle: PredicateDocument::All(vec![]),
             })
@@ -4856,6 +5041,8 @@ mod tests {
                 args: serde_json::json!({ "retaliate": retaliate }),
                 comment: None,
                 advances: Some(false),
+                max_attempts: None,
+                stop: None,
                 skip_if: PredicateDocument::Any(vec![]),
                 settle: PredicateDocument::All(vec![]),
             })
@@ -4977,6 +5164,8 @@ mod tests {
                 args: serde_json::json!({ "retaliate": retaliate }),
                 comment: None,
                 advances: Some(false),
+                max_attempts: None,
+                stop: None,
                 skip_if: PredicateDocument::Any(vec![]),
                 settle: PredicateDocument::All(vec![]),
             })
@@ -5220,6 +5409,8 @@ mod tests {
             args,
             comment: None,
             advances: Some(false),
+            max_attempts: None,
+            stop: None,
             skip_if,
             settle,
         }
@@ -5657,6 +5848,8 @@ mod tests {
                 args: serde_json::json!({"until":{"Any":[]},"max_ticks":1}),
                 comment: None,
                 advances: Some(false),
+                max_attempts: None,
+                stop: None,
                 skip_if: PredicateDocument::Any(vec![]),
                 settle: PredicateDocument::All(vec![]),
             }],
@@ -5668,6 +5861,8 @@ mod tests {
             args: serde_json::json!({"recipe":"test:child-failure"}),
             comment: None,
             advances: Some(false),
+            max_attempts: None,
+            stop: None,
             skip_if: PredicateDocument::Any(vec![]),
             settle: PredicateDocument::All(vec![]),
         }];
@@ -6073,6 +6268,8 @@ mod tests {
             args: serde_json::json!({"until":{"All":[]},"max_ticks":100}),
             comment: None,
             advances: Some(false),
+            max_attempts: None,
+            stop: None,
             skip_if,
             settle,
         };

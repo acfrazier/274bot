@@ -255,6 +255,12 @@ pub struct CompiledSequence {
     pub steps: Vec<CompiledStep>,
 }
 
+#[derive(Clone)]
+pub struct StepAttemptBudget {
+    pub max_attempts: u32,
+    pub stop: Arc<str>,
+}
+
 pub struct CompiledStep {
     pub id: FactKey,
     pub kind: Arc<str>,
@@ -262,6 +268,7 @@ pub struct CompiledStep {
     pub loadout: Option<Arc<str>>,
     pub tactic: Option<Arc<str>>,
     pub advances: bool,
+    pub attempt_budget: Option<StepAttemptBudget>,
     pub skip_if: Arc<dyn PredicatePlan>,
     pub skip_if_summary: Arc<str>,
     pub settle: Arc<dyn PredicatePlan>,
@@ -291,6 +298,44 @@ pub struct StepContext<'a, 'frame> {
 }
 pub trait FamilyReceipt: Send + Sync + 'static {
     fn as_any(&self) -> &dyn Any;
+    fn attempt_count(&self) -> Option<u32> {
+        None
+    }
+    fn attempt_stop(&self) -> Option<&Arc<str>> {
+        None
+    }
+}
+pub(crate) struct StepAttemptReceipt {
+    inner: Option<Arc<dyn FamilyReceipt>>,
+    attempts: u32,
+    stop: Arc<str>,
+}
+impl StepAttemptReceipt {
+    pub(crate) fn new(
+        inner: Option<Arc<dyn FamilyReceipt>>,
+        attempts: u32,
+        stop: Arc<str>,
+    ) -> Self {
+        Self {
+            inner,
+            attempts,
+            stop,
+        }
+    }
+}
+impl FamilyReceipt for StepAttemptReceipt {
+    fn as_any(&self) -> &dyn Any {
+        match self.inner.as_deref() {
+            Some(inner) => inner.as_any(),
+            None => self,
+        }
+    }
+    fn attempt_count(&self) -> Option<u32> {
+        Some(self.attempts)
+    }
+    fn attempt_stop(&self) -> Option<&Arc<str>> {
+        Some(&self.stop)
+    }
 }
 pub struct StepOutcome {
     pub progress: Option<Arc<QuestProgress>>,
@@ -1632,6 +1677,23 @@ fn compile_steps(
                 source: None,
             });
         }
+        let step_error = |code: &'static str| {
+            let mut error = CompileError::code(code).with_path(document.id.clone());
+            error.step = Some(step.id.clone());
+            error
+        };
+        let attempt_budget = match (step.max_attempts, step.stop.as_deref()) {
+            (None, None) => None,
+            (Some(0), _) => return Err(step_error("step-max-attempts-zero")),
+            (Some(max_attempts), Some(stop)) if !stop.trim().is_empty() => {
+                Some(StepAttemptBudget {
+                    max_attempts,
+                    stop: Arc::from(stop),
+                })
+            }
+            (Some(_), _) => return Err(step_error("step-max-attempts-needs-stop")),
+            (None, Some(_)) => return Err(step_error("step-stop-without-max-attempts")),
+        };
         let handler = step_handlers()
             .find(|handler| handler.kind == step.kind && handler.version == step.version)
             .ok_or_else(|| CompileError {
@@ -1725,6 +1787,7 @@ fn compile_steps(
                 })
                 .flatten(),
             advances: step.advances.unwrap_or(false),
+            attempt_budget,
             skip_if,
             skip_if_summary: Arc::from(predicate_summary(&step.skip_if)),
             settle,
@@ -2976,6 +3039,8 @@ mod tests {
             args: serde_json::json!({"recipe": recipe}),
             comment: None,
             advances: Some(false),
+            max_attempts: None,
+            stop: None,
             skip_if: PredicateDocument::Any(vec![]),
             settle: PredicateDocument::All(vec![]),
         }
@@ -3348,6 +3413,29 @@ mod tests {
         });
         assert_eq!(contradiction.code.as_ref(), "settle-needs-advance");
     }
+    #[test]
+    fn step_attempt_budget_requires_positive_limit_and_nonblank_stop() {
+        let _home = crate::IsolatedEnv::enter("quester-step-attempt-budget");
+        for (max_attempts, stop, expected) in [
+            (Some(0u32), Some("retry-stop"), "step-max-attempts-zero"),
+            (Some(1), None, "step-max-attempts-needs-stop"),
+            (Some(1), Some(" \t"), "step-max-attempts-needs-stop"),
+            (None, Some("retry-stop"), "step-stop-without-max-attempts"),
+        ] {
+            let error = compile_err(|document| {
+                let step = document
+                    .roles
+                    .iter_mut()
+                    .flat_map(|role| &mut role.sequences)
+                    .flat_map(|sequence| &mut sequence.steps)
+                    .find(|step| step.kind == "talk")
+                    .expect("Cook has a default talk step");
+                step.max_attempts = max_attempts;
+                step.stop = stop.map(str::to_owned);
+            });
+            assert_eq!(error.code.as_ref(), expected);
+        }
+    }
 
     #[test]
     fn default_steps_allow_omitted_advances_and_dynamic_quantity_settles() {
@@ -3363,6 +3451,8 @@ mod tests {
             }),
             comment: None,
             advances: None,
+            max_attempts: None,
+            stop: None,
             skip_if: PredicateDocument::Any(vec![]),
             settle: PredicateDocument::Any(vec![]),
         };

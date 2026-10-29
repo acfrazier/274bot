@@ -102,10 +102,7 @@ impl NativeMachine for AcceptedUseOnMachine {
         Ok(Self { request_id: None })
     }
 
-    fn poll(
-        &mut self,
-        cx: &mut ActionContext<'_>,
-    ) -> Poll<Result<Self::Output, ActionError>> {
+    fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
         if let Some(request_id) = self.request_id {
             return match cx.interaction_receipt(request_id) {
                 Some(receipt) if receipt.accepted => Poll::Ready(Ok(receipt.evidence)),
@@ -159,10 +156,7 @@ struct AcceptedUseOnRun {
 }
 
 impl super::super::compile::StepRun for AcceptedUseOnRun {
-    fn poll(
-        &mut self,
-        cx: &mut StepContext<'_, '_>,
-    ) -> Poll<Result<StepOutcome, ActionError>> {
+    fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         let result = {
             let Some(handle) = self.handle.as_ref() else {
                 return Poll::Ready(Err(ActionError::Cancelled));
@@ -1182,13 +1176,7 @@ fn advancing_settle_timeout_rereads_before_retrying_after_delayed_progress() {
 
     let mut ledger = None;
     drive(&mut script, &snapshot, &mut ledger, 1);
-    finish_read(
-        &mut script,
-        &mut snapshot,
-        &mut ledger,
-        2,
-        "seeded branch",
-    );
+    finish_read(&mut script, &mut snapshot, &mut ledger, 2, "seeded branch");
     assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
     assert_eq!(begins.load(Ordering::Relaxed), 1);
     drive(&mut script, &snapshot, &mut ledger, 6);
@@ -1217,7 +1205,12 @@ fn advancing_settle_timeout_rereads_before_retrying_after_delayed_progress() {
     drive(&mut script, &snapshot, &mut ledger, 7);
     assert!(script.settling && script.needs_read);
     assert!(matches!(
-        ledger.as_ref().unwrap().outbox.first().map(|action| &action.effect),
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .first()
+            .map(|action| &action.effect),
         Some(HostEffect::Interaction(
             crate::shim::InteractReq::IfButton { .. }
         ))
@@ -1258,7 +1251,12 @@ fn advancing_settle_timeout_rereads_before_retrying_after_delayed_progress() {
 
     drive(&mut script, &snapshot, &mut ledger, 22);
     assert!(matches!(
-        ledger.as_ref().unwrap().outbox.first().map(|action| &action.effect),
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .first()
+            .map(|action| &action.effect),
         Some(HostEffect::Interaction(
             crate::shim::InteractReq::IfButton { .. }
         ))
@@ -2427,6 +2425,8 @@ fn nested_bank_fixture(owns_inventory: bool) -> NestedBankFixture {
             args: serde_json::json!({"recipe": "acquire:egg-bank-scan"}),
             comment: None,
             advances: Some(false),
+            max_attempts: None,
+            stop: None,
             skip_if: PredicateDocument::Any(vec![]),
             settle: bank_empty.clone(),
         }],
@@ -2448,6 +2448,8 @@ fn nested_bank_fixture(owns_inventory: bool) -> NestedBankFixture {
                 }),
                 comment: None,
                 advances: Some(false),
+                max_attempts: None,
+                stop: None,
                 skip_if: PredicateDocument::Any(vec![]),
                 settle: bank_known,
             },
@@ -2467,6 +2469,8 @@ fn nested_bank_fixture(owns_inventory: bool) -> NestedBankFixture {
                 }),
                 comment: None,
                 advances: Some(false),
+                max_attempts: None,
+                stop: None,
                 skip_if: bank_empty.clone(),
                 settle: bank_empty.clone(),
             },

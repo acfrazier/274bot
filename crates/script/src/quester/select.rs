@@ -721,6 +721,7 @@ mod tests {
             loadout: None,
             tactic: None,
             advances: false,
+            attempt_budget: None,
             skip_if: Arc::new(Skip(Truth::False)),
             skip_if_summary: Arc::from("never"),
             settle: Arc::new(Skip(Truth::True)),

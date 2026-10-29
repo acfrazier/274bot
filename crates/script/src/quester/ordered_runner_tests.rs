@@ -6,7 +6,7 @@ use super::tests::status_fixture;
 use super::*;
 use crate::native::ledger::Ledger;
 use crate::native::NativeActions;
-use crate::quester::compile::StepPlan;
+use crate::quester::compile::{PredicateContext, PredicatePlan, StepPlan, StepRun};
 use crate::quester::families::tests::{with_tick, with_tick_output};
 use crate::quester::path::{PathDocument, PredicateDocument, SequenceOrder, StepDocument};
 use api::snapshot::{GameSnapshot, QuestStatusView};
@@ -51,6 +51,8 @@ fn wait_step(id: &str, skip_if: PredicateDocument, settle: PredicateDocument) ->
         args: serde_json::json!({"until": {"All": []}, "max_ticks": 10}),
         comment: None,
         advances: Some(false),
+        max_attempts: None,
+        stop: None,
         skip_if,
         settle,
     }
@@ -170,12 +172,65 @@ impl StepRun for OneTickRun {
 
     fn cancel(&mut self, _: &mut NativeActions) {}
 }
+struct CountedStep(Arc<AtomicUsize>);
+
+impl StepPlan for CountedStep {
+    fn begin(
+        &self,
+        _: &mut crate::quester::compile::StepContext<'_, '_>,
+    ) -> Result<Box<dyn StepRun>, ActionError> {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        Ok(Box::new(OneTickRun { pending: false }))
+    }
+
+    fn settle_timeout(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
+}
+
+struct BlockedPoll;
+
+impl StepPlan for BlockedPoll {
+    fn begin(&self, _: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+        Ok(Box::new(BlockedPollRun))
+    }
+}
+
+struct BlockedPollRun;
+
+impl StepRun for BlockedPollRun {
+    fn poll(&mut self, _: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        Poll::Ready(Err(ActionError::Blocked(Arc::from("action blocked"))))
+    }
+
+    fn cancel(&mut self, _: &mut NativeActions) {}
+}
+
+struct AttemptGate {
+    attempts: Arc<AtomicUsize>,
+    settle_at: Option<usize>,
+}
+
+impl PredicatePlan for AttemptGate {
+    fn evaluate(&self, _: &PredicateContext<'_, '_>) -> api::selected::Truth {
+        if self
+            .settle_at
+            .is_some_and(|settle_at| self.attempts.load(Ordering::Relaxed) >= settle_at)
+        {
+            api::selected::Truth::True
+        } else {
+            api::selected::Truth::False
+        }
+    }
+}
 
 #[derive(Default)]
-struct Logs(Vec<String>);
+struct Logs(Vec<String>, Vec<ScriptStatus>);
 
 impl NativeOutput for Logs {
-    fn status(&mut self, _: ScriptStatus) {}
+    fn status(&mut self, status: ScriptStatus) {
+        self.1.push(status);
+    }
     fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
     fn log(&mut self, _: api::hostlog::Level, message: &str) {
         self.0.push(message.to_owned());
@@ -289,6 +344,7 @@ impl Harness {
             loadout: None,
             tactic: None,
             advances: false,
+            attempt_budget: None,
             skip_if: Arc::clone(&template.skip_if),
             skip_if_summary: Arc::clone(&template.skip_if_summary),
             settle: Arc::clone(&template.settle),
@@ -349,6 +405,25 @@ impl Harness {
     fn logged(&self, needle: &str) -> bool {
         self.logs.0.iter().any(|line| line.contains(needle))
     }
+}
+fn retry_harness(settle_at: Option<usize>) -> (Harness, Arc<AtomicUsize>) {
+    let mut document = document(SequenceOrder::Ordered, |_| never(), never());
+    let sequence = &mut document.roles[0].sequences[0];
+    sequence.steps.truncate(1);
+    sequence.steps[0].max_attempts = Some(32);
+    sequence.steps[0].stop = Some("retry-limit-reached".into());
+
+    let mut harness = Harness::new(document);
+    harness.script_reads(&[QuestListStatus::NotStarted]);
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let path = Arc::get_mut(&mut harness.script.path).expect("unshared path");
+    let step = &mut path.sequences[0].steps[0];
+    step.plan = Arc::new(CountedStep(Arc::clone(&attempts)));
+    step.settle = Arc::new(AttemptGate {
+        attempts: Arc::clone(&attempts),
+        settle_at,
+    });
+    (harness, attempts)
 }
 
 #[test]
@@ -582,6 +657,118 @@ fn failed_ordered_step_is_retried_in_place() {
 }
 
 #[test]
+fn budgeted_step_can_settle_after_31_failures_on_attempt_32() {
+    let (mut harness, attempts) = retry_harness(Some(32));
+    while harness
+        .script
+        .last_attempt_receipt
+        .as_ref()
+        .and_then(|receipt| receipt.attempt_count())
+        != Some(32)
+    {
+        assert!(!harness.script.parked, "budgeted step parked early");
+        harness.step();
+    }
+
+    assert_eq!(attempts.load(Ordering::Relaxed), 32);
+    assert!(!harness.script.parked);
+    let receipt = harness
+        .script
+        .last_attempt_receipt
+        .as_ref()
+        .expect("successful final attempt is receipted");
+    assert_eq!(receipt.attempt_count(), Some(32));
+    assert_eq!(
+        receipt.attempt_stop().map(|stop| stop.as_ref()),
+        Some("retry-limit-reached")
+    );
+    let status = harness
+        .logs
+        .1
+        .last()
+        .expect("final attempt publishes status");
+    assert!(status.fields.iter().any(|field| {
+        field.key == "step_attempts" && matches!(&field.value, StatusValue::Integer(32))
+    }));
+    assert!(status.fields.iter().any(|field| {
+        field.key == "step_stop"
+            && matches!(&field.value, StatusValue::Text(stop) if stop.as_ref() == "retry-limit-reached")
+    }));
+}
+
+#[test]
+fn budgeted_step_parks_on_its_named_stop_after_32_failures() {
+    let (mut harness, attempts) = retry_harness(None);
+    harness.run_until_parked();
+
+    assert_eq!(attempts.load(Ordering::Relaxed), 32);
+    assert_eq!(harness.script.step_attempts, 32);
+    assert_eq!(
+        harness
+            .script
+            .parked_step
+            .as_ref()
+            .map(|step| step.id.as_ref()),
+        Some("step-1")
+    );
+    assert!(harness
+        .script
+        .last_error
+        .as_deref()
+        .is_some_and(|error| error.contains("retry-limit-reached")));
+    let receipt = harness
+        .script
+        .last_attempt_receipt
+        .as_ref()
+        .expect("budget exhaustion is receipted");
+    assert_eq!(receipt.attempt_count(), Some(32));
+    assert_eq!(
+        receipt.attempt_stop().map(|stop| stop.as_ref()),
+        Some("retry-limit-reached")
+    );
+    let status = harness.logs.1.last().expect("parked status is published");
+    assert_eq!(status.phase, NativePhase::Blocked);
+    assert!(status.fields.iter().any(|field| {
+        field.key == "step_attempts" && matches!(&field.value, StatusValue::Integer(32))
+    }));
+    assert!(status.fields.iter().any(|field| {
+        field.key == "step_stop"
+            && matches!(&field.value, StatusValue::Text(stop) if stop.as_ref() == "retry-limit-reached")
+    }));
+}
+
+#[test]
+fn budgeted_hard_poll_failure_reports_its_named_stop() {
+    let mut document = document(SequenceOrder::Ordered, |_| never(), never());
+    document.roles[0].sequences[0].steps.truncate(1);
+    document.roles[0].sequences[0].steps[0].max_attempts = Some(1);
+    document.roles[0].sequences[0].steps[0].stop = Some("blocked-stop".into());
+
+    let mut harness = Harness::new(document);
+    harness.script_reads(&[QuestListStatus::NotStarted]);
+    let path = Arc::get_mut(&mut harness.script.path).expect("unshared path");
+    path.sequences[0].steps[0].plan = Arc::new(BlockedPoll);
+    harness.run_until_parked();
+
+    assert_eq!(harness.script.step_attempts, 1);
+    assert!(harness
+        .script
+        .last_error
+        .as_deref()
+        .is_some_and(|error| error.contains("blocked-stop")));
+    let receipt = harness
+        .script
+        .last_attempt_receipt
+        .as_ref()
+        .expect("blocked attempt is receipted");
+    assert_eq!(receipt.attempt_count(), Some(1));
+    assert_eq!(
+        receipt.attempt_stop().map(|stop| stop.as_ref()),
+        Some("blocked-stop")
+    );
+}
+
+#[test]
 fn terminal_timed_ground_step_publishes_its_receipt() {
     #[derive(Default)]
     struct Capture(Option<ScriptStatus>);
@@ -607,6 +794,8 @@ fn terminal_timed_ground_step_publishes_its_receipt() {
         }),
         comment: None,
         advances: Some(false),
+        max_attempts: None,
+        stop: None,
         skip_if: never(),
         settle: has_egg(),
     }];

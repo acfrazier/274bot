@@ -10,7 +10,9 @@ Schema 3 is the only accepted document version. `PATH_SCHEMA` is `3` (`crates/sc
 2. Add `"$schema": "../path.schema.json"` to every file in `crates/script/paths/289/`, or the matching relative path in another guide directory.
 3. Add `"advances": true` or `"advances": false` to every Explicit step kind: `talk`, `interact`, `use_on`, `make`, `combat`, `gather`, and `thieve`. Use `true` when the server changes quest progress, and `false` when it does not. Default-class kinds may omit the key, which compiles as `false`.
 
-The compiler rejects a missing `advances` on an Explicit kind with `advances-undeclared`, and a direct progress fact in `settle` without `advances: true` with `settle-needs-advance` (`crates/script/src/quester/compile.rs:1239-1252`). A direct progress fact is any of `stage_in`, `flag`, or `quest_colour`, matched through the handler's `ProgressRead` class (`crates/script/src/quester/compile.rs:1330-1341`). A journal count used as an item quantity (`qty: { "progress": ... }`) is inventory evidence, not a direct progress fact, and does not require it (`crates/script/src/quester/families/s2.rs:57-62`, `crates/script/src/quester/families/mod.rs:849-854`).
+The compiler rejects a missing `advances` on an Explicit kind with `advances-undeclared` (`crates/script/src/quester/compile.rs:1708-1711`), and a direct progress fact in `settle` without `advances: true` with `settle-needs-advance` (`crates/script/src/quester/compile.rs:1714-1721`). A direct progress fact is any of `stage_in`, `flag`, or `quest_colour`, matched through the handler's `ProgressRead` class (`crates/script/src/quester/compile.rs:1799-1809`). A journal count used as an item quantity (`qty: { "progress": ... }`) is inventory evidence, not a direct progress fact, and does not require it (`crates/script/src/quester/families/s2.rs:57-62`, `crates/script/src/quester/families/mod.rs:849-854`).
+
+An optional step budget uses positive `max_attempts` with a nonblank `stop` name; the compiler and generated schema reject missing partners, zero, or blank names. Failed begins, poll failures, and settle timeouts count against the budget; a successful settle is also included in its receipt. Exhausting the limit parks with the named stop. An advancing step requests a fresh progress read after a settle timeout and before any retry. Steps without a budget retain the legacy five-failure park rule.
 
 ## Register a step or fact handler
 
@@ -20,7 +22,7 @@ Each `step!` row declares an `AdvanceClass`: `Explicit` or `Default` (`crates/sc
 
 ## Generated schema and shape checks
 
-`crates/script/src/quester/schema.rs:193` renders `paths/path.schema.json` from the Rust document and handler types, and `:212` resolves the output path. The `#[ignore]` test `regen_path_schema` rewrites the file (`crates/script/tests/path_schema.rs:336`). Numeric constraints use standard JSON Schema `type`, `minimum`, and `maximum`, with no custom format plugin (`crates/script/tests/path_schema.rs:300-335`).
+`crates/script/src/quester/schema.rs:201` renders `paths/path.schema.json` from the Rust document and handler types, and `:220` resolves the output path. The `#[ignore]` test `regen_path_schema` rewrites the file (`crates/script/tests/path_schema.rs:336`). Numeric constraints use standard JSON Schema `type`, `minimum`, and `maximum`, with no custom format plugin (`crates/script/tests/path_schema.rs:300-335`).
 
 `npx --yes -p ajv-cli@5.0.0 ajv validate --spec=draft2020 --errors=text -s crates/script/paths/path.schema.json -d crates/script/paths/289/<id>.json`
 
@@ -175,7 +177,7 @@ Probe every multi-step sequence at each state it should resume from, and every `
 
 Sequence order is `SequenceOrder::Authored`, `Nearest`, or `Ordered` (`crates/script/src/quester/path.rs:44-62`). The ordered cursor restarts on every run start, resume, death, or stage change, so every step must be safe to replay (`crates/script/src/quester/runner.rs:1944-1985`). One exception keeps the cursor while paired work is pending (`crates/script/src/quester/runner.rs:3197-3199`).
 
-Journal latency never spends the family's post-read settle window (`crates/script/src/quester/runner.rs:1991-1992`). The no-progress watchdog warns at three unchanged step boundaries and parks at eight (`crates/script/src/quester/watchdog.rs:1-2,83-100`). The run trace keeps 32 events and folds repeats into `(repeated N additional times)` (`crates/script/src/quester/runner.rs:126,212`). An `acquire` recipe restarts at most 8 times past its last settled child (`crates/script/src/quester/families/mod.rs:3633-3648`).
+Journal latency never spends the family's post-read settle window (`crates/script/src/quester/runner.rs:1991-1992`). The no-progress watchdog warns at three unchanged step boundaries and parks at eight (`crates/script/src/quester/watchdog.rs:1-2,83-100`); budgeted failed attempts use their per-step stop instead of the watchdog. A step receipt reports the attempt count and named stop. The run trace keeps 32 events and folds repeats into `(repeated N additional times)` (`crates/script/src/quester/runner.rs:126,212`). An `acquire` recipe restarts at most 8 times past its last settled child (`crates/script/src/quester/families/mod.rs:3633-3648`).
 
 Paired validation compiles each declared gang role before the guide is available, and names the failing gang alongside the per-file error (`crates/script/src/quester/registry.rs:1159-1180`). A run activates only the account's effective gang after owned membership admission (`crates/script/src/quester/pair.rs:65`, `crates/script/src/quester/gang.rs:132-160`).
 

@@ -277,6 +277,13 @@ pub struct StepDocument {
     /// Required for Explicit handler kinds; omitted Default kinds behave as false.
     #[serde(default)]
     pub advances: Option<bool>,
+    /// Maximum number of attempts for this step before it parks.
+    /// Requires `stop` and must be greater than zero.
+    #[serde(default)]
+    pub max_attempts: Option<u32>,
+    /// Named stop reported when `max_attempts` is exhausted.
+    #[serde(default)]
+    pub stop: Option<String>,
     /// Predicate which skips this step when proven true.
     pub skip_if: PredicateDocument,
     /// Predicate which settles this step after execution.
