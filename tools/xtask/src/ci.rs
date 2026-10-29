@@ -446,10 +446,10 @@ fn run_test_step(step: &Step, command: &str, root: &Path, log: &mut File) -> Res
         }
         let cargo_home = env::var_os("CARGO_HOME")
             .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| home.join(".cargo"));
+            .unwrap_or_else(|| home.join(".cargo").into_os_string());
         let rustup_home = env::var_os("RUSTUP_HOME")
             .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| home.join(".rustup"));
+            .unwrap_or_else(|| home.join(".rustup").into_os_string());
         process.env("CARGO_HOME", cargo_home);
         process.env("RUSTUP_HOME", rustup_home);
         process.env("BOT_NAV_SNAPSHOT_ROOT", snapshot_root);
@@ -1002,8 +1002,8 @@ fn ensure_flatc(cache: &Path, log: &mut File) -> Result<PathBuf, String> {
         .map_err(io_error)?;
         fs::remove_file(&binary).map_err(io_error)?;
     }
-    let _ = fs::remove_file(archive_pin);
-    let _ = fs::remove_file(binary_pin);
+    let _ = fs::remove_file(&archive_pin);
+    let _ = fs::remove_file(&binary_pin);
 
     let archive = download_dir.join("flatc-linux.zip");
     if !archive.is_file() || file_sha256(&archive, log)? != FLATC_ARCHIVE_SHA256 {
