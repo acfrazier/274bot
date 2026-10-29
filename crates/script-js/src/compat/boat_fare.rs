@@ -1143,6 +1143,8 @@ impl Recover {
             false,
             Vec::new(),
             Vec::new(),
+            None,
+            None,
             cx,
         ) {
             Ok(walk) => Ok(Stage::TalkWalk { second, walk }),
@@ -1379,6 +1381,8 @@ impl Family for WalkTo {
             allow_teleports,
             avoid.clone(),
             cross.clone(),
+            None,
+            None,
             cx,
         ) {
             Ok(walk) => Begin::Run(Self {
@@ -1503,6 +1507,8 @@ impl WalkTo {
                     self.allow_teleports,
                     self.avoid.clone(),
                     self.cross.clone(),
+                    None,
+                    None,
                     cx,
                 ) {
                     Ok(walk) => {

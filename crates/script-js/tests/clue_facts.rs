@@ -995,6 +995,8 @@ export async function tick(api) {
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 0,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -1113,6 +1115,8 @@ export async function tick(api) {
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 0,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -1247,6 +1251,8 @@ fn clue_walk(x: i32, z: i32, level: i32) -> InteractReq {
         request_id: 0,
         avoid: Vec::new(),
         cross: Vec::new(),
+        allow_prereq_dialogue: None,
+        allow_quest_start: None,
     }
 }
 

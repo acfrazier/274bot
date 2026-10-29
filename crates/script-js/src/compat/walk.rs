@@ -790,6 +790,10 @@ impl Walk {
     }
 
     /// Compat `Traversal` walks preserve a walkable requested tile as route end.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Preserve the original routing policy and both request-level consent overrides"
+    )]
     pub(crate) fn begin_compat_avoiding(
         dest: WorldTile,
         radius: i32,
@@ -1060,6 +1064,8 @@ impl Resilient {
             phase: Phase::NeedWalk,
             best_dist,
             no_progress: 0,
+            delay_left: 0,
+            unstick_dir: 0,
             last_probe_terminal: None,
             unreachable: false,
             recover: true,

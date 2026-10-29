@@ -804,6 +804,8 @@ fn a_compat_walk_near_a_solid_tile_plans_the_hint_trip_with_the_bank_closed() {
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: true,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id: 43,
                 avoid: Vec::new(),
                 cross: Vec::new(),
