@@ -805,15 +805,6 @@ fn wait_for_inventory_slots(fixture: &LiveFixture, slots: usize) -> u32 {
     )
 }
 
-fn pie_counts(fixture: &LiveFixture, snapshot: &GameSnapshot) -> (i32, i32) {
-    let meat = item_id(&fixture.selected, "meat_pie");
-    let apple = item_id(&fixture.selected, "apple_pie");
-    (
-        item_count(snapshot.inventory(), meat),
-        item_count(snapshot.inventory(), apple),
-    )
-}
-
 fn start_compat(fixture: &LiveFixture, source: String) -> RunKey {
     let run = fixture.seed_run.next_run().expect("next compat run key");
     fixture
