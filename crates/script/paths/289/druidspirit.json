@@ -1,0 +1,51 @@
+{
+  "$schema":"../path.schema.json",
+  "schema":3,
+  "id":"druidspirit",
+  "display_name":"Nature Spirit",
+  "required":["quest:priest","quest:priestperil"],
+  "tested_stats":null,
+  "partner":null,
+  "quest":{
+    "members":true,
+    "quest_points":2,
+    "requirements":[
+      {"id":"quest:priest","kind":{"Quest":"priest"},"at":"start","source":"content/scripts/quests/quest_druidspirit/scripts/druidspirit_journal.rs2:23-30"},
+      {"id":"quest:priestperil","kind":{"Quest":"priestperil"},"at":"start","source":"content/scripts/quests/quest_druidspirit/scripts/druidspirit_journal.rs2:31-35"}
+    ],
+    "items":[],"acquire":{},"bank":"nearest","coin_float":0,"loadouts":{},
+    "areas":{
+      "swamp":{"boxes":[[3392,3270,3519,3457,0]],"source":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:1-16; content/maps/m53_54.jm2:5096"},
+      "grotto_island":{"boxes":[[3437,3331,3445,3342,0]],"source":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:26-34,92-100"}
+    },
+    "tools":["obj:amulet_of_ghostspeak","obj:mirror","obj:silver_sickle"],"owns_inventory":true
+  },
+  "roles":[{
+    "role":null,"progress_binding":"journal:druidspirit",
+    "progress":{"colour":{"not_started":"druidspirit:0","in_progress":"druidspirit:5","complete":"druidspirit:complete"},
+      "rules":[{"stage":"druidspirit:5","all":["i need to look for", "filliman tarlock"],"any":[],"not":[],"varp":5}],"flags":[],"monotonic":false},
+    "prelude":[],"sequences":[
+      {"stage":"druidspirit:0","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"ask-drezel","kind":"talk","version":1,"advances":true,
+         "comment":"content/scripts/areas/area_mausoleum/scripts/drezel.rs2:1,160-161,275-304,328-337; content/maps/m53_154.jm2:6139; content/pack/npc.pack:1050.",
+         "args":{"npc":"priestperiltrappedmonk2","anchor":{"tile":[3440,9895,0],"source":"content/maps/m53_154.jm2:6139"},"leash":8,"prefer":["Yes, I'm sure.","Yes, I'll go and look for him.","Well, what is it, I may be able to help?","Is there anything else interesting to do around here?"],"strict":true},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"druidspirit","is":"in_progress"}}}}
+      ]},
+      {"stage":"druidspirit:5","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"enter-mort-myre","kind":"interact","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:1-16; content/maps/m53_54.jm2:5096; content/pack/loc.pack:3507.",
+         "args":{"target":{"loc":"mortmyre_metalgateclosed_l"},"op":"Open","anchor":{"tile":[3444,3458,0],"source":"content/maps/m53_54.jm2:5096"},"radius":4},
+         "skip_if":{"Fact":{"kind":"in_area","version":1,"args":{"area":"swamp"}}},"settle":{"Fact":{"kind":"in_area","version":1,"args":{"area":"swamp"}}}},
+        {"id":"jump-to-grotto-island","kind":"interact","version":1,"advances":false,
+         "comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:26-61; content/maps/m53_52.jm2:5675-5681; content/scripts/quests/quest_druidspirit/configs/quest_druidspirit.loc:169-179. A failed agility roll can cause damage.",
+         "args":{"target":{"loc":"druidjump_loc"},"op":"Jump","anchor":{"tile":[3440,3330,0],"source":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:26-34"},"radius":4},
+         "skip_if":{"Fact":{"kind":"in_area","version":1,"args":{"area":"grotto_island"}}},"settle":{"Fact":{"kind":"in_area","version":1,"args":{"area":"grotto_island"}}}},
+        {"id":"approach-grotto","kind":"walk","version":1,
+         "comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:92-100; content/maps/m53_52.jm2:5135. The next operation opens Filliman's repeated menu and is intentionally not authored.",
+         "args":{"tile":[3440,3336,0],"source":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:95-100","radius":1},
+         "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[3440,3336,0],"radius":1}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[3440,3336,0],"radius":1}}}}
+      ]},
+      {"stage":"druidspirit:complete","required":[],"terminal":true,"recovery_entry":null,"steps":[]}
+    ]
+  }]
+}

@@ -1,0 +1,71 @@
+{
+  "$schema":"../path.schema.json",
+  "schema":3,
+  "id":"routequest",
+  "display_name":"In Search of the Myreque",
+  "required":["quest:druidspirit","agility:25"],
+  "tested_stats":null,
+  "partner":null,
+  "quest":{
+    "members":true,
+    "quest_points":2,
+    "requirements":[{"id":"quest:druidspirit","kind":{"Quest":"druidspirit"},"at":"start","source":"content/scripts/quests/quest_routequest/scripts/routequest_vanstorm.rs2:43-50; content/scripts/quests/quest_routequest/scripts/routequest_journal.rs2:16-24"},{"id":"agility:25","kind":{"Skill":{"skill":"agility","level":25}},"at":"start","source":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:118-127"}],
+    "items":[],"acquire":{},"bank":"nearest","coin_float":0,"loadouts":{},
+    "areas":{"hollows":{"boxes":[[3456,3328,3519,3391,0]],"source":"content/scripts/quests/quest_routequest/scripts/routequest_morton.rs2:34-55"}},
+    "tools":["obj:steel_longsword","obj:steel_sword","obj:steel_dagger","obj:steel_mace","obj:steel_warhammer","obj:druid_pouch","obj:woodplank","obj:nails","obj:hammer","obj:coins"],"owns_inventory":true
+  },
+  "roles":[{
+    "role":null,"progress_binding":"journal:routequest",
+    "progress":{
+      "colour":{"not_started":"routequest:0","in_progress":"routequest:5","complete":"routequest:complete"},
+      "rules":[
+        {"stage":"routequest:52","all":["a guard named", "asked me to answer some questions"],"any":[],"not":[],"varp":52},
+        {"stage":"routequest:25","all":["i borrowed the", "hollows"],"any":[],"not":[],"varp":25},
+        {"stage":"routequest:20","all":["the boatman", "but i can use his"],"any":[],"not":[],"varp":20},
+        {"stage":"routequest:15","all":["i've persuaded", "the boatman"],"any":[],"not":[],"varp":15},
+        {"stage":"routequest:10","all":["the boatman", "won't take me"],"any":[],"not":[],"varp":10},
+        {"stage":"routequest:5","all":["the weapons i need to collect are"],"any":[],"not":[],"varp":5}
+      ],"flags":[],"monotonic":false
+    },
+    "prelude":[],"sequences":[
+      {"stage":"routequest:0","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"start-myreque","kind":"talk","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_routequest/scripts/routequest_vanstorm.rs2:42-65,74-82,91-94,116-120; content/maps/m54_54.jm2:7623.",
+         "args":{"npc":"route_vanstrom_klause_sitting","anchor":{"tile":[3503,3477,0],"source":"content/maps/m54_54.jm2:7623"},"leash":8,"prefer":["Yes, I'll do it!","Perhaps I could help you out here.","Why do they need help? Are they in trouble?"],"strict":true},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"routequest","is":"in_progress"}}}}
+      ]},
+      {"stage":"routequest:5","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"persuade-cyreg","kind":"talk","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_routequest/scripts/routequest_morton.rs2:57-77,89-96,106-111,125-132,134-153,155-157,174-180,188-216; content/maps/m55_51.jm2:4547. Carry all six steel weapons, five pouch charges and six planks.",
+         "args":{"npc":"route_cyreg_paddlehorn","anchor":{"tile":[3522,3284,0],"source":"content/maps/m55_51.jm2:4547"},"leash":8,"prefer":["Give wooden planks to Cyreg.","What kind of a man are you to say that you don't care?","If you don't tell me, their deaths are on your head!","Resourceful enough to get their own steel weapons?","Well, I guess they'll just die without weapons."],"strict":true},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:20","routequest:25","routequest:52"]}}}}
+      ]},
+      {"stage":"routequest:10","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"resume-cyreg-persuasion","kind":"talk","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_routequest/scripts/routequest_morton.rs2:73-77,89-96,106-111,125-132,134-153,155-157,174-180,188-216. This resumes after an interrupted persuasion conversation.",
+         "args":{"npc":"route_cyreg_paddlehorn","anchor":{"tile":[3522,3284,0],"source":"content/maps/m55_51.jm2:4547"},"leash":8,"prefer":["Give wooden planks to Cyreg.","What kind of a man are you to say that you don't care?","If you don't tell me, their deaths are on your head!","Resourceful enough to get their own steel weapons?","Well, I guess they'll just die without weapons."],"strict":true},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:20","routequest:25","routequest:52"]}}}}
+      ]},
+      {"stage":"routequest:15","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"give-cyreg-planks","kind":"talk","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_routequest/scripts/routequest_morton.rs2:75-77,188-216. Five druid pouch charges and three planks are required; keep three more planks for the bridge.",
+         "args":{"npc":"route_cyreg_paddlehorn","anchor":{"tile":[3522,3284,0],"source":"content/maps/m55_51.jm2:4547"},"leash":8,"prefer":["Give wooden planks to Cyreg."],"strict":true},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:20","routequest:25","routequest:52"]}}}}
+      ]},
+      {"stage":"routequest:20","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"board-mortton-boat","kind":"interact","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_routequest/scripts/routequest_morton.rs2:1-21,34-55; content/maps/m55_51.jm2:4165; content/scripts/_unpack/289/all.loc:1909-1915. The journey contains p_delay(13).",
+         "args":{"target":{"loc":"route_rowboat","tile":[3523,3284,0],"source":"content/maps/m55_51.jm2:4165"},"op":"Board","anchor":{"tile":[3523,3284,0],"source":"content/maps/m55_51.jm2:4165"},"radius":4,"dialogue":{"prefer":["Yes, I'll pay ten gold."],"strict":true,"gap_ticks":14}},
+         "skip_if":{"Fact":{"kind":"in_area","version":1,"args":{"area":"hollows"}}},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:25","routequest:52"]}}}}
+      ]},
+      {"stage":"routequest:25","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"climb-south-tree","kind":"interact","version":1,"advances":false,
+         "comment":"content/scripts/quests/quest_routequest/scripts/routequest_hollow.rs2:48-70; content/maps/m54_53.jm2:5555,5952-5955; content/scripts/_unpack/289/all.loc:1394-1401. Stop at the bridge: the tree operation preserves level 0 while the rungs are placed on level 1.",
+         "args":{"target":{"loc":"harmless_dead_palm_mid","tile":[3502,3426,0],"source":"content/maps/m54_53.jm2:5555"},"op":"Climb up","anchor":{"tile":[3502,3426,0],"source":"content/maps/m54_53.jm2:5555"},"radius":4},
+         "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[3502,3427,0],"radius":0}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[3502,3427,0],"radius":0}}}}
+      ]},
+      {"stage":"routequest:52","required":[],"terminal":false,"recovery_entry":null,"steps":[]},
+      {"stage":"routequest:complete","required":[],"terminal":true,"recovery_entry":null,"steps":[]}
+    ]
+  }]
+}

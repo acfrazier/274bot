@@ -1,0 +1,43 @@
+{
+  "$schema": "../path.schema.json", "schema": 3, "id": "regicide", "display_name": "Regicide",
+  "required": ["upass", "agility-56", "crafting-10"], "tested_stats": null, "partner": null,
+  "quest": {
+    "members": true, "quest_points": 3,
+    "requirements": [
+      {"id":"upass","kind":{"Quest":"upass"},"at":"start","source":"C:scripts/quests/quest_regicide/scripts/regicide_kings_messenger.rs2:1-4"},
+      {"id":"agility-56","kind":{"Skill":{"skill":"agility","level":56}},"at":"start","source":"C:scripts/quests/quest_regicide/scripts/regicide_journal.rs2:16-20"},
+      {"id":"crafting-10","kind":{"Skill":{"skill":"crafting","level":10}},"at":"start","source":"C:scripts/quests/quest_regicide/scripts/regicide_journal.rs2:21-25"}
+    ],
+    "items": [], "acquire": {}, "bank": "nearest", "coin_float": 0, "loadouts": {}, "areas": {}, "tools": [], "owns_inventory": true
+  },
+  "roles": [{"role":null,"progress_binding":"journal:regicide",
+    "progress":{"colour":{"not_started":"regicide:0","in_progress":"regicide:1","complete":"regicide:complete"},"rules":[
+      {"stage":"regicide:2","all":["king lathas has asked me to re-enter the underground pass"],"any":[],"not":[],"varp":2},
+      {"stage":"regicide:1","all":["a courier has given me a message"],"any":[],"not":[],"varp":1}
+    ],"flags":[],"monotonic":true},"prelude":[],"sequences":[
+      {"stage":"regicide:0","required":[],"terminal":false,"recovery_entry":null,"steps":[{
+        "id":"wait-for-kings-summons","kind":"wait","version":1,"advances":true,
+        "args":{"until":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"regicide_quest_kings_summons"}}},"max_ticks":1250,"park_on_timeout":true},
+        "comment":"C:scripts/quests/quest_regicide/scripts/regicide_kings_messenger.rs2:1-26 schedules a messenger at random 400-1200 ticks and grants the summons and stage 1. The extra 50 ticks allow arrival.",
+        "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"regicide_quest_kings_summons"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"regicide_quest_kings_summons"}}}
+      }]},
+      {"stage":"regicide:1","required":[],"terminal":false,"recovery_entry":null,"steps":[{
+        "id":"speak-to-lathas","kind":"talk","version":1,"advances":true,
+        "args":{"npc":"kinglathas","anchor":{"tile":[2578,3293,1],"source":"C:maps/m40_51.jm2:10828-10832; C:pack/npc.pack:365"},"leash":8,"prefer":[]},
+        "comment":"C:scripts/areas/area_ardougne_east/scripts/king_lathas.rs2:30-37 moves stage 1 to 2.","skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"regicide","any":["regicide:2"]}}}
+      }]},
+      {"stage":"regicide:2","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"enter-underground-pass","kind":"interact","version":1,"advances":false,
+         "args":{"target":{"loc":"upass_caveentrance2"},"op":"Enter","anchor":{"tile":[2433,3313,0],"source":"C:maps/m38_51.jm2:4669; C:pack/loc.pack:3214"},"radius":5},
+         "comment":"C:scripts/quests/quest_upass/scripts/quest_upass.rs2:80-97 sends completed Underground Pass players to 2494,9716,0.",
+         "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[2494,9716,0],"radius":60}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2494,9716,0],"radius":3}}}},
+        {"id":"approach-floor-grid","kind":"walk","version":1,"args":{"tile":[2478,9677,0],"radius":0,"source":"C:scripts/quests/quest_upass/configs/quest_upass.constant:36-38; C:scripts/quests/quest_upass/scripts/upass_grid.rs2:60-82"},
+         "comment":"Approach east of the floor grid without entering its timed hazard. C:scripts/quests/quest_upass/scripts/upass_grid.rs2:60-99; route reachability is unverified.",
+         "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[2478,9677,0],"radius":1}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2478,9677,0],"radius":1}}}},
+        {"id":"GAP-upass-grid","kind":"wait","version":1,"args":{"until":{"Fact":{"kind":"near","version":1,"args":{"tile":[2466,9677,0],"radius":1}}},"max_ticks":20,"park_on_timeout":true},
+         "comment":"GAP GRID: C:scripts/quests/quest_upass/scripts/upass_grid.rs2:45-58,60-99 assigns a per-player randomized safe route; an incorrect tile falls to spikes for 15 damage. A controller must determine the safe route and cross with observed position and recovery. This wait deliberately parks; it does not cross.",
+         "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[2466,9677,0],"radius":1}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2466,9677,0],"radius":1}}}}
+      ]},
+      {"stage":"regicide:complete","required":[],"terminal":true,"recovery_entry":null,"steps":[]}
+    ]}]
+}

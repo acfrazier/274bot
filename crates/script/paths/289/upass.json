@@ -1,0 +1,82 @@
+{
+  "$schema": "../path.schema.json", "schema": 3, "id": "upass", "display_name": "Underground Pass",
+  "required": ["biohazard", "ranged-25"], "tested_stats": null, "partner": null,
+  "quest": {
+    "members": true, "quest_points": 5,
+    "requirements": [
+      { "id": "biohazard", "kind": { "Quest": "biohazard" }, "at": "start", "source": "C:scripts/areas/area_ardougne_east/scripts/king_lathas.rs2:73-88; C:scripts/quests/quest_upass/scripts/quest_upass.rs2:80-84" },
+      { "id": "ranged-25", "kind": { "Skill": { "skill": "ranged", "level": 25 } }, "at": "start", "source": "C:scripts/areas/area_ardougne_east/scripts/king_lathas.rs2:88-99" }
+    ],
+    "items": [], "bank": "nearest", "coin_float": 0, "loadouts": {}, "areas": {},
+    "tools": ["obj:bronze_arrow", "obj:shortbow", "obj:tinderbox", "obj:rope", "obj:damp_cloth", "obj:unlitarrow", "obj:litarrow"], "owns_inventory": true,
+    "acquire": {
+      "bridge-attempts": [
+        { "id": "obtain-damp-cloth", "kind": "talk", "version": 1, "advances": false,
+          "args": { "npc": "caveguide2", "anchor": { "tile": [2449, 9716, 0], "source": "C:maps/m38_151.jm2:9399; C:pack/npc.pack:974" }, "leash": 8, "prefer": ["Not to worry, probably just litter."], "strict": true },
+          "comment": "C:scripts/quests/quest_upass/scripts/koftik.rs2:57-87 gives a damp cloth when none is held.",
+          "skip_if": { "Any": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "damp_cloth" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unlitarrow" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "litarrow" } } }, { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "litarrow" } } }] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "damp_cloth" } } } },
+        { "id": "wrap-arrow", "kind": "use_on", "version": 1, "advances": false,
+          "args": { "item": "bronze_arrow", "target": { "item": "damp_cloth" }, "product": "unlitarrow" },
+          "comment": "C:scripts/quests/quest_upass/scripts/upass_bridge.rs2:1-22 consumes one damp cloth and one bronze arrow.",
+          "skip_if": { "Any": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unlitarrow" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "litarrow" } } }, { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "litarrow" } } }] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unlitarrow" } } } },
+        { "id": "light-arrow", "kind": "use_on", "version": 1, "advances": false,
+          "args": { "item": "unlitarrow", "target": { "item": "tinderbox" }, "product": "litarrow" },
+          "comment": "C:scripts/skill_firemaking/scripts/firemaking.rs2:12-17 and C:scripts/quests/quest_upass/scripts/upass_bridge.rs2:24-31 light the wrapped arrow using a tinderbox.",
+          "skip_if": { "Any": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "litarrow" } } }, { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "litarrow" } } }] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "litarrow" } } } },
+        { "id": "wear-bow", "kind": "equip", "version": 1, "args": { "obj": "shortbow" },
+          "comment": "C:scripts/quests/quest_upass/scripts/upass_bridge.rs2:43-58 requires a worn bow.",
+          "skip_if": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "shortbow" } } }, "settle": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "shortbow" } } } },
+        { "id": "wear-fire-arrow", "kind": "equip", "version": 1, "args": { "obj": "litarrow" },
+          "comment": "C:scripts/quests/quest_upass/scripts/upass_bridge.rs2:43-63 requires and consumes a worn lit arrow.",
+          "skip_if": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "litarrow" } } }, "settle": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "litarrow" } } } },
+        { "id": "shoot-guide-rope", "kind": "interact", "version": 1, "advances": true,
+          "args": { "target": { "loc": "oldbridge_guiderope" }, "op": "Fire-at", "anchor": { "tile": [2454, 9723, 0], "source": "C:maps/m38_151.jm2:5139; C:scripts/quests/quest_upass/scripts/upass_bridge.rs2:33-40" }, "radius": 8 },
+          "comment": "C:scripts/quests/quest_upass/scripts/upass_bridge.rs2:33-87 consumes the arrow, rolls Ranged, and either reports a miss or crosses and sets stage 2.",
+          "skip_if": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "upass", "any": ["upass:2"] } } },
+          "settle": { "Any": [{ "Fact": { "kind": "message", "version": 1, "args": { "any": ["the arrow just misses the rope"] } } }, { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "upass", "any": ["upass:2"] } } }] } }
+      ]
+    }
+  },
+  "roles": [{ "role": null, "progress_binding": "journal:upass",
+    "progress": { "colour": { "not_started": "upass:0", "in_progress": "upass:started", "complete": "upass:complete" },
+      "rules": [
+        { "stage": "upass:2", "all": ["i must work my way deeper into these caverns"] },
+        { "stage": "upass:1", "all": ["i have met koftik", "bridge"] },
+        { "stage": "upass:started", "all": ["king lathas asked me to meet a tracker named"] }
+      ], "flags": [], "monotonic": false },
+    "prelude": [], "sequences": [
+      { "stage": "upass:0", "required": [], "terminal": false, "recovery_entry": null, "steps": [
+        { "id": "start-lathas", "kind": "talk", "version": 1, "advances": true,
+          "args": { "npc": "kinglathas", "anchor": { "tile": [2578, 3293, 1], "source": "C:maps/m40_51.jm2:10832; C:pack/npc.pack:365" }, "leash": 8, "prefer": [] },
+          "comment": "C:scripts/areas/area_ardougne_east/scripts/king_lathas.rs2:73-107 checks Biohazard and Ranged 25, then sets the started bit and generates the grid.",
+          "skip_if": { "Any": [] }, "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "upass", "any": ["upass:started"] } } } }
+      ] },
+      { "stage": "upass:started", "required": [], "terminal": false, "recovery_entry": null, "steps": [
+        { "id": "talk-koftik", "kind": "talk", "version": 1, "advances": true,
+          "args": { "npc": "caveguide1", "anchor": { "tile": [2436, 3315, 0], "source": "C:maps/m38_51.jm2:7207; C:pack/npc.pack:973" }, "leash": 8, "prefer": ["I'll take my chances."], "strict": true },
+          "comment": "C:scripts/quests/quest_upass/scripts/koftik.rs2:1-5,34-47 sets stage 1.",
+          "skip_if": { "Any": [] }, "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "upass", "any": ["upass:1"] } } } }
+      ] },
+      { "stage": "upass:1", "required": [], "terminal": false, "recovery_entry": null, "steps": [
+        { "id": "enter-cave", "kind": "interact", "version": 1, "advances": false,
+          "args": { "target": { "loc": "upass_caveentrance2" }, "op": "Enter", "anchor": { "tile": [2433, 3313, 0], "source": "C:maps/m38_51.jm2:4669; C:pack/loc.pack:3214" }, "radius": 5 },
+          "comment": "C:scripts/quests/quest_upass/scripts/quest_upass.rs2:80-97 sends eligible players to the cave.",
+          "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2494, 9716, 0], "radius": 64 } } }, "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2494, 9716, 0], "radius": 3 } } } },
+        { "id": "cross-fire-bridge", "kind": "acquire", "version": 1,
+          "args": { "recipe": "bridge-attempts" },
+          "comment": "C:scripts/quests/quest_upass/scripts/upass_bridge.rs2:63-87 may miss and consume the arrow. The recipe repeats while the landing is not observed. Its advancing child reads the stage.",
+          "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2442, 9716, 0], "radius": 2 } } }, "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2442, 9716, 0], "radius": 2 } } } }
+      ] },
+      { "stage": "upass:2", "required": [], "terminal": false, "recovery_entry": null, "order": "ordered", "steps": [
+        { "id": "approach-grid", "kind": "walk", "version": 1,
+          "args": { "tile": [2478, 9677, 0], "source": "C:scripts/quests/quest_upass/configs/quest_upass.constant:36-38; C:scripts/quests/quest_upass/scripts/upass_grid.rs2:60-82", "radius": 0 },
+          "comment": "C:scripts/quests/quest_upass/scripts/upass_grid.rs2:60-99 defines the timed trap; this is the east-side approach, not a grid crossing.",
+          "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2478, 9677, 0], "radius": 0 } } }, "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2478, 9677, 0], "radius": 0 } } } }
+      ] },
+      { "stage": "upass:complete", "required": [], "terminal": true, "recovery_entry": null, "steps": [] }
+    ]
+  }]
+}

@@ -1,0 +1,197 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "horror",
+  "display_name": "Horror from the Deep",
+  "required": [
+    "agility-35"
+  ],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 2,
+    "requirements": [
+      {
+        "id": "agility-35",
+        "kind": {
+          "Skill": {
+            "skill": "agility",
+            "level": 35
+          }
+        },
+        "at": "start",
+        "source": "content/scripts/quests/quest_horror/scripts/horror_journal.rs2:3-7"
+      }
+    ],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {},
+    "tools": [
+      "obj:horror_key",
+      "obj:woodplank",
+      "obj:nails",
+      "obj:hammer"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:horror",
+      "progress": {
+        "colour": {
+          "not_started": "horror:0",
+          "in_progress": "horror:1",
+          "complete": "horror:10"
+        },
+        "rules": [],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "horror:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "horror_girlfriend_prequest",
+                "anchor": {
+                  "tile": [
+                    2508,
+                    3635,
+                    0
+                  ],
+                  "source": "content/maps/m39_56.jm2:5550; pack/npc.pack:1337"
+                },
+                "leash": 8,
+                "prefer": [
+                  "With what?",
+                  "But how can I help?",
+                  "Okay, I'll help!",
+                  "I'll see what I can do"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "horror",
+                    "is": "in_progress"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_horror/scripts/horror_girlfriend.rs2:49-53,81-93,107-119; maps/m39_56.jm2:5550.",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "horror:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "gunnjorn-key",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "gunnjorn",
+                "anchor": {
+                  "tile": [
+                    2540,
+                    3548,
+                    0
+                  ],
+                  "source": "content/maps/m39_55.jm2:6149; pack/npc.pack:608"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "horror_key"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "horror_key"
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_barbarian_outpost/scripts/gunnjorn.rs2:1-27; content/maps/m39_55.jm2:6149.",
+              "advances": false
+            },
+            {
+              "id": "repair-bridge-left",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "woodplank",
+                "target": {
+                  "loc": "horror_broken_bridge_left_spot"
+                },
+                "radius": 4
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {
+                      "obj": "woodplank",
+                      "qty": 2
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {
+                      "obj": "woodplank",
+                      "qty": 2
+                    }
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_horror/scripts/quest_horror.rs2:110-137. The config exists but no placement was found in content/maps; see report.",
+              "advances": false
+            }
+          ]
+        },
+        {
+          "stage": "horror:10",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

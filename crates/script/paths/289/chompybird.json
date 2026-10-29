@@ -1,0 +1,47 @@
+{
+  "$schema":"../path.schema.json",
+  "schema":3,
+  "id":"chompybird",
+  "display_name":"Big Chompy Bird Hunting",
+  "required":["fletching-5","cooking-30","ranged-30"],
+  "tested_stats":null,
+  "partner":null,
+  "quest":{
+    "members":true,
+    "quest_points":2,
+    "requirements":[
+      {"id":"fletching-5","kind":{"Skill":{"skill":"fletching","level":5}},"at":"start","source":"content/scripts/quests/quest_chompybird/scripts/chompybird_journal.rs2:8-14"},
+      {"id":"cooking-30","kind":{"Skill":{"skill":"cooking","level":30}},"at":"start","source":"content/scripts/quests/quest_chompybird/scripts/chompybird_journal.rs2:16-20"},
+      {"id":"ranged-30","kind":{"Skill":{"skill":"ranged","level":30}},"at":"start","source":"content/scripts/quests/quest_chompybird/scripts/chompybird_journal.rs2:22-26"}
+    ],
+    "items":[],
+    "acquire":{},"bank":"nearest","coin_float":0,"loadouts":{},"areas":{},"tools":["obj:ogre_headless_arrow","obj:wolfbone_arrowheads","obj:ogre_arrow"],"owns_inventory":true
+  },
+  "roles":[{
+    "role":null,"progress_binding":"journal:chompybird",
+    "progress":{"colour":{"not_started":"chompybird:0","in_progress":"chompybird:5","complete":"chompybird:65"},
+      "rules":[
+        {"stage":"chompybird:5","all":["i agreed to get","some"],"any":[],"not":[],"varp":5}
+      ],"flags":[],"monotonic":false},
+    "prelude":[],"sequences":[
+      {"stage":"chompybird:0","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"start-rantz","kind":"talk","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_chompybird/scripts/rantz.rs2:24-49; content/maps/m41_46.jm2:4491-4492",
+         "args":{"npc":"rantz","anchor":{"tile":[2630,2981,0],"source":"content/maps/m41_46.jm2:4492"},"leash":8,"prefer":["Ok, I'll make you some 'stabbers'."]},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"chompybird","is":"in_progress"}}}}
+      ]},
+      {"stage":"chompybird:5","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"fletch-ogre-arrows","kind":"use_on","version":1,"advances":false,
+         "comment":"content/scripts/skill_fletching/scripts/ogre_arrows.rs2:13-15,110-142. This action sets the made-arrows bit required by Rantz.",
+         "args":{"item":"wolfbone_arrowheads","target":{"item":"ogre_headless_arrow"},"product":"ogre_arrow"},
+         "skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"ogre_headless_arrow"}}}},
+         "settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_arrow","qty":6}}}},
+        {"id":"give-arrows","kind":"talk","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_chompybird/scripts/rantz.rs2:238-245,263-285,287-315",
+         "args":{"npc":"rantz","anchor":{"tile":[2630,2981,0],"source":"content/maps/m41_46.jm2:4492"},"leash":8,"prefer":["Ok, thanks."]},
+         "skip_if":{"Any":[]},"settle":{"Not":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_arrow","qty":6}}}}}
+      ]},
+      {"stage":"chompybird:65","required":[],"terminal":true,"recovery_entry":null,"steps":[]}
+    ]
+  }]
+}
