@@ -18,8 +18,15 @@ impl Gatherer {
             .as_ref()
             .filter(|park| {
                 park.code == code
-                    && park.request.needs.get(usize::from(park.block.need)).map(|need| need.item)
-                        == request.needs.get(usize::from(block.need)).map(|need| need.item)
+                    && park
+                        .request
+                        .needs
+                        .get(usize::from(park.block.need))
+                        .map(|need| need.item)
+                        == request
+                            .needs
+                            .get(usize::from(block.need))
+                            .map(|need| need.item)
             })
             .map_or(now, |park| park.since_tick);
         self.cancel_active();
@@ -138,7 +145,11 @@ impl Gatherer {
             Ok(AcquireVerdict::Blocked(block)) => {
                 if park.code != block.code()
                     || previous_item
-                        != park.request.needs.get(usize::from(block.need)).map(|need| need.item)
+                        != park
+                            .request
+                            .needs
+                            .get(usize::from(block.need))
+                            .map(|need| need.item)
                 {
                     park.since_tick = tick.cx.evidence().tick;
                 }
