@@ -1,8 +1,6 @@
 //! Identity catalog: roster rows only. Stage resolution belongs to the Path.
 
-use crate::game_data::{
-    QuestCoverageRecord, QuestIdentityFacts, QuestIdentityRow, Transmission,
-};
+use crate::game_data::{QuestCoverageRecord, QuestIdentityFacts, QuestIdentityRow, Transmission};
 use crate::quest_progress::{EvidenceStamp, JournalRead, ProgressError, QuestProgress};
 use crate::selected::{EntityId, FactKey, Knowledge, Requirement, SignalRange, SourceSpan};
 use crate::selected::{FactError, QuestGate, Truth};
@@ -143,12 +141,6 @@ pub enum QuestKind {
     Quest,
     Miniquest,
     Stub,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Transmission {
-    PostedByContent,
-    NotTransmitted,
-    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
