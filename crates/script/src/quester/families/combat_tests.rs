@@ -4205,12 +4205,10 @@ fn killed_report_waits_for_a_late_drop_before_reengaging() {
         }],
     );
     let mut ledger = None;
-    assert!(
-        with_step_context(&absent, &mut ledger, 12, |cx| {
-            run.on_combat_report(report(CombatEnd::Killed), cx)
-        })
-        .is_pending()
-    );
+    assert!(with_step_context(&absent, &mut ledger, 12, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
     assert!(with_step_context(&absent, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
     assert!(with_step_context(&absent, &mut ledger, 14, |cx| run.poll(cx)).is_pending());
@@ -4220,19 +4218,14 @@ fn killed_report_waits_for_a_late_drop_before_reengaging() {
     assert!(with_step_context(&appeared, &mut ledger, 15, |cx| run.poll(cx)).is_pending());
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
     assert!(
-        ledger
-            .as_ref()
-            .unwrap()
-            .outbox
-            .iter()
-            .any(|entry| matches!(
-                &entry.effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
-                    id: Some(id),
-                    action,
-                    ..
-                }) if *id == item_id && action == "Take"
-            )),
+        ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
+            &entry.effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+                id: Some(id),
+                action,
+                ..
+            }) if *id == item_id && action == "Take"
+        )),
         "the delayed ore should be taken before the combat step re-engages"
     );
 }
@@ -4266,9 +4259,7 @@ fn missing_combat_loot_wait_is_bounded_before_reengaging() {
 
     let deadline = 1_u64.saturating_add(LOOT_ITEM_WAIT_TICKS);
     for tick in 1..=deadline {
-        assert!(
-            with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending()
-        );
+        assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending());
         assert!(matches!(&run.phase, Phase::Loot));
         assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
         assert_eq!(run.loot_wait_deadline, Some(deadline));
