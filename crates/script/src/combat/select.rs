@@ -281,14 +281,17 @@ fn has_attack(actions: &[Option<String>]) -> bool {
         .any(|action| action.as_deref() == Some("Attack"))
 }
 
-/// True while an authored stand is still to be reached: the player is
-/// more than one tile (Chebyshev, the stand walk's radius) from it. A
-/// fight with a stand picks no target until then, so the machine's
-/// stand walk runs first and the fight starts from the stand.
+/// True when the local player's network tile is within the stand's walk radius.
+pub fn stand_reached(stand: api::WorldTile, local: &api::snapshot::LocalPlayerView) -> bool {
+    tile_distance(local.player.network, stand) <= 1
+}
+
+/// True while an authored stand is still to be reached. A fight with a stand
+/// picks no target until the network tile is within one tile of it.
 pub fn stand_pending(request: &CombatRequest, frame: &Frame<'_>) -> bool {
     request
         .stand
-        .is_some_and(|stand| tile_distance(frame.here, stand) > 1)
+        .is_some_and(|stand| !stand_reached(stand, frame.local))
 }
 
 /// Walking steps from the player's tile to a wall-valid stand beside
@@ -328,35 +331,48 @@ pub fn pick_target(
                 return None;
             }
             let origin = request.stand.unwrap_or(frame.here);
-            // Melee needs a wall-valid stand beside the target. When the
-            // live flood is known, a target with no reachable stand (the
-            // other side of a wall or fence) is not a candidate, and
-            // `Nearest` ranks by walking steps, not straight-line tiles.
-            // Ranged and mage keep straight-line picks: they can attack
-            // over a fence the flood cannot cross. An unknown flood
-            // keeps the straight-line behaviour.
-            let reach = (request.style == Style::Melee)
-                .then(|| crate::reach_route::live(frame.reach, Some(frame.local.player.network)))
-                .flatten();
-            let mut best: Option<(&NpcView, u64, u64)> = None;
+            // Melee uses the posted reach flood when it starts at the
+            // network tile. A stale posted flood gives no pick this poll.
+            // Only a missing flood keeps straight-line picks.
+            let reach = if request.style == Style::Melee {
+                match frame.reach {
+                    Some(view) => Some(crate::reach_route::live(
+                        Some(view),
+                        Some(frame.local.player.network),
+                    )?),
+                    None => None,
+                }
+            } else {
+                None
+            };
+            let mut best: Option<(ActorRef, u64, u64)> = None;
             let mut random_state = seed | 1;
             let mut seen = 0u64;
-            for npc in frame.npcs.iter().filter(|npc| {
-                !corpse(npc)
-                    && npc.r#type.is_some_and(|id| {
+            let candidates = frame.npcs.iter().filter_map(|npc| {
+                if corpse(npc)
+                    || !npc.r#type.is_some_and(|id| {
                         types
                             .iter()
                             .any(|wanted| usize::try_from(*wanted).ok() == Some(id))
                     })
-                    && within_search_bounds(npc.tile, request.search_bounds.as_deref())
-                    && tile_distance(npc.tile, origin) <= u32::from(request.engage_radius)
-                    && reach.is_none_or(|view| npc_route_steps(view, npc).is_some())
-                    && (!not_targeting_others || !taken_by_another(npc, None, frame.me()))
-                    && npc_actor(npc).is_some_and(|actor| actor_attackable(frame, actor))
-            }) {
+                    || !within_search_bounds(npc.tile, request.search_bounds.as_deref())
+                    || tile_distance(npc.tile, origin) > u32::from(request.engage_radius)
+                {
+                    return None;
+                }
+                let route_steps = reach.and_then(|view| npc_route_steps(view, npc));
+                if reach.is_some() && route_steps.is_none() {
+                    return None;
+                }
+                if not_targeting_others && taken_by_another(npc, None, frame.me()) {
+                    return None;
+                }
+                let actor = npc_actor(npc)?;
+                actor_attackable(frame, actor).then_some((npc, actor, route_steps))
+            });
+            for (npc, actor, route_steps) in candidates {
                 seen = seen.saturating_add(1);
-                let distance = reach
-                    .and_then(|view| npc_route_steps(view, npc))
+                let distance = route_steps
                     .map_or_else(|| u64::from(tile_distance(npc.tile, origin)), u64::from);
                 let health = health_rank(npc);
                 let replace = match (pick, best) {
@@ -371,10 +387,10 @@ pub fn pick_target(
                     (_, None) => true,
                 };
                 if replace || best.is_none() {
-                    best = Some((npc, distance, health));
+                    best = Some((actor, distance, health));
                 }
             }
-            best.and_then(|(npc, _, _)| npc_actor(npc))
+            best.map(|(actor, _, _)| actor)
         }
         Target::Attacker { npcs, players } => threats
             .iter(frame.tick)

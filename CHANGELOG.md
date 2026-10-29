@@ -51,9 +51,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   fence, click a monster it could not reach, and never land a hit. The
   Witch's Potion rat inside its building and the Druidic Ritual cow inside
   its fence both failed this way. Melee target choice also skips a monster
-  the bot cannot walk up to, and picks a reachable one instead. A walk to
-  the fight spot that fails is planned again from where the bot stands,
-  up to three failed walks, before the fight attempt ends.
+  the bot cannot walk up to, and picks a reachable one instead. A failed walk
+  to the fight spot is planned again from the observed tile, up to three
+  failed walks. If all three fail, the quest step stops with the last route
+  failure. The walk back to the stand also retries blocked walks, up to three
+  failures. If all three return walks fail, the quest step stops with the last
+  route failure.
 
 ### Navigation
 

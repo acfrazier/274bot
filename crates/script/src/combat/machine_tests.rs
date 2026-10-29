@@ -3913,7 +3913,7 @@ fn melee_pick_does_not_fall_back_when_the_posted_reach_flood_is_stale() {
 
 
 #[test]
-fn failed_stand_walks_retry_to_a_bound_then_report_no_target() {
+fn failed_stand_walks_retry_to_a_bound_then_block_with_the_last_detail() {
     let mut scene = Scene::new("cow");
     let here = scene.local.player.actor.tile;
     let stand = tile(here.x + 10, here.z);
@@ -3940,16 +3940,13 @@ fn failed_stand_walks_retry_to_a_bound_then_report_no_target() {
             assert_eq!(harness.machine.end, None);
         }
     }
-    // The third failure is terminal for this attempt. It may complete
-    // its wind-down in the same poll or a later one.
-    match harness.poll(&scene.snapshot, 4) {
-        Poll::Pending => {
-            harness.drain(None);
-            assert_eq!(harness.machine.end, Some(CombatEnd::NoTarget));
-        }
-        Poll::Ready(Ok(report)) => assert_eq!(report.end, CombatEnd::NoTarget),
-        other => panic!("expected a NoTarget end after three failed stand walks, got {other:?}"),
-    }
+    // The third failure ends the machine with the receipt detail.
+    assert!(matches!(
+        harness.poll(&scene.snapshot, 4),
+        Poll::Ready(Err(ActionError::Blocked(detail)))
+            if detail.as_ref() == "no route to the stand"
+    ));
+    assert_eq!(harness.machine.end, None);
     assert_eq!(harness.machine.stand_walk_failures, 3);
     assert_eq!(harness.machine.counters.swings, 0);
 }

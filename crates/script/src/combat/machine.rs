@@ -42,11 +42,11 @@ enum RangedReadinessWait {
     },
 }
 const PREP_READINESS_TICKS: u16 = 8;
-/// Failed stand-approach walks in one fight before the attempt ends.
+/// Failed stand-approach walks in one fight before the step ends.
 /// Each retry is a fresh route plan from the observed tile, which is
 /// the recovery for a transient stall or a route that ended short.
-/// Three failures report `NoTarget` (no reachable fight from this
-/// stand) instead of re-walking until the kill budget expires.
+/// Three failures return the last walk detail instead of re-walking
+/// until the kill budget expires.
 const MAX_STAND_WALK_FAILURES: u8 = 3;
 #[derive(Default)]
 struct Counters {
@@ -439,22 +439,19 @@ impl NativeMachine for Combat {
                 let stand_arrived = self
                     .request
                     .stand
-                    .is_some_and(|stand| distance(frame.local.player.network, stand) <= 1);
+                    .is_some_and(|stand| select::stand_reached(stand, frame.local));
                 let stand_walk = self.engaged.is_none()
                     && matches!(self.phase, Phase::Prep | Phase::Engage)
-                    && !stand_arrived
                     && select::stand_pending(&self.request, &frame);
-                let end = receipt.end.clone();
-                let detail = receipt.failure_detail();
                 self.pending_walk = None;
                 if stand_arrived {
                     self.stand_walk_failures = 0;
                 }
                 if stand_walk {
-                    match end {
+                    match &receipt.end {
                         WalkEnd::Arrived => self.stand_walk_failures = 0,
                         WalkEnd::NeedsEvidence(gates) => {
-                            return Poll::Ready(Err(ActionError::NeedsEvidence(gates)));
+                            return Poll::Ready(Err(ActionError::NeedsEvidence(Arc::clone(gates))));
                         }
                         WalkEnd::Cancelled => {
                             return Poll::Ready(Err(ActionError::Cancelled));
@@ -465,6 +462,9 @@ impl NativeMachine for Combat {
                         end => {
                             self.stand_walk_failures = self.stand_walk_failures.saturating_add(1);
                             if self.stand_walk_failures >= MAX_STAND_WALK_FAILURES {
+                                let detail = receipt
+                                    .failure_detail()
+                                    .unwrap_or_else(|| Arc::from("combat stand walk failed"));
                                 if let Some(stand) = self.request.stand {
                                     api::host_log!(
                                         api::hostlog::Category::NavEvent,
@@ -475,10 +475,10 @@ impl NativeMachine for Combat {
                                         stand.level,
                                         self.stand_walk_failures,
                                         end,
-                                        detail.as_deref().unwrap_or("none"),
+                                        detail.as_ref(),
                                     );
                                 }
-                                self.finish(CombatEnd::NoTarget, tick);
+                                return Poll::Ready(Err(ActionError::Blocked(detail)));
                             }
                         }
                     }
@@ -2396,7 +2396,7 @@ impl Combat {
                 if let Some(tile) = self
                     .request
                     .stand
-                    .filter(|tile| distance(frame.here, *tile) > 1)
+                    .filter(|tile| !select::stand_reached(*tile, frame.local))
                 {
                     self.walk(tile, tick, cx)?;
                 }

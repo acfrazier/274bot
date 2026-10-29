@@ -1562,7 +1562,23 @@ impl CombatRun {
         cx: &mut StepContext<'_, '_>,
     ) -> Poll<Result<StepOutcome, ActionError>> {
         self.action = None;
-        match receipt.into_arrival() {
+        let route_ended_at_stand =
+            matches!(&receipt.end, crate::native::WalkEnd::RouteEnded)
+                && self.request.stand.is_some_and(|stand| {
+                    cx.tick
+                        .cx
+                        .snapshot()
+                        .local_player()
+                        .is_some_and(|local| {
+                            crate::combat::select::stand_reached(stand, local.value)
+                        })
+                });
+        let arrival = if route_ended_at_stand {
+            Ok(receipt.evidence)
+        } else {
+            receipt.into_arrival()
+        };
+        match arrival {
             Ok(_) => {
                 self.return_walk_failures = 0;
                 self.rebegin_combat(cx, true)
