@@ -1,0 +1,796 @@
+#!/usr/bin/env python3
+"""Run live cells listed in map.toml, one at a time.
+
+This module imports live_map for cell names and commands. It never
+duplicates a per-cell command. It sets the environment each cell needs,
+runs each cell in its own pass, writes one receipt per cell and pass,
+and never stops the loop on a failure.
+
+Use through live_map.py so one tool lists and runs cells:
+
+    python3 -B tools/live-map/live_map.py run --repo <clone> \\
+        --cells frontend-core.driver-command-headless,host-play.local-state-headless \\
+        --prefix lcr --evidence /path/to/evidence --passes 1
+
+Or call this file directly (the leading ``run`` verb is then absent):
+
+    python3 -B tools/live-map/run_cells.py --repo <clone> --cells <id,...> \\
+        --prefix lcr --evidence /path/to/evidence --passes 1
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import os
+import re
+import subprocess
+import sys
+import unittest
+import unittest.mock
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable
+
+try:
+    import live_map
+except ModuleNotFoundError:  # pragma: no cover - direct path use
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import live_map
+
+RUNNER_DIR = Path(__file__).resolve().parent
+DEFAULT_ENGINE_GAME_PORT = 44594
+DEFAULT_ENGINE_HTTP_PORT = 1080
+DEFAULT_QUEST_GAME_PORT = 44694
+DEFAULT_QUEST_HTTP_PORT = 1180
+DEFAULT_PASSES = 3
+
+
+@dataclass(frozen=True)
+class RunResult:
+    cell: str
+    passed_pass: int
+    exit_code: int
+    duration_seconds: int
+    log_path: Path
+    receipt_path: Path
+    command: str
+
+
+def _port(value: str, label: str) -> int:
+    try:
+        number = int(value, 10)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{label} must be a port number, got {value!r}")
+    if not 1 <= number <= 65535:
+        raise argparse.ArgumentTypeError(f"{label} must be 1-65535, got {value!r}")
+    return number
+
+
+def _prefix_type(value: str) -> str:
+    if not 1 <= len(value) <= 4:
+        raise argparse.ArgumentTypeError(
+            f"--prefix must be 1-4 characters, got {value!r}"
+        )
+    return value
+
+
+def _passes_type(value: str) -> int:
+    try:
+        number = int(value, 10)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"--passes must be an integer, got {value!r}")
+    if number < 1:
+        raise argparse.ArgumentTypeError(f"--passes must be at least 1, got {value!r}")
+    return number
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", required=True, help="Lab clone path that runs the cells.")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--cells", help="Comma-separated cell ids from map.toml.")
+    group.add_argument("--diff", metavar="BASE..HEAD", help="Git range listed by live_map.")
+    parser.add_argument("--prefix", required=True, type=_prefix_type,
+                        help="Bot live name prefix, 1-4 characters (3 is the lab convention).")
+    parser.add_argument("--evidence", required=True, help="Evidence directory that receives receipts.")
+    parser.add_argument("--passes", type=_passes_type, default=DEFAULT_PASSES,
+                        help=f"Passes per cell (default {DEFAULT_PASSES}).")
+    parser.add_argument("--engine-game-port", type=lambda v: _port(v, "--engine-game-port"),
+                        default=DEFAULT_ENGINE_GAME_PORT)
+    parser.add_argument("--engine-http-port", type=lambda v: _port(v, "--engine-http-port"),
+                        default=DEFAULT_ENGINE_HTTP_PORT)
+    parser.add_argument("--quest-game-port", type=lambda v: _port(v, "--quest-game-port"),
+                        default=DEFAULT_QUEST_GAME_PORT)
+    parser.add_argument("--quest-http-port", type=lambda v: _port(v, "--quest-http-port"),
+                        default=DEFAULT_QUEST_HTTP_PORT)
+    parser.add_argument("--self-test", action="store_true", help="Run the runner unit tests.")
+    return parser
+
+
+def parse_run_args(argv: list[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
+
+
+def is_quest_cell(cell_name: str, cell_command: str) -> bool:
+    return (
+        "quester" in cell_name
+        or "QUESTER_TICK_MS" in cell_command
+        or "ENGINE_Q_DIR" in cell_command
+    )
+
+
+_PORT_ENV_RE = re.compile(r"([A-Z][A-Z0-9_]*_GAME_PORT=)\d+")
+_HTTP_ENV_RE = re.compile(r"([A-Z][A-Z0-9_]*_HTTP_PORT=)\d+")
+_PORT_FLAG_RE = re.compile(r"(--port[ =])\d+")
+_HTTP_FLAG_RE = re.compile(r"(--http-port[ =])\d+")
+
+
+def apply_ports(command: str, game_port: int, http_port: int) -> str:
+    command = _PORT_ENV_RE.sub(rf"\g<1>{game_port}", command)
+    command = _HTTP_ENV_RE.sub(rf"\g<1>{http_port}", command)
+    command = _PORT_FLAG_RE.sub(rf"\g<1>{game_port}", command)
+    command = _HTTP_FLAG_RE.sub(rf"\g<1>{http_port}", command)
+    return command
+
+
+def _first_existing(candidates: list[str | None], want_file: bool) -> str | None:
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate)
+        if not path.is_absolute():
+            continue
+        if want_file and path.is_file():
+            return str(path)
+        if not want_file and path.is_dir():
+            return str(path)
+    return None
+
+
+def _reference_dir() -> str | None:
+    candidates = [
+        os.environ.get("REFERENCE_V17_DIR"),
+        "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17",
+        "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_dir():
+            return candidate
+    return None
+
+
+def host_defaults() -> dict[str, str]:
+    home = str(Path.home())
+    ref = _reference_dir()
+    defaults: dict[str, str] = {}
+    isohome = _first_existing(
+        [
+            os.environ.get("ISOHOME"),
+            "/home/acfrazier/experiments/274bot/.superpowers/bin/isohome",
+            "/Users/acfrazier/experiments/274bot/.superpowers/bin/isohome",
+            f"{home}/experiments/274bot/.superpowers/bin/isohome",
+        ],
+        want_file=True,
+    )
+    if isohome:
+        defaults["ISOHOME"] = isohome
+    engine_a = _first_existing(
+        [
+            os.environ.get("ENGINE_A_DIR"),
+            "/home/acfrazier/experiments/lostcity-289/engine",
+            "/Users/acfrazier/experiments/lostcity-289/engine",
+            "/srv/dev/experiments/lostcity-289/engine",
+        ],
+        want_file=False,
+    )
+    if engine_a:
+        defaults["ENGINE_A_DIR"] = engine_a
+    engine_q = _first_existing(
+        [
+            os.environ.get("ENGINE_Q_DIR"),
+            "/home/acfrazier/experiments/lostcity-289-q/engine",
+            "/Users/acfrazier/experiments/lostcity-289-q/engine",
+        ],
+        want_file=False,
+    )
+    if engine_q:
+        defaults["ENGINE_Q_DIR"] = engine_q
+    engine_b = _first_existing(
+        [os.environ.get("ENGINE_B_DIR")],
+        want_file=False,
+    )
+    if engine_b:
+        defaults["ENGINE_B_DIR"] = engine_b
+    elif engine_a:
+        defaults["ENGINE_B_DIR"] = engine_a
+    catalog = _first_existing(
+        [
+            os.environ.get("CATALOG_ROOT"),
+            "/home/acfrazier/experiments/rs2b0t",
+            "/Users/acfrazier/experiments/rs2b0t",
+        ],
+        want_file=False,
+    )
+    if catalog:
+        defaults["CATALOG_ROOT"] = catalog
+    snapshot = _first_existing(
+        [
+            os.environ.get("NAV_SNAPSHOT_ROOT_289"),
+            "/home/acfrazier/.274bot/unpack-289",
+            "/Users/acfrazier/.274bot/unpack-289",
+        ],
+        want_file=False,
+    )
+    if snapshot:
+        defaults["NAV_SNAPSHOT_ROOT_289"] = snapshot
+    if ref:
+        pack = Path(ref) / "274bot-289-v17.navpack"
+        flags = Path(ref) / "274bot-289-v17.navflags"
+        pack274 = Path(ref) / "274bot-274-v17.navpack"
+        if pack.is_file():
+            defaults["NAV_PACK_289"] = str(pack)
+        if flags.is_file():
+            defaults["NAV_FLAGS_289"] = str(flags)
+        if pack274.is_file():
+            defaults["NAV_PACK_274"] = str(pack274)
+    for key in (
+        "NAV_PACK_289",
+        "NAV_FLAGS_289",
+        "NAV_PACK_274",
+        "ENGINE_A_DIR",
+        "ENGINE_Q_DIR",
+        "CATALOG_ROOT",
+    ):
+        if key in os.environ and key not in defaults:
+            defaults[key] = os.environ[key]
+    return defaults
+
+
+def cell_names(config: dict) -> dict[str, live_map.Cell]:
+    found: dict[str, live_map.Cell] = {}
+    for index, row in enumerate(config["cover"]):
+        for spec in row["cells"]:
+            cell = live_map._cell_fields(spec, f"cover row {index + 1}")
+            if cell.name in found and found[cell.name] != cell:
+                raise live_map.MapError(f"cell {cell.name!r} has conflicting commands")
+            found[cell.name] = cell
+    return found
+
+
+def resolve_cells(config: dict, names: list[str]) -> list[live_map.Cell]:
+    registry = cell_names(config)
+    missing = [name for name in names if name not in registry]
+    if missing:
+        raise live_map.MapError(f"unknown cells: {', '.join(missing)}")
+    return [registry[name] for name in names]
+
+
+def build_cell_env(
+    *,
+    cell_name: str,
+    cell_command: str,
+    prefix: str,
+    live_evidence_dir: str,
+    bot_cache_dir: str,
+    client_unpack_dir: str,
+    bot_unpack_dir: str,
+    panel_home: str,
+    repo: str,
+    engine_game_port: int,
+    engine_http_port: int,
+    quest_game_port: int,
+    quest_http_port: int,
+    defaults: dict[str, str] | None = None,
+) -> tuple[dict[str, str], str]:
+    quest = is_quest_cell(cell_name, cell_command)
+    game_port = quest_game_port if quest else engine_game_port
+    http_port = quest_http_port if quest else engine_http_port
+    command = apply_ports(cell_command, game_port, http_port)
+    env = dict(os.environ)
+    env.pop("QUESTER_TICK_MS", None)
+    env.pop("QUESTER_SPEED_RESTORE", None)
+    resolved = dict(defaults) if defaults else {}
+    for key, value in resolved.items():
+        if key not in env or not env[key]:
+            env[key] = value
+    env["BOT_LIVE_NAME_PREFIX"] = prefix
+    env["BOT_NAV_BUILD"] = "skip"
+    env["WORLD_GAME_PORT"] = str(game_port)
+    env["WORLD_HTTP_PORT"] = str(http_port)
+    env["LIVE_EVIDENCE_DIR"] = live_evidence_dir
+    env["BOT_CACHE_DIR"] = bot_cache_dir
+    env["CLIENT_UNPACK_DIR"] = client_unpack_dir
+    env["BOT_UNPACK_DIR"] = bot_unpack_dir
+    env["PANEL_LIVE_HOME"] = panel_home
+    env["PWD"] = str(Path(repo).resolve())
+    if quest:
+        env["QUESTER_SPEED_RESTORE"] = "0"
+    env["CARGO_TERM_COLOR"] = "never"
+    return env, command
+
+
+def repo_head(repo: Path) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode:
+        raise live_map.MapError(f"git rev-parse HEAD failed: {result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def ensure_clean(repo: Path) -> None:
+    result = subprocess.run(
+        ["git", "-C", str(repo), "status", "--porcelain", "--untracked-files=no"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode:
+        raise live_map.MapError(f"git status failed: {result.stderr.strip()}")
+    if result.stdout.strip():
+        raise live_map.MapError(
+            f"refusing to run: {repo} has uncommitted tracked changes:\n{result.stdout.strip()}"
+        )
+
+
+def load_map_for_repo(repo: Path) -> dict:
+    candidate = repo / "tools" / "live-map" / "map.toml"
+    if candidate.is_file():
+        return live_map.load_map(candidate)
+    return live_map.load_map()
+
+
+def _utc_now() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def run_one_cell(
+    *,
+    cell: live_map.Cell,
+    repo: Path,
+    env: dict[str, str],
+    command: str,
+    log_path: Path,
+) -> tuple[int, str, str, int]:
+    import time
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    start = _utc_now()
+    begin = time.monotonic()
+    with log_path.open("w", encoding="utf-8") as stream:
+        result = subprocess.run(
+            ["bash", "-lc", command],
+            cwd=str(repo),
+            env=env,
+            stdout=stream,
+            stderr=subprocess.STDOUT,
+            check=False,
+            text=True,
+        )
+    duration = int(time.monotonic() - begin)
+    return result.returncode, start, _utc_now(), duration
+
+
+def write_receipt(path: Path, fields: dict[str, str]) -> None:
+    order = (
+        "cell",
+        "pass",
+        "repo",
+        "head",
+        "prefix",
+        "command",
+        "start_utc",
+        "end_utc",
+        "duration_seconds",
+        "exit_code",
+        "log",
+        "evidence_dir",
+    )
+    lines = [f"{key}={fields[key]}" for key in order if key in fields]
+    for key in sorted(set(fields) - set(order)):
+        lines.append(f"{key}={fields[key]}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def format_summary(
+    results: list[RunResult],
+    *,
+    repo: str,
+    head: str,
+    prefix: str,
+    evidence: str,
+) -> str:
+    lines = [
+        "Live-cell run summary",
+        f"repo={repo} head={head} prefix={prefix} evidence={evidence}",
+        "",
+        "| cell | pass | exit | seconds | log |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for item in results:
+        lines.append(
+            f"| {item.cell} | {item.passed_pass} | {item.exit_code} | "
+            f"{item.duration_seconds} | {item.log_path} |"
+        )
+    passed = sum(1 for item in results if item.exit_code == 0)
+    lines.append("")
+    lines.append(f"passed {passed}/{len(results)}")
+    return "\n".join(lines)
+
+
+def run_all(
+    cells: list[live_map.Cell],
+    *,
+    repo: Path,
+    evidence_root: Path,
+    prefix: str,
+    passes: int,
+    engine_game_port: int,
+    engine_http_port: int,
+    quest_game_port: int,
+    quest_http_port: int,
+    defaults: dict[str, str] | None = None,
+    runner: Callable[..., tuple[int, str, str, int]] | None = None,
+) -> list[RunResult]:
+    head = repo_head(repo)
+    results: list[RunResult] = []
+    run_fn = runner or run_one_cell_by_args
+    for cell in cells:
+        quest = is_quest_cell(cell.name, cell.command)
+        game_port = quest_game_port if quest else engine_game_port
+        http_port = quest_http_port if quest else engine_http_port
+        cell_dir = evidence_root / cell.name
+        cache_dir = cell_dir / "cache-289"
+        client_dir = cell_dir / "client-unpack"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        client_dir.mkdir(parents=True, exist_ok=True)
+        for passed_pass in range(1, passes + 1):
+            pass_dir = cell_dir / f"pass{passed_pass}"
+            live_dir = pass_dir / "evidence"
+            panel_home = pass_dir / "panel-home"
+            live_dir.mkdir(parents=True, exist_ok=True)
+            panel_home.mkdir(parents=True, exist_ok=True)
+            (live_dir / "tui").mkdir(parents=True, exist_ok=True)
+            log_path = pass_dir / "cell.log"
+            receipt_path = pass_dir / "receipt.txt"
+            env, command = build_cell_env(
+                cell_name=cell.name,
+                cell_command=cell.command,
+                prefix=prefix,
+                live_evidence_dir=str(live_dir),
+                bot_cache_dir=str(cache_dir),
+                client_unpack_dir=str(client_dir),
+                bot_unpack_dir=str(client_dir),
+                panel_home=str(panel_home),
+                repo=str(repo),
+                engine_game_port=engine_game_port,
+                engine_http_port=engine_http_port,
+                quest_game_port=quest_game_port,
+                quest_http_port=quest_http_port,
+                defaults=defaults,
+            )
+            try:
+                if runner is not None:
+                    exit_code, start, end, duration = runner(
+                        cell=cell,
+                        repo=repo,
+                        env=env,
+                        command=command,
+                        log_path=log_path,
+                    )
+                else:
+                    exit_code, start, end, duration = run_fn(
+                        cell=cell,
+                        repo=repo,
+                        env=env,
+                        command=command,
+                        log_path=log_path,
+                    )
+            except Exception as error:  # never stop the loop on a failure
+                exit_code, start, end, duration = (
+                    1,
+                    _utc_now(),
+                    _utc_now(),
+                    0,
+                )
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                with log_path.open("a", encoding="utf-8") as stream:
+                    stream.write(f"\nrunner error: {error}\n")
+            write_receipt(
+                receipt_path,
+                {
+                    "cell": cell.name,
+                    "pass": str(passed_pass),
+                    "repo": str(repo),
+                    "head": head,
+                    "prefix": prefix,
+                    "command": command,
+                    "start_utc": start,
+                    "end_utc": end,
+                    "duration_seconds": str(duration),
+                    "exit_code": str(exit_code),
+                    "log": str(log_path),
+                    "evidence_dir": str(live_dir),
+                },
+            )
+            results.append(
+                RunResult(
+                    cell=cell.name,
+                    passed_pass=passed_pass,
+                    exit_code=exit_code,
+                    duration_seconds=duration,
+                    log_path=log_path,
+                    receipt_path=receipt_path,
+                    command=command,
+                )
+            )
+    return results
+
+
+def run_one_cell_by_args(**kwargs) -> tuple[int, str, str, int]:  # pragma: no cover
+    return run_one_cell(**kwargs)
+
+
+def main(argv: list[str] | None = None) -> int:
+    raw = list(argv) if argv is not None else sys.argv[1:]
+    if raw == ["--self-test"] or (len(raw) == 1 and raw[0] == "--self-test"):
+        return self_test()
+    args = parse_run_args(argv)
+    repo = Path(args.repo)
+    if not repo.is_dir():
+        print(f"run-cells: --repo is not a directory: {repo}", file=sys.stderr)
+        return 2
+    evidence_root = Path(args.evidence)
+    try:
+        ensure_clean(repo)
+        config = load_map_for_repo(repo)
+        if args.cells:
+            names = [part.strip() for part in args.cells.split(",") if part.strip()]
+            if not names:
+                print("run-cells: --cells is empty", file=sys.stderr)
+                return 2
+            cells = resolve_cells(config, names)
+        else:
+            paths = live_map.diff_paths(args.diff, repo)
+            plan = live_map.make_plan(paths, config)
+            cells = list(plan.cells)
+            if plan.uncovered or plan.unclassified:
+                print(
+                    "run-cells: diff has uncovered or unclassified paths; "
+                    "running covering cells only",
+                    file=sys.stderr,
+                )
+            if not cells:
+                print("run-cells: diff selects no cells", file=sys.stderr)
+                return 1
+        evidence_root.mkdir(parents=True, exist_ok=True)
+        defaults = host_defaults()
+        results = run_all(
+            cells,
+            repo=repo,
+            evidence_root=evidence_root,
+            prefix=args.prefix,
+            passes=args.passes,
+            engine_game_port=args.engine_game_port,
+            engine_http_port=args.engine_http_port,
+            quest_game_port=args.quest_game_port,
+            quest_http_port=args.quest_http_port,
+            defaults=defaults,
+        )
+        head = repo_head(repo)
+        summary = format_summary(
+            results,
+            repo=str(repo),
+            head=head,
+            prefix=args.prefix,
+            evidence=str(evidence_root),
+        )
+        print(summary)
+        (evidence_root / "summary.txt").write_text(summary + "\n", encoding="utf-8")
+        return 0 if all(item.exit_code == 0 for item in results) else 1
+    except live_map.MapError as error:
+        print(f"run-cells: {error}", file=sys.stderr)
+        return 2
+
+
+class RunCellsTests(unittest.TestCase):
+    def test_cells_and_diff_are_exclusive(self) -> None:
+        with self.assertRaises(SystemExit):
+            parse_run_args(
+                [
+                    "--repo",
+                    "/tmp/repo",
+                    "--cells",
+                    "a",
+                    "--diff",
+                    "b..h",
+                    "--prefix",
+                    "abc",
+                    "--evidence",
+                    "/tmp/e",
+                ]
+            )
+
+    def test_missing_prefix_is_rejected(self) -> None:
+        with self.assertRaises(SystemExit):
+            parse_run_args(
+                ["--repo", "/tmp/repo", "--cells", "a", "--evidence", "/tmp/e"]
+            )
+
+    def test_prefix_length_is_checked(self) -> None:
+        with self.assertRaises(SystemExit):
+            parse_run_args(
+                [
+                    "--repo",
+                    "/tmp/repo",
+                    "--cells",
+                    "a",
+                    "--prefix",
+                    "abcde",
+                    "--evidence",
+                    "/tmp/e",
+                ]
+            )
+        self.assertEqual(
+            parse_run_args(
+                [
+                    "--repo",
+                    "/tmp/repo",
+                    "--cells",
+                    "a",
+                    "--prefix",
+                    "abc",
+                    "--evidence",
+                    "/tmp/e",
+                ]
+            ).prefix,
+            "abc",
+        )
+
+    def test_passes_and_ports_have_defaults(self) -> None:
+        args = parse_run_args(
+            [
+                "--repo",
+                "/tmp/repo",
+                "--cells",
+                "a",
+                "--prefix",
+                "abc",
+                "--evidence",
+                "/tmp/e",
+            ]
+        )
+        self.assertEqual(args.passes, DEFAULT_PASSES)
+        self.assertEqual(args.engine_game_port, DEFAULT_ENGINE_GAME_PORT)
+        self.assertEqual(args.engine_http_port, DEFAULT_ENGINE_HTTP_PORT)
+        self.assertEqual(args.quest_game_port, DEFAULT_QUEST_GAME_PORT)
+        self.assertEqual(args.quest_http_port, DEFAULT_QUEST_HTTP_PORT)
+
+    def test_env_sets_common_values_and_unsets_tick(self) -> None:
+        with unittest.mock.patch.dict(
+            os.environ, {"QUESTER_TICK_MS": "300", "QUESTER_SPEED_RESTORE": "1"}
+        ):
+            env, _ = build_cell_env(
+                cell_name="host.sherlock-search-live",
+                cell_command="LIVE=1 WORLD_GAME_PORT=44594 ${ISOHOME:?} cargo test",
+                prefix="abc",
+                live_evidence_dir="/e/cell/pass1/evidence",
+                bot_cache_dir="/e/cell/cache-289",
+                client_unpack_dir="/e/cell/client-unpack",
+                bot_unpack_dir="/e/cell/client-unpack",
+                panel_home="/e/cell/pass1/panel-home",
+                repo="/tmp/repo",
+                engine_game_port=47594,
+                engine_http_port=3080,
+                quest_game_port=47694,
+                quest_http_port=3180,
+                defaults={"ISOHOME": "/isohome"},
+            )
+        self.assertEqual(env["BOT_LIVE_NAME_PREFIX"], "abc")
+        self.assertEqual(env["BOT_NAV_BUILD"], "skip")
+        self.assertEqual(env["WORLD_GAME_PORT"], "47594")
+        self.assertEqual(env["WORLD_HTTP_PORT"], "3080")
+        self.assertNotIn("QUESTER_TICK_MS", env)
+        self.assertNotIn("QUESTER_SPEED_RESTORE", env)
+
+    def test_quest_cells_use_quest_ports_and_speed_restore(self) -> None:
+        env, command = build_cell_env(
+            cell_name="host.quester-path-engine-q",
+            cell_command=(
+                "LIVE=1 QUESTER_TICK_MS=300 WORLD_GAME_PORT=44694 "
+                "WORLD_HTTP_PORT=1180 ${ISOHOME:?} cargo test -- --port 44694 --http-port 1180"
+            ),
+            prefix="abc",
+            live_evidence_dir="/e/cell/pass1/evidence",
+            bot_cache_dir="/e/cell/cache-289",
+            client_unpack_dir="/e/cell/client-unpack",
+            bot_unpack_dir="/e/cell/client-unpack",
+            panel_home="/e/cell/pass1/panel-home",
+            repo="/tmp/repo",
+            engine_game_port=47594,
+            engine_http_port=3080,
+            quest_game_port=47694,
+            quest_http_port=3180,
+            defaults={},
+        )
+        self.assertEqual(env["WORLD_GAME_PORT"], "47694")
+        self.assertEqual(env["WORLD_HTTP_PORT"], "3180")
+        self.assertEqual(env["QUESTER_SPEED_RESTORE"], "0")
+        self.assertNotIn("QUESTER_TICK_MS", env)
+        self.assertIn("47694", command)
+        self.assertIn("3180", command)
+        self.assertNotIn("44594", command)
+        self.assertNotIn("44694", command)
+
+    def test_never_stop_loop_continues_after_failure(self) -> None:
+        cells = [
+            live_map.Cell("first", "true", "--locked -p a --lib"),
+            live_map.Cell("second", "true", "--locked -p b --lib"),
+        ]
+        calls: list[str] = []
+
+        def fake_runner(**kwargs) -> tuple[int, str, str, int]:
+            cell = kwargs["cell"]
+            calls.append(cell.name)
+            log_path = kwargs["log_path"]
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text(f"{cell.name}\n", encoding="utf-8")
+            if cell.name == "first":
+                return 3, "s", "e", 0
+            return 0, "s", "e", 0
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp) / "repo"
+            repo.mkdir()
+            evidence = Path(temp) / "evidence"
+            with unittest.mock.patch(
+                f"{__name__}.repo_head", return_value="deadbeef"
+            ):
+                results = run_all(
+                    cells,
+                    repo=repo,
+                    evidence_root=evidence,
+                    prefix="abc",
+                    passes=1,
+                    engine_game_port=1,
+                    engine_http_port=2,
+                    quest_game_port=3,
+                    quest_http_port=4,
+                    defaults={},
+                    runner=fake_runner,
+                )
+                self.assertEqual(calls, ["first", "second"])
+                self.assertEqual([item.exit_code for item in results], [3, 0])
+                self.assertTrue((evidence / "first" / "pass1" / "receipt.txt").is_file())
+                self.assertTrue((evidence / "second" / "pass1" / "receipt.txt").is_file())
+
+    def test_unknown_cell_is_rejected(self) -> None:
+        config = live_map.validate_map(
+            {
+                "live": {"globs": ["src/**"]},
+                "not_live": {"globs": ["docs/**"]},
+                "cover": [
+                    {
+                        "globs": ["src/**"],
+                        "cells": ["a|cargo test --locked -p a --lib"],
+                    }
+                ],
+            }
+        )
+        with self.assertRaises(live_map.MapError):
+            resolve_cells(config, ["missing"])
+
+
+def self_test() -> int:
+    suite = unittest.defaultTestLoader.loadTestsFromTestCase(RunCellsTests)
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    return 0 if result.wasSuccessful() else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -803,6 +803,14 @@ def self_test() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw = list(argv) if argv is not None else sys.argv[1:]
+    if raw and raw[0] == "run":
+        try:
+            import run_cells
+        except ModuleNotFoundError:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            import run_cells
+        return run_cells.main(raw[1:])
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--diff", metavar="BASE..HEAD")

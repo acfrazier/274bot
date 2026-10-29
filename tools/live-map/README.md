@@ -276,3 +276,38 @@ The scenario registry and nightly cell lists are separate from changed-path matc
 ```sh
 python3 -B tools/nightly/run_nightly.py --list
 ```
+
+## Run cells
+
+The runner uses the command from `map.toml`. It does not duplicate per-cell commands.
+Use `live_map.py run` so one tool lists and runs cells. `run_cells.py` holds the
+run logic and imports `live_map.py`. This split keeps listing stable while the runner
+evolves. No `map.toml` schema change was needed. Every current cell is one shell
+string with `name|command`. Port choice stays in the runner by rewrite, not in the map.
+
+```sh
+python3 -B tools/live-map/live_map.py run --repo <lab clone> \
+  --cells frontend-core.driver-command-headless,host-play.local-state-headless \
+  --prefix lcr --evidence /path/to/evidence --passes 1
+
+python3 -B tools/live-map/live_map.py run --repo <lab clone> \
+  --diff BASE..HEAD --prefix lcr --evidence /path/to/evidence --passes 3 \
+  --engine-game-port 44594 --engine-http-port 1080 \
+  --quest-game-port 44694 --quest-http-port 1180
+```
+
+The runner refuses to start when the clone has uncommitted tracked changes. It runs
+cells one at a time and never stops on a failure. It creates one `BOT_CACHE_DIR` per
+cell, one `LIVE_EVIDENCE_DIR` per cell and pass, plus per-cell unpack dirs and a kept
+panel home. It sets `BOT_LIVE_NAME_PREFIX`, `BOT_NAV_BUILD=skip`,
+`WORLD_GAME_PORT`/`WORLD_HTTP_PORT` from the engine ports, and the v17 `NAV_PACK` and
+flags from the reference pack. Quest cells use the quest ports, set
+`QUESTER_SPEED_RESTORE=0`, and run with `QUESTER_TICK_MS` unset in the base env
+(their `QUESTER_TICK_MS=300` stays inline in the map command). It rewrites inline
+`_GAME_PORT`, `_HTTP_PORT`, `--port`, and `--http-port` values to the selected ports.
+`ISOHOME` comes from the host wrapper where the map command names it. Each cell runs
+by `bash -lc` from the repo root.
+
+Each cell and pass writes `passN/cell.log` and `passN/receipt.txt` with `cell`, `pass`,
+repo `head`, `command`, `start`, `end`, `exit_code`, and `log`. The runner prints a
+summary table and writes `summary.txt`. A non-zero exit means at least one cell failed.
