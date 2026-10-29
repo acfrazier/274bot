@@ -21,7 +21,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - Gatherer can buy a missing gathering tool or bait from a reachable shop.
   `buyTools` is on by default. A usable tool in the pack, equipment or observed
   bank is used first; the bot does not buy an upgrade in its place. Shop
-  purchases use the content price rule and only the coins the account has.
+  purchases choose the best skill-usable tier that a reachable vendor sells
+  within the account's budget. A tool bought for wearing must also meet the
+  account's wield requirement. Prices follow the content rule.
 - A supply shortage now parks the running card instead of stopping it.
   The panel, terminal and fleet show the reason and the bank information used.
   The card closes the bank and waits without repeated trips or purchase clicks.

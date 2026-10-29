@@ -1333,13 +1333,17 @@ fishing tools remain carried.
 
 `buyTools` defaults to `true`. It admits shops only for the selected method's
 gathering tools and bait, not food, runes or optional coin top-ups. Gatherer
-uses a usable held, worn or session-banked tool before it considers a purchase;
-it does not buy an upgrade to replace a usable tool. Shop choice uses the
-nearest reachable keeper that sells an acceptable tool or bait. Route
-permissions and access gates still apply; an unreachable keeper is not chosen
-only because it is nearby. The content price rule determines the coin
-reserve, and the reserve cannot exceed the coins available in the pack and
-observed bank. A usable partial refill can still continue gathering.
+uses a usable held, worn or session-banked tool before it considers a purchase.
+It does not buy an upgrade to replace a usable tool. When none is owned,
+shared acquisition chooses the best tier that the skill permits, a reachable
+vendor stocks, and the run budget can afford. A plan that wears the tool also
+requires the account to meet its wield requirement. Axes have no Woodcutting
+use gate. Shop choice uses the nearest reachable keeper for the chosen tier.
+Route permissions and access gates still apply. An undecided route search does
+not prove that a keeper is unreachable. The content price rule determines the
+coin reserve, capped by coins in the pack and observed bank. A usable partial
+refill can still continue gathering. If no tier qualifies, `no-vendor` names
+the best tier found and the condition that failed.
 
 Supply refusals keep the slot `Running` with native phase `Blocked` and no
 terminal failure. `block_reason` names the refused need and the evidence
