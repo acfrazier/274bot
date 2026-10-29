@@ -11,11 +11,10 @@ pub(crate) const MUSA_DOCK: WorldTile = WorldTile {
     z: 3146,
     level: 0,
 };
-/// The Shilo→Brimhaven cart landing on Karamja's west coast, from
-/// `navigation.rs`'s packed route.
-const BRIMHAVEN_CART_LANDING: WorldTile = WorldTile {
-    x: 2776,
-    z: 3214,
+/// Musa Point's Karamja-side gangplank landing (`static_routes.rs`).
+const MUSA_DOCK_FAR_SIDE: WorldTile = WorldTile {
+    x: 2956,
+    z: 3147,
     level: 0,
 };
 /// Luthas's stand (frozen `LUTHAS.anchor`).
@@ -50,10 +49,9 @@ pub(crate) fn boat_fare_v1_scenario() -> Scenario {
     boat_fare_scenario("boat_fare_v1_ts", MUSA_DOCK, false)
 }
 
-/// The fare recovery starting at the Brimhaven-side cart landing, outside
-/// Luthas's view.
+/// Fare recovery from the far side of the Musa Point dock.
 pub(crate) fn boat_fare_far_start_v1_scenario() -> Scenario {
-    boat_fare_scenario("boat_fare_far_start_v1_ts", BRIMHAVEN_CART_LANDING, false)
+    boat_fare_scenario("boat_fare_far_start_v1_ts", MUSA_DOCK_FAR_SIDE, false)
 }
 
 /// [`boat_fare_v1_scenario`] with the connection dropped (`::serverdrop`)
