@@ -460,10 +460,8 @@ pub fn status_stage(status: &ScriptStatus, quest: &str) -> Option<String> {
 }
 
 fn parked(status: &ScriptStatus) -> Option<String> {
-    if status.phase == NativePhase::Blocked {
-        return Some(format!("phase Blocked: {:?}", status.failure));
-    }
-    text(status, "block_reason").map(str::to_owned)
+    (status.phase == NativePhase::Blocked)
+        .then(|| format!("phase Blocked: {:?}", status.failure))
 }
 
 /// Match only the explicitly expected native park, not another blocked state.
@@ -3088,11 +3086,15 @@ mod tests {
             }),
         };
         assert!(has_named_stop(Some(&status), reason));
+        assert!(parked(&status).is_some());
         assert!(!has_named_stop(None, reason));
         assert!(!has_named_stop(Some(&status), "another stop"));
         status.phase = NativePhase::Working;
+        let failure = status.failure.take();
+        assert!(parked(&status).is_none(), "block_reason precedes native Blocked publication");
         assert!(!has_named_stop(Some(&status), reason));
         status.phase = NativePhase::Blocked;
+        status.failure = failure;
         status.failure.as_mut().unwrap().code = Arc::from("failed");
         assert!(!has_named_stop(Some(&status), reason));
         status.failure.as_mut().unwrap().code = Arc::from("parked");

@@ -1,0 +1,874 @@
+{
+  "source": "/Volumes/dev-scratch/274bot-evidence/QUEST-CAMPAIGN/sheepherder/gap-2",
+  "projection": "Original native messages, receipt guards and status/capture facts. The original final phase is not changed. Guide metadata comes from the run-owned plan/staging copy.",
+  "gap": {
+    "stage": "sheepherder:2",
+    "step_id": "wield-prod",
+    "park_reason": "no step for stage"
+  },
+  "error": "qsh20ys693_0 Quester parked/blocked: no step for stage",
+  "receipt": {
+    "account": "qsh20ys693_0",
+    "quest": "sheepherder",
+    "quest_complete": false,
+    "deaths": 0,
+    "death_count_total_across_runs": 0,
+    "death_sent": false,
+    "death_injections": 0,
+    "death_observed": false,
+    "error": null,
+    "capture_error": null,
+    "end_captured": true,
+    "stages_seen": [
+      "sheepherder:0",
+      "sheepherder:1",
+      "sheepherder:2"
+    ],
+    "step_observations": [
+      {
+        "run": "RunKey { slot: 1, run: 1, session: 3 }",
+        "tick": 23,
+        "stage": "sheepherder:0",
+        "sequence": 0,
+        "step_index": 0,
+        "remaining_steps": 1,
+        "step_id": "accept-task",
+        "child_step_id": "",
+        "action_state": "talking",
+        "waiting_for": null,
+        "owned_combat": null,
+        "inventory": [
+          [
+            995,
+            100
+          ]
+        ]
+      },
+      {
+        "run": "RunKey { slot: 1, run: 1, session: 3 }",
+        "tick": 63,
+        "stage": "sheepherder:1",
+        "sequence": 1,
+        "step_index": 0,
+        "remaining_steps": 1,
+        "step_id": "buy-protection",
+        "child_step_id": "",
+        "action_state": "talking",
+        "waiting_for": null,
+        "owned_combat": null,
+        "inventory": [
+          [
+            995,
+            100
+          ],
+          [
+            279,
+            1
+          ]
+        ]
+      },
+      {
+        "run": "RunKey { slot: 1, run: 1, session: 3 }",
+        "tick": 74,
+        "stage": "sheepherder:2",
+        "sequence": 2,
+        "step_index": 0,
+        "remaining_steps": 5,
+        "step_id": "wear-jacket",
+        "child_step_id": "",
+        "action_state": "working",
+        "waiting_for": null,
+        "owned_combat": null,
+        "inventory": [
+          [
+            284,
+            1
+          ],
+          [
+            279,
+            1
+          ],
+          [
+            285,
+            1
+          ]
+        ]
+      }
+    ],
+    "final_status": {
+      "run": "RunKey { slot: 1, run: 1, session: 3 }",
+      "phase": "Working",
+      "fields": {
+        "display": "Sheep Herder",
+        "stage": "sheepherder:2",
+        "deaths": 0,
+        "needs_read": "True",
+        "quest_id": "sheepherder",
+        "colour": "in_progress",
+        "action_state": "blocked",
+        "step_id": "wear-jacket",
+        "child_recipe_id": "",
+        "child_step_id": "",
+        "sequence": 2,
+        "sequence_count": 4,
+        "step_index": 0,
+        "remaining_steps": 5,
+        "attempts": 0,
+        "no_progress": 0,
+        "queue": "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPRPPPPPB",
+        "completed": 0,
+        "session_deaths": 0,
+        "path_validation": "Reload Paths: 42 folder documents, 68 registry rows, 0 validation errors (/Volumes/dev-scratch/274bot-evidence/QUEST-TERRA/paths)",
+        "path_source": "folder",
+        "draft_status": "Untested draft Path",
+        "required_vs_live": 0,
+        "tested_stats_warning": "No qualified stats recorded",
+        "pin": "r289 engine:cc359656b4acd216ca452495874b6beba9a0ac75 content:92649430fcbc83538d8c4367ecb96cee1a67a944 nav:[4e, 8a, b5, af, 46, 94, cf, 67, 22, ed, 38, 36, c3, e1, f4, 2e, 9a, c1, be, 13, 6d, 4d, 11, 27, c7, db, 69, 8f, 4f, c6, 50, 0b]",
+        "tactic": "",
+        "role": "",
+        "step_comment": "C:scripts/quests/quest_sheepherder/scripts/npcs/diseased_sheep.rs2:36-41 requires the worn jacket and trousers.",
+        "provision": "Ready",
+        "provision_item": "",
+        "provision_need": 0,
+        "provision_pack": 0,
+        "bank_known": "True",
+        "provision_attempts": 0,
+        "active_loadout": "",
+        "coin_float": 100,
+        "coin_drawn": "True",
+        "carry_drawn": "0000000000000000",
+        "quest": {
+          "stage": "sheepherder:2",
+          "rule": "sheepherder:2",
+          "complete": "False"
+        },
+        "rule": "sheepherder:2",
+        "journal_lines": "Close Window\n@str@Councillor Halgrive asked me to dispose of four\n@str@plague-bearing sheep just north of Ardougne\n@str@and I accepted.\n@str@He gave me some poisoned sheep feed to do this.\n@str@I bought some protective clothing from Dr Orbon in the\n@str@chapel north of Ardougne Zoo. I could now kill the sheep.\n@dbl@I must find the first sheep and herd it to the pen.\n@dbl@@dbl@I must find the second sheep and herd it to the pen.\n@dbl@@dbl@I must find the third sheep and herd it to the pen.\n@dbl@@dbl@I must find the fourth sheep and herd it to the pen.",
+        "block_reason": "no step for stage"
+      },
+      "failure": null
+    },
+    "gap_state_evidence": {
+      "status_log": "/Volumes/dev-scratch/274bot-evidence/QUEST-CAMPAIGN/sheepherder/gap-2/sheepherder/campaign-qsh20ys693_0-1793298803/status.jsonl",
+      "end_capture": "/Volumes/dev-scratch/274bot-evidence/QUEST-CAMPAIGN/sheepherder/gap-2/sheepherder/campaign-qsh20ys693_0-1793298803/05-end-fail.json",
+      "statuses": [
+        {
+          "tick": 21,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Preparing",
+            "fields": {}
+          }
+        },
+        {
+          "tick": 22,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {}
+          }
+        },
+        {
+          "tick": 23,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "sheepherder",
+              "stage": "sheepherder:0",
+              "step_id": "accept-task",
+              "sequence": 0,
+              "step_index": 0,
+              "remaining_steps": 1,
+              "needs_read": "False",
+              "action_state": "talking",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 52,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "sheepherder",
+              "stage": "sheepherder:0",
+              "step_id": "accept-task",
+              "sequence": 0,
+              "step_index": 0,
+              "remaining_steps": 1,
+              "needs_read": "True",
+              "action_state": "waiting",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 63,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "sheepherder",
+              "stage": "sheepherder:1",
+              "step_id": "buy-protection",
+              "sequence": 1,
+              "step_index": 0,
+              "remaining_steps": 1,
+              "needs_read": "False",
+              "action_state": "talking",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 72,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "sheepherder",
+              "stage": "sheepherder:1",
+              "step_id": "buy-protection",
+              "sequence": 1,
+              "step_index": 0,
+              "remaining_steps": 1,
+              "needs_read": "True",
+              "action_state": "waiting",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 74,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "sheepherder",
+              "stage": "sheepherder:2",
+              "step_id": "wear-jacket",
+              "sequence": 2,
+              "step_index": 0,
+              "remaining_steps": 5,
+              "needs_read": "False",
+              "action_state": "working",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 75,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "sheepherder",
+              "stage": "sheepherder:2",
+              "step_id": "wear-trousers",
+              "sequence": 2,
+              "step_index": 1,
+              "remaining_steps": 4,
+              "needs_read": "False",
+              "action_state": "working",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 76,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "sheepherder",
+              "stage": "sheepherder:2",
+              "step_id": "open-pen-gate",
+              "sequence": 2,
+              "step_index": 2,
+              "remaining_steps": 3,
+              "needs_read": "False",
+              "action_state": "working",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 136,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "sheepherder",
+              "stage": "sheepherder:2",
+              "step_id": "take-prod",
+              "sequence": 2,
+              "step_index": 3,
+              "remaining_steps": 2,
+              "needs_read": "False",
+              "action_state": "working",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 146,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "sheepherder",
+              "stage": "sheepherder:2",
+              "step_id": "wield-prod",
+              "sequence": 2,
+              "step_index": 4,
+              "remaining_steps": 1,
+              "needs_read": "False",
+              "action_state": "working",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 147,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "sheepherder",
+              "stage": "sheepherder:2",
+              "step_id": "wear-jacket",
+              "sequence": 2,
+              "step_index": 0,
+              "remaining_steps": 5,
+              "needs_read": "True",
+              "action_state": "waiting",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 150,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "sheepherder",
+              "stage": "sheepherder:2",
+              "step_id": "wear-jacket",
+              "sequence": 2,
+              "step_index": 0,
+              "remaining_steps": 5,
+              "needs_read": "True",
+              "action_state": "blocked",
+              "attempts": 0,
+              "no_progress": 0,
+              "block_reason": "no step for stage"
+            }
+          }
+        }
+      ],
+      "end_state": {
+        "account": "qsh20ys693_0",
+        "label": "end-fail",
+        "tick": 150,
+        "status": {
+          "run": "RunKey { slot: 1, run: 1, session: 3 }",
+          "phase": "Working",
+          "fields": {
+            "display": "Sheep Herder",
+            "stage": "sheepherder:2",
+            "deaths": 0,
+            "needs_read": "True",
+            "quest_id": "sheepherder",
+            "colour": "in_progress",
+            "action_state": "blocked",
+            "step_id": "wear-jacket",
+            "child_recipe_id": "",
+            "child_step_id": "",
+            "sequence": 2,
+            "sequence_count": 4,
+            "step_index": 0,
+            "remaining_steps": 5,
+            "attempts": 0,
+            "no_progress": 0,
+            "queue": "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPRPPPPPB",
+            "completed": 0,
+            "session_deaths": 0,
+            "path_validation": "Reload Paths: 42 folder documents, 68 registry rows, 0 validation errors (/Volumes/dev-scratch/274bot-evidence/QUEST-TERRA/paths)",
+            "path_source": "folder",
+            "draft_status": "Untested draft Path",
+            "required_vs_live": 0,
+            "tested_stats_warning": "No qualified stats recorded",
+            "pin": "r289 engine:cc359656b4acd216ca452495874b6beba9a0ac75 content:92649430fcbc83538d8c4367ecb96cee1a67a944 nav:[4e, 8a, b5, af, 46, 94, cf, 67, 22, ed, 38, 36, c3, e1, f4, 2e, 9a, c1, be, 13, 6d, 4d, 11, 27, c7, db, 69, 8f, 4f, c6, 50, 0b]",
+            "tactic": "",
+            "role": "",
+            "step_comment": "C:scripts/quests/quest_sheepherder/scripts/npcs/diseased_sheep.rs2:36-41 requires the worn jacket and trousers.",
+            "provision": "Ready",
+            "provision_item": "",
+            "provision_need": 0,
+            "provision_pack": 0,
+            "bank_known": "True",
+            "provision_attempts": 0,
+            "active_loadout": "",
+            "coin_float": 100,
+            "coin_drawn": "True",
+            "carry_drawn": "0000000000000000",
+            "quest": {
+              "stage": "sheepherder:2",
+              "rule": "sheepherder:2",
+              "complete": "False"
+            },
+            "rule": "sheepherder:2",
+            "journal_lines": "Close Window\n@str@Councillor Halgrive asked me to dispose of four\n@str@plague-bearing sheep just north of Ardougne\n@str@and I accepted.\n@str@He gave me some poisoned sheep feed to do this.\n@str@I bought some protective clothing from Dr Orbon in the\n@str@chapel north of Ardougne Zoo. I could now kill the sheep.\n@dbl@I must find the first sheep and herd it to the pen.\n@dbl@@dbl@I must find the second sheep and herd it to the pen.\n@dbl@@dbl@I must find the third sheep and herd it to the pen.\n@dbl@@dbl@I must find the fourth sheep and herd it to the pen.",
+            "block_reason": "no step for stage"
+          },
+          "failure": null
+        },
+        "tile": [
+          2604,
+          3357,
+          0
+        ],
+        "inventory": [
+          [
+            279,
+            1
+          ]
+        ],
+        "equipment": [
+          278,
+          284,
+          285
+        ],
+        "chat": [
+          "Welcome to RuneScape.",
+          "set tutorial: to 1000"
+        ]
+      },
+      "guide": {
+        "quest": "sheepherder",
+        "areas": {
+          "pen": {
+            "boxes": [
+              [
+                2595,
+                3351,
+                2609,
+                3364,
+                0
+              ]
+            ],
+            "source": "C:scripts/quests/quest_sheepherder/configs/sheepherder_area.dbrow:1-3"
+          }
+        },
+        "prelude": [],
+        "sequences": [
+          {
+            "stage": "sheepherder:0",
+            "steps": [
+              {
+                "id": "accept-task",
+                "kind": "talk",
+                "settle": {
+                  "Fact": {
+                    "kind": "stage_in",
+                    "version": 1,
+                    "args": {
+                      "quest": "sheepherder",
+                      "any": [
+                        "sheepherder:1"
+                      ]
+                    }
+                  }
+                },
+                "skip_if": {
+                  "Any": []
+                }
+              }
+            ]
+          },
+          {
+            "stage": "sheepherder:1",
+            "steps": [
+              {
+                "id": "buy-protection",
+                "kind": "talk",
+                "settle": {
+                  "Fact": {
+                    "kind": "stage_in",
+                    "version": 1,
+                    "args": {
+                      "quest": "sheepherder",
+                      "any": [
+                        "sheepherder:2"
+                      ]
+                    }
+                  }
+                },
+                "skip_if": {
+                  "Any": []
+                }
+              }
+            ]
+          },
+          {
+            "stage": "sheepherder:2",
+            "steps": [
+              {
+                "id": "wear-jacket",
+                "kind": "equip",
+                "settle": {
+                  "Fact": {
+                    "kind": "worn",
+                    "version": 1,
+                    "args": {
+                      "obj": "plague_jacket"
+                    }
+                  }
+                },
+                "skip_if": {
+                  "Fact": {
+                    "kind": "worn",
+                    "version": 1,
+                    "args": {
+                      "obj": "plague_jacket"
+                    }
+                  }
+                }
+              },
+              {
+                "id": "wear-trousers",
+                "kind": "equip",
+                "settle": {
+                  "Fact": {
+                    "kind": "worn",
+                    "version": 1,
+                    "args": {
+                      "obj": "plague_trousers"
+                    }
+                  }
+                },
+                "skip_if": {
+                  "Fact": {
+                    "kind": "worn",
+                    "version": 1,
+                    "args": {
+                      "obj": "plague_trousers"
+                    }
+                  }
+                }
+              },
+              {
+                "id": "open-pen-gate",
+                "kind": "interact",
+                "settle": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "pen"
+                    }
+                  }
+                },
+                "skip_if": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "pen"
+                    }
+                  }
+                }
+              },
+              {
+                "id": "take-prod",
+                "kind": "interact",
+                "settle": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "cattleprod"
+                    }
+                  }
+                },
+                "skip_if": {
+                  "Any": [
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "cattleprod"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "worn",
+                        "version": 1,
+                        "args": {
+                          "obj": "cattleprod"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "wield-prod",
+                "kind": "equip",
+                "settle": {
+                  "Fact": {
+                    "kind": "worn",
+                    "version": 1,
+                    "args": {
+                      "obj": "cattleprod"
+                    }
+                  }
+                },
+                "skip_if": {
+                  "Fact": {
+                    "kind": "worn",
+                    "version": 1,
+                    "args": {
+                      "obj": "cattleprod"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "stage": "sheepherder:complete",
+            "steps": []
+          }
+        ]
+      }
+    }
+  },
+  "logs": [
+    {
+      "account": "qsh20ys693_0",
+      "tick": 23,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: run start stage=unknown"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 23,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage unknown \u2192 sheepherder:0"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 23,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:0 step accept-task (talk) begin"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 54,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:0 \u2192 sheepherder:1"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 54,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:1 step accept-task (talk) settled"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 54,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:1 step buy-protection (talk) begin"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 74,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:1 \u2192 sheepherder:2"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 74,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:2 step buy-protection (talk) settled"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 74,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:2 step wear-jacket (equip) begin"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 75,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:2 step wear-jacket (equip) settled"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 75,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:2 step wear-jacket skipped: worn({\"obj\":\"plague_jacket\"}) evaluated true"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 75,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:2 step wear-trousers (equip) begin"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 76,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:2 step wear-trousers (equip) settled"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 76,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:2 step wear-trousers skipped: worn({\"obj\":\"plague_trousers\"}) evaluated true"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 76,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:2 step open-pen-gate (interact) begin"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 136,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:2 step open-pen-gate (interact) settled"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 136,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:2 step open-pen-gate skipped: in_area({\"area\":\"pen\"}) evaluated true"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 136,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:2 step take-prod (interact) begin"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 146,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:2 step take-prod (interact) settled"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 146,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:2 step take-prod skipped: any(has_item({\"obj\":\"cattleprod\"}), worn({\"obj\":\"cattleprod\"})) evaluated true"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 146,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:2 step wield-prod (equip) begin"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 147,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:2 step wield-prod (equip) settled"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 147,
+      "source": "script",
+      "level": "info",
+      "message": "quester sheepherder: stage sheepherder:2 step wield-prod skipped: worn({\"obj\":\"cattleprod\"}) evaluated true"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 150,
+      "source": "script",
+      "level": "warn",
+      "message": "quester sheepherder: stage sheepherder:2 step wear-jacket skipped: worn({\"obj\":\"plague_jacket\"}) evaluated true (repeated 5 additional times)"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 150,
+      "source": "script",
+      "level": "warn",
+      "message": "quester sheepherder: stage sheepherder:2 step wear-trousers skipped: worn({\"obj\":\"plague_trousers\"}) evaluated true (repeated 4 additional times)"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 150,
+      "source": "script",
+      "level": "warn",
+      "message": "quester sheepherder: stage sheepherder:2 step open-pen-gate skipped: in_area({\"area\":\"pen\"}) evaluated true (repeated 3 additional times)"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 150,
+      "source": "script",
+      "level": "warn",
+      "message": "quester sheepherder: stage sheepherder:2 step take-prod skipped: any(has_item({\"obj\":\"cattleprod\"}), worn({\"obj\":\"cattleprod\"})) evaluated true (repeated 2 additional times)"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 150,
+      "source": "script",
+      "level": "warn",
+      "message": "quester sheepherder: stage sheepherder:2 step wield-prod skipped: worn({\"obj\":\"cattleprod\"}) evaluated true (repeated 1 additional times)"
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 150,
+      "source": "script",
+      "level": "warn",
+      "message": "quester sheepherder: park context step=wear-jacket child_recipe= child="
+    },
+    {
+      "account": "qsh20ys693_0",
+      "tick": 150,
+      "source": "script",
+      "level": "warn",
+      "message": "quester sheepherder: park: no step for stage"
+    }
+  ]
+}

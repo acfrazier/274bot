@@ -1,0 +1,1571 @@
+{
+  "source": "/Volumes/dev-scratch/274bot-evidence/QUEST-CAMPAIGN/murder/gap-2",
+  "projection": "Original native messages, receipt guards and status/capture facts. The original final phase is not changed. Guide metadata comes from the run-owned plan/staging copy.",
+  "gap": {
+    "stage": "murder:proof",
+    "step_id": "dust-murder-weapon",
+    "park_reason": "no step for stage"
+  },
+  "error": "qmd2yuvgrx_0 Quester parked/blocked: no step for stage",
+  "receipt": {
+    "account": "qmd2yuvgrx_0",
+    "quest": "murder",
+    "quest_complete": false,
+    "deaths": 0,
+    "death_count_total_across_runs": 0,
+    "death_sent": false,
+    "death_injections": 0,
+    "death_observed": false,
+    "error": null,
+    "capture_error": null,
+    "end_captured": true,
+    "stages_seen": [
+      "murder:0",
+      "murder:1",
+      "murder:proof"
+    ],
+    "step_observations": [
+      {
+        "run": "RunKey { slot: 1, run: 1, session: 3 }",
+        "tick": 25,
+        "stage": "murder:0",
+        "sequence": 0,
+        "step_index": 0,
+        "remaining_steps": 1,
+        "step_id": "offer-help",
+        "child_step_id": "",
+        "action_state": "talking",
+        "waiting_for": null,
+        "owned_combat": null,
+        "inventory": [
+          [
+            1931,
+            1
+          ]
+        ]
+      },
+      {
+        "run": "RunKey { slot: 1, run: 1, session: 3 }",
+        "tick": 38,
+        "stage": "murder:1",
+        "sequence": 1,
+        "step_index": 0,
+        "remaining_steps": 16,
+        "step_id": "collect-thread",
+        "child_step_id": "",
+        "action_state": "working",
+        "waiting_for": null,
+        "owned_combat": null,
+        "inventory": [
+          [
+            1931,
+            1
+          ]
+        ]
+      },
+      {
+        "run": "RunKey { slot: 1, run: 1, session: 3 }",
+        "tick": 539,
+        "stage": "murder:proof",
+        "sequence": 2,
+        "step_index": 1,
+        "remaining_steps": 3,
+        "step_id": "fill-flour-pot",
+        "child_step_id": "",
+        "action_state": "working",
+        "waiting_for": null,
+        "owned_combat": null,
+        "inventory": [
+          [
+            1931,
+            1
+          ],
+          [
+            1809,
+            1
+          ],
+          [
+            1813,
+            1
+          ],
+          [
+            1812,
+            1
+          ]
+        ]
+      }
+    ],
+    "final_status": {
+      "run": "RunKey { slot: 1, run: 1, session: 3 }",
+      "phase": "Blocked",
+      "fields": {
+        "queue": "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPB",
+        "completed": 0,
+        "session_deaths": 0,
+        "path_validation": "Reload Paths: 42 folder documents, 68 registry rows, 0 validation errors (/Volumes/dev-scratch/274bot-evidence/QUEST-TERRA/paths)",
+        "path_source": "folder",
+        "block_reason": "no step for stage",
+        "required_vs_live": 0,
+        "deaths": 0,
+        "stage": "murder:proof",
+        "quest_id": "murder",
+        "step_id": "recover-dagger",
+        "last_failure": "no step for stage",
+        "action_state": "blocked"
+      },
+      "failure": "ScriptFailure { code: \"queue-blocked\", message: \"no step for stage; resolve the condition, then Stop/Start Quester\" }"
+    },
+    "gap_state_evidence": {
+      "status_log": "/Volumes/dev-scratch/274bot-evidence/QUEST-CAMPAIGN/murder/gap-2/murder/campaign-qmd2yuvgrx_0-1793300411/status.jsonl",
+      "end_capture": "/Volumes/dev-scratch/274bot-evidence/QUEST-CAMPAIGN/murder/gap-2/murder/campaign-qmd2yuvgrx_0-1793300411/05-end-fail.json",
+      "statuses": [
+        {
+          "tick": 23,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Preparing",
+            "fields": {}
+          }
+        },
+        {
+          "tick": 24,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {}
+          }
+        },
+        {
+          "tick": 25,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:0",
+              "step_id": "offer-help",
+              "sequence": 0,
+              "step_index": 0,
+              "remaining_steps": 1,
+              "needs_read": "False",
+              "action_state": "talking",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 36,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:0",
+              "step_id": "offer-help",
+              "sequence": 0,
+              "step_index": 0,
+              "remaining_steps": 1,
+              "needs_read": "True",
+              "action_state": "waiting",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 38,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "collect-thread",
+              "sequence": 1,
+              "step_index": 0,
+              "remaining_steps": 16,
+              "needs_read": "False",
+              "action_state": "working",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 55,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "collect-thread",
+              "sequence": 1,
+              "step_index": 0,
+              "remaining_steps": 16,
+              "needs_read": "True",
+              "action_state": "waiting",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 57,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "take-dagger",
+              "sequence": 1,
+              "step_index": 1,
+              "remaining_steps": 15,
+              "needs_read": "False",
+              "action_state": "working",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 62,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "take-poison-pot",
+              "sequence": 1,
+              "step_index": 2,
+              "remaining_steps": 14,
+              "needs_read": "False",
+              "action_state": "working",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 67,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "ask-poison-salesman",
+              "sequence": 1,
+              "step_index": 3,
+              "remaining_steps": 13,
+              "needs_read": "False",
+              "action_state": "talking",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 152,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "ask-poison-salesman",
+              "sequence": 1,
+              "step_index": 3,
+              "remaining_steps": 13,
+              "needs_read": "True",
+              "action_state": "waiting",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 154,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "question-anna",
+              "sequence": 1,
+              "step_index": 4,
+              "remaining_steps": 12,
+              "needs_read": "False",
+              "action_state": "talking",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 231,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "question-anna",
+              "sequence": 1,
+              "step_index": 4,
+              "remaining_steps": 12,
+              "needs_read": "True",
+              "action_state": "waiting",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 233,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "question-bob",
+              "sequence": 1,
+              "step_index": 5,
+              "remaining_steps": 11,
+              "needs_read": "False",
+              "action_state": "talking",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 260,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "question-bob",
+              "sequence": 1,
+              "step_index": 5,
+              "remaining_steps": 11,
+              "needs_read": "True",
+              "action_state": "waiting",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 262,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "question-carol",
+              "sequence": 1,
+              "step_index": 6,
+              "remaining_steps": 10,
+              "needs_read": "False",
+              "action_state": "talking",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 294,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "question-carol",
+              "sequence": 1,
+              "step_index": 6,
+              "remaining_steps": 10,
+              "needs_read": "True",
+              "action_state": "waiting",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 296,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "question-david",
+              "sequence": 1,
+              "step_index": 7,
+              "remaining_steps": 9,
+              "needs_read": "False",
+              "action_state": "talking",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 321,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "question-david",
+              "sequence": 1,
+              "step_index": 7,
+              "remaining_steps": 9,
+              "needs_read": "True",
+              "action_state": "waiting",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 323,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "question-elizabeth",
+              "sequence": 1,
+              "step_index": 8,
+              "remaining_steps": 8,
+              "needs_read": "False",
+              "action_state": "talking",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 375,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "question-elizabeth",
+              "sequence": 1,
+              "step_index": 8,
+              "remaining_steps": 8,
+              "needs_read": "False",
+              "action_state": "talking",
+              "attempts": 0,
+              "no_progress": 0,
+              "last_failure": "expected dialogue did not open"
+            }
+          }
+        },
+        {
+          "tick": 376,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "question-elizabeth",
+              "sequence": 1,
+              "step_index": 8,
+              "remaining_steps": 8,
+              "needs_read": "False",
+              "action_state": "talking",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 389,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "question-elizabeth",
+              "sequence": 1,
+              "step_index": 8,
+              "remaining_steps": 8,
+              "needs_read": "True",
+              "action_state": "waiting",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 391,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "question-frank",
+              "sequence": 1,
+              "step_index": 9,
+              "remaining_steps": 7,
+              "needs_read": "False",
+              "action_state": "talking",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 436,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "question-frank",
+              "sequence": 1,
+              "step_index": 9,
+              "remaining_steps": 7,
+              "needs_read": "True",
+              "action_state": "waiting",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 438,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "investigate-loc_2650",
+              "sequence": 1,
+              "step_index": 10,
+              "remaining_steps": 6,
+              "needs_read": "False",
+              "action_state": "working",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 460,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "investigate-loc_2650",
+              "sequence": 1,
+              "step_index": 10,
+              "remaining_steps": 6,
+              "needs_read": "True",
+              "action_state": "waiting",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 462,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "investigate-quest_murder_beehive",
+              "sequence": 1,
+              "step_index": 11,
+              "remaining_steps": 5,
+              "needs_read": "False",
+              "action_state": "working",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 481,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "investigate-quest_murder_beehive",
+              "sequence": 1,
+              "step_index": 11,
+              "remaining_steps": 5,
+              "needs_read": "True",
+              "action_state": "waiting",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 483,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "investigate-murderdrain",
+              "sequence": 1,
+              "step_index": 12,
+              "remaining_steps": 4,
+              "needs_read": "False",
+              "action_state": "working",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 503,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "investigate-murderdrain",
+              "sequence": 1,
+              "step_index": 12,
+              "remaining_steps": 4,
+              "needs_read": "True",
+              "action_state": "waiting",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 505,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "investigate-loc_2653",
+              "sequence": 1,
+              "step_index": 13,
+              "remaining_steps": 3,
+              "needs_read": "False",
+              "action_state": "working",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 537,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:1",
+              "step_id": "investigate-loc_2653",
+              "sequence": 1,
+              "step_index": 13,
+              "remaining_steps": 3,
+              "needs_read": "True",
+              "action_state": "waiting",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 539,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:proof",
+              "step_id": "fill-flour-pot",
+              "sequence": 2,
+              "step_index": 1,
+              "remaining_steps": 3,
+              "needs_read": "False",
+              "action_state": "working",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 559,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:proof",
+              "step_id": "take-flypaper",
+              "sequence": 2,
+              "step_index": 2,
+              "remaining_steps": 2,
+              "needs_read": "False",
+              "action_state": "working",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 595,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:proof",
+              "step_id": "dust-murder-weapon",
+              "sequence": 2,
+              "step_index": 3,
+              "remaining_steps": 1,
+              "needs_read": "False",
+              "action_state": "working",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 598,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:proof",
+              "step_id": "recover-dagger",
+              "sequence": 2,
+              "step_index": 0,
+              "remaining_steps": 4,
+              "needs_read": "True",
+              "action_state": "waiting",
+              "attempts": 0,
+              "no_progress": 0
+            }
+          }
+        },
+        {
+          "tick": 601,
+          "status": {
+            "run": "RunKey { slot: 1, run: 1, session: 3 }",
+            "phase": "Working",
+            "fields": {
+              "quest_id": "murder",
+              "stage": "murder:proof",
+              "step_id": "recover-dagger",
+              "sequence": 2,
+              "step_index": 0,
+              "remaining_steps": 4,
+              "needs_read": "True",
+              "action_state": "blocked",
+              "attempts": 0,
+              "no_progress": 0,
+              "block_reason": "no step for stage"
+            }
+          }
+        }
+      ],
+      "end_state": {
+        "account": "qmd2yuvgrx_0",
+        "label": "end-fail",
+        "tick": 602,
+        "status": {
+          "run": "RunKey { slot: 1, run: 1, session: 3 }",
+          "phase": "Blocked",
+          "fields": {
+            "queue": "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPB",
+            "completed": 0,
+            "session_deaths": 0,
+            "path_validation": "Reload Paths: 42 folder documents, 68 registry rows, 0 validation errors (/Volumes/dev-scratch/274bot-evidence/QUEST-TERRA/paths)",
+            "path_source": "folder",
+            "block_reason": "no step for stage",
+            "required_vs_live": 0,
+            "deaths": 0,
+            "stage": "murder:proof",
+            "quest_id": "murder",
+            "step_id": "recover-dagger",
+            "last_failure": "no step for stage",
+            "action_state": "blocked"
+          },
+          "failure": "ScriptFailure { code: \"queue-blocked\", message: \"no step for stage; resolve the condition, then Stop/Start Quester\" }"
+        },
+        "tile": [
+          2731,
+          3581,
+          0
+        ],
+        "inventory": [
+          [
+            1931,
+            1
+          ],
+          [
+            1809,
+            1
+          ],
+          [
+            1814,
+            1
+          ],
+          [
+            1812,
+            1
+          ],
+          [
+            1811,
+            1
+          ]
+        ],
+        "equipment": [],
+        "chat": [
+          "Welcome to RuneScape.",
+          "set tutorial: to 1000",
+          "You take the thread.",
+          "I can't reach that!",
+          "You take some flour from the barrel.",
+          "There's still plenty of flour left.",
+          "You sprinkle a small amount of flour on the murderweapon.",
+          "The murderweapon is now coated with a thin layer of flour."
+        ]
+      },
+      "guide": {
+        "quest": "murder",
+        "areas": {},
+        "prelude": [],
+        "sequences": [
+          {
+            "stage": "murder:0",
+            "steps": [
+              {
+                "id": "offer-help",
+                "kind": "talk",
+                "settle": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "murder",
+                      "is": "in_progress"
+                    }
+                  }
+                },
+                "skip_if": {
+                  "Any": []
+                }
+              }
+            ]
+          },
+          {
+            "stage": "murder:1",
+            "steps": [
+              {
+                "id": "collect-thread",
+                "kind": "interact",
+                "settle": {
+                  "Any": [
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "murderthreadg"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "murderthreadr"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "murderthreadb"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "skip_if": {
+                  "Any": [
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "murderthreadg"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "murderthreadr"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "murderthreadb"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "take-dagger",
+                "kind": "interact",
+                "settle": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "murderweapon"
+                    }
+                  }
+                },
+                "skip_if": {
+                  "Any": [
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "murderweapon"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "murderweapondust"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "murderfingerprint1"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "murderfingerprint"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "take-poison-pot",
+                "kind": "interact",
+                "settle": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "murderpot2"
+                    }
+                  }
+                },
+                "skip_if": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "murderpot2"
+                    }
+                  }
+                }
+              },
+              {
+                "id": "ask-poison-salesman",
+                "kind": "talk",
+                "settle": {
+                  "All": []
+                },
+                "skip_if": {
+                  "Any": []
+                }
+              },
+              {
+                "id": "question-anna",
+                "kind": "talk",
+                "settle": {
+                  "All": []
+                },
+                "skip_if": {
+                  "Any": []
+                }
+              },
+              {
+                "id": "question-bob",
+                "kind": "talk",
+                "settle": {
+                  "All": []
+                },
+                "skip_if": {
+                  "Any": []
+                }
+              },
+              {
+                "id": "question-carol",
+                "kind": "talk",
+                "settle": {
+                  "All": []
+                },
+                "skip_if": {
+                  "Any": []
+                }
+              },
+              {
+                "id": "question-david",
+                "kind": "talk",
+                "settle": {
+                  "All": []
+                },
+                "skip_if": {
+                  "Any": []
+                }
+              },
+              {
+                "id": "question-elizabeth",
+                "kind": "talk",
+                "settle": {
+                  "All": []
+                },
+                "skip_if": {
+                  "Any": []
+                }
+              },
+              {
+                "id": "question-frank",
+                "kind": "talk",
+                "settle": {
+                  "All": []
+                },
+                "skip_if": {
+                  "Any": []
+                }
+              },
+              {
+                "id": "investigate-loc_2650",
+                "kind": "interact",
+                "settle": {
+                  "All": []
+                },
+                "skip_if": {
+                  "Any": []
+                }
+              },
+              {
+                "id": "investigate-quest_murder_beehive",
+                "kind": "interact",
+                "settle": {
+                  "All": []
+                },
+                "skip_if": {
+                  "Any": []
+                }
+              },
+              {
+                "id": "investigate-murderdrain",
+                "kind": "interact",
+                "settle": {
+                  "All": []
+                },
+                "skip_if": {
+                  "Any": []
+                }
+              },
+              {
+                "id": "investigate-loc_2653",
+                "kind": "interact",
+                "settle": {
+                  "All": []
+                },
+                "skip_if": {
+                  "Any": []
+                }
+              },
+              {
+                "id": "investigate-murderfountain",
+                "kind": "interact",
+                "settle": {
+                  "All": []
+                },
+                "skip_if": {
+                  "Any": []
+                }
+              },
+              {
+                "id": "investigate-murdersign",
+                "kind": "interact",
+                "settle": {
+                  "All": []
+                },
+                "skip_if": {
+                  "Any": []
+                }
+              }
+            ]
+          },
+          {
+            "stage": "murder:proof",
+            "steps": [
+              {
+                "id": "recover-dagger",
+                "kind": "interact",
+                "settle": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "murderweapon"
+                    }
+                  }
+                },
+                "skip_if": {
+                  "Any": [
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "murderweapon"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "murderweapondust"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "murderfingerprint1"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "murderfingerprint"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "fill-flour-pot",
+                "kind": "interact",
+                "settle": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "pot_flour"
+                    }
+                  }
+                },
+                "skip_if": {
+                  "Any": [
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "pot_flour"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "murderweapondust"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "take-flypaper",
+                "kind": "interact",
+                "settle": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "murderpaper"
+                    }
+                  }
+                },
+                "skip_if": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "murderpaper"
+                    }
+                  }
+                }
+              },
+              {
+                "id": "dust-murder-weapon",
+                "kind": "use_on",
+                "settle": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "murderweapondust"
+                    }
+                  }
+                },
+                "skip_if": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "murderweapondust"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "stage": "murder:done",
+            "steps": []
+          }
+        ]
+      }
+    }
+  },
+  "logs": [
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 25,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: run start stage=unknown"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 25,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage unknown \u2192 murder:0"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 25,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:0 step offer-help (talk) begin"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 38,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:0 \u2192 murder:1"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 38,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step offer-help (talk) settled"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 38,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step collect-thread (interact) begin"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 57,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step collect-thread (interact) settled"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 57,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step take-dagger (interact) begin"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 62,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step take-dagger (interact) settled"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 62,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step take-poison-pot (interact) begin"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 67,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step take-poison-pot (interact) settled"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 67,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step ask-poison-salesman (talk) begin"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 154,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step ask-poison-salesman (talk) settled"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 154,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step question-anna (talk) begin"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 233,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step question-anna (talk) settled"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 233,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step question-bob (talk) begin"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 262,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step question-bob (talk) settled"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 262,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step question-carol (talk) begin"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 296,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step question-carol (talk) settled"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 296,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step question-david (talk) begin"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 323,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step question-david (talk) settled"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 323,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step question-elizabeth (talk) begin"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 375,
+      "source": "script",
+      "level": "warn",
+      "message": "quester murder: stage murder:1 step question-elizabeth (talk) failed: expected dialogue did not open"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 391,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step question-elizabeth (talk) settled"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 391,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step question-frank (talk) begin"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 438,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step question-frank (talk) settled"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 438,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step investigate-loc_2650 (interact) begin"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 462,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step investigate-loc_2650 (interact) settled"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 462,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step investigate-quest_murder_beehive (interact) begin"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 483,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step investigate-quest_murder_beehive (interact) settled"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 483,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step investigate-murderdrain (interact) begin"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 505,
+      "source": "script",
+      "level": "info",
+      "message": "quester murder: stage murder:1 step investigate-murderdrain (interact) settled"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 601,
+      "source": "script",
+      "level": "warn",
+      "message": "quester murder: stage murder:1 step question-elizabeth (talk) begin (repeated 1 additional times)"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 601,
+      "source": "script",
+      "level": "warn",
+      "message": "quester trace truncated after the event limit"
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 601,
+      "source": "script",
+      "level": "warn",
+      "message": "quester murder: park context step=recover-dagger child_recipe= child="
+    },
+    {
+      "account": "qmd2yuvgrx_0",
+      "tick": 601,
+      "source": "script",
+      "level": "warn",
+      "message": "quester murder: park: no step for stage"
+    }
+  ]
+}
