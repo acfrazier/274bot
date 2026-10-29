@@ -1376,39 +1376,41 @@ fn drive_filliman(answer_once: bool) -> (Vec<i32>, bool) {
             )
             .unwrap()
     });
-    let mut poll = |page: &GameSnapshot, tick: u64| {
-        with_tick(page, &mut ledger, tick, |tick| {
+    let poll = |page: &GameSnapshot,
+                tick: u64,
+                ledger: &mut Option<Box<ledger::Ledger>>| {
+        with_tick(page, ledger, tick, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })
     };
-    assert!(poll(&first, 2).is_pending());
+    assert!(poll(&first, 2, &mut ledger).is_pending());
     assert_eq!(answers(&ledger), [2]);
 
     let question = menu_page(100, &["How long have you been a ghost?"], &[], 101);
-    assert!(poll(&question, 3).is_pending());
-    assert!(poll(&question, 4).is_pending());
+    assert!(poll(&question, 3, &mut ledger).is_pending());
+    assert!(poll(&question, 4, &mut ledger).is_pending());
     let reply = menu_page(
         100,
         &["What?! Don't be preposterous! I'm not a ghost!"],
         &[],
         101,
     );
-    assert!(poll(&reply, 5).is_pending());
+    assert!(poll(&reply, 5, &mut ledger).is_pending());
     let second_menu = menu_page(
         100,
         &["What?! Don't be preposterous! I'm not a ghost!"],
         &FILLIMAN_MENU,
         -1,
     );
-    assert!(poll(&second_menu, 6).is_pending());
+    assert!(poll(&second_menu, 6, &mut ledger).is_pending());
 
     let thanks = menu_page(100, &["Ok, thanks."], &[], 101);
-    assert!(poll(&thanks, 7).is_pending());
-    assert!(poll(&thanks, 8).is_pending());
+    assert!(poll(&thanks, 7, &mut ledger).is_pending());
+    assert!(poll(&thanks, 8, &mut ledger).is_pending());
     let closed = menu_page(-1, &[], &[], -1);
-    assert!(poll(&closed, 9).is_pending());
+    assert!(poll(&closed, 9, &mut ledger).is_pending());
     let completed = matches!(
-        poll(&closed, 10),
+        poll(&closed, 10, &mut ledger),
         Poll::Ready(Ok(DialogueOutcome::Completed))
     );
     (answers(&ledger), completed)
