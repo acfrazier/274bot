@@ -326,7 +326,6 @@ fn walk_radius(op: &InteractReq) -> i32 {
     }
 }
 
-
 fn orthogonally_adjacent(left: WorldTile, right: WorldTile) -> bool {
     left.level == right.level
         && u64::from(left.x.abs_diff(right.x)) + u64::from(left.z.abs_diff(right.z)) == 1
@@ -538,7 +537,10 @@ fn a_far_start_walks_to_luthas_spawn_without_a_scene_reach_gate() {
         let mut cx = Cx::test(&mut ops, &mut clock, None);
         Recover::start(PORT_SARIM, &mut cx, &mut logs)
     };
-    assert!(recovery.is_ok(), "far-start fare recovery should start: {logs:?}");
+    assert!(
+        recovery.is_ok(),
+        "far-start fare recovery should start: {logs:?}"
+    );
     assert!(
         matches!(ops.as_slice(), [op] if walk_near(anchor, 2)(op)),
         "a far start walks to Luthas's spawn tile with radius 2: {ops:?}"
@@ -663,7 +665,10 @@ fn being_at_luthas_staging_tile_checks_the_row_before_another_walk() {
         let mut cx = Cx::test(&mut ops, &mut clock, None);
         Recover::start(PORT_SARIM, &mut cx, &mut logs)
     };
-    assert!(recovery.is_err(), "no-row recovery ends after the row check");
+    assert!(
+        recovery.is_err(),
+        "no-row recovery ends after the row check"
+    );
     assert!(ops.is_empty(), "do not walk away before checking the row");
     assert!(
         logs.iter()
@@ -695,6 +700,27 @@ fn luthas_stand_selection_uses_search_rank_before_manhattan_distance() {
     };
     install_ranked_luthas_reach_view(anchor, &[(lower_rank, 1), (closer, 2)]);
     world.post();
+    let options = api::query::SceneReachOptions {
+        max_steps: Some(400),
+        adjacent_ok: false,
+    };
+    crate::reach_query::with_view(|view| {
+        let rank = |tile: WorldTile| {
+            let lx = (tile.x - view.base_x) as usize;
+            let lz = (tile.z - view.base_z) as usize;
+            view.exact_rank[lx * view.height as usize + lz]
+        };
+        assert!(view.walkable(lower_rank));
+        assert!(view.walkable(closer));
+        assert!(view.can_reach(lower_rank, &options));
+        assert!(view.can_reach(closer, &options));
+        assert_eq!(rank(lower_rank), 1);
+        assert_eq!(rank(closer), 2);
+    });
+    assert_eq!(
+        super::next_orthogonal_stand(npc, &super::TriedStands::default()),
+        Ok(lower_rank)
+    );
     let coins = world.facts.coins;
     let fare = world.facts.coin_payout;
     fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
@@ -707,7 +733,6 @@ fn luthas_stand_selection_uses_search_rank_before_manhattan_distance() {
         "search rank wins when the lower-rank tile is farther away"
     );
 }
-
 
 fn is_talk(name: String) -> impl Fn(&InteractReq) -> bool {
     move |op| {
@@ -1199,7 +1224,17 @@ fn initial_luthas_move_stages_without_a_posted_row_then_replans_orthogonally() {
 
     world.here = staging_tile;
     world.luthas_posted = true;
-    let (result, ops) = recovery_step(&mut world, &mut recover, &mut clock, &mut logs);
+    world.post();
+    world.tick += 1;
+    post_walk_outcome(
+        world.tick,
+        token(&ops[0]),
+        world.here,
+        staging_tile,
+        2,
+        false,
+    );
+    let (result, ops) = recovery_step_observed(&mut recover, &mut clock, &mut logs);
     assert_eq!(result, None);
     assert!(matches!(ops.as_slice(), [InteractReq::Walk { .. }]));
     let talk_stand = walk_tile(&ops[0]);
@@ -1208,12 +1243,21 @@ fn initial_luthas_move_stages_without_a_posted_row_then_replans_orthogonally() {
         "the posted row is used to replan the actual talk approach: {talk_stand:?}"
     );
 
+    let talk_walk = ops[0].clone();
     world.here = talk_stand;
-    assert!(
-        recovery_step(&mut world, &mut recover, &mut clock, &mut logs)
-            .1
-            .is_empty()
+    world.post();
+    world.tick += 1;
+    post_walk_outcome(
+        world.tick,
+        token(&talk_walk),
+        world.here,
+        talk_stand,
+        0,
+        false,
     );
+    let (result, ops) = recovery_step_observed(&mut recover, &mut clock, &mut logs);
+    assert_eq!(result, None);
+    assert!(ops.is_empty());
     let (result, ops) = recovery_step(&mut world, &mut recover, &mut clock, &mut logs);
     assert_eq!(result, None);
     assert!(
