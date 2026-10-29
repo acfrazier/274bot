@@ -1279,11 +1279,16 @@ fn run_cell(kind: CellKind) {
         .expect("reference navigation flags");
     let template = options
         .resolve(None)
-        .expect("resolve R289 Engine A profile")
+        .expect("resolve R289 Engine L profile")
         .prepare_template()
         .expect("prepare isolated R289 reference-pack template");
     let selected = game_data::for_revision(ClientRevision::R289).expect("selected R289 data");
     let nav_world = template.world().expect("reference navigation world");
+    if nav_world.named_bank_facts().is_none() {
+        nav_world
+            .bind_named_bank_facts(&selected)
+            .expect("bind selected R289 service facts before Play starts");
+    }
     let keepers = Arc::clone(
         nav_world
             .shop_keeper_facts()

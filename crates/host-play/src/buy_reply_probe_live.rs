@@ -2027,6 +2027,11 @@ fn run_live_probe() {
         .expect("prepare isolated Engine L R289 client template");
     let selected = game_data::for_revision(ClientRevision::R289).expect("selected R289 data");
     let nav_world = template.world().expect("selected R289 navigation world");
+    if nav_world.named_bank_facts().is_none() {
+        nav_world
+            .bind_named_bank_facts(&selected)
+            .expect("bind selected R289 service facts before Play starts");
+    }
     let keepers = Arc::clone(
         nav_world
             .shop_keeper_facts()

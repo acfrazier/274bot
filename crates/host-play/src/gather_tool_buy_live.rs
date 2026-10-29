@@ -1464,6 +1464,11 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
     let selected = profile.game_data().expect("selected R289 game data");
     let template = SharedClientTemplate::load(Arc::clone(&profile)).expect("client template");
     let world = template.world().expect("selected R289 navigation world");
+    if world.named_bank_facts().is_none() {
+        world
+            .bind_named_bank_facts(&selected)
+            .expect("bind selected R289 service facts before Play starts");
+    }
     let keepers = Arc::clone(
         world
             .shop_keeper_facts()
