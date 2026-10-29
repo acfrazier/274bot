@@ -32166,7 +32166,7 @@ export default class T extends LoopingBot {
     fn slot_keeps_parked_native_run_and_resumes_after_dose() {
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use api::quest_progress::EvidenceStamp;
-        use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView, StatView};
+        use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, StatView};
         use script::native::{HostEffect, InteractionReceipt, NativePhase, SettingsBag};
         use script::survival::CurePoison;
 
