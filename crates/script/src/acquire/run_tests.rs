@@ -1232,7 +1232,7 @@ fn bank_machine_and_acquire_run_size_of_pinned() {
         size_of::<AcquireRequest>(),
         size_of::<BankReceipt>(),
         size_of::<crate::quester::provision::Provisioner>(),
-        size_of::<crate::gatherer::runner::Gatherer>(),
+        size_of::<crate::gatherer::Gatherer>(),
         size_of::<crate::quester::runner::Quester>(),
         size_of::<crate::survival::SurvivalStep>(),
     );

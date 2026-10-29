@@ -5218,9 +5218,10 @@ mod tests {
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use api::selected::Truth;
         use api::snapshot::{
-            GameSnapshot, HitmarkView, HitmarksView, ItemActionFamily, ItemContainer, ItemView,
-            StatView, WorldStateView,
+            HitmarkView, HitmarksView, ItemActionFamily, ItemContainer, ItemView, StatView,
+            WorldStateView,
         };
+        use crate::quester::compile::PredicatePlan;
         use crate::survival::CurePoison;
         use std::sync::atomic::{AtomicUsize, Ordering};
 

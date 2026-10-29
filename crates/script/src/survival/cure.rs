@@ -218,7 +218,7 @@ fn held_fruit(inventory: &[ItemView], tables: &CombatTables) -> Option<i32> {
 mod tests {
     use super::*;
     use crate::combat::schedule::{InputEffect, Schedule};
-    use api::condition::{CureDoses, SessionMark};
+    use api::condition::{CureDoses, FoodSummary, SessionMark};
     use api::obj_names::ItemDefView;
     use api::selected::ClientRevision;
     use api::snapshot::{ItemActionFamily, ItemContainer};

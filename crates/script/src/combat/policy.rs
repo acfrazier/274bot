@@ -320,6 +320,10 @@ pub(crate) struct EatChoice {
     pub ordinary: Option<i32>,
     pub combo: Option<i32>,
 }
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the frame, tables and schedule borrows plus danger, poison fire, HP pair and tick stay explicit"
+)]
 pub(crate) fn eat_choice(
     frame: &Frame<'_>,
     tables: &CombatTables,

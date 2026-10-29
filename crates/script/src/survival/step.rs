@@ -134,7 +134,7 @@ impl SurvivalStep {
             | CureDecision::Needed { why, .. } => Some(why),
             CureDecision::None => None,
         };
-        if let Some((args, decision)) = click(cure, &frame.inventory, hp) {
+        if let Some((args, decision)) = click(cure, frame.inventory, hp) {
             self.last = SurvivalReport {
                 decision,
                 why,
@@ -156,7 +156,7 @@ impl SurvivalStep {
                 tick,
                 eat_floor,
             ) {
-                if let Some(args) = eat_args(choice, &frame.inventory, hp) {
+                if let Some(args) = eat_args(choice, frame.inventory, hp) {
                     self.last = SurvivalReport {
                         decision: Decision::Eating,
                         why,
@@ -337,11 +337,11 @@ fn click(
     hp: Option<i32>,
 ) -> Option<(OneOpArgs, Decision)> {
     match cure {
-        CureDecision::Drink { item, why: _, .. } => {
+        CureDecision::Drink { item, .. } => {
             let (name, count) = held_item(inventory, item)?;
             Some((OneOpArgs::drink(name, item, count), Decision::Drinking))
         }
-        CureDecision::EatFruit { item, why: _, .. } => {
+        CureDecision::EatFruit { item, .. } => {
             let (name, count) = held_item(inventory, item)?;
             let hp = hp?;
             Some((OneOpArgs::eat(name, item, count, hp), Decision::Eating))
@@ -386,6 +386,7 @@ mod tests {
     };
     use crate::combat::tables::PotionKind;
     use crate::gatherer::oneop::OneOpKind;
+    use crate::survival::CurePoison;
     use crate::quester::families::tests::{local_player, with_tick};
 
     fn condition(hp: u8, poison: PoisonState) -> BotCondition {

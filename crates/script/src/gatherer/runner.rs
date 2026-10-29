@@ -2706,6 +2706,8 @@ mod switch_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use api::snapshot::{ItemActionFamily, ItemContainer};
+    use crate::quester::families::tests::with_tick;
     use std::mem::size_of;
 
     fn survival_condition(
@@ -4158,6 +4160,9 @@ mod tests {
             fn status(&mut self, status: ScriptStatus) {
                 self.0.push(status);
             }
+            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn log(&mut self, _: api::hostlog::Level, _: &str) {}
+            fn settings_applied(&mut self, _: u64) {}
         }
 
         let fixture = BaitFixture::new();
@@ -4225,6 +4230,9 @@ mod tests {
             fn status(&mut self, status: ScriptStatus) {
                 self.0.push(status);
             }
+            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn log(&mut self, _: api::hostlog::Level, _: &str) {}
+            fn settings_applied(&mut self, _: u64) {}
         }
 
         let fixture = BaitFixture::new();

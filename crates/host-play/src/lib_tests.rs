@@ -32172,7 +32172,7 @@ export default class T extends LoopingBot {
 
         fn condition(tick: u64, poison: PoisonState, hp: u8, antipoison: u8) -> BotCondition {
             BotCondition {
-                tick: u16::try_from(tick).unwrap(),
+                tick: u32::try_from(tick).unwrap(),
                 session: SessionMark::Live,
                 hp,
                 hp_max: 99,
