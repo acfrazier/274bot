@@ -1899,10 +1899,20 @@ impl Family for WalkTo {
                 self.pumped = false;
                 return Step::Wait;
             }
-            // Frozen follow pass: `EventSignal.pending()` ends the walk
-            // before `Sustain.run()` (`WalkExecutor.ts:844–853, 359–362`),
-            // the re-walk and the recovery included; the host route stops.
+            // A host-owned random event suspends the first route. The host
+            // freezes follow while it handles the event, so keep the walk
+            // pending and let a later route failure enter fare recovery.
             if interrupted(cx) {
+                let first_route = matches!(
+                    &self.phase,
+                    WalkToPhase::Walking { retried: false, .. }
+                );
+                let owned_random =
+                    observed::with(|scene| scene.since_login().ours().unwrap_or(false));
+                if first_route && owned_random && !crate::event_signal::pending() {
+                    self.pumped = false;
+                    return Step::Wait;
+                }
                 self.interrupt(cx);
                 continue;
             }
