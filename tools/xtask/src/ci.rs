@@ -10,7 +10,8 @@ const RA_ARCHIVE_SHA256: &str = "040cab4e2abc490fadd95c3f6cbc60b941a78761dbc3acf
 const RA_BINARY_SHA256: &str = "fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49";
 const RA_VERSION: &str = "rust-analyzer 0.3.3081-standalone";
 const FLATC_URL: &str = "https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g%2B%2B-13.zip";
-const FLATC_ARCHIVE_SHA256: &str = "9f87066dc5dfa7fe02090b55bab5f3e55df03e32c9b0cdf229004ade7d091039";
+const FLATC_ARCHIVE_SHA256: &str =
+    "9f87066dc5dfa7fe02090b55bab5f3e55df03e32c9b0cdf229004ade7d091039";
 const FLATC_VERSION: &str = "flatc version 25.12.19";
 const ARCH_BRANCH: &str = "main";
 
@@ -181,8 +182,12 @@ pub fn run(args: Vec<String>) -> Result<u8, String> {
         selected_steps.push(step);
     }
 
-    fs::create_dir_all(&options.log_dir)
-        .map_err(|error| format!("cannot create log directory {}: {error}", options.log_dir.display()))?;
+    fs::create_dir_all(&options.log_dir).map_err(|error| {
+        format!(
+            "cannot create log directory {}: {error}",
+            options.log_dir.display()
+        )
+    })?;
     let summary_path = options.log_dir.join("summary.txt");
     let mut summary = File::create(&summary_path)
         .map_err(|error| format!("cannot create {}: {error}", summary_path.display()))?;
@@ -286,7 +291,10 @@ fn parse_options(args: Vec<String>, root: &Path) -> Result<Options, String> {
         return Err("select --all or one or more step names".to_owned());
     }
 
-    let log_dir = resolve_path(root, log_dir.unwrap_or_else(|| PathBuf::from("target/xtask-ci")));
+    let log_dir = resolve_path(
+        root,
+        log_dir.unwrap_or_else(|| PathBuf::from("target/xtask-ci")),
+    );
     let cache_dir = match cache_dir {
         Some(path) => resolve_path(root, path),
         None => env::var_os("HOME")
@@ -356,10 +364,16 @@ fn steps() -> Vec<Step> {
         },
     ];
 
-    result.extend(CLIPPY_COMMANDS.iter().map(|(name, command)| shell(name, command)));
-    result.extend(TEST_LANES.iter().map(|(lane, command)| {
-        shell(&format!("test-{lane}"), command)
-    }));
+    result.extend(
+        CLIPPY_COMMANDS
+            .iter()
+            .map(|(name, command)| shell(name, command)),
+    );
+    result.extend(
+        TEST_LANES
+            .iter()
+            .map(|(lane, command)| shell(&format!("test-{lane}"), command)),
+    );
     result.push(Step {
         name: "ci-self-check".to_owned(),
         kind: StepKind::SelfCheck,
@@ -382,9 +396,7 @@ fn execute_step(
 ) -> Result<i32, String> {
     match step.kind {
         StepKind::Shell(command) => run_shell_step(step, command, root, log),
-        StepKind::ArchitectureSelfTest => {
-            architecture_step(step, root, options, log, true)
-        }
+        StepKind::ArchitectureSelfTest => architecture_step(step, root, options, log, true),
         StepKind::ArchitectureCheck => architecture_step(step, root, options, log, false),
         StepKind::FlatBuffers => flatbuffers_step(step, root, options, log),
         StepKind::SelfCheck => self_check_step(root, log),
@@ -397,14 +409,10 @@ fn run_shell_step(step: &Step, command: &str, root: &Path, log: &mut File) -> Re
     }
     writeln!(log, "== {}: {command}", step.name).map_err(io_error)?;
     let mut process = Command::new("bash");
-    process
-        .arg("-c")
-        .arg(command)
-        .current_dir(root);
+    process.arg("-c").arg(command).current_dir(root);
     configure_common_environment(&mut process);
     run_logged(process, log)
 }
-
 
 fn run_test_step(step: &Step, command: &str, root: &Path, log: &mut File) -> Result<i32, String> {
     writeln!(log, "== {}: {command}", step.name).map_err(io_error)?;
@@ -427,9 +435,11 @@ fn run_test_step(step: &Step, command: &str, root: &Path, log: &mut File) -> Res
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".274bot/unpack-289"));
-        let temp_home = root
-            .join("target/xtask-ci/homes")
-            .join(format!("{}-{}", std::process::id(), step_nonce()));
+        let temp_home = root.join("target/xtask-ci/homes").join(format!(
+            "{}-{}",
+            std::process::id(),
+            step_nonce()
+        ));
         if let Err(error) = seed_test_home(&temp_home, &snapshot_root) {
             let _ = fs::remove_dir_all(&temp_home);
             return Err(error);
@@ -449,7 +459,10 @@ fn run_test_step(step: &Step, command: &str, root: &Path, log: &mut File) -> Res
     let result = run_logged(process, log);
     if let Some(home) = temp_home {
         if let Err(error) = fs::remove_dir_all(&home) {
-            return Err(format!("cannot remove test HOME {}: {error}", home.display()));
+            return Err(format!(
+                "cannot remove test HOME {}: {error}",
+                home.display()
+            ));
         }
     }
     result
@@ -469,10 +482,12 @@ fn configure_common_environment(process: &mut Command) {
     }
 
     let default_pack = match env::var("CI_NAV_PACK_RELEASE").as_deref() {
-        Ok("nav-reference-v17") | Err(_) => {
-            Some("/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack")
-        }
-        _ => Some("/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack"),
+        Ok("nav-reference-v17") | Err(_) => Some(
+            "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
+        ),
+        _ => Some(
+            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+        ),
     };
     let pack = env::var("NAV_PACK")
         .or_else(|_| env::var("WORLD_NAV_PACK"))
@@ -496,7 +511,10 @@ fn seed_test_home(home: &Path, snapshot_root: &Path) -> Result<(), String> {
         return Ok(());
     }
     let entries = fs::read_dir(snapshot_root).map_err(|error| {
-        format!("cannot read nav snapshot root {}: {error}", snapshot_root.display())
+        format!(
+            "cannot read nav snapshot root {}: {error}",
+            snapshot_root.display()
+        )
     })?;
     for entry in entries {
         let entry = entry.map_err(io_error)?;
@@ -508,7 +526,6 @@ fn seed_test_home(home: &Path, snapshot_root: &Path) -> Result<(), String> {
     }
     Ok(())
 }
-
 
 fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
     let mut command = Command::new("cp");
@@ -547,8 +564,12 @@ fn is_snapshot_hash(value: &str) -> bool {
 fn run_logged(mut process: Command, log: &mut File) -> Result<i32, String> {
     let stdout = log.try_clone().map_err(io_error)?;
     let stderr = log.try_clone().map_err(io_error)?;
-    process.stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr));
-    let status = process.status().map_err(|error| format!("cannot start command: {error}"))?;
+    process
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr));
+    let status = process
+        .status()
+        .map_err(|error| format!("cannot start command: {error}"))?;
     Ok(exit_code(status))
 }
 
@@ -567,7 +588,11 @@ fn architecture_step(
         log,
         "== {}: python3 -B 274bot-arch/check.py {}",
         step.name,
-        if self_test { "--self-test" } else { "--root <workspace>" }
+        if self_test {
+            "--self-test"
+        } else {
+            "--root <workspace>"
+        }
     )
     .map_err(io_error)?;
     let ra = ensure_rust_analyzer(&options.cache_dir, log)?;
@@ -609,15 +634,16 @@ fn clone_arch_checker(
     step: &Step,
     log: &mut File,
 ) -> Result<PathBuf, String> {
-    let branch = options
-        .arch_ref
-        .as_deref()
-        .unwrap_or(ARCH_BRANCH);
-    let check_root = root
-        .join("target/xtask-ci/checkers")
-        .join(format!("{}-{}", std::process::id(), step.name));
-    fs::create_dir_all(check_root.parent().ok_or_else(|| "invalid checker path".to_owned())?)
-        .map_err(io_error)?;
+    let branch = options.arch_ref.as_deref().unwrap_or(ARCH_BRANCH);
+    let check_root =
+        root.join("target/xtask-ci/checkers")
+            .join(format!("{}-{}", std::process::id(), step.name));
+    fs::create_dir_all(
+        check_root
+            .parent()
+            .ok_or_else(|| "invalid checker path".to_owned())?,
+    )
+    .map_err(io_error)?;
     let _ = fs::remove_dir_all(&check_root);
     writeln!(
         log,
@@ -687,11 +713,16 @@ fn flatbuffers_step(
     };
     let schema = schema_root.join("isolate.fbs");
     if !schema.is_file() {
-        return Err(format!("FlatBuffer schema is missing: {}", schema.display()));
+        return Err(format!(
+            "FlatBuffer schema is missing: {}",
+            schema.display()
+        ));
     }
-    let output = root
-        .join("target/xtask-ci/generated")
-        .join(format!("{}-{}", std::process::id(), step.name));
+    let output = root.join("target/xtask-ci/generated").join(format!(
+        "{}-{}",
+        std::process::id(),
+        step.name
+    ));
     let _ = fs::remove_dir_all(&output);
     fs::create_dir_all(&output).map_err(io_error)?;
     let generation = Command::new(&flatc)
@@ -728,8 +759,11 @@ fn self_check_step(root: &Path, log: &mut File) -> Result<i32, String> {
         .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     let problems = inspect_workflow(&contents);
     if problems.is_empty() {
-        writeln!(log, "CI run steps call cargo xtask or use an approved hosted setup command.")
-            .map_err(io_error)?;
+        writeln!(
+            log,
+            "CI run steps call cargo xtask or use an approved hosted setup command."
+        )
+        .map_err(io_error)?;
         return Ok(0);
     }
     for problem in problems {
@@ -805,14 +839,15 @@ fn inspect_workflow(contents: &str) -> Vec<String> {
     if !has_test_template {
         problems.push("CI has no cargo xtask test-lane matrix call".to_owned());
     }
-    for step in step_specs.iter().filter(|step| !step.name.starts_with("test-")) {
+    for step in step_specs
+        .iter()
+        .filter(|step| !step.name.starts_with("test-")) {
         if !called.contains(step.name.as_str()) {
             problems.push(format!("CI does not call cargo xtask step `{}`", step.name));
         }
     }
     problems
 }
-
 
 fn parse_run_steps(contents: &str) -> Vec<RunStep> {
     let lines: Vec<&str> = contents.lines().collect();
@@ -901,8 +936,11 @@ fn ensure_rust_analyzer(cache: &Path, log: &mut File) -> Result<PathBuf, String>
         return Ok(binary);
     }
     if binary.exists() {
-        writeln!(log, "cached rust-analyzer digest did not match; replacing it")
-            .map_err(io_error)?;
+        writeln!(
+            log,
+            "cached rust-analyzer digest did not match; replacing it"
+        )
+        .map_err(io_error)?;
         fs::remove_file(&binary).map_err(io_error)?;
     }
 
@@ -943,8 +981,7 @@ fn ensure_flatc(cache: &Path, log: &mut File) -> Result<PathBuf, String> {
     let archive_pin = bin_dir.join("flatc.sha256");
     let binary_pin = bin_dir.join("flatc.binary.sha256");
     if binary.is_file()
-        && fs::read_to_string(&archive_pin)
-            .is_ok_and(|value| value.trim() == FLATC_ARCHIVE_SHA256)
+        && fs::read_to_string(&archive_pin).is_ok_and(|value| value.trim() == FLATC_ARCHIVE_SHA256)
         && fs::read_to_string(&binary_pin)
             .ok()
             .map(|expected| file_sha256(&binary, log).map(|actual| actual == expected.trim()))
@@ -957,8 +994,11 @@ fn ensure_flatc(cache: &Path, log: &mut File) -> Result<PathBuf, String> {
         }
     }
     if binary.exists() {
-        writeln!(log, "cached flatc did not match its pinned archive or version; replacing it")
-            .map_err(io_error)?;
+        writeln!(
+            log,
+            "cached flatc did not match its pinned archive or version; replacing it"
+        )
+        .map_err(io_error)?;
         fs::remove_file(&binary).map_err(io_error)?;
     }
     let _ = fs::remove_file(archive_pin);
@@ -1021,8 +1061,12 @@ fn ensure_linux_x86_64(tool: &str) -> Result<(), String> {
 fn download(url: &str, destination: &Path, log: &mut File) -> Result<(), String> {
     let temporary = destination.with_extension(format!("download-{}", std::process::id()));
     let _ = fs::remove_file(&temporary);
-    writeln!(log, "curl --fail --location --retry 3 --output {} {url}", temporary.display())
-        .map_err(io_error)?;
+    writeln!(
+        log,
+        "curl --fail --location --retry 3 --output {} {url}",
+        temporary.display()
+    )
+    .map_err(io_error)?;
     let status = Command::new("curl")
         .args(["--fail", "--location", "--retry", "3", "--output"])
         .arg(&temporary)
@@ -1055,12 +1099,7 @@ fn file_sha256(path: &Path, log: &mut File) -> Result<String, String> {
         .ok_or_else(|| format!("sha256sum returned no digest for {}", path.display()))
 }
 
-fn require_digest(
-    path: &Path,
-    expected: &str,
-    label: &str,
-    log: &mut File,
-) -> Result<(), String> {
+fn require_digest(path: &Path, expected: &str, label: &str, log: &mut File) -> Result<(), String> {
     let actual = file_sha256(path, log)?;
     writeln!(log, "sha256 {label}: {actual}").map_err(io_error)?;
     if actual != expected {
@@ -1085,7 +1124,11 @@ fn command_output(
         .output()
         .map_err(|error| format!("cannot run {}: {error}", executable.display()))?;
     if !output.status.success() {
-        return Err(format!("{} exited with {}", executable.display(), exit_code(output.status)));
+        return Err(format!(
+            "{} exited with {}",
+            executable.display(),
+            exit_code(output.status)
+        ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
@@ -1105,7 +1148,8 @@ fn prepend_path(bin_dir: &Path) -> Result<String, String> {
     let current = env::var_os("PATH").ok_or_else(|| "PATH is not set".to_owned())?;
     let mut entries = vec![bin_dir.to_path_buf()];
     entries.extend(env::split_paths(&current));
-    let joined = env::join_paths(entries).map_err(|error| format!("cannot build tool PATH: {error}"))?;
+    let joined =
+        env::join_paths(entries).map_err(|error| format!("cannot build tool PATH: {error}"))?;
     Ok(joined.to_string_lossy().into_owned())
 }
 
@@ -1123,7 +1167,11 @@ mod tests {
         assert_eq!(CLIPPY_COMMANDS.len(), 13);
         assert_eq!(TEST_LANES.len(), 15);
         assert!(names.iter().any(|name| name == "clippy-13"));
-        assert!(names.iter().any(|name| name == "test-host-play-memory-26.04"));
+        assert!(
+            names
+                .iter()
+                .any(|name| name == "test-host-play-memory-26.04")
+        );
         assert!(names.iter().any(|name| name == "ci-self-check"));
     }
 
@@ -1137,7 +1185,11 @@ mod tests {
     fn workflow_parser_rejects_commands_that_bypass_xtask() {
         let yaml = "jobs:\n  fmt:\n    steps:\n      - name: Check formatting\n        run: cargo fmt --all -- --check\n";
         let problems = inspect_workflow(yaml);
-        assert!(problems.iter().any(|problem| problem.contains("bypasses cargo xtask")));
+        assert!(
+            problems
+                .iter()
+                .any(|problem| problem.contains("bypasses cargo xtask"))
+        );
     }
 
     #[test]
@@ -1160,6 +1212,9 @@ mod tests {
     fn workflow_parser_reads_multiline_run_blocks() {
         let yaml = "jobs:\n  arch:\n    steps:\n      - name: Install deps\n        run: |\n          set -euo pipefail\n          sudo apt-get update\n";
         let runs = parse_run_steps(yaml);
-        assert_eq!(runs[0].commands, ["set -euo pipefail", "sudo apt-get update"]);
+        assert_eq!(
+            runs[0].commands,
+            ["set -euo pipefail", "sudo apt-get update"]
+        );
     }
 }
