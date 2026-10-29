@@ -54,6 +54,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   fails, the quest stops with the last route failure. This does not promise
   that an escape exists.
 
+### Survival
+
+- After a bot eats a Strange fruit, it now counts its poison as cured even
+  when it sees the eat message and the loss of the fruit in different game
+  ticks. Before, the bot and scripts that read its poison state could still
+  see it as poisoned.
+
 ### Navigation
 
 - Bots now wait and try again when another player is using a shortcut,

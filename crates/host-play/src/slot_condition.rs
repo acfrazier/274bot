@@ -91,16 +91,27 @@ struct PendingLatch {
     hit_at_edge: bool,
 }
 
+#[derive(Clone, Copy)]
+enum PendingFruit {
+    None,
+    Chat { tick: u16 },
+    CountLoss { tick: u16 },
+}
+
 pub(crate) struct SlotCondition {
     fact: BotCondition,
     memory: PoisonMemory,
     tables: Option<Arc<CombatTables>>,
     inv_gen: Option<u64>,
     last_tick: u32,
+    /// Tick of the PLAYER_INFO edge before the last one. A frame after an edge
+    /// can still deliver that tick's count loss, so the fruit window keeps it.
+    previous_edge_tick: u16,
     chat_seen: i32,
     chat_visible: i32,
     hit_seen: [i32; 4],
     latch: Option<PendingLatch>,
+    pending_fruit: PendingFruit,
     window: SettleWindow,
     q_unknown: u8,
     complete: bool,
@@ -120,10 +131,12 @@ impl Default for SlotCondition {
             tables: None,
             inv_gen: None,
             last_tick: 0,
+            previous_edge_tick: 0,
             chat_seen: 0,
             chat_visible: 0,
             hit_seen: [-1; 4],
             latch: None,
+            pending_fruit: PendingFruit::None,
             window: SettleWindow::default(),
             q_unknown: u8::MAX,
             complete: false,
@@ -159,6 +172,8 @@ impl SlotCondition {
         self.fact.session = SessionMark::Boundary;
         self.complete = false;
         self.latch = None;
+        self.pending_fruit = PendingFruit::None;
+        self.previous_edge_tick = 0;
     }
 
     pub(crate) fn current(&self) -> Option<&BotCondition> {
@@ -220,6 +235,56 @@ impl SlotCondition {
 
     fn transition(&mut self, event: PoisonEvent) {
         self.memory = self.memory.transition(event);
+    }
+
+    // strange_fruit.rs2:6-12 removes the fruit and sends its line in one
+    // server tick. The row has no p_delay (consume_effects.rs2:166-168,
+    // consume_messages.dbrow:713-719). World.ts:1108-1116 sends PLAYER_INFO
+    // before inventory. NetworkPlayer.ts:191-227 writes each packet at once.
+    // A drain can hold multiple PLAYER_INFO packets, so pair signals from this
+    // or the immediately previous observed edge, not by a fixed tick delta.
+    // The line of tick T+1 can be read at the edge of tick T, and the count
+    // loss of T+1 can arrive in a frame after PLAYER_INFO(T+1), so the window
+    // follows PLAYER_INFO edges rather than the previous frame's tick.
+    fn fruit_origin(
+        &mut self,
+        chat: bool,
+        count_loss: bool,
+        previous_edge_tick: u16,
+        now: u16,
+    ) -> Option<u16> {
+        let pending = self.pending_fruit;
+        let pending_tick = match pending {
+            PendingFruit::None => None,
+            PendingFruit::Chat { tick } | PendingFruit::CountLoss { tick } => Some(tick),
+        };
+        let pending = pending_tick
+            .filter(|tick| *tick == previous_edge_tick || *tick == now)
+            .map(|_| pending);
+        if pending.is_none() {
+            self.pending_fruit = PendingFruit::None;
+        }
+
+        match (pending, chat, count_loss) {
+            (Some(PendingFruit::Chat { tick }), false, true)
+            | (Some(PendingFruit::CountLoss { tick }), true, false) => {
+                self.pending_fruit = PendingFruit::None;
+                Some(tick)
+            }
+            (_, true, true) => {
+                self.pending_fruit = PendingFruit::None;
+                Some(now)
+            }
+            (_, true, false) => {
+                self.pending_fruit = PendingFruit::Chat { tick: now };
+                None
+            }
+            (_, false, true) => {
+                self.pending_fruit = PendingFruit::CountLoss { tick: now };
+                None
+            }
+            _ => None,
+        }
     }
 
     fn incomplete(&mut self, error: ConditionError) {
@@ -294,18 +359,39 @@ impl SlotCondition {
             None
         };
         let tick = snapshot.tick();
+        let previous_tick = self.last_tick as u16;
         let now = tick as u16;
         let k = tick.saturating_sub(self.last_tick);
         let prev_complete = self.complete;
         self.last_tick = tick;
+        // The count loss of a tick can arrive in a frame after that tick's
+        // PLAYER_INFO edge (World.ts:1108-1116 sends PLAYER_INFO before
+        // inventory), and the fruit line of tick T+1 can be read at the edge of
+        // tick T. On an edge the window pairs with the previous edge; later
+        // frames at the same tick keep that edge as the window's other bound.
+        let previous_edge_tick = if drain.player_info {
+            self.previous_edge_tick = previous_tick;
+            previous_tick
+        } else {
+            self.previous_edge_tick
+        };
+        let fruit_count_loss =
+            derived.is_some_and(|fact| fact.cures.strange_fruit < self.fact.cures.strange_fruit);
         let mut poison_signal = false;
+        let mut hits = [None; 4];
+        let mut hit_at_edge = false;
+        if let Some(origin) = self.fruit_origin(false, fruit_count_loss, previous_edge_tick, now) {
+            // strange_fruit.rs2:10 sets %poison to min(%poison, -1). Its
+            // negative timer proves that no future immunity fire can occur,
+            // so the fruit earns zero lower-bound immunity credit.
+            self.transition(PoisonEvent::ProvenFruit { origin });
+            self.latch = None;
+        }
         if drain.player_info {
             // Close only a latch opened by an earlier edge, before new evidence.
             if self.latch.take().is_some() {
                 self.transition(PoisonEvent::LatchComplete { q: self.q_unknown });
             }
-            let mut hits = [None; 4];
-            let mut hit_at_edge = false;
             if let Some(marks) = snapshot.hitmarks() {
                 for (slot, mark) in marks.marks.iter().enumerate() {
                     if mark.cycle <= marks.loop_cycle || mark.cycle == self.hit_seen[slot] {
@@ -324,6 +410,9 @@ impl SlotCondition {
                 line.sequence > previous_seen && line.type_ == 0 && line.username.is_none()
             }) {
                 if line.text == POISON_LINE {
+                    if matches!(self.pending_fruit, PendingFruit::Chat { .. }) {
+                        self.pending_fruit = PendingFruit::None;
+                    }
                     poison_signal = true;
                     self.transition(PoisonEvent::PoisonChat { tick: now });
                     let proven = line.sequence <= self.chat_visible || !drain.npc_rows_coherent;
@@ -343,23 +432,22 @@ impl SlotCondition {
                     let origin = tick.saturating_sub(k.max(1).saturating_sub(1)) as u16;
                     self.transition(PoisonEvent::ProvenDrink { origin });
                     self.latch = None;
-                } else if line.text == FRUIT_LINE
-                    && derived.is_some_and(|fact| {
-                        fact.cures.strange_fruit < self.fact.cures.strange_fruit
-                    })
-                {
-                    // strange_fruit.rs2:6-12 and consume_messages.dbrow:713-718.
-                    // The line must accompany an observed fruit loss. Its single
-                    // negative timer value proves no future immunity fires.
-                    let origin = tick.saturating_sub(k.max(1).saturating_sub(1)) as u16;
-                    self.transition(PoisonEvent::ProvenFruit { origin });
-                    self.latch = None;
+                } else if line.text == FRUIT_LINE {
+                    if let Some(origin) = self.fruit_origin(true, false, previous_edge_tick, now) {
+                        // strange_fruit.rs2:10 sets %poison to min(%poison, -1).
+                        // That negative timer proves no future immunity fire, so
+                        // fruit grants zero lower-bound immunity credit.
+                        self.transition(PoisonEvent::ProvenFruit { origin });
+                        self.latch = None;
+                    }
                 }
             }
             self.chat_seen = snapshot
                 .chat_lines()
                 .first()
                 .map_or(self.chat_seen, |line| line.sequence.max(self.chat_seen));
+        }
+        if drain.player_info {
             // Kind 2 reveals the fire's value. A same-edge ordinary hit may
             // follow it server-side, so process it afterward and fail closed.
             for poison in [true, false] {
