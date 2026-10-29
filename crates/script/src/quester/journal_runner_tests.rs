@@ -1191,7 +1191,12 @@ fn blocked_slot_read_journal_is_terminal_and_retains_its_diagnostic() {
 #[test]
 fn a_transient_foreign_main_modal_waits_before_the_journal_begins() {
     let (mut script, mut snapshot) = fixture(true);
-    snapshot.seed_main_modal(6554, vec![]);
+    let root = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .unwrap()
+        .dialogue_ui()
+        .unwrap()
+        .chapter_root;
+    snapshot.seed_main_modal(root, vec![]);
     snapshot.seed_main_modal_texts(vec!["Close Window".into()]);
     let mut ledger = None;
 
@@ -1204,7 +1209,7 @@ fn a_transient_foreign_main_modal_waits_before_the_journal_begins() {
     assert!(ledger
         .as_ref()
         .is_none_or(|ledger| ledger.outbox.is_empty()));
-    assert_eq!(snapshot.modals().main, 6554, "the owner keeps its window");
+    assert_eq!(snapshot.modals().main, root, "the owner keeps its window");
 
     snapshot.seed_main_modal(-1, vec![]);
     snapshot.seed_main_modal_texts(vec![]);

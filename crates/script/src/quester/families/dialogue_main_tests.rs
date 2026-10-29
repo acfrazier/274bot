@@ -4,11 +4,13 @@ use crate::dialogue_outcome::DialogueOutcome;
 use crate::native::{
     ledger, ActionContext, ActionError, HostEffect, InteractionReceipt, NativeMachine,
 };
+use crate::quest_journal::{JournalMachine, JournalRequest};
 use crate::shim::InteractReq;
 use api::game_data::DialogueUiIds;
+use api::quest_facts::QuestCatalog;
 use api::quest_progress::EvidenceStamp;
-use api::selected::ClientRevision;
-use api::snapshot::{GameSnapshot, WidgetKind, WidgetRoot, WidgetView};
+use api::selected::{ClientRevision, FactKey};
+use api::snapshot::{GameSnapshot, QuestStatusView, WidgetKind, WidgetRoot, WidgetView};
 use std::sync::Arc;
 use std::task::Poll;
 
@@ -32,12 +34,13 @@ fn dialogue_ui() -> DialogueUiIds {
 #[test]
 fn operation_page_gate_adopts_only_chat_and_selected_documents() {
     let ids = dialogue_ui();
-    let unsupported = ids.scroll_root.max(ids.book_root) + 100;
+    let unsupported = ids.chapter_root.max(ids.scroll_root.max(ids.book_root)) + 100;
     for (root, expected) in [
         (-1, false),
         (unsupported, false),
         (ids.scroll_root, true),
         (ids.book_root, true),
+        (ids.chapter_root, true),
     ] {
         let mut snapshot = snapshot();
         snapshot.seed_main_modal(root, vec![]);
@@ -199,6 +202,51 @@ fn complete_last_interaction(
         },
     );
 }
+fn close_chapter_page_after_accepted_advance(
+    snapshot: &mut GameSnapshot,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+) -> u64 {
+    let ids = dialogue_ui();
+    let handle = with_tick(snapshot, ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(npc_args(), &mut tick.cx)
+            .unwrap()
+    });
+    complete_talk(ledger, 2, true, false);
+    snapshot.seed_chat_modal(4882, vec!["Yes please.".into()]);
+    snapshot.seed_chat_options(vec![], 4883);
+    assert!(with_tick(snapshot, ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        last_interaction(ledger),
+        InteractReq::ContinueDialog { .. }
+    ));
+    complete_last_interaction(ledger, 4, true);
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_chat_options(vec![], -1);
+    snapshot.seed_main_modal(ids.chapter_root, vec![]);
+    assert!(with_tick(snapshot, ledger, 5, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(last_interaction(ledger), InteractReq::CloseModal));
+    complete_last_interaction(ledger, 6, true);
+    snapshot.seed_main_modal(-1, vec![]);
+    assert!(with_tick(snapshot, ledger, 6, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    let settle_tick = 6 + PAGE_SETTLE_TICKS;
+    assert!(matches!(
+        with_tick(snapshot, ledger, settle_tick, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(DialogueOutcome::Completed))
+    ));
+    settle_tick
+}
 
 struct PageProbe {
     dialogue: Dialogue,
@@ -277,6 +325,47 @@ fn continuation_closes_scroll_and_waits_for_observed_disappearance() {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Ok(DialogueOutcome::Completed))
+    ));
+}
+
+#[test]
+fn chapter_page_after_accepted_advance_is_closed_by_dialogue() {
+    let mut snapshot = snapshot();
+    let mut ledger = None;
+    close_chapter_page_after_accepted_advance(&mut snapshot, &mut ledger);
+    assert_eq!(snapshot.modals().main, -1);
+}
+
+#[test]
+fn journal_read_begins_after_chapter_page_closes() {
+    let mut snapshot = snapshot();
+    let mut ledger = None;
+    let settle_tick = close_chapter_page_after_accepted_advance(&mut snapshot, &mut ledger);
+    snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            name: "Monkey Madness".into(),
+            component_id: 42,
+            colour: 0xf8f800,
+        }],
+        true,
+    );
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let request = JournalRequest {
+        quest: FactKey::new("mm"),
+        facts: Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap()),
+    };
+    let journal = with_tick(&snapshot, &mut ledger, settle_tick + 1, |tick| {
+        tick.actions
+            .begin::<JournalMachine>(request, &mut tick.cx)
+            .unwrap()
+    });
+    assert!(with_tick(&snapshot, &mut ledger, settle_tick + 2, |tick| {
+        tick.actions.poll(&journal, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::IfButton { component_id: 42 }
     ));
 }
 
@@ -848,7 +937,7 @@ fn refused_chat_advance_does_not_adopt_a_main_scroll() {
 #[test]
 fn a_main_scroll_without_an_owned_chat_page_stays_fail_closed() {
     let ids = dialogue_ui();
-    for root in [ids.scroll_root, ids.quest_scroll_root] {
+    for root in [ids.scroll_root, ids.quest_scroll_root, ids.chapter_root] {
         let mut snapshot = snapshot();
         let mut ledger = None;
         let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -878,7 +967,7 @@ fn a_main_scroll_without_an_owned_chat_page_stays_fail_closed() {
 #[test]
 fn a_main_modal_opened_by_our_accepted_advance_completes_the_dialogue() {
     let ids = dialogue_ui();
-    let ship_journey = ids.scroll_root.max(ids.book_root) + 100;
+    let ship_journey = ids.chapter_root.max(ids.scroll_root.max(ids.book_root)) + 100;
     for (advance, accepted, expected) in [
         (true, true, DialogueOutcome::Completed),
         (true, false, DialogueOutcome::Failed),

@@ -110,6 +110,18 @@ fn bronze_wire_smithing_requirement() -> QuestRequirementDocument {
     }
 }
 
+fn shortbow_fletching_requirement() -> QuestRequirementDocument {
+    QuestRequirementDocument {
+        id: FactKey::new("fletching"),
+        kind: QuestRequirementKindDocument::Skill {
+            skill: "fletching".to_owned(),
+            level: 5,
+        },
+        at: "Start".to_owned(),
+        source: SHORTBOW_RECIPE_SOURCE.to_owned(),
+    }
+}
+
 fn live_data() -> (Arc<SelectedGameData>, Arc<QuestCatalog>) {
     let selected = api::game_data::for_revision(ClientRevision::R289).expect("selected R289 data");
     let quests = Arc::new(
@@ -1764,8 +1776,7 @@ const JAIL_KEY_SOURCE: &str =
     "content/maps/m45_151.jm2:8528; content/scripts/drop tables/scripts/jailer.rs2:1-10";
 const NORMAL_TREE_SOURCE: &str =
     "content/maps/m40_50.jm2:5891; content/pack/loc.pack:1277; content/scripts/skill_woodcutting/configs/trees.dbrow:1-16";
-const SHORTBOW_MENU_SOURCE: &str =
-    "content/scripts/skill_fletching/scripts/cut_logs.rs2:18-41";
+const SHORTBOW_MENU_SOURCE: &str = "content/scripts/skill_fletching/scripts/cut_logs.rs2:18-47";
 const SHORTBOW_RECIPE_SOURCE: &str =
     "content/scripts/skill_fletching/configs/cut_logs/cut_logs.dbrow:1-7";
 
@@ -1777,8 +1788,7 @@ fn live_quester_families_until_drop_on_entrana() {
         .npc_by_config("zombie_entranan")
         .expect("selected R289 Entrana zombie config")
         .id;
-    let zombie_type =
-        usize::try_from(zombie_id).expect("selected zombie type id is nonnegative");
+    let zombie_type = usize::try_from(zombie_id).expect("selected zombie type id is nonnegative");
     let axe_id = item_id(&selected, "bronze_axe");
     let (mut cell, seed, seed_commands) = make_cell(
         "live-quester-families-until-drop-entrana",
@@ -1871,6 +1881,8 @@ fn live_quester_families_until_drop_on_entrana() {
         )],
         true,
     );
+    // This proof consumes its steps once while the fixture journal stays cook:0.
+    document.roles[0].sequences[0].order = SequenceOrder::Ordered;
     document.roles[0].sequences[0].steps[0].comment = Some(format!(
         "{ENTRANA_ZOMBIE_SOURCE}. The step must loot the chance-only drop itself."
     ));
@@ -1895,8 +1907,8 @@ fn live_quester_families_until_drop_on_entrana() {
                 native_status_receipt(status)
             ));
         }
-        let kills = confirmed_kills
-            .ok_or("completed until_drop step exposed no combat_kills status")?;
+        let kills =
+            confirmed_kills.ok_or("completed until_drop step exposed no combat_kills status")?;
         if !combat_step_seen || kills <= 0 || kills > i64::from(ENTRANA_DROP_MAX_KILLS) {
             return Err(format!(
                 "until_drop receipt was not a confirmed bounded fight: \
@@ -1923,7 +1935,12 @@ fn live_quester_families_until_drop_on_entrana() {
     });
     let receipt = quester_live::run_family(cell, start, observe)
         .unwrap_or_else(|error| panic!("Entrana until_drop live proof failed: {error}"));
-    assert!(receipt["family_receipt"]["confirmed_kills"].as_i64().unwrap() > 0);
+    assert!(
+        receipt["family_receipt"]["confirmed_kills"]
+            .as_i64()
+            .unwrap()
+            > 0
+    );
     assert_eq!(receipt["family_receipt"]["target_item_seeded"], false);
 }
 
@@ -2037,6 +2054,7 @@ fn live_quester_families_timed_jail_key_take() {
         ],
         true,
     );
+    document.roles[0].sequences[0].order = SequenceOrder::Ordered;
     document.roles[0].sequences[0].steps[0].comment = Some(format!(
         "{JAIL_KEY_SOURCE}. The combat step deliberately does not loot."
     ));
@@ -2140,7 +2158,7 @@ fn live_quester_families_make_from_open_fletching_menu() {
     let knife_id = item_id(&selected, "knife");
     let logs_id = item_id(&selected, "logs");
     let product_id = item_id(&selected, "unstrung_shortbow");
-    let (mut cell, seed, seed_commands) = make_cell(
+    let (mut cell, seed, seed_commands) = make_cell_with_requirements(
         "live-quester-families-open-fletching-menu",
         ("cook", "Cook's Assistant"),
         0,
@@ -2148,6 +2166,7 @@ fn live_quester_families_make_from_open_fletching_menu() {
         FLETCHING_STAND,
         None,
         Arc::clone(&selected),
+        vec![shortbow_fletching_requirement()],
     );
     let start_seed = seed;
     let start_selected = Arc::clone(&selected);
@@ -2217,7 +2236,8 @@ fn live_quester_families_make_from_open_fletching_menu() {
                 }),
                 false,
                 empty_any(),
-                fact("modal_open", json!({})),
+                // skill_multi3 opens chat products, not the modal_open main panel.
+                empty_all(),
             ),
             step(
                 "make-unstrung-shortbow",
@@ -2238,6 +2258,12 @@ fn live_quester_families_make_from_open_fletching_menu() {
         ],
         true,
     );
+    document.roles[0].sequences[0].order = SequenceOrder::Ordered;
+    document
+        .quest
+        .as_mut()
+        .expect("Cook quest header")
+        .requirements = vec![shortbow_fletching_requirement()];
     document.roles[0].sequences[0].steps[0].comment = Some(format!(
         "{NORMAL_TREE_SOURCE}; content/scripts/skill_woodcutting/scripts/woodcut.rs2:1-14,91-148 yields logs."
     ));
@@ -2257,8 +2283,7 @@ fn live_quester_families_make_from_open_fletching_menu() {
             let step_id = status_text(status, "step_id");
             gather_step_seen |= step_id == Some("gather-normal-log");
             use_on_step_seen |= step_id == Some("open-fletching-menu");
-            menu_open_after_use_on |= step_id == Some("open-fletching-menu")
-                && snapshot.modals().main != -1;
+            menu_open_after_use_on |= use_on_step_seen && !snapshot.make_products().is_empty();
             make_step_seen |= step_id == Some("make-unstrung-shortbow");
         }
         if lifecycle.is_none() {
@@ -2487,6 +2512,7 @@ fn live_quester_families_bronze_bar_on_anvil_makes_wire() {
         ],
         true,
     );
+    document.roles[0].sequences[0].order = SequenceOrder::Ordered;
     document
         .quest
         .as_mut()
@@ -2528,10 +2554,9 @@ fn live_quester_families_bronze_bar_on_anvil_makes_wire() {
             .iter()
             .any(|item| item.def.id == bronze_wire_id);
         main_make_wire_row_seen |= wire_menu_row_visible;
-        anvil_menu_open_after_use_on |=
-            step_id == Some("use-bronze-bar-on-anvil")
-                && snapshot.modals().main != -1
-                && wire_menu_row_visible;
+        anvil_menu_open_after_use_on |= step_id == Some("use-bronze-bar-on-anvil")
+            && snapshot.modals().main != -1
+            && wire_menu_row_visible;
         if lifecycle.is_none() {
             return Ok(None);
         }
@@ -2614,8 +2639,5 @@ fn live_quester_families_bronze_bar_on_anvil_makes_wire() {
         receipt["family_receipt"]["anvil_menu_open_after_use_on"],
         true
     );
-    assert_eq!(
-        receipt["family_receipt"]["main_make_wire_row_seen"],
-        true
-    );
+    assert_eq!(receipt["family_receipt"]["main_make_wire_row_seen"], true);
 }

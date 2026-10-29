@@ -1125,9 +1125,9 @@ pub(super) fn page_open(cx: &ActionContext<'_>) -> bool {
         .make_products()
         .is_some_and(|products| !products.value.is_empty());
     (!production_menu
-        && snapshot.chat_modal().is_some_and(|chat| {
-            chat_page_open(chat.value.root, chat.value.continue_component_id)
-        }))
+        && snapshot
+            .chat_modal()
+            .is_some_and(|chat| chat_page_open(chat.value.root, chat.value.continue_component_id)))
         || observe_main(cx, selected_dialogue_ui(cx))
             .is_some_and(|main| matches!(main.kind, MainKind::Scroll | MainKind::Book))
 }
@@ -1197,7 +1197,7 @@ fn observe_main<'a>(
     let kind = if root == -1 {
         MainKind::Closed
     } else if let Some(ids) = ids {
-        if root == ids.scroll_root || root == ids.quest_scroll_root {
+        if root == ids.scroll_root || root == ids.quest_scroll_root || root == ids.chapter_root {
             MainKind::Scroll
         } else if root == ids.book_root {
             MainKind::Book
