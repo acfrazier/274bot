@@ -447,9 +447,16 @@
               "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "maple_logs"}}}
             },
             {
-              "id": "take-iron-bar", "kind": "interact", "version": 1, "advances": false,
-              "args": {"target": {"ground": "iron_bar"}, "op": "Take", "anchor": {"tile": [3111,3657,0], "source": "content/maps/m48_57.jm2:5929-5940; content/pack/obj.pack:2352"}, "radius": 2, "wait_if_missing": true},
-              "comment": "The Wilderness ground spawn supplies Dunstan's iron bar: content/maps/m48_57.jm2:5929-5940; content/scripts/quests/quest_death/scripts/death_smithy.rs2:228-257.",
+              "id": "mine-iron-ore", "kind": "gather", "version": 1, "advances": false,
+              "args": {"skill": "mining", "resource": "iron", "until": {"obj": "iron_ore", "qty": 8}, "anchor": {"tile": [2968,3239,0], "source": "content/maps/m46_50.jm2:5666; content/pack/loc.pack:2093; content/scripts/skill_mining/configs/mine.dbrow:49-60"}, "radius": 3, "settle_ms": 300000},
+              "comment": "Mining 15 obtains iron ore: content/scripts/skill_mining/configs/mine.dbrow:49-60. Eight ores do not guarantee a successful smelt: content/scripts/skill_smithing/scripts/smelting/smelting.rs2:190-208.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_bar"}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "iron_ore", "qty": 8}}}]},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "iron_ore", "qty": 8}}}
+            },
+            {
+              "id": "smelt-iron-bar", "kind": "use_on", "version": 1, "advances": false,
+              "args": {"item": "iron_ore", "target": {"loc": "furnace1"}, "anchor": {"tile": [2974,3369,0], "source": "content/maps/m46_52.jm2:7888; content/scripts/skill_smithing/scripts/smelting/smelting.rs2:1-29,100-115"}, "radius": 3, "product": "iron_bar", "settle_ms": 15000, "until": {"obj": "iron_bar", "qty": 1}},
+              "comment": "Smithing 15 is required: content/scripts/skill_smithing/configs/smelting/smelting.struct:17-26. A failed smelt consumes ore, and eight attempts are not guaranteed: content/scripts/skill_smithing/scripts/smelting/smelting.rs2:190-208.",
               "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_bar"}}},
               "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_bar"}}}
             },
