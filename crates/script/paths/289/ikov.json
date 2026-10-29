@@ -2194,7 +2194,9 @@
               "version": 1,
               "args": {
                 "target": {
-                  "npc": "ikov_lucien2"
+                  "npc": "ikov_lucien2",
+                  "pick": "nearest",
+                  "not_targeting_others": true
                 },
                 "stand": {
                   "tile": [
