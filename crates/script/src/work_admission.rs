@@ -843,26 +843,15 @@ struct ServiceNotifier {
     epoch: AtomicU64,
     gate: Mutex<()>,
     changed: Condvar,
-    #[cfg(test)]
-    wait_hook: Mutex<Option<std::sync::mpsc::Sender<()>>>,
 }
 
 impl ServiceNotifier {
     fn wait_for_change(&self, observed: u64, timeout: Duration) -> bool {
         let mut gate = self.gate.lock();
         if self.epoch.load(Ordering::Acquire) == observed {
-            #[cfg(test)]
-            if let Some(wait_hook) = self.wait_hook.lock().take() {
-                let _ = wait_hook.send(());
-            }
             self.changed.wait_for(&mut gate, timeout);
         }
         self.epoch.load(Ordering::Acquire) != observed
-    }
-
-    #[cfg(test)]
-    fn hook_next_wait(&self, hook: std::sync::mpsc::Sender<()>) {
-        *self.wait_hook.lock() = Some(hook);
     }
 
     fn signal_change(&self) {
