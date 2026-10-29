@@ -12,6 +12,11 @@ use api::selected::QuestGate;
 use std::sync::Arc;
 use std::task::Poll;
 
+enum OriginalWalk {
+    Native(WalkRequest),
+    Handover(OuterWalk),
+}
+
 enum Phase {
     Walking(ActionHandle<Walk>),
     Entry(HandoverEntry),
@@ -22,11 +27,10 @@ enum Phase {
 }
 
 pub struct PrereqWalk {
-    request: Option<WalkRequest>,
-    outer: Option<OuterWalk>,
+    original: OriginalWalk,
     phase: Phase,
     budget: PrereqBudget,
-    last_receipt: Option<WalkReceipt>,
+    last_receipt: Option<Box<WalkReceipt>>,
     allow: PrereqAllow,
     revocation: Option<ActionLink>,
 }
@@ -39,8 +43,7 @@ impl PrereqWalk {
     ) -> Result<Self, ActionError> {
         let handle = actions.begin::<Walk>(request.clone(), cx)?;
         Ok(Self {
-            request: Some(request),
-            outer: None,
+            original: OriginalWalk::Native(request),
             phase: Phase::Walking(handle),
             budget: PrereqBudget::default(),
             last_receipt: None,
@@ -52,8 +55,7 @@ impl PrereqWalk {
     pub fn from_handover(handover: WalkHandover) -> Self {
         let allow = handover.outer.prereq_allow;
         Self {
-            request: None,
-            outer: Some(handover.outer),
+            original: OriginalWalk::Handover(handover.outer),
             phase: Phase::Entry(handover.entry),
             budget: PrereqBudget::default(),
             last_receipt: None,
@@ -63,7 +65,10 @@ impl PrereqWalk {
     }
 
     pub fn outer_identity(&self) -> Option<OuterIdentity> {
-        self.outer.as_ref().map(|outer| outer.identity)
+        match &self.original {
+            OriginalWalk::Native(_) => None,
+            OriginalWalk::Handover(outer) => Some(outer.identity),
+        }
     }
 
     fn current_revoker(&self) -> Option<ActionRevoker> {
@@ -100,21 +105,25 @@ impl PrereqWalk {
     }
 
     fn receipt(&mut self, cx: &ActionContext<'_>, end: WalkEnd) -> WalkReceipt {
-        let mut receipt = self.last_receipt.take().unwrap_or_else(|| WalkReceipt {
-            request_id: match self.outer_identity() {
-                Some(OuterIdentity::Compat { request_id }) => request_id,
-                _ => 0,
-            },
-            evidence: cx.evidence(),
-            goal: None,
-            end: end.clone(),
-            blocked: None,
-            detail: None,
-            refusal: None,
-            assessment: None,
-            escape: None,
-            prereq_allow: Some(self.allow),
-        });
+        let mut receipt = self
+            .last_receipt
+            .take()
+            .map(|receipt| *receipt)
+            .unwrap_or_else(|| WalkReceipt {
+                request_id: match self.outer_identity() {
+                    Some(OuterIdentity::Compat { request_id }) => request_id,
+                    _ => 0,
+                },
+                evidence: cx.evidence(),
+                goal: None,
+                end: end.clone(),
+                blocked: None,
+                detail: None,
+                refusal: None,
+                assessment: None,
+                escape: None,
+                prereq_allow: Some(self.allow),
+            });
         receipt.end = end;
         receipt.evidence = cx.evidence();
         receipt.prereq_allow = Some(self.allow);
@@ -141,11 +150,9 @@ impl PrereqWalk {
     }
 
     fn request(&self, cx: &ActionContext<'_>) -> WalkRequest {
-        let mut request = if let Some(request) = &self.request {
-            request.clone()
-        } else {
-            let outer = self.outer.as_ref().expect("handover retains original walk");
-            WalkRequest {
+        let mut request = match &self.original {
+            OriginalWalk::Native(request) => request.clone(),
+            OriginalWalk::Handover(outer) => WalkRequest {
                 target: outer.target,
                 candidate_goals: None,
                 loc_id: None,
@@ -159,7 +166,7 @@ impl PrereqWalk {
                 protect: false,
                 food_guard: false,
                 allow: WalkAllow::default(),
-            }
+            },
         };
         request.required_after = cx.evidence();
         request
@@ -195,7 +202,9 @@ impl PrereqWalk {
                 Phase::Walking(handle) => {
                     let mut receipt = std::task::ready!(actions.poll(handle, cx))?;
                     // The original admission fixes consent for the whole logical walk.
-                    if self.budget.re_issues == 0 && self.outer.is_none() {
+                    if self.budget.re_issues == 0
+                        && matches!(&self.original, OriginalWalk::Native(_))
+                    {
                         self.allow = receipt.prereq_allow.unwrap_or_default();
                     }
                     receipt.prereq_allow = Some(self.allow);
@@ -209,7 +218,11 @@ impl PrereqWalk {
                         _ => None,
                     };
                     if let Some(entry) = entry {
-                        self.last_receipt = Some(receipt);
+                        if let Some(retained) = self.last_receipt.as_mut() {
+                            **retained = receipt;
+                        } else {
+                            self.last_receipt = Some(Box::new(receipt));
+                        }
                         self.phase = Phase::Entry(entry);
                     } else {
                         self.phase = Phase::Complete;
@@ -241,21 +254,18 @@ impl PrereqWalk {
                         self.phase = Phase::Complete;
                         return Poll::Ready(Ok(receipt));
                     }
-                    let evidence = self
-                        .request
-                        .as_ref()
-                        .and_then(|request| request.evidence.clone());
+                    let evidence = match &self.original {
+                        OriginalWalk::Native(request) => request.evidence.clone(),
+                        OriginalWalk::Handover(_) => None,
+                    };
                     self.phase = Phase::Resolving(Box::new(
                         PrereqRun::begin(gate, run_entry, self.allow).with_evidence(evidence),
                     ));
                 }
                 Phase::Resolving(run) => {
-                    let repair = if let Some(request) = self.request.as_ref() {
-                        RepairWalk::from_request(request)
-                    } else {
-                        RepairWalk::from_outer(
-                            self.outer.as_ref().expect("handover retains caller policy"),
-                        )
+                    let repair = match &self.original {
+                        OriginalWalk::Native(request) => RepairWalk::from_request(request),
+                        OriginalWalk::Handover(outer) => RepairWalk::from_outer(outer),
                     };
                     match std::task::ready!(run.poll_with_walk(
                         actions,

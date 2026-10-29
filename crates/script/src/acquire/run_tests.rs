@@ -1003,7 +1003,13 @@ fn bank_walk_prerequisite_handoff_reissues_once_and_cancel_keeps_run_state() {
     let (mut snapshot, bank, banks) = fixture();
     let data =
         api::game_data::for_revision(api::selected::ClientRevision::R289).expect("R289 data");
-    let catalog = data.try_prereq_steps().expect("R289 prerequisite catalog");
+    let catalog = api::selected::FamilyPreparation::run(move |worker| {
+        data.prepare_prereq_steps(worker)
+            .expect("R289 prerequisite catalog")
+    })
+    .expect("family preparation worker")
+    .join()
+    .expect("prerequisite preparation");
     let (_, row) = catalog
         .iter()
         .find(|(_, row)| row.crossings.iter().any(|entry| entry.crossing.option > 0))

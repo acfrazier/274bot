@@ -52,7 +52,7 @@ impl StatePort for NoStore {
 fn state() -> SlotState {
     SlotState::new(
         Arc::new(NoStore),
-        AccountKey::try_new("local-289", "prereq-test").unwrap(),
+        AccountKey::try_new("local-289", "prereq_test").unwrap(),
         ContentScope::try_new(ClientRevision::R289, "test-content").unwrap(),
     )
 }

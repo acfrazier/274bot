@@ -678,13 +678,20 @@ where
                 if already_following(navs, name, request_id, key, &exclusions) {
                     continue;
                 }
-                retire_logical_walk(
-                    owner_slot.as_deref_mut(),
-                    navs,
-                    name,
-                    None,
-                    script::native::WalkEnd::Cancelled,
-                );
+                if navs
+                    .lock()
+                    .unwrap()
+                    .get(name)
+                    .is_some_and(|bot| bot.compat_walk_request_id().is_some())
+                {
+                    retire_logical_walk(
+                        owner_slot.as_deref_mut(),
+                        navs,
+                        name,
+                        None,
+                        script::native::WalkEnd::Cancelled,
+                    );
+                }
                 let prereq_allow = (request_id != 0).then(|| {
                     super::walk_permissions::compiled_prereq_allow(
                         navs,
@@ -773,13 +780,20 @@ where
                 if already_following(navs, name, request_id, key, &exclusions) {
                     continue;
                 }
-                retire_logical_walk(
-                    owner_slot.as_deref_mut(),
-                    navs,
-                    name,
-                    None,
-                    script::native::WalkEnd::Cancelled,
-                );
+                if navs
+                    .lock()
+                    .unwrap()
+                    .get(name)
+                    .is_some_and(|bot| bot.compat_walk_request_id().is_some())
+                {
+                    retire_logical_walk(
+                        owner_slot.as_deref_mut(),
+                        navs,
+                        name,
+                        None,
+                        script::native::WalkEnd::Cancelled,
+                    );
+                }
                 let prereq_allow = (request_id != 0).then(|| {
                     super::walk_permissions::compiled_prereq_allow(
                         navs,

@@ -3,8 +3,8 @@ use api::selected::{FactKey, QuestGate};
 use client::config::if_type::{ButtonType, ComponentType};
 use client::config::{IfType, IfTypeMut};
 use client::io::ServerProt;
-use nav_planner::quest_gates::{QuestFamilyId, QuestGates};
-use std::num::NonZeroU16;
+use nav_planner::quest_gates::QuestGates;
+use nav_planner::test_support::family;
 use std::sync::Arc;
 
 use crate::traveller::CrossingPass;
@@ -16,7 +16,7 @@ fn gated_shantay_edge() -> TransportEdge {
     let mut edge = shantay_edge();
     edge.quest_gates = Some(
         QuestGates::new(
-            QuestFamilyId::new([7; 32], NonZeroU16::new(1).expect("nonzero schema")),
+            family(7),
             [
                 QuestGate::Complete(FactKey::new("druidspirit")),
                 QuestGate::Complete(FactKey::new("priestperil")),

@@ -575,8 +575,26 @@ fn native_bank_selection_captures_quest_rows_before_search_and_keeps_the_view_im
         tick: 1,
         sequence: 1,
     };
-    let mut world = world(false);
-    Arc::get_mut(&mut world).unwrap().graph.quest_family = Some(family);
+    let (walk, blocked) = pack_walk(&vec![0; 4 * 16 * 16]);
+    let world = Arc::new(NavWorld::from_parts(
+        WorldCollision {
+            origin: tile(0, 0),
+            width: 16,
+            height: 16,
+            walk,
+            blocked,
+            flags: None,
+        },
+        TransportGraph {
+            quest_family: Some(family),
+            ..TransportGraph::default()
+        },
+        vec![nav_planner::pack::BankStand {
+            name: "Bank booth".into(),
+            tile: tile(12, 12),
+            access: nav_planner::pack::BankAccess::Booth { op: 2 },
+        }],
+    ));
     let navs = navs(banks);
     navs.lock().unwrap().get_mut("test").unwrap().quest_context =
         super::super::script_nav::route_quest_context(&slot, 1);

@@ -33,10 +33,7 @@ fn stage_scalar(expr: &Expr, src: &Sources) -> Option<i32> {
 // Exact stage partitions are sound only when every read has a bounded
 // authoritative domain and every quest use is a static comparison.
 fn stage_dimensions(reads: &Reads, src: &Sources) -> Result<Option<Vec<StageDimension>>, ()> {
-    if reads.quests.is_empty()
-        || src.quest_family.is_none()
-        || !reads.stage_partitionable
-    {
+    if reads.quests.is_empty() || src.quest_family.is_none() || !reads.stage_partitionable {
         return Ok(None);
     }
     let mut varps: Vec<_> = reads.quests.iter().collect();
@@ -73,9 +70,7 @@ fn stage_dimensions(reads: &Reads, src: &Sources) -> Result<Option<Vec<StageDime
         boundaries.dedup();
         let mut ranges = Vec::with_capacity(boundaries.len());
         for (index, &range_min) in boundaries.iter().enumerate() {
-            let range_max = boundaries
-                .get(index + 1)
-                .map_or(max, |next| next - 1);
+            let range_max = boundaries.get(index + 1).map_or(max, |next| next - 1);
             ranges.push(api::selected::InclusiveRange {
                 min: Some(range_min),
                 max: Some(range_max),
@@ -122,10 +117,7 @@ fn quest_gate(
     complete: i32,
     domain_max: i32,
 ) -> api::selected::QuestGate {
-    if domain_max == complete
-        && values.min == Some(complete)
-        && values.max == Some(complete)
-    {
+    if domain_max == complete && values.min == Some(complete) && values.max == Some(complete) {
         api::selected::QuestGate::Complete(quest.clone())
     } else {
         api::selected::QuestGate::Window(api::selected::StageWindow {
@@ -135,7 +127,6 @@ fn quest_gate(
         })
     }
 }
-
 
 #[derive(Clone, Copy)]
 pub(super) struct Inputs<'a> {
@@ -193,8 +184,7 @@ impl Reads {
             Expr::Cmp(_, a, b) => {
                 let stage_varp = match a.as_ref() {
                     Expr::Word(varp)
-                        if varp.starts_with('%')
-                            && src.quest_complete.contains_key(&varp[1..]) =>
+                        if varp.starts_with('%') && src.quest_complete.contains_key(&varp[1..]) =>
                     {
                         Some(varp.clone())
                     }
@@ -515,13 +505,7 @@ impl Motion<'_> {
                         values
                     };
                     Needs {
-                        quests: vec![quest_gate(
-                            quest,
-                            quest_varp,
-                            values,
-                            *complete,
-                            domain_max,
-                        )],
+                        quests: vec![quest_gate(quest, quest_varp, values, *complete, domain_max)],
                         quest_family: Some(quest_family),
                         ..Needs::default()
                     }
@@ -983,11 +967,13 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                 .items
                 .len()
                 .checked_add(reads.npc.len())
-                .and_then(|bits| bits.checked_add(if stage_dimensions.is_some() {
-                    0
-                } else {
-                    above.len()
-                }))
+                .and_then(|bits| {
+                    bits.checked_add(if stage_dimensions.is_some() {
+                        0
+                    } else {
+                        above.len()
+                    })
+                })
             else {
                 bump(
                     skipped,
@@ -1008,9 +994,7 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                 );
                 continue;
             }
-            let stage_variants = stage_dimensions
-                .as_deref()
-                .map(stage_variants);
+            let stage_variants = stage_dimensions.as_deref().map(stage_variants);
             let member_path = src.has_member_reads(handler);
             let kind = if defs
                 .op_at(id, option)
@@ -1110,8 +1094,7 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                                 if !collision.standable(result.to) {
                                     return;
                                 }
-                                let mut edge =
-                                    gated_edge(kind, id, at, result.to, result.needs);
+                                let mut edge = gated_edge(kind, id, at, result.to, result.needs);
                                 edge.takeoff = Some(stand);
                                 edge.option = option;
                                 edge.ticks = result.ticks;

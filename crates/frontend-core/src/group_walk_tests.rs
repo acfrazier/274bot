@@ -94,11 +94,7 @@ fn fixture(names: &[&'static str], slots: &[Slot]) -> Fixture {
     fixture_with_world(names, slots, world(12, &ring))
 }
 
-fn fixture_with_world(
-    names: &[&'static str],
-    slots: &[Slot],
-    world: NavWorld,
-) -> Fixture {
+fn fixture_with_world(names: &[&'static str], slots: &[Slot], world: NavWorld) -> Fixture {
     fixture_with_world_and_snapshots(names, slots, world, true)
 }
 
@@ -271,11 +267,8 @@ fn every_marked_bot_walks_to_the_one_tile_and_unmarked_bots_stay() {
 
 #[test]
 fn group_confirmation_without_observed_snapshot_keeps_ordinary_walk_available() {
-    let mut fixture = fixture_without_observed_snapshot(
-        &["alice"],
-        &[slot("alice", t(1, 1, 0))],
-        world(12, &[]),
-    );
+    let mut fixture =
+        fixture_without_observed_snapshot(&["alice"], &[slot("alice", t(1, 1, 0))], world(12, &[]));
     assert!(
         fixture
             .core

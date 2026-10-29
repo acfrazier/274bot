@@ -4325,8 +4325,10 @@ fn native_route_exclusions(
         }
     });
     for name in avoid {
-        if !exclusions.avoid_wire.iter().any(|entry| {
-            matches!(entry, script::shim::InspectAvoidWire::Catalog(existing) if existing == name.as_ref())
+        if compat.is_none_or(|original| {
+            !original.avoid_wire.iter().any(|entry| {
+                matches!(entry, script::shim::InspectAvoidWire::Catalog(existing) if existing == name.as_ref())
+            })
         }) {
             exclusions
                 .avoid_wire
@@ -4334,7 +4336,7 @@ fn native_route_exclusions(
         }
     }
     for name in cross {
-        if !exclusions.cross.contains(name) {
+        if compat.is_none_or(|original| !original.cross.contains(name)) {
             exclusions.cross.push(Arc::clone(name));
         }
     }
@@ -6858,17 +6860,28 @@ impl NavBot {
         key: (WorldTile, i32, bool, bool, bool),
         exclusions: &ScriptRouteExclusions,
     ) -> bool {
-        self.compat_walk.as_ref().is_some_and(|walk| {
-            walk.request_id == request_id
+        let same_exclusions = |original: Option<&ScriptRouteExclusions>| {
+            original.map_or_else(
+                || exclusions.is_empty(),
+                |original| {
+                    original.avoid_wire == exclusions.avoid_wire
+                        && original.cross == exclusions.cross
+                },
+            )
+        };
+        if let Some(walk) = self.compat_walk.as_ref() {
+            return self.compat_walk_context_current()
+                && walk.request_id == request_id
                 && (walk.key.0, walk.key.1, walk.key.2, walk.key.3, walk.key.4) == key
-                && walk.exclusions.as_deref().map_or_else(
-                    || exclusions.is_empty(),
-                    |original| {
-                        original.avoid_wire == exclusions.avoid_wire
-                            && original.cross == exclusions.cross
-                    },
-                )
-        })
+                && same_exclusions(walk.exclusions.as_deref());
+        }
+        self.native_walk.is_none()
+            && self.walk_request_id == request_id
+            && self.requested_route.is_some_and(|original| {
+                (original.0, original.1, original.2, original.3, original.4) == key
+            })
+            && same_exclusions(self.requested_exclusions.as_deref())
+            && (self.has_route() || self.route_work_pending())
     }
 
     pub(crate) fn retire_compat_walk(&mut self, request_id: u64) -> bool {

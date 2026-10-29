@@ -1350,7 +1350,6 @@ impl Play {
         arms: &WalkArms,
     ) -> Result<WalkActionOutcome, ActionError> {
         let name = self.validate_map_command(&command, current, ActionKind::Walk)?;
-        let snapshot = snapshot.ok_or(ActionError::NoOrigin)?;
         let world = self.world.as_deref().ok_or(ActionError::NoNavigation)?;
         let options = command.options();
         let destination = command.destination();
@@ -1381,7 +1380,8 @@ impl Play {
             }
         }
         let start = self.script_start_handle();
-        let manual_route = start.manual_route_state(&name, snapshot, state, world);
+        let manual_route =
+            snapshot.and_then(|snapshot| start.manual_route_state(&name, snapshot, state, world));
         let route_state = manual_route
             .as_ref()
             .map_or(state, |(_, _, route_state)| route_state);
@@ -1440,7 +1440,9 @@ impl Play {
                             if let Some(content) =
                                 crate::script_runtime::route_prereq_content(catalog, run, gates)
                             {
-                                if let Some((x, z, level)) = snapshot.tile() {
+                                if let Some((x, z, level)) =
+                                    snapshot.and_then(|snapshot| snapshot.tile())
+                                {
                                     let handover = script::native::WalkHandover {
                                         outer,
                                         entry: script::native::HandoverEntry::NeedsStep(

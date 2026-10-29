@@ -1836,7 +1836,7 @@ fn manual_walk_refuses_before_boarding_and_names_the_total_coin_shortfall() {
 }
 
 #[test]
-fn eligible_group_walk_without_snapshot_fails_closed() {
+fn eligible_ordinary_group_walk_without_snapshot_uses_validated_status_origin() {
     let origin = t(3201, 3201, 0);
     let destination = t(3205, 3206, 0);
     let fixture = MapFixture::new(&world(t(3200, 3200, 0), 8, &[]), "local-289");
@@ -1861,9 +1861,144 @@ fn eligible_group_walk_without_snapshot_fails_closed() {
     let arms = Arc::new(Mutex::new(HashMap::new()));
 
     let report = play.map_walk_group(plan, &dest_ctx, &request, &arms);
+    assert_eq!(report.outcomes[0].kind, WalkSlotOutcomeKind::Walking);
+    assert_eq!(
+        arms.lock().unwrap()["alice"].lock().unwrap().queued_tile(),
+        Some(destination)
+    );
+}
+
+#[test]
+fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
+    use nav_planner::quest_gates::{QuestEvidence, QuestGates};
+    use nav_planner::test_support::{family, stamp};
+
+    struct ClosedGate;
+    impl api::quest_progress::EvidenceProvider for ClosedGate {
+        fn observe_gate(
+            &self,
+            _: &api::selected::QuestGate,
+            required_after: api::quest_progress::EvidenceStamp,
+        ) -> Option<api::prereq_knowledge::Observation> {
+            Some(api::prereq_knowledge::Observation {
+                truth: api::selected::Truth::False,
+                observed: Some(required_after),
+            })
+        }
+    }
+
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let catalog = api::selected::FamilyPreparation::run(move |worker| {
+        selected.prepare_prereq_steps(worker).unwrap()
+    })
+    .unwrap()
+    .join()
+    .unwrap();
+    let (row, entry) = catalog
+        .iter()
+        .flat_map(|(_, row)| row.crossings.iter().map(move |entry| (row, entry)))
+        .find(|(_, entry)| {
+            let crossing = &entry.crossing;
+            crossing.at.level == crossing.to.level
+                && crossing.at.x.abs_diff(crossing.to.x) <= 4
+                && crossing.at.z.abs_diff(crossing.to.z) <= 4
+        })
+        .expect("selected catalog has a local gated crossing");
+    let crossing = &entry.crossing;
+    let origin = t(crossing.at.x, crossing.at.z, crossing.at.level);
+    let destination = t(crossing.to.x, crossing.to.z, crossing.to.level);
+    let size = crossing
+        .at
+        .x
+        .abs_diff(crossing.to.x)
+        .max(crossing.at.z.abs_diff(crossing.to.z)) as usize
+        + 3;
+    // Both endpoints are valid stands, but no ordinary walking edge exists.
+    let (walk, blocked) = pack_walk(&vec![
+        client::dash3d::CollisionFlag::WALK_BLOCK_FLAGS as u32;
+        4 * size * size
+    ]);
+    let mut gate_edge = edge(TransportKind::Door, crossing.at, crossing.to);
+    gate_edge.loc_id = crossing.loc_id;
+    gate_edge.option = crossing.option;
+    gate_edge.quest_gates = Some(
+        QuestGates::new(
+            family(7),
+            [api::selected::QuestGate::Window(row.establishes.clone())],
+        )
+        .unwrap(),
+    );
+    let mut graph = TransportGraph {
+        quest_family: Some(family(7)),
+        ..TransportGraph::default()
+    };
+    graph.at.insert(crossing.at, vec![0]);
+    graph.edges.push(gate_edge);
+    let nav = NavWorld::from_parts(
+        WorldCollision {
+            origin: wt(
+                crossing.at.x.min(crossing.to.x) - 1,
+                crossing.at.z.min(crossing.to.z) - 1,
+                0,
+            ),
+            width: size,
+            height: size,
+            walk,
+            blocked,
+            flags: None,
+        },
+        graph,
+        vec![],
+    );
+    let mut state = WorldState::empty();
+    state.establishable = Some(catalog.establishable_windows());
+    state.quest_evidence = Some(QuestEvidence::new(
+        Arc::new(ClosedGate),
+        family(7),
+        stamp(1),
+    ));
+    assert!(
+        nav_planner::router::find_actionable_quest_gates(
+            &nav.collision,
+            &nav.graph,
+            crossing.at,
+            &[crossing.to],
+            FindOptions::default(),
+            &state,
+            &[],
+        )
+        .unwrap()
+        .is_some(),
+        "the route must need a real catalog-backed prerequisite"
+    );
+
+    let fixture = MapFixture::new(&nav, "local-289");
+    let play = fixture.play(origin);
+    let context = bound_context(&play);
+    let mut model = MapModel::default();
+    model.bind(context);
+    model.select_tile(&play.world().unwrap(), destination);
+    let plan = model
+        .confirm_walk_plan(&context, FindOptions::default())
+        .unwrap();
+    let bank = BankRows::default();
+    let request = [WalkSlotRequest {
+        name: "alice",
+        state: &state,
+        snapshot: None,
+        bank: &bank,
+        risk_input: Default::default(),
+    }];
+    let arms = Arc::new(Mutex::new(HashMap::new()));
+    let report = play.map_walk_group(plan, &context, &request, &arms);
     assert_eq!(
         report.outcomes[0].kind,
-        WalkSlotOutcomeKind::Failed(ActionError::NoOrigin)
+        WalkSlotOutcomeKind::Failed(ActionError::NoPath)
     );
-    assert!(arms.lock().unwrap().get("alice").is_none());
+    assert!(arms.lock().unwrap()["alice"]
+        .lock()
+        .unwrap()
+        .route
+        .is_none());
+    assert!(!play.script_blocks_walk("alice"));
 }

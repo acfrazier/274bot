@@ -174,7 +174,7 @@ fn card_refusal_entry_with_denied_global_returns_not_allowed() {
     slot.runtime_generation = route_run.run;
     let state = Arc::new(crate::local_state::SlotState::new(
         Arc::new(NoStore),
-        AccountKey::try_new("local-289", "manual-card").unwrap(),
+        AccountKey::try_new("local-289", "manual_card").unwrap(),
         ContentScope::try_new(ClientRevision::R289, "test-content").unwrap(),
     ));
     slot.bind_local_state(Arc::clone(&state));
@@ -372,7 +372,7 @@ fn manual_walk_memory_alias_follows_the_fact_writer_run() {
 
     let state = Arc::new(crate::local_state::SlotState::new(
         Arc::new(NoStore),
-        AccountKey::try_new("local-289", "manual-route").unwrap(),
+        AccountKey::try_new("local-289", "manual_route").unwrap(),
         ContentScope::try_new(ClientRevision::R289, "test-content").unwrap(),
     ));
     let mut slot = SlotScript::new();
@@ -2339,7 +2339,7 @@ mod api_gather_seat {
 
         let state = Arc::new(crate::local_state::SlotState::new(
             Arc::new(NoStore),
-            api::local_state::AccountKey::try_new("local-289", "compat-seat").unwrap(),
+            api::local_state::AccountKey::try_new("local-289", "compat_seat").unwrap(),
             api::local_state::ContentScope::try_new(
                 api::selected::ClientRevision::R289,
                 "test-content",
