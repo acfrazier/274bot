@@ -515,6 +515,23 @@ fn build_seed_scenario(plan: SeedPlan) -> Result<Scenario, String> {
             budget_ticks: 100,
         },
     });
+    // Relog from the mainland landing, not the start tile: content at
+    // a seed tile can hold the bot in combat, and combat blocks the
+    // one logout press a Relog sends (`combat_preventlogout` in
+    // content/scripts/login_logout/logout.rs2). The landing is safe.
+    steps.push(command_step(
+        "stand on the mainland landing for the relog",
+        api::interact::tele_args(
+            crate::MAINLAND_LANDING.level,
+            crate::MAINLAND_LANDING.x,
+            crate::MAINLAND_LANDING.z,
+        ),
+        Proof::Arrived {
+            x: crate::MAINLAND_LANDING.x,
+            z: crate::MAINLAND_LANDING.z,
+            level: crate::MAINLAND_LANDING.level,
+        },
+    ));
     steps.push(Step {
         name: "relog after the bank proof",
         kind: StepKind::Relog,
@@ -553,9 +570,12 @@ fn build_seed_scenario(plan: SeedPlan) -> Result<Scenario, String> {
             budget_ticks: 200,
         },
     });
+    // Repeat the logout press once per game tick: combat at the start
+    // tile refuses single presses until 10 seconds after combat ends,
+    // and the first press that lands in a quiet gap logs out cleanly.
     steps.push(Step {
         name: "log out with the seed saved",
-        kind: StepKind::Perform {
+        kind: StepKind::Repeat {
             send: Box::new(|client, _| {
                 let ifaces = std::sync::Arc::clone(&client.ifaces);
                 api::interact::logout(client, ifaces.as_slice())
@@ -563,7 +583,7 @@ fn build_seed_scenario(plan: SeedPlan) -> Result<Scenario, String> {
         },
         wait: Wait {
             arm: Proof::LoggedOut,
-            budget_ticks: 200,
+            budget_ticks: 600,
         },
     });
 
@@ -638,7 +658,7 @@ pub fn quest_watch_speed_scenario_from_env() -> Result<Scenario, String> {
     });
     steps.push(Step {
         name: "log out after the speed change",
-        kind: StepKind::Perform {
+        kind: StepKind::Repeat {
             send: Box::new(|client, _| {
                 let ifaces = std::sync::Arc::clone(&client.ifaces);
                 api::interact::logout(client, ifaces.as_slice())
@@ -646,7 +666,7 @@ pub fn quest_watch_speed_scenario_from_env() -> Result<Scenario, String> {
         },
         wait: Wait {
             arm: Proof::LoggedOut,
-            budget_ticks: 200,
+            budget_ticks: 600,
         },
     });
     Ok(Scenario {
