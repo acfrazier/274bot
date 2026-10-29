@@ -2431,10 +2431,6 @@
       "owner": "T3"
     },
     {
-      "path": "crates/panel/examples/quester_skip.rs",
-      "owner": "T3"
-    },
-    {
       "path": "crates/panel/src/app.rs",
       "owner": "T3"
     },
@@ -5976,10 +5972,6 @@
     },
     {
       "path": "crates/tui/src/world_picker.rs",
-      "owner": "T3"
-    },
-    {
-      "path": "crates/tui/tests/script_footer.rs",
       "owner": "T3"
     },
     {
