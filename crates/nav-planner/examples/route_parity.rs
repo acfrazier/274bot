@@ -1,7 +1,11 @@
 //! Deterministic full route witnesses for the retained 289 corpus.
 //! This is not a timing benchmark. It records costs and complete leg sequences.
 
-use api::snapshot::WorldTile;
+use api::quest_facts::QuestCatalog;
+use api::quest_progress::{EvidenceProvider, EvidenceStamp, QuestListEvidenceProvider};
+use api::selected::{InclusiveRange, QuestGate, RunKey, Truth};
+use api::snapshot::{GameSnapshot, QuestStatusView, SnapshotView, WorldTile};
+use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId};
 use nav_planner::router::{find_blocking_zones, find_first_with, find_many_with, FindOptions};
 use nav_planner::world::NavWorld;
 use nav_planner::world_state::WorldState;
@@ -9,6 +13,7 @@ use nav_planner::zones::ZoneExempt;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::Arc;
 
 fn tile(x: i32, z: i32, level: i32) -> WorldTile {
     WorldTile { x, z, level }
@@ -39,6 +44,92 @@ fn rich_state() -> WorldState {
         stats: (0..21).map(|skill| (skill, 99)).collect(),
         ..WorldState::empty()
     }
+}
+
+/// Corpus stage witnesses evaluate only explicitly supplied quest/signal pairs.
+/// Other windows stay unknown; completion still uses the selected quest resolver.
+struct CorpusEvidence {
+    completion: QuestListEvidenceProvider,
+    signals: Vec<(&'static str, &'static str, i32)>,
+    stamp: EvidenceStamp,
+}
+
+impl EvidenceProvider for CorpusEvidence {
+    fn test_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Truth {
+        let QuestGate::Window(window) = gate else {
+            return self.completion.test_gate(gate, required_after);
+        };
+        if !self.stamp.meets(required_after) {
+            return Truth::Unknown;
+        }
+        self.signals
+            .iter()
+            .find(|(quest, signal, _)| {
+                window.quest.0.as_ref() == *quest && window.signal.0.as_ref() == *signal
+            })
+            .map_or(Truth::Unknown, |(_, _, value)| {
+                window.values.test(&InclusiveRange {
+                    min: Some(*value),
+                    max: Some(*value),
+                })
+            })
+    }
+}
+
+fn quest_state(
+    data: &api::game_data::SelectedGameData,
+    signals: &[(&'static str, &'static str, i32)],
+) -> Result<WorldState, String> {
+    let (facts, identity) = data.quest_identity_for_bake().map_err(|error| error.to_string())?;
+    let catalog = QuestCatalog::from_identity(Some(&facts)).map_err(|error| error.to_string())?;
+    let stamp = EvidenceStamp {
+        run: RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: 1,
+        sequence: 1,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_quest_statuses(
+        catalog
+            .iter()
+            // Exact stage witnesses do not also assert completion for that quest.
+            .filter(|quest| !signals.iter().any(|(id, _, _)| quest.id.0.as_ref() == *id))
+            .enumerate()
+            .map(|(index, quest)| QuestStatusView {
+                component_id: index as i32,
+                name: quest.display.to_string(),
+                colour: nav_planner::world_state::QUEST_COMPLETE_COLOUR,
+            })
+            .collect(),
+        true,
+    );
+    let provider = CorpusEvidence {
+        completion: QuestListEvidenceProvider::from_snapshot(
+            &catalog,
+            Some(identity),
+            Some(identity),
+            SnapshotView::new(Some(&snapshot), stamp),
+        ),
+        signals: signals.to_vec(),
+        stamp,
+    };
+    let mut state = rich_state();
+    for (quest, _, _) in signals {
+        let facts = catalog.quest(quest).map_err(|error| error.to_string())?;
+        state.quests.remove(facts.display.as_ref());
+    }
+    state.inventory_ready = true;
+    state.equipment_ready = true;
+    state.quest_evidence = Some(QuestEvidence::new(
+        Arc::new(provider),
+        QuestFamilyId::new(identity.sha256, identity.schema),
+        stamp,
+    ));
+    Ok(state)
 }
 
 struct Case<'a> {
@@ -335,7 +426,73 @@ fn main() -> Result<(), String> {
             },
         ));
     }
-    let result = json!({"schema": "274bot-route-parity-v1", "revision": 289, "cases": cases});
+    let complete = quest_state(&data, &[])?;
+    let direct = quest_state(
+        &data,
+        &[("grandtree", "grandtree", 80), ("mm", "mm_main", 2), ("biohazard", "biohazard", 14)],
+    )?;
+    let password = quest_state(
+        &data,
+        &[("grandtree", "grandtree", 80), ("mm", "mm_main", 1)],
+    )?;
+    let unreleased = quest_state(
+        &data,
+        &[("grandtree", "grandtree", 79), ("mm", "mm_main", 2)],
+    )?;
+    let searching = quest_state(&data, &[("biohazard", "biohazard", 10)])?;
+    let observed = WorldState {
+        map_members: true,
+        inventory_ready: true,
+        equipment_ready: true,
+        combat_level: Some(126),
+        ..WorldState::empty()
+    };
+    for (gate, west, east) in [
+        ("fortress", tile(3025, 3511, 1), tile(3026, 3511, 1)),
+        ("shipyard_left", tile(2944, 3041, 0), tile(2945, 3041, 0)),
+        ("shipyard_right", tile(2944, 3042, 0), tile(2945, 3042, 0)),
+        ("guidor_left", tile(3263, 3405, 0), tile(3264, 3405, 0)),
+        ("guidor_right", tile(3263, 3406, 0), tile(3264, 3406, 0)),
+    ] {
+        for (direction, from, to) in [("east", west, east), ("west", east, west)] {
+            let mut accounts = vec![
+                ("complete", &complete),
+                ("unresolved", &observed),
+                ("direct", &direct),
+            ];
+            if gate.starts_with("shipyard") {
+                accounts.extend([("password", &password), ("unreleased", &unreleased)]);
+            } else if gate.starts_with("guidor") {
+                accounts.push(("searching", &searching));
+            }
+            for (account, state) in accounts {
+                cases.push(first(
+                    &world,
+                    Case {
+                        name: &format!("gate_{gate}_{direction}_{account}"),
+                        from,
+                        goals: &[to],
+                        options: legacy,
+                        state,
+                        account,
+                    },
+                ));
+            }
+        }
+    }
+    let mut transports: Vec<_> = world
+        .graph
+        .edges
+        .iter()
+        .map(|edge| format!("{edge:?}"))
+        .collect();
+    transports.sort_unstable();
+    let result = json!({
+        "schema": "274bot-route-parity-v1",
+        "revision": 289,
+        "cases": cases,
+        "transports": transports,
+    });
     std::fs::write(
         &args[1],
         serde_json::to_vec_pretty(&result).map_err(|error| error.to_string())?,

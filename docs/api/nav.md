@@ -417,9 +417,10 @@ Named quest/guild door and secret-wall openers are interpreted from their
 RuneScript control flow. The generic engine crossing helpers must match their
 pinned content bodies. Conjunctive worn checks become strict `worn_all_req`
 gates, including exact primary-slot `inv_getobj` checks; carrying the disguise
-does not authorize the crossing. An untransmitted quest varp is admitted only
-with its unique completed-journal proof. Hidden bitfields, intermediate quest
-windows, dialogue/NPC choices and unresolved conditions stay impassable.
+does not authorize the crossing. Named doors use a unique completed-journal proof
+for an untransmitted quest varp. The entrance proof below can instead use exact
+selected stage signals. Hidden bitfields, dialogue choices and unresolved
+conditions stay impassable.
 General item-on-loc unlocks go through the same certified door interpreter:
 an `oplocu` handler that checks the selected item (`last_useitem`) derives a
 carried-item requirement on an `option` 0 edge — never a free op — when its
@@ -433,6 +434,24 @@ crossing rather than emitting it. Quest gating on these entrances is typed
 side-effectful handlers that the interpreter cannot prove stay impassable:
 these producers cover the entrances content proves, not every locked door
 in the world.
+
+The door interpreter distinguishes passability from NPC side effects.
+`black_knights_aggro` may precede a crossing only while its complete body matches
+the pinned content proof. That proc selects Black Knights and starts their
+attack. It does not change the crossing condition or the player landing.
+An unknown or changed proc still rejects that crossing.
+The v17 edge format has no danger-side-effect field. This exception adds no
+danger metadata and does not claim that the crossing is safe.
+
+Paired gate entrances can carry existing `QuestGate::Window` conditions for
+unambiguous selected quest signals. Each NPC-state alternative must prove the
+same crossing under those conditions. A post-motion scenery loop is accepted
+only by the narrow paired-gate proof; an unknown loop still rejects the edge.
+The shipyard password dialogue and the Varrock guard-search dialogue are not
+skipped. Their unproved trajectories stay impassable. A direct shipyard entry
+requires Grand Tree progress at least 80 and Monkey Madness progress above 1;
+exit requires only the Grand Tree condition. These conditions do not mean that
+both quests must be complete.
 
 Requirement-gated loc ops also derive deterministic force-walk and exact-move
 trajectories, following source proc/label calls, checked arithmetic, placement
