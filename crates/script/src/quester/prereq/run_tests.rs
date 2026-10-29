@@ -1433,7 +1433,7 @@ fn reissued_walks_keep_the_original_effective_prerequisite_grants() {
         assert!(matches!(
             refusal.as_ref(),
             PrereqRefusal::NotAllowed {
-                switch: ConsentSwitch::QuestStart,
+                switch: crate::native::PrereqSwitch::QuestStart,
                 ..
             }
         ));
