@@ -436,9 +436,10 @@ impl NativeMachine for Combat {
                 // can lag one tile behind it, and the host then reports
                 // `RouteEnded` for a walk that did reach its aim. That
                 // receipt is arrival, not a failure.
-                let stand_arrived = self.request.stand.is_some_and(|stand| {
-                    distance(frame.local.player.network, stand) <= 1
-                });
+                let stand_arrived = self
+                    .request
+                    .stand
+                    .is_some_and(|stand| distance(frame.local.player.network, stand) <= 1);
                 let stand_walk = self.engaged.is_none()
                     && matches!(self.phase, Phase::Prep | Phase::Engage)
                     && !stand_arrived
