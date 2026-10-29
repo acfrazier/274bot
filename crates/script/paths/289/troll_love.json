@@ -48,6 +48,10 @@
     "coin_float": 0,
     "loadouts": {},
     "areas": {
+      "brimhaven-food-route": {
+        "boxes": [[2752,3136,2815,3263,0],[2752,3136,2815,3263,1]],
+        "source": "/Users/acfrazier/experiments/lostcity-289/content/scripts/areas/area_ardougne_east/scripts/captain_barnaby.rs2:1-2; /Users/acfrazier/experiments/lostcity-289/content/maps/m43_49.jm2:9202; /Users/acfrazier/experiments/lostcity-289/content/maps/m43_50.jm2:4911-4913"
+      },
       "snow-cave": {
         "boxes": [
           [
@@ -113,7 +117,9 @@
       "obj:death_climbingboots",
       "obj:maple_logs",
       "obj:iron_bar",
-      "obj:cabbage",
+      "obj:tbwt_cooked_karambwan",
+      "obj:lobster",
+      "obj:swordfish",
       "obj:rope",
       "obj:bucket_wax",
       "obj:swamp_tar",
@@ -449,11 +455,39 @@
             },
             {"id":"acquire-iron-bar","kind":"acquire","version":1,"advances":false,"args":{"recipe":"STOP-iron-smelting-20-failures","max_restarts":19},"comment":"At most 20 smelts. All 20 fail with probability 1/1048576 without a forging ring: /Users/acfrazier/experiments/lostcity-289/content/scripts/skill_smithing/scripts/smelting/smelting.rs2:190-208.","skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_bar"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_bar"}}}},
             {
-              "id": "pick-arrg-food", "kind": "interact", "version": 1, "advances": false,
-              "args": {"target": {"loc": "cabbage"}, "op": "Pick", "anchor": {"tile": [3046,3287,0], "source": "/Users/acfrazier/experiments/lostcity-289/content/maps/m47_51.jm2:5743-5756; /Users/acfrazier/experiments/lostcity-289/content/pack/loc.pack:1162"}, "radius": 12, "wait_if_missing": true, "until": {"obj": "cabbage", "qty": 10}, "settle_ms": 180000},
-              "comment": "The cabbage patch replenishes after 70 ticks. Each cabbage heals one hitpoint: /Users/acfrazier/experiments/lostcity-289/content/scripts/general_use/scripts/pickables.rs2:42-51; /Users/acfrazier/experiments/lostcity-289/content/scripts/player/configs/consumption/consume_normal.dbrow:32-38.",
-              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "cabbage", "qty": 10}}},
-              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "cabbage", "qty": 10}}}
+              "id": "sail-for-arrg-food", "kind": "talk", "version": 1, "advances": false,
+              "args": {"npc": "captain_barnaby", "anchor": {"tile": [2679,3275,0], "source": "/Users/acfrazier/experiments/lostcity-289/content/maps/m41_51.jm2:11011; /Users/acfrazier/experiments/lostcity-289/content/scripts/areas/area_ardougne_east/scripts/captain_barnaby.rs2:1-2"}, "leash": 8, "prefer": ["Yes please."], "strict": true, "gap_ticks": 8},
+              "comment": "The voyage to Brimhaven costs 30 coins: /Users/acfrazier/experiments/lostcity-289/content/scripts/areas/area_port_sarim/scripts/sailors.rs2:12-31.",
+              "skip_if": {"Any": [{"Fact": {"kind": "in_area", "version": 1, "args": {"area": "brimhaven-food-route"}}}, {"All": [{"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "tbwt_cooked_karambwan", "qty": 3}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "lobster", "qty": 3}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "swordfish", "qty": 2}}}]}]},
+              "settle": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "brimhaven-food-route"}}}
+            },
+            {
+              "id": "buy-arrg-karambwan", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "alfonse_the_waiter", "anchor": {"tile": [2793,3188,0], "source": "/Users/acfrazier/experiments/lostcity-289/content/maps/m43_49.jm2:9202"}}, "obj": "tbwt_cooked_karambwan", "qty": 3, "est_gp": 997},
+              "comment": "Three cost 997 coins at base stock and heal 18 hitpoints each: /Users/acfrazier/experiments/lostcity-289/content/scripts/areas/area_brimhaven/configs/brimhaven.inv:30-44; /Users/acfrazier/experiments/lostcity-289/content/scripts/areas/area_brimhaven/configs/brimhaven.npc:52-59; /Users/acfrazier/experiments/lostcity-289/content/scripts/_unpack/274/all.obj:1-13; /Users/acfrazier/experiments/lostcity-289/content/scripts/shop/scripts/shop.rs2:58-68,131-147,182-187; /Users/acfrazier/experiments/lostcity-289/content/scripts/player/configs/consumption/consume_normal.dbrow:207-211.",
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "tbwt_cooked_karambwan", "qty": 3}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "tbwt_cooked_karambwan", "qty": 3}}}
+            },
+            {
+              "id": "buy-arrg-lobster", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "alfonse_the_waiter", "anchor": {"tile": [2793,3188,0], "source": "/Users/acfrazier/experiments/lostcity-289/content/maps/m43_49.jm2:9202"}}, "obj": "lobster", "qty": 3, "est_gp": 598},
+              "comment": "Three cost 598 coins at base stock and heal 12 hitpoints each: /Users/acfrazier/experiments/lostcity-289/content/scripts/areas/area_brimhaven/configs/brimhaven.inv:30-44; /Users/acfrazier/experiments/lostcity-289/content/scripts/areas/area_brimhaven/configs/brimhaven.npc:52-59; /Users/acfrazier/experiments/lostcity-289/content/scripts/skill_fishing/configs/fishing.obj:724-734; /Users/acfrazier/experiments/lostcity-289/content/scripts/shop/scripts/shop.rs2:58-68,131-147,182-187; /Users/acfrazier/experiments/lostcity-289/content/scripts/player/configs/consumption/consume_normal.dbrow:172-180.",
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "lobster", "qty": 3}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "lobster", "qty": 3}}}
+            },
+            {
+              "id": "buy-arrg-swordfish", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "alfonse_the_waiter", "anchor": {"tile": [2793,3188,0], "source": "/Users/acfrazier/experiments/lostcity-289/content/maps/m43_49.jm2:9202"}}, "obj": "swordfish", "qty": 2, "est_gp": 526},
+              "comment": "Two cost 526 coins at base stock and heal 14 hitpoints each: /Users/acfrazier/experiments/lostcity-289/content/scripts/areas/area_brimhaven/configs/brimhaven.inv:30-44; /Users/acfrazier/experiments/lostcity-289/content/scripts/areas/area_brimhaven/configs/brimhaven.npc:52-59; /Users/acfrazier/experiments/lostcity-289/content/scripts/skill_fishing/configs/fishing.obj:675-688; /Users/acfrazier/experiments/lostcity-289/content/scripts/shop/scripts/shop.rs2:58-68,131-147,182-187; /Users/acfrazier/experiments/lostcity-289/content/scripts/player/configs/consumption/consume_normal.dbrow:188-196.",
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "swordfish", "qty": 2}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "swordfish", "qty": 2}}}
+            },
+            {
+              "id": "return-from-arrg-food", "kind": "talk", "version": 1, "advances": false,
+              "args": {"npc": "customs_officer", "anchor": {"tile": [2772,3225,0], "source": "/Users/acfrazier/experiments/lostcity-289/content/maps/m43_50.jm2:4911-4913"}, "leash": 8, "prefer": ["Can I journey on this ship?", "Search away, I have nothing to hide.", "Ok."], "strict": true, "gap_ticks": 8},
+              "comment": "The return trip costs 30 coins: /Users/acfrazier/experiments/lostcity-289/content/scripts/areas/area_karamja/scripts/customs_officer.rs2:1-3,23-24,45-61,63-82.",
+              "skip_if": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "brimhaven-food-route"}}}},
+              "settle": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "brimhaven-food-route"}}}}
             },
             {
               "id": "collect-sled",
