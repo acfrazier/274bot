@@ -2681,6 +2681,13 @@ impl Quester {
                 }
                 self.empty_reads += 1;
                 if self.empty_reads >= 2 {
+                    self.in_prelude = false;
+                    self.step_index = self
+                        .path
+                        .sequences
+                        .get(self.seq_index)
+                        .map_or(0, |sequence| sequence.steps.len());
+                    self.parked_step = None;
                     self.parked = true;
                     self.park_reason = "no step for stage";
                     self.clear_last_error();
@@ -6317,14 +6324,26 @@ mod tests {
             }],
             true,
         );
+        let mut output = StatusCapture::default();
         for tick in 1..10 {
-            with_tick(&s, &mut ledger, tick, |t| script.tick(t).unwrap());
+            super::super::families::tests::with_tick_output(
+                &s,
+                &mut ledger,
+                tick,
+                &mut output,
+                |t| script.tick(t).unwrap(),
+            );
         }
         assert!(script.parked);
+        assert!(script.current_step().is_none());
+        assert!(script.parked_step.is_none());
         assert_eq!(
             script.blocked_failure().message.as_ref(),
             "no step for stage"
         );
+        let status = output.0.last().expect("parked status was published");
+        assert_eq!(status_text(status, "step_id"), "");
+        assert_eq!(status_text(status, "block_reason"), "no step for stage");
     }
 
     #[test]

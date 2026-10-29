@@ -20,6 +20,9 @@ use std::task::Poll;
 pub const DIALOG_GAP_TICKS: u64 = 1;
 pub const DIALOGUE_OPEN_MS: u64 = 8_000;
 pub const DIALOGUE_APPROACH_MS: u64 = 20_000;
+/// Scale each NPC's content `wanderrange` by the observed four-tick Viking
+/// route (`viking.npc:563`; `QUEST-CAMPAIGN/viking/gap-2/debug.log:211-221`).
+const DIALOGUE_APPROACH_WALK_TICKS: u16 = 4;
 pub const DRIVE_STEPS: u32 = 120;
 pub const PAGE_ACK_MS: u64 = 3_000;
 /// Ticks before acting on a page that changed text on the same root (a same-
@@ -289,6 +292,8 @@ pub struct Dialogue {
     npc_action: Arc<str>,
     deadline_ms: u64,
     walk_request_id: u64,
+    /// Additional approach routes allowed by the target NPC's wander range.
+    approach_replans_left: u16,
     talk_request_id: Option<u64>,
     talk_baseline: Option<PageAcknowledgement>,
     chat_advanced: bool,
@@ -333,6 +338,7 @@ impl NativeMachine for Dialogue {
             npc_action: Arc::from("Talk-to"),
             deadline_ms: cx.active_now().as_millis() as u64 + DIALOGUE_OPEN_MS,
             walk_request_id: 0,
+            approach_replans_left: 0,
             surface: Surface::Unselected,
             talk_request_id: None,
             talk_baseline: None,
@@ -453,21 +459,37 @@ impl NativeMachine for Dialogue {
         }
         match self.phase {
             Phase::Approach => {
-                if let Some(target) = self.npc_id().and_then(|id| nearest_talk(cx, id)) {
-                    if target.distance <= 2 && talk_reachable(cx, target.tile) {
-                        std::task::ready!(crate::native::defer_budget(self.open(cx)))?;
-                        cx.cancel_request(self.walk_request_id);
-                        self.walk_request_id = 0;
-                        return Poll::Pending;
-                    }
-                }
-                if now >= self.deadline_ms
-                    || (self.walk_request_id != 0
-                        && cx.walk_receipt(self.walk_request_id).is_some())
-                {
+                let target = self.npc_id().and_then(|id| nearest_talk(cx, id));
+                let Some(target) = target else {
                     cx.cancel_request(self.walk_request_id);
                     self.walk_request_id = 0;
                     return Poll::Ready(Ok(DialogueOutcome::Failed));
+                };
+                if target.distance <= 2 && talk_reachable(cx, target.tile) {
+                    std::task::ready!(crate::native::defer_budget(self.open(cx)))?;
+                    cx.cancel_request(self.walk_request_id);
+                    self.walk_request_id = 0;
+                    return Poll::Pending;
+                }
+                let route_finished = self.walk_request_id != 0
+                    && cx.walk_receipt(self.walk_request_id).is_some();
+                if now >= self.deadline_ms || (route_finished && self.approach_replans_left == 0) {
+                    cx.cancel_request(self.walk_request_id);
+                    self.walk_request_id = 0;
+                    return Poll::Ready(Ok(DialogueOutcome::Failed));
+                }
+                if route_finished {
+                    let reachable = talk_reachable(cx, target.tile);
+                    let request = reach::walk_request(
+                        target.tile,
+                        if reachable { 1 } else { 0 },
+                        None,
+                        cx.evidence(),
+                    );
+                    let request_id =
+                        std::task::ready!(crate::native::defer_budget(cx.walk(request)))?;
+                    self.approach_replans_left -= 1;
+                    self.walk_request_id = request_id;
                 }
                 Poll::Pending
             }
@@ -700,12 +722,15 @@ impl Dialogue {
             }
             return Ok(());
         }
-        if let Some(target) = self.npc_id().and_then(|id| nearest_talk(cx, id)) {
+        let npc_id = self.npc_id();
+        if let Some(target) = npc_id.and_then(|id| nearest_talk(cx, id)) {
             let reachable = talk_reachable(cx, target.tile);
             if target.distance > 2 || !reachable {
                 // A nearby NPC across a closed wall/door is not ready to
                 // talk. Route to its side instead of accepting a blocked
                 // adjacent tile and cancelling before the door traversal.
+                self.approach_replans_left = npc_id
+                    .map_or(0, |id| dialogue_approach_replan_budget(cx, id));
                 self.walk_request_id = cx.walk(reach::walk_request(
                     target.tile,
                     if reachable { 1 } else { 0 },
@@ -1239,6 +1264,18 @@ fn talk_reachable(cx: &ActionContext<'_>, tile: api::WorldTile) -> bool {
             },
         )
     })
+}
+
+fn dialogue_approach_replan_budget(cx: &ActionContext<'_>, npc_id: i32) -> u16 {
+    let Ok(data) = api::game_data::for_revision(cx.pin().revision) else {
+        return 0;
+    };
+    let Some(npc) = data.npc_name(npc_id) else {
+        return 0;
+    };
+    u16::try_from(npc.wanderrange.max(0))
+        .unwrap_or(u16::MAX)
+        .saturating_mul(DIALOGUE_APPROACH_WALK_TICKS)
 }
 
 fn nearest_talk<'a>(cx: &'a ActionContext<'_>, wanted: i32) -> Option<TalkTarget<'a>> {

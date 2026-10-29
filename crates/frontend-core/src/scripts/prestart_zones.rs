@@ -607,10 +607,10 @@ mod tests {
         let scope = zones
             .scopes
             .iter()
-            .find(|scope| scope.quest_id == "cook")
-            .expect("selected Cook scope is shown");
+            .find(|scope| scope.quest_id == "cook" && scope.stage_id == "cook:0")
+            .expect("selected Cook sequence scope is shown");
         assert_eq!(scope.quest_name, "Cook Fixture");
-        assert_eq!(scope.stage_id, "cook:1");
+        assert_eq!(scope.stage_id, "cook:0");
         assert!(scope.display_label.contains("Cook Fixture (cook)"));
         let authored = scope
             .zones
