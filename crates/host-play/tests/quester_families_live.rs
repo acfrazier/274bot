@@ -1533,45 +1533,37 @@ fn live_dialogue_answer_once_filliman_repeated_menu() {
         true,
     );
     let start = family_start(document, Arc::clone(&selected), Arc::clone(&quests));
-    let menu_pages = Arc::new(AtomicI32::new(0));
-    let step_seen = Arc::new(AtomicI32::new(0));
-    let observed_menus = Arc::clone(&menu_pages);
-    let observed_step = Arc::clone(&step_seen);
+    let mut menu_pages = 0;
+    let mut step_seen = false;
     let mut in_menu = false;
-    let observe_tick: ObserveTick = Box::new(move |snapshot, status| {
+    let observe: ObserveFamily = Box::new(move |snapshot, status, lifecycle| {
         if status.is_some_and(|status| {
             status.phase == NativePhase::Working
                 && status_text(status, "step_id") == Some(FILLIMAN_STEP)
         }) {
-            observed_step.store(1, Ordering::Relaxed);
+            step_seen = true;
         }
-        let chat = snapshot.chat_modal()?.value;
-        // Count a menu opening once, not each poll of the same page. Text
-        // frames may still arrive after the option rows; the rows identify
-        // the menu. The bug would open the menu until DRIVE_STEPS fails.
-        let menu = chat
-            .options
-            .iter()
-            .any(|option| option.text.eq_ignore_ascii_case("Ok, thanks."));
-        if menu && !in_menu {
-            observed_menus.fetch_add(1, Ordering::Relaxed);
+        if let Some(chat) = snapshot.chat_modal() {
+            // Count a menu opening once, not each poll of the same page.
+            // Text frames may still arrive after the option rows; the rows
+            // identify the menu. Without answer_once the driver re-answers
+            // the question until DRIVE_STEPS fails.
+            let menu = chat
+                .value
+                .options
+                .iter()
+                .any(|option| option.text.eq_ignore_ascii_case("Ok, thanks."));
+            if menu && !in_menu {
+                menu_pages += 1;
+            }
+            in_menu = menu;
         }
-        in_menu = menu;
-        None
-    });
-    let menus = Arc::clone(&menu_pages);
-    let seen = Arc::clone(&step_seen);
-    let observe: ObserveFamily = Box::new(move |snapshot, status, lifecycle| {
-        if seen.load(Ordering::Relaxed) == 0
-            || !completed_lifecycle(lifecycle)
-            || snapshot.modals().chat != -1
-        {
+        if !step_seen || !completed_lifecycle(lifecycle) || snapshot.modals().chat != -1 {
             return Ok(None);
         }
-        let menu_pages_seen = menus.load(Ordering::Relaxed);
-        if menu_pages_seen != 2 {
+        if menu_pages != 2 {
             return Err(format!(
-                "answer_once must answer the question once and leave; observed {menu_pages_seen} menu pages (the page cap is {})",
+                "answer_once must answer the question once and leave; observed {menu_pages} menu pages (the page cap is {})",
                 script::quester::families::dialogue::DRIVE_STEPS
             ));
         }
@@ -1581,7 +1573,7 @@ fn live_dialogue_answer_once_filliman_repeated_menu() {
             "operation": "Enter",
             "answer_once": true,
             "prefer": ["How long have you been a ghost?", "Ok, thanks."],
-            "menu_pages": menu_pages_seen,
+            "menu_pages": menu_pages,
             "page_cap": script::quester::families::dialogue::DRIVE_STEPS,
             "chat_modal_after": snapshot.modals().chat,
             "quest_varp_id": quest_varp_id,
