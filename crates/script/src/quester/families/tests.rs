@@ -5795,6 +5795,15 @@ fn dialogue_open_clock_starts_after_approaching_the_npc() {
 
 #[test]
 fn sheep_partial_hand_in_spins_only_the_remaining_unheld_balls() {
+    assert_sheep_partial_spin(true);
+}
+
+#[test]
+fn sheep_spinning_exhausted_inputs_fail_below_the_held_target() {
+    assert_sheep_partial_spin(false);
+}
+
+fn assert_sheep_partial_spin(finish_target: bool) {
     use client::io::ServerProt;
     compile_context_test(|cx| {
         let document: crate::quester::path::PathDocument =
@@ -5897,12 +5906,14 @@ fn sheep_partial_hand_in_spins_only_the_remaining_unheld_balls() {
             }],
             28,
         );
-        let Poll::Ready(Ok(outcome)) = with_tick(&snapshot, &mut ledger, 8, |tick| {
-            with_sheep_step(tick, 12, |cx| run.poll(cx))
-        }) else {
-            panic!("observed production progress must return to Path settlement");
-        };
-        let settle = |cx: &mut StepContext<'_, '_>| {
+        assert!(
+            with_tick(&snapshot, &mut ledger, 8, |tick| {
+                with_sheep_step(tick, 12, |cx| run.poll(cx))
+            })
+            .is_pending(),
+            "partial output must not complete the held target"
+        );
+        let settle = |cx: &mut StepContext<'_, '_>, outcome: Option<&StepOutcome>| {
             step.settle.evaluate(&PredicateContext {
                 cx: &cx.tick.cx,
                 pairs: cx.tick.pairs,
@@ -5910,20 +5921,49 @@ fn sheep_partial_hand_in_spins_only_the_remaining_unheld_balls() {
                 progress: cx.progress,
                 required_after: cx.required_after,
                 chat_since: 0,
-                outcome: Some(&outcome),
+                outcome,
             })
         };
         assert_eq!(
             with_tick(&snapshot, &mut ledger, 8, |tick| {
-                with_sheep_step(tick, 12, settle)
+                with_sheep_step(tick, 12, |cx| settle(cx, None))
             }),
             Truth::False,
             "11 held balls cannot settle the journal's remaining 12"
         );
+        if !finish_target {
+            // No raw wool remains. A final queued output can still arrive within
+            // three ticks (skill_crafting/scripts/spinning/spinning.rs2:83-99).
+            for _ in 0..100 {
+                assert!(with_tick(&snapshot, &mut ledger, 8, |tick| {
+                    with_sheep_step(tick, 12, |cx| run.poll(cx))
+                })
+                .is_pending());
+            }
+            for game_tick in 9..=10 {
+                assert!(with_tick(&snapshot, &mut ledger, game_tick, |tick| {
+                    with_sheep_step(tick, 12, |cx| run.poll(cx))
+                })
+                .is_pending());
+            }
+            assert!(matches!(
+                with_tick(&snapshot, &mut ledger, 11, |tick| {
+                    with_sheep_step(tick, 12, |cx| run.poll(cx))
+                }),
+                Poll::Ready(Err(ActionError::Failed(reason)))
+                    if reason.as_ref() == "production did not reach the held target"
+            ));
+            return;
+        }
         snapshot.seed_inventory(vec![ItemView { count: 12, ..ball }], 28);
+        let Poll::Ready(Ok(outcome)) = with_tick(&snapshot, &mut ledger, 9, |tick| {
+            with_sheep_step(tick, 12, |cx| run.poll(cx))
+        }) else {
+            panic!("the complete held target must finish production");
+        };
         assert_eq!(
             with_tick(&snapshot, &mut ledger, 9, |tick| {
-                with_sheep_step(tick, 12, settle)
+                with_sheep_step(tick, 12, |cx| settle(cx, Some(&outcome)))
             }),
             Truth::True
         );
