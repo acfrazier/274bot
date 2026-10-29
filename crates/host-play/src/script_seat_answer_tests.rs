@@ -61,15 +61,29 @@ const TWO_DEPOSITS: &str = r#"
         globalThis.__done2 = true;
 "#;
 
+/// How long the one-shot tick listener spins: past the isolate's 600 ms
+/// execution horizon, so the dispatch counts as a slow tick.
+const SPIN_MS: u32 = 1_200;
+
 fn source(body: &str) -> String {
     format!(
         "
 import {{ Bank }} from '../../api/bank/Bank.js';
+import {{ BotHost }} from '../../runtime/BotHost.js';
 export default class T extends LoopingBot {{
     async loop() {{
         if (globalThis.__started) return;
         globalThis.__started = true;
         globalThis.__matches = [];
+        // One-shot: a script sets `__spin_next_tick` to make the next game
+        // tick slow.
+        BotHost.addTickListener(() => {{
+            if (!globalThis.__spin_next_tick) return;
+            globalThis.__spin_next_tick = false;
+            globalThis.__spun = (globalThis.__spun ?? 0) + 1;
+            const from = Date.now();
+            while (Date.now() - from < {SPIN_MS}) {{}}
+        }});
 {body}
     }}
 }}
@@ -561,6 +575,103 @@ fn seat_answer_final_terminal_survives_a_refused_dispatch() {
     for _ in 0..8 {
         assert!(
             !frames.frame(tick, false),
+            "nothing is owed after completion"
+        );
+    }
+    assert_eq!(frames.seat().seat_pages.accepted, after.seat_pages.accepted);
+}
+
+/// Sol N1 and Grok F1 through the whole host path: a slow game tick makes the
+/// isolate thread skip the ticks queued behind it, and the seat page that
+/// carries an accepted answer survives the skip. Every step goes through the
+/// real observe adapter, the real page encoder and the real dispatch
+/// accounting; nothing probes the isolate between the slow tick's start and
+/// the last frame that queues work behind it, because a probe ends the stale
+/// window.
+#[test]
+fn seat_answer_wake_survives_a_slow_tick_skip() {
+    let frames = Frames::new(KEEP_ALL, 5);
+    frames.iso(script_js::LoadIsolate::suppress_execution_watchdog_for_test);
+    let tick = frames.first_visit();
+    assert_eq!(frames.matches(), 1, "one visit before the slow tick");
+    frames.probe("globalThis.__spin_next_tick = true");
+    let before = frames.seat();
+
+    // The slow tick starts on the tick edge and spins in its listener.
+    assert!(frames.frame(tick + 1, true), "the tick edge dispatches");
+    // Unchanged frames: the tick frame's poll took the answer and published
+    // prompt 2 after its own page was posted, so the page is owed. It is
+    // accepted while the thread still spins.
+    let mut queued_behind_the_spin = 0;
+    for _ in 0..8 {
+        frames.frame(tick + 1, false);
+        let seat = frames.seat();
+        if seat.answer_dispatched == seat.answer_seq && seat.untaken_answers == 0 {
+            queued_behind_the_spin = frames.iso(|iso| iso.queued_commands_for_test());
+            break;
+        }
+    }
+    let accepted = frames.seat();
+    assert!(
+        accepted.answer_seq > before.answer_seq,
+        "the wake published the next prompt: {before:?} -> {accepted:?}"
+    );
+    assert_eq!(
+        accepted.answer_dispatched, accepted.answer_seq,
+        "the seat page was accepted: {accepted:?}"
+    );
+    assert_eq!(accepted.seat_pages.refused_page, 0);
+    assert_eq!(accepted.seat_pages.refused_dispatch, 0);
+    assert!(
+        queued_behind_the_spin >= 1,
+        "the accepted page was still queued behind the slow tick"
+    );
+    assert_eq!(
+        frames.iso(script_js::LoadIsolate::executed_seat_pages_for_test),
+        0,
+        "no seat page has run yet: the thread is inside the slow tick"
+    );
+
+    // The next tick's snapshot and tick queue behind the page: the skip
+    // drops that tick and must keep the page.
+    assert!(frames.frame(tick + 2, true));
+    assert_eq!(
+        frames.iso(script_js::LoadIsolate::executed_seat_pages_for_test),
+        0,
+        "still inside the slow tick"
+    );
+
+    // Only unchanged frames from here. The retained page runs after the slow
+    // tick and the burst finishes with no tick edge and no changed fact.
+    frames.run_to_done(tick + 2);
+    assert_eq!(frames.probe("globalThis.__matches"), five());
+    assert_eq!(
+        frames.probe("globalThis.__spun"),
+        serde_json::json!(1),
+        "the listener spun exactly once"
+    );
+    let logs = frames.slot.lock().unwrap().take_pending_logs();
+    let skipped = format!("skipped stale ticks -> {}", tick + 2);
+    assert!(
+        logs.iter().any(|line| *line == skipped),
+        "the skip ran: {logs:?}"
+    );
+    assert_eq!(
+        frames.probe("__rs2b0t_host.tick"),
+        serde_json::json!(tick + 1),
+        "the skipped tick never ran"
+    );
+    assert!(
+        frames.iso(script_js::LoadIsolate::executed_seat_pages_for_test) >= 1,
+        "the retained page ran"
+    );
+    let after = frames.seat();
+    assert_eq!(after.answer_dispatched, after.answer_seq);
+    assert_eq!(after.seat_pages.refused_page, 0);
+    assert_eq!(after.seat_pages.refused_dispatch, 0);
+    for _ in 0..8 {
+        assert!(
+            !frames.frame(tick + 2, false),
             "nothing is owed after completion"
         );
     }

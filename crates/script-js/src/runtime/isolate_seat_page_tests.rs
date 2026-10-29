@@ -932,6 +932,7 @@ fn an_embedded_hunt_child_steps_only_its_owner_and_continues_into_the_family() {
     };
     let startup = called(&iso).len();
     let probe_steps = steps_of_probe(&iso);
+    let owner_handle = family_row(&iso, "hunt-bank")["handle"].as_u64().unwrap();
     let tick = iso.probe("__rs2b0t_host.tick").unwrap();
     assert_eq!(
         iso.probe("typeof globalThis.__done").unwrap(),
@@ -973,11 +974,11 @@ fn an_embedded_hunt_child_steps_only_its_owner_and_continues_into_the_family() {
         [serde_json::json!(["log", "could not open the bank. Will retry."])],
         "exactly the family's own continuation ran"
     );
-    assert_eq!(
-        iso.probe("globalThis.__done").unwrap(),
-        serde_json::json!({ "kind": "done", "value": false }),
-        "the family ended through its own stepper"
-    );
+    let ended = settled(&iso)
+        .into_iter()
+        .find(|entry| entry["handle"] == owner_handle)
+        .unwrap_or_else(|| panic!("the owner settled: {:?}", settled(&iso)));
+    assert_eq!(ended["kind"], "done", "the family ended on its own stepper");
     assert_eq!(steps_of_probe(&iso), probe_steps, "still inactive");
     assert_eq!(
         iso.probe("globalThis.__wait_done").unwrap(),
