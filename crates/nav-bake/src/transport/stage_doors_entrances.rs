@@ -14,6 +14,8 @@ pub(super) struct Inputs<'a> {
     absent: &'a [i32],
     npc_queries: &'a [Expr],
     npc_mask: usize,
+    scenery_queries: &'a [Expr],
+    scenery_mask: usize,
     complete: bool,
     above_queries: &'a [String],
     above_mask: usize,
@@ -35,6 +37,7 @@ struct StageRanges {
 struct Reads {
     items: Vec<i32>,
     npc: Vec<Expr>,
+    scenery: Vec<Expr>,
     quests: HashSet<String>,
     /// Comparison boundaries that partition every recognized stage predicate.
     stage_boundaries: HashMap<String, Vec<i32>>,
@@ -65,6 +68,9 @@ impl Reads {
                 }
                 if name == "npc_find" && !self.npc.contains(expr) {
                     self.npc.push(expr.clone());
+                }
+                if name == "loc_find" && !self.scenery.contains(expr) {
+                    self.scenery.push(expr.clone());
                 }
                 if let Some(name) = name.strip_prefix('~') {
                     self.procedure(name, src);
@@ -209,14 +215,14 @@ fn compare_interval(op: CmpOp, min: i32, max: i32, value: i32) -> Option<bool> {
     }
 }
 
-fn quest_stage_ranges(reads: &Reads, src: &Sources) -> Option<Vec<StageRanges>> {
+fn quest_stage_ranges(reads: &Reads, src: &Sources, obstacle: bool) -> Option<Vec<StageRanges>> {
     let mut varps: Vec<_> = reads.stage_boundaries.keys().collect();
     varps.sort_unstable();
     let mut out = Vec::new();
     for varp in varps {
         let starts = &reads.stage_boundaries[varp];
         let complete = src.quest_complete.get(varp).map(|(_, value)| *value);
-        if complete.is_some_and(|complete| starts.iter().all(|start| *start == complete)) {
+        if !obstacle && complete.is_some_and(|complete| starts.iter().all(|start| *start == complete)) {
             continue;
         }
         if !src.quest_signals.contains_key(varp) {
@@ -224,8 +230,10 @@ fn quest_stage_ranges(reads: &Reads, src: &Sources) -> Option<Vec<StageRanges>> 
         }
         let mut boundaries = Vec::with_capacity(starts.len() + usize::from(complete.is_some()));
         boundaries.extend(starts.iter().copied());
-        if let Some(complete) = complete {
-            boundaries.push(complete);
+        if !obstacle {
+            if let Some(complete) = complete {
+                boundaries.push(complete);
+            }
         }
         boundaries.sort_unstable();
         boundaries.dedup();
@@ -516,6 +524,12 @@ impl Motion<'_> {
                     .map(|index| Val::Bool(input.npc_mask & (1usize << index) != 0)),
             ),
             "loc_find" => Some((|| {
+                if self.obstacle == Some(obstacles::Class::Wall) {
+                    let index = input.scenery_queries.iter().position(|query| query == expr)?;
+                    if input.scenery_mask & (1usize << index) == 0 {
+                        return Some(Val::Bool(false));
+                    }
+                }
                 let [coord, Expr::Word(name)] = args else {
                     return None;
                 };
@@ -593,7 +607,10 @@ impl Motion<'_> {
                     };
                     let gate = if self.base.src.quest_complete.get(quest_varp).is_some_and(
                         |(_, complete)| {
-                            stage.values.min == Some(*complete) && stage.values.max.is_none()
+                            stage.values.min == Some(*complete)
+                                && (stage.values.max.is_none()
+                                    || stage.values.max == Some(*complete)
+                                        && self.base.src.quest_exact.contains(quest_varp))
                         },
                     ) {
                         api::selected::QuestGate::Complete(quest.clone())
@@ -867,6 +884,8 @@ struct TrajectoryInputs<'a> {
     stand: WorldTile,
     absent: &'a [i32],
     npc: &'a [Expr],
+    scenery: &'a [Expr],
+    obstacle: Option<obstacles::Class>,
     above: &'a [String],
     complete: bool,
     stages: &'a [StageChoice<'a>],
@@ -887,6 +906,8 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
         absent,
         npc,
         above,
+        scenery,
+        obstacle,
         complete,
         stages,
     } = input;
@@ -899,9 +920,10 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
     let above = if complete { above } else { &[] };
     // Above-completion values and NPC presence are independent unknowns.
     // Every combination must prove the same landing.
-    for mask in 0..(1usize << (npc.len() + above.len())) {
+    for mask in 0..(1usize << (npc.len() + scenery.len() + above.len())) {
         let npc_mask = mask & ((1usize << npc.len()) - 1);
-        let above_mask = mask >> npc.len();
+        let scenery_mask = (mask >> npc.len()) & ((1usize << scenery.len()) - 1);
+        let above_mask = mask >> (npc.len() + scenery.len());
         let mut motion = Motion {
             base: Eval {
                 src,
@@ -932,6 +954,8 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
                 npc_queries: npc,
                 npc_mask,
                 complete,
+                scenery_queries: scenery,
+                scenery_mask,
                 above_queries: above,
                 above_mask,
                 stages,
@@ -939,6 +963,7 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
             returned: None,
             value_query: false,
             timer: None,
+            obstacle,
         };
         if motion.run(&handler.body, &mut Env::new()) == End::Refused
             || !motion.moved
@@ -1007,9 +1032,6 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
             continue;
         };
         for option in 1..=5 {
-            if covered.contains(&(id, option)) {
-                continue;
-            }
             let own: Vec<_> = src
                 .ids
                 .iter()
@@ -1027,6 +1049,10 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                 },
                 _ => continue,
             };
+            let obstacle = obstacles::classify(handler, src);
+            if covered.contains(&(id, option)) && obstacle != Some(obstacles::Class::Ladder) {
+                continue;
+            }
             let calls = reachable_calls(handler, src);
             if !calls.iter().any(|call| {
                 matches!(
@@ -1048,13 +1074,16 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                 ..Reads::default()
             };
             reads.body(&handler.body, src);
+            if obstacle != Some(obstacles::Class::Wall) {
+                reads.scenery.clear();
+            }
             reads.items.sort_unstable();
             reads.items.dedup();
             let paired_gate = has_certified_paired_gate(handler, src);
-            let stages = if reads.stage_boundaries.is_empty() || !paired_gate {
+            let stages = if reads.stage_boundaries.is_empty() || !paired_gate && obstacle.is_none() {
                 Vec::new()
             } else {
-                let Some(stages) = quest_stage_ranges(&reads, src) else {
+                let Some(stages) = quest_stage_ranges(&reads, src, obstacle.is_some()) else {
                     continue;
                 };
                 stages
@@ -1090,6 +1119,7 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                 .items
                 .len()
                 .checked_add(reads.npc.len())
+                .and_then(|bits| bits.checked_add(reads.scenery.len()))
                 .and_then(|bits| bits.checked_add(above.len()))
             else {
                 continue;
@@ -1127,6 +1157,9 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                             level: at.level,
                         },
                     ]);
+                } else if placement.shape == 4 && obstacle == Some(obstacles::Class::Window) {
+                    // Wall-decoration reach always permits the loc's own tile.
+                    stands.push(at);
                 } else if matches!(placement.shape, 10 | 11 | 22) {
                     let Some(approach) = LocApproach::from_loc_def(
                         def.width,
@@ -1181,6 +1214,8 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                                 absent: &absent,
                                 npc: &reads.npc,
                                 above: &above,
+                                scenery: &reads.scenery,
+                                obstacle,
                                 complete: true,
                                 stages,
                             };
@@ -1200,7 +1235,7 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                                 })
                             });
                             for result in [complete, incomplete].into_iter().flatten() {
-                                if !paired_gate
+                                if obstacle.is_none() && !paired_gate
                                     && result.needs.quests.is_empty()
                                     && result.needs.forbidden_held.is_empty()
                                     && result.needs.forbidden_worn.is_empty()
@@ -1212,8 +1247,13 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                                 if !collision.standable(result.to) {
                                     continue;
                                 }
+                                if covered.contains(&(id, option))
+                                    && graph.edges.iter().any(|edge| edge.loc_id == id
+                                        && edge.option == option && edge.to == result.to) {
+                                    continue;
+                                }
                                 let mut edge = gated_edge(
-                                    TransportKind::Ladder,
+                                    obstacle.map_or(TransportKind::Ladder, obstacles::Class::kind),
                                     id,
                                     at,
                                     result.to,

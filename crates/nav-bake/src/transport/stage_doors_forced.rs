@@ -6,6 +6,8 @@ use api::query::loc_approach::LocApproach;
 
 #[path = "stage_doors_entrances.rs"]
 mod entrances;
+#[path = "stage_doors_obstacles.rs"]
+mod obstacles;
 
 pub(super) const ENGINE_FORCED_PROCS: &str = include_str!("engine_forced_procs.rs2");
 const SKIP_FORCED_CONFLICT: &str =
@@ -226,6 +228,7 @@ fn tool_selector(block: &Block, src: &Sources, facts: &Facts) -> Option<Vec<Tool
 fn movement_proofs(src: &Sources) -> HashSet<String> {
     let pinned: HashMap<_, _> = header_blocks(ENGINE_FORCED_PROCS)
         .into_iter()
+        .chain(header_blocks(include_str!("engine_obstacle_procs.rs2")))
         .map(|(_, name, params, body)| (name, proc_identity(&params, &body)))
         .collect();
     let matches = |name: &str| {
@@ -241,6 +244,14 @@ fn movement_proofs(src: &Sources) -> HashSet<String> {
     }
     if matches("agility_exactmove") {
         proofs.insert("agility_exactmove".to_owned());
+    }
+    if matches("agility_climb_up") {
+        proofs.insert("agility_climb_up".to_owned());
+    }
+    if ["set_forcemove_bas", "set_walkbas", "set_readywalk_bas",
+        "set_readywalkturn_bas", "bas_set", "update_bas",
+        "inzone_coord_pair_table"].into_iter().all(matches) {
+        proofs.insert("obstacle_appearance".to_owned());
     }
     proofs
 }
@@ -334,6 +345,7 @@ struct Motion<'a> {
     returned: Option<Val>,
     value_query: bool,
     timer: Option<&'a str>,
+    obstacle: Option<obstacles::Class>,
 }
 
 impl Motion<'_> {
@@ -369,6 +381,12 @@ impl Motion<'_> {
     }
 
     fn statement(&mut self, stmt: &Stmt, env: &mut Env) -> End {
+        if self.obstacle == Some(obstacles::Class::Rocks) && obstacles::failure(stmt) {
+            return End::Continue;
+        }
+        if let Some(end) = self.obstacle_assignment(stmt, env) {
+            return end;
+        }
         match stmt {
             Stmt::Block(body) => self.run(body, env),
             Stmt::Return(calls) if calls.is_empty() => End::Return,
@@ -521,6 +539,9 @@ impl Motion<'_> {
             if let Some(end) = self.entrance_call(name, args, env) {
                 return end;
             }
+        }
+        if let Some(end) = self.obstacle_call(name, args, env) {
+            return end;
         }
         let result = match name {
             "~forcemove" if self.proofs.contains("forcemove") => match args {
@@ -921,6 +942,11 @@ impl Motion<'_> {
                         CmpOp::Ne => a != b,
                         _ => return Cond::unknown(),
                     },
+                    (Val::Name(a), Val::Name(b)) => match op {
+                        CmpOp::Eq => a == b,
+                        CmpOp::Ne => a != b,
+                        _ => return Cond::unknown(),
+                    },
                     (Val::Loc(LocRef::Itself), Val::Name(name))
                     | (Val::Name(name), Val::Loc(LocRef::Itself)) => {
                         let Some(&id) = self.base.src.ids.get(name) else {
@@ -1150,6 +1176,7 @@ pub(super) fn forced_move_edges(
                                 returned: None,
                                 value_query: false,
                                 timer: None,
+                                obstacle: None,
                             };
                             let mut env = Env::new();
                             if motion.run(&handler.body, &mut env) == End::Refused
