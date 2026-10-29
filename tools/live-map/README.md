@@ -56,7 +56,7 @@ All cells not listed below normally run on merlot. Engine A uses game port
 | `host.quester-path-engine-q`, `scenario.quester-engine-q` | Run on the Engine Q host. This setup uses merlot at `127.0.0.1:44694` and `127.0.0.1:1180`. Set `QUESTER_TICK_MS=300` only for these cells. |
 | `nav.essence-follow` | The orchestrator must start a 274 engine on the cell host at `127.0.0.1:43594`. The orchestrator supplies `ENGINE_274_DIR` and `NAV_PACK_274`. Do not run this cell until the orchestrator provides both inputs and starts the engine. |
 | `nav.essence-289-engine-a` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. Use chardonnay when merlot is measured or reserved. |
-| `host.nav-zanaris-entrana` | Run on aubaine with Engine L at `127.0.0.1:47594` and `127.0.0.1:3080`. Set `ENGINE_L_DIR`, `BOT_CACHE_DIR`, `NAV_PACK_289`, `LIVE_EVIDENCE_DIR`, `CATALOG_ROOT`, and `QUESTER_PATH_DIR`. Use the task's head pack and the Zanaris Path source from the quest-paths branch. |
+| `host.nav-zanaris-entrana` | Run on aubaine with Engine L at `127.0.0.1:47594` and `127.0.0.1:3080`. Set `ENGINE_A_DIR` to the Engine L directory. Also set `BOT_CACHE_DIR`, `NAV_PACK_289`, `LIVE_EVIDENCE_DIR`, `CATALOG_ROOT`, and `QUESTER_PATH_DIR`. Use the task's head pack and the Zanaris Path source from the quest-paths branch. |
 | `host.sherlock-entrana-walk-arrive`, `host.sherlock-entrana-content-categories` | Run on aubaine through Engine L's relay at `127.0.0.1:44594` and `127.0.0.1:1080`. Set the standard Engine A, pack, cache, catalog, and evidence variables. |
 | `panel.headed-render` | Run on merlot with its interactive GPU and display. The command removes `BOT_CPU` so the client uses the GPU renderer. |
 
@@ -217,7 +217,7 @@ does not replace or gate the 289 cell.
 
 ## Input values
 
-These are the 21 names reviewed in round 2. Three inputs are fixed in the map.
+These are the 20 names reviewed in round 2. Three inputs are fixed in the map.
 The caller must not replace the gather tile, Path, or seeds file.
 
 | Name | Value or owner |
@@ -225,11 +225,10 @@ The caller must not replace the gather tile, Path, or seeds file.
 | `ISOHOME` | Use the absolute wrapper path on the host. Merlot: `/Users/acfrazier/experiments/274bot/.superpowers/bin/isohome`. Chardonnay: `/home/acfrazier/experiments/274bot/.superpowers/bin/isohome`. |
 | `BOT_LIVE_NAME_PREFIX` | Choose a unique prefix of 1 to 4 characters for each run. The Sherlock receipt in this round uses `l2r`. See `STANDING-RULINGS.md:33` and `crates/host-play/src/play_bootstrap.rs:67-75`. |
 | `LIVE_EVIDENCE_DIR` | Use a fresh directory outside the throwaway HOME. Merlot: `/Volumes/dev-scratch/274bot-evidence/LIVE-MAP-1023/fix-r2/live/<cell>`. Chardonnay: `/srv/dev/scratch/274bot-evidence/LIVE-MAP-1023/fix-r2/live/<cell>`. |
-| `ENGINE_A_DIR` | Merlot: `/Users/acfrazier/experiments/lostcity-289/engine`. Chardonnay: `/home/acfrazier/experiments/lostcity-289/engine`. Keep the directory read-only. |
+| `ENGINE_A_DIR` | Merlot: `/Users/acfrazier/experiments/lostcity-289/engine`. Chardonnay: `/home/acfrazier/experiments/lostcity-289/engine`. Aubaine: `/Volumes/dev-scratch/engines/lostcity-289-l/engine` for Engine L relay cells. Keep the directory read-only. |
 | `ENGINE_B_DIR` | For the chardonnay tunnel cell, use the local R289 client tree at `/home/acfrazier/experiments/lostcity-289/engine`. This optional client path is not the Engine B service. The service is the tunnel at `45594/2080`. |
 | `ENGINE_Q_DIR` | Use the Engine Q tree on its host. Merlot: `/Users/acfrazier/experiments/lostcity-289-q/engine`. Chardonnay: `/home/acfrazier/experiments/lostcity-289-q/engine`. |
 | `ENGINE_274_DIR` | The orchestrator supplies the 274 engine directory when it starts the 274 service. This value is not set in this map round. |
-| `ENGINE_L_DIR` | On aubaine, use `/Volumes/dev-scratch/engines/lostcity-289-l/engine`. Keep the Engine L directory read-only. |
 | `NAV_PACK_289` | Use the CI reference v17 pack for standard cells. The Zanaris and Sherlock Entrana cells use the task's head pack. Merlot: `/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack`. Chardonnay: `/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack`. See `STANDING-RULINGS.md:16`. |
 | `NAV_FLAGS_289` | Use the matching `274bot-289-v17.navflags` in the same reference-v17 directory as `NAV_PACK_289`. |
 | `NAV_SNAPSHOT_ROOT_289` | Use the read-only decoded snapshot that `isohome` exposes as `BOT_NAV_SNAPSHOT_ROOT`. The default paths are `/Users/acfrazier/.274bot/unpack-289` on merlot and `/home/acfrazier/.274bot/unpack-289` on chardonnay. See `AGENTS.md:149`. |
