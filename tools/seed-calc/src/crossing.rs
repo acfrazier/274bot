@@ -419,7 +419,7 @@ fn player_state(profile: &RouteState) -> Result<WorldState, CrossError> {
         (CombatStat::Prayer, 1),
         (CombatStat::Magic, 1),
     ] {
-        state.stats.insert(stat.index() as i32, i32::from(value));
+        state.stats.insert(stat.index() as i32, value);
     }
     Ok(state)
 }
