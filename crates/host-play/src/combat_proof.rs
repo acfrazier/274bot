@@ -1,7 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, LazyLock, Mutex};
 
+use api::interact::Driver;
 use api::snapshot::{ActorKind, GameSnapshot, ItemContainer};
+use client::client::Client;
 use client::io::ClientProt289;
 use script::native::{HostAuthority, NativePhase, ScriptStatus, StatusValue};
 use script::shim::InteractReq;
@@ -779,6 +781,157 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) ->
     })
 }
 
+#[derive(Default)]
+pub(crate) struct DriverPacketTrace {
+    packets_by_tick: BTreeMap<u32, Vec<u8>>,
+    complete: bool,
+}
+
+impl DriverPacketTrace {
+    pub(crate) fn from_actions(actions: &[Value]) -> Self {
+        let mut trace = Self {
+            complete: true,
+            ..Self::default()
+        };
+        for action in actions
+            .iter()
+            .filter(|action| action["kind"].as_str() == Some("interaction"))
+        {
+            trace.complete &= action["wire_decoded"].as_bool() == Some(true);
+            // Sink counters use the PLAYER_INFO snapshot clock, not host
+            // action ticks, which can have a different origin after login.
+            let (Some(tick), Some(opcodes)) = (
+                action["snapshot_tick"].as_u64(),
+                action["wire_opcodes"].as_array(),
+            ) else {
+                trace.complete = false;
+                continue;
+            };
+            let Ok(tick) = u32::try_from(tick) else {
+                trace.complete = false;
+                continue;
+            };
+            let packets = trace.packets_by_tick.entry(tick).or_default();
+            for opcode in opcodes {
+                if let Some(opcode) = opcode.as_u64().and_then(|opcode| u8::try_from(opcode).ok()) {
+                    packets.push(opcode);
+                } else {
+                    trace.complete = false;
+                }
+            }
+        }
+        trace.complete &= !trace.packets_by_tick.is_empty();
+        trace
+    }
+
+    pub(crate) fn value(&self) -> (Value, usize, bool) {
+        let rows = self
+            .packets_by_tick
+            .iter()
+            .map(
+                |(tick, packets)| json!({"tick": tick, "count": packets.len(), "opcodes": packets}),
+            )
+            .collect::<Vec<_>>();
+        let max = self
+            .packets_by_tick
+            .values()
+            .map(Vec::len)
+            .max()
+            .unwrap_or(0);
+        (json!(rows), max, self.complete)
+    }
+}
+/// The real encrypted sink count spans host interactions and Traveller writes.
+/// The next frame observes writes after the previous frontend callback.
+pub(crate) struct DriverPacketCounts {
+    packets_by_tick: BTreeMap<u32, u64>,
+    last: Option<(u32, u64)>,
+    complete: bool,
+    started: bool,
+    finished: bool,
+}
+
+impl Default for DriverPacketCounts {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DriverPacketCounts {
+    pub(crate) fn new() -> Self {
+        Self {
+            packets_by_tick: BTreeMap::new(),
+            last: None,
+            complete: true,
+            started: false,
+            finished: false,
+        }
+    }
+
+    pub(crate) fn observe(&mut self, client: &Client, tick: u32) {
+        self.record_count(Driver::packet_commit_count(client), tick);
+    }
+
+    pub(crate) fn begin(&mut self, client: &Client, tick: u32) {
+        if !self.started() {
+            self.observe(client, tick);
+        }
+    }
+
+    pub(crate) fn started(&self) -> bool {
+        self.started
+    }
+
+    #[cfg(all(feature = "live-harness", feature = "test-support"))]
+    pub(crate) fn finish(&mut self, client: &Client, tick: u32) {
+        self.observe(client, tick);
+        self.finished = true;
+    }
+
+    pub(crate) fn finished(&self) -> bool {
+        self.finished
+    }
+
+    fn record_count(&mut self, count: Option<u64>, tick: u32) {
+        if self.finished() {
+            return;
+        }
+        self.started = true;
+        let Some(count) = count else {
+            self.complete = false;
+            return;
+        };
+        if let Some((previous_tick, previous_count)) = self.last {
+            if tick < previous_tick {
+                self.complete = false;
+            }
+            if let Some(delta) = count.checked_sub(previous_count) {
+                *self.packets_by_tick.entry(previous_tick).or_default() += delta;
+            } else {
+                self.complete = false;
+            }
+        }
+        self.last = Some((tick, count));
+    }
+
+    pub(crate) fn includes_interactions(&self, interactions: &DriverPacketTrace) -> bool {
+        interactions.complete
+            && interactions.packets_by_tick.iter().all(|(tick, opcodes)| {
+                self.packets_by_tick.get(tick).copied().unwrap_or(0) >= opcodes.len() as u64
+            })
+    }
+
+    pub(crate) fn value(&self) -> (Value, usize, bool) {
+        let rows = self.packets_by_tick.iter().map(|(tick, count)| {
+            json!({"tick": tick, "count": count, "source": "real-encrypted-sink-commits"})
+        }).collect::<Vec<_>>();
+        let maximum = self.packets_by_tick.values().copied().max().unwrap_or(0);
+        let maximum = usize::try_from(maximum);
+        let complete =
+            self.complete && maximum.is_ok() && maximum.as_ref().is_ok_and(|count| *count > 0);
+        (json!(rows), maximum.unwrap_or(usize::MAX), complete)
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -849,5 +1002,96 @@ mod tests {
         assert_eq!(facts["nearby_npcs"][0]["network"], json!(network));
         assert_eq!(facts["nearby_npcs"][0]["tile"], json!(rendered));
         assert_eq!(facts["nearby_npcs"][0]["size"], 1);
+    }
+    #[test]
+    fn probe_packet_trace_counts_dispatch_bound_opcodes_per_player_info_tick() {
+        let actions = [
+            json!({"kind": "interaction", "tick": 107, "snapshot_tick": 7, "wire_decoded": true, "wire_opcodes": [155]}),
+            json!({"kind": "interaction", "tick": 107, "snapshot_tick": 7, "wire_decoded": true, "wire_opcodes": [183]}),
+            json!({"kind": "status", "tick": 107}),
+            json!({"kind": "interaction", "tick": 108, "snapshot_tick": 8, "wire_decoded": true, "wire_opcodes": [248, 155]}),
+        ];
+        let (rows, max, complete) = DriverPacketTrace::from_actions(&actions).value();
+        assert!(complete);
+        assert_eq!(max, 2);
+        assert_eq!(
+            rows[0],
+            json!({"tick": 7, "count": 2, "opcodes": [155, 183]})
+        );
+        assert_eq!(
+            rows[1],
+            json!({"tick": 8, "count": 2, "opcodes": [248, 155]})
+        );
+    }
+
+    #[test]
+    fn probe_packet_trace_rejects_missing_or_undecodable_dispatch_evidence() {
+        for actions in [
+            Vec::new(),
+            vec![
+                json!({"kind": "interaction", "tick": 7, "snapshot_tick": 7, "wire_opcodes": [155]}),
+            ],
+            vec![
+                json!({"kind": "interaction", "tick": 7, "snapshot_tick": 7, "wire_decoded": false, "wire_opcodes": [155]}),
+            ],
+            vec![
+                json!({"kind": "interaction", "tick": 7, "snapshot_tick": 7, "wire_decoded": true, "wire_opcodes": [256]}),
+            ],
+            vec![
+                json!({"kind": "interaction", "tick": 7, "wire_decoded": true, "wire_opcodes": [155]}),
+            ],
+            vec![
+                json!({"kind": "interaction", "tick": 7, "snapshot_tick": u64::MAX, "wire_decoded": true, "wire_opcodes": [155]}),
+            ],
+        ] {
+            assert!(!DriverPacketTrace::from_actions(&actions).value().2);
+        }
+    }
+
+    #[test]
+    fn probe_sink_counts_attribute_late_native_and_walk_writes_to_their_own_tick() {
+        let mut counts = DriverPacketCounts::new();
+        counts.record_count(Some(10), 7);
+        counts.record_count(Some(12), 7);
+        counts.record_count(Some(15), 8);
+        counts.record_count(Some(16), 8);
+        let (rows, maximum, complete) = counts.value();
+        assert!(complete);
+        assert_eq!(maximum, 5);
+        assert_eq!(rows[0]["tick"], 7);
+        assert_eq!(rows[0]["count"], 5);
+        assert_eq!(rows[1]["tick"], 8);
+        assert_eq!(rows[1]["count"], 1);
+        let actions = [
+            json!({"kind": "interaction", "tick": 107, "snapshot_tick": 7, "wire_decoded": true, "wire_opcodes": [67, 178]}),
+            json!({"kind": "interaction", "tick": 108, "snapshot_tick": 8, "wire_decoded": true, "wire_opcodes": [155]}),
+        ];
+        assert!(counts.includes_interactions(&DriverPacketTrace::from_actions(&actions)));
+        let omitted = [
+            json!({"kind": "interaction", "tick": 108, "snapshot_tick": 8, "wire_decoded": true, "wire_opcodes": [67, 178]}),
+        ];
+        assert!(!counts.includes_interactions(&DriverPacketTrace::from_actions(&omitted)));
+    }
+
+    #[test]
+    fn probe_sink_counts_reject_missing_or_reset_counters() {
+        for ending in [None, Some(9)] {
+            let mut counts = DriverPacketCounts::new();
+            counts.record_count(Some(10), 7);
+            counts.record_count(Some(11), 7);
+            counts.record_count(ending, 8);
+            assert!(!counts.value().2);
+        }
+        assert!(!DriverPacketCounts::new().value().2);
+        let mut rewound = DriverPacketCounts::new();
+        rewound.record_count(Some(10), 8);
+        rewound.record_count(Some(11), 8);
+        rewound.record_count(Some(12), 7);
+        assert!(!rewound.value().2);
+
+        let mut empty = DriverPacketCounts::new();
+        empty.record_count(Some(10), 7);
+        empty.record_count(Some(10), 8);
+        assert!(!empty.value().2);
     }
 }

@@ -29,7 +29,9 @@ use script::native::{NativeTick, Script, ScriptFailure, ScriptFlow, WalkOptions}
 use serde_json::{json, Value};
 use vault::{Profile, ProfileSettings};
 
-use super::combat_proof::{self, CaptureRegistration, CombatCapture};
+use super::combat_proof::{
+    self, CaptureRegistration, CombatCapture, DriverPacketCounts, DriverPacketTrace,
+};
 use super::{run_with_template, ProfileOptions, ScriptStartHandle};
 
 const ENGINE_L_GAME_PORT: u16 = 47_594;
@@ -374,71 +376,6 @@ impl ShopTrace {
     }
 }
 
-#[derive(Default)]
-struct DriverPacketTrace {
-    checkpoint: Option<Box<api::interact::PacketCheckpoint>>,
-    checkpoint_tick: Option<u32>,
-    packets_by_tick: BTreeMap<u32, Vec<u8>>,
-    complete: bool,
-    started: bool,
-}
-
-impl DriverPacketTrace {
-    fn begin(&mut self, client: &Client, tick: u32) {
-        self.started = true;
-        self.complete = true;
-        self.checkpoint_tick = Some(tick);
-        self.checkpoint = api::interact::Driver::packet_checkpoint(client);
-        if self.checkpoint.is_none() {
-            self.complete = false;
-        }
-        self.packets_by_tick.entry(tick).or_default();
-    }
-
-    fn observe(&mut self, client: &Client, tick: u32) {
-        if !self.started {
-            return;
-        }
-        if let Some(checkpoint) = self.checkpoint.take() {
-            let mut packets = Vec::new();
-            let decoded =
-                api::interact::Driver::trace_packets(client, *checkpoint, &mut |opcode| {
-                    packets.push(opcode)
-                });
-            self.complete &= decoded;
-            self.packets_by_tick
-                .entry(self.checkpoint_tick.unwrap_or(tick))
-                .or_default()
-                .extend(packets);
-        } else {
-            self.complete = false;
-        }
-        self.checkpoint = api::interact::Driver::packet_checkpoint(client);
-        self.checkpoint_tick = Some(tick);
-        if self.checkpoint.is_none() {
-            self.complete = false;
-        }
-        self.packets_by_tick.entry(tick).or_default();
-    }
-
-    fn value(&self) -> (Value, usize, bool) {
-        let rows = self
-            .packets_by_tick
-            .iter()
-            .map(
-                |(tick, packets)| json!({"tick": tick, "count": packets.len(), "opcodes": packets}),
-            )
-            .collect::<Vec<_>>();
-        let max = self
-            .packets_by_tick
-            .values()
-            .map(Vec::len)
-            .max()
-            .unwrap_or(0);
-        (json!(rows), max, self.complete)
-    }
-}
-
 struct LiveState {
     account: String,
     kind: CellKind,
@@ -453,7 +390,7 @@ struct LiveState {
     trace: Arc<Mutex<ShopTrace>>,
     started_at: Option<Instant>,
     started: bool,
-    packet_trace: DriverPacketTrace,
+    packet_trace: DriverPacketCounts,
 }
 
 impl LiveState {
@@ -1322,7 +1259,7 @@ fn run_cell(kind: CellKind) {
         trace: Arc::clone(&trace),
         started_at: None,
         started: false,
-        packet_trace: DriverPacketTrace::default(),
+        packet_trace: DriverPacketCounts::default(),
     }));
     let frame_state = Arc::clone(&state);
     let frame_account = account.clone();
@@ -1510,6 +1447,12 @@ fn run_cell(kind: CellKind) {
     failures.extend(over_target_failures(&actions, &shop_frames, &fixture));
     let (driver_packets, max_driver_packets, driver_packets_complete) = {
         let state = state.lock();
+        if !state
+            .packet_trace
+            .includes_interactions(&DriverPacketTrace::from_actions(&actions))
+        {
+            failures.push("real sink counts omitted a decoded interaction packet".into());
+        }
         state.packet_trace.value()
     };
     if !driver_packets_complete {

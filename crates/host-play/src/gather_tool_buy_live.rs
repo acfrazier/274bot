@@ -16,7 +16,6 @@
 //!
 //! `LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=gsh GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_NAV_PACK=<pack> GATHERER_ENGINE_DIR=<engine> GATHERER_CATALOG_ROOT=<catalog> BOT_CACHE_DIR=<unpack-root>/<version> CLIENT_UNPACK_DIR=<unpack-root> LIVE_EVIDENCE_DIR=/Volumes/dev-scratch/274bot-evidence/GATHERER-SHOP isohome cargo test -p host-play --features live-harness,test-support --lib gather_tool_buy_live:: -- --ignored --nocapture --test-threads=1`
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::task::Poll;
@@ -25,7 +24,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use api::bank_memory::Origin;
 use api::game_data::SelectedGameData;
-use api::interact::Driver;
 use api::named_banks::{BankPreferences, NamedBankFacts};
 use api::service_pick::ShopKeeperFacts;
 use api::snapshot::{GameSnapshot, WorldTile};
@@ -42,7 +40,7 @@ use vault::{Profile, ProfileSettings};
 use super::bank_core_live::{
     check_prerequisites, frame, live_profile, Cell, Prep, DRAYNOR, PREPARATION_DEADLINE,
 };
-use super::combat_proof::{self, CaptureRegistration, CombatCapture};
+use super::combat_proof::{self, CaptureRegistration, CombatCapture, DriverPacketCounts};
 use super::{run_with_template, tele_args, SharedClientTemplate};
 
 const PROFILE: &str = "local-289";
@@ -632,81 +630,6 @@ impl Script for BankPrimer {
                 }
             }
         }
-    }
-}
-
-#[derive(Default)]
-struct DriverPacketTrace {
-    checkpoint: Option<Box<api::interact::PacketCheckpoint>>,
-    checkpoint_tick: Option<u32>,
-    packets_by_tick: BTreeMap<u32, Vec<u8>>,
-    complete: bool,
-    started: bool,
-    finished: bool,
-}
-
-impl DriverPacketTrace {
-    fn begin(&mut self, client: &Client, tick: u32) {
-        self.started = true;
-        self.complete = true;
-        self.checkpoint_tick = Some(tick);
-        self.checkpoint = Driver::packet_checkpoint(client);
-        if self.checkpoint.is_none() {
-            self.complete = false;
-        }
-        self.packets_by_tick.entry(tick).or_default();
-    }
-
-    fn trace_checkpoint(&mut self, client: &Client, tick: u32) {
-        if let Some(checkpoint) = self.checkpoint.take() {
-            let mut packets = Vec::new();
-            self.complete &=
-                Driver::trace_packets(client, *checkpoint, &mut |opcode| packets.push(opcode));
-            self.packets_by_tick
-                .entry(self.checkpoint_tick.unwrap_or(tick))
-                .or_default()
-                .extend(packets);
-        } else {
-            self.complete = false;
-        }
-    }
-
-    fn observe(&mut self, client: &Client, tick: u32) {
-        if !self.started || self.finished {
-            return;
-        }
-        self.trace_checkpoint(client, tick);
-        self.checkpoint = Driver::packet_checkpoint(client);
-        self.checkpoint_tick = Some(tick);
-        if self.checkpoint.is_none() {
-            self.complete = false;
-        }
-        self.packets_by_tick.entry(tick).or_default();
-    }
-
-    fn finish(&mut self, client: &Client, tick: u32) {
-        if !self.started || self.finished {
-            return;
-        }
-        self.trace_checkpoint(client, tick);
-        self.finished = true;
-    }
-
-    fn value(&self) -> (Value, usize, bool) {
-        let rows = self
-            .packets_by_tick
-            .iter()
-            .map(|(tick, packets)| {
-                json!({"game_tick": tick, "count": packets.len(), "opcodes": packets})
-            })
-            .collect::<Vec<_>>();
-        let max = self
-            .packets_by_tick
-            .values()
-            .map(Vec::len)
-            .max()
-            .unwrap_or(0);
-        (json!(rows), max, self.complete && self.finished)
     }
 }
 
@@ -1525,7 +1448,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
     let cell = Arc::new(Mutex::new(cell));
     let frame_cell = Arc::clone(&cell);
     let frame_trace = Arc::clone(&trace);
-    let frame_packets = Arc::new(Mutex::new(DriverPacketTrace::default()));
+    let frame_packets = Arc::new(Mutex::new(DriverPacketCounts::default()));
     let callback_packets = Arc::clone(&frame_packets);
     let frame_account = account.clone();
     let observer = Arc::new(Mutex::new(GameSnapshot::new()));
@@ -1570,7 +1493,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                     trace.start_baseline_recorded = true;
                 }
                 let mut packets = callback_packets.lock();
-                if !packets.started {
+                if !packets.started() {
                     packets.begin(client, observer.tick());
                 } else if finish_requested {
                     packets.finish(client, observer.tick());
@@ -1974,7 +1897,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                 }
             }
             RunStage::ParkRelogTraceFinish { since } => {
-                if frame_packets.lock().finished {
+                if frame_packets.lock().finished() {
                     let Some(arm) = relog_arm.as_ref() else {
                         cell_failure = Some("relog cell has no account slot arm".into());
                         break;
@@ -2190,7 +2113,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                 trace.lock().finish_requested = true;
                 stage = RunStage::Finish;
             }
-            RunStage::Finish if frame_packets.lock().finished => break,
+            RunStage::Finish if frame_packets.lock().finished() => break,
             RunStage::Finish => {}
         }
         thread::sleep(POLL_INTERVAL);
