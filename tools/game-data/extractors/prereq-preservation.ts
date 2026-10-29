@@ -321,12 +321,18 @@ function directReturn(nodes: readonly Node[]) {
     const last = nodes.at(-1);
     return last?.kind === 'stmt' && /^return\b/.test(last.text);
 }
-function priorReturns(nodes: readonly Node[]) {
-    const out: { through: number; condition: string; polarity: boolean }[] = [];
-    for (const node of nodes) if (node.kind === 'if') {
-        const through = lastLine([node]);
-        if (directReturn(node.then)) out.push({ through, condition: node.cond, polarity: false });
-        if (directReturn(node.els)) out.push({ through, condition: node.cond, polarity: true });
+function priorReturns(nodes: readonly Node[], within = Number.POSITIVE_INFINITY) {
+    const out: { through: number; within: number; condition: string; polarity: boolean }[] = [];
+    for (const node of nodes) {
+        if (node.kind === 'if') {
+            const through = lastLine([node]);
+            if (directReturn(node.then)) out.push({ through, within, condition: node.cond, polarity: false });
+            if (directReturn(node.els)) out.push({ through, within, condition: node.cond, polarity: true });
+            out.push(...priorReturns(node.then, lastLine(node.then)));
+            out.push(...priorReturns(node.els, lastLine(node.els)));
+        } else if (node.kind === 'while') {
+            out.push(...priorReturns(node.body, lastLine(node.body)));
+        }
     }
     return out;
 }
@@ -432,7 +438,7 @@ function parseStatements(block: Rs2Block, variable: string, constants: ReadonlyM
     walkStatements(nodes, (statement: Stmt, path: PathCond[]) => {
         if (switchLines.has(statement.line)) return;
         const guards = path.map((part) => ({ expression: part.cond, polarity: part.polarity }));
-        for (const previous of prior) if (previous.through < statement.line) guards.push({ expression: previous.condition, polarity: previous.polarity });
+        for (const previous of prior) if (previous.through < statement.line && statement.line <= previous.within) guards.push({ expression: previous.condition, polarity: previous.polarity });
         statements.push({ text: statement.text, line: statement.line, guards });
     });
     statements.push(...switches);

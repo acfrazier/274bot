@@ -138,3 +138,30 @@ withContent({
     assertPrereqPreservation(content, [row([0, 0], [0, 1])]);
     assertPrereqPreservation(content, [row([1, 1], [1, 1])]);
 });
+
+withContent({
+    [constants]: '^zero = 0\n^one = 1\n',
+    'scripts/nested-return.rs2': [
+        '[oplocu,root]',
+        'if (last_useitem = key) {',
+        '    if (npc_find(coord, monk, 15, 0) = true) {',
+        '        if (%progress >= ^one) { return; }',
+        '        %progress = ^zero;',
+        '    }',
+        '}',
+    ].join('\n'),
+}, (content) => assertPrereqPreservation(content, [row([1, 1], [1, 1])]));
+
+withContent({
+    [constants]: '^zero = 0\n^one = 1\n',
+    'scripts/return-scope.rs2': [
+        '[oplocu,root]',
+        'if (last_useitem = key) {',
+        '    if (%progress >= ^one) { return; }',
+        '}',
+        '%progress = ^zero;',
+    ].join('\n'),
+}, (content) => assert.throws(
+    () => assertPrereqPreservation(content, [row([1, 1], [1, 1])]),
+    /after \[1,1\] is \[0,1\]/,
+));
