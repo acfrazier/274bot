@@ -30,8 +30,8 @@ use script::native::{NativePhase, ScriptStatus, StatusValue};
 use script::quester::compile::compile_path;
 use script::quester::path::{
     PathDocument, PredicateDocument, ProgressColourDocument, ProgressDocument,
-    ProgressRuleDocument, QuestBankDocument, QuestLoadoutDocument, SequenceDocument, SequenceOrder,
-    StepDocument,
+    ProgressRuleDocument, QuestBankDocument, QuestLoadoutDocument, QuestRequirementDocument,
+    QuestRequirementKindDocument, SequenceDocument, SequenceOrder, StepDocument,
 };
 use script::quester::runner::Quester;
 use serde_json::{json, Value};
@@ -71,6 +71,44 @@ const BLACKCOG_TILE: WorldTile = WorldTile {
     z: 9639,
     level: 0,
 };
+const BRONZE_COPPER_TILE: WorldTile = WorldTile {
+    x: 2976,
+    z: 3247,
+    level: 0,
+};
+const BRONZE_TIN_TILE: WorldTile = WorldTile {
+    x: 2984,
+    z: 3237,
+    level: 0,
+};
+const BRONZE_FURNACE_TILE: WorldTile = WorldTile {
+    x: 2974,
+    z: 3369,
+    level: 0,
+};
+const BRONZE_ANVIL_TILE: WorldTile = WorldTile {
+    x: 3188,
+    z: 3425,
+    level: 0,
+};
+const BRONZE_COPPER_SOURCE: &str = "content/maps/m46_50.jm2:6013 (copperrock1 at [2976,3247,0]); content/pack/loc.pack:2091; content/scripts/skill_mining/configs/mine.dbrow:23-34";
+const BRONZE_TIN_SOURCE: &str = "content/maps/m46_50.jm2:6266 (tinrock1 at [2984,3237,0]); content/pack/loc.pack:2095; content/scripts/skill_mining/configs/mine.dbrow:36-47";
+const BRONZE_FURNACE_SOURCE: &str = "content/maps/m46_52.jm2:7888 (furnace1 at [2975,3368,0]); content/scripts/skill_smithing/scripts/smelting/smelting.rs2:10-29,100-115; content/scripts/skill_smithing/configs/smelting/smelting.struct:1-15";
+const BRONZE_ANVIL_SOURCE: &str = "content/maps/m49_53.jm2:7806 (anvil at [3188,3424,0]); content/pack/loc.pack:2784; content/scripts/skill_smithing/scripts/smithing/smithing.rs2:39-76,86-103";
+const BRONZE_WIRE_MENU_SOURCE: &str = "content/scripts/skill_smithing/scripts/smithing/smithing.rs2:114-123; content/scripts/skill_smithing/configs/smithing/smithing.inv:30-35";
+const BRONZE_WIRE_RECIPE_SOURCE: &str = "content/scripts/skill_smithing/configs/smithing/smithing.dbrow:1321-1330; content/scripts/skill_smithing/scripts/smithing/smithing.rs2:269-280";
+
+fn bronze_wire_smithing_requirement() -> QuestRequirementDocument {
+    QuestRequirementDocument {
+        id: FactKey::new("smithing"),
+        kind: QuestRequirementKindDocument::Skill {
+            skill: "smithing".to_owned(),
+            level: 4,
+        },
+        at: "Start".to_owned(),
+        source: BRONZE_WIRE_RECIPE_SOURCE.to_owned(),
+    }
+}
 
 fn live_data() -> (Arc<SelectedGameData>, Arc<QuestCatalog>) {
     let selected = api::game_data::for_revision(ClientRevision::R289).expect("selected R289 data");
@@ -143,15 +181,41 @@ fn make_cell(
     loadout: Option<FixtureLoadout<'_>>,
     selected: Arc<SelectedGameData>,
 ) -> (Cell, scenario::quester::QuesterSeed, Vec<String>) {
+    make_cell_with_requirements(
+        name,
+        (quest, display),
+        quest_stage,
+        items,
+        stand,
+        loadout,
+        selected,
+        Vec::new(),
+    )
+}
+
+fn make_cell_with_requirements(
+    name: &'static str,
+    (quest, display): (&'static str, &'static str),
+    quest_stage: i32,
+    items: &'static [(&'static str, i32)],
+    stand: WorldTile,
+    loadout: Option<FixtureLoadout<'_>>,
+    selected: Arc<SelectedGameData>,
+    requirements: Vec<QuestRequirementDocument>,
+) -> (Cell, scenario::quester::QuesterSeed, Vec<String>) {
     // Cook is a Base40 profile-table key; the exact target quest state is
     // staged separately so every cell still begins at its authored target.
-    let path = family_path(
+    let mut path = family_path(
         "cook",
         "Cook Base40 fixture root",
         "cook:0",
         Vec::new(),
         false,
     );
+    path.quest
+        .as_mut()
+        .expect("released Cook quest header")
+        .requirements = requirements;
     let identity = selected
         .quest_identity()
         .expect("selected R289 quest identity")
@@ -2247,4 +2311,311 @@ fn live_quester_families_make_from_open_fletching_menu() {
     assert_eq!(receipt["family_receipt"]["shortbow_count_after"], 1);
     assert_eq!(receipt["family_receipt"]["make"]["loc"], Value::Null);
     assert_eq!(receipt["family_receipt"]["make"]["anchor"], Value::Null);
+}
+#[test]
+#[ignore = "requires LIVE=1 and the already-running local Engine Q"]
+fn live_quester_families_bronze_bar_on_anvil_makes_wire() {
+    let (selected, quests) = live_data();
+    let bronze_pickaxe_id = item_id(&selected, "bronze_pickaxe");
+    let hammer_id = item_id(&selected, "hammer");
+    let copper_ore_id = item_id(&selected, "copper_ore");
+    let tin_ore_id = item_id(&selected, "tin_ore");
+    let bronze_bar_id = item_id(&selected, "bronze_bar");
+    let bronze_wire_id = item_id(&selected, "bronzecraftwire");
+    let (mut cell, seed, seed_commands) = make_cell_with_requirements(
+        "live-quester-families-bronze-wire-on-anvil",
+        ("cook", "Cook's Assistant"),
+        0,
+        &[("bronze_pickaxe", 1), ("hammer", 1)],
+        BRONZE_COPPER_TILE,
+        None,
+        Arc::clone(&selected),
+        vec![bronze_wire_smithing_requirement()],
+    );
+    cell.scenario.settings.deadline = Duration::from_secs(600);
+    let start_seed = seed;
+    let start_selected = Arc::clone(&selected);
+    cell.observe_start = Some(Box::new(move |snapshot| {
+        let seed_receipt = start_seed.observe_start(snapshot)?;
+        let here = common_observe_start(snapshot, BRONZE_COPPER_TILE)?;
+        require_item(snapshot, bronze_pickaxe_id, 1, "bronze_pickaxe")?;
+        require_item(snapshot, hammer_id, 1, "hammer")?;
+        require_item(snapshot, copper_ore_id, 0, "copper_ore")?;
+        require_item(snapshot, tin_ore_id, 0, "tin_ore")?;
+        require_item(snapshot, bronze_bar_id, 0, "bronze_bar")?;
+        require_item(snapshot, bronze_wire_id, 0, "bronzecraftwire")?;
+        if seed_commands.iter().any(|command| {
+            command.starts_with("give copper_ore ")
+                || command.starts_with("give tin_ore ")
+                || command.starts_with("give bronze_bar ")
+                || command.starts_with("give bronzecraftwire ")
+        }) {
+            return Err("smithing fixture seeded an ore, bar, or wire".into());
+        }
+        if snapshot.modals().main != -1 {
+            return Err(format!(
+                "bronze-wire fixture began with a modal already open: {}",
+                snapshot.modals().main
+            ));
+        }
+        if stat_base(snapshot, "smithing") != Some(4) {
+            return Err(format!(
+                "bronze-wire fixture did not seed minimum Smithing 4: {:?}",
+                stat_base(snapshot, "smithing")
+            ));
+        }
+        Ok(json!({
+            "fixture": "cook:0 Base40",
+            "profile_seed": seed_receipt,
+            "seed_commands": &seed_commands,
+            "tile": here,
+            "tools_seeded": ["bronze_pickaxe", "hammer"],
+            "smithing_seeded": 4,
+            "copper_ore_seeded": false,
+            "tin_ore_seeded": false,
+            "bronze_bar_seeded": false,
+            "bronzecraftwire_seeded": false,
+            "main_modal_before_start": snapshot.modals().main,
+            "selected_revision": start_selected.revision().to_string(),
+        }))
+    }));
+
+    let mut document = family_path(
+        "cook",
+        "Bronze bar on anvil MainMake family fixture",
+        "cook:0",
+        vec![
+            step(
+                "gather-copper-ore",
+                "gather",
+                json!({
+                    "skill": "mining",
+                    "resource": "copper",
+                    "until": {"obj": "copper_ore", "qty": 1},
+                    "anchor": {
+                        "tile": [
+                            BRONZE_COPPER_TILE.x,
+                            BRONZE_COPPER_TILE.z,
+                            BRONZE_COPPER_TILE.level
+                        ],
+                        "source": BRONZE_COPPER_SOURCE
+                    },
+                    "radius": 3
+                }),
+                false,
+                empty_any(),
+                fact("has_item", json!({"obj": "copper_ore"})),
+            ),
+            step(
+                "gather-tin-ore",
+                "gather",
+                json!({
+                    "skill": "mining",
+                    "resource": "tin",
+                    "until": {"obj": "tin_ore", "qty": 1},
+                    "anchor": {
+                        "tile": [
+                            BRONZE_TIN_TILE.x,
+                            BRONZE_TIN_TILE.z,
+                            BRONZE_TIN_TILE.level
+                        ],
+                        "source": BRONZE_TIN_SOURCE
+                    },
+                    "radius": 3
+                }),
+                false,
+                empty_any(),
+                fact("has_item", json!({"obj": "tin_ore"})),
+            ),
+            step(
+                "smelt-bronze-bar",
+                "use_on",
+                json!({
+                    "item": "copper_ore",
+                    "target": {"loc": "furnace1"},
+                    "anchor": {
+                        "tile": [
+                            BRONZE_FURNACE_TILE.x,
+                            BRONZE_FURNACE_TILE.z,
+                            BRONZE_FURNACE_TILE.level
+                        ],
+                        "source": BRONZE_FURNACE_SOURCE
+                    },
+                    "radius": 3,
+                    "product": "bronze_bar"
+                }),
+                false,
+                empty_any(),
+                fact("has_item", json!({"obj": "bronze_bar"})),
+            ),
+            step(
+                "use-bronze-bar-on-anvil",
+                "use_on",
+                json!({
+                    "item": "bronze_bar",
+                    "target": {"loc": "anvil"},
+                    "anchor": {
+                        "tile": [
+                            BRONZE_ANVIL_TILE.x,
+                            BRONZE_ANVIL_TILE.z,
+                            BRONZE_ANVIL_TILE.level
+                        ],
+                        "source": BRONZE_ANVIL_SOURCE
+                    },
+                    "radius": 3
+                }),
+                false,
+                empty_any(),
+                fact("modal_open", json!({})),
+            ),
+            step(
+                "make-bronze-wire",
+                "make",
+                json!({
+                    "product": "bronzecraftwire",
+                    "menu": {
+                        "obj": "bronzecraftwire",
+                        "source": BRONZE_WIRE_MENU_SOURCE
+                    },
+                    "qty": 1,
+                    "make_x": false
+                }),
+                false,
+                empty_any(),
+                fact("has_item", json!({"obj": "bronzecraftwire"})),
+            ),
+        ],
+        true,
+    );
+    document
+        .quest
+        .as_mut()
+        .expect("Cook quest header")
+        .requirements = vec![bronze_wire_smithing_requirement()];
+    let steps = &mut document.roles[0].sequences[0].steps;
+    steps[0].comment = Some(format!(
+        "{BRONZE_COPPER_SOURCE}; Mining requires level 1 and uses the content mining recipe."
+    ));
+    steps[1].comment = Some(format!(
+        "{BRONZE_TIN_SOURCE}; Mining requires level 1 and supplies the second bronze ore."
+    ));
+    steps[2].comment = Some(format!(
+        "{BRONZE_FURNACE_SOURCE}; smelting consumes one copper ore and one tin ore for one bronze bar."
+    ));
+    steps[3].comment = Some(format!(
+        "{BRONZE_ANVIL_SOURCE}; {BRONZE_WIRE_MENU_SOURCE} opens the main Make inventory after the bar is used on the anvil."
+    ));
+    steps[4].comment = Some(format!(
+        "{BRONZE_WIRE_MENU_SOURCE}; {BRONZE_WIRE_RECIPE_SOURCE}; one named Make quantity consumes one bronze bar and returns one bronze wire after the content delay."
+    ));
+    let start = family_start(document, Arc::clone(&selected), Arc::clone(&quests));
+    let mut copper_gather_seen = false;
+    let mut tin_gather_seen = false;
+    let mut smelt_step_seen = false;
+    let mut anvil_step_seen = false;
+    let mut anvil_menu_open_after_use_on = false;
+    let mut main_make_wire_row_seen = false;
+    let mut make_step_seen = false;
+    let observe: ObserveFamily = Box::new(move |snapshot, status, lifecycle| {
+        let step_id = status.and_then(|status| status_text(status, "step_id"));
+        copper_gather_seen |= step_id == Some("gather-copper-ore");
+        tin_gather_seen |= step_id == Some("gather-tin-ore");
+        smelt_step_seen |= step_id == Some("smelt-bronze-bar");
+        anvil_step_seen |= step_id == Some("use-bronze-bar-on-anvil");
+        make_step_seen |= step_id == Some("make-bronze-wire");
+        let wire_menu_row_visible = snapshot
+            .main_make()
+            .iter()
+            .any(|item| item.def.id == bronze_wire_id);
+        main_make_wire_row_seen |= wire_menu_row_visible;
+        anvil_menu_open_after_use_on |=
+            step_id == Some("use-bronze-bar-on-anvil")
+                && snapshot.modals().main != -1
+                && wire_menu_row_visible;
+        if lifecycle.is_none() {
+            return Ok(None);
+        }
+        if !completed_lifecycle(lifecycle) {
+            return Err(format!(
+                "content-mined bronze-wire MainMake path did not complete: \
+                 copper={copper_gather_seen}, tin={tin_gather_seen}, \
+                 smelt={smelt_step_seen}, anvil={anvil_step_seen}, \
+                 main_make_row={main_make_wire_row_seen}, \
+                 make={make_step_seen}; status={:?}",
+                native_status_receipt(status)
+            ));
+        }
+        if !copper_gather_seen
+            || !tin_gather_seen
+            || !smelt_step_seen
+            || !anvil_step_seen
+            || !anvil_menu_open_after_use_on
+            || !main_make_wire_row_seen
+            || !make_step_seen
+        {
+            return Err(format!(
+                "bronze-wire MainMake evidence is incomplete: copper={copper_gather_seen}, \
+                 tin={tin_gather_seen}, smelt={smelt_step_seen}, anvil={anvil_step_seen}, \
+                 anvil_menu={anvil_menu_open_after_use_on}, \
+                 main_make_row={main_make_wire_row_seen}, make={make_step_seen}"
+            ));
+        }
+        require_item(snapshot, copper_ore_id, 0, "copper_ore")?;
+        require_item(snapshot, tin_ore_id, 0, "tin_ore")?;
+        require_item(snapshot, bronze_bar_id, 0, "bronze_bar")?;
+        require_item(snapshot, bronze_wire_id, 1, "bronzecraftwire")?;
+        Ok(Some(json!({
+            "family_steps": ["gather", "gather", "use_on", "use_on", "make"],
+            "copper_tile": BRONZE_COPPER_TILE,
+            "copper_source": BRONZE_COPPER_SOURCE,
+            "tin_tile": BRONZE_TIN_TILE,
+            "tin_source": BRONZE_TIN_SOURCE,
+            "furnace_tile": BRONZE_FURNACE_TILE,
+            "furnace_source": BRONZE_FURNACE_SOURCE,
+            "anvil_tile": BRONZE_ANVIL_TILE,
+            "anvil_source": BRONZE_ANVIL_SOURCE,
+            "copper_gather_step_seen": copper_gather_seen,
+            "tin_gather_step_seen": tin_gather_seen,
+            "smelt_step_seen": smelt_step_seen,
+            "anvil_step_seen": anvil_step_seen,
+            "anvil_menu_open_after_use_on": anvil_menu_open_after_use_on,
+            "main_make_wire_row_seen": main_make_wire_row_seen,
+            "make_step_seen": make_step_seen,
+            "make": {
+                "product": "bronzecraftwire",
+                "menu": {
+                    "obj": "bronzecraftwire",
+                    "source": BRONZE_WIRE_MENU_SOURCE
+                },
+                "qty": 1,
+                "make_x": false,
+                "loc": null,
+                "anchor": null
+            },
+            "recipe_source": BRONZE_WIRE_RECIPE_SOURCE,
+            "copper_ore_after": item_count(snapshot, copper_ore_id),
+            "tin_ore_after": item_count(snapshot, tin_ore_id),
+            "bronze_bar_after": item_count(snapshot, bronze_bar_id),
+            "bronzecraftwire_after": item_count(snapshot, bronze_wire_id),
+            "inventory_after": inventory_receipt(snapshot),
+            "native_status": native_status_receipt(status),
+        })))
+    });
+    let receipt = quester_live::run_family(cell, start, observe)
+        .unwrap_or_else(|error| panic!("bronze-wire MainMake live proof failed: {error}"));
+    assert_eq!(receipt["family_receipt"]["copper_ore_after"], 0);
+    assert_eq!(receipt["family_receipt"]["tin_ore_after"], 0);
+    assert_eq!(receipt["family_receipt"]["bronze_bar_after"], 0);
+    assert_eq!(receipt["family_receipt"]["bronzecraftwire_after"], 1);
+    assert_eq!(receipt["family_receipt"]["make"]["qty"], 1);
+    assert_eq!(receipt["family_receipt"]["make"]["loc"], Value::Null);
+    assert_eq!(receipt["family_receipt"]["make"]["anchor"], Value::Null);
+    assert_eq!(
+        receipt["family_receipt"]["anvil_menu_open_after_use_on"],
+        true
+    );
+    assert_eq!(
+        receipt["family_receipt"]["main_make_wire_row_seen"],
+        true
+    );
 }
