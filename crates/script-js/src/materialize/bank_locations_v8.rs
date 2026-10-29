@@ -1556,9 +1556,12 @@ globalThis.__checkEmptyBankResults = () => {
                 output.status.success(),
                 "isolated V8 shape test failed\nstdout: {stdout}\nstderr: {stderr}"
             );
+            // The child runs with --nocapture, so its heap diagnostic can appear between the libtest
+            // "test <name> ..." line and its "ok", depending on scheduling. Check the summary instead.
             assert!(
-                stdout.contains(&format!("test {BANK_SHAPE_TEST_NAME} ... ok"))
-                    && stdout.contains("1 passed"),
+                stdout.contains("running 1 test")
+                    && stdout.contains(&format!("test {BANK_SHAPE_TEST_NAME} ..."))
+                    && stdout.contains("test result: ok. 1 passed"),
                 "isolated test did not run exactly once\nstdout: {stdout}\nstderr: {stderr}"
             );
             return;
