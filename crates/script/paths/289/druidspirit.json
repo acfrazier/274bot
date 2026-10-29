@@ -102,13 +102,16 @@
          "args":{"target":{"loc":"log_druidicspirit2"},"op":"Pick","anchor":{"tile":[3443,3352,0],"source":"content/maps/m53_52.jm2:5281"},"radius":3},
          "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"druidspirit","any":["druidspirit:50"]}}}}
       ]},
-      {"stage":"druidspirit:50","required":[],"terminal":false,"recovery_entry":null,"steps":[
+      {"stage":"druidspirit:50","required":[],"terminal":false,"recovery_entry":null,"order":"ordered","steps":[
         {"id":"place-fungus","kind":"use_on","version":1,"advances":true,"comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:135-158; the journal exposes the nature stone bit.",
          "args":{"item":"mortmyremushroom","target":{"loc":"stonedisc_ds_nature"},"anchor":{"tile":[3439,3336,0],"source":"content/maps/m53_52.jm2:5094"},"radius":4},
          "skip_if":{"Fact":{"kind":"flag","version":1,"args":{"quest":"druidspirit","flag":"druidspirit:nature-stone"}}},"settle":{"Fact":{"kind":"flag","version":1,"args":{"quest":"druidspirit","flag":"druidspirit:nature-stone"}}}},
         {"id":"place-scroll","kind":"use_on","version":1,"advances":true,"comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:171-191; casting turns the scroll into used_bloom_spell.",
          "args":{"item":"used_bloom_spell","target":{"loc":"stonedisc_ds_spirit"},"anchor":{"tile":[3441,3336,0],"source":"content/maps/m53_52.jm2:5167"},"radius":4},
          "skip_if":{"Fact":{"kind":"flag","version":1,"args":{"quest":"druidspirit","flag":"druidspirit:spirit-stone"}}},"settle":{"Fact":{"kind":"flag","version":1,"args":{"quest":"druidspirit","flag":"druidspirit:spirit-stone"}}}},
+        {"id":"summon-filliman","kind":"interact","version":1,"advances":true,"comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:92-100 spawns Filliman if absent; filliman.rs2:63-77 describes the fungus and reopens the menu.",
+         "args":{"target":{"loc":"grotto_door_druidicspirit"},"op":"Enter","anchor":{"tile":[3440,3337,0],"source":"content/maps/m53_52.jm2:5135"},"radius":4,"dialogue":{"prefer":["Ok, thanks."],"strict":true}},
+         "skip_if":{"Fact":{"kind":"npc_present","version":1,"args":{"npc":"filliman_tarlock_spirit"}}},"settle":{"Fact":{"kind":"npc_present","version":1,"args":{"npc":"filliman_tarlock_spirit"}}}},
         {"id":"stand-on-faith-stone","kind":"walk","version":1,"args":{"tile":[3440,3335,0],"radius":0,"source":"content/maps/m53_52.jm2:5134"},"skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[3440,3335,0],"radius":0}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[3440,3335,0],"radius":0}}}},
         {"id":"perform-ritual","kind":"talk","version":1,"advances":true,"comment":"content/scripts/quests/quest_druidspirit/scripts/filliman.rs2:63-77,384-402.",
          "args":{"npc":"filliman_tarlock_spirit","anchor":{"tile":[3440,3336,0],"source":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:95-96"},"leash":8,"prefer":["I think I've solved the puzzle!"],"strict":true,"gap_ticks":2},
