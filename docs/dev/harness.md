@@ -44,6 +44,12 @@ its own environment.
 
 The `quester_skip_active_cook_parks_then_sheep_completes` cell in
 `quester_queue_live` also needs `--features "live-harness test-support live-probe"`.
+`SkipQuest` is a test-only operator command. `frontend-core` exposes the
+command with its `test-support` feature; the panel and TUI controls, uppercase
+`X` key, and help row are compiled only for tests. Release-profile builds use
+the normal production feature set and omit the command and controls. Keep its
+behavior documented here rather than in user-facing release documentation.
+
 
 The expected-combat Quester cell seeds Tourist Trap (`desertrescue`) at stage
 3. The loc-dialogue cell seeds Priest in Peril (`priestperil`) at stage 1.

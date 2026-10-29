@@ -2787,16 +2787,19 @@ fn script_section(ui: &Ui, session: &mut Session) {
             session.script_stop();
         }
     }
+    #[cfg(test)]
     let mut skip_quest = false;
     let native = session
         .core
         .fleet_view()
         .detail()
         .and_then(|detail| detail.native_status());
+    #[cfg(test)]
     let target = native.map(|status| status.run());
     let status = frontend_core::views::script_status_label(state, native);
     if let Some(native) = native {
         kv_row(ui, "status", status);
+        #[cfg(test)]
         if matches!(state, ScriptRunState::Running | ScriptRunState::Paused)
             && native.card() == frontend_core::scripts::CompiledCardId::QUESTER
         {
@@ -2816,6 +2819,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
             None => kv_row(ui, "status", status),
         }
     }
+    #[cfg(test)]
     if skip_quest {
         session.script_skip_quest(target);
     }

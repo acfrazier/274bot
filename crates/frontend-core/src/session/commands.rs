@@ -682,6 +682,7 @@ impl<Io> OperatorSession<Io> {
     /// [`CommandFailure::Rejected`] before any operation exists for it. One
     /// line per command, however many bots it refused.
     fn log_refusals(&mut self, request: RequestId, command: OperatorCommand) {
+        #[cfg(feature = "test-support")]
         if matches!(&command, OperatorCommand::SkipQuest { .. }) {
             self.log_skip_quest(request, command);
             return;
@@ -722,6 +723,7 @@ impl<Io> OperatorSession<Io> {
         self.record_refusal(command, &bots, &reason);
     }
 
+    #[cfg(feature = "test-support")]
     /// Log SkipQuest refusals after every targeted member has settled.
     fn log_skip_quest(&mut self, request: RequestId, command: OperatorCommand) {
         let Some(report) = self.commands.book.report(request) else {
@@ -1287,6 +1289,7 @@ impl<Io> OperatorSession<Io> {
                 }
                 self.release_names(names);
             }
+            #[cfg(feature = "test-support")]
             OperatorCommand::SkipQuest { target } => {
                 let names = self.admitted_names(request);
                 for name in &names {

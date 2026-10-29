@@ -147,6 +147,7 @@ pub enum OperatorCommand {
     /// Pause the running script (`OperatorSession::toggle_pause`,
     /// `session.rs:1728-1750`).
     PauseScript,
+    #[cfg(feature = "test-support")]
     /// Request a skip for the active Quester run at its next eligible tick.
     /// `target` fences the command against a stale native status view.
     SkipQuest { target: Option<RunKey> },
@@ -740,6 +741,7 @@ impl OperatorCommand {
         Self::StartScript,
         Self::PauseScript,
         Self::ResumeScript,
+        #[cfg(feature = "test-support")]
         Self::SkipQuest { target: None },
         Self::StopScript,
         Self::CancelQueuedStart,
@@ -995,6 +997,8 @@ impl OperatorCommand {
     /// How a pending member settles.
     pub const fn settles(self) -> Settles {
         match self {
+            #[cfg(feature = "test-support")]
+            Self::SkipQuest { .. } => Settles::AtDispatch,
             Self::Login | Self::Logout | Self::RelogNow => Settles::IntentApplied,
             Self::Select
             | Self::SetMark(_)
@@ -1026,7 +1030,6 @@ impl OperatorCommand {
             | Self::ReturnToProfileImportPath
             | Self::SetProfileImportDeletePrompt(_)
             | Self::DeleteProfileImportExport
-            | Self::SkipQuest { .. }
             | Self::CancelQueuedStart
             | Self::CancelSettingsSync
             | Self::DeferSettingsRestart
