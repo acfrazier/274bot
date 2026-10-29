@@ -158,16 +158,27 @@ impl Case {
     }
 
     const fn keeper(self) -> &'static str {
-        if self.is_axe() { "bob" } else { "harry" }
+        if self.is_axe() {
+            "bob"
+        } else {
+            "harry"
+        }
     }
 
-
     const fn gather_action(self) -> &'static str {
-        if self.is_axe() { "Chop down" } else { "Harpoon" }
+        if self.is_axe() {
+            "Chop down"
+        } else {
+            "Harpoon"
+        }
     }
 
     const fn gather_object(self) -> &'static str {
-        if self.is_axe() { "Oak" } else { "Fishing spot" }
+        if self.is_axe() {
+            "Oak"
+        } else {
+            "Fishing spot"
+        }
     }
 }
 
@@ -237,7 +248,11 @@ fn keeper_fact(
     })
 }
 
-fn fixture(case: Case, data: &SelectedGameData, keepers: &ShopKeeperFacts) -> Result<Fixture, String> {
+fn fixture(
+    case: Case,
+    data: &SelectedGameData,
+    keepers: &ShopKeeperFacts,
+) -> Result<Fixture, String> {
     let coins = item_fact(data, "coins")?;
     let tool = item_fact(data, case.item_alias())?;
     let keeper = keeper_fact(
@@ -253,12 +268,7 @@ fn fixture(case: Case, data: &SelectedGameData, keepers: &ShopKeeperFacts) -> Re
             case.keeper()
         ));
     }
-    let quote = api::shop_facts::quote(
-        vendor.record,
-        vendor.item,
-        1,
-        vendor.item.baseline,
-    );
+    let quote = api::shop_facts::quote(vendor.record, vendor.item, 1, vendor.item.baseline);
     Ok(Fixture {
         coins,
         tool,
@@ -650,9 +660,8 @@ impl DriverPacketTrace {
     fn trace_checkpoint(&mut self, client: &Client, tick: u32) {
         if let Some(checkpoint) = self.checkpoint.take() {
             let mut packets = Vec::new();
-            self.complete &= Driver::trace_packets(client, *checkpoint, &mut |opcode| {
-                packets.push(opcode)
-            });
+            self.complete &=
+                Driver::trace_packets(client, *checkpoint, &mut |opcode| packets.push(opcode));
             self.packets_by_tick
                 .entry(self.checkpoint_tick.unwrap_or(tick))
                 .or_default()
@@ -709,20 +718,18 @@ fn frame_value(snapshot: &GameSnapshot, session: u64, player_info: u64) -> Value
     value["bank_open"] = json!(snapshot.bank_component_id() >= 0);
     value["shop_open"] = json!(shop.open);
     value["shop_server_closes"] = json!(shop.server_closes);
-    value["nearby_locs"] = json!(
-        snapshot
-            .locs()
-            .iter()
-            .filter(|loc| loc.distance <= 12)
-            .map(|loc| json!({
-                "id": loc.id,
-                "name": loc.name,
-                "tile": loc.tile,
-                "distance": loc.distance,
-                "actions": loc.actions,
-            }))
-            .collect::<Vec<_>>()
-    );
+    value["nearby_locs"] = json!(snapshot
+        .locs()
+        .iter()
+        .filter(|loc| loc.distance <= 12)
+        .map(|loc| json!({
+            "id": loc.id,
+            "name": loc.name,
+            "tile": loc.tile,
+            "distance": loc.distance,
+            "actions": loc.actions,
+        }))
+        .collect::<Vec<_>>());
     value
 }
 
@@ -898,7 +905,10 @@ fn button_analysis(
                 ));
             }
         } else {
-            failures.push(format!("ShopButton sequence {} has no observed reply", button.sequence));
+            failures.push(format!(
+                "ShopButton sequence {} has no observed reply",
+                button.sequence
+            ));
         }
         if next.is_some_and(|next| {
             count_rows(
@@ -950,14 +960,18 @@ fn close_analysis(
     for action in &close_actions {
         let action_tick = action["snapshot_tick"].as_u64().unwrap_or(0);
         let resolved = frames.iter().find(|frame| {
-            frame["snapshot_tick"].as_u64().is_some_and(|tick| tick >= action_tick)
+            frame["snapshot_tick"]
+                .as_u64()
+                .is_some_and(|tick| tick >= action_tick)
                 && frame["shop_server_closes"]
                     .as_u64()
                     .is_some_and(|count| count > previous_count)
                 && frame["shop_open"].as_bool() == Some(false)
         });
         if let Some(frame) = resolved {
-            let count = frame["shop_server_closes"].as_u64().unwrap_or(previous_count);
+            let count = frame["shop_server_closes"]
+                .as_u64()
+                .unwrap_or(previous_count);
             previous_count = count;
             resolutions.push(json!({
                 "close_sequence": action["sequence"],
@@ -1078,7 +1092,10 @@ fn wear_action(actions: &[Value], item_id: i32) -> (Option<Value>, Vec<String>) 
         })
         .collect::<Vec<_>>();
     if rows.len() != 1 {
-        failures.push(format!("expected one Bronze axe Wear action, observed {}", rows.len()));
+        failures.push(format!(
+            "expected one Bronze axe Wear action, observed {}",
+            rows.len()
+        ));
     }
     let row = rows.first().map(|action| {
         let inventory = count_rows(&action["snapshot"]["inventory"], i64::from(item_id));
@@ -1145,9 +1162,9 @@ fn gather_action(
                                     && loc["tile"][1].as_i64() == z
                                     && loc["tile"][2].as_i64() == level
                                     && loc["actions"].as_array().is_some_and(|actions| {
-                                        actions.iter().any(|action| {
-                                            action.as_str() == Some("Chop down")
-                                        })
+                                        actions
+                                            .iter()
+                                            .any(|action| action.as_str() == Some("Chop down"))
                                     })
                             })
                 });
@@ -1161,9 +1178,7 @@ fn gather_action(
                     .into_iter()
                     .flatten()
                     .find(|npc| npc["index"].as_i64() == npc_index);
-                if observed.is_none_or(|npc| {
-                    npc["name"].as_str() != Some("Fishing spot")
-                }) {
+                if observed.is_none_or(|npc| npc["name"].as_str() != Some("Fishing spot")) {
                     return false;
                 }
             }
@@ -1183,7 +1198,6 @@ fn gather_action(
         .cloned()
 }
 
-
 fn field_text<'a>(status: &'a ScriptStatus, key: &str) -> Option<&'a str> {
     status
         .fields
@@ -1194,7 +1208,6 @@ fn field_text<'a>(status: &'a ScriptStatus, key: &str) -> Option<&'a str> {
             _ => None,
         })
 }
-
 
 fn nearest_vendor_line(
     data: &SelectedGameData,
@@ -1217,12 +1230,7 @@ fn nearest_vendor_line(
             names.push_str(" and ");
         }
         names.push_str(vendor.keeper_name);
-        let price = api::shop_facts::quote(
-            vendor.record,
-            vendor.item,
-            1,
-            vendor.item.baseline,
-        );
+        let price = api::shop_facts::quote(vendor.record, vendor.item, 1, vendor.item.baseline);
         low = low.min(price);
         high = high.max(price);
     }
@@ -1319,8 +1327,10 @@ fn park_observation(
         bank_rows: Some(bank.rows.clone()),
         bank_open,
         session_generation: frame.and_then(|frame| frame["session_generation"].as_u64()),
-        tool_in_pack: frame.map(|frame| count_rows(&frame["inventory"], i64::from(fixture.tool.id))),
-        coins_in_pack: frame.map(|frame| count_rows(&frame["inventory"], i64::from(fixture.coins.id))),
+        tool_in_pack: frame
+            .map(|frame| count_rows(&frame["inventory"], i64::from(fixture.tool.id))),
+        coins_in_pack: frame
+            .map(|frame| count_rows(&frame["inventory"], i64::from(fixture.coins.id))),
         no_walk: Some(!actions.iter().any(|action| action["kind"] == "walk")),
         no_bank_trip: Some(
             bank_open == Some(false)
@@ -1350,19 +1360,22 @@ fn record_final_status(
         .as_ref()
         .map(|failure| failure.message.to_string());
     guard.final_block_reason = field_text(status, "block_reason").map(str::to_owned);
-    guard.final_bank_open = current.as_ref().and_then(|frame| frame["bank_open"].as_bool());
-    guard.final_shop_open = current.as_ref().and_then(|frame| frame["shop_open"].as_bool());
+    guard.final_bank_open = current
+        .as_ref()
+        .and_then(|frame| frame["bank_open"].as_bool());
+    guard.final_shop_open = current
+        .as_ref()
+        .and_then(|frame| frame["shop_open"].as_bool());
     guard.final_bank_origin = Some(origin_name(bank.origin));
     guard.final_bank_rows = Some(bank.rows.clone());
 }
 
 fn over_target_failures(actions: &[Value], frames: &[Value], item_id: i32) -> Vec<String> {
     let mut failures = Vec::new();
-    for snapshot in frames.iter().chain(
-        actions
-            .iter()
-            .map(|action| &action["snapshot"]),
-    ) {
+    for snapshot in frames
+        .iter()
+        .chain(actions.iter().map(|action| &action["snapshot"]))
+    {
         let held = held_total(snapshot, i64::from(item_id));
         if held > 1 {
             failures.push(format!(
@@ -1384,7 +1397,11 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
         "G2 lifecycle transitions use the no-coins Harpoon fixture"
     );
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"), "requires LIVE=1");
-    assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"), "Engine L cells require BOT_CPU=1");
+    assert_eq!(
+        std::env::var("BOT_CPU").as_deref(),
+        Ok("1"),
+        "Engine L cells require BOT_CPU=1"
+    );
     assert_eq!(
         std::env::var("BOT_LIVE_NAME_PREFIX").as_deref(),
         Ok("gsh"),
@@ -1414,7 +1431,10 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
             .expect("a minted live name is a login identity");
         let path = crate::local_state::StateRoot::new(home.join(".274bot"))
             .bank_hint_file(PROFILE, identity.account());
-        assert!(path.starts_with(&home), "bank hint must remain under isohome HOME");
+        assert!(
+            path.starts_with(&home),
+            "bank hint must remain under isohome HOME"
+        );
         assert!(
             !path.exists(),
             "minted account must not have a prior bank hint before the relog cell: {}",
@@ -1435,7 +1455,11 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
         .resolve(None)
         .and_then(|resolved| resolved.bind())
         .expect("bind Engine L R289 profile");
-    assert_eq!(profile.client().game_host(), "127.0.0.1", "loopback Engine L only");
+    assert_eq!(
+        profile.client().game_host(),
+        "127.0.0.1",
+        "loopback Engine L only"
+    );
     assert_eq!(profile.name(), PROFILE, "bank hint profile identity");
     let selected = profile.game_data().expect("selected R289 game data");
     let template = SharedClientTemplate::load(Arc::clone(&profile)).expect("client template");
@@ -1452,7 +1476,11 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
         Case::Harpoon | Case::NoCoins => assert_eq!(fixture.tool.id, HARPOON_ID),
         Case::AxeWear => assert_eq!(fixture.tool.id, BRONZE_AXE_ID),
     }
-    assert!(fixture.quote > 0, "pinned shop quote must be positive: {}", fixture.quote);
+    assert!(
+        fixture.quote > 0,
+        "pinned shop quote must be positive: {}",
+        fixture.quote
+    );
     if case != Case::NoCoins {
         assert!(
             i64::from(case.coin_seed()) >= fixture.quote,
@@ -1517,11 +1545,9 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
             let row = frame_value(&observer, client.gens.session, client.gens.player_info);
             let (start_requested, finish_requested) = {
                 let mut trace = frame_trace.lock();
-                trace.clock.observe(
-                    client.gens.session,
-                    client.gens.player_info,
-                    Instant::now(),
-                );
+                trace
+                    .clock
+                    .observe(client.gens.session, client.gens.player_info, Instant::now());
                 let start_requested = trace.start_requested;
                 let finish_requested = trace.finish_requested;
                 if trace.frames.last() != Some(&row) {
@@ -1633,10 +1659,11 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                         break;
                     }
                     let script = primer();
-                    match play
-                        .script_start_handle()
-                        .start_test_script(&account, Box::new(script), Some(Arc::clone(&selected)))
-                    {
+                    match play.script_start_handle().start_test_script(
+                        &account,
+                        Box::new(script),
+                        Some(Arc::clone(&selected)),
+                    ) {
                         Ok(run) if play.script_native_run(&account) == Some(run) => {
                             play.wake(&account);
                             stage = RunStage::Prime;
@@ -1670,7 +1697,8 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                     match play.cheat(&account, &tele_args(case.start())) {
                         Ok(()) => stage = RunStage::Travel,
                         Err(error) => {
-                            cell_failure = Some(format!("teleport to the real start site: {error}"));
+                            cell_failure =
+                                Some(format!("teleport to the real start site: {error}"));
                             break;
                         }
                     }
@@ -1700,7 +1728,8 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                     guard.start_requested = true;
                     guard.start_session = current["session_generation"].as_u64();
                     guard.start_player_info = current["player_info_generation"].as_u64();
-                    guard.start_game_tick = current["snapshot_tick"].as_u64().map(|tick| tick as u32);
+                    guard.start_game_tick =
+                        current["snapshot_tick"].as_u64().map(|tick| tick as u32);
                     guard.start_tile = tile;
                     guard.start_bank_origin = Some(origin_name(bank_rows.origin));
                     guard.start_bank_rows = Some(bank_rows.rows.clone());
@@ -1708,7 +1737,8 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                     guard.start_equipment = Some(current["equipment"].clone());
                     guard.start_server_closes = current["shop_server_closes"].as_u64();
                     let start_tool_count = held_total(&current, i64::from(fixture.tool.id));
-                    let start_coin_count = count_rows(&current["inventory"], i64::from(fixture.coins.id));
+                    let start_coin_count =
+                        count_rows(&current["inventory"], i64::from(fixture.coins.id));
                     if start_tool_count != 0 || start_coin_count != 0 {
                         cell_failure = Some(format!(
                             "Start must hold neither tool nor bank-seeded coins: tool={start_tool_count} coins={start_coin_count}"
@@ -1756,14 +1786,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                             .collect::<Vec<_>>();
                         let observation = {
                             let guard = trace.lock();
-                            park_observation(
-                                &play,
-                                &account,
-                                status,
-                                &guard,
-                                &actions,
-                                &fixture,
-                            )
+                            park_observation(&play, &account, status, &guard, &actions, &fixture)
                         };
                         trace.lock().park_no_walk = observation.no_walk;
                         trace.lock().park_lifecycle.initial = Some(observation.clone());
@@ -1836,13 +1859,9 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                         .cloned()
                         .collect::<Vec<_>>();
                     let observed_frames = trace.lock().frames.clone();
-                    if let Some(action) = gather_action(
-                        &actions,
-                        &observed_frames,
-                        case,
-                        case.start(),
-                        12,
-                    ) {
+                    if let Some(action) =
+                        gather_action(&actions, &observed_frames, case, case.start(), 12)
+                    {
                         let tick = action["snapshot_tick"].as_u64().unwrap_or(0) as u32;
                         let mut guard = trace.lock();
                         guard.gather_action = Some(action);
@@ -1856,7 +1875,8 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                             .last()
                             .and_then(|frame| frame["snapshot_tick"].as_u64())
                             .map(|tick| tick as u32);
-                        if current.is_some_and(|tick| tick.wrapping_sub(end_tick) < (u32::MAX / 2)) {
+                        if current.is_some_and(|tick| tick.wrapping_sub(end_tick) < (u32::MAX / 2))
+                        {
                             stage = RunStage::Done;
                         }
                     }
@@ -1874,14 +1894,14 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                             };
                         }
                         Err(error) => {
-                            cell_failure = Some(format!(
-                                "account-only Harpoon arrival was refused: {error}"
-                            ));
+                            cell_failure =
+                                Some(format!("account-only Harpoon arrival was refused: {error}"));
                             break;
                         }
                     }
                 } else if since.elapsed() > Duration::from_secs(30) {
-                    cell_failure = Some("Gatherer did not enter Paused before supply arrival".into());
+                    cell_failure =
+                        Some("Gatherer did not enter Paused before supply arrival".into());
                     break;
                 }
             }
@@ -1899,7 +1919,8 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                         since: Instant::now(),
                     };
                 } else if since.elapsed() > Duration::from_secs(30) {
-                    cell_failure = Some("account-only Harpoon arrival did not reach the pack".into());
+                    cell_failure =
+                        Some("account-only Harpoon arrival did not reach the pack".into());
                     break;
                 }
             }
@@ -1908,8 +1929,10 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                     final_status = Some(status.clone());
                     record_final_status(&play, &account, &trace, status);
                     if status.failure.is_some() {
-                        cell_failure =
-                            Some(format!("Gatherer failed after Resume: {:?}", status.failure));
+                        cell_failure = Some(format!(
+                            "Gatherer failed after Resume: {:?}",
+                            status.failure
+                        ));
                         break;
                     }
                     if play.script_state(&account) == script::RunState::Running
@@ -1962,9 +1985,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
             RunStage::ParkRelogLogout { since } => {
                 if !play.slot_connected(&account) {
                     trace.lock().park_lifecycle.logout_observed = true;
-                    let hint_written = relog_hint_path
-                        .as_ref()
-                        .is_some_and(|path| path.is_file());
+                    let hint_written = relog_hint_path.as_ref().is_some_and(|path| path.is_file());
                     if hint_written {
                         let Some(arm) = relog_arm.as_ref() else {
                             cell_failure = Some("relog cell has no account slot arm".into());
@@ -2054,14 +2075,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                         .collect::<Vec<_>>();
                     let observation = {
                         let guard = trace.lock();
-                        park_observation(
-                            &play,
-                            &account,
-                            status,
-                            &guard,
-                            &actions,
-                            &fixture,
-                        )
+                        park_observation(&play, &account, status, &guard, &actions, &fixture)
                     };
                     let initial = trace
                         .lock()
@@ -2123,14 +2137,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                         .collect::<Vec<_>>();
                     let observation = {
                         let guard = trace.lock();
-                        park_observation(
-                            &play,
-                            &account,
-                            status,
-                            &guard,
-                            &actions,
-                            &fixture,
-                        )
+                        park_observation(&play, &account, status, &guard, &actions, &fixture)
                     };
                     let initial = trace
                         .lock()
@@ -2183,7 +2190,12 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
     play.script_stop(&account);
 
     if !trace.lock().clock.accepted() {
-        cell_failure.get_or_insert_with(|| format!("Engine L PLAYER_INFO clock failed: {:?}", trace.lock().clock));
+        cell_failure.get_or_insert_with(|| {
+            format!(
+                "Engine L PLAYER_INFO clock failed: {:?}",
+                trace.lock().clock
+            )
+        });
     }
     let all_actions = capture
         .lock()
@@ -2191,7 +2203,11 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
         .actions
         .clone();
     let start_action_index = trace.lock().start_action_index.unwrap_or(0);
-    let gather_actions = all_actions.iter().skip(start_action_index).cloned().collect::<Vec<_>>();
+    let gather_actions = all_actions
+        .iter()
+        .skip(start_action_index)
+        .cloned()
+        .collect::<Vec<_>>();
     let start_game_tick = trace.lock().start_game_tick.unwrap_or(0);
     let start_session = trace.lock().start_session.unwrap_or(0);
     let game_frames = trace
@@ -2207,8 +2223,12 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
         .cloned()
         .collect::<Vec<_>>();
     let expected_shop_actions = usize::from(case != Case::NoCoins);
-    let (buttons, mut button_failures, reconciled, maximum_reply_edges) =
-        button_analysis(&gather_actions, &game_frames, fixture.tool.id, expected_shop_actions);
+    let (buttons, mut button_failures, reconciled, maximum_reply_edges) = button_analysis(
+        &gather_actions,
+        &game_frames,
+        fixture.tool.id,
+        expected_shop_actions,
+    );
     let (trades, mut trade_failures) =
         trade_analysis(&gather_actions, &fixture, expected_shop_actions);
     let (wear, mut wear_failures) = if case.is_axe() {
@@ -2250,14 +2270,19 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
     failures.append(&mut trade_failures);
     failures.append(&mut wear_failures);
     failures.append(&mut close_failures);
-    failures.extend(over_target_failures(&gather_actions, &game_frames, fixture.tool.id));
-    let (driver_packets, max_driver_packets, driver_trace_complete) =
-        frame_packets.lock().value();
+    failures.extend(over_target_failures(
+        &gather_actions,
+        &game_frames,
+        fixture.tool.id,
+    ));
+    let (driver_packets, max_driver_packets, driver_trace_complete) = frame_packets.lock().value();
     if !driver_trace_complete {
         failures.push("Driver packet trace was incomplete".into());
     }
     if max_driver_packets > 5 {
-        failures.push(format!("{max_driver_packets} Driver packets in one game tick; limit is five"));
+        failures.push(format!(
+            "{max_driver_packets} Driver packets in one game tick; limit is five"
+        ));
     }
     let bank_open_observed = game_frames
         .iter()
@@ -2309,9 +2334,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
     };
     if case == Case::NoCoins {
         let initial = lifecycle.initial.clone();
-        let no_walk = !gather_actions
-            .iter()
-            .any(|action| action["kind"] == "walk");
+        let no_walk = !gather_actions.iter().any(|action| action["kind"] == "walk");
         if buttons.len() != 0
             || !trades.is_empty()
             || bank_open_observed
@@ -2322,7 +2345,9 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
             failures.push("no-coins lifecycle dispatched a shop action, walk, or bank trip".into());
         }
         if expected_no_coin_reason.is_none()
-            || initial.as_ref().and_then(|park| park.block_reason.as_deref())
+            || initial
+                .as_ref()
+                .and_then(|park| park.block_reason.as_deref())
                 != expected_no_coin_reason.as_deref()
         {
             failures.push(format!(
@@ -2338,7 +2363,9 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                     || final_block_reason.as_deref() != expected_no_coin_reason.as_deref()
                     || final_bank_open != Some(false)
                     || final_bank_origin.as_deref() != Some("Session")
-                    || final_bank_rows.as_deref().is_none_or(|rows| !rows.is_empty())
+                    || final_bank_rows
+                        .as_deref()
+                        .is_none_or(|rows| !rows.is_empty())
                     || final_gather_action.is_some()
                 {
                     failures.push(
@@ -2371,7 +2398,9 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                     || final_failure.is_some()
                     || final_bank_open != Some(false)
                     || final_bank_origin.as_deref() != Some("Session")
-                    || final_bank_rows.as_deref().is_none_or(|rows| !rows.is_empty())
+                    || final_bank_rows
+                        .as_deref()
+                        .is_none_or(|rows| !rows.is_empty())
                 {
                     failures.push(
                         "account-only supply plus Resume did not leave the Gatherer running without a bank trip"
@@ -2393,22 +2422,22 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                             || park.failure.is_some()
                             || park.block_reason.as_deref() != expected_no_coin_reason.as_deref()
                             || park.bank_origin.as_deref() != Some("Hint")
-                            || park
-                                .bank_rows
-                                .as_ref()
-                                .is_none_or(|rows| !rows.is_empty())
+                            || park.bank_rows.as_ref().is_none_or(|rows| !rows.is_empty())
                             || park.bank_open != Some(false)
                             || park.tool_in_pack != Some(0)
                             || park.coins_in_pack != Some(0)
                             || park.no_walk != Some(true)
                             || park.no_bank_trip != Some(true)
                     })
-                    || initial.as_ref().zip(after_relog).is_none_or(|(before, after)| {
-                        before.run_slot != after.run_slot
-                            || before.run_generation != after.run_generation
-                            || before.run_session == after.run_session
-                            || before.session_generation == after.session_generation
-                    })
+                    || initial
+                        .as_ref()
+                        .zip(after_relog)
+                        .is_none_or(|(before, after)| {
+                            before.run_slot != after.run_slot
+                                || before.run_generation != after.run_generation
+                                || before.run_session == after.run_session
+                                || before.session_generation == after.session_generation
+                        })
                     || final_phase.as_deref() != Some("Blocked")
                     || final_phase_label.as_deref() != Some("blocked")
                     || final_slot_running != Some(true)
@@ -2416,7 +2445,9 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                     || final_block_reason.as_deref() != expected_no_coin_reason.as_deref()
                     || final_bank_open != Some(false)
                     || final_bank_origin.as_deref() != Some("Hint")
-                    || final_bank_rows.as_deref().is_none_or(|rows| !rows.is_empty())
+                    || final_bank_rows
+                        .as_deref()
+                        .is_none_or(|rows| !rows.is_empty())
                     || final_gather_action.is_some()
                 {
                     failures.push(format!(
@@ -2440,7 +2471,9 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
             ));
         }
         if !bank_open_observed || !bank_open_request_observed {
-            failures.push("positive purchase did not open the bank to use the account-only coin seed".into());
+            failures.push(
+                "positive purchase did not open the bank to use the account-only coin seed".into(),
+            );
         }
         let final_rows = trace.lock().final_bank_rows.clone().unwrap_or_default();
         let final_coin_balance = final_rows
@@ -2466,7 +2499,13 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
             .as_ref()
             .and_then(|row| row["sequence"].as_u64());
         let wear_sequence = wear.as_ref().and_then(|row| row["sequence"].as_u64());
-        let ordered = match (trade_sequence, buy_sequence, close_sequence, wear_sequence, gather_sequence) {
+        let ordered = match (
+            trade_sequence,
+            buy_sequence,
+            close_sequence,
+            wear_sequence,
+            gather_sequence,
+        ) {
             (Some(trade), Some(buy), Some(close), Some(wear), Some(gather)) if case.is_axe() => {
                 trade < buy && buy < close && close < wear && wear < gather
             }
@@ -2578,12 +2617,21 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
     });
     let passed = cell_failure.is_none() && failures.is_empty();
     receipt["passed"] = json!(passed);
-    std::fs::write(evidence.join("actions.json"), serde_json::to_vec_pretty(&gather_actions).expect("serialize actions"))
-        .expect("write raw Gatherer action capture");
-    std::fs::write(evidence.join("frames.json"), serde_json::to_vec_pretty(&game_frames).expect("serialize frames"))
-        .expect("write observed game frames");
-    std::fs::write(evidence.join("receipt.json"), serde_json::to_vec_pretty(&receipt).expect("serialize receipt"))
-        .expect("write structured live receipt");
+    std::fs::write(
+        evidence.join("actions.json"),
+        serde_json::to_vec_pretty(&gather_actions).expect("serialize actions"),
+    )
+    .expect("write raw Gatherer action capture");
+    std::fs::write(
+        evidence.join("frames.json"),
+        serde_json::to_vec_pretty(&game_frames).expect("serialize frames"),
+    )
+    .expect("write observed game frames");
+    std::fs::write(
+        evidence.join("receipt.json"),
+        serde_json::to_vec_pretty(&receipt).expect("serialize receipt"),
+    )
+    .expect("write structured live receipt");
     drop(capture_guard);
     drop(play);
     let _ = std::fs::remove_dir_all(&scratch);
