@@ -101,6 +101,10 @@ const REGISTRY: &[Entry] = &[
     Entry::new("prayer_v1_ts", scenarios::prayer_v1_scenario),
     Entry::new("boat_fare_v1_ts", scenarios::boat_fare_v1_scenario),
     Entry::new(
+        "boat_fare_far_start_v1_ts",
+        scenarios::boat_fare_far_start_v1_scenario,
+    ),
+    Entry::new(
         "boat_fare_reconnect_v1_ts",
         scenarios::boat_fare_reconnect_v1_scenario,
     ),
