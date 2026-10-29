@@ -136,6 +136,7 @@ impl Scenario {
 struct WalkSpec {
     target: WorldTile,
     radius: u16,
+    allow_danger_zones: bool,
     loc_id: Option<i32>,
     loc_name: Option<String>,
     loc_actions: Vec<String>,
@@ -146,6 +147,7 @@ impl WalkSpec {
         Self {
             target: RETURN_TARGET,
             radius: 12,
+            allow_danger_zones: false,
             loc_id: None,
             loc_name: None,
             loc_actions: Vec::new(),
@@ -160,6 +162,7 @@ impl WalkSpec {
                 level: 0,
             },
             radius: 3,
+            allow_danger_zones: false,
             loc_id: None,
             loc_name: None,
             loc_actions: Vec::new(),
@@ -173,7 +176,10 @@ impl WalkSpec {
             radius: self.radius,
             arrival: nav_planner::arrival::ArrivalKind::Reach,
             loc_id: self.loc_id,
-            options: script::native::WalkOptions::default(),
+            options: script::native::WalkOptions {
+                allow_danger_zones: self.allow_danger_zones.then_some(true).into(),
+                ..script::native::WalkOptions::default()
+            },
             required_after,
             evidence: None,
             cross: Box::default(),
@@ -430,6 +436,7 @@ fn yew_walk(snapshot: &GameSnapshot, origin: WorldTile) -> Option<WalkSpec> {
                 WalkSpec {
                     target: loc.tile,
                     radius: 1,
+                    allow_danger_zones: false,
                     loc_id: Some(loc.id),
                     loc_name: Some(name.to_owned()),
                     loc_actions: loc.actions.iter().flatten().cloned().collect(),
@@ -938,6 +945,7 @@ impl EvidenceContext<'_> {
                 "target": walk.target,
                 "radius": walk.radius,
                 "loc_id": walk.loc_id,
+                "allow_danger_zones": walk.allow_danger_zones,
                 "allow_teleports": false,
                 "allow_wilderness": false,
                 "allow_bank_fetch": false,
@@ -1172,6 +1180,7 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
             Scenario::LumbridgeDoor => Some(WalkSpec {
                 target: LUMBRIDGE_DOOR_TARGET,
                 radius: 0,
+                allow_danger_zones: false,
                 loc_id: None,
                 loc_name: None,
                 loc_actions: Vec::new(),
@@ -1179,6 +1188,8 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
             Scenario::GnomeMaze => Some(WalkSpec {
                 target: GNOME_MAZE_TARGET,
                 radius: 0,
+                // This fixture tests walk timing, not fresh-account danger admission.
+                allow_danger_zones: true,
                 loc_id: None,
                 loc_name: None,
                 loc_actions: Vec::new(),
