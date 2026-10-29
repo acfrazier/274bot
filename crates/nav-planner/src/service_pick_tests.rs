@@ -1,7 +1,7 @@
 use api::service_pick::{ServiceCandidate, ServiceKind};
 use api::snapshot::WorldTile;
 
-use crate::collision::{pack_walk, WorldCollision, WALL_WEST, WALK_SCENERY};
+use crate::collision::{pack_walk, WorldCollision, WALK_SCENERY, WALL_WEST};
 use crate::named_banks::{AccessReach, Footprint};
 use crate::router::{FindOptions, SearchRequest};
 use crate::service_pick::{

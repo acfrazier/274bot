@@ -25,9 +25,9 @@ pub mod paint;
 pub mod producer;
 pub mod quest_gates;
 pub mod router;
+pub mod service_pick;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
-pub mod service_pick;
 pub mod tile;
 pub mod transport;
 pub mod walk_destinations;
