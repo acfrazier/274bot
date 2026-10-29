@@ -440,7 +440,12 @@ fn build_seed_scenario(plan: SeedPlan) -> Result<Scenario, String> {
                     return false;
                 }
                 if let Some(id) = gate_qp_id {
-                    if snapshot.varp(id) != gate_points {
+                    let observed = snapshot
+                        .varps()
+                        .iter()
+                        .find(|row| row.index == id)
+                        .map_or(0, |row| row.value);
+                    if observed != gate_points {
                         return false;
                     }
                 }
@@ -630,12 +635,19 @@ mod tests {
         serde_json::from_str(text).expect("plan parses")
     }
 
+    fn refusal(result: Result<Scenario, String>, what: &str) -> String {
+        match result {
+            Ok(_) => panic!("{what} must refuse"),
+            Err(error) => error,
+        }
+    }
+
     #[test]
     fn seed_plan_rejects_unknown_fields_and_places() {
         let bad_place = plan(
             r#"{"quest":"priest","quest_varp":"prieststart","quest_display":"The Restless Ghost","items":[{"alias":"lobster","count":1,"where":"pocket"}],"start_tile":[3243,3206,0]}"#,
         );
-        let error = build_seed_scenario(bad_place).expect_err("unknown where refuses");
+        let error = refusal(build_seed_scenario(bad_place), "unknown where");
         assert!(error.contains("field items"), "{error}");
         assert!(error.contains("pocket"), "{error}");
     }
@@ -645,13 +657,13 @@ mod tests {
         let bad_skill = plan(
             r#"{"quest":"priest","quest_varp":"prieststart","quest_display":"The Restless Ghost","stats":{"luck":5},"start_tile":[3243,3206,0]}"#,
         );
-        let error = build_seed_scenario(bad_skill).expect_err("unknown skill refuses");
+        let error = refusal(build_seed_scenario(bad_skill), "unknown skill");
         assert!(error.contains("field stats"), "{error}");
 
         let bad_alias = plan(
             r#"{"quest":"priest","quest_varp":"prieststart","quest_display":"The Restless Ghost","items":[{"alias":"not_an_item_xyz","count":1,"where":"bank"}],"start_tile":[3243,3206,0]}"#,
         );
-        let error = build_seed_scenario(bad_alias).expect_err("unknown alias refuses");
+        let error = refusal(build_seed_scenario(bad_alias), "unknown alias");
         assert!(error.contains("field items"), "{error}");
     }
 
