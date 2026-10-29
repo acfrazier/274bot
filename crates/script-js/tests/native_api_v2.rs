@@ -1164,6 +1164,8 @@ fn v2_hold_run_sets_status_and_emits_the_world_walk() {
                 allow_teleports: false,
                 allow_wilderness: true,
                 allow_bank_fetch: true,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id,
                 avoid: _,
                 cross: _,
