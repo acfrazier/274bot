@@ -55,7 +55,7 @@ impl OneOpArgs {
                 name: name.to_string(),
                 action: action.into(),
                 slot: None,
-                target_item_id: None,
+                target_item_id: Some(item_id),
             },
             kind: OneOpKind::Wear { item_id },
             bound_ticks: 8,

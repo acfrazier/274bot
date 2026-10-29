@@ -60,7 +60,8 @@ pub struct AcquireRun {
     withdrawals: Option<Arc<[Withdrawal]>>,
     wears: Option<Arc<[i32]>>,
     purchases: Option<Arc<[Purchase]>>,
-    purchase_index: usize,
+    // One purchase per need, bounded by MAX_MEMO (64).
+    purchase_index: u8,
     shop: Option<Box<super::shop_run::ShopRun>>,
     bought: u32,
     short_of_target: u8,
@@ -372,7 +373,7 @@ impl AcquireRun {
                     let Some(purchase) = self
                         .purchases
                         .as_deref()
-                        .and_then(|purchases| purchases.get(self.purchase_index))
+                        .and_then(|purchases| purchases.get(usize::from(self.purchase_index)))
                         .copied()
                     else {
                         self.shop = None;

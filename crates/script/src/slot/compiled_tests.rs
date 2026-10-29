@@ -1111,7 +1111,10 @@ fn gatherer_tick_with_bank(
     slot.on_game_tick(&mut ScriptCtx {
         driver: &mut NullDriver::default(),
         tick: u64::from(tick),
-        here: None,
+        here: snapshot.local_player().map(|local| {
+            let tile = local.player.actor.tile;
+            (tile.x, tile.z, tile.level)
+        }),
         walk: None,
         walk_with: None,
         inv: None,

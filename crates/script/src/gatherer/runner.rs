@@ -251,7 +251,7 @@ struct GatherScratch {
     withdrew_supplies: bool,
     /// Only the in-flight observation request needs its selected-goal receipt.
     observation_walk: bool,
-    parked: Option<Park>,
+    parked: Option<Box<Park>>,
     replan_once: bool,
     rebuild_park_request: bool,
 }

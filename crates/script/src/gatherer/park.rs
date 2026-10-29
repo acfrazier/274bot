@@ -16,17 +16,21 @@ impl Gatherer {
             .scratch
             .parked
             .as_ref()
-            .filter(|park| park.code == code && park.block.need == block.need)
+            .filter(|park| {
+                park.code == code
+                    && park.request.needs.get(usize::from(park.block.need)).map(|need| need.item)
+                        == request.needs.get(usize::from(block.need)).map(|need| need.item)
+            })
             .map_or(now, |park| park.since_tick);
         self.cancel_active();
         self.wait_until = None;
         self.scratch.needs = None;
-        self.scratch.parked = Some(Park {
+        self.scratch.parked = Some(Box::new(Park {
             code,
             request,
             block,
             since_tick,
-        });
+        }));
         self.scratch.replan_once = false;
         self.scratch.rebuild_park_request = false;
         self.set_event(code);
@@ -93,6 +97,11 @@ impl Gatherer {
             None
         };
         let mut park = self.scratch.parked.take().expect("observed park");
+        let previous_item = park
+            .request
+            .needs
+            .get(usize::from(park.block.need))
+            .map(|need| need.item);
         if let Some(request) = request {
             park.request = request;
         }
@@ -127,7 +136,10 @@ impl Gatherer {
                 false
             }
             Ok(AcquireVerdict::Blocked(block)) => {
-                if park.code != block.code() || park.block.need != block.need {
+                if park.code != block.code()
+                    || previous_item
+                        != park.request.needs.get(usize::from(block.need)).map(|need| need.item)
+                {
                     park.since_tick = tick.cx.evidence().tick;
                 }
                 park.code = block.code();
