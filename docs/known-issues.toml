@@ -94,7 +94,8 @@ text = """on a desktop with two graphics chips (for example a Ryzen with built-i
   starts with "importing the supplied dmabufs failed". Start it with
   `WGPU_POWER_PREF=high ./panel-play` until this is fixed."""
 first = "0.2.0.2"
-target = "0.2.9"
+target = "0.2.8"
+fixed = "0.2.8"
 severity = "high"
 owner = "dual-gpu"
 
