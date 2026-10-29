@@ -42,6 +42,8 @@ const WALK_TIMEOUT: Duration = Duration::from_secs(12 * 60);
 enum Scenario {
     Return,
     Yew,
+    TowerTop,
+    TowerBasement,
 }
 
 impl Scenario {
@@ -49,7 +51,9 @@ impl Scenario {
         match std::env::var("NAV_ARRIVAL_SCENARIO").as_deref() {
             Ok("return") => Self::Return,
             Ok("yew") => Self::Yew,
-            other => panic!("NAV_ARRIVAL_SCENARIO must be return or yew, got {other:?}"),
+            Ok("tower-top") => Self::TowerTop,
+            Ok("tower-basement") => Self::TowerBasement,
+            other => panic!("unknown NAV_ARRIVAL_SCENARIO: {other:?}"),
         }
     }
 
@@ -57,6 +61,8 @@ impl Scenario {
         match self {
             Self::Return => "return",
             Self::Yew => "yew",
+            Self::TowerTop => "tower-top",
+            Self::TowerBasement => "tower-basement",
         }
     }
 
@@ -64,6 +70,10 @@ impl Scenario {
         match self {
             Self::Return => RETURN_ORIGIN,
             Self::Yew => YEW_SCENE_SEED,
+            // ladders.rs2:114-119 lands at 0_48_49_33_26.
+            Self::TowerTop => WorldTile { x: 3105, z: 3162, level: 0 },
+            // One tile east of the real basement ladder at 0_48_149_31_40.
+            Self::TowerBasement => WorldTile { x: 3104, z: 9576, level: 0 },
         }
     }
 }
@@ -82,6 +92,16 @@ impl WalkSpec {
         Self {
             target: RETURN_TARGET,
             radius: 12,
+            loc_id: None,
+            loc_name: None,
+            loc_actions: Vec::new(),
+        }
+    }
+
+    fn crypt_walk() -> Self {
+        Self {
+            target: WorldTile { x: 3249, z: 3192, level: 0 },
+            radius: 3,
             loc_id: None,
             loc_name: None,
             loc_actions: Vec::new(),
@@ -125,6 +145,7 @@ struct LiveState {
     walk_started: bool,
     start_error: Option<String>,
     receipt: Option<Result<WalkReceipt, ActionError>>,
+    samples: Vec<Value>,
 }
 
 struct NativeWalkScript {
@@ -301,10 +322,27 @@ fn frame_hook(
                 })
             }),
         };
+        if state.samples.last().and_then(|row| row["tick"].as_u64()) != Some(u64::from(snapshot.tick())) {
+            let walking = state.walk_started;
+            state.samples.push(json!({
+                "tick": snapshot.tick(),
+                "tile": tile,
+                "scene": client.scene_state,
+                "walking": walking,
+                "map_flag": snapshot.map_flag(),
+                "actor_moving": snapshot.local_player().map(|p| p.player.actor.moving),
+                "last_movement": snapshot.last_server_movement_tick(),
+            }));
+        }
         if !(client.ingame && client.scene_state == 2) || state.setup_error.is_some() {
             return;
         }
         if !state.teleport_sent {
+            if matches!(scenario, Scenario::TowerTop | Scenario::TowerBasement) {
+                for command in ["setvar priest 4", "give ghostskull 1", "setstat hitpoints 30"] {
+                    assert!(api::interact::cheat(client, command).is_sent());
+                }
+            }
             api::interact::seed_at(client, seed.level, seed.x, seed.z);
             state.teleport_sent = true;
             return;
@@ -773,7 +811,11 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
         .prepare_template()
         .expect("prepare local-289 live template with copied cache");
     let state = Arc::new(parking_lot::Mutex::new(LiveState {
-        target: (scenario == Scenario::Return).then(WalkSpec::return_walk),
+        target: match scenario {
+            Scenario::Return => Some(WalkSpec::return_walk()),
+            Scenario::TowerTop | Scenario::TowerBasement => Some(WalkSpec::crypt_walk()),
+            Scenario::Yew => None,
+        },
         ..LiveState::default()
     }));
     let mailbox = FrameBuf::new();
@@ -899,6 +941,10 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
         )
     };
     let arrived = matches!(result.as_ref(), Some(Ok(receipt)) if receipt.end == WalkEnd::Arrived);
+    std::fs::write(
+        run_dir.join("tick-samples.json"),
+        serde_json::to_vec_pretty(&state.lock().samples).unwrap(),
+    ).expect("write observed game ticks");
     let final_report = evidence.document(
         if arrived {
             "native-walk-terminal"
