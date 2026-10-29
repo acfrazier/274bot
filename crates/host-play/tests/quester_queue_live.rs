@@ -488,22 +488,16 @@ impl SkipQueueEvidence {
         {
             return Ok(None);
         }
-        let Some(step_id) = text_field(status, "step_id")?
-            .filter(|step| step == "cook-bank")
-        else {
+        let Some(step_id) = text_field(status, "step_id")?.filter(|step| !step.is_empty()) else {
             return Ok(None);
         };
         let Some(action_state) = text_field(status, "action_state")? else {
             return Ok(None);
         };
-        let child_step_id = text_field(status, "child_step_id")?.filter(|step| !step.is_empty());
-        let active_action = matches!(
-            action_state.as_str(),
-            "walking" | "talking" | "fighting" | "banking"
-        ) || (action_state == "working" && child_step_id.is_some());
-        if !active_action {
+        if action_state != "banking" {
             return Ok(None);
         }
+        let child_step_id = text_field(status, "child_step_id")?.filter(|step| !step.is_empty());
         Ok(Some(SkipActionReceipt {
             quest_id: "cook".into(),
             step_id,
@@ -1272,9 +1266,12 @@ fn run_quester_skip() -> Result<(), String> {
         }
         std::thread::sleep(POLL_INTERVAL);
     };
-    let expected_skip_line = format!(
-        "command accepted: SkipQuest on {account}: {account}: quest_id=cook step_id=cook-bank"
-    );
+    let expected_skip_line = evidence.skip.as_ref().map(|skip| {
+        format!(
+            "command accepted: SkipQuest on {account}: {account}: quest_id={} step_id={}",
+            skip.quest_id, skip.step_id
+        )
+    });
     let accepted_skip_log = SKIP_SESSION_LOG
         .0
         .lock()
@@ -1284,12 +1281,17 @@ fn run_quester_skip() -> Result<(), String> {
             entry.slot.as_deref() == Some(account.as_str())
                 && entry.source == api::hostlog::Source::Host
                 && entry.level == api::hostlog::Level::Info
-                && entry.message == expected_skip_line
+                && expected_skip_line
+                    .as_deref()
+                    .is_some_and(|expected| entry.message == expected)
         })
         .map(|entry| entry.message.clone());
     let result = if result.is_ok() && accepted_skip_log.is_none() {
         Err(format!(
-            "accepted SkipQuest info line missing from session log: {expected_skip_line}"
+            "accepted SkipQuest info line missing from session log: {}",
+            expected_skip_line
+                .as_deref()
+                .unwrap_or("no accepted skip receipt")
         ))
     } else {
         result
@@ -1324,7 +1326,7 @@ fn quester_queue() {
 
 #[cfg(feature = "test-support")]
 #[test]
-fn skip_probe_waits_for_cook_bank_step() {
+fn skip_probe_waits_for_cook_bank_action() {
     use script::native::StatusField;
 
     let status = |step_id: &str, action_state: &str| ScriptStatus {
@@ -1356,17 +1358,19 @@ fn skip_probe_waits_for_cook_bank_step() {
         ]),
         failure: None,
     };
-    let start = status("start", "talking");
-    assert!(
-        SkipQueueEvidence::active_cook_action(&start)
-            .unwrap()
-            .is_none()
-    );
-    let bank = status("cook-bank", "banking");
+    for action_state in ["talking", "walking"] {
+        let early = status("start", action_state);
+        assert!(
+            SkipQueueEvidence::active_cook_action(&early)
+                .unwrap()
+                .is_none()
+        );
+    }
+    let bank = status("start", "banking");
     let action = SkipQueueEvidence::active_cook_action(&bank)
         .unwrap()
         .expect("Cook bank action");
-    assert_eq!(action.step_id, "cook-bank");
+    assert_eq!(action.step_id, "start");
     assert_eq!(action.action_state, "banking");
 }
 #[cfg(feature = "test-support")]
