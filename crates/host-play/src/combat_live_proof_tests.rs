@@ -5821,10 +5821,15 @@ fn m2_ready(capture: &CombatCapture) -> bool {
     let Some(boost_doses) = integer(report, "combat_boost_doses") else {
         return false;
     };
+    let locked_ticks = integer(report, "combat_locked_ticks").unwrap_or(-1);
     let protected_hits = integer(report, "combat_hits_while_protected").unwrap_or(-1);
     let plans = batch_plans(capture);
-    // Require at least one boost dose only when Prep lies inside the report window.
+    // Each drink locks the next two observed ticks
+    // (`crates/script/src/combat/schedule.rs:173-175`), and every locked tick is
+    // counted. Also require at least one boost dose when Prep lies inside the
+    // report window.
     prayer_doses > 0
+        && locked_ticks == 2 * (prayer_doses + boost_doses)
         && prep_boost_count_matches(capture, report, boost_doses)
         && protected_hits == 0
         && every_killed_report_has_corpse(capture)

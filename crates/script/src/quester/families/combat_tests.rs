@@ -3935,10 +3935,13 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
         .saturating_add(warlord_row.attackrange)
         .max(0)
         .saturating_add(1);
+    // Fifteen tiles west of the player. The rings the planner builds around the
+    // vanished Warlord at (3001,3000) cross this tile's chase envelope, so a
+    // plan centered on the gone actor names goals inside it.
     let mut snapshot = GameSnapshot::new();
     let new_attacker_tile = api::WorldTile {
-        x: 3000,
-        z: 2999,
+        x: 2985,
+        z: 3000,
         level: 0,
     };
     let mut newcomer = aborting_npc(9, warlord.id, new_attacker_tile);
@@ -3977,6 +3980,12 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
             .all(|previous| { new_goals.iter().all(|goal| !previous.contains(goal)) }),
         "the new attacker plan does not repeat the vanished Warlord's failed tiles"
     );
+    for goal in new_goals {
+        assert!(
+            tile_distance(*goal, new_attacker_tile) > chase_envelope,
+            "goal {goal:?} lies inside the new attacker's chase envelope of {chase_envelope} tiles"
+        );
+    }
     let escape_distance = tile_distance(walks[0], new_attacker_tile);
     assert!(
         escape_distance > tile_distance(here, new_attacker_tile),

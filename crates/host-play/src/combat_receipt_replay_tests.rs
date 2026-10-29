@@ -1460,3 +1460,89 @@ fn m2_out_of_range_receipts_pass_the_full_oracle() {
         "both retained receipts count Prep within their combat windows"
     );
 }
+
+/// A receipt with only the Killed report's fields edited, as a replay mutant.
+fn m2_report_field_mutant(
+    base: &Value,
+    edit: impl Fn(&mut serde_json::Map<String, Value>),
+) -> Value {
+    let mut mutant = base.clone();
+    let status = mutant["statuses"]
+        .as_array_mut()
+        .expect("receipt has statuses")
+        .iter_mut()
+        .find(|status| status["fields"]["combat_end"] == json!("Killed"))
+        .expect("receipt retains its Killed report");
+    edit(
+        status["fields"]
+            .as_object_mut()
+            .expect("Killed report has fields"),
+    );
+    mutant
+}
+
+/// Every dose locks the next two observed ticks
+/// (`crates/script/src/combat/schedule.rs:173-175`), so a Killed report's
+/// locked ticks must equal two per reported dose. The oracle must reject a
+/// report that changes the locked ticks alone, and one that changes a dose
+/// count alone.
+#[test]
+#[ignore = "requires M2_ORACLE_RECEIPTS with retained M2 receipts"]
+fn m2_locked_ticks_must_match_the_reported_doses() {
+    let paths = std::env::var("M2_ORACLE_RECEIPTS").expect("M2_ORACLE_RECEIPTS");
+    let mut count = 0;
+    for path in paths.split(',').filter(|path| !path.is_empty()) {
+        let value: Value =
+            serde_json::from_slice(&std::fs::read(path).expect("read M2 receipt")).unwrap();
+        let parse_capture = capture;
+        let capture = parse_capture(&value);
+        assert!(m2_ready(&capture), "receipt {path} passes unmutated");
+        let report = report_with_end(&capture, "Killed").expect("M2 receipt has a Killed report");
+        let prayer_doses = integer(report, "combat_prayer_doses").expect("M2 receipt has doses");
+        let boost_doses = integer(report, "combat_boost_doses").expect("M2 receipt has boosts");
+        let locked_ticks =
+            integer(report, "combat_locked_ticks").expect("M2 receipt has locked ticks");
+        assert_eq!(
+            locked_ticks,
+            2 * (prayer_doses + boost_doses),
+            "receipt {path} reports two locked ticks per dose"
+        );
+        let mutants = [
+            (
+                "locked ticks plus two",
+                m2_report_field_mutant(&value, |fields| {
+                    fields.insert("combat_locked_ticks".to_owned(), json!(locked_ticks + 2));
+                }),
+            ),
+            (
+                "locked ticks zero",
+                m2_report_field_mutant(&value, |fields| {
+                    fields.insert("combat_locked_ticks".to_owned(), json!(0));
+                }),
+            ),
+            (
+                "locked ticks times three",
+                m2_report_field_mutant(&value, |fields| {
+                    fields.insert("combat_locked_ticks".to_owned(), json!(locked_ticks * 3));
+                }),
+            ),
+            (
+                "one more prayer dose",
+                m2_report_field_mutant(&value, |fields| {
+                    fields.insert("combat_prayer_doses".to_owned(), json!(prayer_doses + 1));
+                }),
+            ),
+        ];
+        for (label, mutant) in mutants {
+            assert!(
+                !m2_ready(&parse_capture(&mutant)),
+                "{label} does not pass for {path}"
+            );
+        }
+        count += 1;
+    }
+    assert!(
+        count >= 7,
+        "supply the seven retained M2 receipts, got {count}"
+    );
+}
