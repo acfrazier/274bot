@@ -61,6 +61,23 @@ fn post_page(
     rows: &[Live<'_>],
     results: &[SeatResult],
 ) {
+    post_page_in(
+        iso,
+        buffer,
+        crate::wire::tests::empty_input(tick),
+        rows,
+        results,
+    );
+}
+
+/// `post_page` over explicit facts, for a trace whose rows read them.
+fn post_page_in(
+    iso: &LoadIsolate,
+    buffer: &mut crate::wire::IsolateBuf,
+    snapshot: crate::wire::SnapshotInput<'_>,
+    rows: &[Live<'_>],
+    results: &[SeatResult],
+) {
     let encoded: Vec<Option<Vec<u8>>> = rows
         .iter()
         .map(|row| {
@@ -98,7 +115,6 @@ fn post_page(
             .collect();
     let page =
         crate::wire::SeatPageInput::new(&entries, results, &details, 0).expect("valid seat page");
-    let snapshot = crate::wire::tests::empty_input(tick);
     let bytes = buffer.encode_snapshot_with_native(
         &snapshot,
         crate::wire::NativeFactsInput {
@@ -862,6 +878,116 @@ fn an_embedded_withdraw_child_delivers_its_terminal_to_its_owner_only() {
         probe_steps(&iso),
         before,
         "the unrelated row stayed inactive"
+    );
+    iso.join();
+}
+
+/// ADR 0017 N10, `hunt` (the bank run embeds a native `bank_open` child):
+/// the public `bankRun` path on frozen ticks and frozen facts. While the
+/// child is live the owning row steps through the child alone: no hook runs
+/// and no other row moves. After the child's terminal the same step runs the
+/// family's own continuation (here: the stepper's `log` note and its own
+/// end), and nothing else.
+#[test]
+fn an_embedded_hunt_child_steps_only_its_owner_and_continues_into_the_family() {
+    let iso = spawn_bank_machine_card(
+        "globalThis.__calls = [];
+         globalThis.__wait_done = false;
+         const rec = (name) => (...args) => { globalThis.__calls.push([name, ...args]); };
+         runMachine('hunt-bank', {
+             site: { key: 'heroes-blue', keyItem: null, boxes: [], bank: { x: 80, z: 80, level: 0 }, style: 'range' },
+         }, {
+             log: rec('log'), vlog: rec('vlog'), setStatus: rec('setStatus'), eatOnce: rec('eatOnce'),
+             parkFor: rec('parkFor'), countBankTrip: rec('countBankTrip'), setTarget: rec('setTarget'),
+             hasFood: rec('hasFood'), needEat: rec('needEat'), leave: rec('leave'), sustain: rec('sustain'),
+         }).then(v => { globalThis.__done = v; }, e => { globalThis.__done = { threw: String(e) }; });
+         runMachine('probe', { button: 7, steps: 99 });
+         Execution.delayTicks(50).then(() => { globalThis.__wait_done = true; });",
+    );
+    let mut buffer = crate::wire::IsolateBuf::default();
+    // The facts stay as they are for the whole trace: the player stands at
+    // the bank, the bank is closed. Only the seat pages change.
+    let standing = || {
+        let mut input = crate::wire::tests::empty_input(1);
+        input.here = Some(crate::wire::TileInput {
+            x: 80,
+            z: 80,
+            level: 0,
+        });
+        input
+    };
+    let first = buffer.encode_snapshot_with_native(&standing(), Default::default());
+    assert!(iso.post_snapshot(first));
+    let ids = started(&iso);
+    assert_eq!(ids.len(), 1, "the embedded opener is the only seat start");
+    let child = ids[0];
+    let probe_row = family_row(&iso, "probe")["handle"].as_u64().unwrap();
+    let steps_of_probe = |iso: &LoadIsolate| {
+        iso.machine_host_for_test()["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["handle"] == probe_row)
+            .map_or(0, |row| row["steps"].as_u64().unwrap())
+    };
+    let startup = called(&iso).len();
+    let probe_steps = steps_of_probe(&iso);
+    let tick = iso.probe("__rs2b0t_host.tick").unwrap();
+    assert_eq!(
+        iso.probe("typeof globalThis.__done").unwrap(),
+        serde_json::json!("undefined"),
+        "the run is parked on its child"
+    );
+
+    // The child is live and nothing about it changed: the owner steps through
+    // the child alone and nothing is called.
+    post_page_in(
+        &iso,
+        &mut buffer,
+        standing(),
+        &[live(child, NativeKind::BankPlan)],
+        &[],
+    );
+    dispatch(&iso, 1, 0);
+    assert_eq!(called(&iso).len(), startup, "a live child runs no hook");
+    assert_eq!(steps_of_probe(&iso), probe_steps, "the unrelated row is inactive");
+    assert_eq!(
+        iso.probe("typeof globalThis.__done").unwrap(),
+        serde_json::json!("undefined"),
+        "the family has not continued"
+    );
+
+    // The child's terminal: the same step continues into the family.
+    let after_live = called(&iso).len();
+    post_page_in(
+        &iso,
+        &mut buffer,
+        standing(),
+        &[],
+        &[result(child, 1, SeatTerminal::Done)],
+    );
+    dispatch(&iso, 1, 0);
+    let delta = &called(&iso)[after_live..];
+    assert_eq!(
+        delta,
+        [serde_json::json!(["log", "could not open the bank. Will retry."])],
+        "exactly the family's own continuation ran"
+    );
+    assert_eq!(
+        iso.probe("globalThis.__done").unwrap(),
+        serde_json::json!({ "kind": "done", "value": false }),
+        "the family ended through its own stepper"
+    );
+    assert_eq!(steps_of_probe(&iso), probe_steps, "still inactive");
+    assert_eq!(
+        iso.probe("globalThis.__wait_done").unwrap(),
+        serde_json::json!(false),
+        "the parked wait stayed parked"
+    );
+    assert_eq!(
+        iso.probe("__rs2b0t_host.tick").unwrap(),
+        tick,
+        "no tick time moved"
     );
     iso.join();
 }
