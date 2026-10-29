@@ -666,7 +666,7 @@ fn quest_walk_step_blocks_after_three_failures_with_the_last_detail() {
         with_step(tick, |cx| plan.begin(cx).unwrap())
     });
 
-    for attempt in 1..=3 {
+    for attempt in 1u8..=3 {
         let failure_tick = u64::from(attempt) * 2;
         let detail = format!("route failure {attempt}");
         post_walk_receipt(
@@ -690,7 +690,7 @@ fn quest_walk_step_blocks_after_three_failures_with_the_last_detail() {
         } else {
             assert!(
                 matches!(result, Poll::Ready(Err(ActionError::Blocked(reason))) if reason.as_ref() == detail),
-                "the exhausted budget must keep the last route failure: {result:?}"
+                "the exhausted budget must keep the last route failure"
             );
         }
     }
@@ -708,7 +708,7 @@ fn quest_walk_step_retry_budget_resets_for_a_new_step() {
         with_step(tick, |cx| first_plan.begin(cx).unwrap())
     });
 
-    for attempt in 1..=2 {
+    for attempt in 1u8..=2 {
         let failure_tick = u64::from(attempt) * 2;
         let detail = format!("first step failure {attempt}");
         post_walk_receipt(
