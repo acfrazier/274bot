@@ -1100,12 +1100,26 @@ fn seat_counters_follow_each_publish_and_each_boundary() {
     start(&mut seat, 6, None, NativeKind::BankPlan);
     seat.revoke(id(6), AbortReason::Superseded).unwrap();
     assert_eq!(counters(&seat), (8, 0, 0, 6), "revoke publishes the abort");
+    // An admission that ends at once publishes a terminal without a live
+    // entry: a request cancelled before admission, and a refused one.
+    assert_eq!(
+        seat.start(stamp(20, None), NativeKind::BankPlan, true)
+            .unwrap(),
+        Admission::Cancelled
+    );
+    assert_eq!(counters(&seat), (9, 0, 0, 7), "a cancelled admission");
+    assert_eq!(
+        seat.start(stamp(21, Some(999)), NativeKind::BankPlan, false)
+            .unwrap(),
+        Admission::Refused(Refusal::ParentNotLive)
+    );
+    assert_eq!(counters(&seat), (10, 0, 0, 8), "a refused admission");
     // Entry 7 stays live for the held checks below.
     start(&mut seat, 7, None, NativeKind::BankPlan);
 
     // The slot records what an accepted dispatch carried.
-    seat.mark_answer_dispatched(8, 6);
-    assert_eq!(counters(&seat), (8, 8, 6, 6));
+    seat.mark_answer_dispatched(10, 8);
+    assert_eq!(counters(&seat), (10, 10, 8, 8));
     assert!(!seat.answer_page_owed());
 
     // A held seat refuses every producer, so nothing moves while it is held.
@@ -1118,7 +1132,7 @@ fn seat_counters_follow_each_publish_and_each_boundary() {
     seat.cancel(id(7), CallbackCancelReason::HookThrew).unwrap();
     seat.revoke(id(7), AbortReason::Superseded).unwrap();
     seat.manual_walk(id(7)).unwrap();
-    assert_eq!(counters(&seat), (8, 8, 6, 6));
+    assert_eq!(counters(&seat), (10, 10, 8, 8));
     seat.hold(false);
 
     // A kept reconnect keeps the counters and the result sequence.

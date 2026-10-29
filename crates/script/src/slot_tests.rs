@@ -2022,3 +2022,81 @@ fn the_seat_page_dispatch_reaches_the_surface_with_its_floor_and_answers_its_acc
         .collect();
     assert_eq!(dispatches, vec![(7, 3), (8, 5)]);
 }
+
+/// A seat answer polls only the row that owns the answer: a second live bank
+/// request stays unstarted until a tick or an evidence wake polls it.
+#[test]
+fn seat_answer_wake_polls_only_the_answered_request() {
+    use crate::bank::request::{BankSeatArgs, BankSeatOperation};
+    use crate::native::request::NativeKind;
+    use crate::native::seat_rows::{DecodedSeatBatch, SeatStartArgs, SeatStartInput};
+
+    let selected =
+        api::game_data::for_revision(api::selected::ClientRevision::R289).expect("selected data");
+    let (mut slot, _factory, _run) = ready_stub_slot_with_incarnation(1206);
+    slot.surface_start
+        .as_mut()
+        .expect("surface identity")
+        .game_data = Some(Arc::clone(&selected));
+    let run = slot.seat.as_ref().expect("owned native seat").run();
+    let answered = RequestId::isolate(1).unwrap();
+    let bystander = RequestId::isolate(2).unwrap();
+    let starts = vec![
+        SeatStartInput {
+            id: answered,
+            parent: None,
+            run: run.run,
+            session: run.session,
+            kind: NativeKind::BankPlan,
+            args: SeatStartArgs::Bank(BankSeatArgs::new(BankSeatOperation::DepositMatch)),
+        },
+        SeatStartInput {
+            id: bystander,
+            parent: None,
+            run: run.run,
+            session: run.session,
+            kind: NativeKind::BankNearest,
+            args: SeatStartArgs::Bank(BankSeatArgs::new(BankSeatOperation::BankNearest)),
+        },
+    ];
+    slot.consume_seat_batch(
+        DecodedSeatBatch {
+            consumed_terminal_seq: 0,
+            starts,
+            decisions: Vec::new(),
+            cancels: Vec::new(),
+            mirror_revokes: Vec::new(),
+            reqs: Vec::new(),
+        },
+        0,
+        &[],
+    );
+    assert_eq!(
+        slot.unstarted_bank_rows_for_test(),
+        vec![answered, bystander],
+        "both requests are live bank rows no poll has started"
+    );
+    let point = crate::native::PromptPoint::from_contract_row(
+        crate::native::abi::HOOK_CHARACTERIZATIONS
+            .iter()
+            .find(|row| row.families().contains(&"bank_deposit") && row.member() == "match")
+            .expect("frozen bank matcher row"),
+    )
+    .expect("characterized prompt");
+    let seat = slot.seat.as_mut().unwrap();
+    let sequence = seat.prompt_with_details(answered, point, &[1]).unwrap();
+    assert_eq!(
+        seat.decide_with_answer(answered, sequence, vec![9]),
+        crate::native::seat::SeatDecisionStatus::Consumed
+    );
+
+    let mut driver = NullDriver::default();
+    let mut ctx = compiled_ctx(&mut driver, Some(&selected));
+    ctx.tick = 5;
+    assert!(slot.on_seat_answer(&mut ctx), "the wake may post its page");
+    assert_eq!(
+        slot.unstarted_bank_rows_for_test(),
+        vec![bystander],
+        "the answered row was polled once, the other was not"
+    );
+}

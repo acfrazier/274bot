@@ -881,6 +881,20 @@ impl SlotScript {
 }
 
 #[cfg(test)]
+impl SlotScript {
+    /// The bank rows no poll has started yet (still `Job::Start`).
+    pub(super) fn unstarted_bank_rows_for_test(&self) -> Vec<RequestId> {
+        self.bank.as_ref().map_or_else(Vec::new, |bank| {
+            bank.rows
+                .iter()
+                .filter(|row| matches!(row.job, Job::Start(_)))
+                .map(|row| row.id)
+                .collect()
+        })
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
