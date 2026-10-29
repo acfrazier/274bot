@@ -429,9 +429,6 @@ fn route_owner_layout_is_bounded() {
 static SEARCH_EVENTS: Mutex<Vec<(RouteSearchPurpose, bool, Instant)>> = Mutex::new(Vec::new());
 
 pub(super) fn record_search_event(name: &str, purpose: RouteSearchPurpose, started: bool) {
-    if name == "nav-find-alice" && std::env::var_os("WALK_NO_ROUTE_TRACE").is_some() {
-        eprintln!("[DEBUG-walk-no-route] {purpose:?} started={started}");
-    }
     if name == "nav-find-route-latency" {
         SEARCH_EVENTS
             .lock()

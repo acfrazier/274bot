@@ -6979,12 +6979,19 @@ fn anchored_use_on_wall_walk_uses_network_side_then_falls_back_once() {
         {
             let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
             receipt.end = WalkEnd::NoPath;
-            receipt.detail = None;
+            receipt.detail = Some(Arc::from("fallback route has no path"));
         }
         let result = with_tick(&snapshot, &mut ledger, 6, |tick| {
             with_step(tick, |step| run.poll(step))
         });
-        assert!(matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))));
+        assert!(
+            matches!(
+                result,
+                Poll::Ready(Err(ActionError::Blocked(reason)))
+                    if reason.as_ref() == "fallback route has no path"
+            ),
+            "terminal text must preserve the final no-route detail after its bounded retry"
+        );
         assert_eq!(
             ledger
                 .as_ref()
@@ -7096,12 +7103,19 @@ fn anchored_interact_wall_walk_falls_back_to_the_loc_tile_once() {
         {
             let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
             receipt.end = WalkEnd::NoPath;
-            receipt.detail = None;
+            receipt.detail = Some(Arc::from("fallback route has no path"));
         }
         let result = with_tick(&snapshot, &mut ledger, 6, |tick| {
             with_step(tick, |step| run.poll(step))
         });
-        assert!(matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))));
+        assert!(
+            matches!(
+                result,
+                Poll::Ready(Err(ActionError::Blocked(reason)))
+                    if reason.as_ref() == "fallback route has no path"
+            ),
+            "terminal text must preserve the final no-route detail after its bounded retry"
+        );
         assert_eq!(
             ledger
                 .as_ref()

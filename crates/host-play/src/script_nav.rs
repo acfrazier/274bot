@@ -31,7 +31,7 @@ use nav_planner::router::find_missing_item_reqs_with_avoid;
 use nav_planner::router::{
     AvoidRect, BlockerDiagnosis, CompactFallbackRoute, CompactRoute, CursorStep, FindOptions,
     MissingReqView, MissingRequirements, Route, SearchCursor, SearchOutcome, SearchPreflight,
-    SearchRequest, SearchRequestShape, NODE_BUDGET,
+    SearchRequest, SearchRequestShape, FIRST_TARGET_BUDGET, NODE_BUDGET,
 };
 use nav_planner::world::NavWorld;
 use nav_planner::zones::{ZoneExempt, ZoneFilterOwned, ZoneKey};
@@ -1074,6 +1074,9 @@ pub(crate) struct RouteJob {
     bank_avoid_copy: Vec<AvoidRect>,
     bank_avoid_index: usize,
     diagnostics_started: bool,
+    diagnostic_settled: usize,
+    #[cfg(test)]
+    diagnostic_budget: usize,
     outcome: Option<RouteJobOutcome>,
     assessment_future: Option<RouteAssessmentFuture>,
     assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
@@ -1209,6 +1212,9 @@ impl RouteJob {
             bank_avoid_copy: Vec::new(),
             bank_avoid_index: 0,
             diagnostics_started: false,
+            diagnostic_settled: 0,
+            #[cfg(test)]
+            diagnostic_budget: FIRST_TARGET_BUDGET,
             outcome: None,
             assessment_future: None,
             assessment: None,
@@ -1555,7 +1561,13 @@ impl RouteJob {
         let avoid = std::mem::take(&mut self.search_avoid).into_boxed_slice();
         self.search_avoid_started = false;
         let options = route_search_options(&self.request);
-        let max_settles = NODE_BUDGET;
+        let max_settles = if self.diagnostics_started {
+            self.diagnostic_budget()
+                .saturating_sub(self.diagnostic_settled)
+                .min(NODE_BUDGET)
+        } else {
+            NODE_BUDGET
+        };
         let single_preflight = if self.search_purpose == RouteSearchPurpose::PostBank {
             self.preflights.post_bank_single
         } else {
@@ -1787,6 +1799,38 @@ impl RouteJob {
         self.outcome = Some(RouteJobOutcome::NoPath);
         self.diagnostics_started = true;
         self.stage = RouteJobStage::BeginDiagnostics;
+        self.native_failure = Some(script::native::WalkEnd::NoPath);
+    }
+
+    fn diagnostic_budget(&self) -> usize {
+        // Diagnosis cannot change the failed strict route. Share the planner's
+        // smaller first-goal allowance across all post-failure searches.
+        #[cfg(test)]
+        {
+            self.diagnostic_budget
+        }
+        #[cfg(not(test))]
+        {
+            FIRST_TARGET_BUDGET
+        }
+    }
+
+    fn finish_diagnostics_at_budget(&mut self) {
+        if let Some(cursor) = self.search_cursor.take() {
+            self.diagnostic_settled = self
+                .diagnostic_settled
+                .saturating_add(cursor.forward_settled());
+        }
+        let reason = format!(
+            "no route found; further gate diagnosis stopped after {} settled nodes",
+            self.diagnostic_budget()
+        );
+        self.detail = Some(match self.detail.take() {
+            Some(detail) => format!("{detail}; {reason}"),
+            None => reason,
+        });
+        // Preserve any gate, evidence or carry diagnosis that already finished.
+        self.stage = RouteJobStage::Diagnostics;
     }
 
     fn handle_search(&mut self, search: SearchOutcome) -> Result<(), RouteJobError> {
@@ -1955,7 +1999,7 @@ impl RouteJob {
                     Ok(Some(gates)) if !gates.is_empty() => {
                         script::native::WalkEnd::NeedsEvidence(Arc::from(gates))
                     }
-                    Ok(_) => script::native::WalkEnd::Failed,
+                    Ok(_) => script::native::WalkEnd::NoPath,
                     Err(_) => script::native::WalkEnd::Refused,
                 });
                 self.schedule_search(RouteSearchPurpose::MissingCarry);
@@ -2255,6 +2299,12 @@ impl RouteJob {
                     None => route_detail,
                 });
             }
+        }
+        if matches!(&outcome, RouteJobOutcome::NoPath) && detail.is_none() {
+            detail = Some(format!(
+                "no route found from {:?} to {:?} within radius {}",
+                self.request.from, self.request.to, self.request.radius
+            ));
         }
         RouteJobOutput {
             candidate_goals: self.request.candidate_goals.is_some(),
@@ -2697,9 +2747,21 @@ impl CooperativeJob for RouteJob {
                         .expect("search cursor is present")
                         .advance(ctx);
                     match step {
-                        CursorStep::Yielded | CursorStep::Cancelled(_) => {
+                        CursorStep::Yielded => {
+                            if self.diagnostics_started
+                                && self.diagnostic_settled.saturating_add(
+                                    self.search_cursor
+                                        .as_ref()
+                                        .expect("search cursor is present")
+                                        .forward_settled(),
+                                ) >= self.diagnostic_budget()
+                            {
+                                self.finish_diagnostics_at_budget();
+                                continue;
+                            }
                             return StepOutcome::Yielded;
                         }
+                        CursorStep::Cancelled(_) => return StepOutcome::Yielded,
                         CursorStep::Failed(_) => return StepOutcome::Failed(RouteJobError::Search),
                         CursorStep::Complete(completion) => {
                             #[cfg(test)]
@@ -2708,10 +2770,21 @@ impl CooperativeJob for RouteJob {
                                 self.search_purpose,
                                 false,
                             );
+                            if self.diagnostics_started {
+                                self.diagnostic_settled = self
+                                    .diagnostic_settled
+                                    .saturating_add(completion.forward_settled());
+                            }
                             self.search_cursor = None;
                             let (search, _state) = completion.into_parts();
                             if let Err(error) = self.handle_search(search) {
                                 return StepOutcome::Failed(error);
+                            }
+                            if self.diagnostics_started
+                                && self.diagnostic_settled >= self.diagnostic_budget()
+                                && self.stage != RouteJobStage::Diagnostics
+                            {
+                                self.finish_diagnostics_at_budget();
                             }
                             self.boundary_ready = true;
                             return StepOutcome::Yielded;
