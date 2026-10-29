@@ -126,32 +126,39 @@ struct ParkedStep {
 
 /// Distinct trace lines a stage keeps before new lines are dropped. The floor
 /// covers the run start and stages with no steps; a stage with steps gets
-/// `RUN_TRACE_EVENT_PER_STEP × steps + RUN_TRACE_EVENT_SLACK`.
+/// `RUN_TRACE_EVENT_PER_STEP × units + RUN_TRACE_EVENT_SLACK`, where a unit is
+/// one of its own steps or one step of a recipe its `acquire` steps run.
 const RUN_TRACE_EVENT_MIN: usize = 32;
-/// Lines a compiled step can trace: begin, skip and settled/failed, plus one
-/// spare for a retried begin or a child acquisition line.
+/// Lines one trace unit can log: begin, skip and settled/failed, plus one
+/// spare for a retried begin, a restart line or a skip predicate that waits.
 const RUN_TRACE_EVENT_PER_STEP: usize = 4;
 /// Lines for provisioning, the stage change itself and the run start.
 const RUN_TRACE_EVENT_SLACK: usize = 8;
 const RUN_TRACE_LINE_LIMIT: usize = 192;
 
-/// The distinct-line budget of one stage: every step's begin, skip and
-/// settled/failed line fits, and a short stage keeps the 32-line floor.
-fn stage_event_limit(steps: usize) -> usize {
+/// The distinct-line budget of one stage, from its compiled trace units
+/// (`CompiledSequence::trace_units`): every step line and every line of the
+/// recipes its acquire steps run fits, and a short stage keeps the 32-line
+/// floor.
+fn stage_event_limit(units: usize) -> usize {
     RUN_TRACE_EVENT_MIN.max(
-        steps
+        units
             .saturating_mul(RUN_TRACE_EVENT_PER_STEP)
             .saturating_add(RUN_TRACE_EVENT_SLACK),
     )
 }
 
-/// One distinct trace line of the current stage: a 64-bit hash of the line and
-/// how many times it repeated. The line text is not kept here; only an entry
-/// that repeats keeps its text, in `RunTrace::repeated`. A hash collision
-/// merges two different lines' repeat counts, which can only fold one line's
-/// summary into another's, so it is accepted rather than checked.
+/// One distinct trace line of the current stage: two independent 64-bit
+/// digests of the line and how many times it repeated. The line text is not
+/// kept here; only an entry that repeats keeps its text, in
+/// `RunTrace::repeated`. A hit needs both digests, so a collision in one
+/// cannot hide a different line or fold its count into another line's
+/// summary; a real collision in both is accepted rather than checked.
 struct TraceEntry {
     hash: u64,
+    /// An FNV-1a digest where `hash` is SipHash-1-3: two functions, so one
+    /// collision does not repeat in the other.
+    check: u64,
     repeats: u32,
 }
 
@@ -236,6 +243,18 @@ fn trace_hash(line: &str) -> u64 {
     hasher.finish()
 }
 
+/// The second, independent digest of a trace line: 64-bit FNV-1a, where
+/// `trace_hash` is SipHash-1-3. A repeat needs both to match, so neither
+/// function's collision alone can hide a different line.
+fn trace_check(line: &str) -> u64 {
+    let mut check: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in line.bytes() {
+        check ^= u64::from(byte);
+        check = check.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    check
+}
+
 impl RunTrace {
     fn record(
         &mut self,
@@ -246,13 +265,18 @@ impl RunTrace {
         let (line, truncated) = trace_line(args, RUN_TRACE_LINE_LIMIT);
         self.truncated |= truncated;
         let hash = trace_hash(&line);
-        if let Some(index) = self.entries.iter().position(|entry| entry.hash == hash) {
+        let check = trace_check(&line);
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| entry.hash == hash && entry.check == check)
+        {
             let repeats = self.entries[index].repeats.saturating_add(1);
             self.entries[index].repeats = repeats;
             if repeats == 1 {
                 // The first repeat keeps the line text this log call already
-                // built; it is the same text as the first, and `flush_repeats`
-                // prints it with the count.
+                // built; both digests matched, so it is the first line's text,
+                // and `flush_repeats` prints it with the count.
                 self.repeated.push(RepeatedLine {
                     entry: index,
                     line: line.into_boxed_str(),
@@ -265,18 +289,22 @@ impl RunTrace {
             return;
         }
         output.log(level, &line);
-        self.entries.push(TraceEntry { hash, repeats: 0 });
+        self.entries.push(TraceEntry {
+            hash,
+            check,
+            repeats: 0,
+        });
     }
 
-    /// Start a stage's fresh budget, sized from its compiled step count. The
+    /// Start a stage's fresh budget, sized from its compiled trace units. The
     /// ending stage's folded repeats and truncation warning are emitted first;
     /// then its lines are dropped, so one bot's memory stays bounded by its
     /// largest stage and a later stage logs its lines even when an earlier
     /// one was truncated.
-    fn begin_stage(&mut self, output: &mut dyn NativeOutput, steps: usize) {
+    fn begin_stage(&mut self, output: &mut dyn NativeOutput, units: usize) {
         self.flush_repeats(output);
         self.entries.clear();
-        self.limit = stage_event_limit(steps);
+        self.limit = stage_event_limit(units);
     }
 
     fn flush_repeats(&mut self, output: &mut dyn NativeOutput) {
@@ -781,6 +809,16 @@ impl Quester {
             begun: Vec::new(),
         }
     }
+
+    /// The current sequence's trace units, or zero (the 32-line floor) when
+    /// the runner has no sequence yet.
+    fn stage_units(&self) -> usize {
+        self.path
+            .sequences
+            .get(self.seq_index)
+            .map_or(0, |sequence| sequence.trace_units)
+    }
+
     fn trace_start(&mut self, output: &mut dyn NativeOutput) {
         if self.trace.started {
             return;
@@ -2053,9 +2091,10 @@ impl Quester {
                 .as_ref()
                 .map_or("unknown", |previous| previous.0.as_ref());
             // Each stage keeps its own trace budget, sized from its compiled
-            // steps, so a long quest logs every later step line too.
+            // steps and the recipe steps its acquire steps run, so a long
+            // quest logs every later step line too.
             self.trace
-                .begin_stage(tick.output, self.path.sequences[sequence].steps.len());
+                .begin_stage(tick.output, self.path.sequences[sequence].trace_units);
             self.trace.record(
                 tick.output,
                 api::hostlog::Level::Info,
@@ -3061,7 +3100,14 @@ impl Script for Quester {
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
         if tick.cx.run() != self.run {
             self.run = tick.cx.run();
+            // A new run starts a fresh trace: print the ending run's pending
+            // repeat counts first, then give the current stage its own budget.
+            // `stage` does not change here, so the stage hook will not run
+            // again for it and this is the only place the new run is sized.
+            self.trace.flush_repeats(tick.output);
+            let units = self.stage_units();
             self.trace = RunTrace::default();
+            self.trace.begin_stage(tick.output, units);
             self.watchdog = Watchdog::default();
             self.cancel_step(tick);
             self.pair_admission = None;
@@ -5091,14 +5137,17 @@ mod tests {
             .contains("truncated after the event limit"));
     }
 
-    /// The budget is `4 × steps + 8` above the floor, so one stage keeps a
-    /// begin, skip and settled/failed line for each of its compiled steps.
+    /// The budget is `4 × units + 8` above the floor, where a unit is one of
+    /// the stage's steps or one step of a recipe its acquire steps run; one
+    /// stage keeps a begin, skip and settled/failed line for each of them.
     #[test]
     fn run_trace_stage_budget_is_sized_from_the_stage() {
         assert_eq!(stage_event_limit(0), RUN_TRACE_EVENT_MIN);
         assert_eq!(stage_event_limit(6), RUN_TRACE_EVENT_MIN);
         assert_eq!(stage_event_limit(7), 36);
         assert_eq!(stage_event_limit(27), 116);
+        assert_eq!(stage_event_limit(13 + 32), 188);
+        assert_eq!(stage_event_limit(107), 436);
         assert_eq!(stage_event_limit(usize::MAX), usize::MAX);
     }
 
@@ -5249,23 +5298,56 @@ mod tests {
         );
     }
 
-    /// The worst bundled stage is `fluffs:4` with 27 steps, so its budget is
-    /// 116 distinct lines. The table keeps a hash and a count per line and no
-    /// text for a distinct line, so the retained heap is the entry vector.
+    /// The worst bundled stage by trace units: its own steps plus every step
+    /// of the recipes its acquire steps run, nested recipes included.
+    fn worst_bundled_stage_units() -> (usize, String) {
+        use super::super::registry::PathRegistry;
+        let empty = std::collections::BTreeMap::new();
+        let mut worst = (0, String::new());
+        for id in PathRegistry::Bundled.ids() {
+            let Some(bytes) = super::super::compile::path_bytes(&id) else {
+                continue;
+            };
+            let document: super::super::path::PathDocument =
+                serde_json::from_slice(bytes).expect("bundled Path document");
+            let recipes = document
+                .quest
+                .as_ref()
+                .map_or(&empty, |quest| &quest.acquire);
+            for sequence in document.roles.iter().flat_map(|role| &role.sequences) {
+                let units = super::super::compile::sequence_trace_units(&sequence.steps, recipes);
+                if units > worst.0 {
+                    worst = (units, sequence.stage.0.to_string());
+                }
+            }
+        }
+        worst
+    }
+
+    /// The worst bundled stage (`prince:30`: 7 steps and 100 recipe steps)
+    /// sets the table's ceiling: 107 units, so 436 distinct lines. A distinct
+    /// line keeps two digests and a count and no text, so the retained heap is
+    /// the entry vector alone.
     #[test]
-    fn run_trace_worst_stage_table_stays_under_four_kib() {
+    fn run_trace_worst_bundled_stage_table_stays_under_sixteen_kib() {
+        let (worst, stage) = worst_bundled_stage_units();
+        assert_eq!(
+            (worst, stage.as_str()),
+            (107, "prince:30"),
+            "the bundled guides changed their worst stage; re-measure the trace ceiling"
+        );
         let mut trace = RunTrace::default();
         // `StatusCapture` ignores log lines, so the measured closure counts
         // only the trace's own allocations.
         let mut output = StatusCapture::default();
-        trace.begin_stage(&mut output, 27);
-        assert_eq!(trace.limit, 116);
+        trace.begin_stage(&mut output, worst);
+        assert_eq!(trace.limit, 436);
         let measured = allocation_counter::measure(|| {
             for line in 0..trace.limit {
                 trace.record(
                     &mut output,
                     api::hostlog::Level::Info,
-                    format_args!("quester test: stage fluffs:4 step fluffs-{line} (walk) begin"),
+                    format_args!("quester test: stage {stage} step {line} (walk) begin"),
                 );
             }
         });
@@ -5281,16 +5363,272 @@ mod tests {
             trace.repeated.capacity(),
             std::mem::size_of::<RepeatedLine>()
         );
-        assert_eq!(trace.entries.len(), 116);
+        assert_eq!(trace.entries.len(), 436);
         assert!(trace.repeated.is_empty(), "no line repeats in this stage");
         assert_eq!(
             retained, table,
             "the retained heap is the table's own buffers"
         );
         assert!(
-            retained < 4096,
-            "a 116-line stage keeps {retained}B, over the 4 KiB budget"
+            retained < 16 * 1024,
+            "a 436-line stage keeps {retained}B, over the 16 KiB budget"
         );
+    }
+
+    /// A stage whose acquire recipe has 32 children logs every child's begin
+    /// and settled line and every later step line. The step-only budget held
+    /// 60 lines here, fewer than the 64 child lines alone, so later lines were
+    /// dropped; the budget now counts the recipe's steps too.
+    #[test]
+    fn wide_acquire_recipe_logs_every_child_and_later_step_line() {
+        use super::super::families::tests::with_tick_output;
+        use super::super::path::PredicateDocument;
+
+        let wait = || serde_json::json!({"until":{"All":[]},"max_ticks":10});
+        let mut document = super::super::compile::decode_cook().unwrap();
+        document.quest.as_mut().unwrap().acquire.insert(
+            "test:wide".to_owned(),
+            (1..=32)
+                .map(|n| {
+                    test_step(
+                        &format!("wide-{n}"),
+                        "wait",
+                        wait(),
+                        PredicateDocument::Any(vec![]),
+                        PredicateDocument::All(vec![]),
+                    )
+                })
+                .collect(),
+        );
+        let mut steps = vec![test_step(
+            "wide-acquire",
+            "acquire",
+            serde_json::json!({"recipe":"test:wide"}),
+            PredicateDocument::Any(vec![]),
+            PredicateDocument::All(vec![]),
+        )];
+        steps.extend((1..=12).map(|n| {
+            test_step(
+                &format!("after-{n}"),
+                "wait",
+                wait(),
+                PredicateDocument::Any(vec![]),
+                PredicateDocument::All(vec![]),
+            )
+        }));
+        let units = steps.len() + 32;
+        assert_eq!(units, 45, "13 sequence steps and 32 recipe children");
+        document.roles[0].sequences[0].steps = steps;
+        document.roles[0].sequences[0].order = super::super::path::SequenceOrder::Ordered;
+        let (mut script, mut snapshot) = status_fixture(document);
+        // Start before the first stage is known so the run adopts `cook:0` and
+        // sizes its trace budget from this sequence.
+        script.stage = None;
+        script.needs_read = true;
+        let mut ledger = None;
+        let mut output = TraceCapture::default();
+        for tick in 1..=300 {
+            // Real steps move the player or train a skill. The synthetic waits
+            // change nothing observable, so give the no-progress watchdog a
+            // fresh xp total at every step boundary.
+            snapshot.seed_stats(vec![api::snapshot::StatView {
+                index: 0,
+                name: api::snapshot::stat_name(0).to_owned(),
+                effective: 1,
+                base: 1,
+                xp: i32::try_from(tick).unwrap_or(i32::MAX),
+                used: true,
+            }]);
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                script.tick(native).unwrap();
+            });
+            if tick == 1 {
+                assert_eq!(
+                    script.stage.as_ref().map(|stage| stage.0.as_ref()),
+                    Some("cook:0"),
+                    "the run adopts the first stage on its first tick"
+                );
+                assert_eq!(
+                    script.trace.limit,
+                    stage_event_limit(units),
+                    "the stage budget counts its 32 recipe children"
+                );
+            }
+            let done = output
+                .logs
+                .iter()
+                .any(|(_, line)| line.ends_with("step after-12 (wait) settled"));
+            if done || script.parked {
+                break;
+            }
+        }
+        let lines: Vec<&str> = output.logs.iter().map(|(_, line)| line.as_str()).collect();
+        for n in 1..=32 {
+            for event in ["begin", "settled"] {
+                let expected =
+                    format!("quester cook: stage cook:0 recipe test:wide child wide-{n} {event}");
+                assert!(
+                    lines.iter().any(|line| *line == expected),
+                    "missing {expected}: {lines:#?}"
+                );
+            }
+        }
+        for n in 1..=12 {
+            for event in ["begin", "settled"] {
+                let expected = format!("quester cook: stage cook:0 step after-{n} (wait) {event}");
+                assert!(
+                    lines.iter().any(|line| *line == expected),
+                    "missing {expected}: {lines:#?}"
+                );
+            }
+        }
+        assert!(
+            lines.iter().any(|line| {
+                *line == "quester cook: stage cook:0 step wide-acquire (acquire) settled"
+            }),
+            "the acquire step settles after its recipe: {lines:#?}"
+        );
+        let last_child = lines
+            .iter()
+            .rposition(|line| {
+                *line == "quester cook: stage cook:0 recipe test:wide child wide-32 settled"
+            })
+            .expect("the last child settles");
+        assert!(
+            !lines[..last_child]
+                .iter()
+                .any(|line| *line == "quester trace truncated after the event limit"),
+            "the stage truncated before its last child line: {lines:#?}"
+        );
+    }
+
+    /// A new run key prints the ending run's pending repeat counts and starts
+    /// the current stage's budget. Without it the new run kept the 32-line
+    /// floor, because the unchanged stage never enters the stage hook again.
+    #[test]
+    fn new_run_key_flushes_repeats_and_sizes_the_current_stage() {
+        use super::super::families::tests::with_tick_output;
+        use super::super::path::PredicateDocument;
+
+        let mut document = super::super::compile::decode_cook().unwrap();
+        document.roles[0].sequences[0].steps = (1..=10)
+            .map(|n| {
+                test_step(
+                    &format!("pending-{n}"),
+                    "wait",
+                    serde_json::json!({"until":{"Any":[]},"max_ticks":1000}),
+                    PredicateDocument::Any(vec![]),
+                    PredicateDocument::All(vec![]),
+                )
+            })
+            .collect();
+        let steps = document.roles[0].sequences[0].steps.len();
+        let (mut script, snapshot) = status_fixture(document);
+        script.stage = None;
+        script.needs_read = true;
+        let mut ledger = None;
+        let mut output = TraceCapture::default();
+        with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+            script.tick(native).unwrap();
+        });
+        assert_eq!(
+            script.stage.as_ref().map(|stage| stage.0.as_ref()),
+            Some("cook:0")
+        );
+        assert_eq!(
+            script.trace.limit,
+            stage_event_limit(steps),
+            "the stage budget is sized from its own steps"
+        );
+        assert!(script.trace.limit > RUN_TRACE_EVENT_MIN);
+        // A line that repeated in the ending run still owes its count.
+        for _ in 0..2 {
+            script.trace.record(
+                &mut output,
+                api::hostlog::Level::Info,
+                format_args!("quester cook: pending"),
+            );
+        }
+        let before = output.logs.len();
+        // The queue forwards a new run key to the existing Quester.
+        script.run = RunKey {
+            slot: 1,
+            run: 2,
+            session: 1,
+        };
+        with_tick_output(&snapshot, &mut ledger, 2, &mut output, |native| {
+            script.tick(native).unwrap();
+        });
+        let fresh: Vec<&str> = output.logs[before..]
+            .iter()
+            .map(|(_, line)| line.as_str())
+            .collect();
+        assert_eq!(
+            fresh.first().copied(),
+            Some("quester cook: pending (repeated 1 additional times)"),
+            "the ending run's count is printed before the new trace: {fresh:#?}"
+        );
+        assert_eq!(
+            script.trace.limit,
+            stage_event_limit(steps),
+            "the new run keeps the current stage's budget, not the 32-line floor"
+        );
+        assert!(
+            fresh
+                .iter()
+                .any(|line| *line == "quester cook: run start stage=cook:0"),
+            "the new run starts its own trace: {fresh:#?}"
+        );
+    }
+
+    /// A first-digest collision with a different line logs that line as its own
+    /// entry instead of hiding it and naming the wrong line in a summary; the
+    /// same line still folds into its new entry.
+    #[test]
+    fn run_trace_hash_collision_logs_the_different_line() {
+        let mut trace = RunTrace::default();
+        let mut output = TraceCapture::default();
+        trace.begin_stage(&mut output, 4);
+        trace.record(
+            &mut output,
+            api::hostlog::Level::Info,
+            format_args!("first line"),
+        );
+        trace.record(
+            &mut output,
+            api::hostlog::Level::Info,
+            format_args!("second line"),
+        );
+        assert_eq!(output.logs.len(), 2);
+        // Make the stored first line collide with the second in the first
+        // digest only: its second digest stays the first line's.
+        trace.entries[0].hash = trace_hash("second line");
+        trace.entries[0].check = trace_check("first line");
+        trace.record(
+            &mut output,
+            api::hostlog::Level::Info,
+            format_args!("second line"),
+        );
+        assert_eq!(
+            output.logs.len(),
+            3,
+            "a different line is logged, not skipped: {:?}",
+            output.logs
+        );
+        assert_eq!(trace.entries.len(), 3, "it counts as a new entry");
+        assert_eq!(
+            trace.entries[0].repeats, 0,
+            "the colliding entry's count is untouched"
+        );
+        assert!(trace.repeated.is_empty(), "no summary was started");
+        trace.record(
+            &mut output,
+            api::hostlog::Level::Info,
+            format_args!("second line"),
+        );
+        assert_eq!(output.logs.len(), 3, "the same line folds");
+        assert_eq!(trace.entries[2].repeats, 1);
+        assert_eq!(&*trace.repeated[0].line, "second line");
     }
 
     /// A stage longer than the old 32-line run budget logs every step line in
@@ -5769,8 +6107,8 @@ mod tests {
         );
         assert_eq!(
             script.trace.limit,
-            stage_event_limit(script.path.sequences[script.seq_index].steps.len()),
-            "the stage's budget comes from its compiled steps"
+            stage_event_limit(script.path.sequences[script.seq_index].trace_units),
+            "the stage's budget comes from its compiled steps and recipe steps"
         );
         assert!(messages.iter().any(|line| {
             line.contains("step skip-not-started skipped:")
