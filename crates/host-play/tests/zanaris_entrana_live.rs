@@ -177,7 +177,9 @@ fn zanaris_navigation_cell() -> Result<Cell, String> {
             .map(|item| item.count)
             .sum();
         if knife_count < 1 {
-            return Err(format!("Base40 fixture knife expected 1, observed {knife_count}"));
+            return Err(format!(
+                "Base40 fixture knife expected 1, observed {knife_count}"
+            ));
         }
         Ok(json!({
             "profile": "Base40",
@@ -199,7 +201,6 @@ fn zanaris_navigation_cell() -> Result<Cell, String> {
         observe_start: Some(observe_start),
     })
 }
-
 
 struct SourceGuard(Option<registry::FolderSource>);
 
