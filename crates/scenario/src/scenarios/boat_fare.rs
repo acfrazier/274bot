@@ -11,10 +11,10 @@ pub(crate) const MUSA_DOCK: WorldTile = WorldTile {
     z: 3146,
     level: 0,
 };
-/// Musa Point's Karamja-side gangplank landing (`static_routes.rs`).
-const MUSA_DOCK_FAR_SIDE: WorldTile = WorldTile {
-    x: 2956,
-    z: 3147,
+/// Karamja glory landing used by the far-start fare scenario.
+const KARAMJA_GLORY_LANDING: WorldTile = WorldTile {
+    x: 2918,
+    z: 3176,
     level: 0,
 };
 /// Luthas's stand (frozen `LUTHAS.anchor`).
@@ -49,9 +49,9 @@ pub(crate) fn boat_fare_v1_scenario() -> Scenario {
     boat_fare_scenario("boat_fare_v1_ts", MUSA_DOCK, false)
 }
 
-/// Fare recovery from the far side of the Musa Point dock.
+/// Fare recovery from the Karamja glory landing, far from Luthas and Musa Point.
 pub(crate) fn boat_fare_far_start_v1_scenario() -> Scenario {
-    boat_fare_scenario("boat_fare_far_start_v1_ts", MUSA_DOCK_FAR_SIDE, false)
+    boat_fare_scenario("boat_fare_far_start_v1_ts", KARAMJA_GLORY_LANDING, false)
 }
 
 /// [`boat_fare_v1_scenario`] with the connection dropped (`::serverdrop`)

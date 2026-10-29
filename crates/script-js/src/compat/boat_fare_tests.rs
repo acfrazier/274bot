@@ -24,6 +24,12 @@ const PORT_SARIM: WorldTile = WorldTile {
     z: 3217,
     level: 0,
 };
+const BRIMHAVEN_CART: WorldTile = WorldTile {
+    x: 2776,
+    z: 3214,
+    level: 0,
+};
+
 #[test]
 fn grove_anchor_uses_nearest_content_tree_to_frozen_center_deterministically() {
     use api::game_data::KaramjaSpawn;
@@ -586,6 +592,68 @@ fn a_short_luthas_staging_walk_without_a_row_retries() {
 }
 
 #[test]
+fn a_staging_arrival_without_luthas_waits_one_tick_before_retrying() {
+    reset();
+    let mut world = World::new(MUSA, 5);
+    let anchor = world.facts.luthas_anchor;
+    world.luthas_posted = false;
+    install_luthas_staging_reach_view(anchor);
+    world.post();
+    let coins = world.facts.coins;
+    let fare = world.facts.coin_payout;
+    fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
+
+    let (mut recover, mut clock, mut logs, ops) = start_recovery();
+    let walk = ops.first().expect("staging walk starts");
+    world.here = anchor;
+    world.tick += 1;
+    post_walk_outcome(
+        world.tick,
+        token(walk),
+        world.here,
+        anchor,
+        walk_radius(walk),
+        false,
+    );
+    let (result, ops) = recovery_step_observed(&mut recover, &mut clock, &mut logs);
+    assert_eq!(result, None, "arrival waits for another observed tick");
+    assert!(ops.is_empty());
+    assert!(
+        logs.iter()
+            .any(|line| line.contains("staging attempt 1/3 failed")),
+        "the arrival without a row spends the first attempt: {logs:?}"
+    );
+    assert!(
+        !logs.iter().any(|line| line.contains("recovery ended")),
+        "the first staging miss is not terminal"
+    );
+
+    for attempt in 2..=3 {
+        world.post();
+        let (result, ops) = recovery_step_observed(&mut recover, &mut clock, &mut logs);
+        assert_eq!(result, None, "attempt {attempt} waits before ending");
+        assert!(ops.is_empty(), "the player is already within staging radius");
+        assert!(
+            logs.iter()
+                .any(|line| line.contains(&format!("staging attempt {attempt}/3 failed"))),
+            "attempt {attempt} is recorded: {logs:?}"
+        );
+    }
+
+    world.post();
+    let (result, ops) = recovery_step_observed(&mut recover, &mut clock, &mut logs);
+    assert_eq!(result, Some(false), "the exhausted budget ends after a tick");
+    assert!(ops.is_empty());
+    assert!(
+        logs.back().is_some_and(|line| {
+            line.contains("recovery ended after attempt 3/3")
+                && line.contains("the staging walk ended without Luthas in view")
+        }),
+        "terminal staging failure keeps its detail: {logs:?}"
+    );
+}
+
+#[test]
 fn staging_walk_failures_share_three_attempts_and_keep_the_last_detail() {
     reset();
     let mut world = World::new(MUSA, 5);
@@ -658,22 +726,26 @@ fn being_at_luthas_staging_tile_checks_the_row_before_another_walk() {
     let fare = world.facts.coin_payout;
     fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
 
-    let mut ops = Vec::new();
-    let mut clock = InstantTaskClock::new();
-    let mut logs = VecDeque::new();
-    let recovery = {
+    let (mut ops, mut clock, mut logs) = (Vec::new(), InstantTaskClock::new(), VecDeque::new());
+    let mut recover = {
         let mut cx = Cx::test(&mut ops, &mut clock, None);
-        Recover::start(PORT_SARIM, &mut cx, &mut logs)
+        Recover::start(PORT_SARIM, &mut cx, &mut logs).expect("staging wait starts")
     };
-    assert!(
-        recovery.is_err(),
-        "no-row recovery ends after the row check"
-    );
-    assert!(ops.is_empty(), "do not walk away before checking the row");
+    assert!(ops.is_empty(), "the current tile needs no new walk");
     assert!(
         logs.iter()
-            .any(|line| line.contains("no posted talkable Luthas row")),
-        "the row check records its result: {logs:?}"
+            .any(|line| line.contains("staging attempt 1/3 failed")),
+        "arrival without Luthas spends the first attempt: {logs:?}"
+    );
+
+    world.post();
+    let (result, ops) = recovery_step_observed(&mut recover, &mut clock, &mut logs);
+    assert_eq!(result, None, "one missing row does not end recovery");
+    assert!(ops.is_empty());
+    assert!(
+        logs.iter()
+            .any(|line| line.contains("staging attempt 2/3 failed")),
+        "the next attempt also waits for a posted row: {logs:?}"
     );
 }
 
@@ -1457,16 +1529,71 @@ fn walk_to_does_not_recover_a_short_that_is_not_the_boat_fare() {
             2,
             (coins_id, count),
         );
+        let retry = tick();
         assert!(
-            tick().is_empty(),
-            "{count} coins from {from:?}: no recovery walk"
+            matches!(retry.as_slice(), [op] if walk_near(PORT_SARIM, 2)(op)),
+            "{count} coins from {from:?}: no fare recovery, but a fresh walk: {retry:?}"
         );
+
+        world.tick += 1;
+        post_walk_outcome(
+            world.tick,
+            token(&retry[0]),
+            world.here,
+            PORT_SARIM,
+            2,
+            true,
+        );
+        assert!(tick().is_empty());
         assert_eq!(
             machine::take(h),
             Take::Settled(Outcome::Done(json!(false))),
-            "frozen walkTo returns the failed walk as is"
+            "the bounded retry returns the second failed walk"
         );
     }
+}
+
+#[test]
+fn walk_to_retries_a_failed_initial_walk_without_missing_fare_evidence() {
+    reset();
+    let mut world = World::new(BRIMHAVEN_CART, 5);
+    let h = start_walk_to(&mut world);
+    let first = machine::merge_ops(Vec::new());
+    let first_token = token(&first[0]);
+    world.tick += 1;
+    post_walk_outcome(
+        world.tick,
+        first_token,
+        world.here,
+        PORT_SARIM,
+        2,
+        true,
+    );
+
+    let retry = tick();
+    assert!(
+        matches!(retry.as_slice(), [op] if walk_near(PORT_SARIM, 2)(op)),
+        "a failed walk without the exact fare signal gets a fresh route: {retry:?}"
+    );
+    let retry_token = token(&retry[0]);
+    assert_ne!(retry_token, first_token, "the retry uses a fresh request");
+    assert_eq!(machine::take(h), Take::Pending);
+
+    world.tick += 1;
+    post_walk_outcome(
+        world.tick,
+        retry_token,
+        world.here,
+        PORT_SARIM,
+        2,
+        true,
+    );
+    assert!(tick().is_empty());
+    assert_eq!(
+        machine::take(h),
+        Take::Settled(Outcome::Done(json!(false))),
+        "the second failed route spends the retry budget"
+    );
 }
 
 #[test]
@@ -1485,7 +1612,22 @@ fn walk_to_with_a_full_pack_and_no_banana_does_not_recover() {
         2,
         (coins_id, fare),
     );
-    assert!(tick().is_empty(), "no free slot: no walk to Luthas");
+    let retry = tick();
+    assert!(
+        matches!(retry.as_slice(), [op] if walk_near(PORT_SARIM, 2)(op)),
+        "no free slot prevents fare recovery but not the fresh route: {retry:?}"
+    );
+
+    world.tick += 1;
+    post_walk_outcome(
+        world.tick,
+        token(&retry[0]),
+        world.here,
+        PORT_SARIM,
+        2,
+        true,
+    );
+    assert!(tick().is_empty());
     assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
 }
 

@@ -750,7 +750,7 @@ What differs from the 289 lane:
   scripts, the `unpack` decoded-cache folder, the 274 nav bake
   (`BOT_NAV_REVISION=274`) and the `-274` run suffix. Runs are
   `<date>-dev-<commit>-274`.
-- Cells: [`cells-274.conf`](cells-274.conf), 103 of 244. Its header
+- Cells: [`cells-274.conf`](cells-274.conf), 104 of 244. Its header
   states the breadth rule, the R289-only quester and random-event
   oracle exclusions, and the known 289 non-PASS exclusions. The runner
   fails if a listed name leaves the catalog. It never drops a name silently.
