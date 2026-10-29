@@ -5594,14 +5594,9 @@ mod tests {
             api::hostlog::Level::Info,
             format_args!("first line"),
         );
-        trace.record(
-            &mut output,
-            api::hostlog::Level::Info,
-            format_args!("second line"),
-        );
-        assert_eq!(output.logs.len(), 2);
-        // Make the stored first line collide with the second in the first
-        // digest only: its second digest stays the first line's.
+        assert_eq!(output.logs.len(), 1);
+        // Make the stored first line collide with a line that is not in the
+        // table in the first digest only: its second digest stays its own.
         trace.entries[0].hash = trace_hash("second line");
         trace.entries[0].check = trace_check("first line");
         trace.record(
@@ -5611,23 +5606,28 @@ mod tests {
         );
         assert_eq!(
             output.logs.len(),
-            3,
+            2,
             "a different line is logged, not skipped: {:?}",
             output.logs
         );
-        assert_eq!(trace.entries.len(), 3, "it counts as a new entry");
+        assert_eq!(trace.entries.len(), 2, "it counts as a new entry");
         assert_eq!(
             trace.entries[0].repeats, 0,
             "the colliding entry's count is untouched"
         );
         assert!(trace.repeated.is_empty(), "no summary was started");
+        // The same line again folds into its own entry, not the colliding one.
         trace.record(
             &mut output,
             api::hostlog::Level::Info,
             format_args!("second line"),
         );
-        assert_eq!(output.logs.len(), 3, "the same line folds");
-        assert_eq!(trace.entries[2].repeats, 1);
+        assert_eq!(output.logs.len(), 2, "the same line folds");
+        assert_eq!(trace.entries[1].repeats, 1);
+        assert_eq!(
+            trace.repeated[0].entry, 1,
+            "the summary names the line's own entry"
+        );
         assert_eq!(&*trace.repeated[0].line, "second line");
     }
 
