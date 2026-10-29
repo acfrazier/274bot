@@ -28,9 +28,8 @@
 //! fish, resources, NPCs or an incidental-drop gate. Initial level/tool fixtures
 //! precede the progression baseline; proof gains come from the running script.
 //! G4a cells verify death recovery, including terminal return refusals and
-//! watchdog recreation; they require the
-//! `BOT_LIVE_NAME_PREFIX=g4a` namespace. The chance-gated random-event identity
-//! and gas-hazard cells are explicit live-proof limits.
+//! watchdog recreation. Gas and random-event identity stay explicit live-proof
+//! limits because their real content outcomes are chance-gated.
 //! Fixtures seed only account-owned state; they never inject scene locations,
 //! products or XP.
 //! Every live account uses the configured `BOT_LIVE_NAME_PREFIX` and a
@@ -5782,11 +5781,6 @@ fn run_cell_with_fixture(
                 .into(),
         );
     }
-    if (case == LiveCase::RandomEvent || case.is_death_recovery())
-        && std::env::var("BOT_LIVE_NAME_PREFIX").as_deref() != Ok("g4a")
-    {
-        return Err("G4a live cells require BOT_LIVE_NAME_PREFIX=g4a".into());
-    }
     let cell_name = cell.name_for_case(case);
     let _home = script::IsolatedEnv::enter(cell_name);
     api::hostlog::set_debug(true);
@@ -7865,7 +7859,7 @@ fn gatherer_bank_reconnect_return() {
     run_cell(Cell::Woodcutting, LiveCase::ReconnectReturn).unwrap();
 }
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_WC_TILE, and local 289 engine"]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, GATHERER_WC_TILE, and local 289 engine"]
 fn gatherer_random() {
     run_cell(Cell::Woodcutting, LiveCase::RandomEvent).unwrap();
 }
@@ -7888,13 +7882,13 @@ fn maze_random_complete(witness: &Witness) -> bool {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_WC_BANK_TILE, and local 289 engine"]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, GATHERER_WC_BANK_TILE, and local 289 engine"]
 fn gatherer_death_return() {
     run_cell(Cell::Woodcutting, LiveCase::DeathReturn).unwrap();
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, and local 289 engine"]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, and local 289 engine"]
 fn gatherer_death_reprovision_real_content() {
     run_cell_with_fixture(
         Cell::Woodcutting,
@@ -7905,33 +7899,33 @@ fn gatherer_death_reprovision_real_content() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, and local 289 engine; defaults to the Lumbridge respawn-region fixture"]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, and local 289 engine; defaults to the Lumbridge respawn-region fixture"]
 fn gatherer_death_return_respawn_region() {
     run_cell(Cell::Woodcutting, LiveCase::DeathRespawnRegion).unwrap();
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, and local 289 engine"]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, and local 289 engine"]
 fn gatherer_death_return_no_stock() {
     run_cell(Cell::Woodcutting, LiveCase::DeathNoStock).unwrap();
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_DEATH_RETURN_REFUSE_TILE, and local 289 engine"]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, GATHERER_DEATH_RETURN_REFUSE_TILE, and local 289 engine"]
 fn gatherer_death_return_refused_stops() {
     run_cell(Cell::Woodcutting, LiveCase::DeathReturnRefused).unwrap();
 }
 
 #[cfg(feature = "live-probe")]
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_WC_BANK_TILE, live-probe, and local 289 engine"]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, GATHERER_WC_BANK_TILE, live-probe, and local 289 engine"]
 fn gatherer_death_watchdog_pending5() {
     run_cell(Cell::Woodcutting, LiveCase::DeathWatchdogPending).unwrap();
 }
 
 #[cfg(feature = "live-probe")]
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_WC_BANK_TILE, live-probe, and local 289 engine"]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, GATHERER_WC_BANK_TILE, live-probe, and local 289 engine"]
 fn gatherer_death_watchdog_proving() {
     run_cell(Cell::Woodcutting, LiveCase::DeathWatchdogProving).unwrap();
 }
@@ -10393,7 +10387,7 @@ mod named_site_fixture_tests {
             "requested": true,
             "request_id": 2,
             "arrival": "Area",
-            "requested_radius": 1,
+            "requested_radius": 0,
             "requested_destination": [2846, 3437, 0],
         })
     }
@@ -10410,12 +10404,27 @@ mod named_site_fixture_tests {
     }
 
     #[test]
-    fn initial_site_walk_accepts_the_loaded_resource_approach() {
+    fn initial_site_walk_accepts_the_loaded_woodcutting_approach() {
+        let mut nav = initial_site_nav();
+        nav["requested_radius"] = json!(1);
         assert!(site_initial_nav_matches(
-            Cell::Fishing,
-            &initial_site_nav(),
+            Cell::Woodcutting,
+            &nav,
             world_tile(2844, 3429),
             "walking",
+            "Oak",
+        ));
+    }
+ 
+    #[test]
+    fn initial_fishing_approach_rejects_a_radius_one_arrival() {
+        let mut nav = initial_site_nav();
+        nav["requested_radius"] = json!(1);
+        assert!(!site_initial_nav_matches(
+            Cell::Fishing,
+            &nav,
+            world_tile(2844, 3429),
+            "surveying",
             "0_44_53_rarefish",
         ));
     }

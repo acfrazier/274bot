@@ -796,7 +796,7 @@ fn debug_field<'a>(debug: &'a str, field: &str) -> Option<&'a str> {
     let start = debug.find(&marker)?.checked_add(marker.len())?;
     let rest = &debug[start..];
     let end = rest
-        .find(|character| matches!(character, ',' | '}'))
+        .find([',', '}'])
         .unwrap_or(rest.len());
     Some(rest[..end].trim())
 }
@@ -1125,7 +1125,7 @@ fn close_analysis(
         .iter()
         .enumerate()
         .filter_map(|(index, action)| shop_button(action, index))
-        .last();
+        .next_back();
     if let Some(final_action) = final_action {
         match last_button {
             Some(last_button)

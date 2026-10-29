@@ -751,7 +751,7 @@ fn debug_field<'a>(debug: &'a str, field: &str) -> Option<&'a str> {
     let start = debug.find(&marker)?.checked_add(marker.len())?;
     let rest = &debug[start..];
     let end = rest
-        .find(|character| matches!(character, ',' | '}'))
+        .find([',', '}'])
         .unwrap_or(rest.len());
     Some(rest[..end].trim())
 }
@@ -897,7 +897,7 @@ fn button_analysis(
         }
         if let Some(edges) = reply_edges {
             maximum_reply_edges = Some(maximum_reply_edges.map_or(edges, |old| old.max(edges)));
-            if edges > u64::from(script::acquire::buy::BUY_REPLY_TICKS) {
+            if edges > script::acquire::buy::BUY_REPLY_TICKS {
                 failures.push(format!(
                     "ShopButton sequence {} reply used {edges} observed ticks, above BUY_REPLY_TICKS={}",
                     button.sequence,
@@ -2345,7 +2345,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
     if case == Case::NoCoins {
         let initial = lifecycle.initial.clone();
         let no_walk = !gather_actions.iter().any(|action| action["kind"] == "walk");
-        if buttons.len() != 0
+        if !buttons.is_empty()
             || !trades.is_empty()
             || bank_open_observed
             || bank_open_request_observed

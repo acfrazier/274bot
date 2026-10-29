@@ -19,6 +19,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use api::game_data::{self, SelectedGameData};
+use api::interact::Driver;
 use api::selected::{ClientRevision, RunKey};
 use api::service_pick::ShopKeeperFacts;
 use api::snapshot::{GameSnapshot, WorldTile};
@@ -26,10 +27,13 @@ use client::client::Client;
 use host::{FrameBuf, Pump};
 use parking_lot::Mutex;
 use scenario::{self, Proof, RunnerStatus, Scenario, ScenarioRunner, Step, StepKind, Wait};
+use script::native::walk::Walk;
 use script::native::{
     ActionContext, ActionError, ActionHandle, NativeMachine, NativeTick, Script, ScriptFailure,
-    ScriptFlow,
+    ScriptFlow, WalkEnd,
 };
+use script::quester::families::reach::walk_request;
+use script::shop_open::{self, Decision, Facts, Keeper, OpenCore, Session};
 use script::shim::InteractReq;
 use serde_json::{json, Value};
 use vault::{Profile, ProfileSettings};
@@ -334,6 +338,60 @@ impl DriverPacketTrace {
         (json!(rows), max, self.complete)
     }
 }
+/// The real encrypted sink count spans host interactions and Traveller writes.
+/// The next frame observes writes after the previous frontend callback.
+struct DriverPacketCounts {
+    packets_by_tick: BTreeMap<u32, u64>,
+    last: Option<(u32, u64)>,
+    complete: bool,
+}
+
+impl DriverPacketCounts {
+    fn new() -> Self {
+        Self {
+            packets_by_tick: BTreeMap::new(),
+            last: None,
+            complete: true,
+        }
+    }
+
+    fn observe(&mut self, client: &Client, tick: u32) {
+        self.record_count(Driver::packet_commit_count(client), tick);
+    }
+
+    fn record_count(&mut self, count: Option<u64>, tick: u32) {
+        let Some(count) = count else {
+            self.complete = false;
+            return;
+        };
+        if let Some((previous_tick, previous_count)) = self.last {
+            if let Some(delta) = count.checked_sub(previous_count) {
+                *self.packets_by_tick.entry(previous_tick).or_default() += delta;
+            } else {
+                self.complete = false;
+            }
+        }
+        self.last = Some((tick, count));
+    }
+
+    fn includes_interactions(&self, interactions: &DriverPacketTrace) -> bool {
+        interactions.complete
+            && interactions.packets_by_tick.iter().all(|(tick, opcodes)| {
+                self.packets_by_tick.get(tick).copied().unwrap_or(0) >= opcodes.len() as u64
+            })
+    }
+
+    fn value(&self) -> (Value, usize, bool) {
+        let rows = self.packets_by_tick.iter().map(|(tick, count)| {
+            json!({"tick": tick, "count": count, "source": "real-encrypted-sink-commits"})
+        }).collect::<Vec<_>>();
+        let maximum = self.packets_by_tick.values().copied().max().unwrap_or(0);
+        let maximum = usize::try_from(maximum);
+        let complete = self.complete && maximum.is_ok() && maximum.as_ref().is_ok_and(|count| *count > 0);
+        (json!(rows), maximum.unwrap_or(usize::MAX), complete)
+    }
+}
+
 
 fn item_fact(data: &SelectedGameData, alias: &str) -> Result<ItemFact, String> {
     let row = data
@@ -488,11 +546,6 @@ fn probe_scenario(stand: WorldTile, trace: Arc<Mutex<ProbeTrace>>) -> Scenario {
 #[derive(Clone, Copy)]
 enum Phase {
     OpenShop,
-    AwaitOpen {
-        request_id: u64,
-        request_tick: u64,
-        dispatch_tick: Option<u64>,
-    },
     Held {
         next: usize,
     },
@@ -528,15 +581,14 @@ enum Phase {
         close_tick: u64,
         closes_after: u64,
     },
-    AwaitReopen {
-        next: usize,
-        request_id: u64,
-        request_tick: u64,
-        dispatch_tick: Option<u64>,
-        closes_after: u64,
-    },
     Done,
 }
+struct PendingOpenTrade {
+    keeper: Keeper,
+    request_id: u64,
+    request_tick: u64,
+}
+
 
 struct BuyReplyProbeScript {
     account: String,
@@ -544,7 +596,11 @@ struct BuyReplyProbeScript {
     trace: Arc<Mutex<ProbeTrace>>,
     phase: Phase,
     last_emit_tick: Option<u64>,
-    open_request_started: Option<u64>,
+    open: OpenCore,
+    open_walk: Option<Walk>,
+    open_trade: Option<PendingOpenTrade>,
+    open_seen_trade: bool,
+    keeper_index: Option<i32>,
     reopening_after_coin_drop: bool,
 }
 
@@ -556,7 +612,11 @@ impl BuyReplyProbeScript {
             trace,
             phase: Phase::OpenShop,
             last_emit_tick: None,
-            open_request_started: None,
+            open: OpenCore::default(),
+            open_walk: None,
+            open_trade: None,
+            open_seen_trade: false,
+            keeper_index: None,
             reopening_after_coin_drop: false,
         }
     }
@@ -687,30 +747,139 @@ impl BuyReplyProbeScript {
         }
     }
 
-    fn trade_request(&self, cx: &ActionContext<'_>) -> Result<InteractReq, String> {
-        let rows = cx
-            .snapshot()
-            .npcs()
-            .ok_or_else(|| "scene has no NPC projection for Gerrant Trade".to_owned())?;
-        let keeper = rows.value.iter().find(|npc| {
-            npc.r#type == usize::try_from(self.fixture.keeper.id).ok()
-                && npc.name.as_deref().is_some_and(|name| {
+    fn keeper(&self, cx: &ActionContext<'_>) -> Option<Keeper> {
+        let snapshot = cx.snapshot();
+        let rows = snapshot.npcs()?;
+        let here = snapshot
+            .local_player()
+            .map(|row| row.value.player.network);
+        let view = script::reach_route::live(snapshot.reach().map(|row| row.value), here);
+        let candidates = rows
+            .value
+            .iter()
+            .filter(|npc| npc.r#type == usize::try_from(self.fixture.keeper.id).ok())
+            .filter(|npc| self.keeper_index.is_none_or(|index| i32::try_from(npc.index) == Ok(index)))
+            .filter(|npc| {
+                npc.name.as_deref().is_some_and(|name| {
                     name.eq_ignore_ascii_case(self.fixture.keeper.name.as_ref())
                 })
-                && npc.tile.level == self.fixture.keeper.tile.level
-                && npc.actions.iter().flatten().any(|action| action == "Trade")
+            })
+            .map(|npc| {
+                shop_open::Candidate::new(
+                    npc.name.as_deref().unwrap_or(self.fixture.keeper.name.as_ref()),
+                    npc.actions
+                        .iter()
+                        .flatten()
+                        .find(|action| action.eq_ignore_ascii_case("Trade"))
+                        .map(String::as_str),
+                    i32::try_from(npc.index).unwrap_or(-1),
+                    if npc.size >= 1 { npc.network } else { npc.tile },
+                    npc.size,
+                    npc.distance,
+                )
+            });
+        shop_open::choose_keeper(candidates, view.zip(here))
+    }
+
+    fn reset_open(&mut self) {
+        self.open = OpenCore::default();
+        self.open_walk = None;
+        self.open_trade = None;
+        self.open_seen_trade = false;
+    }
+
+    fn poll_open(&mut self, cx: &mut ActionContext<'_>) -> Result<bool, String> {
+        let now = cx.evidence().tick;
+        if let Some(pending) = &self.open_trade {
+            let Some(receipt) = cx.interaction_receipt(pending.request_id).copied() else {
+                if now.saturating_sub(pending.request_tick) >= SAMPLE_REPLY_LIMIT_TICKS {
+                    return Err("no actual Gerrant Trade dispatch receipt within the tick bound".into());
+                }
+                return Ok(false);
+            };
+            if !receipt.accepted || receipt.evidence.run != cx.run() {
+                return Err("Gerrant Trade was not accepted in the probe's current run".into());
+            }
+            let dispatched = Facts::new(
+                Some(receipt.evidence.tick),
+                Session::new(receipt.evidence.run.run, receipt.evidence.run.session),
+                receipt.chat_since,
+                0,
+                false,
+                false,
+            );
+            self.open.traded(&dispatched, &pending.keeper);
+            self.keeper_index.get_or_insert(pending.keeper.index());
+            self.open_seen_trade = true;
+            self.open_trade = None;
+        }
+        let snapshot = cx.snapshot();
+        let (chat_seq, cant_reach_seq) = snapshot.chat_lines(0).map_or((0, 0), |lines| {
+            lines.value.iter().fold((0, 0), |(all, refused), line| {
+                (
+                    all.max(line.sequence),
+                    if line.username.is_none()
+                        && line.type_ == 0
+                        && shop_open::is_cant_reach(&line.text)
+                    {
+                        refused.max(line.sequence)
+                    } else {
+                        refused
+                    },
+                )
+            })
         });
-        let Some(keeper) = keeper else {
-            return Err(format!(
-                "selected Gerrant NPC type {} with a Trade action is not in the posted scene",
-                self.fixture.keeper.id
-            ));
+        let facts = Facts::new(
+            Some(now),
+            Session::new(cx.run().run, cx.run().session),
+            chat_seq,
+            cant_reach_seq,
+            self.open_seen_trade
+                && snapshot.shop().is_some_and(|shop| shop.value.open)
+                && self.stock_row(cx).is_some(),
+            self.last_emit_tick == Some(now),
+        );
+        let decision = if let Some(walk) = self.open_walk.as_mut() {
+            match walk.poll(cx) {
+                Poll::Pending => return Ok(false),
+                Poll::Ready(Err(error)) => return Err(format!("shared shop approach failed: {error:?}")),
+                Poll::Ready(Ok(receipt)) => {
+                    self.open_walk = None;
+                    let keeper = self.keeper(cx);
+                    self.open.walked(receipt.end == WalkEnd::Arrived, || keeper)
+                }
+            }
+        } else {
+            let keeper = self.keeper(cx);
+            self.open.tick(&facts, || keeper)
         };
-        Ok(InteractReq::Npc {
-            name: self.fixture.keeper.name.to_string(),
-            action: "Trade".into(),
-            index: Some(keeper.index as i32),
-        })
+        match decision {
+            Decision::Wait => Ok(false),
+            Decision::Opened => Ok(true),
+            Decision::Failed(reason) => Err(format!("shared Gerrant shop opener failed: {reason}")),
+            Decision::Trade(keeper) => {
+                let request = InteractReq::Npc {
+                    name: keeper.name().to_owned(),
+                    action: keeper.action().to_owned(),
+                    index: Some(keeper.index()),
+                };
+                if let Some(request_id) = self.emit(cx, now, request)? {
+                    self.open_trade = Some(PendingOpenTrade {
+                        keeper,
+                        request_id,
+                        request_tick: now,
+                    });
+                }
+                Ok(false)
+            }
+            Decision::Walk(tile) => {
+                self.open_walk = Some(
+                    Walk::begin(walk_request(tile, 1, None, cx.evidence()), cx)
+                        .map_err(|error| format!("shared shop approach was not admitted: {error:?}"))?,
+                );
+                Ok(false)
+            }
+        }
     }
 
     fn stock_row(&self, cx: &ActionContext<'_>) -> Option<(i32, i32, i32)> {
@@ -858,81 +1027,26 @@ impl BuyReplyProbeScript {
 
         let flow = match self.phase {
             Phase::OpenShop => {
-                let shop_open = cx.snapshot().shop().is_some_and(|shop| shop.value.open);
-                if shop_open {
-                    self.fail(
-                        "shop page was already open before the probe's own Trade",
-                        None,
-                    )
+                if !self.open_seen_trade
+                    && self.open_trade.is_none()
+                    && cx.snapshot().shop().is_some_and(|shop| shop.value.open)
+                {
+                    self.fail("shop page was already open before the probe's own Trade", None)
                 } else {
-                    self.open_request_started.get_or_insert(now);
-                    match self.trade_request(cx) {
-                        Ok(request) => match self.emit(cx, now, request) {
-                            Ok(Some(request_id)) => {
-                                self.phase = Phase::AwaitOpen {
-                                    request_id,
-                                    request_tick: now,
-                                    dispatch_tick: None,
-                                };
-                                ScriptFlow::Continue
-                            }
-                            Ok(None) => ScriptFlow::Continue,
-                            Err(error) => self.fail(error, None),
-                        },
-                        Err(error) => {
-                            let started = self.open_request_started.unwrap_or(now);
-                            if now.saturating_sub(started) >= SAMPLE_REPLY_LIMIT_TICKS {
-                                self.fail(error, None)
+                    match self.poll_open(cx) {
+                        Ok(true) => {
+                            self.phase = if self.reopening_after_coin_drop {
+                                Phase::Refusal { next: 0 }
                             } else {
-                                ScriptFlow::Continue
-                            }
+                                Phase::Held { next: 0 }
+                            };
+                            ScriptFlow::Continue
                         }
+                        Ok(false) => ScriptFlow::Continue,
+                        Err(error) => self.fail(error, None),
                     }
                 }
             }
-            Phase::AwaitOpen {
-                request_id,
-                request_tick,
-                mut dispatch_tick,
-            } => match self.complete_control(
-                cx,
-                request_id,
-                request_tick,
-                &mut dispatch_tick,
-                now,
-                "Gerrant Trade",
-            ) {
-                Err(error) => self.fail(error, None),
-                Ok(false) => {
-                    self.phase = Phase::AwaitOpen {
-                        request_id,
-                        request_tick,
-                        dispatch_tick,
-                    };
-                    ScriptFlow::Continue
-                }
-                Ok(true) => {
-                    if cx.snapshot().shop().is_some_and(|shop| shop.value.open) {
-                        self.phase = if self.reopening_after_coin_drop {
-                            Phase::Refusal { next: 0 }
-                        } else {
-                            Phase::Held { next: 0 }
-                        };
-                    } else if self
-                        .fail_on_tick_limit(now, dispatch_tick.unwrap_or(request_tick), "shop page")
-                        .is_err()
-                    {
-                        return Ok(self.fail("Gerrant Trade had no observed open shop page", None));
-                    } else {
-                        self.phase = Phase::AwaitOpen {
-                            request_id,
-                            request_tick,
-                            dispatch_tick,
-                        };
-                    }
-                    ScriptFlow::Continue
-                }
-            },
             Phase::Held { next } => {
                 if next >= HELD_SAMPLES {
                     self.phase = Phase::DropCoins;
@@ -1133,7 +1247,7 @@ impl BuyReplyProbeScript {
                 Ok(true) => {
                     if held_count(cx, self.fixture.coins.id) == Some(0) {
                         self.reopening_after_coin_drop = true;
-                        self.open_request_started = None;
+                        self.reset_open();
                         self.phase = Phase::OpenShop;
                         ScriptFlow::Continue
                     } else if self
@@ -1404,11 +1518,14 @@ impl BuyReplyProbeScript {
                                     Some(sample),
                                 )
                             } else {
-                                self.phase = if row.ordinal == CLOSE_SAMPLES {
-                                    Phase::Close { next: row.ordinal }
+                                let ordinal = row.ordinal;
+                                drop(trace);
+                                self.reset_open();
+                                self.phase = if ordinal == CLOSE_SAMPLES {
+                                    Phase::Close { next: ordinal }
                                 } else {
                                     Phase::Reopen {
-                                        next: row.ordinal,
+                                        next: ordinal,
                                         close_tick: now,
                                         closes_after: after,
                                     }
@@ -1438,111 +1555,32 @@ impl BuyReplyProbeScript {
                 close_tick,
                 closes_after,
             } => {
-                let snapshot = cx.snapshot();
-                let shop = snapshot.shop();
-                if shop.is_some_and(|shop| shop.value.open) {
-                    if shop.is_some_and(|shop| shop.value.server_closes != closes_after) {
-                        self.fail(
-                            "server close counter changed outside the measured CloseModal dispatch",
-                            None,
-                        )
-                    } else if now.saturating_sub(close_tick) >= SAMPLE_REPLY_LIMIT_TICKS {
-                        self.fail(
-                            "shop page did not become locally absent before the next Trade",
-                            None,
-                        )
-                    } else {
-                        ScriptFlow::Continue
-                    }
-                } else if shop.is_some_and(|shop| shop.value.server_closes != closes_after) {
+                let shop = cx.snapshot().shop();
+                if shop.is_some_and(|shop| shop.value.server_closes != closes_after) {
                     self.fail(
                         "server close counter changed outside the measured CloseModal dispatch",
                         None,
                     )
-                } else {
-                    match self.trade_request(cx) {
-                        Ok(request) => match self.emit(cx, now, request) {
-                            Ok(Some(request_id)) => {
-                                self.phase = Phase::AwaitReopen {
-                                    next,
-                                    request_id,
-                                    request_tick: now,
-                                    dispatch_tick: None,
-                                    closes_after,
-                                };
-                                ScriptFlow::Continue
-                            }
-                            Ok(None) => ScriptFlow::Continue,
-                            Err(error) => self.fail(error, None),
-                        },
-                        Err(error) => {
-                            if now.saturating_sub(close_tick) >= SAMPLE_REPLY_LIMIT_TICKS {
-                                self.fail(error, None)
-                            } else {
-                                ScriptFlow::Continue
-                            }
-                        }
+                } else if !self.open_seen_trade
+                    && self.open_trade.is_none()
+                    && shop.is_some_and(|shop| shop.value.open)
+                {
+                    if now.saturating_sub(close_tick) >= SAMPLE_REPLY_LIMIT_TICKS {
+                        self.fail("shop page did not become locally absent before the next Trade", None)
+                    } else {
+                        ScriptFlow::Continue
                     }
-                }
-            }
-            Phase::AwaitReopen {
-                next,
-                request_id,
-                request_tick,
-                mut dispatch_tick,
-                closes_after,
-            } => match self.complete_control(
-                cx,
-                request_id,
-                request_tick,
-                &mut dispatch_tick,
-                now,
-                "same-keeper Trade after measured close",
-            ) {
-                Err(error) => self.fail(error, None),
-                Ok(false) => {
-                    self.phase = Phase::AwaitReopen {
-                        next,
-                        request_id,
-                        request_tick,
-                        dispatch_tick,
-                        closes_after,
-                    };
-                    ScriptFlow::Continue
-                }
-                Ok(true) => {
-                    let snapshot = cx.snapshot();
-                    let shop = snapshot.shop();
-                    if shop.is_some_and(|shop| shop.value.open) {
-                        if shop.is_some_and(|shop| shop.value.server_closes != closes_after) {
-                            self.fail("same-keeper Trade changed the server close count outside a CloseModal sample", None)
-                        } else if self.stock_row(cx).is_none() {
-                            self.fail("fresh same-keeper page has no real feather stock row", None)
-                        } else {
+                } else {
+                    match self.poll_open(cx) {
+                        Ok(true) => {
                             self.phase = Phase::Close { next };
                             ScriptFlow::Continue
                         }
-                    } else if self
-                        .fail_on_tick_limit(
-                            now,
-                            dispatch_tick.unwrap_or(request_tick),
-                            "same-keeper shop page",
-                        )
-                        .is_err()
-                    {
-                        self.fail("same-keeper Trade produced no fresh open shop page", None)
-                    } else {
-                        self.phase = Phase::AwaitReopen {
-                            next,
-                            request_id,
-                            request_tick,
-                            dispatch_tick,
-                            closes_after,
-                        };
-                        ScriptFlow::Continue
+                        Ok(false) => ScriptFlow::Continue,
+                        Err(error) => self.fail(error, None),
                     }
                 }
-            },
+            }
             Phase::Done => ScriptFlow::Complete,
         };
         Ok(flow)
@@ -1617,7 +1655,6 @@ impl Script for OwnedProbeScript {
 fn phase_name(phase: Phase) -> &'static str {
     match phase {
         Phase::OpenShop => "open_shop",
-        Phase::AwaitOpen { .. } => "await_open",
         Phase::Held { .. } => "held",
         Phase::AwaitHeld { .. } => "await_held",
         Phase::DropCoins => "drop_coins",
@@ -1628,7 +1665,6 @@ fn phase_name(phase: Phase) -> &'static str {
         Phase::Close { .. } => "close",
         Phase::AwaitClose { .. } => "await_close",
         Phase::Reopen { .. } => "reopen",
-        Phase::AwaitReopen { .. } => "await_reopen",
         Phase::Done => "done",
     }
 }
@@ -1656,6 +1692,7 @@ struct LiveState {
     trace: Arc<Mutex<ProbeTrace>>,
     started_at: Option<Instant>,
     started: bool,
+    packet_counts: DriverPacketCounts,
 }
 
 impl LiveState {
@@ -1692,8 +1729,12 @@ impl LiveState {
     }
 
     fn frame(&mut self, client: &mut Client, hold: bool) {
+        Driver::finish_pending_packet(client);
         let drain = self.pump.drain_client(client);
         host::publish_snapshot(&mut self.snapshot, client, drain);
+        if self.started {
+            self.packet_counts.observe(client, self.snapshot.tick());
+        }
         if client.ingame && client.scene_state == 2 {
             self.trace.lock().player_info_clock.observe(
                 client.gens.session,
@@ -1766,6 +1807,9 @@ impl LiveState {
             return;
         }
         self.runner.tick_with_hold(client, hold);
+        if self.started {
+            self.packet_counts.observe(client, self.snapshot.tick());
+        }
     }
 }
 
@@ -1797,7 +1841,7 @@ fn debug_field<'a>(debug: &'a str, field: &str) -> Option<&'a str> {
     let start = debug.find(&marker)?.checked_add(marker.len())?;
     let rest = &debug[start..];
     let end = rest
-        .find(|character| matches!(character, ',' | '}'))
+        .find([',', '}'])
         .unwrap_or(rest.len());
     Some(rest[..end].trim())
 }
@@ -2098,6 +2142,7 @@ fn run_live_probe() {
         trace: Arc::clone(&trace),
         started_at: None,
         started: false,
+        packet_counts: DriverPacketCounts::new(),
     }));
     let state = Arc::clone(&frame_state);
     let frame_account = account.clone();
@@ -2114,8 +2159,8 @@ fn run_live_probe() {
     let mut play = run_with_template(
         Arc::clone(&template),
         true,
-        vec![profile],
-        move |_| (None, Some(Arc::clone(&frame))),
+        vec![],
+        |_| (None, None),
         move |client, username, hold| {
             if username == frame_account {
                 client.set_draw(true);
@@ -2130,6 +2175,16 @@ fn run_live_probe() {
         state.runner.set_obj_names(play.obj_names());
         state.start_context = Some(start_context);
     }
+    let observed_state = Arc::clone(&frame_state);
+    play.set_post_native_player_info_observer(move |client, username| {
+        let mut state = observed_state.lock();
+        if username == state.account && state.started {
+            let tick = state.snapshot.tick();
+            state.packet_counts.observe(client, tick);
+        }
+    });
+    play.try_spawn_slot(profile, None, Some(frame), None)
+        .expect("spawn probe only after its packet observer and script context are installed");
     play.focus(&account);
 
     let preparation_deadline = Instant::now() + PREPARATION_DEADLINE;
@@ -2215,9 +2270,16 @@ fn run_live_probe() {
         .unwrap_or_else(|error| error.into_inner())
         .actions
         .clone();
-    let (packet_rows, max_packets, packet_trace_complete) =
-        DriverPacketTrace::from_actions(&actions).value();
+    let interactions = DriverPacketTrace::from_actions(&actions);
+    let (interaction_packet_rows, _, _) = interactions.value();
+    let state = frame_state.lock();
+    let (packet_rows, max_packets, packet_trace_complete) = state.packet_counts.value();
+    let interactions_counted = state.packet_counts.includes_interactions(&interactions);
+    drop(state);
     let mut capture_failures = record_capture_evidence(&mut samples, &actions);
+    if !interactions_counted {
+        capture_failures.push("real sink counts omitted a decoded interaction packet".into());
+    }
     if !packet_trace_complete {
         capture_failures.push("outgoing Driver packet trace was incomplete".into());
     }
@@ -2304,6 +2366,7 @@ fn run_live_probe() {
         "max_driver_packets_per_PLAYER_INFO_tick": max_packets,
         "driver_packet_limit": MAX_DRIVER_PACKETS_PER_TICK,
         "driver_packet_trace_complete": packet_trace_complete,
+        "decoded_interaction_packets": interaction_packet_rows,
         "terminal_error": terminal_error,
         "script": script_trace,
         "passed": passed,
@@ -2391,4 +2454,41 @@ fn probe_packet_trace_rejects_missing_or_undecodable_dispatch_evidence() {
     ] {
         assert!(!DriverPacketTrace::from_actions(&actions).value().2);
     }
+}
+
+#[test]
+fn probe_sink_counts_attribute_late_native_and_walk_writes_to_their_own_tick() {
+    let mut counts = DriverPacketCounts::new();
+    counts.record_count(Some(10), 7);
+    counts.record_count(Some(12), 7);
+    counts.record_count(Some(15), 8);
+    counts.record_count(Some(16), 8);
+    let (rows, maximum, complete) = counts.value();
+    assert!(complete);
+    assert_eq!(maximum, 5);
+    assert_eq!(rows[0]["tick"], 7);
+    assert_eq!(rows[0]["count"], 5);
+    assert_eq!(rows[1]["tick"], 8);
+    assert_eq!(rows[1]["count"], 1);
+    let actions = [
+        json!({"kind": "interaction", "tick": 7, "wire_decoded": true, "wire_opcodes": [67, 178]}),
+        json!({"kind": "interaction", "tick": 8, "wire_decoded": true, "wire_opcodes": [155]}),
+    ];
+    assert!(counts.includes_interactions(&DriverPacketTrace::from_actions(&actions)));
+    let omitted = [
+        json!({"kind": "interaction", "tick": 8, "wire_decoded": true, "wire_opcodes": [67, 178]}),
+    ];
+    assert!(!counts.includes_interactions(&DriverPacketTrace::from_actions(&omitted)));
+}
+
+#[test]
+fn probe_sink_counts_reject_missing_or_reset_counters() {
+    for ending in [None, Some(9)] {
+        let mut counts = DriverPacketCounts::new();
+        counts.record_count(Some(10), 7);
+        counts.record_count(Some(11), 7);
+        counts.record_count(ending, 8);
+        assert!(!counts.value().2);
+    }
+    assert!(!DriverPacketCounts::new().value().2);
 }
