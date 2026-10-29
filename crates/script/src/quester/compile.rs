@@ -3426,7 +3426,7 @@ mod tests {
         for (max_attempts, stop, expected) in [
             (Some(0u32), Some("retry-stop"), "step-max-attempts-zero"),
             (
-                Some(super::path::MAX_STEP_ATTEMPTS + 1),
+                Some(crate::quester::path::MAX_STEP_ATTEMPTS + 1),
                 Some("retry-stop"),
                 "step-max-attempts-too-large",
             ),
