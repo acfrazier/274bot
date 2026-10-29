@@ -623,7 +623,7 @@ pub(super) struct MakeArgs {
     menu: Option<MakeMenu>,
     /// Held-target quantity after this production step.
     qty: QuantityDocument,
-    /// Use the game's Make-X option when available.
+    /// Allow Make-X only when the exact fixed quantity is not posted.
     #[serde(default)]
     make_x: bool,
 }

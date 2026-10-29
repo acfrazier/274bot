@@ -3299,6 +3299,68 @@ fn production_menu_client(rows: &[(i32, &str)]) -> client::client::Client {
     client
 }
 
+fn production_main_make_client(
+    item_id: i32,
+    item_name: &str,
+    actions: &[&str],
+) -> client::client::Client {
+    use client::client::{Client, ClientConfig};
+    use client::config::if_type::{ComponentType, IfType, IfTypeMut};
+    use client::io::ServerProt;
+
+    let mut client = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp/274bot-no-production-cache".into(),
+        members: true,
+        lowmem: false,
+    });
+    let cache = Arc::get_mut(&mut client.cache).unwrap();
+    cache
+        .objs
+        .resize(item_id as usize + 1, client::config::ObjType::default());
+    cache.objs[item_id as usize] = client::config::ObjType {
+        id: item_id,
+        name: item_name.into(),
+        ..Default::default()
+    };
+    client.set_iface(
+        2200,
+        IfType {
+            id: 2200,
+            layer_id: 2200,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![2210]),
+            ..Default::default()
+        },
+    );
+    let mut operations: [Option<String>; 5] = Default::default();
+    for (operation, text) in operations.iter_mut().zip(actions) {
+        *operation = Some((*text).into());
+    }
+    client.set_iface(
+        2210,
+        IfType {
+            id: 2210,
+            layer_id: 2200,
+            r#type: ComponentType::TYPE_INV,
+            iop: operations,
+            ..Default::default()
+        },
+    );
+    client.set_iface_mut(
+        2210,
+        IfTypeMut {
+            link_obj_type: Some(vec![item_id + 1]),
+            link_obj_number: Some(vec![1]),
+            ..Default::default()
+        },
+    );
+    client.main_modal_id = 2200;
+    client.bump_gens(ServerProt::IF_OPENMAIN);
+    client
+}
+
 #[test]
 fn make_accepts_selector_only_and_legacy_location_trigger_but_rejects_invalid_authorship() {
     compile_context_test(|compile| {
@@ -3432,6 +3494,7 @@ fn item_on_item_use_on_emits_the_selected_inventory_target() {
         .unwrap();
         let client = production_menu_client(&[(decoy_id, "Longbow"), (menu_id, "Shortbow")]);
         snapshot.rebuild_family(&client, api::snapshot::Family::MakeProducts);
+        snapshot.rebuild_family(&client, api::snapshot::Family::Modals);
         snapshot.seed_inventory(
             vec![
                 held(source_id, "Knife", 4, 1, None),
@@ -3518,6 +3581,7 @@ fn item_on_location_use_on_opens_pottery_product_selection() {
         .unwrap();
         let client = production_menu_client(&[(menu_id, "Unfired bowl")]);
         snapshot.rebuild_family(&client, api::snapshot::Family::MakeProducts);
+        snapshot.rebuild_family(&client, api::snapshot::Family::Modals);
         snapshot.seed_inventory(vec![held(source_id, "Soft clay", 6, 1, None)], 28);
         assert_ne!(source_id, product_id);
         assert!(matches!(
@@ -3536,6 +3600,91 @@ fn item_on_location_use_on_opens_pottery_product_selection() {
         assert!(matches!(
             emitted(&ledger),
             InteractReq::IfButton { component_id: 2121 }
+        ));
+    });
+}
+
+#[test]
+fn item_on_anvil_make_selects_bronze_wire_main_make_row() {
+    compile_context_test(|compile| {
+        let bar_id = resolve_obj(compile, "bronze_bar").unwrap();
+        let product_id = resolve_obj(compile, "bronzecraftwire").unwrap();
+        let anvil_id = resolve_loc(compile, "anvil").unwrap();
+        let use_on = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "bronze_bar",
+                "target": {"loc": "anvil"}
+            })),
+            compile,
+        )
+        .unwrap();
+        let make = s2::compile_make(
+            test_args::<s2::MakeArgs>(serde_json::json!({
+                "product": "bronzecraftwire",
+                "menu": {
+                    "obj": "bronze_bar",
+                    "source": "C:scripts/skill_smithing/configs/smithing/smithing.dbrow:1321-1330"
+                },
+                "qty": 1
+            })),
+            compile,
+        )
+        .unwrap();
+
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(5, 5)));
+        snapshot.seed_inventory(vec![held(bar_id, "Bronze bar", 8, 1, None)], 28);
+        let mut anvil = loc(anvil_id, "Anvil", "Use");
+        anvil.tile = tile(5, 6);
+        anvil.distance = 1;
+        snapshot.seed_locs(vec![anvil]);
+        let mut ledger = None;
+        let mut use_on_run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| use_on.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| use_on_run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::UseOn {
+                kind,
+                target_name: Some(name),
+                x: 5,
+                z: 6,
+                source_item_id: Some(source),
+                source_item_slot: Some(8),
+                ..
+            } if kind == "loc" && name == "Anvil" && *source == bar_id
+        ));
+        accept_last(&mut ledger, 3, true);
+
+        let menu_client = production_main_make_client(bar_id, "Bronze bar", &["Make 1"]);
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake);
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
+        assert_ne!(bar_id, product_id);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 4, |tick| {
+                with_step(tick, |cx| use_on_run.poll(cx))
+            }),
+            Poll::Ready(Ok(_))
+        ));
+        let mut make_run = with_tick(&snapshot, &mut ledger, 5, |tick| {
+            with_step(tick, |cx| make.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
+            with_step(tick, |cx| make_run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::MakePanel {
+                id,
+                slot: 0,
+                component,
+                operation: 1,
+            } if *id == bar_id && *component == 2210
         ));
     });
 }
