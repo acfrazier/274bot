@@ -452,6 +452,9 @@ skipped. Their unproved trajectories stay impassable. A direct shipyard entry
 requires Grand Tree progress at least 80 and Monkey Madness progress above 1;
 exit requires only the Grand Tree condition. These conditions do not mean that
 both quests must be complete.
+A proved paired-gate exit can have no quest or item condition. Its source
+membership guard still applies. This exception does not admit an unproved
+unguarded entrance.
 The direct shipyard arm can close an interface only as its first command,
 before any yield. The engine closes modals before it dispatches the loc op;
 this second close therefore cannot run a close trigger. A prior command or

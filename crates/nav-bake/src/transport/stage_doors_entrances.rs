@@ -1050,15 +1050,15 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
             reads.body(&handler.body, src);
             reads.items.sort_unstable();
             reads.items.dedup();
-            let stages =
-                if reads.stage_boundaries.is_empty() || !has_certified_paired_gate(handler, src) {
-                    Vec::new()
-                } else {
-                    let Some(stages) = quest_stage_ranges(&reads, src) else {
-                        continue;
-                    };
-                    stages
+            let paired_gate = has_certified_paired_gate(handler, src);
+            let stages = if reads.stage_boundaries.is_empty() || !paired_gate {
+                Vec::new()
+            } else {
+                let Some(stages) = quest_stage_ranges(&reads, src) else {
+                    continue;
                 };
+                stages
+            };
             let Some(stage_combinations) = stage_combinations(&stages) else {
                 bump(
                     skipped,
@@ -1200,7 +1200,8 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                                 })
                             });
                             for result in [complete, incomplete].into_iter().flatten() {
-                                if result.needs.quests.is_empty()
+                                if !paired_gate
+                                    && result.needs.quests.is_empty()
                                     && result.needs.forbidden_held.is_empty()
                                     && result.needs.forbidden_worn.is_empty()
                                     && result.needs.items.is_empty()
