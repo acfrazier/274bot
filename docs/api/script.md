@@ -1976,18 +1976,23 @@ flight settles false (a deposit loop does nothing).
   bank-side row with the name, by id, slot and component, and answers whether
   it pressed. A row without the label presses nothing; it is never an All.
 - **`depositAllMatching` / `depositInventory` / `depositAllExcept`** press
-  each matching row's All op by id and wait up to eight fresh game updates for
-  that id to leave the pack. A side row is clicked only while its item remains
-  in the current pack. The loop ends when no matching pack items remain or a
-  click's eight-update bound expires; if a current pack candidate has no
+  each matching row's All op by id and wait for that id to leave the pack.
+  If a transfer does not settle, its timeout requires at least eight fresh
+  game updates (observed ticks) and 4.8 seconds of active time, whichever
+  takes longer. A deposit may make one second transfer attempt after a no-op
+  click, with the same timeout bound. A side row is clicked only while its
+  item remains in the current pack. The loop ends when no matching pack items
+  remain or a click's wait expires; if a current pack candidate has no
   matching posted side row, the loop waits up to 1.2 s and then fails rather
   than reporting success with items still held. `depositAllExcept(names)`
   keeps every id whose display name is kept, noted or not. A nameless row is
   still an item the matcher decides.
 - **`Bank.withdrawLoad(name)`** presses the row's Withdraw-All and answers
-  true once more pack slots are used, the pack is full or that row emptied,
-  within eight fresh game updates; a row without All is withdrawn as
-  `withdrawX` of the free slots. A full pack is true with no press.
+  true once more pack slots are used, the pack is full or that row emptied.
+  If the transfer does not settle, its timeout requires at least eight fresh
+  game updates (observed ticks) and 4.8 seconds of active time, whichever
+  takes longer; a row without All is withdrawn as `withdrawX` of the free
+  slots. A full pack is true with no press.
 - **`Bank.close(timeoutMs)`** is true at once on a shut bank. Otherwise one
   Close is true only when the bank is shut, its old side root is released
   and the bank session generation moved on, within `timeoutMs` (4 s when
