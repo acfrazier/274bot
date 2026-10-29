@@ -542,13 +542,7 @@ mod tests {
             },
         );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        TextureHandle {
-            device: device.clone(),
-            queue: queue.clone(),
-            view,
-            width: 2,
-            height: 2,
-        }
+        TextureHandle::untracked(device.clone(), queue.clone(), view, 2, 2)
     }
 
     /// A real 2×2 RGBA8 texture on a headless wgpu device, written with
@@ -815,13 +809,13 @@ mod tests {
 
         // The client reuses one `frame_texture` per backend: a re-taken
         // frame of the same texture must not re-register.
-        let re_take = TextureHandle {
-            device: device.clone(),
-            queue: queue.clone(),
-            view: client_texture.create_view(&Default::default()),
-            width: 2,
-            height: 2,
-        };
+        let re_take = TextureHandle::untracked(
+            device.clone(),
+            queue.clone(),
+            client_texture.create_view(&Default::default()),
+            2,
+            2,
+        );
         view.present(&mut gpu, FrameOutput::Texture(re_take));
         assert_eq!(
             gpu.registered.len(),
@@ -945,13 +939,13 @@ mod tests {
         assert_eq!(view.present_stats.bind_rereg, 1);
         assert_eq!(view.present_stats.bind_noop, 0);
 
-        let again = TextureHandle {
-            device: device.clone(),
-            queue: queue.clone(),
-            view: tex.create_view(&Default::default()),
-            width: 2,
-            height: 2,
-        };
+        let again = TextureHandle::untracked(
+            device.clone(),
+            queue.clone(),
+            tex.create_view(&Default::default()),
+            2,
+            2,
+        );
         view.present(&mut gpu, FrameOutput::Texture(again));
         assert_eq!(view.present_stats.tex, 2);
         assert_eq!(
