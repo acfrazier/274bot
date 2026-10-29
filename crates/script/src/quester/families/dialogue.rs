@@ -362,10 +362,16 @@ impl NativeMachine for Dialogue {
                 }
             }
         }
-        // NPC melee closes interfaces even when it deals zero damage. A
-        // witnessed combat close is not the quiet end of a conversation.
-        // A visible Continue component is an active page even without a root.
-        if DialogueOutcome::combat_interrupted(obs.ready, obs.in_combat) {
+        // The local health-bar flag can outlive a kill. Content can close one
+        // page before it opens the next. Wait for the first continuation page
+        // before treating that flag as an interruption.
+        let awaiting_initial_continuation = matches!(
+            &self.args.target,
+            DialogueTarget::Continuation
+        ) && matches!(&self.surface, Surface::Unselected);
+        if !awaiting_initial_continuation
+            && DialogueOutcome::combat_interrupted(obs.ready, obs.in_combat)
+        {
             return Poll::Ready(Err(ActionError::CombatInterrupted));
         }
         match self.phase {
