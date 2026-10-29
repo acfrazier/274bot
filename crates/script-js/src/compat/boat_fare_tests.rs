@@ -1602,7 +1602,7 @@ fn walk_to_waits_for_owned_random_event_before_fare_recovery() {
 fn walk_to_waits_for_owned_random_event_during_re_walk() {
     crate::event_signal::clear();
     let (h, mut world, _, again) = earn_the_fare(None);
-    assert!(is_walk(&again));
+    assert!(walk_near(PORT_SARIM, 2)(&again));
 
     world.ours = true;
     world.post();
