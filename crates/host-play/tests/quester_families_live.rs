@@ -1543,21 +1543,18 @@ fn live_dialogue_answer_once_filliman_repeated_menu() {
         }) {
             step_seen = true;
         }
-        if let Some(chat) = snapshot.chat_modal() {
-            // Count a menu opening once, not each poll of the same page.
-            // Text frames may still arrive after the option rows; the rows
-            // identify the menu. Without answer_once the driver re-answers
-            // the question until DRIVE_STEPS fails.
-            let menu = chat
-                .value
-                .options
-                .iter()
-                .any(|option| option.text.eq_ignore_ascii_case("Ok, thanks."));
-            if menu && !in_menu {
-                menu_pages += 1;
-            }
-            in_menu = menu;
+        // Count a menu opening once, not each poll of the same page.
+        // Text frames may still arrive after the option rows; the rows
+        // identify the menu. Without answer_once the driver re-answers
+        // the question until DRIVE_STEPS fails.
+        let menu = snapshot
+            .chat_options()
+            .iter()
+            .any(|option| option.text.eq_ignore_ascii_case("Ok, thanks."));
+        if menu && !in_menu {
+            menu_pages += 1;
         }
+        in_menu = menu;
         if !step_seen || !completed_lifecycle(lifecycle) || snapshot.modals().chat != -1 {
             return Ok(None);
         }
