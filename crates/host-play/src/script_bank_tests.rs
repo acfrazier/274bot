@@ -270,7 +270,8 @@ fn queued_bank_pick_keeps_the_state_of_the_frame_that_queued_it() {
     frame_a.quests.insert("Frame A".into());
     let mut frame_b = WorldState::empty();
     frame_b.quests.insert("Frame B".into());
-    let scope = api::identity::Scope::Slot(api::identity::SlotKey::from_incarnation(1).unwrap());
+    let frame_a = Arc::new(frame_a);
+    let frame_b = Arc::new(frame_b);
     let mut driver = HeldDriver;
     let snapshot = GameSnapshot::new();
     for state in [&frame_a, &frame_b] {
@@ -298,7 +299,8 @@ fn queued_bank_pick_keeps_the_state_of_the_frame_that_queued_it() {
         .current
         .as_ref()
         .expect("a far routable bank queues selection work");
-    assert_eq!(*active.job.request.state, frame_a);
+    assert!(Arc::ptr_eq(&active.job.request.state, &frame_a));
+    assert_eq!(active.job.request.state.quests, frame_a.quests);
 }
 
 #[test]
@@ -376,12 +378,13 @@ fn typed_select_air_fallback_is_opt_in_when_no_route_target_exists() {
                 tick: 1,
                 sequence: 1,
             };
+            let state = Arc::new(WorldState::empty());
             queue_native_bank_pick_scoped(
                 &navs,
                 "test",
                 api::identity::Scope::Slot(api::identity::SlotKey::from_incarnation(1).unwrap()),
                 &world,
-                Some(&WorldState::empty()),
+                Some(&state),
                 NativeBankPickInput {
                     request,
                     authority,
@@ -488,12 +491,13 @@ fn typed_select_routes_before_using_a_closer_air_fallback_with_compatibility_bou
         }
     ));
     let navs = navs(banks);
+    let state = Arc::new(WorldState::empty());
     queue_native_bank_pick_scoped(
         &navs,
         "test",
         api::identity::Scope::Slot(api::identity::SlotKey::from_incarnation(1).unwrap()),
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&state),
         NativeBankPickInput {
             request,
             authority,

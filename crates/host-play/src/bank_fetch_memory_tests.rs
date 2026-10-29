@@ -723,7 +723,7 @@ fn assert_one_trip_only_for_a_hint(arrival: nav_planner::arrival::ArrivalKind) {
         loc_id: None,
         arrival,
         opts: fetch_on(),
-        state: Some(state.clone()),
+        state: Some(Arc::new(state.clone())),
         bank_origin,
         bank: rows.to_vec(),
         live_geometry: None,

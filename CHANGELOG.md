@@ -61,6 +61,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   of polls inside one tick no longer ends a crossing early, and a slow
   poll that misses several ticks no longer extends it.
 
+- Route planning now reuses each bot's unchanged eligibility facts between
+  observations. It refreshes those facts when their source data changes.
+  Queued routes keep the facts captured when they start.
+
 ### Scripting
 
 - The script API documentation now states that moving the bot by hand during a

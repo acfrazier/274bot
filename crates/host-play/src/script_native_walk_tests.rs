@@ -3885,6 +3885,7 @@ fn review_manual_takeover_then_nopath_must_still_deliver_a_terminal() {
 fn review_native_recovery_click_then_nopath_delivers_terminal() {
     let mut rig = two_walk_rig();
     let first_native = rig.navs.lock().unwrap()["alice"].walk_request_id;
+    let state = Arc::new(WorldState::empty());
     super::apply_watchdog_nav_action(
         script::WatchdogAction::ArmWalk {
             x: 8,
@@ -3896,7 +3897,7 @@ fn review_native_recovery_click_then_nopath_delivers_terminal() {
         Some((0, 0, 0)),
         &rig.navs,
         &rig.world,
-        Some(&WorldState::empty()),
+        Some(&state),
         None,
         "alice",
     );
@@ -3971,7 +3972,7 @@ fn manual_cancellation_detail_clears_when_the_next_walk_arms() {
         world: rig.world.clone(),
         navs: Arc::clone(&rig.navs),
         name: "alice".into(),
-        state: Some(WorldState::empty()),
+        state: Some(Arc::new(WorldState::empty())),
         bank: BankRows::default(),
     };
     let completed = arm

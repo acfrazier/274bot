@@ -1851,7 +1851,7 @@ fn make_bank_pick_request(
     facts: Arc<NamedBankFacts>,
     from: WorldTile,
     opts: FindOptions,
-    state: WorldState,
+    state: Arc<WorldState>,
     order: Vec<BankCandidate>,
     target_count: usize,
     walk_generation: Option<u64>,
@@ -1863,7 +1863,7 @@ fn make_bank_pick_request(
         facts,
         from,
         opts,
-        state: Arc::new(state),
+        state,
         timeout_fallback: AtomicBool::new(false),
         order,
         target_count,
@@ -1877,7 +1877,7 @@ pub(super) fn queue_native_bank_pick_scoped(
     name: &str,
     scope: Scope,
     world: &Option<Arc<NavWorld>>,
-    state: Option<&WorldState>,
+    state: Option<&Arc<WorldState>>,
     input: NativeBankPickInput,
     session_permissions: Option<script::native::WalkPermissions>,
 ) {
@@ -1915,7 +1915,7 @@ pub(super) fn queue_bank_walk_scoped(
     name: &str,
     scope: Scope,
     world: &Option<Arc<NavWorld>>,
-    state: Option<&WorldState>,
+    state: Option<&Arc<WorldState>>,
     from: WorldTile,
     fishing_base: Option<i32>,
 ) -> bool {
@@ -1935,9 +1935,8 @@ pub(super) fn queue_bank_walk_scoped(
     )
 }
 
-/// `state` borrows the observe frame's gating facts. The request copies them
-/// once, into its own shared backing, only after the admission gates pass, so
-/// it keeps that frame's facts while it waits.
+/// `state` borrows the observe frame's gating facts. The request retains that
+/// shared backing after the admission gates pass, so it keeps that frame's facts.
 #[expect(
     clippy::too_many_arguments,
     reason = "one admission path serves native selection, compatibility selection and bank walking"
@@ -1947,7 +1946,7 @@ fn queue_bank(
     name: &str,
     scope: Scope,
     world: &Option<Arc<NavWorld>>,
-    state: Option<&WorldState>,
+    state: Option<&Arc<WorldState>>,
     from: WorldTile,
     mut opts: FindOptions,
     request_id: u64,
@@ -2061,8 +2060,9 @@ fn queue_bank(
     let Some(lease) = lease else {
         unreachable!("a present NavWorld has an owner lease");
     };
-    let empty = WorldState::default();
-    let state = state.unwrap_or(&empty);
+    let state = state
+        .cloned()
+        .unwrap_or_else(|| Arc::new(WorldState::default()));
     let from = native.as_ref().map_or(from, |native| native.request.from);
     let BankCandidates {
         order,
@@ -2071,7 +2071,7 @@ fn queue_bank(
         world.as_ref(),
         facts.as_ref(),
         from,
-        state,
+        state.as_ref(),
         preferences,
         fishing_base,
         native.as_ref().map(|native| &native.request),
@@ -2099,7 +2099,7 @@ fn queue_bank(
         facts,
         from,
         opts,
-        state.clone(),
+        state,
         order,
         target_count,
         walk_generation,

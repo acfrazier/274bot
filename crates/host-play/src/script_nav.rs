@@ -1098,7 +1098,18 @@ impl RouteJob {
         mut request: Box<ScriptRouteRequest>,
         kind: RouteDemandKind,
     ) -> Result<Self, RouteJobError> {
-        let state = Arc::new(request.state.take().unwrap_or_else(WorldState::empty));
+        let state = request
+            .state
+            .take()
+            .unwrap_or_else(|| Arc::new(WorldState::empty()));
+        let state = if request.opts.allow_bank_fetch {
+            match Arc::try_unwrap(state) {
+                Ok(state) => Arc::new(state),
+                Err(shared) => Arc::new((*shared).clone()),
+            }
+        } else {
+            state
+        };
         let basis_avoid: Arc<[AvoidRect]> = Arc::from(copy_boxed_slice(request.avoid())?);
         let lease = nav_lease(&request.world).map_err(|_| RouteJobError::Budget)?;
         let bank_rows_limit = request.bank.capacity();
@@ -4193,7 +4204,7 @@ pub(crate) struct ScriptWalkArm {
     /// The slot's gating facts at arm time (from its live snapshot);
     /// `None` when no player is decoded — the route job then searches with
     /// the fail-closed empty [`WorldState`].
-    pub(crate) state: Option<WorldState>,
+    pub(crate) state: Option<Arc<WorldState>>,
     /// The account's bank memory rows at arm time
     /// ([`super::slot_bank_memory::planner_rows`]): what a BankBudget
     /// session is planned over ([`nav_planner::bank_fetch::planning_rows`]).
@@ -4217,11 +4228,25 @@ fn walk_arm_outcome_tag(outcome: &RouteOutcome) -> &'static str {
 /// with `state: None`. That rebuild is what lets posted skills open a
 /// skill-gated door (Fishing Guild 68) instead of routing on the fail-closed
 /// empty state.
-pub(crate) fn route_world_state(snapshot: &GameSnapshot, armed: Option<WorldState>) -> WorldState {
-    match armed {
-        Some(state) => state,
-        None => WorldState::from_snapshot(snapshot),
+pub(crate) fn route_world_state(
+    snapshot: &GameSnapshot,
+    armed: Option<Arc<WorldState>>,
+) -> Arc<WorldState> {
+    armed.unwrap_or_else(|| Arc::new(WorldState::from_snapshot(snapshot)))
+}
+
+/// Attach evidence to a request-owned view without changing the cached base.
+/// An unchanged empty value can share the original backing.
+fn patch_route_quest_evidence(
+    state: Arc<WorldState>,
+    evidence: Option<nav_planner::quest_gates::QuestEvidence>,
+) -> Arc<WorldState> {
+    if evidence.is_none() && state.quest_evidence.is_none() {
+        return state;
     }
+    let mut private = (*state).clone();
+    private.quest_evidence = evidence;
+    Arc::new(private)
 }
 
 fn log_walk_arm(name: &str, build: impl FnOnce() -> String) {
@@ -4439,17 +4464,14 @@ impl ScriptWalkArm {
                 return;
             }
         }
-        self.state = Some(route_world_state(snapshot, self.state.take()));
+        let state = route_world_state(snapshot, self.state.take());
         let context = self
             .navs
             .lock()
             .unwrap()
             .get(&self.name)
             .and_then(|bot| bot.quest_context.clone());
-        self.state
-            .as_mut()
-            .expect("request state was captured")
-            .quest_evidence = world.graph.quest_family.and_then(|family| {
+        let evidence = world.graph.quest_family.and_then(|family| {
             captured_route_quests(
                 family,
                 context.as_ref(),
@@ -4458,6 +4480,7 @@ impl ScriptWalkArm {
                 request.required_after,
             )
         });
+        self.state = Some(patch_route_quest_evidence(state, evidence));
         let from = WorldTile { x, z, level };
         let radius = i32::from(request.radius);
         let (options, policy, enforce) = super::walk_permissions::native_admission(
@@ -4679,10 +4702,7 @@ impl ScriptWalkArm {
             .unwrap()
             .get(&self.name)
             .and_then(|bot| bot.quest_context.clone());
-        self.state
-            .as_mut()
-            .expect("request state was captured")
-            .quest_evidence = self
+        let evidence = self
             .world
             .as_ref()
             .and_then(|world| world.graph.quest_family)
@@ -4695,6 +4715,11 @@ impl ScriptWalkArm {
                     request.required_after,
                 )
             });
+        let state = self
+            .state
+            .take()
+            .expect("request state was captured");
+        self.state = Some(patch_route_quest_evidence(state, evidence));
         let exclusions = ScriptRouteExclusions {
             cross: request.cross.to_vec(),
             ..Default::default()
@@ -5206,20 +5231,29 @@ impl ScriptWalkArm {
                     .get(&self.name)
                     .and_then(|bot| bot.quest_context.clone());
                 if let Some(context) = context.as_ref() {
-                    state
-                        .get_or_insert_with(|| WorldState::from_snapshot(snapshot))
-                        .quest_evidence =
-                        captured_route_quests(family, Some(context), snapshot, None, context.stamp);
+                    let base_state =
+                        state.take().unwrap_or_else(|| Arc::new(WorldState::from_snapshot(snapshot)));
+                    let evidence = captured_route_quests(
+                        family,
+                        Some(context),
+                        snapshot,
+                        None,
+                        context.stamp,
+                    );
+                    state = Some(patch_route_quest_evidence(base_state, evidence));
                 }
             }
         }
         let (mut opts, exclusions) = if let Some((basis, exclusions)) = frozen {
-            let state = state.get_or_insert_with(WorldState::empty);
-            state.quest_evidence = basis.quest_evidence.clone();
+            let base_state = state.take().unwrap_or_else(|| Arc::new(WorldState::empty()));
+            state = Some(patch_route_quest_evidence(
+                base_state,
+                basis.quest_evidence.clone(),
+            ));
             (basis.options, exclusions)
         } else {
             let empty = WorldState::empty();
-            let route_state = state.as_ref().unwrap_or(&empty);
+            let route_state = state.as_deref().unwrap_or(&empty);
             match resolve_route_exclusions(opts, world, from, to, route_state, exclusions) {
                 Ok((opts, exclusions)) => {
                     let exclusions = (!exclusions.is_empty()).then(|| Arc::new(exclusions));
@@ -5900,7 +5934,7 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) loc_id: Option<i32>,
     pub(crate) arrival: ArrivalKind,
     pub(crate) opts: FindOptions,
-    pub(crate) state: Option<WorldState>,
+    pub(crate) state: Option<Arc<WorldState>>,
     pub(crate) admission: crate::admission::Admission,
     /// The arm's bank memory ([`ScriptWalkArm::bank`]), its origin beside
     /// its rows so the byte packs into this request's own padding.
