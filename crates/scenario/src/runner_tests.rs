@@ -1023,6 +1023,51 @@ fn world_speed_resets_after_failed_run() {
 }
 
 #[test]
+fn world_speed_opt_out_skips_restore_after_pass() {
+    let mut runner = ScenarioRunner::new(fast_speed_scenario(
+        Proof::WorldSpeedChanged { ms: 300 },
+        10,
+    ));
+    runner.set_restore_world_speed(false);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+
+    runner.tick(&mut client);
+    assert_eq!(outgoing_ascii_count(&client, "speed 300"), 1);
+    push_system_chat(&mut client, "World speed was changed to 300ms");
+    runner.tick(&mut client);
+    runner.tick(&mut client);
+
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+    assert_eq!(outgoing_ascii_count(&client, "speed 300"), 1);
+    assert_eq!(
+        outgoing_ascii_count(&client, "speed 600"),
+        0,
+        "the opt-out skips only the terminal restoration command"
+    );
+}
+
+#[test]
+fn world_speed_opt_out_skips_restore_after_failure() {
+    let mut runner = ScenarioRunner::new(fast_speed_scenario(Proof::Stat { id: 16, min: 999 }, 1));
+    runner.set_restore_world_speed(false);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+
+    runner.tick(&mut client);
+    assert_eq!(outgoing_ascii_count(&client, "speed 300"), 1);
+    runner.tick(&mut client);
+
+    assert!(
+        matches!(runner.status(), RunnerStatus::Failed(message) if message.contains("not seen within 1 game tick")),
+        "the original terminal failure is preserved: {:?}",
+        runner.status()
+    );
+    assert_eq!(outgoing_ascii_count(&client, "speed 300"), 1);
+    assert_eq!(outgoing_ascii_count(&client, "speed 600"), 0);
+}
+
+#[test]
 fn default_scenario_sends_no_world_speed_command() {
     let mut runner = ScenarioRunner::new(stat_scenario(0, 10));
     runner.set_scene_settle(Duration::ZERO);
