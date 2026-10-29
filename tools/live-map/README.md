@@ -294,6 +294,13 @@ python3 -B tools/live-map/live_map.py run --repo <lab clone> \
   --diff BASE..HEAD --prefix lcr --evidence /path/to/evidence --passes 3 \
   --engine-game-port 44594 --engine-http-port 1080 \
   --quest-game-port 44694 --quest-http-port 1180
+
+python3 -B tools/live-map/live_map.py run --repo <lab clone> \
+  --cells host.script-runtime-load,panel.state-gap-stop-live,nav.route-search-live \
+  --prefix lcr --evidence /path/to/evidence --passes 1 \
+  --engine-game-port 47594 --engine-http-port 3080 \
+  --catalog-root /home/acfrazier/experiments/rs2b0t \
+  --unpack-source /home/acfrazier/.274bot/unpack-289
 ```
 
 The runner refuses to start when the clone has uncommitted tracked changes. It runs
@@ -301,7 +308,10 @@ cells one at a time and never stops on a failure. It creates one `BOT_CACHE_DIR`
 cell, one `LIVE_EVIDENCE_DIR` per cell and pass, plus per-cell unpack dirs and a kept
 panel home. It sets `BOT_LIVE_NAME_PREFIX`, `BOT_NAV_BUILD=skip`,
 `WORLD_GAME_PORT`/`WORLD_HTTP_PORT` from the engine ports, and the v17 `NAV_PACK` and
-flags from the reference pack. Quest cells use the quest ports and set
+flags from the reference pack. It sets `ISOHOME_DIR` to `<LIVE_EVIDENCE_DIR>/home`
+for each cell and pass, so `isohome` keeps `HOME` under `BOT_EVIDENCE_DIR`
+(`crates/host-play/tests/script_api_live.rs:503-507`). Panel cells override this
+with the inline `ISOHOME_DIR=${PANEL_LIVE_HOME:?}` in the map command. Quest cells use the quest ports and set
 `QUESTER_SPEED_RESTORE=0`. The runner never sets `QUESTER_TICK_MS`, so it sends
 no speed command: `crates/scenario/src/quester.rs:78-82` changes the world speed
 only when `QUESTER_TICK_MS` is present. The product reads `QUESTER_SPEED_RESTORE`
@@ -311,6 +321,15 @@ cell whose command sets `QUESTER_TICK_MS`. It rewrites inline
 `_GAME_PORT`, `_HTTP_PORT`, `--port`, and `--http-port` values to the selected ports.
 `ISOHOME` comes from the host wrapper where the map command names it. Each cell runs
 by `bash -lc` from the repo root.
+Use `--catalog-root <path>` for the local `rs2b0t` checkout root. The flag is
+required when any selected cell uses `${CATALOG_ROOT}`. The runner exports it as
+`CATALOG_ROOT` and refuses to start without it. Use `--unpack-source <path>` for
+the revision decoded unpack directory. The flag is required when any selected
+cell uses `${PANEL_LIVE_HOME}`. For each such cell and pass the runner copies the
+source tree (never a symlink) to `panel-home/.274bot/unpack-289`, as the panel
+live test expects (`crates/panel/src/manual_click_live_tests.rs:77-90`). The copy
+runs once per panel home and the receipt records it as `unpack_source`
+(`<source>#<hash>`).
 Some cells still open 44594/1080 instead of reading `WORLD_GAME_PORT` and
 `WORLD_HTTP_PORT`: `host.nav-quest-doors`, `host.nav-gated-entrances`,
 `host.nav-busy-transport-two-bots`, `host.nav-busy-transport-rope-swing`,
@@ -323,7 +342,9 @@ through the relay. On chardonnay pass `--engine-game-port 47594 --engine-http-po
 (the forwarded Engine L) and never use 44594/1080 there. Quest cells use Engine Q.
 
 Each cell and pass writes `passN/cell.log` and `passN/receipt.txt` with `cell`, `pass`,
-repo `head`, `command`, `start_utc`, `end_utc`, `exit_code`, and `log`. The runner prints a
+repo `head`, `command`, `start_utc`, `end_utc`, `exit_code`, `log`, `evidence_dir`,
+`isohome_dir`, plus `catalog_root` when `--catalog-root` is set and `unpack_source`
+when the cell stages a panel unpack. The runner prints a
 summary table and writes `summary.txt`. The table lists `cell`, `pass`, `exit`, `seconds`,
 `start_utc`, `end_utc`, and `log`, followed by one `command`, `start_utc`, and `end_utc`
 line per cell and pass. A non-zero exit means at least one cell failed.

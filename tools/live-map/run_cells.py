@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import os
 import re
+import shutil
 import subprocess
 import sys
 import unittest
@@ -105,6 +107,10 @@ def build_parser() -> argparse.ArgumentParser:
                         default=DEFAULT_QUEST_GAME_PORT)
     parser.add_argument("--quest-http-port", type=lambda v: _port(v, "--quest-http-port"),
                         default=DEFAULT_QUEST_HTTP_PORT)
+    parser.add_argument("--catalog-root", default=None,
+                        help="Local rs2b0t checkout root. Required when a selected cell uses ${CATALOG_ROOT}.")
+    parser.add_argument("--unpack-source", default=None,
+                        help="Revision decoded unpack directory copied to panel-home/.274bot/unpack-289. Required when a selected cell uses ${PANEL_LIVE_HOME}.")
     parser.add_argument("--self-test", action="store_true", help="Run the runner unit tests.")
     return parser
 
@@ -137,6 +143,84 @@ def ensure_no_tick_override(cells: list[live_map.Cell]) -> None:
     for cell in cells:
         reject_tick_override(cell.name, cell.command)
 
+
+def needs_catalog_root(cells: list[live_map.Cell]) -> bool:
+    return any("CATALOG_ROOT" in cell.command for cell in cells)
+
+
+def ensure_catalog_root(cells: list[live_map.Cell], catalog_root: str | None) -> str | None:
+    if not needs_catalog_root(cells):
+        return catalog_root
+    if not catalog_root:
+        names = ", ".join(cell.name for cell in cells if "CATALOG_ROOT" in cell.command)
+        raise live_map.MapError(
+            f"run-cells: refusing cells [{names}]: a selected cell uses ${{CATALOG_ROOT}}. "
+            "Pass --catalog-root <path> with the local rs2b0t checkout root."
+        )
+    if not Path(catalog_root).is_dir():
+        raise live_map.MapError(
+            f"run-cells: --catalog-root is not a directory: {catalog_root}"
+        )
+    return catalog_root
+
+
+def needs_panel_cache(cells: list[live_map.Cell]) -> bool:
+    return any("PANEL_LIVE_HOME" in cell.command for cell in cells)
+
+
+def ensure_unpack_source(cells: list[live_map.Cell], unpack_source: str | None) -> str | None:
+    if not needs_panel_cache(cells):
+        return unpack_source
+    if not unpack_source:
+        names = ", ".join(cell.name for cell in cells if "PANEL_LIVE_HOME" in cell.command)
+        raise live_map.MapError(
+            f"run-cells: refusing cells [{names}]: a selected cell stages panel-home/.274bot/unpack-289. "
+            "Pass --unpack-source <path> with the revision decoded unpack directory."
+        )
+    if not Path(unpack_source).is_dir():
+        raise live_map.MapError(
+            f"run-cells: --unpack-source is not a directory: {unpack_source}"
+        )
+    return unpack_source
+
+
+def hash_unpack_source(source: Path) -> str:
+    digest = hashlib.sha256()
+    names: list[str] = []
+    for root, dirs, files in os.walk(source):
+        dirs.sort()
+        for name in sorted(files):
+            full = Path(root) / name
+            try:
+                stat = full.stat()
+            except OSError:
+                continue
+            relative = full.relative_to(source).as_posix()
+            names.append(relative)
+            digest.update(relative.encode("utf-8"))
+            digest.update(str(stat.st_size).encode("utf-8"))
+    digest.update(str(len(names)).encode("utf-8"))
+    return digest.hexdigest()[:16]
+
+
+def stage_panel_unpack(panel_home: Path, unpack_source: str) -> str:
+    source = Path(unpack_source)
+    if not source.is_dir():
+        raise live_map.MapError(
+            f"run-cells: --unpack-source is not a directory: {unpack_source}"
+        )
+    dest = panel_home / ".274bot" / "unpack-289"
+    if dest.is_symlink() or dest.is_file():
+        raise live_map.MapError(
+            f"run-cells: refusing to stage over non-directory: {dest}"
+        )
+    if dest.is_dir() and any(dest.iterdir()):
+        return f"{unpack_source}#{hash_unpack_source(source)}"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source, dest, symlinks=False, dirs_exist_ok=True)
+    if dest.is_symlink():
+        raise live_map.MapError(f"run-cells: staged unpack is a symlink: {dest}")
+    return f"{unpack_source}#{hash_unpack_source(source)}"
 
 _PORT_ENV_RE = re.compile(r"([A-Z][A-Z0-9_]*_GAME_PORT=)\d+")
 _HTTP_ENV_RE = re.compile(r"([A-Z][A-Z0-9_]*_HTTP_PORT=)\d+")
@@ -222,16 +306,6 @@ def host_defaults() -> dict[str, str]:
         defaults["ENGINE_B_DIR"] = engine_b
     elif engine_a:
         defaults["ENGINE_B_DIR"] = engine_a
-    catalog = _first_existing(
-        [
-            os.environ.get("CATALOG_ROOT"),
-            "/home/acfrazier/experiments/rs2b0t",
-            "/Users/acfrazier/experiments/rs2b0t",
-        ],
-        want_file=False,
-    )
-    if catalog:
-        defaults["CATALOG_ROOT"] = catalog
     snapshot = _first_existing(
         [
             os.environ.get("NAV_SNAPSHOT_ROOT_289"),
@@ -258,7 +332,6 @@ def host_defaults() -> dict[str, str]:
         "NAV_PACK_274",
         "ENGINE_A_DIR",
         "ENGINE_Q_DIR",
-        "CATALOG_ROOT",
     ):
         if key in os.environ and key not in defaults:
             defaults[key] = os.environ[key]
@@ -300,6 +373,7 @@ def build_cell_env(
     quest_game_port: int,
     quest_http_port: int,
     defaults: dict[str, str] | None = None,
+    catalog_root: str | None = None,
 ) -> tuple[dict[str, str], str]:
     reject_tick_override(cell_name, cell_command)
     quest = is_quest_cell(cell_name, cell_command)
@@ -313,6 +387,8 @@ def build_cell_env(
     for key, value in resolved.items():
         if key not in env or not env[key]:
             env[key] = value
+    if catalog_root is not None:
+        env["CATALOG_ROOT"] = catalog_root
     env["BOT_LIVE_NAME_PREFIX"] = prefix
     env["BOT_NAV_BUILD"] = "skip"
     env["WORLD_GAME_PORT"] = str(game_port)
@@ -322,6 +398,7 @@ def build_cell_env(
     env["CLIENT_UNPACK_DIR"] = client_unpack_dir
     env["BOT_UNPACK_DIR"] = bot_unpack_dir
     env["PANEL_LIVE_HOME"] = panel_home
+    env["ISOHOME_DIR"] = str(Path(live_evidence_dir) / "home")
     env["PWD"] = str(Path(repo).resolve())
     if quest:
         env["QUESTER_SPEED_RESTORE"] = "0"
@@ -408,6 +485,9 @@ def write_receipt(path: Path, fields: dict[str, str]) -> None:
         "exit_code",
         "log",
         "evidence_dir",
+        "catalog_root",
+        "isohome_dir",
+        "unpack_source",
     )
     lines = [f"{key}={fields[key]}" for key in order if key in fields]
     for key in sorted(set(fields) - set(order)):
@@ -459,6 +539,8 @@ def run_all(
     quest_game_port: int,
     quest_http_port: int,
     defaults: dict[str, str] | None = None,
+    catalog_root: str | None = None,
+    unpack_source: str | None = None,
     runner: Callable[..., tuple[int, str, str, int]] | None = None,
 ) -> list[RunResult]:
     head = repo_head(repo)
@@ -480,8 +562,12 @@ def run_all(
             live_dir.mkdir(parents=True, exist_ok=True)
             panel_home.mkdir(parents=True, exist_ok=True)
             (live_dir / "tui").mkdir(parents=True, exist_ok=True)
+            (live_dir / "home").mkdir(parents=True, exist_ok=True)
             log_path = pass_dir / "cell.log"
             receipt_path = pass_dir / "receipt.txt"
+            unpack_record: str | None = None
+            if unpack_source is not None and "PANEL_LIVE_HOME" in cell.command:
+                unpack_record = stage_panel_unpack(panel_home, unpack_source)
             env, command = build_cell_env(
                 cell_name=cell.name,
                 cell_command=cell.command,
@@ -497,6 +583,7 @@ def run_all(
                 quest_game_port=quest_game_port,
                 quest_http_port=quest_http_port,
                 defaults=defaults,
+                catalog_root=catalog_root,
             )
             try:
                 if runner is not None:
@@ -525,23 +612,26 @@ def run_all(
                 log_path.parent.mkdir(parents=True, exist_ok=True)
                 with log_path.open("a", encoding="utf-8") as stream:
                     stream.write(f"\nrunner error: {error}\n")
-            write_receipt(
-                receipt_path,
-                {
-                    "cell": cell.name,
-                    "pass": str(passed_pass),
-                    "repo": str(repo),
-                    "head": head,
-                    "prefix": prefix,
-                    "command": command,
-                    "start_utc": start,
-                    "end_utc": end,
-                    "duration_seconds": str(duration),
-                    "exit_code": str(exit_code),
-                    "log": str(log_path),
-                    "evidence_dir": str(live_dir),
-                },
-            )
+            receipt_fields: dict[str, str] = {
+                "cell": cell.name,
+                "pass": str(passed_pass),
+                "repo": str(repo),
+                "head": head,
+                "prefix": prefix,
+                "command": command,
+                "start_utc": start,
+                "end_utc": end,
+                "duration_seconds": str(duration),
+                "exit_code": str(exit_code),
+                "log": str(log_path),
+                "evidence_dir": str(live_dir),
+                "isohome_dir": env.get("ISOHOME_DIR", ""),
+            }
+            if catalog_root is not None:
+                receipt_fields["catalog_root"] = catalog_root
+            if unpack_record is not None:
+                receipt_fields["unpack_source"] = unpack_record
+            write_receipt(receipt_path, receipt_fields)
             results.append(
                 RunResult(
                     cell=cell.name,
@@ -595,6 +685,8 @@ def main(argv: list[str] | None = None) -> int:
                 print("run-cells: diff selects no cells", file=sys.stderr)
                 return 1
         ensure_no_tick_override(cells)
+        catalog_root = ensure_catalog_root(cells, args.catalog_root)
+        unpack_source = ensure_unpack_source(cells, args.unpack_source)
         evidence_root.mkdir(parents=True, exist_ok=True)
         defaults = host_defaults()
         results = run_all(
@@ -608,6 +700,8 @@ def main(argv: list[str] | None = None) -> int:
             quest_game_port=args.quest_game_port,
             quest_http_port=args.quest_http_port,
             defaults=defaults,
+            catalog_root=catalog_root,
+            unpack_source=unpack_source,
         )
         head = repo_head(repo)
         summary = format_summary(
@@ -697,6 +791,28 @@ class RunCellsTests(unittest.TestCase):
         self.assertEqual(args.engine_http_port, DEFAULT_ENGINE_HTTP_PORT)
         self.assertEqual(args.quest_game_port, DEFAULT_QUEST_GAME_PORT)
         self.assertEqual(args.quest_http_port, DEFAULT_QUEST_HTTP_PORT)
+        self.assertIsNone(args.catalog_root)
+        self.assertIsNone(args.unpack_source)
+
+    def test_new_paths_parse(self) -> None:
+        args = parse_run_args(
+            [
+                "--repo",
+                "/tmp/repo",
+                "--cells",
+                "a",
+                "--prefix",
+                "abc",
+                "--evidence",
+                "/tmp/e",
+                "--catalog-root",
+                "/tmp/catalog",
+                "--unpack-source",
+                "/tmp/unpack-289",
+            ]
+        )
+        self.assertEqual(args.catalog_root, "/tmp/catalog")
+        self.assertEqual(args.unpack_source, "/tmp/unpack-289")
 
     def test_env_sets_common_values_and_unsets_tick(self) -> None:
         with unittest.mock.patch.dict(
@@ -870,6 +986,139 @@ class RunCellsTests(unittest.TestCase):
         self.assertIn("2026-10-29T10:00:00Z", summary)
         self.assertIn("2026-10-29T10:00:07Z", summary)
 
+    def test_catalog_root_is_required_for_catalog_cells(self) -> None:
+        cells = [live_map.Cell("nav.route-search-live", "LIVE=1 RS2B0T=${CATALOG_ROOT:?} cargo test", "")]
+        self.assertTrue(needs_catalog_root(cells))
+        with self.assertRaises(live_map.MapError) as context:
+            ensure_catalog_root(cells, None)
+        self.assertIn("--catalog-root", str(context.exception))
+        self.assertIn("nav.route-search-live", str(context.exception))
+        clean = [live_map.Cell("plain", "LIVE=1 ${ISOHOME:?} cargo test", "")]
+        self.assertFalse(needs_catalog_root(clean))
+        self.assertIsNone(ensure_catalog_root(clean, None))
+
+    def test_catalog_root_missing_dir_is_refused(self) -> None:
+        cells = [live_map.Cell("nav.route-search-live", "LIVE=1 ${CATALOG_ROOT:?} cargo test", "")]
+        with self.assertRaises(live_map.MapError):
+            ensure_catalog_root(cells, "/no/such/catalog-root-r2")
+
+    def test_catalog_root_reaches_cell_env(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as temp:
+            env, _ = build_cell_env(
+                cell_name="nav.route-search-live",
+                cell_command="LIVE=1 RS2B0T=${CATALOG_ROOT:?} ${ISOHOME:?} cargo test",
+                prefix="abc",
+                live_evidence_dir="/e/cell/pass1/evidence",
+                bot_cache_dir="/e/cell/cache-289",
+                client_unpack_dir="/e/cell/client-unpack",
+                bot_unpack_dir="/e/cell/client-unpack",
+                panel_home="/e/cell/pass1/panel-home",
+                repo="/tmp/repo",
+                engine_game_port=47594,
+                engine_http_port=3080,
+                quest_game_port=47694,
+                quest_http_port=3180,
+                defaults={},
+                catalog_root=temp,
+            )
+            self.assertEqual(env["CATALOG_ROOT"], temp)
+
+    def test_isohome_dir_stays_under_evidence(self) -> None:
+        env, _ = build_cell_env(
+            cell_name="host.script-runtime-load",
+            cell_command="LIVE=1 ${ISOHOME:?} cargo test",
+            prefix="abc",
+            live_evidence_dir="/e/cell/pass1/evidence",
+            bot_cache_dir="/e/cell/cache-289",
+            client_unpack_dir="/e/cell/client-unpack",
+            bot_unpack_dir="/e/cell/client-unpack",
+            panel_home="/e/cell/pass1/panel-home",
+            repo="/tmp/repo",
+            engine_game_port=47594,
+            engine_http_port=3080,
+            quest_game_port=47694,
+            quest_http_port=3180,
+            defaults={},
+        )
+        self.assertEqual(env["ISOHOME_DIR"], "/e/cell/pass1/evidence/home")
+
+    def test_unpack_source_is_required_for_panel_cells(self) -> None:
+        cells = [live_map.Cell("panel.state-gap-stop-live", "LIVE=1 ISOHOME_DIR=${PANEL_LIVE_HOME:?} cargo test", "")]
+        self.assertTrue(needs_panel_cache(cells))
+        with self.assertRaises(live_map.MapError) as context:
+            ensure_unpack_source(cells, None)
+        self.assertIn("--unpack-source", str(context.exception))
+        self.assertIn("panel.state-gap-stop-live", str(context.exception))
+        clean = [live_map.Cell("plain", "LIVE=1 ${ISOHOME:?} cargo test", "")]
+        self.assertFalse(needs_panel_cache(clean))
+        self.assertIsNone(ensure_unpack_source(clean, None))
+
+    def test_unpack_source_missing_dir_is_refused(self) -> None:
+        cells = [live_map.Cell("panel.state-gap-stop-live", "ISOHOME_DIR=${PANEL_LIVE_HOME:?} cargo test", "")]
+        with self.assertRaises(live_map.MapError):
+            ensure_unpack_source(cells, "/no/such/unpack-source-r2")
+
+    def test_stage_copies_files_without_symlink(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "unpack-289"
+            source.mkdir()
+            (source / "config").write_text("config-bytes", encoding="utf-8")
+            nested = source / "media"
+            nested.mkdir()
+            (nested / "sprite").write_text("sprite-bytes", encoding="utf-8")
+            panel = Path(temp) / "panel-home"
+            panel.mkdir()
+            record = stage_panel_unpack(panel, str(source))
+            self.assertIn(str(source), record)
+            dest = panel / ".274bot" / "unpack-289"
+            self.assertTrue((dest / "config").is_file())
+            self.assertTrue((dest / "media" / "sprite").is_file())
+            self.assertFalse((dest / "config").is_symlink())
+            self.assertFalse(dest.is_symlink())
+            again = stage_panel_unpack(panel, str(source))
+            self.assertEqual(record, again)
+
+    def test_run_all_records_catalog_and_unpack(self) -> None:
+        import tempfile
+        cells = [
+            live_map.Cell("panel.state-gap-stop-live", "LIVE=1 ISOHOME_DIR=${PANEL_LIVE_HOME:?} true", "--locked"),
+        ]
+        def fake_runner(**kwargs) -> tuple[int, str, str, int]:
+            log_path = kwargs["log_path"]
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text("ok\n", encoding="utf-8")
+            return 0, "s", "e", 0
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp) / "repo"
+            repo.mkdir()
+            evidence = Path(temp) / "evidence"
+            source = Path(temp) / "unpack-289"
+            source.mkdir()
+            (source / "config").write_text("x", encoding="utf-8")
+            catalog = Path(temp) / "catalog"
+            catalog.mkdir()
+            with unittest.mock.patch(f"{__name__}.repo_head", return_value="deadbeef"):
+                run_all(
+                    cells,
+                    repo=repo,
+                    evidence_root=evidence,
+                    prefix="abc",
+                    passes=1,
+                    engine_game_port=1,
+                    engine_http_port=2,
+                    quest_game_port=3,
+                    quest_http_port=4,
+                    defaults={},
+                    catalog_root=str(catalog),
+                    unpack_source=str(source),
+                    runner=fake_runner,
+                )
+            receipt = (evidence / "panel.state-gap-stop-live" / "pass1" / "receipt.txt").read_text(encoding="utf-8")
+            self.assertIn(f"catalog_root={catalog}", receipt)
+            self.assertIn("unpack_source=", receipt)
+            self.assertIn(str(source), receipt)
 
 def self_test() -> int:
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(RunCellsTests)
