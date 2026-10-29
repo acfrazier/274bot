@@ -373,7 +373,7 @@
           "recovery_entry": null,
           "steps": [
             {
-              "id": "wear-khazard_helmet",
+              "id": "wear-khazard_helmet-stage-3",
               "kind": "equip",
               "version": 1,
               "args": {
@@ -400,7 +400,7 @@
               "comment": "content/scripts/quests/quest_arena/scripts/quest_arena.rs2:56-60; scripts/quests/quest_arena/scripts/khazard_guard.rs2:98-105."
             },
             {
-              "id": "wear-khazard_platemail",
+              "id": "wear-khazard_platemail-stage-3",
               "kind": "equip",
               "version": 1,
               "args": {
