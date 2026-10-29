@@ -1803,6 +1803,10 @@ impl CombatRun {
                 Ok(LootStart::Waiting)
             };
         };
+        let radius = reach::ground_area(self.request.stand, i32::from(self.request.lost_radius))
+            .radius
+            .max(reach::PROBE_RADIUS);
+        let area = reach::Area::new(self.request.stand, radius);
         while let Some(item) = self.loot.get(self.loot_index) {
             let held = inventory
                 .value
@@ -1814,19 +1818,19 @@ impl CombatRun {
                 self.loot_index += 1;
                 continue;
             }
-            match self.ground_loot_visible(cx, item) {
-                Some(true) => {}
-                Some(false) if wait_expired => {
+            let target_tile = match self.ground_loot_tile(cx, item, area) {
+                Some(Some(tile)) => tile,
+                Some(None) if wait_expired => {
                     self.loot_missing_this_kill = true;
                     self.loot_index += 1;
                     continue;
                 }
-                Some(false) => return Ok(LootStart::Waiting),
+                Some(None) => return Ok(LootStart::Waiting),
                 None if wait_expired => {
                     return Err(ActionError::NeedsEvidence(Arc::from([])));
                 }
                 None => return Ok(LootStart::Waiting),
-            }
+            };
             let handle = cx.tick.actions.begin::<Reach>(
                 ReachArgs {
                     kind: ReachKind::Ground {
@@ -1835,9 +1839,9 @@ impl CombatRun {
                     },
                     op: Arc::from("Take"),
                     anchor: self.request.stand,
-                    radius: i32::from(self.request.lost_radius),
+                    radius,
                     wait_if_missing: false,
-                    target_tile: None,
+                    target_tile: Some(target_tile),
                     reachable_only: false,
                 },
                 &mut cx.tick.cx,
@@ -1848,15 +1852,17 @@ impl CombatRun {
         Ok(LootStart::Complete)
     }
 
-    fn ground_loot_visible(&self, cx: &StepContext<'_, '_>, item: &LootItem) -> Option<bool> {
-        let snapshot = cx.tick.cx.snapshot();
-        let items = snapshot.ground_items()?;
-        let area = reach::ground_area(self.request.stand, i32::from(self.request.lost_radius));
+    fn ground_loot_tile(
+        &self,
+        cx: &StepContext<'_, '_>,
+        item: &LootItem,
+        area: reach::Area,
+    ) -> Option<Option<api::WorldTile>> {
+        cx.tick.cx.snapshot().ground_items()?;
         Some(
-            items
-                .value
-                .iter()
-                .any(|row| row.def.id == item.id && area.contains(row.tile, row.distance)),
+            reach::choose_ground(&cx.tick.cx, item.id, None, area, &reach::Avoid::default())
+                .any()
+                .map(|choice| choice.tile),
         )
     }
 

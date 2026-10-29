@@ -312,6 +312,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   on the next refresh. Recovery clears that error without erasing a newer
   message.
 
+#### Combat
+
+- A visible quest drop that does not reach the held count now ends at the
+  ground Take's existing four-game-tick settlement bound and is recorded as
+  missed. Required loot then follows the existing step-failure path, while a
+  successful pickup may still settle after the six-tick appearance window.
+
 #### Survival
 
 - Strange fruit waits for the game's food delay after a bite. Eating the fruit
