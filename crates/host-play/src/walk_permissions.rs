@@ -311,11 +311,6 @@ pub(crate) fn compiled_prereq_allow(
     }
 }
 
-/// Resolve the additive header grants for one manual WalkTo admission.
-pub(crate) fn manual_prereq_allow(globals: WalkGlobals) -> PrereqAllow {
-    globals.manual_prereq_allow()
-}
-
 fn resolve_native_admission(
     globals: WalkGlobals,
     script: WalkPermissions,
