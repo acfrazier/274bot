@@ -44,6 +44,7 @@ globs = [
   "crates/host-play/src/bank_memory_live.rs",
   "crates/host-play/src/gather_bait_live.rs",
   "crates/host-play/src/gather_held_live.rs",
+  "crates/host-play/src/script_bank_harness.rs",
   "crates/host-play/src/gather_return_live.rs",
   "crates/host-play/src/gatherer_recovery_live.rs",
   "**/tests/**",
