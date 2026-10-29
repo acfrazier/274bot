@@ -4157,6 +4157,78 @@ fn stand_walk_bound_spans_the_kill_budget_attempt_boundary() {
     );
 }
 
+#[test]
+fn stand_walk_count_survives_a_failure_on_the_budget_tick() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let here = api::WorldTile {
+        x: 3000,
+        z: 3000,
+        level: 0,
+    };
+    let stand = api::WorldTile {
+        x: 3010,
+        z: 3000,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    seed_abort_scene(&mut snapshot, here, 40, Vec::new(), None, None);
+    let mut run = combat_test_run(
+        imp_target(&data),
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    Arc::make_mut(&mut run.request).budget_ticks = 50;
+    let mut ledger = None;
+    with_step_context(&snapshot, &mut ledger, 1, |cx| {
+        run.begin_combat(cx).unwrap()
+    });
+
+    assert!(with_step_context(&snapshot, &mut ledger, 2, |cx| run.poll(cx)).is_pending());
+    post_walk_end(&mut ledger, 2, WalkEnd::NoPath, Some("first route failure"));
+    assert!(with_step_context(&snapshot, &mut ledger, 3, |cx| run.poll(cx)).is_pending());
+    let in_flight = last_walk(&ledger);
+    assert_eq!(in_flight.target, stand);
+    for tick in 4..51 {
+        assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending());
+    }
+    post_walk_end(
+        &mut ledger,
+        50,
+        WalkEnd::NoPath,
+        Some("second route failure"),
+    );
+
+    let mut tick = 51;
+    while pending_walk(&ledger).is_none_or(|walk| walk.request_id == in_flight.request_id) {
+        assert!(tick < 60, "the new attempt must request its own stand walk");
+        assert!(
+            with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending(),
+            "the budget end must rebegin the fight, not end the step"
+        );
+        tick += 1;
+    }
+    assert_eq!(
+        run.stand_walk_failures, 2,
+        "the failure counted on the budget tick must seed the new attempt"
+    );
+    post_walk_end(
+        &mut ledger,
+        tick,
+        WalkEnd::NoPath,
+        Some("third route failure"),
+    );
+    let result = with_step_context(&snapshot, &mut ledger, tick + 1, |cx| run.poll(cx));
+    match result {
+        Poll::Ready(Err(ActionError::Blocked(reason))) => {
+            assert_eq!(reason.as_ref(), "third route failure");
+        }
+        Poll::Ready(Err(other)) => panic!("expected the third route failure, got {other:?}"),
+        Poll::Ready(Ok(_)) => panic!("the unreachable stand must not complete the step"),
+        Poll::Pending => panic!("three stand-walk failures must end the step"),
+    }
+}
+
 /// The run is inlined into the compiled step and lives for a whole combat
 /// step. Its step-local counts must fit the layout the machine's own sizes
 /// were measured at; 1176 bytes is the size before the stand-walk count.
