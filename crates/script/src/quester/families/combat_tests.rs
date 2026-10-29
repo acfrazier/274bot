@@ -4425,6 +4425,8 @@ fn combat_state_size_tripwire_reports_config_run_and_receipt_sizes() {
         std::mem::size_of::<CombatRun>(),
         std::mem::size_of::<CombatReceipt>(),
     );
+    assert!(std::mem::size_of::<Option<UntilDropConfig>>() <= 32);
+    assert!(std::mem::size_of::<CombatReceipt>() <= 256);
 }
 
 #[test]
