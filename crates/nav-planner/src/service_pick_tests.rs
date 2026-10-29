@@ -156,6 +156,8 @@ fn transport_to(from: WorldTile, to: WorldTile) -> TransportGraph {
     let edge = TransportEdge {
         takeoff: None,
         worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: from,
