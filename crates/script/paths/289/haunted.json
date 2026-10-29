@@ -15,8 +15,8 @@
     "bank": "nearest",
     "coin_float": 0,
     "loadouts": {},
-    "areas": {},
-    "tools": ["obj:spade", "obj:closet_key", "obj:fish_food", "obj:poison", "obj:poisoned_fish_food", "obj:pressure_gauge", "obj:rubber_tube", "obj:oil_can"],
+    "areas": { "closet": { "boxes": [[3108, 3366, 3112, 3368, 0]], "source": "content/maps/m48_52.jm2:2344-2346,2408-2410,2472-2474,2536-2538,2600-2602,6998-7000,7022-7023,7063-7065,7124-7125,7187-7190" } },
+    "tools": ["obj:iron_mace", "obj:cabbage", "obj:spade", "obj:closet_key", "obj:fish_food", "obj:poison", "obj:poisoned_fish_food", "obj:pressure_gauge", "obj:rubber_tube", "obj:oil_can"],
     "owns_inventory": true
   },
   "roles": [{
@@ -36,6 +36,12 @@
       {
         "stage": "haunted:0", "required": [], "terminal": false, "recovery_entry": null,
         "steps": [{
+          "id": "pick-food", "kind": "interact", "version": 1, "advances": false,
+          "args": { "target": { "loc": "cabbage" }, "op": "Pick", "anchor": { "tile": [3046, 3287, 0], "source": "content/maps/m47_51.jm2:5743-5756; content/pack/loc.pack:1162" }, "radius": 12, "wait_if_missing": true, "until": { "obj": "cabbage", "qty": 16 }, "settle_ms": 180000 },
+          "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "cabbage", "qty": 16 } } },
+          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "cabbage", "qty": 16 } } },
+          "comment": "Pick food before entering the manor. The patch gives cabbage and replenishes after 70 ticks; each cabbage heals one hitpoint: content/scripts/general_use/scripts/pickables.rs2:42-51; content/scripts/player/configs/consumption/consume_normal.dbrow:32-38."
+        }, {
           "id": "start-veronica", "kind": "talk", "version": 1, "advances": true,
           "args": { "npc": "veronica", "anchor": { "tile": [3110, 3330, 0], "source": "content/maps/m48_52.jm2:9447; content/pack/npc.pack:286" }, "leash": 8, "prefer": ["Aha, sounds like a quest. I'll help."] },
           "skip_if": { "Any": [] },
@@ -54,7 +60,7 @@
         }]
       },
       {
-        "stage": "haunted:2", "required": [], "terminal": false, "recovery_entry": null,
+        "stage": "haunted:2", "required": [], "terminal": false, "recovery_entry": null, "order": "ordered",
         "steps": [
           {
             "id": "take-spade", "kind": "interact", "version": 1, "advances": false,
@@ -73,9 +79,16 @@
           {
             "id": "unlock-closet", "kind": "use_on", "version": 1, "advances": false,
             "args": { "item": "closet_key", "target": { "loc": "closet_door" }, "anchor": { "tile": [3107, 3367, 0], "source": "content/maps/m48_52.jm2:6960; content/pack/loc.pack:132" }, "radius": 2 },
-            "skip_if": { "Any": [ { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3111, 3367, 0], "radius": 1 } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rubber_tube" } } } ] },
-            "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["you go through the door"] } } },
-            "comment": "The key opens the closet door: content/scripts/quests/quest_haunted/scripts/quest_haunted.rs2:31-46."
+            "skip_if": { "Any": [ { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "closet" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rubber_tube" } } } ] },
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "closet" } } },
+            "comment": "The key toggles the door and moves the player inside. Wait for the inside tile rather than the earlier door message: content/scripts/quests/quest_haunted/scripts/quest_haunted.rs2:31-46; content/scripts/doors/scripts/open_and_close_doors.rs2:43-62."
+          },
+          {
+            "id": "fight-closet-skeleton", "kind": "combat", "version": 1, "advances": false,
+            "args": { "target": { "npc": "skeleton_unarmed", "not_targeting_others": true, "pick": "nearest" }, "stand": { "tile": [3110, 3367, 0], "source": "content/maps/m48_52.jm2:9448; content/pack/npc.pack:91" }, "area": { "box": [3108, 3366, 3112, 3368, 0], "source": "content/maps/m48_52.jm2:6998-7000,7022-7023,7063-7065,7124-7125,7187-7190" }, "lost_radius": 8, "kill_budget_ticks": 240, "tactic": { "kind": "open", "style": "melee", "engage_radius": 5, "auto_retaliate": true } },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rubber_tube" } } },
+            "settle": { "All": [] },
+            "comment": "The level-25 skeleton spawns beside the tube and hunts weak players: content/maps/m48_52.jm2:9448,9472; content/scripts/_unpack/225/all.npc:2222-2240; content/scripts/_unpack/225/all.hunt:37-45."
           },
           {
             "id": "take-tube", "kind": "interact", "version": 1, "advances": false,
