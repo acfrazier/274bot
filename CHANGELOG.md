@@ -16,6 +16,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - The terminal app's script pane now marks the selected compiled (native)
   script card with `>` the same way as a selected JavaScript card.
 
+### Gatherer
+
+- Gatherer can buy a missing gathering tool or bait from a reachable shop.
+  `buyTools` is on by default. A usable tool in the pack, equipment or observed
+  bank is used first; the bot does not buy an upgrade in its place. Shop
+  purchases use the content price rule and only the coins the account has.
+- A supply shortage now parks the running card instead of stopping it.
+  The panel, terminal and fleet show the reason and the bank information used.
+  The card closes the bank and waits without repeated trips or purchase clicks.
+  Fresh supply evidence, Resume or a relevant setting change can start one
+  new plan. A saved bank hint alone cannot. Pause, Stop, relog handling and
+  connection checks remain active.
+
 ### Combat
 
 - Bots now drink their boost potion before the first hit even when the target

@@ -19,6 +19,9 @@ impl Gatherer {
         self.cancel_active();
         self.trip = TripStep::Idle;
         self.scratch.needs = None;
+        self.scratch.parked = None;
+        self.scratch.replan_once = false;
+        self.scratch.rebuild_park_request = false;
         self.observed_progress = None;
         self.proof_evidence = 0;
         self.tool = ToolState {
@@ -123,9 +126,8 @@ impl Gatherer {
                 ) else {
                     return;
                 };
-                // The same admission as a live boundary (N7): a
-                // `Session`-known shortage fails in place, a `Hint` or an
-                // unknown bank earns one reprovision trip.
+                // The same admission as a live boundary (N7): a known
+                // shortage parks. A Hint or an unknown bank earns one scan.
                 if self.admit_supply(&tick.cx) {
                     return;
                 }

@@ -27,6 +27,7 @@ pub struct StatusData {
     pub xp_per_hour: Option<i32>,
     pub bank: Arc<str>,
     pub bank_seen: Option<BankSeen>,
+    pub block_reason: Arc<str>,
     pub last_progress: u64,
     pub deaths: u8,
     pub recoveries: u8,
@@ -84,6 +85,12 @@ macro_rules! status_rows {
                 "Bank seen (at status update)",
                 Text,
                 bank_seen_text($data.bank_seen)
+            ),
+            $emit!(
+                "block_reason",
+                "Block reason (evidence when blocked)",
+                Text,
+                Arc::clone(&$data.block_reason)
             ),
             $emit!(
                 "last_progress",
@@ -281,6 +288,7 @@ mod tests {
             xp_per_hour: None,
             bank: Arc::from(""),
             bank_seen: None,
+            block_reason: Arc::from(""),
             last_progress: 7,
             deaths: 0,
             recoveries: 0,
@@ -405,6 +413,8 @@ mod tests {
             xp: 0,
             xp_per_hour: None,
             bank: Arc::from(""),
+            bank_seen: None,
+            block_reason: Arc::from(""),
             last_progress: 0,
             deaths: 0,
             recoveries: 0,

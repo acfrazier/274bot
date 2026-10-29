@@ -20,8 +20,8 @@ use super::widen::{
 use super::{GatherRetained, RecoveryState};
 use crate::acquire::run::AcquireRun;
 use crate::acquire::{
-    AcquireOutcome, AcquirePlan, AcquireRequest, AcquireVerdict, BankChoice, BankStage, CloseBank,
-    CoinPolicy, DepositSpec, Need, OpenGate, VendorChoice,
+    AcquireBlock, AcquireOutcome, AcquirePlan, AcquireRequest, AcquireVerdict, BankChoice, BankStage,
+    CloseBank, CoinPolicy, DepositSpec, Need, OpenGate, SourceSet, VendorChoice,
 };
 use crate::native::walk::Walk;
 use crate::native::{
@@ -39,6 +39,9 @@ use std::task::Poll;
 
 #[path = "recover.rs"]
 mod recover;
+#[path = "park.rs"]
+mod park;
+use park::Park;
 
 const MAX_AVOID: usize = 8;
 
@@ -107,6 +110,7 @@ enum Active {
     Walk(ActionHandle<Walk>),
     Tend(ActionHandle<OneOp>),
     Acquire(AcquireRun),
+    ParkClose(AcquireRun),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -251,6 +255,9 @@ struct GatherScratch {
     withdrew_supplies: bool,
     /// Only the in-flight observation request needs its selected-goal receipt.
     observation_walk: bool,
+    parked: Option<Park>,
+    replan_once: bool,
+    rebuild_park_request: bool,
 }
 
 pub struct Gatherer {
@@ -402,8 +409,18 @@ impl Gatherer {
             stage: BankStage::Planned,
             partial_ok: true,
             close,
-            vendor: VendorChoice::None,
-            coins: CoinPolicy::None,
+            vendor: if self.settings().buy_tools {
+                VendorChoice::Nearest
+            } else {
+                VendorChoice::None
+            },
+            coins: if self.settings().buy_tools {
+                CoinPolicy::ForPurchase {
+                    sources: SourceSet::PACK | SourceSet::BANK,
+                }
+            } else {
+                CoinPolicy::None
+            },
             walk: WalkOptions::default(),
             required_after: cx.evidence(),
         }
@@ -451,36 +468,15 @@ impl Gatherer {
                 return true;
             }
         };
-        let mut request = self.acquire_request(needs, None, CloseBank::Close, cx);
+        let request = self.acquire_request(needs, None, CloseBank::Close, cx);
         match crate::acquire::run::plan_current(&request, cx) {
             Ok(AcquireVerdict::Satisfied) => false,
             Ok(AcquireVerdict::Plan(plan)) => {
-                let bank_work = plan.scan || plan.withdrawal_count > 0;
-                let continuing_return = self.trip == TripStep::Validate;
-                if bank_work {
-                    let Some(inventory) = snapshot.inventory() else {
-                        return false;
-                    };
-                    request.deposit = Some(self.deposit_spec(inventory.value));
-                }
-                let step = TripStep::Supply {
-                    return_to_work: bank_work || continuing_return,
-                    deposit_products: bank_work,
-                };
-                // A newly learned lower tier can need a wear-only request.
-                // Keep the original bank return and its receipt attribution.
-                if continuing_return {
-                    self.advance_trip(step);
-                } else {
-                    self.start_trip(step);
-                }
-                self.scratch.needs = Some(Arc::clone(&request.needs));
-                self.active =
-                    Active::Acquire(AcquireRun::new(request, plan, &self.prepared.banks, cx));
+                self.start_supply_plan(request, plan, cx);
                 true
             }
             Ok(AcquireVerdict::Blocked(block)) => {
-                self.fail(block.code(), block.message);
+                self.park_supply(request, block, cx.evidence().tick);
                 true
             }
             Err(error) => {
@@ -488,6 +484,38 @@ impl Gatherer {
                 true
             }
         }
+    }
+
+    fn start_supply_plan(
+        &mut self,
+        mut request: AcquireRequest,
+        plan: AcquirePlan,
+        cx: &crate::native::ActionContext<'_>,
+    ) {
+        let bank_work = plan.scan || plan.withdrawal_count > 0;
+        let continuing_return = self.trip == TripStep::Validate
+            || matches!(self.trip, TripStep::Supply { return_to_work: true, .. });
+        if bank_work {
+            if let Some(inventory) = cx.snapshot().inventory() {
+                request.deposit = Some(self.deposit_spec(inventory.value));
+            }
+        }
+        let step = TripStep::Supply {
+            return_to_work: bank_work || plan.purchase_count > 0 || continuing_return,
+            deposit_products: bank_work,
+        };
+        if continuing_return {
+            self.advance_trip(step);
+        } else {
+            self.start_trip(step);
+        }
+        self.scratch.needs = Some(Arc::clone(&request.needs));
+        self.active = Active::Acquire(AcquireRun::new(
+            request,
+            plan,
+            &self.prepared.banks,
+            cx,
+        ));
     }
 
     fn start_dispose(&mut self, tick: &mut NativeTick<'_>) {
@@ -716,7 +744,7 @@ impl Gatherer {
             Ok(AcquireVerdict::Satisfied) => AcquirePlan::empty(),
             Ok(AcquireVerdict::Plan(plan)) => plan,
             Ok(AcquireVerdict::Blocked(block)) => {
-                self.fail(block.code(), block.message);
+                self.park_supply(request, block, tick.cx.evidence().tick);
                 return;
             }
             Err(error) => {
@@ -734,6 +762,9 @@ impl Gatherer {
     }
 
     fn fail(&mut self, code: &'static str, message: impl Into<Arc<str>>) {
+        self.scratch.parked = None;
+        self.scratch.replan_once = false;
+        self.scratch.rebuild_park_request = false;
         self.failure = Some(ScriptFailure {
             code: Arc::from(code),
             message: message.into(),
@@ -813,7 +844,8 @@ impl Gatherer {
     fn apply_pending(&mut self, disposal_due: bool) -> Option<u64> {
         // A hold revokes the machine, not its full-batch reserve target.
         // Keep both the plan and its configuration stable until settlement.
-        if self.scratch.needs.is_some() {
+        let parked = self.scratch.parked.is_some();
+        if !parked && self.scratch.needs.is_some() {
             return None;
         }
         let next = self.pending.as_ref()?.get::<Arc<Prepared>>()?;
@@ -826,10 +858,10 @@ impl Gatherer {
         let next_disposal = disposal_due
             && self.trip == TripStep::Idle
             && current.disposition != next.settings.disposition;
-        if changed_bank && self.trip != TripStep::Deposit && !next_disposal {
+        if !parked && changed_bank && self.trip != TripStep::Deposit && !next_disposal {
             return None;
         }
-        if current.disposition != next.settings.disposition
+        if !parked && current.disposition != next.settings.disposition
             && (!disposal_due || self.trip != TripStep::Idle)
         {
             return None;
@@ -849,6 +881,8 @@ impl Gatherer {
         self.prepared = Arc::clone(prepared);
         self.config = config;
         self.needs_validate = true;
+        self.scratch.replan_once |= parked;
+        self.scratch.rebuild_park_request |= parked;
         self.dirty = true;
         self.set_event("settings applied");
         Some(revision)
@@ -1044,6 +1078,9 @@ impl Gatherer {
         if self.trip != TripStep::Idle && self.trip != TripStep::Validate {
             return Validation::Ready;
         }
+        if self.scratch.parked.is_some() {
+            return Validation::Ready;
+        }
         // A full-pack haul is deposited before a known supply shortage can
         // refuse the second request at the open bank.
         if self.trip == TripStep::Idle
@@ -1053,7 +1090,7 @@ impl Gatherer {
             return Validation::Ready;
         }
         if self.admit_supply(cx) {
-            return if self.failure.is_some() {
+            return if self.failure.is_some() || self.scratch.parked.is_some() {
                 Validation::Pending
             } else {
                 Validation::Ready
@@ -1682,18 +1719,41 @@ impl Gatherer {
                             "a Gatherer bank-only supply request selected a child",
                         );
                     }
-                    Poll::Ready(Err(error)) => self.acquire_failure(&run, error),
+                    Poll::Ready(Err(error)) => {
+                        run.cancel(tick.actions);
+                        self.acquire_failure(run, error, &tick.cx);
+                    }
                 }
             }
+            Active::ParkClose(mut run) => match run.poll(tick, OpenGate::Open) {
+                Poll::Pending
+                | Poll::Ready(Err(ActionError::Held | ActionError::BudgetExhausted)) => {
+                    self.active = Active::ParkClose(run);
+                }
+                Poll::Ready(Ok(AcquireOutcome::Done(_))) => self.dirty = true,
+                Poll::Ready(Ok(AcquireOutcome::ChildDue { .. })) => {
+                    self.fail("action-error", "a park close selected a child");
+                }
+                Poll::Ready(Err(error)) => {
+                    run.cancel(tick.actions);
+                    self.acquire_failure(run, error, &tick.cx);
+                }
+            },
         }
         if tick.cx.interaction_event_spent() {
             self.fence.seal();
         }
     }
 
-    fn acquire_failure(&mut self, run: &AcquireRun, error: ActionError) {
-        if let Some(block) = run.block() {
-            self.fail(block.code(), Arc::clone(&block.message));
+    fn acquire_failure(
+        &mut self,
+        run: AcquireRun,
+        error: ActionError,
+        cx: &crate::native::ActionContext<'_>,
+    ) {
+        let stage = run.progress().2;
+        if let Some((request, block)) = run.into_blocked() {
+            self.park_supply(request, block, cx.evidence().tick);
             return;
         }
         if matches!(error, ActionError::BankDeposit(_)) {
@@ -1723,7 +1783,7 @@ impl Gatherer {
                 }
             }
         }
-        let code = match run.progress().2 {
+        let code = match stage {
             "Select" | "Access" | "Open" => "bank-unavailable",
             "Deposit" => "bank-deposit-failed",
             "Withdraw" => "bank-withdraw-failed",
@@ -1789,6 +1849,9 @@ impl Gatherer {
                 Validation::Pending => return,
                 Validation::Ready => self.needs_validate = false,
             }
+        }
+        if self.scratch.parked.is_some() {
+            return;
         }
         if matches!(self.active, Active::Acquire(_)) {
             self.begin_trip(tick);
@@ -2155,6 +2218,9 @@ impl Gatherer {
         if matches!(self.retained.recovery, RecoveryState::Pending { .. }) {
             return ("recovering", NativePhase::Working);
         }
+        if self.scratch.parked.is_some() {
+            return ("blocked", NativePhase::Blocked);
+        }
         if self.trip != TripStep::Idle && !matches!(self.active, Active::Walk(_)) {
             if self.wait_until.is_some() {
                 return ("waiting", NativePhase::Waiting);
@@ -2184,7 +2250,7 @@ impl Gatherer {
             }
             Active::Walk(_) => ("walking", NativePhase::Working),
             Active::Tend(_) => ("tending", NativePhase::Working),
-            Active::Acquire(_) => ("banking", NativePhase::Working),
+            Active::Acquire(_) | Active::ParkClose(_) => ("banking", NativePhase::Working),
         }
     }
 
@@ -2257,7 +2323,7 @@ impl Gatherer {
                 Arc::clone(&self.bank_label)
             } else {
                 let stage = match &self.active {
-                    Active::Acquire(run) => run.progress().2,
+                    Active::Acquire(run) | Active::ParkClose(run) => run.progress().2,
                     _ => match self.trip {
                         TripStep::Idle => "Idle",
                         TripStep::Deposit => "Deposit",
@@ -2269,6 +2335,10 @@ impl Gatherer {
                 Arc::from(format!("{}; {stage}", self.bank_label))
             },
             bank_seen: None,
+            block_reason: self.scratch.parked.as_ref().map_or_else(
+                || Arc::from(""),
+                |park| Arc::clone(&park.block.message),
+            ),
             last_progress: self.last_gameplay_tick,
             deaths: self.retained.deaths,
             recoveries: self.retained.recoveries,
@@ -2371,6 +2441,17 @@ impl Script for Gatherer {
         }
         let recoveries = self.retained.recoveries;
         self.observe_progress(tick);
+        if self.scratch.parked.is_some() {
+            if self.active_matches_none() {
+                if let Some(revision) = self.apply_pending(false) {
+                    tick.output.settings_applied(revision);
+                }
+            }
+            if self.poll_park(tick) {
+                self.publish(tick);
+                return Ok(ScriptFlow::Continue);
+            }
+        }
         if matches!(self.retained.recovery, RecoveryState::Pending { .. }) {
             self.poll_recovery(tick);
             self.publish(tick);
@@ -2426,7 +2507,9 @@ impl Script for Gatherer {
         if let Some(error) = &prepared.site_error {
             return Err(error.clone());
         }
-        if self.prepared.settings.boundary_changed(&prepared.settings) {
+        if self.prepared.settings.boundary_changed(&prepared.settings)
+            && (self.scratch.parked.is_none() || !self.active_matches_none())
+        {
             self.pending = Some(next);
             self.dirty = true;
             return Ok(SettingsApply::PendingBoundary);
@@ -2435,6 +2518,8 @@ impl Script for Gatherer {
         self.config = next;
         self.pending = None;
         self.needs_validate = true;
+        self.scratch.replan_once |= self.scratch.parked.is_some();
+        self.scratch.rebuild_park_request |= self.scratch.parked.is_some();
         self.dirty = true;
         Ok(SettingsApply::Applied)
     }
@@ -2446,7 +2531,14 @@ impl Script for Gatherer {
                 self.paused = true;
                 self.dirty = true;
             }
-            Interrupt::Resume | Interrupt::Hold(false) | Interrupt::SessionReady => {
+            Interrupt::Resume => {
+                self.paused = false;
+                self.needs_validate = true;
+                self.rebaseline_gameplay = true;
+                self.scratch.replan_once = self.scratch.parked.is_some();
+                self.dirty = true;
+            }
+            Interrupt::Hold(false) | Interrupt::SessionReady => {
                 self.paused = false;
                 self.needs_validate = true;
                 self.rebaseline_gameplay = true;
@@ -2466,12 +2558,20 @@ impl Script for Gatherer {
     fn on_stop(&mut self, _reason: StopReason) {
         self.cancel_active();
         self.pending = None;
+        self.scratch.parked = None;
     }
 
     fn recovery_anchor(&self) -> Option<WorldTile> {
         (self.trip == TripStep::Idle && self.retained.recovery == RecoveryState::Idle)
             .then_some(self.retained.anchor)
             .flatten()
+    }
+
+    fn waits_for_evidence(&self) -> bool {
+        self.scratch.parked.is_some()
+            && self.active_matches_none()
+            && !self.scratch.replan_once
+            && self.failure.is_none()
     }
 }
 
@@ -2484,6 +2584,10 @@ impl Gatherer {
 #[cfg(test)]
 #[path = "runner_switch_tests.rs"]
 mod switch_tests;
+
+#[cfg(test)]
+#[path = "runner_park_tests.rs"]
+mod park_tests;
 
 #[cfg(test)]
 mod tests {
@@ -2894,16 +2998,16 @@ mod tests {
     /// A Draynor-style Bait fishing Gatherer at its spot holding only the
     /// rod, plus a `Session` memory of an empty bank and a `Hint` claiming
     /// 20 bait.
-    struct BaitFixture {
-        config: Arc<PreparedConfig>,
-        prepared: Arc<Prepared>,
-        snapshot: api::snapshot::GameSnapshot,
-        session: api::bank_memory::BankMemory,
-        hint: api::bank_memory::BankMemory,
+    pub(super) struct BaitFixture {
+        pub(super) config: Arc<PreparedConfig>,
+        pub(super) prepared: Arc<Prepared>,
+        pub(super) snapshot: api::snapshot::GameSnapshot,
+        pub(super) session: api::bank_memory::BankMemory,
+        pub(super) hint: api::bank_memory::BankMemory,
     }
 
     impl BaitFixture {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             use crate::quester::families::tests::{def, local_player};
             use api::bank_memory::{BankMemory, ObservedAt};
             use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, WorldStateView};
@@ -2915,6 +3019,7 @@ mod tests {
                 ("fishingMethod", serde_json::json!("fishing.saltfish.op3")),
                 ("baitTarget", serde_json::json!(10)),
                 ("disposition", serde_json::json!("Bank")),
+                ("buyTools", serde_json::json!(false)),
             ] {
                 bag.insert(key.into(), value);
             }
@@ -2998,7 +3103,7 @@ mod tests {
             }
         }
 
-        fn gatherer(&self, retained: GatherRetained) -> Gatherer {
+        pub(super) fn gatherer(&self, retained: GatherRetained) -> Gatherer {
             Gatherer::new(
                 RunKey {
                     slot: 1,
@@ -3011,13 +3116,13 @@ mod tests {
             )
         }
 
-        fn assert_missing(&self, failure: &ScriptFailure) {
+        fn assert_missing(&self, block: &AcquireBlock) {
             let name = &self.prepared.supply.bait.as_ref().unwrap().name;
-            assert_eq!(failure.code.as_ref(), "supply-missing");
-            assert!(failure.message.starts_with(&format!(
+            assert_eq!(block.code(), "supply-missing");
+            assert!(block.message.starts_with(&format!(
                 "no {name} in the pack, worn, or in the bank as seen "
             )));
-            assert!(failure.message.ends_with(&format!(
+            assert!(block.message.ends_with(&format!(
                 "(0 rows); nobody sells it; waiting: put a {name} in the pack"
             )));
         }
@@ -3041,8 +3146,9 @@ mod tests {
                     &tick.cx,
                 );
                 gatherer.acquire_failure(
-                    &run,
+                    run,
                     ActionError::Failed(Arc::from(format!("{code}: observed tool detail"))),
+                    &tick.cx,
                 );
             });
             let failure = gatherer
@@ -3488,9 +3594,10 @@ mod tests {
         );
         fixture.assert_missing(
             gatherer
-                .failure
+                .scratch.parked
                 .as_ref()
-                .expect("the second request checks the now-observed empty bank"),
+                .map(|park| &park.block)
+                .expect("the second request parks on the observed empty bank"),
         );
         assert_eq!(gatherer.retained.deposited, 27);
         assert_eq!(fixture.snapshot.inventory().len(), 1);
@@ -3507,8 +3614,8 @@ mod tests {
     }
 
     /// design-bank-snapshot §2.4 at the validate boundary: a shortage the
-    /// bank showed this session fails in place with no trip and no action; a
-    /// `Hint` or an unknown bank starts the trip.
+    /// bank showed this session parks in place with no trip and no action.
+    /// A Hint or an unknown bank starts one verifying trip.
     #[test]
     fn validate_admits_supply_trips_from_the_bank_memory() {
         use crate::quester::families::tests::with_tick_bank;
@@ -3526,8 +3633,9 @@ mod tests {
             let origin = bank.map(api::bank_memory::BankMemory::origin);
             if in_place {
                 assert_eq!(validation, Validation::Pending, "{origin:?}");
-                let failure = gatherer.failure.as_ref().expect("a Session shortage fails");
-                fixture.assert_missing(failure);
+                assert!(gatherer.failure.is_none());
+                let park = gatherer.scratch.parked.as_ref().expect("a Session shortage parks");
+                fixture.assert_missing(&park.block);
                 assert_eq!(gatherer.trip, TripStep::Idle, "no walk is armed");
             } else {
                 assert_eq!(validation, Validation::Ready, "{origin:?}");
@@ -3565,8 +3673,9 @@ mod tests {
             });
             let origin = bank.map(api::bank_memory::BankMemory::origin);
             if in_place {
-                let failure = gatherer.failure.as_ref().expect("a Session shortage fails");
-                fixture.assert_missing(failure);
+                assert!(gatherer.failure.is_none());
+                let park = gatherer.scratch.parked.as_ref().expect("a Session shortage parks");
+                fixture.assert_missing(&park.block);
                 assert_eq!(gatherer.trip, TripStep::Idle, "no reprovision walk");
             } else {
                 assert!(gatherer.failure.is_none(), "{origin:?}");

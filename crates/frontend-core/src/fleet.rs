@@ -150,9 +150,9 @@ fn status_key(row: Option<&FleetRow>) -> &str {
 
 /// Whether one filter term matches: a name substring, `wN` / `world:N`,
 /// or a status substring: the phase (`ready`, `queued`, `login error`, …)
-/// or the row's label (`running`, `idle`, …). A member the core has not
-/// projected yet counts as offline; a profile that is not loaded matches
-/// only its [`NOT_LOADED`] status.
+/// or the row's brief (`running`, `idle`, `blocked`, …). A member the core
+/// has not projected yet counts as offline. A profile that is not loaded
+/// matches only its [`NOT_LOADED`] status.
 fn term_matches(name: &str, row: Option<&FleetRow>, term: &str) -> bool {
     if contains_ci(name, term)
         || contains_ci(status_key(row), term)

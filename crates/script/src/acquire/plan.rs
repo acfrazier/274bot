@@ -4,6 +4,16 @@ use super::*;
 use api::shop_facts::{self, VendorFact};
 use api::stock::Stock;
 
+
+#[cfg(test)]
+std::thread_local! {
+    static PLAN_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn calls_for_test() -> usize {
+    PLAN_CALLS.get()
+}
 pub trait Counts {
     fn held(&self, id: i32) -> Option<i32>;
     fn worn(&self, id: i32) -> Option<i32>;
@@ -450,6 +460,8 @@ pub fn plan(
     counts: &dyn Counts,
     world: WorldFacts<'_>,
 ) -> Result<AcquireVerdict, ActionError> {
+    #[cfg(test)]
+    PLAN_CALLS.set(PLAN_CALLS.get() + 1);
     if let BankStage::Authored(actions) = &request.stage {
         if let Some(message) = session_shortage(actions, request.partial_ok, counts) {
             return Ok(AcquireVerdict::Blocked(AcquireBlock {

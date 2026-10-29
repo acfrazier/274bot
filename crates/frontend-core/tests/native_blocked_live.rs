@@ -1,18 +1,91 @@
-//! Real-content blocked Gatherer through the shared panel/TUI presentation.
+//! Real-content Running+Blocked Gatherer through the shared panel/TUI projection.
 //! Only the minted account's tutorial state, pack, skill and position are seeded.
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
-use api::interact::{cheat, tele_args};
-use api::snapshot::GameSnapshot;
-use frontend_core::log::{global, LogScope, LogView};
 use frontend_core::scripts::{ScriptRunState, StatusView};
-use frontend_core::views::{script_status_label, script_status_reason};
+use frontend_core::views::{script_status_label, script_status_reason, script_status_rows};
+use frontend_core::{
+    fleet_row_matches, HeadlessSurface, OperationId, OperatorCommand, OperatorSession, Targets,
+};
 use host::Pump;
-use host_play::{ProfileOptions, SharedClientTemplate};
+use host_play::{InstancePermit, ProfileOptions, SharedClientTemplate};
 use scenario::{Proof, RunnerStatus, ScenarioRunner, Step, StepKind, Wait};
 use serde_json::json;
+use vault::{Profile, ProfileSettings, RasterMode, Vault};
+
+fn wait_operation(
+    session: &mut OperatorSession<()>,
+    operation: OperationId,
+    account: &str,
+    deadline: Instant,
+) -> Result<(), String> {
+    loop {
+        session.poll();
+        let report = session
+            .operation(operation)
+            .ok_or_else(|| format!("operation {} disappeared", operation.0))?;
+        let outcome = report
+            .outcome(account)
+            .ok_or_else(|| format!("operation {} has no row for {account}", operation.0))?;
+        if outcome.is_completed() {
+            return Ok(());
+        }
+        if outcome.is_failed() || outcome.is_cancelled() || outcome.is_skipped() {
+            return Err(format!(
+                "operation {} did not complete: {}",
+                operation.0,
+                outcome.reason().unwrap_or("cancelled or skipped")
+            ));
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("operation {} deadline", operation.0));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn submit_and_wait(
+    session: &mut OperatorSession<()>,
+    surface: &mut HeadlessSurface<fn(&str)>,
+    command: OperatorCommand,
+    account: &str,
+    deadline: Instant,
+) -> Result<(), String> {
+    let submitted = session
+        .submit(command, Targets::Profile(account), surface)
+        .map_err(|error| format!("submit {command:?}: {error:?}"))?;
+    let operation = submitted
+        .operation()
+        .ok_or_else(|| format!("{command:?} did not create an operation"))?;
+    wait_operation(session, operation, account, deadline)
+}
+
+fn wait_script_state(
+    session: &mut OperatorSession<()>,
+    account: &str,
+    expected: script::RunState,
+    deadline: Instant,
+) -> Result<(), String> {
+    loop {
+        session.poll();
+        let play = session
+            .play_for_test()
+            .ok_or("OperatorSession lost its Play while awaiting a script state")?;
+        play.pump_script_lifecycle(account);
+        if play.script_state(account) == expected {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "script state remained {:?} instead of {expected:?}",
+                play.script_state(account)
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
 
 fn run_state(play: &host_play::Play, account: &str) -> ScriptRunState {
     match play.script_state(account) {
@@ -71,7 +144,7 @@ fn capture(
     receipt["frame"] = json!({"ingame": client.ingame, "scene_state": client.scene_state});
     scenario::shot::write_shot(
         directory,
-        "01-stopped-blocked",
+        "01-running-blocked",
         &rgba,
         pixels.width as u32,
         pixels.height as u32,
@@ -82,14 +155,33 @@ fn capture(
 
 #[test]
 #[ignore = "requires LIVE=1, throwaway HOME, BLOCKED_* paths and local 289 engine"]
-fn gatherer_blocked_stops_with_shared_status() {
+fn gatherer_parked_status_is_shared_and_controllable() {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return;
     }
-    let _home = script::IsolatedEnv::enter("blocked-stop-live");
+    let _home = script::IsolatedEnv::enter("blocked-run-live");
     let root = required_path("BLOCKED_EVIDENCE_DIR");
     std::fs::create_dir_all(&root).unwrap();
-    global();
+    let names = host_play::mint_live_names(1);
+    let account = names[0].clone();
+    let password = host_play::mint_live_entries(&names)[0].1.clone();
+    let run_stamp = scenario::shot::stamp_utc(SystemTime::now());
+    let directory = root.join(format!("gatherer-running-blocked_{account}_{run_stamp}"));
+    std::fs::create_dir_all(&directory).unwrap();
+    let vault_path = directory.join("vault");
+    let mut vault = Vault::create(&vault_path, "blocked-run-live-pass-01").unwrap();
+    vault
+        .upsert(Profile {
+            username: account.clone(),
+            password: password.into(),
+            uid: 1,
+            settings: ProfileSettings {
+                auto_login: true,
+                raster: RasterMode::Cpu,
+                ..Default::default()
+            },
+        })
+        .unwrap();
     let profile = ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
@@ -101,7 +193,7 @@ fn gatherer_blocked_stops_with_shared_status() {
         nav_pack: Some(required_path("BLOCKED_NAV_PACK")),
         engine_dir: Some(required_path("BLOCKED_ENGINE_DIR")),
         catalog_root: Some(required_path("BLOCKED_CATALOG_ROOT")),
-        vault_path: Some(root.join("unused-vault")),
+        vault_path: Some(vault_path),
         ..ProfileOptions::default()
     }
     .resolve(None)
@@ -109,14 +201,6 @@ fn gatherer_blocked_stops_with_shared_status() {
     .bind()
     .unwrap();
     let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
-    let names = host_play::mint_live_names(1);
-    let account = names[0].clone();
-    let password = host_play::mint_live_entries(&names)[0].1.clone();
-    let directory = root.join(format!(
-        "blocked-stop_bait_{}_{}",
-        account,
-        scenario::shot::stamp_utc(SystemTime::now())
-    ));
     // Reuse the registered Gatherer's tutorial skip/relog sequence, then
     // replace only its gathering fixture with the real Lumbridge fishing site.
     let mut prep = scenario::get("gatherer").unwrap();
@@ -194,24 +278,28 @@ fn gatherer_blocked_stops_with_shared_status() {
     )
     .unwrap();
     state.lock().unwrap().runner.set_obj_names(play.obj_names());
-    play.try_spawn_slot(
-        vault::Profile {
-            username: account.clone(),
-            password: password.into(),
-            uid: 1,
-            settings: vault::ProfileSettings {
-                auto_login: true,
-                ..Default::default()
-            },
-        },
-        None,
-        None,
-        None,
-    )
-    .unwrap();
+    let mut session: OperatorSession<()> = OperatorSession::new(InstancePermit::SkipLock);
+    session.declare_headless_render();
+    session.start_for_test(vault, play);
+    let mut surface = HeadlessSurface::new();
     let deadline = Instant::now() + Duration::from_secs(240);
     let result = (|| -> Result<(), String> {
+        submit_and_wait(
+            &mut session,
+            &mut surface,
+            OperatorCommand::Load,
+            &account,
+            deadline,
+        )?;
+        submit_and_wait(
+            &mut session,
+            &mut surface,
+            OperatorCommand::Select,
+            &account,
+            deadline,
+        )?;
         loop {
+            session.poll();
             match state.lock().unwrap().runner.status() {
                 RunnerStatus::Passed => break,
                 RunnerStatus::Failed(reason) => return Err(reason),
@@ -228,49 +316,93 @@ fn gatherer_blocked_stops_with_shared_status() {
             "allowTeleports": false, "allowWilderness": false
         }))
         .unwrap();
-        play.script_start_handle()
+        session
+            .play_for_test()
+            .ok_or("OperatorSession lost its Play before Gatherer start")?
+            .script_start_handle()
             .start_compiled(&account, script::CompiledId("Gatherer"), bag)?;
         let blocked = loop {
-            if let Some(status) = play.script_native_status(&account) {
-                if status.failure.is_some() {
-                    break status;
+            session.poll();
+            let play = session
+                .play_for_test()
+                .ok_or("OperatorSession lost its Play while awaiting Gatherer status")?;
+            if play.script_state(&account) == script::RunState::Running {
+                if let Some(status) = play.script_native_status(&account) {
+                    if status.phase == script::native::NativePhase::Blocked
+                        && status.failure.is_none()
+                    {
+                        break status;
+                    }
                 }
             }
             if Instant::now() >= deadline {
-                return Err("blocked outcome deadline".into());
+                return Err("running blocked outcome deadline".into());
             }
             std::thread::sleep(Duration::from_millis(20));
         };
-        let failure = blocked.failure.as_ref().unwrap();
-        assert_eq!(failure.code.as_ref(), "supply-missing");
-        assert_eq!(play.script_state(&account), script::RunState::Idle);
-        assert!(play.script_native_run(&account).is_none());
-        assert_eq!(
-            script_status_label(run_state(&play, &account), Some(status_view(&blocked))),
-            "stopped (blocked)"
+        session.poll();
+        let play = session
+            .play_for_test()
+            .ok_or("OperatorSession lost its Play after Gatherer parked")?;
+        assert_eq!(play.script_state(&account), script::RunState::Running);
+        assert!(play.script_native_run(&account).is_some());
+        let reason = script_status_reason(status_view(&blocked))
+            .expect("a parked Gatherer publishes its block reason");
+        assert!(
+            reason.to_ascii_lowercase().contains("feather"),
+            "unexpected supply block reason: {reason}"
         );
-        assert_eq!(
-            script_status_reason(status_view(&blocked)),
-            Some(failure.message.as_ref())
+        let core_label = script_status_label(
+            run_state(play, &account),
+            Some(status_view(&blocked)),
         );
-        let mut log = LogView::new(LogScope::slot(account.clone()));
-        global().refresh(&mut log);
-        let reason_logged = log.rows().iter().any(|row| {
-            row.source() == api::hostlog::Source::Script
-                && row.message().contains(failure.message.as_ref())
-        });
+        assert_eq!(core_label, "blocked");
+        let status_rows = script_status_rows(status_view(&blocked)).collect::<Vec<_>>();
+        assert!(
+            status_rows
+                .iter()
+                .any(|(label, value)| *label == "Bank seen (at status update)" && !value.is_empty()),
+            "the real Gatherer status exposes its point-in-time bank observation"
+        );
+        let projected = {
+            let view = session.fleet_view();
+            let row = view.row(&account).expect("loaded account has a fleet row");
+            assert_eq!(row.script(), script::RunState::Running);
+            assert!(row.parked());
+            assert_eq!(row.brief(), "blocked");
+            row.snapshot()
+        };
+        assert!(fleet_row_matches(
+            &account,
+            Some(&projected),
+            "blocked"
+        ));
+        {
+            let view = session.fleet_view();
+            let phase = view
+                .detail()
+                .and_then(|detail| detail.script_phase())
+                .expect("selected account detail retains the parked script phase");
+            assert_eq!(phase.label(), "blocked");
+            assert_eq!(phase.phase(), Some("blocked"));
+            assert_eq!(phase.reason(), Some(reason));
+        }
         let observation = state.lock().unwrap();
         let snapshot = &observation.snapshot;
         assert!(snapshot.ingame() && snapshot.scene_state() == 2);
         assert!(snapshot.inventory().iter().any(|row| row.def.id == 309));
         assert!(!snapshot.inventory().iter().any(|row| row.def.id == 314));
         let receipt = json!({
-            "request": "BLOCKED-STOP-2", "account": account,
-            "outcome": "PASS", "run_state": "Idle", "native_run": null,
-            "frontend_core_label": script_status_label(run_state(&play, &account), Some(status_view(&blocked))),
-            "panel_tui_reason": script_status_reason(status_view(&blocked)),
-            "failure_code": failure.code, "log": log.to_text(),
-            "reason_logged": reason_logged,
+            "request": "BLOCKED-RUN-3", "account": account,
+            "outcome": "PASS", "run_state": "Running",
+            "native_phase": "Blocked", "native_failure": null,
+            "native_run_retained": true,
+            "frontend_core_label": core_label,
+            "fleet_brief": projected.brief(),
+            "fleet_parked": projected.parked(),
+            "fleet_filter_matches_blocked": true,
+            "panel_tui_reason": reason,
+            "status_rows": status_rows,
             "tile": snapshot.tile(), "scene_state": snapshot.scene_state(),
             "inventory": snapshot.inventory().iter().map(|row| json!({"id":row.def.id,"count":row.count})).collect::<Vec<_>>(),
             "fixture": "own tutorial state, Fishing 20, rod and position only; no feathers, resource spawn or XP injection"
@@ -278,9 +410,10 @@ fn gatherer_blocked_stops_with_shared_status() {
         drop(observation);
         state.lock().unwrap().capture = Some((directory.clone(), receipt));
         loop {
+            session.poll();
             if let Some(result) = state.lock().unwrap().capture_result.take() {
                 let path = result?;
-                println!("blocked-stop capture={}", path.display());
+                println!("running-blocked capture={}", path.display());
                 break;
             }
             if Instant::now() >= deadline {
@@ -288,8 +421,103 @@ fn gatherer_blocked_stops_with_shared_status() {
             }
             std::thread::sleep(Duration::from_millis(20));
         }
+
+        submit_and_wait(
+            &mut session,
+            &mut surface,
+            OperatorCommand::PauseScript,
+            &account,
+            deadline,
+        )?;
+        wait_script_state(
+            &mut session,
+            &account,
+            script::RunState::Paused,
+            deadline,
+        )?;
+        let paused = session
+            .play_for_test()
+            .and_then(|play| play.script_native_status(&account))
+            .ok_or("Pause removed the parked script status")?;
+        assert_eq!(
+            script_status_label(run_state(
+                session.play_for_test().expect("Play remains attached"),
+                &account
+            ), Some(status_view(&paused))),
+            "paused"
+        );
+        let paused_row = session
+            .fleet_view()
+            .row(&account)
+            .expect("paused account remains projected")
+            .snapshot();
+        assert_eq!(paused_row.script(), script::RunState::Paused);
+        assert!(!paused_row.parked());
+        assert_ne!(paused_row.brief(), "blocked");
+
+        submit_and_wait(
+            &mut session,
+            &mut surface,
+            OperatorCommand::ResumeScript,
+            &account,
+            deadline,
+        )?;
+        wait_script_state(
+            &mut session,
+            &account,
+            script::RunState::Running,
+            deadline,
+        )?;
+        let resumed = loop {
+            session.poll();
+            let row = session
+                .fleet_view()
+                .row(&account)
+                .expect("resumed account remains projected");
+            if row.parked() {
+                break row.snapshot();
+            }
+            if Instant::now() >= deadline {
+                return Err("resumed blocked fleet projection deadline".into());
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(resumed.brief(), "blocked");
+        assert_eq!(resumed.script(), script::RunState::Running);
+        let resumed_status = session
+            .play_for_test()
+            .and_then(|play| play.script_native_status(&account))
+            .ok_or("Resume removed the parked script status")?;
+        assert!(resumed_status.failure.is_none());
+        assert_eq!(resumed_status.phase, script::native::NativePhase::Blocked);
+
+        submit_and_wait(
+            &mut session,
+            &mut surface,
+            OperatorCommand::StopScript,
+            &account,
+            deadline,
+        )?;
+        wait_script_state(
+            &mut session,
+            &account,
+            script::RunState::Idle,
+            deadline,
+        )?;
+        let stopped_play = session
+            .play_for_test()
+            .ok_or("OperatorSession lost its Play after Stop")?;
+        assert!(stopped_play.script_native_run(&account).is_none());
+        let stopped = session
+            .fleet_view()
+            .row(&account)
+            .expect("stopped account remains projected")
+            .snapshot();
+        assert_eq!(stopped.script(), script::RunState::Idle);
+        assert!(!stopped.parked());
+        assert_ne!(stopped.brief(), "blocked");
         Ok(())
     })();
-    drop(play);
+    drop(session);
     result.unwrap();
 }

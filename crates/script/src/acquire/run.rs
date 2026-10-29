@@ -528,6 +528,11 @@ impl AcquireRun {
         self.block.as_deref()
     }
 
+    /// Move a generated refusal and its original request to a parked consumer.
+    pub(crate) fn into_blocked(self) -> Option<(AcquireRequest, AcquireBlock)> {
+        self.block.map(|block| (self.request, *block))
+    }
+
     /// Borrow the selected location, route kind and stage without another owner.
     pub(crate) fn progress(
         &self,
@@ -545,6 +550,7 @@ impl AcquireRun {
             Phase::Replan | Phase::Resume => "Replan",
             Phase::Actions => "Withdraw",
             Phase::Close => "Close",
+            Phase::Shop => "Shop",
             Phase::Wear => "Wear",
             Phase::Child => "Child",
             Phase::Done => "Done",
@@ -784,6 +790,22 @@ pub(crate) fn plan_current(
     cx: &ActionContext<'_>,
 ) -> Result<AcquireVerdict, ActionError> {
     plan_frame(request, cx, bank_open(cx))
+}
+
+/// A parked consumer reads only observed inventory and session bank memory.
+/// This query neither loads content nor creates another plan.
+pub(crate) fn resolved_current(
+    block: &AcquireBlock,
+    request: &AcquireRequest,
+    cx: &ActionContext<'_>,
+) -> bool {
+    plan::resolved(
+        block,
+        request,
+        &cx.snapshot().stock(),
+        WorldFacts::default(),
+        cx.evidence().tick,
+    )
 }
 
 fn plan_frame(

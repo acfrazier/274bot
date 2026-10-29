@@ -20,10 +20,10 @@ use host::{FrameBuf, Pump};
 use parking_lot::Mutex;
 use scenario::{self, Proof, RunnerStatus, Scenario, ScenarioRunner, Step, StepKind, Wait};
 use script::acquire::plan;
-use script::acquire::run::{AcquireRun, OpenGate};
+use script::acquire::run::AcquireRun;
 use script::acquire::{
     AcquireOutcome, AcquireRequest, BankChoice, BankStage, CloseBank, CoinPolicy, Need, NeedKind,
-    Presence, SourceSet, VendorChoice, WorldFacts,
+    OpenGate, Presence, SourceSet, VendorChoice, WorldFacts,
 };
 use script::native::{NativeTick, Script, ScriptFailure, ScriptFlow, WalkOptions};
 use serde_json::{json, Value};
@@ -32,12 +32,12 @@ use vault::{Profile, ProfileSettings};
 use super::combat_proof::{self, CaptureRegistration, CombatCapture};
 use super::{run_with_template, ProfileOptions, ScriptStartHandle};
 
-const ENGINE_A_GAME_PORT: u16 = 44_594;
-const ENGINE_A_HTTP_PORT: u16 = 1_080;
+const ENGINE_L_GAME_PORT: u16 = 47_594;
+const ENGINE_L_HTTP_PORT: u16 = 3_080;
 const REFERENCE_NAV_PACK: &str =
-    "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack";
+    "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack";
 const REFERENCE_NAV_FLAGS: &str =
-    "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navflags";
+    "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navflags";
 const SEED_COINS: i32 = 100_000;
 const SEED_FEATHERS: i32 = 5;
 const HARPOON_TARGET: i32 = 1;
@@ -284,9 +284,9 @@ fn profile_options(scratch: &Path) -> Result<ProfileOptions, String> {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
-        port: Some(ENGINE_A_GAME_PORT),
+        port: Some(ENGINE_L_GAME_PORT),
         asset_host: Some("127.0.0.1".into()),
-        http_port: Some(ENGINE_A_HTTP_PORT),
+        http_port: Some(ENGINE_L_HTTP_PORT),
         engine_dir: Some(engine_dir),
         cache_dir: Some(cache_dir),
         unpack_dir: Some(scratch.join("unpack")),
@@ -1574,7 +1574,7 @@ fn run_cell(kind: CellKind) {
         "schema": "gatherer-a4-core-acquire-shop-live-r1",
         "cell": kind.name(),
         "account": account,
-        "engine": {"host": "127.0.0.1", "game_port": ENGINE_A_GAME_PORT, "http_port": ENGINE_A_HTTP_PORT},
+        "engine": {"host": "127.0.0.1", "game_port": ENGINE_L_GAME_PORT, "http_port": ENGINE_L_HTTP_PORT},
         "model": "openai-codex/gpt-6-luna",
         "selected_revision": "R289",
         "reference_nav_pack": nav_pack,

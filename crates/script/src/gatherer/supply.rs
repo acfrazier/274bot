@@ -613,7 +613,7 @@ impl SupplyPlan {
                 minimum: 1,
                 presence: Presence::Held,
                 kind: NeedKind::Required,
-                sources: SourceSet::PACK | SourceSet::BANK,
+                sources: purchase_sources(prepared, SourceSet::PACK | SourceSet::BANK),
                 alternatives: Arc::<[i32]>::from([]),
             });
         }
@@ -720,9 +720,17 @@ fn tool_need(
             Presence::Carried
         },
         kind: NeedKind::Required,
-        sources: SourceSet::PACK | SourceSet::WORN | SourceSet::BANK,
+        sources: purchase_sources(prepared, SourceSet::PACK | SourceSet::WORN | SourceSet::BANK),
         alternatives: Arc::from(alternatives),
     }))
+}
+
+fn purchase_sources(prepared: &Prepared, carried: SourceSet) -> SourceSet {
+    if prepared.settings.buy_tools {
+        carried | SourceSet::SHOP
+    } else {
+        carried
+    }
 }
 
 fn usable_tool_ids(prepared: &Prepared, stats: &[StatView]) -> Vec<i32> {
@@ -832,7 +840,9 @@ mod tests {
 
     const FISHING_ROD: i32 = 307;
 
-    fn prepare(settings: crate::native::SettingsBag) -> Arc<Prepared> {
+    fn prepare(mut settings: crate::native::SettingsBag) -> Arc<Prepared> {
+        // These pre-G1 cases exercise bank-only acquisition by design.
+        settings.entry("buyTools".into()).or_insert(json!(false));
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let config = api::selected::FamilyPreparation::run(move |families| {
             crate::slot::prepare_config(
@@ -2028,5 +2038,63 @@ mod tests {
             }
         });
         assert_eq!(due.bytes_total, 0, "due admission polls allocate nothing");
+    }
+
+    #[test]
+    fn buy_tools_adds_shops_only_to_gathering_tools_and_bait() {
+        for enabled in [false, true] {
+            let mut settings = crate::native::SettingsBag::new();
+            settings.insert("skill".into(), json!("Fishing"));
+            settings.insert("fishingMethod".into(), json!("fishing.saltfish.op3"));
+            settings.insert("buyTools".into(), json!(enabled));
+            settings.insert("food".into(), json!("Trout"));
+            settings.insert("foodTarget".into(), json!(3));
+            settings.insert("coinTarget".into(), json!(10));
+            let prepared = prepare(settings);
+            let stats = stats(&prepared);
+            let bank = memory(&[], Origin::Session);
+            let needs = SupplyPlan::build(&prepared, &stats, with_bank(&[], &[], &bank)).unwrap();
+            let bait = prepared.supply.bait.as_ref().unwrap();
+            assert!(needs.iter().any(|need| need.item == FISHING_ROD));
+            assert!(needs.iter().any(|need| need.item == bait.id));
+            assert!(needs.iter().any(|need| need.item == COINS_ID));
+            assert!(needs.iter().any(|need| need.item != FISHING_ROD && need.item != bait.id && need.item != COINS_ID));
+            for need in needs.iter() {
+                let tool_or_bait = need.item == FISHING_ROD || need.item == bait.id;
+                assert_eq!(
+                    need.sources.contains(SourceSet::SHOP),
+                    enabled && tool_or_bait,
+                    "id={} enabled={enabled}", need.item
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn buy_tools_keeps_held_and_session_banked_tiers_ahead_of_shops() {
+        let mut settings = crate::native::SettingsBag::new();
+        settings.insert("buyTools".into(), json!(true));
+        let prepared = prepare(settings);
+        let stats = stats(&prepared);
+        for held in [false, true] {
+            let bank = memory(if held { &[] } else { &[(1351, 1)] }, Origin::Session);
+            let pack = [item(1351, "Bronze axe", 1, ItemContainer::Inventory)];
+            let stock = with_bank(if held { &pack } else { &[] }, &[], &bank);
+            let needs = SupplyPlan::build(&prepared, &stats, stock).unwrap();
+            let mut request = request(needs);
+            request.vendor = VendorChoice::Nearest;
+            request.coins = CoinPolicy::ForPurchase {
+                sources: SourceSet::PACK | SourceSet::BANK,
+            };
+            let verdict = acquire::plan::plan(&request, &stock, WorldFacts::default()).unwrap();
+            let plan = planned(verdict);
+            assert!(plan.purchases.iter().all(Option::is_none));
+            if held {
+                assert_eq!(plan.wear_count, 1);
+                assert_eq!(plan.withdrawal_count, 0);
+            } else {
+                assert_eq!(targets(&plan), [(1351, 1)]);
+            }
+        }
     }
 }
