@@ -513,6 +513,7 @@ fn canonical_sample_status_wire_delta_stays_inside_two_kib() {
             xp_per_hour: Some(4500),
             bank: Arc::from("—"),
             bank_seen: None,
+            block_reason: Arc::from(""),
             last_progress: 12,
             deaths: 0,
             recoveries: 0,

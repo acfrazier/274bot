@@ -7,22 +7,26 @@
 //! cleared, per-account seeds). The real Gatherer card then runs Bait
 //! fishing (`fishing.saltfish.op3`, a fishing rod and one bait a catch) with
 //! `baitTarget = 10` and `Bank` disposition over a Custom work area on the
-//! two content-placed spots south of the bank. Neither spot is spawned; the
-//! cell decides on bait, trips and the failure, never on incidental drops.
+//! two content-placed spots south of the bank. The
+//! cell decides on bait and bank-trip evidence, never on incidental drops.
+//! This M1 bank-only fixture explicitly sets `buyTools = false`, preserving
+//! its bait-only trip oracle while the default-on shop cells run separately.
+//! Its supply stop is a parked native `Blocked` status with the script still
+//! `Running` and no terminal failure.
 //!
 //! - **banked** (bug 9, F1): the bank is seeded with 3 bait and a rod and
 //!   the pack is empty, so the memory is `Unknown` at Start. Assert one trip
 //!   (`bank trip due` once) that withdraws exactly 3 bait, then — when the
-//!   bait runs out — `supply-missing` in place, with no second `bank trip
-//!   due` and the account still at the fishing area; the memory ends
-//!   `Session` without bait. After the trip the Gatherer walks the real
+//!   bait runs out — a parked supply block in place, with no second
+//!   `bank trip due` and the account still at the fishing area; the memory
+//!   ends `Session` without bait. After the trip the Gatherer walks the real
 //!   route back from the booth to the spots (no shore teleport).
 //! - **stale hint** (D4 stale positive): before login the account's hint
 //!   file claims 20 bait the bank does not hold; the rod is in the pack.
 //!   The first login loads the file (`Unknown` → `Hint`, a new process),
 //!   so the card starts on a `Hint` that claims bait. Assert exactly one
-//!   trip, then `supply-missing` at the open bank; the memory ends
-//!   `Session` without bait.
+//!   trip, then a parked `supply-missing` at the closed bank; the memory
+//!   ends `Session` without bait.
 //!
 //! Every Gatherer status line is captured through the hostlog sink (the
 //! `last_event` transitions are the trip witness) and saved beside the JSON
@@ -158,16 +162,16 @@ const TICK_SAMPLES: usize = 11;
 
 /// Frame-observed applications of consecutive PLAYER_INFO packets, not frame ticks.
 #[derive(Debug, Clone, Default, serde::Serialize)]
-struct PlayerInfoClock {
+pub(super) struct PlayerInfoClock {
     #[serde(skip)]
     last: Option<(u64, u64, Instant)>,
     interarrival_ms: Vec<u128>,
     coalesced_observations: usize,
-    median_ms: Option<u128>,
+    pub(super) median_ms: Option<u128>,
 }
 
 impl PlayerInfoClock {
-    fn observe(&mut self, session: u64, count: u64, now: Instant) {
+    pub(super) fn observe(&mut self, session: u64, count: u64, now: Instant) {
         if self
             .last
             .is_some_and(|(previous_session, previous_count, _)| {
@@ -206,7 +210,7 @@ impl PlayerInfoClock {
         }
     }
 
-    fn accepted(&self) -> bool {
+    pub(super) fn accepted(&self) -> bool {
         self.median_ms
             .is_some_and(|median| (570..=630).contains(&median))
     }
@@ -233,8 +237,13 @@ struct BaitTrace {
     trips: Option<i64>,
     yielded: Option<i64>,
     final_phase: Option<String>,
+    final_phase_text: Option<String>,
+    slot_state: Option<String>,
+    slot_running: Option<bool>,
     failure_code: Option<String>,
     failure_message: Option<String>,
+    block_reason: Option<String>,
+    final_bank_open: Option<bool>,
     final_tile: Option<[i32; 3]>,
     final_distance_from_spots: Option<i32>,
     final_origin: Option<String>,
@@ -278,6 +287,7 @@ fn settings() -> serde_json::Map<String, serde_json::Value> {
         "allowTeleports": false,
         "allowWilderness": false,
         "deathPolicy": "Stop",
+        "buyTools": false,
     }) else {
         unreachable!("a JSON object literal");
     };
@@ -309,18 +319,33 @@ fn verdict(variant: Variant, trace: &BaitTrace) -> Result<(), String> {
             trace.logged_events
         ));
     }
-    if trace.failure_code.as_deref() != Some("supply-missing") {
+    if trace.failure_code.is_some() || trace.failure_message.is_some() {
         return Err(format!(
-            "expected Blocked(supply-missing), got {:?} {:?}",
+            "a parked supply block must have failure=None: {:?} {:?}",
             trace.failure_code, trace.failure_message
         ));
     }
-    let message = trace.failure_message.as_deref().unwrap_or("");
+    if trace.final_phase.as_deref() != Some("Blocked")
+        || trace.final_phase_text.as_deref() != Some("blocked")
+        || trace.slot_running != Some(true)
+    {
+        return Err(format!(
+            "expected a Running slot with native phase Blocked / label blocked: phase={:?} label={:?} slot={:?}",
+            trace.final_phase, trace.final_phase_text, trace.slot_state
+        ));
+    }
+    if trace.final_bank_open != Some(false) {
+        return Err(format!(
+            "the park must leave the bank closed: {:?}",
+            trace.final_bank_open
+        ));
+    }
+    let message = trace.block_reason.as_deref().unwrap_or("");
     if !(message.starts_with("no Fishing bait in the pack, worn, or in the bank as seen ")
         && message.ends_with("; nobody sells it; waiting: put a Fishing bait in the pack"))
     {
         return Err(format!(
-            "the failure must name the bait and observed bank: {message:?}"
+            "the block_reason must name the bait and observed bank: {message:?}"
         ));
     }
     if trace.final_origin.as_deref() != Some("Session") {
@@ -482,6 +507,7 @@ fn run_cell(variant: Variant) {
     );
     let preparation_started = cell.preparation_started;
     let cell = Arc::new(Mutex::new(cell));
+    let mut monitor = GameSnapshot::new();
     let frame_cell = Arc::clone(&cell);
     let frame_account = account.clone();
     let frame_trace = Arc::clone(&trace);
@@ -504,6 +530,11 @@ fn run_cell(variant: Variant) {
                 );
             }
             frame(client, &frame_cell, &frame_account);
+            if client.ingame && client.scene_state == 2 {
+                monitor.rebuild(client);
+                frame_trace.lock().final_bank_open =
+                    Some(monitor.bank_component_id() >= 0);
+            }
         },
     )
     .unwrap_or_else(|error| {
@@ -612,6 +643,10 @@ fn run_cell(variant: Variant) {
                             guard.trips = integer(&status, "trips");
                             guard.yielded = integer(&status, "yielded");
                             guard.final_phase = Some(format!("{:?}", status.phase));
+                            guard.final_phase_text = text(&status, "phase").map(str::to_owned);
+                            guard.slot_state = Some(format!("{:?}", play.script_state(&account)));
+                            guard.slot_running =
+                                Some(play.script_state(&account) == script::RunState::Running);
                         }
                         if blocked {
                             let tile = play
@@ -631,6 +666,8 @@ fn run_cell(variant: Variant) {
                                     .failure
                                     .as_ref()
                                     .map(|failure| failure.message.to_string());
+                                guard.block_reason =
+                                    text(&status, "block_reason").map(str::to_owned);
                                 guard.final_tile = tile;
                                 guard.final_distance_from_spots =
                                     tile.filter(|tile| tile[2] == SPOTS.level).map(|tile| {
@@ -726,7 +763,7 @@ fn status_transitions_fold_repeated_events() {
         "native Gatherer phase=working failure=none action_state=walk last_event=bank trip due",
         "bank open booth",
         "native Gatherer phase=working failure=none last_event=deposit confirmed",
-        "native Gatherer phase=blocked failure=supply-missing failure_message=no Fishing bait in the pack, worn, or in the bank as seen less than a minute ago this session (0 rows); nobody sells it; waiting: put a Fishing bait in the pack last_event=deposit confirmed",
+        "native Gatherer phase=blocked failure=none block_reason=no Fishing bait in the pack, worn, or in the bank as seen less than a minute ago this session (0 rows); nobody sells it; waiting: put a Fishing bait in the pack last_event=deposit confirmed",
     ]
     .map(str::to_owned);
     assert_eq!(
@@ -743,6 +780,10 @@ fn valid_trace(variant: Variant) -> BaitTrace {
     }
     BaitTrace {
         player_info_clock,
+        final_phase: Some("Blocked".into()),
+        final_phase_text: Some("blocked".into()),
+        slot_running: Some(true),
+        final_bank_open: Some(false),
         start_origin: Some(
             match variant {
                 Variant::Banked => "Unknown",
@@ -758,8 +799,7 @@ fn valid_trace(variant: Variant) -> BaitTrace {
         },
         final_bait: Some(0),
         trips: Some(i64::from(variant == Variant::Banked)),
-        failure_code: Some("supply-missing".into()),
-        failure_message: Some(
+        block_reason: Some(
             "no Fishing bait in the pack, worn, or in the bank as seen less than a minute ago this session (0 rows); nobody sells it; waiting: put a Fishing bait in the pack"
                 .into(),
         ),
@@ -778,20 +818,20 @@ fn bait_oracle_accepts_core_shortage_text_after_one_observed_trip() {
 }
 
 #[test]
-fn bait_oracle_rejects_wrong_failure_item_provenance_and_trip_evidence() {
+fn bait_oracle_rejects_wrong_park_state_provenance_and_trip_evidence() {
     for variant in [Variant::Banked, Variant::StaleHint] {
         let mut trace = valid_trace(variant);
-        trace.failure_code = Some("bank-open".into());
+        trace.final_phase = Some("Failed".into());
         assert!(verdict(variant, &trace).is_err());
 
         let mut trace = valid_trace(variant);
-        trace.failure_message = trace
-            .failure_message
+        trace.block_reason = trace
+            .block_reason
             .map(|message| message.replace("Fishing bait", "Feather"));
         assert!(verdict(variant, &trace).is_err());
 
         let mut trace = valid_trace(variant);
-        trace.failure_message = Some("supply-missing:Fishing bait".into());
+        trace.block_reason = Some("supply-missing:Fishing bait".into());
         assert!(verdict(variant, &trace).is_err());
 
         let mut trace = valid_trace(variant);

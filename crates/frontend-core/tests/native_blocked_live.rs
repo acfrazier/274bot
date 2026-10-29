@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
+use api::interact::{cheat, tele_args};
+use api::snapshot::GameSnapshot;
 use frontend_core::scripts::{ScriptRunState, StatusView};
 use frontend_core::views::{script_status_label, script_status_reason, script_status_rows};
 use frontend_core::{
@@ -365,7 +367,7 @@ fn gatherer_parked_status_is_shared_and_controllable() {
         let projected = {
             let view = session.fleet_view();
             let row = view.row(&account).expect("loaded account has a fleet row");
-            assert_eq!(row.script(), script::RunState::Running);
+            assert_eq!(row.script(), ScriptRunState::Running);
             assert!(row.parked());
             assert_eq!(row.brief(), "blocked");
             row.snapshot()
@@ -443,7 +445,7 @@ fn gatherer_parked_status_is_shared_and_controllable() {
             .row(&account)
             .expect("paused account remains projected")
             .snapshot();
-        assert_eq!(paused_row.script(), script::RunState::Paused);
+        assert_eq!(paused_row.script(), ScriptRunState::Paused);
         assert!(!paused_row.parked());
         assert_ne!(paused_row.brief(), "blocked");
 
@@ -470,7 +472,7 @@ fn gatherer_parked_status_is_shared_and_controllable() {
             std::thread::sleep(Duration::from_millis(20));
         };
         assert_eq!(resumed.brief(), "blocked");
-        assert_eq!(resumed.script(), script::RunState::Running);
+        assert_eq!(resumed.script(), ScriptRunState::Running);
         let resumed_status = session
             .play_for_test()
             .and_then(|play| play.script_native_status(&account))
@@ -495,7 +497,7 @@ fn gatherer_parked_status_is_shared_and_controllable() {
             .row(&account)
             .expect("stopped account remains projected")
             .snapshot();
-        assert_eq!(stopped.script(), script::RunState::Idle);
+        assert_eq!(stopped.script(), ScriptRunState::Idle);
         assert!(!stopped.parked());
         assert_ne!(stopped.brief(), "blocked");
         Ok(())
