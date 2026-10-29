@@ -44,7 +44,7 @@ its own environment.
 
 The `quester_skip_active_cook_parks_then_sheep_completes` cell in
 `quester_queue_live` also needs `--features "live-harness test-support live-probe"`.
-`test-support` on `panel` or `tui` enables the Skip quest button or key. Each
+`test-support` on `panel` or `tui` enables the Skip quest button or `X` key. Each
 feature forwards `frontend-core/test-support`, which enables the shared
 `SkipQuest` command. Build both control-enabled binaries with:
 
