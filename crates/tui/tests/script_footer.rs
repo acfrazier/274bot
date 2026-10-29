@@ -10,9 +10,21 @@ use tui::{AppAction, Screen, TuiApp};
 /// The keyboard scope the footer always leads with.
 const SCOPE: &str = "KEYS Script ▸ ";
 
-/// What the footer appends after the hints, by size class.
-const TAIL_STANDARD: &str = " │ Tab pane · ^P cmd · ? help · mouse off";
-const TAIL_COMPACT: &str = " │ ? help · mouse off";
+/// What the footer appends after the hints, by size class, before the
+/// mouse-capture state the app reports.
+const TAIL_STANDARD: &str = " │ Tab pane · ^P cmd · ? help · mouse ";
+const TAIL_COMPACT: &str = " │ ? help · mouse ";
+
+/// The footer tail this app renders at `width`.
+fn footer_tail(app: &TuiApp, width: u16) -> String {
+    let state = if app.mouse_capture { "on" } else { "off" };
+    let prefix = if width >= 100 {
+        TAIL_STANDARD
+    } else {
+        TAIL_COMPACT
+    };
+    format!("{prefix}{state}")
+}
 
 /// The hint row from before the Skip quest control existed.
 #[cfg(not(feature = "test-support"))]
@@ -82,12 +94,8 @@ fn draw_and_capture(app: &mut TuiApp, width: u16, height: u16, stamp: &str) -> S
 /// The row a build shows when the hints are `hints`: the scope, the hints
 /// cut to the space the tail leaves, the gap, then the tail.
 #[cfg(not(feature = "test-support"))]
-fn expected_footer(hints: &str, width: u16) -> String {
-    let tail = if width >= 100 {
-        TAIL_STANDARD
-    } else {
-        TAIL_COMPACT
-    };
+fn expected_footer(app: &TuiApp, hints: &str, width: u16) -> String {
+    let tail = footer_tail(app, width);
     let room = usize::from(width) - SCOPE.len() - tail.len();
     let shown: String = hints.chars().take(room).collect();
     format!("{SCOPE}{shown:<room$}{tail}")
@@ -116,7 +124,7 @@ fn release_build_keeps_the_script_hints_and_footer_from_before_skip_quest() {
         );
         assert_eq!(
             row,
-            expected_footer(BASE_HINTS, width),
+            expected_footer(&app, BASE_HINTS, width),
             "{width}x{height}: the base footer is unchanged"
         );
     }
@@ -142,8 +150,9 @@ fn test_support_build_adds_the_skip_hint_and_keeps_the_rest_fitting() {
         standard.contains(hints),
         "120x40: the hint row is cut: {standard}"
     );
+    let standard_tail = footer_tail(&app, 120);
     assert!(
-        standard.starts_with(SCOPE) && standard.ends_with(TAIL_STANDARD),
+        standard.starts_with(SCOPE) && standard.ends_with(&standard_tail),
         "120x40: the base footer tail stays: {standard}"
     );
     for key in [
@@ -162,8 +171,9 @@ fn test_support_build_adds_the_skip_hint_and_keeps_the_rest_fitting() {
         compact.contains("X skip"),
         "80x24: missing skip hint: {compact}"
     );
+    let compact_tail = footer_tail(&app, 80);
     assert!(
-        compact.starts_with(SCOPE) && compact.ends_with(TAIL_COMPACT),
+        compact.starts_with(SCOPE) && compact.ends_with(&compact_tail),
         "80x24: the base footer tail stays: {compact}"
     );
 }
