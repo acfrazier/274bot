@@ -400,7 +400,7 @@ if(map_members = ^false) {
     observed_clear.inventory_ready = true;
     observed_clear.equipment_ready = true;
     assert!(
-        !observed_clear.clone().allows(outbound),
+        !observed_clear.allows(outbound),
         "F2P cannot take the Entrana boat"
     );
     assert!(
