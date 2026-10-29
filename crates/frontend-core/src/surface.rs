@@ -8,7 +8,15 @@ use vault::Profile;
 
 /// The per-slot frame mailbox and input channel the panel exchanges with
 /// each slot every frame (named re-exports by ruling D1).
-pub use host::{FrameBuf, SlotInput};
+pub use host::{FrameBuf, FrameStamp, PresentedFrame, SlotInput};
+
+#[cfg(feature = "render-test-hooks")]
+pub use host::render_head::test_hooks::{
+    configure_process as configure_render_fixture,
+    configure_process_control as configure_render_fixture_control,
+    configure_render_budgets as configure_render_fixture_budgets, CaptureFixture, ProcessFixture,
+    RenderTestControl, RenderTestEvent, RenderTestPoint,
+};
 
 /// One operator input event for a slot's client, in applet coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -272,6 +280,12 @@ pub fn render_workspace_stats() -> host::render_head::WorkspaceStats {
 /// Acknowledge one displayed render-fault incident by its sequence.
 pub fn acknowledge_render_fault(sequence: u64) -> Result<(), host::render::RenderError> {
     host::render_head::acknowledge_fault(sequence)
+}
+
+/// Whether this process explicitly enabled the experimental render fixture.
+#[cfg(feature = "render-test-hooks")]
+pub fn render_fair_enabled() -> bool {
+    host::render_head::fair_enabled()
 }
 
 impl InputEv {

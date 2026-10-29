@@ -6,7 +6,34 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::session::Session;
-use crate::window::{ShotState, ShotStatus};
+use crate::window::{CaptureError, ShotState, ShotStatus};
+
+/// Preserve the legacy request path unless the explicit process fixture is
+/// active. A gated request uses that fixture's finite readback deadline.
+pub(super) fn enqueue_capture(
+    shots: &mut ShotState,
+    label: &str,
+    snapshot_json: String,
+    actor: Option<String>,
+) -> Result<(), CaptureError> {
+    if crate::window::render_fair_capture_enabled() {
+        let deadline = shots.capture_deadline(Instant::now())?;
+        match actor {
+            Some(actor) => shots.enqueue_for_actor_with_deadline(
+                label.to_string(),
+                snapshot_json,
+                actor,
+                deadline,
+            ),
+            None => shots.enqueue_with_deadline(label.to_string(), snapshot_json, deadline),
+        }
+    } else {
+        match actor {
+            Some(actor) => shots.enqueue_for_actor(label.to_string(), snapshot_json, actor),
+            None => shots.enqueue(label.to_string(), snapshot_json),
+        }
+    }
+}
 
 /// Headed live harness: null_raster (2 slots), stress50 / stress50_full
 /// (50 slots), a shared scenario (`script_<name>`), or `--smoke` (one
@@ -368,6 +395,31 @@ pub(super) fn pair_shot_labels(base: &str, a: &str, b: &str) -> [String; 2] {
     [format!("{base}-{a}"), format!("{base}-{b}")]
 }
 
+fn with_bounded_pair_labels<T>(
+    base: &str,
+    actors: [&str; 2],
+    use_labels: impl FnOnce([&str; 2]) -> T,
+) -> Result<T, CaptureError> {
+    let mut bytes = [[0_u8; crate::window::CAPTURE_NAME_BYTES]; 2];
+    let mut lengths = [0; 2];
+    for ((buffer, length), actor) in bytes.iter_mut().zip(&mut lengths).zip(actors) {
+        *length = base
+            .len()
+            .checked_add(1)
+            .and_then(|length| length.checked_add(actor.len()))
+            .filter(|length| *length <= buffer.len())
+            .ok_or(CaptureError::TooLarge)?;
+        buffer[..base.len()].copy_from_slice(base.as_bytes());
+        buffer[base.len()] = b'-';
+        buffer[base.len() + 1..*length].copy_from_slice(actor.as_bytes());
+    }
+    let labels = [
+        std::str::from_utf8(&bytes[0][..lengths[0]]).map_err(|_| CaptureError::Io)?,
+        std::str::from_utf8(&bytes[1][..lengths[1]]).map_err(|_| CaptureError::Io)?,
+    ];
+    Ok(use_labels(labels))
+}
+
 #[cfg(test)]
 std::thread_local! {
     pub(super) static ACTOR_SNAPSHOT_SERIALIZATIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
@@ -386,14 +438,107 @@ pub(super) fn actor_snapshot_json(
     serde_json::to_string_pretty(&value).map_err(|error| error.to_string())
 }
 
-pub(super) fn pair_terminal_shot_status(shots: &ShotState, labels: &[String]) -> ShotStatus {
+struct CaptureJsonWriter {
+    bytes: Vec<u8>,
+    length: usize,
+    maximum: usize,
+    counting: bool,
+    exceeded: bool,
+}
+
+impl std::io::Write for CaptureJsonWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let next = self.length.checked_add(bytes.len());
+        let Some(next) = next.filter(|next| *next <= self.maximum) else {
+            self.exceeded = true;
+            return Err(std::io::ErrorKind::FileTooLarge.into());
+        };
+        if !self.counting {
+            self.bytes.extend_from_slice(bytes);
+        }
+        self.length = next;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Serialize the accepted actor snapshot without a full intermediate Value.
+/// Count first, then allocate exactly the admitted bytes while old JSON is live.
+pub(super) fn bounded_actor_snapshot_json(
+    actor: &str,
+    snapshot: &api::snapshot::GameSnapshot,
+    maximum: usize,
+) -> Result<String, crate::window::CaptureError> {
+    use crate::window::CaptureError;
+
+    if actor.len() > 256 {
+        return Err(CaptureError::TooLarge);
+    }
+    #[derive(serde::Serialize)]
+    struct ActorSnapshot<'a> {
+        #[serde(flatten)]
+        snapshot: &'a api::snapshot::GameSnapshot,
+        actor: &'a str,
+    }
+    let snapshot = ActorSnapshot { snapshot, actor };
+    #[cfg(test)]
+    ACTOR_SNAPSHOT_SERIALIZATIONS.with(|count| count.set(count.get() + 1));
+    bounded_snapshot_json(&snapshot, maximum)
+}
+
+/// Two-pass bounded serialization shared by plain and actor-tagged snapshots.
+pub(super) fn bounded_snapshot_json<T: serde::Serialize + ?Sized>(
+    snapshot: &T,
+    maximum: usize,
+) -> Result<String, CaptureError> {
+    let mut writer = CaptureJsonWriter {
+        bytes: Vec::new(),
+        length: 0,
+        maximum,
+        counting: true,
+        exceeded: false,
+    };
+    if serde_json::to_writer_pretty(&mut writer, snapshot).is_err() {
+        return Err(if writer.exceeded {
+            CaptureError::TooLarge
+        } else {
+            CaptureError::Io
+        });
+    }
+    writer
+        .bytes
+        .try_reserve_exact(writer.length)
+        .map_err(|_| CaptureError::TooLarge)?;
+    if writer.bytes.capacity() > maximum {
+        return Err(CaptureError::TooLarge);
+    }
+    writer.maximum = writer.length;
+    writer.length = 0;
+    writer.counting = false;
+    if serde_json::to_writer_pretty(&mut writer, snapshot).is_err() {
+        return Err(if writer.exceeded {
+            CaptureError::TooLarge
+        } else {
+            CaptureError::Io
+        });
+    }
+    String::from_utf8(writer.bytes).map_err(|_| CaptureError::Io)
+}
+
+pub(super) fn pair_terminal_shot_status(
+    shots: &ShotState,
+    labels: &[impl AsRef<str>],
+) -> ShotStatus {
     if labels.is_empty() {
         return ShotStatus::Missing;
     }
     let mut pending = ShotStatus::Written;
     for label in labels {
-        match shots.status(label) {
-            ShotStatus::Failed(error) => return ShotStatus::Failed(error),
+        match shots.status(label.as_ref()) {
+            failed @ (ShotStatus::Failed(_) | ShotStatus::FailedCapture(_)) => return failed,
             ShotStatus::Missing => return ShotStatus::Missing,
             ShotStatus::Written => {}
             other => pending = other,
@@ -413,6 +558,31 @@ pub(super) fn enqueue_pair_terminal_shots(
     let Some((a, b)) = pair_terminal_actor_names(session) else {
         return;
     };
+    if crate::window::render_fair_capture_enabled() {
+        let result = with_bounded_pair_labels(base_label, [&a, &b], |labels| {
+            for (actor, label) in [&a, &b].into_iter().zip(labels) {
+                let ready = session
+                    .core
+                    .with_slot_snapshot(actor, |snapshot| {
+                        snapshot.ingame() && snapshot.scene_state() == 2
+                    })
+                    .unwrap_or(false);
+                if !ready {
+                    continue;
+                }
+                let mut shots = shots.lock().unwrap();
+                if matches!(shots.status(label), ShotStatus::Missing) {
+                    if let Err(error) = shots.enqueue_bounded_actor_request(label, actor) {
+                        let _ = shots.mark_failed_capture(label, error);
+                    }
+                }
+            }
+        });
+        if let Err(error) = result {
+            let _ = shots.lock().unwrap().mark_failed_capture(base_label, error);
+        }
+        return;
+    }
     let labels = pair_shot_labels(base_label, &a, &b);
     let requests = {
         [&a, &b]
@@ -428,14 +598,16 @@ pub(super) fn enqueue_pair_terminal_shots(
                         actor_snapshot_json(name, snapshot).ok()
                     })
                     .flatten()?;
-                Some((label.clone(), name.to_string(), json))
+                Some((label.as_str(), name.to_string(), json))
             })
             .collect::<Vec<_>>()
     };
     let mut shots = shots.lock().unwrap();
     for (label, actor, json) in requests {
-        if matches!(shots.status(&label), ShotStatus::Missing) {
-            shots.enqueue_for_actor(label, json, actor);
+        if matches!(shots.status(label), ShotStatus::Missing) {
+            if let Err(error) = enqueue_capture(&mut shots, label, json, Some(actor)) {
+                shots.mark_failed(label, &error.to_string());
+            }
         }
     }
 }
@@ -451,6 +623,23 @@ pub(super) fn enqueue_external_terminal_shot(
     let Some(name) = session.core.live_runner().external_loader_account() else {
         return;
     };
+    if crate::window::render_fair_capture_enabled() {
+        let ready = session
+            .core
+            .with_slot_snapshot(&name, |snapshot| {
+                snapshot.ingame() && snapshot.scene_state() == 2
+            })
+            .unwrap_or(false);
+        if ready {
+            let mut shots = shots.lock().unwrap();
+            if matches!(shots.status(label), ShotStatus::Missing) {
+                if let Err(error) = shots.enqueue_bounded_actor_request(label, &name) {
+                    let _ = shots.mark_failed_capture(label, error);
+                }
+            }
+        }
+        return;
+    }
     let json = session
         .core
         .with_slot_snapshot(&name, |snapshot| {
@@ -465,7 +654,9 @@ pub(super) fn enqueue_external_terminal_shot(
     };
     let mut shots = shots.lock().unwrap();
     if matches!(shots.status(label), ShotStatus::Missing) {
-        shots.enqueue(label.to_string(), json);
+        if let Err(error) = enqueue_capture(&mut shots, label, json, None) {
+            shots.mark_failed(label, &error.to_string());
+        }
     }
 }
 
@@ -480,6 +671,31 @@ pub(super) fn enqueue_fresh_terminal_shot(
     shots: &Mutex<ShotState>,
     label: &str,
 ) -> Result<(), String> {
+    if crate::window::render_fair_capture_enabled() {
+        let result = match session.focused_name() {
+            Some(actor) => {
+                let ready = session
+                    .core
+                    .with_slot_snapshot(&actor, |snapshot| {
+                        snapshot.ingame() && snapshot.scene_state() == 2
+                    })
+                    .unwrap_or(false);
+                if ready {
+                    shots
+                        .lock()
+                        .unwrap()
+                        .enqueue_bounded_actor_request(label, &actor)
+                } else {
+                    Err(CaptureError::InvalidScene)
+                }
+            }
+            None => Err(CaptureError::StaleHead),
+        };
+        if let Err(error) = result {
+            let _ = shots.lock().unwrap().fail_capture_label(label, error);
+        }
+        return result.map_err(|error| error.to_string());
+    }
     let current = (|| {
         let actor = session
             .focused_name()
@@ -498,10 +714,11 @@ pub(super) fn enqueue_fresh_terminal_shot(
     })();
     let mut shots = shots.lock().unwrap();
     match current {
-        Ok(json) => {
-            shots.enqueue(label.to_string(), json);
-            Ok(())
-        }
+        Ok(json) => enqueue_capture(&mut shots, label, json, None).map_err(|error| {
+            let message = error.to_string();
+            shots.mark_failed(label, &message);
+            message
+        }),
         Err(error) => {
             shots.fail_labels(&[label.to_string()], &error);
             Err(error)
@@ -537,6 +754,31 @@ pub(super) fn enqueue_current_terminal_shot(
     shots: &Mutex<ShotState>,
     label: &str,
 ) {
+    if crate::window::render_fair_capture_enabled() {
+        let result = match session.focused_name() {
+            Some(actor) => {
+                let ready = session
+                    .core
+                    .with_slot_snapshot(&actor, |snapshot| {
+                        snapshot.ingame() && snapshot.scene_state() == 2
+                    })
+                    .unwrap_or(false);
+                let mut shots = shots.lock().unwrap();
+                if !ready {
+                    Err(CaptureError::InvalidScene)
+                } else if matches!(shots.status(label), ShotStatus::Written) {
+                    shots.enqueue_bounded_actor_request(label, &actor)
+                } else {
+                    Ok(())
+                }
+            }
+            None => Err(CaptureError::StaleHead),
+        };
+        if let Err(error) = result {
+            let _ = shots.lock().unwrap().fail_capture_label(label, error);
+        }
+        return;
+    }
     let current = (|| {
         let actor = session
             .focused_name()
@@ -556,7 +798,9 @@ pub(super) fn enqueue_current_terminal_shot(
     let mut shots = shots.lock().unwrap();
     match current {
         Ok(json) if matches!(shots.status(label), ShotStatus::Written) => {
-            shots.enqueue(label.to_string(), json);
+            if let Err(error) = enqueue_capture(&mut shots, label, json, None) {
+                shots.mark_failed(label, &error.to_string());
+            }
         }
         Ok(_) => {}
         Err(error) => {
@@ -587,6 +831,21 @@ pub(super) fn enqueue_soak_capture(session: &Session, shots: &Mutex<ShotState>, 
     let Some(actor) = session.focused_name() else {
         return;
     };
+    if crate::window::render_fair_capture_enabled() {
+        let ready = session
+            .core
+            .with_slot_snapshot(&actor, |snapshot| {
+                snapshot.ingame() && snapshot.scene_state() == 2
+            })
+            .unwrap_or(false);
+        if ready {
+            let mut shots = shots.lock().unwrap();
+            if let Err(error) = shots.enqueue_bounded_actor_request(label, &actor) {
+                let _ = shots.mark_failed_capture(label, error);
+            }
+        }
+        return;
+    }
     let json = session
         .core
         .with_slot_snapshot(&actor, |snapshot| {
@@ -597,13 +856,22 @@ pub(super) fn enqueue_soak_capture(session: &Session, shots: &Mutex<ShotState>, 
         })
         .flatten();
     if let Some(json) = json {
-        shots.lock().unwrap().enqueue(label.to_string(), json);
+        let mut shots = shots.lock().unwrap();
+        if let Err(error) = enqueue_capture(&mut shots, label, json, None) {
+            shots.mark_failed(label, &error.to_string());
+        }
     }
 }
 
 pub(super) fn soak_capture_status(session: &Session, shots: &ShotState, label: &str) -> ShotStatus {
     if session.core.live_runner().pair_core_configured() {
         if let Some((a, b)) = pair_terminal_actor_names(session) {
+            if crate::window::render_fair_capture_enabled() {
+                return with_bounded_pair_labels(label, [&a, &b], |labels| {
+                    pair_terminal_shot_status(shots, &labels)
+                })
+                .unwrap_or_else(ShotStatus::FailedCapture);
+            }
             return pair_terminal_shot_status(shots, &pair_shot_labels(label, &a, &b));
         }
     }
@@ -639,6 +907,23 @@ pub(super) fn hold_script_terminal_shot(
     let owned;
     let mut pair_labels: Option<[String; 2]> = None;
     let runner = session.core.live_runner();
+    if crate::window::render_fair_capture_enabled() && runner.pair_core_configured() {
+        if let (Some(shots), Some(label)) = (shots, terminal_shot) {
+            enqueue_pair_terminal_shots(session, shots, label);
+            if let Some((a, b)) = pair_terminal_actor_names(session) {
+                return with_bounded_pair_labels(label, [&a, &b], |labels| {
+                    let mut shots = shots.lock().unwrap();
+                    let status = pair_terminal_shot_status(&shots, &labels);
+                    let result = hold_terminal_shot(live, Some(label), &status);
+                    if let Err(error) = &result {
+                        shots.fail_labels(&labels, error);
+                    }
+                    result
+                })
+                .map_err(|error| format!("terminal pair capture refused: {error}"))?;
+            }
+        }
+    }
     let status = match (shots, terminal_shot, runner.pair_core_configured()) {
         (Some(shots), Some(label), true) => {
             enqueue_pair_terminal_shots(session, shots, label);
@@ -698,6 +983,9 @@ pub(super) fn hold_terminal_shot(
         ShotStatus::Failed(error) => {
             return Err(format!("terminal shot {label} failed: {error}"));
         }
+        ShotStatus::FailedCapture(error) => {
+            return Err(format!("terminal shot {label} failed: {error}"));
+        }
         ShotStatus::Missing
         | ShotStatus::Requested
         | ShotStatus::ReadbackPending
@@ -741,6 +1029,9 @@ pub(super) fn soak_capture_tick(
                 ShotStatus::Failed(error) => {
                     Err(format!("soak checkpoint {label} failed: {error}"))
                 }
+                ShotStatus::FailedCapture(error) => {
+                    Err(format!("soak checkpoint {label} failed: {error}"))
+                }
                 _ => {
                     let t0 = started.get_or_insert_with(Instant::now);
                     if t0.elapsed() >= NAV_FULL_SHOT_DRAIN {
@@ -779,6 +1070,9 @@ pub(super) fn soak_capture_tick(
                     Ok(false)
                 }
                 ShotStatus::Failed(error) => {
+                    Err(format!("soak final readback {label} failed: {error}"))
+                }
+                ShotStatus::FailedCapture(error) => {
                     Err(format!("soak final readback {label} failed: {error}"))
                 }
                 _ => {
@@ -1174,12 +1468,28 @@ pub(super) fn arm_scenario_shots(
     shots: Arc<Mutex<ShotState>>,
     shot_dir: &mut Option<PathBuf>,
 ) {
-    *shot_dir = frontend_core::live::create_shot_run_dir()
-        .map(Some)
-        .unwrap_or_else(|error| {
-            eprintln!("[panel] shot dir: {error}; shots will be skipped");
-            None
-        });
+    if crate::window::render_fair_capture_enabled() {
+        let result = shots
+            .lock()
+            .unwrap()
+            .replace_output_directory(shot_dir, |maximum| {
+                frontend_core::live::shot_run_dir_path(maximum).map_err(|_| CaptureError::TooLarge)
+            });
+        if let Err(error) = result {
+            api::host_log!(
+                api::hostlog::Category::Lifecycle,
+                api::hostlog::Level::Error,
+                "scenario capture directory refused: {error}"
+            );
+        }
+    } else {
+        *shot_dir = frontend_core::live::create_shot_run_dir()
+            .map(Some)
+            .unwrap_or_else(|error| {
+                eprintln!("[panel] shot dir: {error}; shots will be skipped");
+                None
+            });
+    }
     let runner = session.core.live_runner();
     if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
         eprintln!(
@@ -1191,8 +1501,27 @@ pub(super) fn arm_scenario_shots(
         if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
             eprintln!("[panel] scenario capture requested: {label}");
         }
+        if crate::window::render_fair_capture_enabled() {
+            let mut shots = shots.lock().unwrap();
+            if let Err(error) = shots
+                .enqueue_bounded_snapshot(label, |maximum| bounded_snapshot_json(snap, maximum))
+            {
+                let _ = shots.mark_failed_capture(label, error);
+                api::host_log!(
+                    api::hostlog::Category::Lifecycle,
+                    api::hostlog::Level::Error,
+                    "scenario capture refused: {error}"
+                );
+            }
+            return;
+        }
         match serde_json::to_string_pretty(snap) {
-            Ok(json) => shots.lock().unwrap().enqueue(label.to_string(), json),
+            Ok(json) => {
+                let mut shots = shots.lock().unwrap();
+                if let Err(error) = enqueue_capture(&mut shots, label, json, None) {
+                    shots.mark_failed(label, &error.to_string());
+                }
+            }
             Err(error) => {
                 eprintln!("[panel] shot {label}: snapshot serialization failed: {error}");
                 shots
@@ -1246,5 +1575,28 @@ impl LiveHarness {
             Self::Script(live) => live.passed,
             Self::Smoke(live) => live.passed,
         }
+    }
+}
+
+#[cfg(test)]
+mod capture_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn bounded_pair_labels_keep_utf8_and_refuse_before_copy() {
+        with_bounded_pair_labels("shot", ["élise", "bob"], |labels| {
+            assert_eq!(labels, ["shot-élise", "shot-bob"]);
+        })
+        .unwrap();
+        let boundary = "é".repeat((crate::window::CAPTURE_NAME_BYTES - 2) / 2);
+        assert_eq!(
+            with_bounded_pair_labels(&boundary, ["a", "b"], |labels| labels.map(str::len)),
+            Ok([crate::window::CAPTURE_NAME_BYTES; 2])
+        );
+        let oversized = "x".repeat(1_000_000);
+        let called = std::cell::Cell::new(false);
+        let refused = with_bounded_pair_labels("shot", [&oversized, "bob"], |_| called.set(true));
+        assert_eq!(refused, Err(CaptureError::TooLarge));
+        assert!(!called.get());
     }
 }

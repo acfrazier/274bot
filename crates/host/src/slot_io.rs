@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 use std::io::{Read, Write};
+#[cfg(feature = "journal-paint-proof")]
+use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
@@ -113,14 +115,77 @@ pub struct JournalPaintStamp {
     pub journal_paint_hidden: bool,
 }
 
-/// One immutable paint witness. GPU pixels are read back before the producer
-/// can reuse its render texture; the ordinary product mailbox is unchanged.
+/// One immutable paint witness. A GPU proof keeps its process readback permit
+/// until the consumer drops these pixels.
 #[cfg(feature = "journal-paint-proof")]
 pub struct JournalProofFrame {
     pub generation: u64,
     pub pixmap: client::graphics::PixMap,
     pub stamp: Option<JournalPaintStamp>,
     pub gpu: bool,
+    frame_stamp: FrameStamp,
+    _readback_permit: Option<client::render::backend::ReadbackPermit>,
+}
+
+#[cfg(feature = "journal-paint-proof")]
+impl JournalProofFrame {
+    pub fn frame_stamp(&self) -> &FrameStamp {
+        &self.frame_stamp
+    }
+}
+
+#[cfg(feature = "journal-paint-proof")]
+struct JournalProofPolicy {
+    record_ceiling: NonZeroUsize,
+    readback_timeout: Duration,
+}
+
+#[cfg(feature = "journal-paint-proof")]
+struct JournalConsumerRegistration {
+    head: HeadIdentity,
+    registration: client::render::backend::ConsumerRegistration,
+}
+
+#[cfg(feature = "journal-paint-proof")]
+struct PendingJournalProof {
+    readback: client::render::backend::PendingReadback,
+    head: HeadIdentity,
+    stamp: Option<JournalPaintStamp>,
+    token: client::render::backend::PresentToken,
+    geometry: client::render::backend::CaptureGeometry,
+}
+
+#[cfg(feature = "journal-paint-proof")]
+struct JournalProofQueue {
+    frames: VecDeque<JournalProofFrame>,
+    policy: Option<JournalProofPolicy>,
+    registration: Option<JournalConsumerRegistration>,
+    pending: Option<PendingJournalProof>,
+    resolving_head: Option<HeadIdentity>,
+    last_error: Option<client::render::backend::ReadbackError>,
+}
+
+#[cfg(feature = "journal-paint-proof")]
+impl JournalProofQueue {
+    fn new() -> Self {
+        Self {
+            frames: VecDeque::new(),
+            policy: None,
+            registration: None,
+            pending: None,
+            resolving_head: None,
+            last_error: None,
+        }
+    }
+}
+#[cfg(all(feature = "journal-paint-proof", feature = "render-test-hooks"))]
+fn fair_render_enabled() -> bool {
+    crate::render_head::fair_enabled()
+}
+
+#[cfg(all(feature = "journal-paint-proof", not(feature = "render-test-hooks")))]
+fn fair_render_enabled() -> bool {
+    false
 }
 
 /// Per-slot frame mailbox: the slot's attached render head publishes each
@@ -137,7 +202,66 @@ pub struct FrameBuf {
     inner: Mutex<Mailbox>,
     gen: AtomicU64,
     #[cfg(feature = "journal-paint-proof")]
-    proof_frames: Option<parking_lot::Mutex<VecDeque<JournalProofFrame>>>,
+    proof_frames: Option<parking_lot::Mutex<JournalProofQueue>>,
+}
+
+/// Identity and scene authority frozen with one accepted mailbox frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FrameStamp {
+    head: HeadIdentity,
+    mailbox_sequence: u64,
+    present_token: Option<client::render::backend::PresentToken>,
+    has_valid_scene: bool,
+}
+
+impl FrameStamp {
+    pub const fn head(&self) -> HeadIdentity {
+        self.head
+    }
+
+    pub const fn mailbox_sequence(&self) -> u64 {
+        self.mailbox_sequence
+    }
+
+    pub const fn present_token(&self) -> Option<client::render::backend::PresentToken> {
+        self.present_token
+    }
+
+    pub const fn has_valid_scene(&self) -> bool {
+        self.has_valid_scene
+    }
+}
+
+/// Single-consumer output, authority and diagnostics move as one envelope.
+pub struct PresentedFrame {
+    output: FrameOutput,
+    stamp: FrameStamp,
+    #[cfg(feature = "render-diagnostics")]
+    roi: Option<client::render::diagnostics::PixelRoiMeta>,
+}
+
+impl PresentedFrame {
+    pub fn stamp(&self) -> &FrameStamp {
+        &self.stamp
+    }
+
+    pub fn output(&self) -> &FrameOutput {
+        &self.output
+    }
+
+    pub fn into_output(self) -> FrameOutput {
+        self.output
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    pub fn roi(&self) -> Option<&client::render::diagnostics::PixelRoiMeta> {
+        self.roi.as_ref()
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    pub fn take_roi(&mut self) -> Option<client::render::diagnostics::PixelRoiMeta> {
+        self.roi.take()
+    }
 }
 
 /// One lock owns the latest frame, the head allowed to publish it and,
@@ -145,53 +269,155 @@ pub struct FrameBuf {
 /// take share this critical section so a later publish cannot attach a new
 /// ROI to an earlier take.
 struct Mailbox {
-    frame: Option<FrameOutput>,
+    frame: Option<PresentedFrame>,
     /// The attached head whose frames this mailbox accepts: set when the
     /// head attaches, cleared when it retires.
     head: Option<HeadIdentity>,
     /// Why the slot's draw request has no head, while its attach is refused.
     refused: Option<RenderRefusal>,
+    render_fault: Option<client::render::backend::RenderFault>,
+    #[cfg(feature = "draw-memory-profile")]
+    next_render_bytes_request: Option<u64>,
+    #[cfg(feature = "draw-memory-profile")]
+    render_bytes_request: Option<u64>,
+    #[cfg(feature = "draw-memory-profile")]
+    render_bytes_sample: Option<client::render::budget::RenderBytes>,
     #[cfg(feature = "render-test-hooks")]
     fair_stats: Option<crate::render_head::HeadFairStats>,
-    #[cfg(feature = "render-diagnostics")]
-    stored_roi: Option<client::render::diagnostics::PixelRoiMeta>,
-    #[cfg(feature = "render-diagnostics")]
-    taken_roi: Option<client::render::diagnostics::PixelRoiMeta>,
+}
+
+/// By-value paint metadata; no payload allocation or framebuffer layout change.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct FramePaintStatus {
+    cpu_has_valid_scene: bool,
+    recovered_fault: Option<client::render::backend::RenderFault>,
+}
+
+impl FramePaintStatus {
+    pub(crate) const fn new(
+        cpu_has_valid_scene: bool,
+        recovered_fault: Option<client::render::backend::RenderFault>,
+    ) -> Self {
+        Self {
+            cpu_has_valid_scene,
+            recovered_fault,
+        }
+    }
 }
 
 impl FrameBuf {
+    /// Fixed per-loaded-bot Arc allocation, including the inline mailbox and
+    /// optional proof-queue descriptors. Pixel and queue payloads are separate
+    /// owners. This storage exists even when no render head is attached.
+    #[cfg(any(test, feature = "render-test-hooks"))]
+    pub fn fixed_storage_bytes() -> usize {
+        let header = std::alloc::Layout::new::<(
+            std::sync::atomic::AtomicUsize,
+            std::sync::atomic::AtomicUsize,
+        )>();
+        header
+            .extend(std::alloc::Layout::new::<Self>())
+            .expect("the fixed mailbox Arc layout fits usize")
+            .0
+            .pad_to_align()
+            .size()
+    }
+
     pub fn new() -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self {
             inner: Mutex::new(Mailbox {
                 frame: None,
                 head: None,
                 refused: None,
+                render_fault: None,
+                #[cfg(feature = "draw-memory-profile")]
+                next_render_bytes_request: Some(1),
+                #[cfg(feature = "draw-memory-profile")]
+                render_bytes_request: None,
+                #[cfg(feature = "draw-memory-profile")]
+                render_bytes_sample: None,
                 #[cfg(feature = "render-test-hooks")]
                 fair_stats: None,
-                #[cfg(feature = "render-diagnostics")]
-                stored_roi: None,
-                #[cfg(feature = "render-diagnostics")]
-                taken_roi: None,
             }),
             gen: AtomicU64::new(0),
             #[cfg(feature = "journal-paint-proof")]
             proof_frames: None,
         })
     }
-    /// Opt in to lossless capture for one fixture consumer. Unlike `new`,
-    /// this retains every paint and never hands out an aliased GPU texture.
+    /// Create a fixture mailbox that retains every legacy paint when fair
+    /// render is off. Fair render requires explicit bounded policy setup.
     #[cfg(feature = "journal-paint-proof")]
     pub fn new_for_journal_proof() -> std::sync::Arc<Self> {
         let mut mailbox = Self::new();
         std::sync::Arc::get_mut(&mut mailbox)
             .expect("new fixture mailbox has one owner")
-            .proof_frames = Some(parking_lot::Mutex::new(VecDeque::new()));
+            .proof_frames = Some(parking_lot::Mutex::new(JournalProofQueue::new()));
         mailbox
     }
 
+    /// Configure finite fair-gate journal capture before the first proof.
+    /// The caller supplies both the proof-record ceiling and readback timeout.
     #[cfg(feature = "journal-paint-proof")]
-    pub fn take_journal_proof(&self) -> Option<JournalProofFrame> {
-        self.proof_frames.as_ref()?.lock().pop_front()
+    pub fn configure_journal_proof_policy(
+        &self,
+        record_ceiling: NonZeroUsize,
+        readback_timeout: Duration,
+    ) -> Result<(), client::render::backend::ReadbackError> {
+        let queue = self
+            .proof_frames
+            .as_ref()
+            .ok_or(client::render::backend::ReadbackError::Ungated)?;
+        let mut queue = queue.lock();
+        if queue.policy.is_some()
+            || !queue.frames.is_empty()
+            || queue.registration.is_some()
+            || queue.pending.is_some()
+            || queue.resolving_head.is_some()
+        {
+            return Err(client::render::backend::ReadbackError::Limit);
+        }
+        let mut frames = VecDeque::new();
+        frames
+            .try_reserve_exact(record_ceiling.get())
+            .map_err(|_| client::render::backend::ReadbackError::Limit)?;
+        queue.frames = frames;
+        queue.policy = Some(JournalProofPolicy {
+            record_ceiling,
+            readback_timeout,
+        });
+        queue.last_error = None;
+        Ok(())
+    }
+
+    /// Return the last typed fair-gate capture refusal, if any.
+    #[cfg(feature = "journal-paint-proof")]
+    pub fn journal_proof_error(&self) -> Option<client::render::backend::ReadbackError> {
+        self.proof_frames.as_ref()?.lock().last_error
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    pub fn take_journal_proof_result(
+        &self,
+    ) -> Result<Option<JournalProofFrame>, client::render::backend::ReadbackError> {
+        let Some(queue) = &self.proof_frames else {
+            return Ok(None);
+        };
+        let progress = if fair_render_enabled() {
+            self.poll_journal_readback(queue)
+        } else {
+            Ok(())
+        };
+        let mut queue = queue.lock();
+        if let Some(frame) = queue.frames.pop_front() {
+            return Ok(Some(frame));
+        }
+        if let Err(error) = progress {
+            return Err(error);
+        }
+        match queue.last_error.take() {
+            Some(error) => Err(error),
+            None => Ok(None),
+        }
     }
 
     #[cfg(feature = "journal-paint-proof")]
@@ -200,81 +426,774 @@ impl FrameBuf {
         head: HeadIdentity,
         frame: FrameOutput,
         stamp: JournalPaintStamp,
+        status: FramePaintStatus,
     ) -> bool {
         if let Some(queue) = &self.proof_frames {
-            self.publish_proof(queue, head, frame, Some(stamp))
+            self.publish_proof(queue, head, frame, Some(stamp), status)
         } else {
-            self.publish(head, frame)
+            self.publish_with_status(head, frame, status)
         }
     }
 
     /// Publish `head`'s paint into the proof queue, if `head` is attached.
     /// The identity check and the publication share one mailbox critical
-    /// section, as in [`FrameBuf::publish`]: `retire_head`/`attach_head`
+    /// section, as in [`FrameBuf::publish_with_status`]: `retire_head`/`attach_head`
     /// take the same lock, so a head retired after its check cannot publish
     /// into its slot's reattached generation.
     #[cfg(feature = "journal-paint-proof")]
     fn publish_proof(
         &self,
-        queue: &parking_lot::Mutex<VecDeque<JournalProofFrame>>,
+        queue: &parking_lot::Mutex<JournalProofQueue>,
         head: HeadIdentity,
         frame: FrameOutput,
         stamp: Option<JournalPaintStamp>,
+        status: FramePaintStatus,
     ) -> bool {
-        // Read the pixels back before taking the mailbox lock: a GPU readback
-        // waits on the device, and the frame still belongs to this producer.
+        if !frame.is_fresh() {
+            self.update_render_fault(head, frame.render_fault());
+            return false;
+        }
+        if fair_render_enabled() {
+            self.publish_bounded_proof(queue, head, frame, stamp, status)
+        } else {
+            self.publish_legacy_proof(queue, head, frame, stamp, status)
+        }
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    fn update_render_fault(
+        &self,
+        head: HeadIdentity,
+        fault: Option<client::render::backend::RenderFault>,
+    ) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.head == Some(head) {
+            inner.render_fault = fault;
+        }
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    fn publish_legacy_proof(
+        &self,
+        queue: &parking_lot::Mutex<JournalProofQueue>,
+        head: HeadIdentity,
+        frame: FrameOutput,
+        stamp: Option<JournalPaintStamp>,
+        status: FramePaintStatus,
+    ) -> bool {
+        let (present_token, has_valid_scene) = match &frame {
+            FrameOutput::PixMap(_) => (None, status.cpu_has_valid_scene),
+            FrameOutput::Texture(handle) => (handle.present_token(), handle.has_valid_scene()),
+            FrameOutput::Refused(fault) => {
+                self.update_render_fault(head, Some(*fault));
+                return false;
+            }
+        };
         let (pixmap, gpu) = match frame {
             FrameOutput::PixMap(pixmap) => (pixmap, false),
             FrameOutput::Texture(handle) => (
                 client::graphics::PixMap {
-                    width: handle.width as i32,
-                    height: handle.height as i32,
+                    width: handle.width() as i32,
+                    height: handle.height() as i32,
                     pixels: handle.read_back(),
                 },
                 true,
             ),
+            FrameOutput::Refused(fault) => {
+                self.update_render_fault(head, Some(fault));
+                return false;
+            }
         };
-        let inner = self.inner.lock().unwrap();
-        if inner.head != Some(head) {
-            return false;
-        }
-        #[cfg(test)]
-        tests::pause_in_publication_gap();
-        let mut queue = queue.lock();
-        let generation = self.gen.fetch_add(1, Ordering::Relaxed) + 1;
-        queue.push_back(JournalProofFrame {
-            generation,
-            pixmap,
-            stamp,
-            gpu,
-        });
-        drop(queue);
-        drop(inner);
-        true
-    }
-
-    /// Store `head`'s latest frame and bump the generation, if `head` is the
-    /// head attached to this mailbox; otherwise drop the frame and return
-    /// false. The full [`FrameOutput`] is kept so the panel can bind a
-    /// `FrameOutput::Texture` or pack a `PixMap`.
-    pub(crate) fn publish(&self, head: HeadIdentity, frame: FrameOutput) -> bool {
-        #[cfg(feature = "journal-paint-proof")]
-        if let Some(queue) = &self.proof_frames {
-            return self.publish_proof(queue, head, frame, None);
-        }
         let mut inner = self.inner.lock().unwrap();
         if inner.head != Some(head) {
             return false;
         }
         #[cfg(test)]
         tests::pause_in_publication_gap();
-        #[cfg(feature = "render-diagnostics")]
-        {
-            inner.stored_roi = client::render::diagnostics::take_thread_pixel_roi();
+        let mut queue = queue.lock();
+        let Some(generation) = self.gen.load(Ordering::Relaxed).checked_add(1) else {
+            queue.last_error = Some(client::render::backend::ReadbackError::IdentityExhausted);
+            return false;
+        };
+        inner.render_fault = status.recovered_fault;
+        queue.frames.push_back(JournalProofFrame {
+            generation,
+            pixmap,
+            stamp,
+            gpu,
+            frame_stamp: FrameStamp {
+                head,
+                mailbox_sequence: generation,
+                present_token,
+                has_valid_scene,
+            },
+            _readback_permit: None,
+        });
+        queue.last_error = None;
+        self.gen.store(generation, Ordering::Relaxed);
+        true
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    fn publish_bounded_proof(
+        &self,
+        queue: &parking_lot::Mutex<JournalProofQueue>,
+        head: HeadIdentity,
+        frame: FrameOutput,
+        stamp: Option<JournalPaintStamp>,
+        status: FramePaintStatus,
+    ) -> bool {
+        if let Err(error) = self.poll_journal_readback(queue) {
+            Self::record_journal_error(queue, error);
         }
-        inner.frame = Some(frame);
-        drop(inner);
-        self.gen.fetch_add(1, Ordering::Relaxed);
+        {
+            let mut inner = self.inner.lock().unwrap();
+            if inner.head != Some(head) {
+                drop(inner);
+                return Self::refuse_journal_proof(
+                    queue,
+                    client::render::backend::ReadbackError::Retired,
+                );
+            }
+            if matches!(&frame, FrameOutput::Texture(_)) {
+                inner.render_fault = status.recovered_fault;
+            }
+        }
+        match frame {
+            FrameOutput::PixMap(pixmap) => {
+                self.publish_bounded_cpu_proof(queue, head, pixmap, stamp, status)
+            }
+            FrameOutput::Texture(handle) => {
+                self.publish_bounded_gpu_proof(queue, head, handle, stamp)
+            }
+            FrameOutput::Refused(fault) => {
+                self.update_render_fault(head, Some(fault));
+                false
+            }
+        }
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    fn publish_bounded_cpu_proof(
+        &self,
+        queue: &parking_lot::Mutex<JournalProofQueue>,
+        head: HeadIdentity,
+        pixmap: client::graphics::PixMap,
+        stamp: Option<JournalPaintStamp>,
+        status: FramePaintStatus,
+    ) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.head != Some(head) {
+            drop(inner);
+            return Self::refuse_journal_proof(
+                queue,
+                client::render::backend::ReadbackError::Retired,
+            );
+        }
+        let mut queue = queue.lock();
+        let Some(policy) = queue.policy.as_ref() else {
+            queue.last_error = Some(client::render::backend::ReadbackError::Ungated);
+            return false;
+        };
+        let occupied = queue
+            .frames
+            .len()
+            .saturating_add(if queue.pending.is_some() { 1 } else { 0 })
+            .saturating_add(if queue.resolving_head.is_some() { 1 } else { 0 });
+        if occupied >= policy.record_ceiling.get() {
+            queue.last_error = Some(client::render::backend::ReadbackError::Limit);
+            return false;
+        }
+        if queue.frames.capacity() < policy.record_ceiling.get() {
+            queue.last_error = Some(client::render::backend::ReadbackError::Limit);
+            return false;
+        }
+        #[cfg(test)]
+        tests::pause_in_publication_gap();
+        let Some(generation) = self.gen.load(Ordering::Relaxed).checked_add(1) else {
+            queue.last_error = Some(client::render::backend::ReadbackError::IdentityExhausted);
+            return false;
+        };
+        inner.render_fault = status.recovered_fault;
+        queue.frames.push_back(JournalProofFrame {
+            generation,
+            pixmap,
+            stamp,
+            gpu: false,
+            frame_stamp: FrameStamp {
+                head,
+                mailbox_sequence: generation,
+                present_token: None,
+                has_valid_scene: status.cpu_has_valid_scene,
+            },
+            _readback_permit: None,
+        });
+        queue.last_error = None;
+        self.gen.store(generation, Ordering::Relaxed);
+        true
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    fn publish_bounded_gpu_proof(
+        &self,
+        queue: &parking_lot::Mutex<JournalProofQueue>,
+        head: HeadIdentity,
+        handle: client::render::backend::TextureHandle,
+        stamp: Option<JournalPaintStamp>,
+    ) -> bool {
+        let (timeout, needs_registration, old_registration) = {
+            let mut queue = queue.lock();
+            let Some(policy) = queue.policy.as_ref() else {
+                queue.last_error = Some(client::render::backend::ReadbackError::Ungated);
+                return false;
+            };
+            let occupied = queue
+                .frames
+                .len()
+                .saturating_add(if queue.pending.is_some() { 1 } else { 0 })
+                .saturating_add(if queue.resolving_head.is_some() { 1 } else { 0 });
+            if occupied >= policy.record_ceiling.get() {
+                queue.last_error = Some(client::render::backend::ReadbackError::Limit);
+                return false;
+            }
+            if queue.pending.is_some() || queue.resolving_head.is_some() {
+                queue.last_error = Some(client::render::backend::ReadbackError::Busy);
+                return false;
+            }
+            let old_registration = if queue
+                .registration
+                .as_ref()
+                .is_some_and(|registration| registration.head != head)
+            {
+                queue.registration.take()
+            } else {
+                None
+            };
+            (
+                policy.readback_timeout,
+                queue.registration.is_none(),
+                old_registration,
+            )
+        };
+        drop(old_registration);
+
+        if self.inner.lock().unwrap().head != Some(head) {
+            return Self::refuse_journal_proof(
+                queue,
+                client::render::backend::ReadbackError::Retired,
+            );
+        }
+
+        if needs_registration {
+            let registration = match handle.try_register_consumer() {
+                Ok(registration) => registration,
+                Err(error) => return Self::refuse_journal_proof(queue, error),
+            };
+            let inner = self.inner.lock().unwrap();
+            if inner.head != Some(head) {
+                drop(inner);
+                drop(registration);
+                return Self::refuse_journal_proof(
+                    queue,
+                    client::render::backend::ReadbackError::Retired,
+                );
+            }
+            let mut queue_state = queue.lock();
+            if queue_state.registration.is_some() {
+                queue_state.last_error = Some(client::render::backend::ReadbackError::Busy);
+                drop(queue_state);
+                drop(inner);
+                drop(registration);
+                return false;
+            }
+            queue_state.registration = Some(JournalConsumerRegistration { head, registration });
+            drop(queue_state);
+            drop(inner);
+        }
+
+        let consumer = {
+            let queue_state = queue.lock();
+            let Some(registration) = queue_state
+                .registration
+                .as_ref()
+                .filter(|registration| registration.head == head)
+            else {
+                return Self::refuse_journal_proof(
+                    queue,
+                    client::render::backend::ReadbackError::Retired,
+                );
+            };
+            match registration.registration.try_take_frame() {
+                Ok(consumer) => consumer,
+                Err(error) => return Self::refuse_journal_proof(queue, error),
+            }
+        };
+        let Some(consumer) = consumer else {
+            return false;
+        };
+        let Some(token) = handle.present_token() else {
+            drop(consumer);
+            return Self::refuse_journal_proof(
+                queue,
+                client::render::backend::ReadbackError::Ungated,
+            );
+        };
+        if consumer.present_token() != token {
+            drop(consumer);
+            return Self::refuse_journal_proof(
+                queue,
+                client::render::backend::ReadbackError::StalePresent,
+            );
+        }
+        if !consumer.has_valid_scene() {
+            drop(consumer);
+            return Self::refuse_journal_proof(
+                queue,
+                client::render::backend::ReadbackError::InvalidScene,
+            );
+        }
+        let geometry =
+            client::render::backend::CaptureGeometry::new(handle.width(), handle.height());
+        let Some(deadline) = std::time::Instant::now().checked_add(timeout) else {
+            drop(consumer);
+            return Self::refuse_journal_proof(
+                queue,
+                client::render::backend::ReadbackError::Timeout,
+            );
+        };
+        let permit = match client::render::backend::ReadbackBudget::process()
+            .try_acquire(geometry, deadline)
+        {
+            Ok(permit) => permit,
+            Err(error) => {
+                drop(consumer);
+                return Self::refuse_journal_proof(queue, error);
+            }
+        };
+        let pending = match consumer
+            .try_begin_readback(client::render::backend::ReadbackKind::ValidScene, permit)
+        {
+            Ok(pending) => pending,
+            Err((error, consumer, permit)) => {
+                drop(consumer);
+                drop(permit);
+                return Self::refuse_journal_proof(queue, error);
+            }
+        };
+        let pending = PendingJournalProof {
+            readback: pending,
+            head,
+            stamp,
+            token,
+            geometry,
+        };
+        let inner = self.inner.lock().unwrap();
+        if inner.head != Some(head) {
+            drop(inner);
+            drop(pending);
+            return Self::refuse_journal_proof(
+                queue,
+                client::render::backend::ReadbackError::Retired,
+            );
+        }
+        let mut queue_state = queue.lock();
+        let Some(policy) = queue_state.policy.as_ref() else {
+            queue_state.last_error = Some(client::render::backend::ReadbackError::Ungated);
+            drop(queue_state);
+            drop(inner);
+            drop(pending);
+            return false;
+        };
+        let occupied = queue_state
+            .frames
+            .len()
+            .saturating_add(if queue_state.pending.is_some() { 1 } else { 0 })
+            .saturating_add(if queue_state.resolving_head.is_some() {
+                1
+            } else {
+                0
+            });
+        if occupied >= policy.record_ceiling.get()
+            || queue_state.pending.is_some()
+            || queue_state.resolving_head.is_some()
+        {
+            queue_state.last_error = Some(client::render::backend::ReadbackError::Busy);
+            drop(queue_state);
+            drop(inner);
+            drop(pending);
+            return false;
+        }
+        queue_state.pending = Some(pending);
+        queue_state.last_error = None;
+        true
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    fn poll_journal_readback(
+        &self,
+        queue: &parking_lot::Mutex<JournalProofQueue>,
+    ) -> Result<(), client::render::backend::ReadbackError> {
+        let mut pending = {
+            let Some(mut queue) = queue.try_lock() else {
+                return Err(client::render::backend::ReadbackError::Busy);
+            };
+            let Some(pending) = queue.pending.take() else {
+                return Ok(());
+            };
+            queue.resolving_head = Some(pending.head);
+            pending
+        };
+        match pending.readback.poll(std::time::Instant::now()) {
+            Ok(None) => {
+                let inner = self.inner.lock().unwrap();
+                let mut queue_state = queue.lock();
+                if inner.head == Some(pending.head)
+                    && queue_state.resolving_head == Some(pending.head)
+                    && queue_state.pending.is_none()
+                {
+                    queue_state.pending = Some(pending);
+                    queue_state.resolving_head = None;
+                    Ok(())
+                } else {
+                    queue_state.resolving_head = None;
+                    queue_state.last_error = Some(client::render::backend::ReadbackError::Retired);
+                    drop(queue_state);
+                    drop(inner);
+                    drop(pending);
+                    Err(client::render::backend::ReadbackError::Retired)
+                }
+            }
+            Ok(Some(completed)) => self.complete_journal_readback(queue, pending, completed),
+            Err(error) => Err(self.finish_journal_readback_error(queue, pending.head, error)),
+        }
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    fn complete_journal_readback(
+        &self,
+        queue: &parking_lot::Mutex<JournalProofQueue>,
+        pending: PendingJournalProof,
+        completed: client::render::backend::CompletedReadback,
+    ) -> Result<(), client::render::backend::ReadbackError> {
+        let (rgba, token, has_valid_scene, geometry, permit) = completed.into_parts();
+        if token != pending.token {
+            drop(rgba);
+            drop(permit);
+            return Err(self.finish_journal_readback_error(
+                queue,
+                pending.head,
+                client::render::backend::ReadbackError::StalePresent,
+            ));
+        }
+        if !has_valid_scene {
+            drop(rgba);
+            drop(permit);
+            return Err(self.finish_journal_readback_error(
+                queue,
+                pending.head,
+                client::render::backend::ReadbackError::InvalidScene,
+            ));
+        }
+        if geometry != pending.geometry {
+            drop(rgba);
+            drop(permit);
+            return Err(self.finish_journal_readback_error(
+                queue,
+                pending.head,
+                client::render::backend::ReadbackError::Limit,
+            ));
+        }
+        if self.inner.lock().unwrap().head != Some(pending.head) {
+            drop(rgba);
+            drop(permit);
+            return Err(self.finish_journal_readback_error(
+                queue,
+                pending.head,
+                client::render::backend::ReadbackError::Retired,
+            ));
+        }
+        let (pixmap, permit) = match Self::journal_pixmap_from_rgba(rgba, geometry, permit) {
+            Ok(converted) => converted,
+            Err(error) => {
+                return Err(self.finish_journal_readback_error(queue, pending.head, error));
+            }
+        };
+        let mut proof = JournalProofFrame {
+            generation: 0,
+            pixmap,
+            stamp: pending.stamp,
+            gpu: true,
+            frame_stamp: FrameStamp {
+                head: pending.head,
+                mailbox_sequence: 0,
+                present_token: Some(token),
+                has_valid_scene,
+            },
+            _readback_permit: Some(permit),
+        };
+        let mut inner = self.inner.lock().unwrap();
+        let mut queue_state = queue.lock();
+        let error = if inner.head != Some(pending.head)
+            || queue_state.resolving_head != Some(pending.head)
+        {
+            Some(client::render::backend::ReadbackError::Retired)
+        } else if queue_state.policy.is_none() {
+            Some(client::render::backend::ReadbackError::Ungated)
+        } else if queue_state.frames.len()
+            >= queue_state
+                .policy
+                .as_ref()
+                .expect("policy checked above")
+                .record_ceiling
+                .get()
+            || queue_state.frames.capacity()
+                < queue_state
+                    .policy
+                    .as_ref()
+                    .expect("policy checked above")
+                    .record_ceiling
+                    .get()
+        {
+            Some(client::render::backend::ReadbackError::Limit)
+        } else {
+            None
+        };
+        if let Some(error) = error {
+            queue_state.resolving_head = None;
+            queue_state.last_error = Some(error);
+            drop(queue_state);
+            drop(inner);
+            drop(proof);
+            return Err(error);
+        }
+        let Some(generation) = self.gen.load(Ordering::Relaxed).checked_add(1) else {
+            queue_state.resolving_head = None;
+            queue_state.last_error =
+                Some(client::render::backend::ReadbackError::IdentityExhausted);
+            drop(queue_state);
+            drop(inner);
+            drop(proof);
+            return Err(client::render::backend::ReadbackError::IdentityExhausted);
+        };
+        #[cfg(test)]
+        tests::pause_in_publication_gap();
+        proof.generation = generation;
+        proof.frame_stamp.mailbox_sequence = generation;
+        inner.render_fault = None;
+        queue_state.frames.push_back(proof);
+        queue_state.resolving_head = None;
+        queue_state.last_error = None;
+        self.gen.store(generation, Ordering::Relaxed);
+        Ok(())
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    fn journal_pixmap_from_rgba(
+        rgba: Vec<u8>,
+        geometry: client::render::backend::CaptureGeometry,
+        permit: client::render::backend::ReadbackPermit,
+    ) -> Result<
+        (
+            client::graphics::PixMap,
+            client::render::backend::ReadbackPermit,
+        ),
+        client::render::backend::ReadbackError,
+    > {
+        let width = usize::try_from(geometry.width())
+            .map_err(|_| client::render::backend::ReadbackError::Limit)?;
+        let height = usize::try_from(geometry.height())
+            .map_err(|_| client::render::backend::ReadbackError::Limit)?;
+        let pixels_len = width
+            .checked_mul(height)
+            .ok_or(client::render::backend::ReadbackError::Limit)?;
+        let raw_len = pixels_len
+            .checked_mul(4)
+            .ok_or(client::render::backend::ReadbackError::Limit)?;
+        if rgba.len() != raw_len || permit.raw_bytes() != raw_len {
+            return Err(client::render::backend::ReadbackError::Device);
+        }
+        let envelope = permit
+            .stage_bytes()
+            .checked_add(permit.raw_bytes())
+            .ok_or(client::render::backend::ReadbackError::Limit)?;
+        let raw_and_pixels = rgba
+            .capacity()
+            .checked_add(
+                pixels_len
+                    .checked_mul(std::mem::size_of::<i32>())
+                    .ok_or(client::render::backend::ReadbackError::Limit)?,
+            )
+            .ok_or(client::render::backend::ReadbackError::Limit)?;
+        if raw_and_pixels > envelope {
+            return Err(client::render::backend::ReadbackError::Limit);
+        }
+        let mut pixels = Vec::new();
+        pixels
+            .try_reserve_exact(pixels_len)
+            .map_err(|_| client::render::backend::ReadbackError::Limit)?;
+        let converted_capacity = pixels
+            .capacity()
+            .checked_mul(std::mem::size_of::<i32>())
+            .ok_or(client::render::backend::ReadbackError::Limit)?;
+        if rgba
+            .capacity()
+            .checked_add(converted_capacity)
+            .ok_or(client::render::backend::ReadbackError::Limit)?
+            > envelope
+        {
+            return Err(client::render::backend::ReadbackError::Limit);
+        }
+        for rgba_pixel in rgba.chunks_exact(4) {
+            pixels.push(
+                ((rgba_pixel[0] as i32) << 16)
+                    | ((rgba_pixel[1] as i32) << 8)
+                    | rgba_pixel[2] as i32,
+            );
+        }
+        if pixels.len() != pixels_len {
+            return Err(client::render::backend::ReadbackError::Device);
+        }
+        drop(rgba);
+        let width = i32::try_from(geometry.width())
+            .map_err(|_| client::render::backend::ReadbackError::Limit)?;
+        let height = i32::try_from(geometry.height())
+            .map_err(|_| client::render::backend::ReadbackError::Limit)?;
+        Ok((
+            client::graphics::PixMap {
+                width,
+                height,
+                pixels,
+            },
+            permit,
+        ))
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    fn finish_journal_readback_error(
+        &self,
+        queue: &parking_lot::Mutex<JournalProofQueue>,
+        head: HeadIdentity,
+        error: client::render::backend::ReadbackError,
+    ) -> client::render::backend::ReadbackError {
+        let inner = self.inner.lock().unwrap();
+        let mut queue_state = queue.lock();
+        let error = if inner.head == Some(head) {
+            error
+        } else {
+            client::render::backend::ReadbackError::Retired
+        };
+        if queue_state.resolving_head == Some(head) {
+            queue_state.resolving_head = None;
+        }
+        queue_state.last_error = Some(error);
+        error
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    fn record_journal_error(
+        queue: &parking_lot::Mutex<JournalProofQueue>,
+        error: client::render::backend::ReadbackError,
+    ) {
+        queue.lock().last_error = Some(error);
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    fn refuse_journal_proof(
+        queue: &parking_lot::Mutex<JournalProofQueue>,
+        error: client::render::backend::ReadbackError,
+    ) -> bool {
+        Self::record_journal_error(queue, error);
+        false
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    fn cancel_journal_resources(
+        queue: &parking_lot::Mutex<JournalProofQueue>,
+        head: Option<HeadIdentity>,
+    ) {
+        let (pending, registration) = {
+            let mut queue = queue.lock();
+            let matches_head =
+                |candidate: HeadIdentity| head.map_or(true, |head| candidate == head);
+            let pending = if queue
+                .pending
+                .as_ref()
+                .is_some_and(|pending| matches_head(pending.head))
+            {
+                queue.pending.take()
+            } else {
+                None
+            };
+            let registration = if queue
+                .registration
+                .as_ref()
+                .is_some_and(|registration| matches_head(registration.head))
+            {
+                queue.registration.take()
+            } else {
+                None
+            };
+            (pending, registration)
+        };
+        drop(pending);
+        drop(registration);
+    }
+
+    /// Store `head`'s latest frame and bump the generation, if `head` is the
+    /// head attached to this mailbox; otherwise drop the frame and return
+    /// false. The full [`FrameOutput`] is kept so the panel can bind a
+    /// `FrameOutput::Texture` or pack a `PixMap`.
+    #[cfg(test)]
+    pub(crate) fn publish(&self, head: HeadIdentity, frame: FrameOutput) -> bool {
+        self.publish_with_status(head, frame, FramePaintStatus::default())
+    }
+
+    /// Publish scene validity and a recovered fault with the exact output.
+    /// GPU authority is always read from its submitted present token.
+    pub(crate) fn publish_with_status(
+        &self,
+        head: HeadIdentity,
+        frame: FrameOutput,
+        status: FramePaintStatus,
+    ) -> bool {
+        #[cfg(feature = "journal-paint-proof")]
+        if let Some(queue) = &self.proof_frames {
+            return self.publish_proof(queue, head, frame, None, status);
+        }
+        let mut inner = self.inner.lock().unwrap();
+        if inner.head != Some(head) {
+            return false;
+        }
+        if !frame.is_fresh() {
+            inner.render_fault = frame.render_fault();
+            return false;
+        }
+        let Some(generation) = self.gen.load(Ordering::Relaxed).checked_add(1) else {
+            inner.render_fault =
+                Some(client::render::backend::RenderFault::MailboxSequenceExhausted);
+            return false;
+        };
+        #[cfg(test)]
+        tests::pause_in_publication_gap();
+        let (present_token, has_valid_scene) = match &frame {
+            FrameOutput::Texture(handle) => (handle.present_token(), handle.has_valid_scene()),
+            FrameOutput::PixMap(_) => (None, status.cpu_has_valid_scene),
+            FrameOutput::Refused(_) => return false,
+        };
+        let presented = PresentedFrame {
+            output: frame,
+            stamp: FrameStamp {
+                head,
+                mailbox_sequence: generation,
+                present_token,
+                has_valid_scene,
+            },
+            #[cfg(feature = "render-diagnostics")]
+            roi: client::render::diagnostics::take_thread_pixel_roi(),
+        };
+        inner.render_fault = status.recovered_fault;
+        inner.frame = Some(presented);
+        self.gen.store(generation, Ordering::Relaxed);
         true
     }
 
@@ -282,8 +1201,20 @@ impl FrameBuf {
     /// shown for this slot is over.
     pub(crate) fn attach_head(&self, head: HeadIdentity) {
         let mut inner = self.inner.lock().unwrap();
+        #[cfg(feature = "journal-paint-proof")]
+        if inner.head != Some(head) {
+            if let Some(queue) = &self.proof_frames {
+                Self::cancel_journal_resources(queue, inner.head);
+            }
+        }
         inner.head = Some(head);
         inner.refused = None;
+        inner.render_fault = None;
+        #[cfg(feature = "draw-memory-profile")]
+        {
+            inner.render_bytes_request = None;
+            inner.render_bytes_sample = None;
+        }
         #[cfg(feature = "render-test-hooks")]
         {
             inner.fair_stats = None;
@@ -296,7 +1227,17 @@ impl FrameBuf {
     pub(crate) fn retire_head(&self, head: HeadIdentity) -> Option<FrameOutput> {
         let mut inner = self.inner.lock().unwrap();
         if inner.head == Some(head) {
+            #[cfg(feature = "journal-paint-proof")]
+            if let Some(queue) = &self.proof_frames {
+                Self::cancel_journal_resources(queue, Some(head));
+            }
             inner.head = None;
+            inner.render_fault = None;
+            #[cfg(feature = "draw-memory-profile")]
+            {
+                inner.render_bytes_request = None;
+                inner.render_bytes_sample = Some(Default::default());
+            }
         }
         Self::take_locked(&mut inner)
     }
@@ -306,7 +1247,17 @@ impl FrameBuf {
     pub(crate) fn release_head(&self, head: HeadIdentity) {
         let mut inner = self.inner.lock().unwrap();
         if inner.head == Some(head) {
+            #[cfg(feature = "journal-paint-proof")]
+            if let Some(queue) = &self.proof_frames {
+                Self::cancel_journal_resources(queue, Some(head));
+            }
             inner.head = None;
+            inner.render_fault = None;
+            #[cfg(feature = "draw-memory-profile")]
+            {
+                inner.render_bytes_request = None;
+                inner.render_bytes_sample = Some(Default::default());
+            }
         }
     }
 
@@ -326,6 +1277,67 @@ impl FrameBuf {
         self.inner.lock().unwrap().refused
     }
 
+    /// A failed paint leaves the previous picture and its generation intact.
+    pub fn render_fault(&self) -> Option<client::render::backend::RenderFault> {
+        self.inner.lock().unwrap().render_fault
+    }
+
+    /// Request an allocation-free owner census on the slot thread. A request
+    /// supersedes older in-flight samples; a detached slot owns no renderer.
+    #[cfg(feature = "draw-memory-profile")]
+    pub fn request_render_bytes_sample(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.render_bytes_sample = None;
+        inner.render_bytes_request = None;
+        let Some(request) = inner.next_render_bytes_request else {
+            return;
+        };
+        inner.next_render_bytes_request = request.checked_add(1);
+        if inner.head.is_some() {
+            inner.render_bytes_request = Some(request);
+        } else {
+            inner.render_bytes_sample = Some(Default::default());
+        }
+    }
+
+    #[cfg(feature = "draw-memory-profile")]
+    pub fn render_bytes_sample(&self) -> Option<client::render::budget::RenderBytes> {
+        self.inner.lock().unwrap().render_bytes_sample
+    }
+
+    #[cfg(feature = "draw-memory-profile")]
+    pub(crate) fn render_output_storage_bytes(&self) -> usize {
+        match self.inner.lock().unwrap().frame.as_ref() {
+            Some(PresentedFrame {
+                output: FrameOutput::PixMap(pixmap),
+                ..
+            }) => pixmap.pixels.capacity() * std::mem::size_of::<i32>(),
+            _ => 0,
+        }
+    }
+
+    #[cfg(feature = "draw-memory-profile")]
+    pub(crate) fn render_bytes_request(&self, head: HeadIdentity) -> Option<u64> {
+        let inner = self.inner.lock().unwrap();
+        (inner.head == Some(head))
+            .then_some(inner.render_bytes_request)
+            .flatten()
+    }
+
+    #[cfg(feature = "draw-memory-profile")]
+    pub(crate) fn publish_render_bytes_sample(
+        &self,
+        head: HeadIdentity,
+        request: u64,
+        sample: client::render::budget::RenderBytes,
+    ) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.head == Some(head) && inner.render_bytes_request == Some(request) {
+            inner.render_bytes_request = None;
+            inner.render_bytes_sample = Some(sample);
+        }
+    }
+
     /// The latest fixed-size sample for this mailbox's render generation.
     #[cfg(feature = "render-test-hooks")]
     pub fn fair_stats(&self) -> Option<crate::render_head::HeadFairStats> {
@@ -340,28 +1352,20 @@ impl FrameBuf {
         }
     }
 
-    /// Move the stored frame out and clear the mailbox: the single
-    /// consumer's handoff (a `FrameOutput::Texture` is single-consumer, no
-    /// Clone). `None` when nothing was stored since the last take. The
-    /// generation is untouched — only [`FrameBuf::publish`] bumps it.
+    /// Move output, stamp and ROI together. A subsequent publish cannot
+    /// replace any part of this accepted frame.
+    pub fn take_presented(&self) -> Option<PresentedFrame> {
+        self.inner.lock().unwrap().frame.take()
+    }
+
+    /// Output-only convenience for callers that do not claim scene-proof
+    /// authority. The envelope's diagnostics leave with the output.
     pub fn take(&self) -> Option<FrameOutput> {
-        Self::take_locked(&mut self.inner.lock().unwrap())
+        self.take_presented().map(PresentedFrame::into_output)
     }
 
     fn take_locked(inner: &mut Mailbox) -> Option<FrameOutput> {
-        let frame = inner.frame.take();
-        #[cfg(feature = "render-diagnostics")]
-        if frame.is_some() {
-            inner.taken_roi = inner.stored_roi.take();
-        }
-        frame
-    }
-
-    /// Sidecar that belonged to the last successful [`take`]. Ordinary
-    /// builds omit this.
-    #[cfg(feature = "render-diagnostics")]
-    pub fn take_pixel_roi(&self) -> Option<client::render::diagnostics::PixelRoiMeta> {
-        self.inner.lock().unwrap().taken_roi.take()
+        inner.frame.take().map(PresentedFrame::into_output)
     }
     /// CPU path: pack the latest `PixMap`'s pixels via `pack_rgb` (765×503,
     /// same shape the panel's texture upload expects). Empty when nothing
@@ -371,7 +1375,11 @@ impl FrameBuf {
         let n = (APPLET_W * APPLET_H) as usize;
         let inner = self.inner.lock().unwrap();
         let mut out = Vec::with_capacity(n);
-        if let Some(FrameOutput::PixMap(pix)) = &inner.frame {
+        if let Some(PresentedFrame {
+            output: FrameOutput::PixMap(pix),
+            ..
+        }) = &inner.frame
+        {
             if pix.width == APPLET_W && pix.height == APPLET_H && pix.pixels.len() >= n {
                 for src in pix.pixels.iter().take(n) {
                     out.push(pack_rgb(*src));
@@ -1045,14 +2053,14 @@ impl SlotPark {
 #[cfg(test)]
 mod tests {
     use super::{
-        map_image_to_applet, wait_readable, wake_channel, FrameBuf, InputEv, ManualMoveIntent,
-        MouseOwner, SlotInput,
+        map_image_to_applet, wait_readable, wake_channel, FrameBuf, FramePaintStatus, InputEv,
+        ManualMoveIntent, MouseOwner, SlotInput,
     };
     use crate::render::{HeadIdentity, RenderRefusal, RenderService};
     use api::identity::{Notice, Notifier, SlotKey};
-    use client::client::{GameShell, MiniMenuAction};
+    use client::client::{Client, ClientConfig, ClientRevision, GameShell, MiniMenuAction};
     use client::graphics::PixMap;
-    use client::render::backend::FrameOutput;
+    use client::render::backend::{FrameOutput, RenderFault};
     use std::cell::RefCell;
     use std::sync::{Arc, Barrier, TryLockError};
     use std::time::{Duration, Instant};
@@ -1093,6 +2101,475 @@ mod tests {
         head_generations(slot).0
     }
 
+    #[cfg(feature = "render-test-hooks")]
+    struct FairGpuControl {
+        now: std::sync::Mutex<Instant>,
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    impl FairGpuControl {
+        fn advance(&self, elapsed: Duration) {
+            let mut now = self.now.lock().unwrap();
+            *now = now.checked_add(elapsed).unwrap();
+        }
+
+        fn now(&self) -> Instant {
+            *self.now.lock().unwrap()
+        }
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    impl crate::render_head::test_hooks::RenderTestControl for FairGpuControl {
+        fn now(&self) -> Instant {
+            FairGpuControl::now(self)
+        }
+
+        fn at(&self, _event: crate::render_head::test_hooks::RenderTestEvent) {}
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    fn configure_fair_gpu_process() {
+        use std::num::NonZeroUsize;
+
+        client::render::backend::configure_retained_present_budget(NonZeroUsize::new(1).unwrap())
+            .expect("the isolated process configures one retained GPU image");
+        crate::render_head::test_hooks::configure_process(
+            crate::render_head::test_hooks::ProcessFixture {
+                grant_ttl: Duration::from_millis(20),
+                quantum: Duration::from_millis(40),
+            },
+        )
+        .expect("the isolated process configures its explicit fair fixture");
+        crate::render_head::pump(Instant::now());
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    fn fair_gpu_client() -> client::client::Client {
+        use client::client::{Client, ClientConfig, ClientRevision};
+        use client::dash3d::TerrainOverlayShape;
+
+        let mut client = Client::new_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/nonexistent-retained-present-fixture".into(),
+                members: true,
+                lowmem: false,
+            },
+            ClientRevision::R289,
+        );
+        client.set_draw(true);
+        client.ingame = true;
+        client.scene_state = 2;
+        client.world.fill_base_level(0);
+        for x in 8..24 {
+            for z in 8..40 {
+                let hsl = ((x * 7 + z * 13) % 60) * 1024 + 2624;
+                client.world.set_ground(
+                    0,
+                    x,
+                    z,
+                    TerrainOverlayShape::PLAIN,
+                    0,
+                    -1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    hsl,
+                    hsl,
+                    hsl,
+                    hsl,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0x00ff00,
+                    0,
+                );
+            }
+        }
+        client.cam_x = 16 * 128;
+        client.cam_z = 4 * 128;
+        client.cam_y = -600;
+        client.cam_pitch = 200;
+        client.cam_yaw = 0;
+        client
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    fn publish_head_frame(head: &crate::render_head::Head, frame: FrameOutput) -> bool {
+        #[cfg(not(feature = "journal-paint-proof"))]
+        {
+            head.publish(frame)
+        }
+        #[cfg(feature = "journal-paint-proof")]
+        {
+            head.publish_journal_paint(
+                frame,
+                super::JournalPaintStamp {
+                    modal_root: -1,
+                    journal_paint_hidden: false,
+                },
+            )
+        }
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    fn presented_gpu_snapshot(mailbox: &FrameBuf) -> (super::FrameStamp, Vec<i32>) {
+        let inner = mailbox.inner.lock().unwrap();
+        let frame = inner
+            .frame
+            .as_ref()
+            .expect("the prior mailbox frame remains present");
+        let pixels = match frame.output() {
+            FrameOutput::Texture(texture) => texture.read_back(),
+            _ => panic!("the required GPU fixture publishes a texture"),
+        };
+        (*frame.stamp(), pixels)
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    struct PresentGateHolder {
+        release: Option<std::sync::mpsc::Sender<()>>,
+        worker: Option<std::thread::JoinHandle<bool>>,
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    impl PresentGateHolder {
+        fn start(handle: client::render::backend::TextureHandle) -> Self {
+            let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel();
+            let worker = std::thread::spawn(move || {
+                client::render::backend::gpu::test_hooks::with_present_gate_locked(&handle, || {
+                    locked_tx
+                        .send(())
+                        .expect("the paint test still waits for gate acquisition");
+                    release_rx.recv_timeout(Duration::from_secs(15)).is_ok()
+                })
+            });
+            locked_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the fixture locks the real tracked present gate");
+            Self {
+                release: Some(release_tx),
+                worker: Some(worker),
+            }
+        }
+
+        fn release_and_join(mut self) -> bool {
+            if let Some(release) = self.release.take() {
+                let _ = release.send(());
+            }
+            self.worker
+                .take()
+                .expect("the gate holder owns its worker")
+                .join()
+                .expect("the gate holder worker exits")
+        }
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    impl Drop for PresentGateHolder {
+        fn drop(&mut self) {
+            if let Some(release) = self.release.take() {
+                let _ = release.send(());
+            }
+            if let Some(worker) = self.worker.take() {
+                let _ = worker.join();
+            }
+        }
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    fn presented_gpu_stamp(mailbox: &FrameBuf) -> super::FrameStamp {
+        let inner = mailbox.inner.lock().unwrap();
+        *inner
+            .frame
+            .as_ref()
+            .expect("the prior mailbox frame remains present")
+            .stamp()
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    #[test]
+    #[ignore = "requires an explicitly configured GPU adapter"]
+    fn read_submission_gate_never_waits_on_simulation() {
+        const CHILD: &str = "R274_PRESENT_GATE_NONBLOCKING_CHILD";
+        const TEST: &str = "slot_io::tests::read_submission_gate_never_waits_on_simulation";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST, "--ignored", "--nocapture"])
+                .env(CHILD, "1")
+                .output()
+                .expect("spawn an isolated GPU present-gate fixture");
+            assert!(
+                output.status.success(),
+                "present-gate child failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            return;
+        }
+
+        configure_fair_gpu_process();
+        let control = Arc::new(FairGpuControl {
+            now: std::sync::Mutex::new(Instant::now()),
+        });
+        let mailbox = FrameBuf::new();
+        let (wake, park) = wake_channel();
+        let render = crate::render_head::SlotRender::new(
+            SlotKey::from_incarnation(91).unwrap(),
+            Arc::clone(&mailbox),
+            Arc::new(wake),
+        )
+        .with_test_control(control.clone());
+        let mut head = crate::render_head::Head::attach(&render, false, false)
+            .expect("the explicit fixture attaches a real renderer");
+        assert_eq!(
+            head.backend_kind(),
+            client::render::backend::BackendKind::Gpu
+        );
+        let mut client = fair_gpu_client();
+
+        head.note_due(control.now()).unwrap();
+        let initial = head.paint(&mut client);
+        assert!(initial.is_fresh(), "the real GPU head creates N");
+        assert!(publish_head_frame(&head, initial));
+        let original_stamp = presented_gpu_stamp(&mailbox);
+        assert!(original_stamp.has_valid_scene());
+        assert_eq!(original_stamp.head(), head.identity());
+
+        let witness = head.paint(&mut client);
+        assert!(witness.is_fresh(), "the retained head advances its display");
+        let FrameOutput::Texture(witness) = witness else {
+            panic!("the real GPU frame carries the present-gate witness");
+        };
+        let before_pixels = presented_gpu_snapshot(&mailbox).1;
+        let holder = PresentGateHolder::start(witness);
+
+        control.advance(Duration::from_millis(41));
+        head.note_due(control.now()).unwrap();
+        let contended = head.paint(&mut client);
+        assert!(
+            !contended.is_fresh(),
+            "present contention returns a nonfresh frame"
+        );
+        assert_eq!(
+            contended.render_fault(),
+            Some(client::render::backend::RenderFault::PresentContended)
+        );
+        assert!(!publish_head_frame(&head, contended));
+        assert_eq!(
+            mailbox.generation(),
+            1,
+            "contention does not publish a sequence"
+        );
+        assert_eq!(presented_gpu_stamp(&mailbox), original_stamp);
+        assert_eq!(
+            presented_gpu_snapshot(&mailbox).1,
+            before_pixels,
+            "the held present gate prevents a partial display update"
+        );
+        assert_eq!(
+            mailbox.render_fault(),
+            Some(client::render::backend::RenderFault::PresentContended)
+        );
+        assert!(
+            holder.release_and_join(),
+            "the real gate stays held through paint"
+        );
+
+        control.advance(Duration::from_millis(41));
+        head.note_due(control.now()).unwrap();
+        let recovered = head.paint(&mut client);
+        assert!(
+            recovered.is_fresh(),
+            "the producer progresses after gate release"
+        );
+        assert!(publish_head_frame(&head, recovered));
+        assert_eq!(mailbox.generation(), 2);
+        let recovered_stamp = presented_gpu_stamp(&mailbox);
+        assert_eq!(recovered_stamp.head(), original_stamp.head());
+        assert_eq!(recovered_stamp.mailbox_sequence(), 2);
+        assert_ne!(
+            recovered_stamp.present_token(),
+            original_stamp.present_token()
+        );
+        assert!(recovered_stamp.has_valid_scene());
+        assert_eq!(mailbox.render_fault(), None);
+
+        head.detach();
+        drop(park);
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    #[test]
+    #[ignore = "requires an explicitly configured GPU adapter"]
+    fn present_submission_and_mailbox_publication_gap_cannot_forge_valid_scene() {
+        use client::render::backend::{CaptureGeometry, ReadbackBudget, ReadbackKind};
+        const CHILD: &str = "R274_PRESENT_STAMP_GAP_CHILD";
+        const TEST: &str = "slot_io::tests::present_submission_and_mailbox_publication_gap_cannot_forge_valid_scene";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST, "--ignored", "--nocapture"])
+                .env(CHILD, "1")
+                .output()
+                .expect("spawn an isolated GPU stamp fixture");
+            assert!(
+                output.status.success(),
+                "present-stamp child failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            return;
+        }
+
+        configure_fair_gpu_process();
+        let control = Arc::new(FairGpuControl {
+            now: std::sync::Mutex::new(Instant::now()),
+        });
+        let mailbox = FrameBuf::new();
+        let (wake, park) = wake_channel();
+        let render = crate::render_head::SlotRender::new(
+            SlotKey::from_incarnation(92).unwrap(),
+            Arc::clone(&mailbox),
+            Arc::new(wake),
+        )
+        .with_test_control(control.clone());
+        let mut head = crate::render_head::Head::attach(&render, false, false)
+            .expect("the explicit fixture attaches a real renderer");
+        assert_eq!(
+            head.backend_kind(),
+            client::render::backend::BackendKind::Gpu
+        );
+        let mut client = fair_gpu_client();
+
+        head.note_due(control.now()).unwrap();
+        let bootstrap = head.paint(&mut client);
+        assert!(
+            bootstrap.is_fresh(),
+            "the real GPU head creates a bootstrap frame"
+        );
+        let registration = match &bootstrap {
+            FrameOutput::Texture(texture) => texture
+                .try_register_consumer()
+                .expect("the explicit head registers its real present"),
+            _ => panic!("the required GPU fixture publishes a texture"),
+        };
+        drop(bootstrap);
+
+        control.advance(Duration::from_millis(41));
+        head.note_due(control.now()).unwrap();
+        let valid_n = head.paint(&mut client);
+        assert!(valid_n.is_fresh(), "the registered head creates frame N");
+        let token_n = match &valid_n {
+            FrameOutput::Texture(texture) => {
+                assert!(texture.has_valid_scene());
+                texture.present_token().expect("valid frame N has a token")
+            }
+            _ => panic!("the required GPU fixture publishes a texture"),
+        };
+        let held_n = registration
+            .try_take_frame()
+            .expect("consumer admission remains live")
+            .expect("the next successful present offers retained N");
+        assert_eq!(held_n.present_token(), token_n);
+        assert!(held_n.has_valid_scene());
+        assert!(publish_head_frame(&head, valid_n));
+        let stamp_n = presented_gpu_stamp(&mailbox);
+        assert!(stamp_n.has_valid_scene());
+        assert_eq!(stamp_n.present_token(), Some(token_n));
+        let expected_n_pixels = presented_gpu_snapshot(&mailbox).1;
+
+        client.scene_state = 0;
+        let invalid_n1 = head.paint(&mut client);
+        assert!(
+            invalid_n1.is_fresh(),
+            "the invalid scene still has a usable GPU frame"
+        );
+        let FrameOutput::Texture(invalid_n1) = &invalid_n1 else {
+            panic!("the invalid GPU frame carries its by-value token and validity");
+        };
+        let token_n1 = invalid_n1
+            .present_token()
+            .expect("the invalid submitted frame has its own token");
+        assert_ne!(token_n1, token_n);
+        assert!(!invalid_n1.has_valid_scene());
+
+        assert_eq!(
+            mailbox.generation(),
+            1,
+            "N+1 remains unpublished while its present already exists"
+        );
+        assert_eq!(presented_gpu_stamp(&mailbox), stamp_n);
+
+        assert!(publish_head_frame(&head, invalid_n1));
+        assert_eq!(mailbox.generation(), 2);
+        let stamp_n1 = presented_gpu_stamp(&mailbox);
+        assert_eq!(stamp_n1.head(), stamp_n.head());
+        assert_eq!(stamp_n1.mailbox_sequence(), 2);
+        assert_eq!(stamp_n1.present_token(), Some(token_n1));
+        assert!(
+            !stamp_n1.has_valid_scene(),
+            "the invalid N+1 cannot borrow N's validity"
+        );
+        assert_eq!(stamp_n.present_token(), Some(token_n));
+        assert!(
+            stamp_n.has_valid_scene(),
+            "the accepted N stamp remains immutable"
+        );
+
+        let permit = ReadbackBudget::process()
+            .try_acquire(
+                CaptureGeometry::new(765, 503),
+                Instant::now() + Duration::from_secs(30),
+            )
+            .expect("the isolated fixture owns the readback permit");
+        let mut pending = match held_n.try_begin_readback(ReadbackKind::ValidScene, permit) {
+            Ok(pending) => pending,
+            Err((error, frame, permit)) => {
+                drop(frame);
+                drop(permit);
+                panic!("held valid N readback was refused: {error:?}");
+            }
+        };
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let completed = loop {
+            match pending.poll(Instant::now()) {
+                Ok(Some(completed)) => break completed,
+                Ok(None) => {
+                    assert!(Instant::now() < deadline, "held N readback completes");
+                    std::thread::yield_now();
+                }
+                Err(error) => panic!("held N readback failed: {error:?}"),
+            }
+        };
+        let (rgba, token, valid, geometry, permit) = completed.into_parts();
+        assert_eq!(geometry, CaptureGeometry::new(765, 503));
+        assert_eq!(token, token_n);
+        assert!(valid, "later invalid N+1 cannot change N's scene validity");
+        assert_eq!(rgba.len(), expected_n_pixels.len() * 4);
+        for (index, (pixel, expected)) in rgba.chunks_exact(4).zip(&expected_n_pixels).enumerate() {
+            let expected = *expected as u32;
+            assert_eq!(pixel[0], (expected >> 16) as u8, "N red channel at {index}");
+            assert_eq!(
+                pixel[1],
+                (expected >> 8) as u8,
+                "N green channel at {index}"
+            );
+            assert_eq!(pixel[2], expected as u8, "N blue channel at {index}");
+        }
+        drop(permit);
+        drop(registration);
+        assert_eq!(
+            client::render::backend::present::process_retained_present_resource_count(),
+            0,
+            "the isolated retained frame is released before detach"
+        );
+        head.detach();
+        drop(park);
+    }
     /// Publish the way a slot head does, attaching a head first if the
     /// mailbox has none.
     fn store(buf: &FrameBuf, frame: FrameOutput) {
@@ -1134,6 +2611,442 @@ mod tests {
     }
 
     #[test]
+    fn refused_paint_preserves_previous_frame_and_fresh_paint_clears_fault() {
+        let buf = FrameBuf::new();
+        let head = head_identity(70);
+        buf.attach_head(head);
+        assert!(buf.publish(head, applet_pixmap(vec![11; 765 * 503])));
+        assert_eq!(buf.generation(), 1);
+
+        let fault = RenderFault::PresentContended;
+        assert!(!buf.publish(head, FrameOutput::Refused(fault)));
+        assert_eq!(buf.generation(), 1);
+        assert_eq!(buf.render_fault(), Some(fault));
+        match buf.take() {
+            Some(FrameOutput::PixMap(pixmap)) => assert_eq!(pixmap.pixels[0], 11),
+            _ => panic!("a refused output must preserve the previous frame"),
+        }
+
+        assert!(buf.publish(head, applet_pixmap(vec![22; 765 * 503])));
+        assert_eq!(buf.generation(), 2);
+        assert_eq!(buf.render_fault(), None);
+        match buf.take() {
+            Some(FrameOutput::PixMap(pixmap)) => assert_eq!(pixmap.pixels[0], 22),
+            _ => panic!("a fresh output must replace the previous frame"),
+        }
+    }
+
+    #[test]
+    fn recovered_cpu_paint_publishes_new_pixels_and_retains_its_typed_fault() {
+        let buf = FrameBuf::new();
+        let head = head_identity(76);
+        buf.attach_head(head);
+        assert!(buf.publish(head, applet_pixmap(vec![11; 765 * 503])));
+        let fault = RenderFault::Budget(client::render::budget::RenderLimit::new(
+            client::render::budget::RenderResource::HeadMisc,
+            2,
+            1,
+        ));
+        assert!(buf.publish_with_status(
+            head,
+            applet_pixmap(vec![22; 765 * 503]),
+            FramePaintStatus::new(true, Some(fault)),
+        ));
+        assert_eq!(buf.generation(), 2);
+        assert_eq!(buf.render_fault(), Some(fault));
+        let recovered = buf.take_presented().expect("the recovered paint is usable");
+        assert!(recovered.stamp().has_valid_scene());
+        match recovered.into_output() {
+            FrameOutput::PixMap(frame) => assert_eq!(frame.pixels[0], 22),
+            _ => panic!("the recovered CPU paint must publish its complete pixels"),
+        }
+        assert!(buf.publish(head, applet_pixmap(vec![33; 765 * 503])));
+        assert_eq!(buf.generation(), 3);
+        assert_eq!(buf.render_fault(), None);
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    #[test]
+    fn recovered_cpu_proof_publishes_pixels_and_typed_fault_together() {
+        use std::num::NonZeroUsize;
+
+        let buf = FrameBuf::new_for_journal_proof();
+        let head = head_identity(78);
+        buf.attach_head(head);
+        buf.configure_journal_proof_policy(
+            NonZeroUsize::new(1).unwrap(),
+            Duration::from_millis(100),
+        )
+        .unwrap();
+        let fault = RenderFault::Budget(client::render::budget::RenderLimit::new(
+            client::render::budget::RenderResource::NavInput,
+            2,
+            1,
+        ));
+        let queue = buf.proof_frames.as_ref().unwrap();
+        assert!(buf.publish_bounded_proof(
+            queue,
+            head,
+            applet_pixmap(vec![22; 765 * 503]),
+            None,
+            FramePaintStatus::new(true, Some(fault)),
+        ));
+        assert_eq!(buf.render_fault(), Some(fault));
+        assert_eq!(buf.generation(), 1);
+        let proof = buf.take_journal_proof_result().unwrap().unwrap();
+        assert_eq!(proof.pixmap.pixels[0], 22);
+        assert!(proof.frame_stamp().has_valid_scene());
+    }
+
+    #[test]
+    fn retired_head_cannot_fault_or_replace_its_successor() {
+        let buf = FrameBuf::new();
+        let (retired, successor) = head_generations(71);
+        buf.attach_head(retired);
+        assert!(buf.publish(retired, applet_pixmap(vec![31; 765 * 503])));
+        assert!(buf.retire_head(retired).is_some());
+        buf.attach_head(successor);
+        assert!(buf.publish(successor, applet_pixmap(vec![32; 765 * 503])));
+        assert_eq!(buf.generation(), 2);
+
+        assert!(!buf.publish(retired, FrameOutput::Refused(RenderFault::PresentContended)));
+        assert_eq!(buf.render_fault(), None);
+        assert_eq!(buf.generation(), 2);
+        match buf.take() {
+            Some(FrameOutput::PixMap(pixmap)) => assert_eq!(pixmap.pixels[0], 32),
+            _ => panic!("a retired head must not replace its successor's frame"),
+        }
+    }
+
+    #[cfg(all(feature = "journal-paint-proof", feature = "render-test-hooks"))]
+    #[test]
+    #[ignore = "requires a wgpu adapter and an isolated process-global fixture"]
+    fn journal_proofs_are_process_bounded_and_do_not_wait_on_slot() {
+        use std::num::NonZeroUsize;
+        use std::sync::{Arc, Mutex};
+
+        use client::client::{Client, ClientConfig, ClientRevision};
+        use client::dash3d::TerrainOverlayShape;
+        use client::render::backend::gpu::test_hooks::SceneTestPoint;
+        use client::render::backend::{
+            configure_retained_present_budget, BackendKind, CaptureGeometry, FrameOutput,
+            ReadbackBudget, ReadbackError, RenderFault,
+        };
+        use client::render::Renderer;
+
+        use crate::render_head::test_hooks::{ProcessFixture, RenderTestControl, RenderTestEvent};
+        use crate::render_head::{Head, SlotRender};
+
+        struct FixtureControl {
+            now: Mutex<Instant>,
+            failure: Mutex<Option<SceneTestPoint>>,
+        }
+
+        impl FixtureControl {
+            fn advance(&self, elapsed: Duration) {
+                let mut now = self.now.lock().unwrap();
+                *now = now.checked_add(elapsed).unwrap();
+            }
+        }
+
+        impl RenderTestControl for FixtureControl {
+            fn now(&self) -> Instant {
+                *self.now.lock().unwrap()
+            }
+
+            fn resource_failure(&self) -> Option<SceneTestPoint> {
+                self.failure.lock().unwrap().take()
+            }
+
+            fn at(&self, _event: RenderTestEvent) {}
+        }
+
+        let scene_client = || {
+            let mut client = Client::new_with_revision(
+                ClientConfig {
+                    host: "127.0.0.1".into(),
+                    port: 43594,
+                    cache_dir: "/nonexistent-journal-proof-fixture".into(),
+                    members: true,
+                    lowmem: false,
+                },
+                ClientRevision::R289,
+            );
+            client.set_draw(true);
+            client.ingame = true;
+            client.scene_state = 2;
+            client.world.fill_base_level(0);
+            for x in 8..24 {
+                for z in 8..40 {
+                    let hsl = ((x * 7 + z * 13) % 60) * 1024 + 2624;
+                    client.world.set_ground(
+                        0,
+                        x,
+                        z,
+                        TerrainOverlayShape::PLAIN,
+                        0,
+                        -1,
+                        0,
+                        0,
+                        0,
+                        0,
+                        hsl,
+                        hsl,
+                        hsl,
+                        hsl,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0x00ff00,
+                        0,
+                    );
+                }
+            }
+            client.cam_x = 16 * 128;
+            client.cam_z = 4 * 128;
+            client.cam_y = -600;
+            client.cam_pitch = 200;
+            client.cam_yaw = 0;
+            client
+        };
+        let stamp = || super::JournalPaintStamp {
+            modal_root: 1,
+            journal_paint_hidden: false,
+        };
+
+        {
+            // Before process fixture initialization, preserve the exact legacy
+            // gate-off behavior, including the blocking TextureHandle readback.
+            assert!(!crate::render_head::fair_enabled());
+            let mut legacy_renderer = Renderer::new_prefer(false, true);
+            assert_eq!(legacy_renderer.backend_kind(), BackendKind::Gpu);
+            let mut legacy_client = scene_client();
+            let legacy_frame = legacy_renderer.mainredraw(&mut legacy_client);
+            assert!(legacy_frame.is_fresh());
+            let legacy_mailbox = FrameBuf::new_for_journal_proof();
+            let legacy_head = head_identity(77);
+            legacy_mailbox.attach_head(legacy_head);
+            assert!(legacy_mailbox.publish_journal_paint(
+                legacy_head,
+                legacy_frame,
+                stamp(),
+                FramePaintStatus::default(),
+            ));
+            let legacy_proof = legacy_mailbox
+                .take_journal_proof_result()
+                .expect("legacy GPU capture succeeds")
+                .expect("legacy GPU proof retains its real texture pixels");
+            assert!(legacy_proof.gpu);
+            assert_eq!(
+                (legacy_proof.pixmap.width, legacy_proof.pixmap.height),
+                (765, 503)
+            );
+            assert_eq!(legacy_proof.pixmap.pixels.len(), 765 * 503);
+        }
+
+        // These fixture-owned limits are fixed before any retained consumer
+        // registration; fair mode remains explicitly process-fixture gated.
+        configure_retained_present_budget(NonZeroUsize::new(1).unwrap()).unwrap();
+        crate::render_head::test_hooks::configure_process(ProcessFixture {
+            grant_ttl: Duration::from_millis(20),
+            quantum: Duration::from_millis(40),
+        })
+        .unwrap();
+        crate::render_head::pump(Instant::now());
+        assert!(crate::render_head::fair_enabled());
+
+        let mailbox = FrameBuf::new();
+        let (wake, _park) = crate::wake_channel();
+        let control = Arc::new(FixtureControl {
+            now: Mutex::new(Instant::now()),
+            failure: Mutex::new(Some(SceneTestPoint::AfterAdmission)),
+        });
+        let render = SlotRender::new(
+            SlotKey::from_incarnation(78).unwrap(),
+            Arc::clone(&mailbox),
+            Arc::new(wake),
+        )
+        .with_test_control(control.clone());
+        let mut head = Head::attach(&render, false, false).unwrap();
+        assert_eq!(head.backend_kind(), BackendKind::Gpu);
+        let identity = head.identity();
+        *control.now.lock().unwrap() = Instant::now();
+        let mut client = scene_client();
+
+        assert!(mailbox.publish(identity, applet_pixmap(vec![41; 765 * 503])));
+        head.note_due(control.now()).unwrap();
+        let nonfresh = head.paint(&mut client);
+        assert!(!nonfresh.is_fresh());
+        assert_eq!(
+            nonfresh.render_fault(),
+            Some(RenderFault::InjectedResourceLimit)
+        );
+        assert!(!head.publish_journal_paint(nonfresh, stamp()));
+        assert_eq!(mailbox.generation(), 1);
+        assert_eq!(
+            mailbox.render_fault(),
+            Some(RenderFault::InjectedResourceLimit)
+        );
+        match mailbox.take() {
+            Some(FrameOutput::PixMap(pixmap)) => assert_eq!(pixmap.pixels[0], 41),
+            _ => panic!("a nonfresh GPU frame must preserve the previous mailbox frame"),
+        }
+
+        control.advance(Duration::from_millis(41));
+        head.note_due(control.now()).unwrap();
+        let fresh = head.paint(&mut client);
+        assert!(fresh.is_fresh());
+        assert!(head.publish_journal_paint(fresh, stamp()));
+        assert_eq!(mailbox.generation(), 2);
+        assert_eq!(mailbox.render_fault(), None);
+        assert!(matches!(mailbox.take(), Some(FrameOutput::Texture(_))));
+
+        let proofs = FrameBuf::new_for_journal_proof();
+        proofs.attach_head(identity);
+        control.advance(Duration::from_millis(41));
+        head.note_due(control.now()).unwrap();
+        let unconfigured = head.paint(&mut client);
+        assert!(unconfigured.is_fresh());
+        assert!(!proofs.publish_journal_paint(
+            identity,
+            unconfigured,
+            stamp(),
+            FramePaintStatus::default()
+        ));
+        assert_eq!(proofs.generation(), 0);
+        assert_eq!(
+            client::render::backend::present::process_retained_present_resource_count(),
+            0
+        );
+        assert!(matches!(
+            proofs.take_journal_proof_result(),
+            Err(ReadbackError::Ungated)
+        ));
+
+        proofs
+            .configure_journal_proof_policy(NonZeroUsize::new(1).unwrap(), Duration::from_secs(10))
+            .unwrap();
+        assert!(!proofs.publish_journal_paint(
+            identity,
+            FrameOutput::Refused(RenderFault::PresentContended),
+            stamp(),
+            FramePaintStatus::default(),
+        ));
+        assert_eq!(proofs.generation(), 0);
+        assert_eq!(proofs.render_fault(), Some(RenderFault::PresentContended));
+        assert!(proofs.take_journal_proof_result().unwrap().is_none());
+        assert_eq!(
+            client::render::backend::present::process_retained_present_resource_count(),
+            0
+        );
+
+        *control.failure.lock().unwrap() = Some(SceneTestPoint::AfterAdmission);
+        control.advance(Duration::from_millis(41));
+        head.note_due(control.now()).unwrap();
+        let nonfresh_proof = head.paint(&mut client);
+        assert!(!nonfresh_proof.is_fresh());
+        assert!(!proofs.publish_journal_paint(
+            identity,
+            nonfresh_proof,
+            stamp(),
+            FramePaintStatus::default()
+        ));
+        assert_eq!(proofs.generation(), 0);
+        assert!(proofs.take_journal_proof_result().unwrap().is_none());
+        assert_eq!(
+            client::render::backend::present::process_retained_present_resource_count(),
+            0
+        );
+
+        control.advance(Duration::from_millis(41));
+        head.note_due(control.now()).unwrap();
+        let fresh_proof = head.paint(&mut client);
+        assert!(fresh_proof.is_fresh());
+        let proof_token = match &fresh_proof {
+            FrameOutput::Texture(frame) => {
+                assert!(frame.has_valid_scene());
+                frame
+                    .present_token()
+                    .expect("the fresh GPU proof has a token")
+            }
+            _ => panic!("a required GPU proof carries a tracked frame"),
+        };
+        assert!(proofs.publish_journal_paint(
+            identity,
+            fresh_proof,
+            stamp(),
+            FramePaintStatus::default()
+        ));
+        assert_eq!(
+            proofs.generation(),
+            0,
+            "pending GPU readback is not a proof"
+        );
+        assert_eq!(
+            client::render::backend::present::process_retained_present_resource_count(),
+            1
+        );
+
+        // The copy is already ordered into process staging; a due paint on
+        // this same slot must progress without waiting for journal mapping.
+        control.advance(Duration::from_millis(41));
+        head.note_due(control.now()).unwrap();
+        let during_pending_copy = head.paint(&mut client);
+        assert!(during_pending_copy.is_fresh());
+        drop(during_pending_copy);
+        assert_eq!(proofs.generation(), 0, "the later paint is not proof N");
+        assert_eq!(
+            client::render::backend::present::process_retained_present_resource_count(),
+            1,
+            "the registered retained texture is reused while N maps"
+        );
+
+        {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let proof = loop {
+                match proofs.take_journal_proof_result() {
+                    Ok(Some(proof)) => break proof,
+                    Ok(None) | Err(ReadbackError::Busy) => {
+                        assert!(Instant::now() < deadline, "GPU proof readback timed out");
+                        std::thread::yield_now();
+                    }
+                    Err(error) => panic!("GPU proof readback refused: {error:?}"),
+                }
+            };
+            assert_eq!(proof.generation, 1);
+            assert_eq!(proof.frame_stamp().present_token(), Some(proof_token));
+            assert!(proof.frame_stamp().has_valid_scene());
+            assert!(proof.gpu);
+            assert_eq!((proof.pixmap.width, proof.pixmap.height), (765, 503));
+            assert_eq!(proof.pixmap.pixels.len(), 765 * 503);
+            assert_eq!(proofs.render_fault(), None);
+            assert!(matches!(
+                ReadbackBudget::process().try_acquire(
+                    CaptureGeometry::new(1, 1),
+                    Instant::now() + Duration::from_secs(1),
+                ),
+                Err(ReadbackError::Busy)
+            ));
+        }
+        {
+            let _released = ReadbackBudget::process()
+                .try_acquire(
+                    CaptureGeometry::new(1, 1),
+                    Instant::now() + Duration::from_secs(1),
+                )
+                .expect("dropping the proof releases its process permit");
+        }
+
+        assert!(proofs.retire_head(identity).is_none());
+        head.detach();
+        assert_eq!(
+            client::render::backend::present::process_retained_present_resource_count(),
+            0
+        );
+    }
+
+    #[test]
     fn release_keeps_the_last_frame_and_stops_publication() {
         let buf = FrameBuf::new();
         let head = head_identity(8);
@@ -1161,6 +3074,47 @@ mod tests {
         buf.set_refusal(Some(refusal));
         buf.set_refusal(None);
         assert_eq!(buf.refusal(), None);
+    }
+
+    #[cfg(feature = "draw-memory-profile")]
+    #[test]
+    fn render_bytes_sample_ignores_stale_sequence_and_head() {
+        let buf = FrameBuf::new();
+        let (retired, current) = head_generations(72);
+        buf.attach_head(retired);
+        buf.request_render_bytes_sample();
+        let retired_request = buf.render_bytes_request(retired).unwrap();
+
+        buf.attach_head(current);
+        assert_eq!(buf.render_bytes_sample(), None);
+        buf.publish_render_bytes_sample(retired, retired_request, Default::default());
+        assert_eq!(buf.render_bytes_sample(), None);
+
+        buf.request_render_bytes_sample();
+        let current_request = buf.render_bytes_request(current).unwrap();
+        assert_ne!(current_request, retired_request);
+        buf.publish_render_bytes_sample(current, retired_request, Default::default());
+        assert_eq!(buf.render_bytes_request(current), Some(current_request));
+        assert_eq!(buf.render_bytes_sample(), None);
+        buf.publish_render_bytes_sample(current, current_request, Default::default());
+        assert_eq!(buf.render_bytes_sample(), Some(Default::default()));
+    }
+
+    #[cfg(feature = "draw-memory-profile")]
+    #[test]
+    fn detached_render_bytes_request_publishes_zero_sample() {
+        let buf = FrameBuf::new();
+        let head = head_identity(73);
+        buf.attach_head(head);
+        buf.request_render_bytes_sample();
+        let request = buf.render_bytes_request(head).unwrap();
+        assert_eq!(buf.render_bytes_sample(), None);
+
+        assert!(buf.retire_head(head).is_none());
+        assert_eq!(buf.render_bytes_request(head), None);
+        assert_eq!(buf.render_bytes_sample(), Some(Default::default()));
+        buf.publish_render_bytes_sample(head, request, Default::default());
+        assert_eq!(buf.render_bytes_sample(), Some(Default::default()));
     }
 
     /// A scheduling point between a publication's identity check and its
@@ -1284,9 +3238,10 @@ mod tests {
                     modal_root: 1,
                     journal_paint_hidden: false,
                 },
+                FramePaintStatus::default(),
             )
         });
-        let proof = buf.take_journal_proof();
+        let proof = buf.take_journal_proof_result().unwrap();
         assert!(
             !(raced.interleaved && (raced.accepted || proof.is_some())),
             "a retired head's journal proof was published after its slot reattached \
@@ -1296,7 +3251,333 @@ mod tests {
         );
         assert!(raced.accepted, "published while its head was attached");
         assert_eq!(proof.map(|proof| proof.generation), Some(1));
-        assert!(buf.take_journal_proof().is_none());
+        assert!(buf.take_journal_proof_result().unwrap().is_none());
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    fn publish_bounded_journal_paint_for_race(buf: &FrameBuf, head: HeadIdentity) -> bool {
+        let queue = buf.proof_frames.as_ref().unwrap();
+        buf.publish_bounded_proof(
+            queue,
+            head,
+            FrameOutput::PixMap(PixMap {
+                width: 1,
+                height: 1,
+                pixels: vec![7],
+            }),
+            Some(super::JournalPaintStamp {
+                modal_root: 1,
+                journal_paint_hidden: false,
+            }),
+            FramePaintStatus::default(),
+        )
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    #[test]
+    fn bounded_journal_policy_requires_setup_and_refuses_overflow() {
+        use std::num::NonZeroUsize;
+
+        let buf = FrameBuf::new_for_journal_proof();
+        let head = head_identity(74);
+        buf.attach_head(head);
+        let queue = buf.proof_frames.as_ref().unwrap();
+        let paint = || {
+            FrameOutput::PixMap(PixMap {
+                width: 1,
+                height: 1,
+                pixels: vec![9],
+            })
+        };
+
+        assert!(!buf.publish_bounded_proof(
+            queue,
+            head,
+            paint(),
+            None,
+            FramePaintStatus::default()
+        ));
+        assert_eq!(
+            buf.journal_proof_error(),
+            Some(client::render::backend::ReadbackError::Ungated)
+        );
+        assert_eq!(buf.generation(), 0);
+
+        buf.configure_journal_proof_policy(
+            NonZeroUsize::new(1).unwrap(),
+            Duration::from_millis(100),
+        )
+        .unwrap();
+        let reserved_capacity = queue.lock().frames.capacity();
+        assert!(buf.publish_bounded_proof(queue, head, paint(), None, FramePaintStatus::default()));
+        assert!(!buf.publish_bounded_proof(
+            queue,
+            head,
+            paint(),
+            None,
+            FramePaintStatus::default()
+        ));
+        assert_eq!(buf.generation(), 1);
+        assert_eq!(
+            buf.journal_proof_error(),
+            Some(client::render::backend::ReadbackError::Limit)
+        );
+        assert_eq!(queue.lock().frames.len(), 1);
+        assert_eq!(queue.lock().frames.capacity(), reserved_capacity);
+
+        let proof = buf.take_journal_proof_result().unwrap().unwrap();
+        assert_eq!(proof.pixmap.pixels, [9]);
+        assert_eq!(proof.generation, 1);
+        assert!(matches!(
+            buf.take_journal_proof_result(),
+            Err(client::render::backend::ReadbackError::Limit)
+        ));
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    #[test]
+    fn bounded_journal_proof_is_ordered_before_a_reattach() {
+        use std::num::NonZeroUsize;
+
+        let buf = FrameBuf::new_for_journal_proof();
+        buf.configure_journal_proof_policy(
+            NonZeroUsize::new(1).unwrap(),
+            Duration::from_millis(100),
+        )
+        .unwrap();
+        let raced = publish_across_a_reattach(&buf, 75, publish_bounded_journal_paint_for_race);
+        let proof = buf.take_journal_proof_result().unwrap();
+        assert!(
+            !(raced.interleaved && (raced.accepted || proof.is_some())),
+            "a bounded proof from a retired head entered its successor"
+        );
+        assert!(raced.accepted);
+        assert_eq!(proof.map(|proof| proof.generation), Some(1));
+        assert_eq!(buf.generation(), 1);
+        let (retired, _) = head_generations(75);
+        let queue = buf.proof_frames.as_ref().unwrap();
+        assert!(!buf.publish_bounded_proof(
+            queue,
+            retired,
+            FrameOutput::PixMap(PixMap {
+                width: 1,
+                height: 1,
+                pixels: vec![8],
+            }),
+            None,
+            FramePaintStatus::default(),
+        ));
+        assert_eq!(
+            buf.journal_proof_error(),
+            Some(client::render::backend::ReadbackError::Retired)
+        );
+        assert_eq!(buf.generation(), 1);
+    }
+
+    #[test]
+    fn mailbox_sequence_exhaustion_never_reuses_stamp() {
+        let buf = FrameBuf::new();
+        let head = head_identity(75);
+        buf.attach_head(head);
+        let pixmap = |pixel| {
+            FrameOutput::PixMap(PixMap {
+                width: 1,
+                height: 1,
+                pixels: vec![pixel],
+            })
+        };
+        assert!(buf.publish_with_status(head, pixmap(3), FramePaintStatus::new(true, None)));
+        buf.gen
+            .store(u64::MAX, std::sync::atomic::Ordering::Relaxed);
+        assert!(!buf.publish_with_status(head, pixmap(7), FramePaintStatus::new(true, None)));
+        assert_eq!(buf.generation(), u64::MAX);
+        assert_eq!(
+            buf.render_fault(),
+            Some(client::render::backend::RenderFault::MailboxSequenceExhausted),
+        );
+        let accepted = buf.take_presented().expect("last accepted frame");
+        assert_eq!(accepted.stamp().head(), head);
+        assert_eq!(accepted.stamp().mailbox_sequence(), 1);
+        assert!(accepted.stamp().has_valid_scene());
+        match accepted.into_output() {
+            FrameOutput::PixMap(pixmap) => assert_eq!(pixmap.pixels, [3]),
+            _ => panic!("sequence exhaustion must preserve the accepted pixels"),
+        }
+        assert!(!buf.publish_with_status(head, pixmap(9), FramePaintStatus::default()));
+        assert!(buf.take_presented().is_none());
+    }
+
+    #[test]
+    fn accepted_envelope_keeps_exact_head_sequence_and_scene_validity() {
+        let buf = FrameBuf::new();
+        let head = head_identity(74);
+        buf.attach_head(head);
+        let pixmap = |pixel| {
+            FrameOutput::PixMap(PixMap {
+                width: 1,
+                height: 1,
+                pixels: vec![pixel],
+            })
+        };
+        assert!(buf.publish_with_status(head, pixmap(4), FramePaintStatus::new(true, None)));
+        let first = buf.take_presented().expect("first frame");
+        let first_stamp = *first.stamp();
+        assert!(buf.publish_with_status(head, pixmap(9), FramePaintStatus::default()));
+        let second = buf.take_presented().expect("second frame");
+        assert_eq!(first.stamp(), &first_stamp);
+        assert_eq!(first_stamp.head(), head);
+        assert_eq!(first_stamp.mailbox_sequence(), 1);
+        assert_eq!(first_stamp.present_token(), None);
+        assert!(first_stamp.has_valid_scene());
+        assert_eq!(second.stamp().head(), head);
+        assert_eq!(second.stamp().mailbox_sequence(), 2);
+        assert!(!second.stamp().has_valid_scene());
+        match (first.into_output(), second.into_output()) {
+            (FrameOutput::PixMap(first), FrameOutput::PixMap(second)) => {
+                assert_eq!(first.pixels, [4]);
+                assert_eq!(second.pixels, [9]);
+            }
+            _ => panic!("CPU envelopes retain their own payload"),
+        }
+    }
+
+    #[test]
+    fn completed_capture_rejects_reattach_and_cpu_title() {
+        let (old_head, new_head) = head_generations(79);
+        let cache_dir = format!(
+            "{}/../../target/completed-capture-absent-{}",
+            env!("CARGO_MANIFEST_DIR"),
+            std::process::id()
+        );
+        assert!(!std::path::Path::new(&cache_dir).exists());
+        let mut client = Client::new_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir,
+                members: true,
+                lowmem: false,
+            },
+            ClientRevision::R289,
+        );
+        client.ingame = true;
+        client.scene_state = 2;
+        client.local_player = Some(client::dash3d::ClientPlayer::at(50, 50));
+        client.cinema_cam = true;
+        client.cam_x = 50 * 128 + 64;
+        client.cam_z = 50 * 128 + 64;
+        client.cam_y = 0;
+        client.cam_pitch = 512;
+        client.cam_yaw = 0;
+        client.world = client::core::World::new(vec![vec![vec![2000; 105]; 105]; 4], 104, 4, 104);
+        client.set_draw(true);
+        client.world.fill_base_level(0);
+        for x in 49..=51 {
+            for z in 49..=51 {
+                client.world.set_ground(
+                    0,
+                    x,
+                    z,
+                    client::dash3d::TerrainOverlayShape::PLAIN,
+                    0,
+                    -1,
+                    2000,
+                    2000,
+                    2000,
+                    2000,
+                    25_700,
+                    25_700,
+                    25_700,
+                    25_700,
+                    25_700,
+                    25_700,
+                    25_700,
+                    25_700,
+                    0,
+                    0,
+                );
+            }
+        }
+        let mut renderer = client::render::Renderer::new(false);
+        let valid_output = renderer.game_draw(&mut client);
+        assert!(renderer.has_valid_scene(), "the live CPU paint completed");
+        assert_eq!(renderer.retained_storage_allocations(), 1);
+
+        let buf = FrameBuf::new();
+        buf.attach_head(old_head);
+        assert!(buf.publish_with_status(
+            old_head,
+            valid_output,
+            FramePaintStatus::new(renderer.has_valid_scene(), None),
+        ));
+        let completed = buf
+            .take_presented()
+            .expect("the completed CPU capture carries a stamp");
+        let completed_stamp = *completed.stamp();
+        assert_eq!(completed_stamp.head(), old_head);
+        assert!(completed_stamp.has_valid_scene());
+        let completed_output = completed.into_output();
+
+        let title_output = renderer.title_screen_draw(&mut client);
+        assert!(
+            !renderer.has_valid_scene(),
+            "CPU Title invalidates scene authority while storage remains allocated"
+        );
+        assert_eq!(renderer.retained_storage_allocations(), 1);
+        assert!(buf.publish_with_status(
+            old_head,
+            title_output,
+            FramePaintStatus::new(renderer.has_valid_scene(), None),
+        ));
+        let title_capture = buf
+            .take_presented()
+            .expect("the title paint remains a completed frame");
+        assert!(!title_capture.stamp().has_valid_scene());
+        assert_eq!(title_capture.stamp().mailbox_sequence(), 2);
+
+        assert!(buf.retire_head(old_head).is_none());
+        buf.attach_head(new_head);
+        assert_eq!(buf.head(), Some(new_head));
+        assert_ne!(completed_stamp.head(), buf.head().unwrap());
+        assert!(
+            !buf.publish_with_status(
+                completed_stamp.head(),
+                completed_output,
+                FramePaintStatus::new(completed_stamp.has_valid_scene(), None),
+            ),
+            "a completed old-head capture cannot publish after reattach"
+        );
+        assert_eq!(
+            buf.generation(),
+            2,
+            "stale proof publication advances nothing"
+        );
+        assert!(buf.take_presented().is_none());
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    #[test]
+    fn journal_mailbox_sequence_exhaustion_never_reuses_a_stamp() {
+        let buf = FrameBuf::new_for_journal_proof();
+        let head = head_identity(76);
+        buf.attach_head(head);
+        buf.gen
+            .store(u64::MAX, std::sync::atomic::Ordering::Relaxed);
+
+        assert!(!buf.publish(
+            head,
+            FrameOutput::PixMap(PixMap {
+                width: 1,
+                height: 1,
+                pixels: vec![1],
+            })
+        ));
+        assert_eq!(buf.generation(), u64::MAX);
+        assert!(matches!(
+            buf.take_journal_proof_result(),
+            Err(client::render::backend::ReadbackError::IdentityExhausted)
+        ));
+        assert!(buf.take_journal_proof_result().unwrap().is_none());
     }
 
     /// Release micro-bench of the work T4.2 adds around a CPU head's paint
@@ -1430,18 +3711,21 @@ mod tests {
                 pixels: vec![pixel],
             });
             if let Some(stamp) = stamp {
-                assert!(buf.publish_journal_paint(head, frame, stamp));
+                assert!(buf.publish_journal_paint(head, frame, stamp, FramePaintStatus::default()));
             } else {
                 assert!(buf.publish(head, frame));
             }
         }
         for (index, (pixel, stamp)) in witnesses.into_iter().enumerate() {
-            let frame = buf.take_journal_proof().expect("no discarded paint");
+            let frame = buf
+                .take_journal_proof_result()
+                .unwrap()
+                .expect("no discarded paint");
             assert_eq!(frame.generation, index as u64 + 1);
             assert_eq!(frame.pixmap.pixels, [pixel]);
             assert_eq!(frame.stamp, stamp);
         }
-        assert!(buf.take_journal_proof().is_none());
+        assert!(buf.take_journal_proof_result().unwrap().is_none());
         assert_eq!(buf.generation(), 3);
     }
 
@@ -1572,8 +3856,8 @@ mod tests {
             PackedHist::EMPTY,
         );
         stamp_thread_pixel_roi(later);
-        assert!(buf.take().is_some());
-        let roi = buf.take_pixel_roi().expect("sidecar from the stored frame");
+        let mut frame = buf.take_presented().expect("stored frame");
+        let roi = frame.take_roi().expect("sidecar from the stored frame");
         assert_eq!(roi.frame_id, 4);
         assert_eq!(roi.cam.cycle, 10);
         assert_ne!(roi.frame_id, 9);
@@ -1581,7 +3865,7 @@ mod tests {
 
     #[cfg(feature = "render-diagnostics")]
     #[test]
-    fn take_keeps_frame_a_roi_when_frame_b_is_stored_before_take_pixel_roi() {
+    fn accepted_envelope_keeps_frame_a_roi_when_frame_b_is_published() {
         use client::render::backend::FrameOutput;
         use client::render::diagnostics::{
             stamp_thread_pixel_roi, PackedHist, PixelRoiCam, PixelRoiMeta,
@@ -1615,11 +3899,12 @@ mod tests {
         let buf = FrameBuf::new();
         stamp_thread_pixel_roi(tagged(4, 10));
         store(&buf, pix(0x00aa));
-        let frame_a = buf.take().expect("frame A");
+        let mut frame_a = buf.take_presented().expect("frame A");
         stamp_thread_pixel_roi(tagged(9, 99));
         store(&buf, pix(0x00bb));
-        let roi = buf.take_pixel_roi().expect("roi taken with frame A");
-        match frame_a {
+        let roi = frame_a.take_roi().expect("roi taken with frame A");
+        assert_eq!(frame_a.stamp().mailbox_sequence(), 1);
+        match frame_a.into_output() {
             FrameOutput::PixMap(pix) => assert_eq!(pix.pixels[0], 0x00aa, "took frame A pixels"),
             _ => panic!("expected pixmap A"),
         }
@@ -1628,9 +3913,10 @@ mod tests {
             "roi must stay with frame A, not the interleaved store"
         );
         assert_eq!(roi.cam.cycle, 10);
-        let frame_b = buf.take().expect("frame B");
-        let roi_b = buf.take_pixel_roi().expect("roi B");
-        match frame_b {
+        let mut frame_b = buf.take_presented().expect("frame B");
+        let roi_b = frame_b.take_roi().expect("roi B");
+        assert_eq!(frame_b.stamp().mailbox_sequence(), 2);
+        match frame_b.into_output() {
             FrameOutput::PixMap(pix) => assert_eq!(pix.pixels[0], 0x00bb),
             _ => panic!("expected pixmap B"),
         }
@@ -1703,14 +3989,17 @@ mod tests {
                     .recv_timeout(std::time::Duration::from_secs(5))
                     .expect("producer publishes before the consumer starts polling");
                 for _ in 0..8_000 {
-                    if let Some(FrameOutput::PixMap(pix)) = buf.take() {
-                        let tag = pix.pixels[0] as u64;
-                        match buf.take_pixel_roi() {
-                            Some(roi) if roi.frame_id == tag => {
-                                seen.fetch_add(1, Ordering::Relaxed);
-                            }
-                            _ => {
-                                mismatches.fetch_add(1, Ordering::Relaxed);
+                    if let Some(mut frame) = buf.take_presented() {
+                        let roi = frame.take_roi();
+                        if let FrameOutput::PixMap(pix) = frame.into_output() {
+                            let tag = pix.pixels[0] as u64;
+                            match roi {
+                                Some(roi) if roi.frame_id == tag => {
+                                    seen.fetch_add(1, Ordering::Relaxed);
+                                }
+                                _ => {
+                                    mismatches.fetch_add(1, Ordering::Relaxed);
+                                }
                             }
                         }
                     }

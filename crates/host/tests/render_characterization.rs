@@ -70,6 +70,10 @@ fn serial() -> MutexGuard<'static, ()> {
 #[path = "render_characterization/fair_tests.rs"]
 mod fair_tests;
 
+#[cfg(feature = "render-test-hooks")]
+#[path = "render_characterization/content_census.rs"]
+mod content_census;
+
 fn required(var: &str) -> bool {
     std::env::var(var).as_deref() == Ok("1")
 }
@@ -205,6 +209,7 @@ fn pixels(output: &FrameOutput) -> Vec<i32> {
     let px = match output {
         FrameOutput::PixMap(map) => map.pixels.clone(),
         FrameOutput::Texture(handle) => handle.read_back(),
+        FrameOutput::Refused(fault) => panic!("characterization paint refused: {fault:?}"),
     };
     assert_eq!(px.len(), FRAME_W * FRAME_H);
     px.into_iter().map(|p| p & 0xff_ffff).collect()

@@ -13,8 +13,11 @@
 
 use crate::window::Gpu;
 use client::graphics::PixMap;
-use client::render::backend::{FrameOutput, TextureHandle};
+use client::render::backend::{
+    ConsumerFrame, ConsumerRegistration, FrameOutput, ReadbackError, TextureHandle,
+};
 use dear_imgui_rs::TextureId;
+use frontend_core::surface::{FrameStamp, PresentedFrame};
 
 /// Applet draw size the client always paints (never DPI-scaled).
 pub const APPLET_W: u32 = 765;
@@ -61,6 +64,8 @@ pub struct GameView {
     /// path). wgpu handles compare by id, so re-registration happens only
     /// on a mode switch or a new client frame texture (a slot restart).
     bound: Bound,
+    presented_stamp: Option<FrameStamp>,
+    capture_registration: Option<(FrameStamp, ConsumerRegistration)>,
     /// `BOT_DEBUG` / unit-test counters for present routing.
     pub present_stats: PresentStats,
 }
@@ -142,6 +147,8 @@ impl GameView {
             cpu_owner: None,
             rgba: None,
             bound: Bound::Owned,
+            presented_stamp: None,
+            capture_registration: None,
             present_stats: PresentStats::default(),
         }
     }
@@ -151,16 +158,102 @@ impl GameView {
     /// bind the client's frame-texture view directly. The GPU arm never
     /// reads the frame back — the client and panel share one device.
     pub fn present(&mut self, gpu: &mut impl FrameGpu, frame: FrameOutput) {
+        if !frame.is_fresh() {
+            return;
+        }
+        self.present_output(gpu, frame);
+        self.presented_stamp = None;
+        self.capture_registration = None;
+    }
+
+    fn present_output(&mut self, gpu: &mut impl FrameGpu, frame: FrameOutput) {
         match frame {
             FrameOutput::PixMap(pix) => {
                 self.present_stats.pixmap += 1;
-                self.upload(gpu, &pixmap_pixels(&pix));
+                let n = (APPLET_W * APPLET_H) as usize;
+                let pixels = if pix.width == APPLET_W as i32
+                    && pix.height == APPLET_H as i32
+                    && pix.pixels.len() >= n
+                {
+                    bytemuck::cast_slice(&pix.pixels[..n])
+                } else {
+                    &[]
+                };
+                self.upload(gpu, pixels);
             }
             FrameOutput::Texture(handle) => {
                 self.present_stats.tex += 1;
                 self.bind(gpu, &handle);
             }
+            FrameOutput::Refused(_) => {}
         }
+    }
+    /// Present the exact mailbox envelope. A retained GPU frame binds the
+    /// consumer's immutable view, never the producer's newer mutable view.
+    pub fn present_stamped(
+        &mut self,
+        gpu: &mut impl FrameGpu,
+        frame: PresentedFrame,
+        retained: Option<&ConsumerFrame>,
+    ) {
+        let stamp = *frame.stamp();
+        if let Some(retained) = retained {
+            self.present_stats.tex += 1;
+            self.bind_view(gpu, retained.display_view());
+        } else {
+            self.present_output(gpu, frame.into_output());
+        }
+        self.presented_stamp = Some(stamp);
+    }
+
+    pub fn presented_stamp(&self) -> Option<FrameStamp> {
+        self.presented_stamp
+    }
+
+    /// Establish the singleton consumer before accepting a GPU proof. Its
+    /// first offer necessarily belongs to a later successful producer paint.
+    pub fn try_capture_frame(
+        &mut self,
+        frame: &PresentedFrame,
+    ) -> Result<Option<ConsumerFrame>, ReadbackError> {
+        let stamp = *frame.stamp();
+        if !stamp.has_valid_scene() {
+            return Err(ReadbackError::InvalidScene);
+        }
+        let FrameOutput::Texture(handle) = frame.output() else {
+            return if stamp.present_token().is_none() {
+                Ok(None)
+            } else {
+                Err(ReadbackError::StalePresent)
+            };
+        };
+        if self
+            .capture_registration
+            .as_ref()
+            .is_none_or(|(registered, _)| registered.head() != stamp.head())
+        {
+            self.capture_registration = None;
+            self.capture_registration = Some((stamp, handle.try_register_consumer()?));
+            return Err(ReadbackError::Busy);
+        }
+        let (_, registration) = self
+            .capture_registration
+            .as_ref()
+            .expect("registered above");
+        let retained = registration.try_take_frame()?.ok_or(ReadbackError::Busy)?;
+        if Some(retained.present_token()) != stamp.present_token() {
+            return Err(ReadbackError::StalePresent);
+        }
+        if !retained.has_valid_scene() {
+            return Err(ReadbackError::InvalidScene);
+        }
+        Ok(Some(retained))
+    }
+
+    /// Called only after a non-retained view has replaced the registered
+    /// consumer view, so a displayed texture cannot outlive its budget owner.
+    pub fn release_capture_registration(&mut self) {
+        self.capture_registration = None;
     }
 
     /// Direct-bind a client GPU frame (the shared-device seam): register
@@ -171,7 +264,11 @@ impl GameView {
     /// transition unregisters the texture the view last drew, so the
     /// renderer's texture cache stays bounded across slot restarts.
     pub fn bind(&mut self, gpu: &mut impl FrameGpu, handle: &TextureHandle) {
-        let texture = handle.view.texture();
+        self.bind_view(gpu, handle.display_view());
+    }
+
+    fn bind_view(&mut self, gpu: &mut impl FrameGpu, view: &wgpu::TextureView) {
+        let texture = view.texture();
         if matches!(&self.bound, Bound::Client(held) if held == texture) {
             self.present_stats.bind_noop += 1;
             #[cfg(feature = "render-diagnostics")]
@@ -182,7 +279,7 @@ impl GameView {
         #[cfg(feature = "render-diagnostics")]
         client::render::diagnostics::note_gpu_texture_changed();
         gpu.unregister_texture(self.tex_id);
-        self.tex_id = gpu.register_texture(texture, &handle.view);
+        self.tex_id = gpu.register_texture(texture, view);
         self.bound = Bound::Client(texture.clone());
     }
 
@@ -191,12 +288,16 @@ impl GameView {
     /// sample a GPU head that the slot thread is about to drop.
     pub fn unbind_client(&mut self, gpu: &mut impl FrameGpu) {
         if self.bound == Bound::Owned {
+            self.presented_stamp = None;
+            self.capture_registration = None;
             return;
         }
         gpu.unregister_texture(self.tex_id);
         let (texture, view) = self.owned_texture_view();
         self.tex_id = gpu.register_texture(texture, view);
         self.bound = Bound::Owned;
+        self.presented_stamp = None;
+        self.capture_registration = None;
     }
 
     /// Drop this view entirely (draw-off / only-render-selected / leave
@@ -312,7 +413,7 @@ pub fn frame_pixels(frame: FrameOutput) -> Vec<u32> {
     match frame {
         FrameOutput::PixMap(pix) => pixmap_pixels(&pix),
         FrameOutput::Texture(handle) => {
-            let n = (handle.width as usize) * (handle.height as usize);
+            let n = (handle.width() as usize) * (handle.height() as usize);
             handle
                 .read_back()
                 .into_iter()
@@ -320,6 +421,7 @@ pub fn frame_pixels(frame: FrameOutput) -> Vec<u32> {
                 .map(|p| p as u32)
                 .collect()
         }
+        FrameOutput::Refused(_) => Vec::new(),
     }
 }
 
@@ -387,6 +489,14 @@ mod tests {
             height: 2,
             pixels: vec![1, 2, 3],
         }));
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn refused_frame_has_no_pixels() {
+        let out = frame_pixels(FrameOutput::Refused(
+            client::render::backend::RenderFault::CaptureContended,
+        ));
         assert!(out.is_empty());
     }
 
@@ -676,7 +786,7 @@ mod tests {
         // `read_back`), and the Image draws the client's frame texture.
         // The transition unregisters the panel texture init registered.
         let handle = frame_handle(&device, &queue);
-        let client_texture = handle.view.texture().clone();
+        let client_texture = handle.display_view().texture().clone();
         view.present(&mut gpu, FrameOutput::Texture(handle));
         assert!(
             view.cpu_texture().is_none(),
@@ -829,7 +939,7 @@ mod tests {
         let mut gpu = RecordingGpu::new(device.clone(), queue.clone());
         let mut view = GameView::init(&mut gpu);
         let handle = frame_handle(&device, &queue);
-        let tex = handle.view.texture().clone();
+        let tex = handle.display_view().texture().clone();
         view.present(&mut gpu, FrameOutput::Texture(handle));
         assert_eq!(view.present_stats.tex, 1);
         assert_eq!(view.present_stats.bind_rereg, 1);

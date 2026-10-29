@@ -2938,6 +2938,60 @@ fn terminal_shot_drain_accepts_a_write_from_an_earlier_core_pending_frame() {
 }
 
 #[test]
+fn typed_capture_refusals_fail_terminal_pair_and_soak_drains_without_waiting() {
+    let label = "typed-refusal";
+    let refusal = crate::window::CaptureError::Expired;
+    let mut shots = crate::window::ShotState::default();
+    shots
+        .mark_failed_capture(label, refusal)
+        .expect("typed refusal has a bounded terminal status");
+    let status = super::pair_terminal_shot_status(&shots, &[label.to_owned()]);
+    assert_eq!(status, ShotStatus::FailedCapture(refusal));
+    let mut live = LiveScript {
+        name: "script_typed_refusal".into(),
+        passed: false,
+        failed: None,
+        last_step: None,
+        drain_started: None,
+        soak: false,
+        soak_until: None,
+        announced_pass: false,
+        native_failure_capture_requested: false,
+        clean_stop_capture_requested: false,
+        core_deadline: None,
+        soak_capture: SoakCapture::NotNeeded,
+    };
+    let error = super::hold_terminal_shot(&mut live, Some(label), &status)
+        .expect_err("typed capture refusal must fail before the drain timeout");
+    assert!(error.contains(&refusal.to_string()), "{error}");
+    assert!(live.drain_started.is_none());
+    assert!(!live.passed);
+
+    let session = crate::session::Session::new();
+    let shots = std::sync::Mutex::new(shots);
+    for final_capture in [false, true] {
+        live.soak_capture = if final_capture {
+            SoakCapture::Final {
+                label: label.to_owned(),
+                started: None,
+            }
+        } else {
+            SoakCapture::PostPass {
+                label: label.to_owned(),
+                started: None,
+            }
+        };
+        let error = super::soak_capture_tick(&mut live, &session, &shots, None)
+            .expect_err("typed soak capture refusal must fail immediately");
+        assert!(error.contains(&refusal.to_string()), "{error}");
+        assert!(matches!(
+            live.soak_capture,
+            SoakCapture::PostPass { started: None, .. } | SoakCapture::Final { started: None, .. }
+        ));
+    }
+}
+
+#[test]
 fn native_failure_rearms_written_shot_and_waits_for_current_capture() {
     let mut session = crate::session::Session::new();
     session.set_focus_for_test("alice");
@@ -3183,6 +3237,30 @@ fn insert_named_scene2(session: &mut crate::session::Session, name: &str, player
         .publish_test_snapshot(name, snap, nav_planner::WorldState::default());
 }
 
+#[test]
+fn accepted_actor_snapshot_json_refuses_before_copy_and_preserves_fields() {
+    let snapshot = api::snapshot::GameSnapshot::new();
+    let json = super::bounded_actor_snapshot_json("alice", &snapshot, usize::MAX)
+        .expect("borrowed snapshot serializes");
+    let legacy = super::actor_snapshot_json("alice", &snapshot).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&json).unwrap(),
+        serde_json::from_str::<serde_json::Value>(&legacy).unwrap(),
+    );
+    let exact = super::bounded_actor_snapshot_json("alice", &snapshot, json.len())
+        .expect("exact JSON byte envelope is admitted");
+    assert_eq!(exact, json);
+    assert!(exact.capacity() <= exact.len());
+    assert_eq!(
+        super::bounded_actor_snapshot_json("alice", &snapshot, json.len() - 1),
+        Err(crate::window::CaptureError::TooLarge),
+    );
+    assert_eq!(
+        super::bounded_actor_snapshot_json(&"a".repeat(257), &snapshot, usize::MAX),
+        Err(crate::window::CaptureError::TooLarge),
+    );
+}
+
 fn sidecar_actor_and_scene(json: &str) -> (String, i64) {
     let value: serde_json::Value = serde_json::from_str(json).expect("sidecar json");
     (
@@ -3208,12 +3286,16 @@ fn pump_shots_does_not_promote_two_pair_actors_from_an_unready_buffer() {
     insert_named_scene2(&mut state.session, "bob", None);
     {
         let mut shots = state.shot_state.lock().unwrap();
-        shots.enqueue_for_actor(
-            "air-alice".into(),
-            "{\"actor\":\"alice\"}".into(),
-            "alice".into(),
-        );
-        shots.enqueue_for_actor("air-bob".into(), "{\"actor\":\"bob\"}".into(), "bob".into());
+        shots
+            .enqueue_for_actor(
+                "air-alice".into(),
+                "{\"actor\":\"alice\"}".into(),
+                "alice".into(),
+            )
+            .expect("first actor request is accepted");
+        shots
+            .enqueue_for_actor("air-bob".into(), "{\"actor\":\"bob\"}".into(), "bob".into())
+            .expect("second actor request is accepted");
     }
 
     assert_eq!(super::pump_shots(&mut state), 0);
@@ -3274,11 +3356,16 @@ fn pump_shots_does_not_promote_two_pair_actors_from_an_unready_buffer() {
 #[test]
 fn pump_shots_fails_a_missing_pair_actor_without_deadlocking() {
     let mut state = PanelState::default();
-    state.shot_state.lock().unwrap().enqueue_for_actor(
-        "air-ghost".into(),
-        "{\"actor\":\"ghost\"}".into(),
-        "ghost".into(),
-    );
+    state
+        .shot_state
+        .lock()
+        .unwrap()
+        .enqueue_for_actor(
+            "air-ghost".into(),
+            "{\"actor\":\"ghost\"}".into(),
+            "ghost".into(),
+        )
+        .expect("missing actor is diagnosed after admission");
     assert_eq!(super::pump_shots(&mut state), 0);
     let shots = state.shot_state.lock().unwrap();
     match shots.status("air-ghost") {
@@ -3305,11 +3392,16 @@ fn pump_shots_does_not_promote_a_presented_actor_that_left_scene2() {
         api::snapshot::GameSnapshot::new(),
         nav_planner::WorldState::default(),
     );
-    state.shot_state.lock().unwrap().enqueue_for_actor(
-        "air-alice".into(),
-        "{\"actor\":\"alice\",\"ingame\":true,\"scene_state\":2}".into(),
-        "alice".into(),
-    );
+    state
+        .shot_state
+        .lock()
+        .unwrap()
+        .enqueue_for_actor(
+            "air-alice".into(),
+            "{\"actor\":\"alice\",\"ingame\":true,\"scene_state\":2}".into(),
+            "alice".into(),
+        )
+        .expect("actor request is accepted before the scene readiness check");
     assert_eq!(super::pump_shots(&mut state), 0);
     let shots = state.shot_state.lock().unwrap();
     assert!(
@@ -3349,7 +3441,8 @@ fn pump_shots_does_not_serialize_sidecar_without_a_pending_actor_capture() {
         .shot_state
         .lock()
         .unwrap()
-        .enqueue("manual".into(), "{\"untagged\":true}".into());
+        .enqueue("manual".into(), "{\"untagged\":true}".into())
+        .expect("untagged request is accepted");
     let before = actor_snapshot_serialization_count();
     assert_eq!(super::pump_shots(&mut state), 0);
     assert_eq!(
@@ -3381,16 +3474,20 @@ fn pair_deadline_fails_remaining_queued_actors() {
     s.install_paired_core_watch(Some(watch));
 
     let shots = std::sync::Mutex::new(crate::window::ShotState::default());
-    shots.lock().unwrap().enqueue_for_actor(
-        "nature_crafter_air-alice".into(),
-        "{}".into(),
-        "alice".into(),
-    );
-    shots.lock().unwrap().enqueue_for_actor(
-        "nature_crafter_air-bob".into(),
-        "{}".into(),
-        "bob".into(),
-    );
+    shots
+        .lock()
+        .unwrap()
+        .enqueue_for_actor(
+            "nature_crafter_air-alice".into(),
+            "{}".into(),
+            "alice".into(),
+        )
+        .expect("first pair capture is accepted");
+    shots
+        .lock()
+        .unwrap()
+        .enqueue_for_actor("nature_crafter_air-bob".into(), "{}".into(), "bob".into())
+        .expect("second pair capture is accepted");
     let mut live = LiveScript {
         name: "script_nature_crafter_air".into(),
         passed: false,
@@ -3631,6 +3728,7 @@ fn pump_shots_marks_completion_only_after_the_png_and_snapshot_pair_write() {
         .push(crate::window::ShotCapture {
             label: "gnome_chop".into(),
             snapshot_json: "{\"scene\":2}".into(),
+            paint_sequence: 0,
             width: 1,
             height: 1,
             rgba: vec![0, 0, 0, 255],

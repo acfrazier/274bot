@@ -243,7 +243,9 @@ fn shot_state_reports_each_owned_capture_stage() {
     let mut shots = ShotState::default();
     assert_eq!(shots.status("gnome_chop"), ShotStatus::Missing);
 
-    shots.enqueue("gnome_chop".into(), "{\"scene\":2}".into());
+    shots
+        .enqueue("gnome_chop".into(), "{\"scene\":2}".into())
+        .expect("capture request is accepted");
     assert_eq!(shots.status("gnome_chop"), ShotStatus::Requested);
 
     assert_eq!(shots.promote_requests(), 1);
@@ -253,9 +255,12 @@ fn shot_state_reports_each_owned_capture_stage() {
     shots.done.push(ShotCapture {
         label: "gnome_chop".into(),
         snapshot_json: "{\"scene\":2}".into(),
+        paint_sequence: 0,
         width: 1,
         height: 1,
         rgba: vec![0, 0, 0, 255],
+        actor_stamp: None,
+        readback_permit: None,
         #[cfg(feature = "render-diagnostics")]
         pixel_roi: None,
     });
@@ -275,12 +280,16 @@ fn shot_state_reports_each_owned_capture_stage() {
 #[test]
 fn promote_ready_keeps_unready_and_second_actor_queued() {
     let mut shots = ShotState::default();
-    shots.enqueue_for_actor(
-        "air-alice".into(),
-        "{\"actor\":\"alice\"}".into(),
-        "alice".into(),
-    );
-    shots.enqueue_for_actor("air-bob".into(), "{\"actor\":\"bob\"}".into(), "bob".into());
+    shots
+        .enqueue_for_actor(
+            "air-alice".into(),
+            "{\"actor\":\"alice\"}".into(),
+            "alice".into(),
+        )
+        .expect("actor shot is accepted");
+    shots
+        .enqueue_for_actor("air-bob".into(), "{\"actor\":\"bob\"}".into(), "bob".into())
+        .expect("actor shot is accepted");
 
     assert_eq!(shots.promote_ready(Some("alice"), None), 0);
     assert_eq!(
@@ -316,8 +325,12 @@ fn promote_ready_keeps_unready_and_second_actor_queued() {
 #[test]
 fn fail_labels_drops_queued_actors_and_keeps_the_error() {
     let mut shots = ShotState::default();
-    shots.enqueue_for_actor("air-alice".into(), "{}".into(), "alice".into());
-    shots.enqueue_for_actor("air-bob".into(), "{}".into(), "bob".into());
+    shots
+        .enqueue_for_actor("air-alice".into(), "{}".into(), "alice".into())
+        .expect("actor shot is accepted");
+    shots
+        .enqueue_for_actor("air-bob".into(), "{}".into(), "bob".into())
+        .expect("actor shot is accepted");
     shots.promote_ready(Some("alice"), Some("alice"));
     shots.fail_labels(
         &["air-alice".into(), "air-bob".into()],
@@ -351,18 +364,838 @@ fn surface_skip_diagnostic_names_only_readback_pending_captures() {
     shots
         .lock()
         .unwrap()
-        .enqueue("still-requested".into(), "{}".into());
+        .enqueue("still-requested".into(), "{}".into())
+        .expect("capture request is accepted");
     assert_eq!(deferred_readback_message(&shots, "occluded"), None);
 
     {
         let mut shots = shots.lock().unwrap();
         shots.promote_requests();
-        shots.enqueue("not-promoted".into(), "{}".into());
+        shots
+            .enqueue("not-promoted".into(), "{}".into())
+            .expect("capture request is accepted");
     }
     assert_eq!(
         deferred_readback_message(&shots, "occluded").as_deref(),
         Some("[panel] capture readback deferred by surface occluded: still-requested")
     );
+}
+
+#[cfg(feature = "render-test-hooks")]
+#[test]
+fn many_untagged_shots_cannot_multiply_staging() {
+    const CHILD: &str = "PANEL_CAPTURE_FIXTURE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        run_capture_fixture_child(
+            "window::tests::many_untagged_shots_cannot_multiply_staging",
+            false,
+        );
+        return;
+    }
+
+    let _fixture = capture_process_fixture(true, false);
+    let mut shots = ShotState::default();
+    shots
+        .configure_capture_policy(
+            std::num::NonZeroUsize::new(16_384).unwrap(),
+            std::time::Duration::from_secs(30),
+        )
+        .expect("the explicit process fixture enables bounded capture");
+    let deadline = shots
+        .capture_deadline(std::time::Instant::now())
+        .expect("the fixture supplies an explicit capture deadline");
+    for index in 0..CAPTURE_QUEUE {
+        shots
+            .enqueue_with_deadline(format!("shot-{index}"), "{\"scene\":2}".into(), deadline)
+            .expect("each bounded request fits the fixture");
+    }
+    assert_eq!(
+        shots.enqueue_with_deadline("overflow".into(), "{}".into(), deadline),
+        Err(CaptureError::QueueFull),
+        "the ninth request is refused explicitly"
+    );
+    assert_eq!(shots.promote_requests(), CAPTURE_QUEUE);
+
+    let geometry = client::render::backend::CaptureGeometry::new(64, 64);
+    let permit = shots
+        .reserve_next_readback(geometry, std::time::Instant::now(), 1)
+        .expect("the first job receives the process permit")
+        .expect("one active readback is admitted");
+    assert!(shots.active_capture.is_some());
+    assert_eq!(shots.wanted.len(), CAPTURE_QUEUE - 1);
+    assert!(shots
+        .reserve_next_readback(geometry, std::time::Instant::now(), 2)
+        .expect("an active job blocks another admission")
+        .is_none());
+    assert!(matches!(
+        ReadbackBudget::process().try_acquire(geometry, deadline),
+        Err(ReadbackError::Busy)
+    ));
+    shots.fail_active(CaptureError::Device);
+    drop(permit);
+    assert_eq!(
+        shots.status("shot-0"),
+        ShotStatus::FailedCapture(CaptureError::Device)
+    );
+    assert_eq!(shots.wanted.len(), CAPTURE_QUEUE - 1);
+    println!("render fixture child completed");
+}
+
+#[cfg(all(feature = "render-test-hooks", feature = "render-diagnostics"))]
+#[test]
+fn writer_diagnostic_label_capacity_is_admitted_before_copy() {
+    const CHILD: &str = "PANEL_CAPTURE_FIXTURE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        run_capture_fixture_child(
+            "window::tests::writer_diagnostic_label_capacity_is_admitted_before_copy",
+            false,
+        );
+        return;
+    }
+
+    let _fixture = capture_process_fixture(true, false);
+    let mut shots = ShotState::default();
+    shots
+        .configure_capture_policy(
+            std::num::NonZeroUsize::new(16_384).unwrap(),
+            std::time::Duration::from_secs(30),
+        )
+        .expect("the explicit process fixture enables bounded capture");
+    let mut snapshot_json = String::with_capacity(256);
+    snapshot_json.push_str("{}");
+    let snapshot_capacity = snapshot_json.capacity();
+    shots.done.push(ShotCapture {
+        label: "writer-label".into(),
+        snapshot_json,
+        width: 1,
+        height: 1,
+        rgba: Vec::new(),
+        paint_sequence: 1,
+        actor_stamp: None,
+        #[cfg(feature = "render-diagnostics")]
+        pixel_roi: None,
+        readback_permit: None,
+    });
+    let capture = shots
+        .take_done_for_write()
+        .expect("the completed capture transfers to the writer");
+    assert_eq!(capture.snapshot_json.capacity(), snapshot_capacity);
+    let writer_charge = shots.write_pending_bytes;
+    let policy = shots.capture_policy.unwrap();
+    let before_diagnostic = shots.metadata_bytes();
+    let denied_limit = before_diagnostic
+        .checked_add("writer-label".len() - 1)
+        .expect("the fixture's diagnostic limit does not overflow");
+    shots.capture_policy = Some(CapturePolicy {
+        metadata_limit: std::num::NonZeroUsize::new(denied_limit).unwrap(),
+        readback_timeout: policy.readback_timeout,
+    });
+    assert_eq!(
+        shots.try_clone_pending_diagnostic_label("writer-label"),
+        Err(CaptureError::TooLarge),
+        "diagnostic text is refused before the clone exceeds the byte allowance"
+    );
+    assert_eq!(shots.metadata_bytes(), before_diagnostic);
+    assert!(!shots.write_pending_diagnostic_charged);
+    shots.capture_policy = Some(policy);
+    let diagnostic_label = shots
+        .try_clone_pending_diagnostic_label("writer-label")
+        .expect("diagnostic text is admitted before cloning");
+    assert_eq!(diagnostic_label.as_str(), "writer-label");
+    assert_eq!(
+        shots.write_pending_bytes,
+        writer_charge + diagnostic_label.capacity(),
+        "the third label allocation is charged by its actual capacity"
+    );
+    assert!(shots.metadata_bytes() <= 16_384);
+    assert!(shots.write_pending_diagnostic_charged);
+
+    drop(capture);
+    drop(diagnostic_label);
+    shots.mark_written("writer-label");
+    assert_eq!(shots.status("writer-label"), ShotStatus::Written);
+    assert_eq!(shots.write_pending_bytes, 0);
+    assert!(!shots.write_pending_diagnostic_charged);
+    println!("render fixture child completed");
+}
+
+#[cfg(feature = "render-test-hooks")]
+#[test]
+fn writer_output_paths_share_the_explicit_metadata_allowance() {
+    const CHILD: &str = "PANEL_CAPTURE_FIXTURE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        run_capture_fixture_child(
+            "window::tests::writer_output_paths_share_the_explicit_metadata_allowance",
+            false,
+        );
+        return;
+    }
+
+    let _fixture = capture_process_fixture(true, false);
+    let mut shots = ShotState::default();
+    shots
+        .configure_capture_policy(
+            std::num::NonZeroUsize::new(16_384).unwrap(),
+            std::time::Duration::from_secs(30),
+        )
+        .expect("the fixture supplies the metadata allowance");
+    shots.done.push(ShotCapture {
+        label: "writer-paths".into(),
+        snapshot_json: "{}".into(),
+        width: 1,
+        height: 1,
+        rgba: Vec::new(),
+        paint_sequence: 1,
+        actor_stamp: None,
+        #[cfg(feature = "render-diagnostics")]
+        pixel_roi: None,
+        readback_permit: None,
+    });
+    let capture = shots.take_done_for_write().expect("pending writer");
+    let writer_bytes = shots.write_pending_bytes;
+    let policy = shots.capture_policy.unwrap();
+    let before_paths = shots.metadata_bytes();
+    shots.capture_policy = Some(CapturePolicy {
+        metadata_limit: std::num::NonZeroUsize::new(before_paths + 2).unwrap(),
+        readback_timeout: policy.readback_timeout,
+    });
+    assert_eq!(
+        shots.with_pending_output_paths::<()>("writer-paths", |_| {
+            panic!("path construction must not start without byte admission")
+        }),
+        Err(CaptureError::TooLarge)
+    );
+    assert_eq!(shots.metadata_bytes(), before_paths);
+    shots.capture_policy = Some(policy);
+
+    let directory = std::path::PathBuf::from("shots");
+    let directory_bytes = directory.capacity();
+    let paths = shots
+        .with_pending_output_paths("writer-paths", |maximum| {
+            let paths = frontend_core::live::shot_output_paths(
+                &directory,
+                "writer-paths",
+                std::time::UNIX_EPOCH,
+                maximum,
+            )
+            .map_err(|_| CaptureError::TooLarge)?;
+            let output_bytes = paths.0.capacity() + paths.1.capacity();
+            Ok((paths, directory_bytes, output_bytes))
+        })
+        .expect("the admitted path owners fit");
+    assert_eq!(shots.output_directory_bytes, directory_bytes);
+    assert_eq!(
+        shots.write_pending_bytes,
+        writer_bytes + paths.0.capacity() + paths.1.capacity()
+    );
+    assert!(shots.metadata_bytes() <= policy.metadata_limit.get());
+    drop(paths);
+    drop(capture);
+    shots.mark_written("writer-paths");
+    assert_eq!(shots.write_pending_bytes, 0);
+    assert_eq!(shots.output_directory_bytes, directory_bytes);
+    let terminal_bytes = shots.terminal.capacity() * std::mem::size_of::<TerminalStatus>()
+        + shots
+            .terminal
+            .iter()
+            .map(|status| status.label.capacity())
+            .sum::<usize>();
+    assert_eq!(shots.metadata_bytes(), directory_bytes + terminal_bytes);
+    assert_eq!(
+        shots.with_pending_output_paths::<()>("absent", |_| {
+            panic!("an absent writer must not allocate output paths")
+        }),
+        Err(CaptureError::StaleHead)
+    );
+    println!("render fixture child completed");
+}
+
+#[cfg(feature = "render-test-hooks")]
+#[test]
+fn borrowed_capture_requests_admit_before_copy_and_defer_actor_json() {
+    const CHILD: &str = "PANEL_CAPTURE_FIXTURE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        run_capture_fixture_child(
+            "window::tests::borrowed_capture_requests_admit_before_copy_and_defer_actor_json",
+            false,
+        );
+        return;
+    }
+    let _fixture = capture_process_fixture(true, false);
+    let mut shots = ShotState::default();
+    assert_eq!(
+        shots.enqueue_bounded_snapshot("absent-policy", |_| {
+            panic!("missing policy must refuse before serialization")
+        }),
+        Err(CaptureError::PolicyMissing)
+    );
+    shots
+        .configure_capture_policy(
+            std::num::NonZeroUsize::new(16_384).unwrap(),
+            std::time::Duration::from_secs(30),
+        )
+        .unwrap();
+    let oversized = "x".repeat(CAPTURE_NAME_BYTES + 1);
+    assert_eq!(
+        shots.enqueue_bounded_snapshot(&oversized, |_| {
+            panic!("oversized label must refuse before serialization")
+        }),
+        Err(CaptureError::TooLarge)
+    );
+    assert_eq!(
+        shots.enqueue_bounded_actor_request("actor", &oversized),
+        Err(CaptureError::TooLarge)
+    );
+    assert!(shots.requests.is_empty());
+    shots
+        .enqueue_bounded_snapshot("plain", |maximum| {
+            assert!(maximum >= 2);
+            Ok("{}".into())
+        })
+        .unwrap();
+    shots
+        .enqueue_bounded_actor_request("actor", "alice")
+        .unwrap();
+    assert_eq!(shots.requests[0].snapshot_json, "{}");
+    assert_eq!(shots.requests[1].actor.as_deref(), Some("alice"));
+    assert!(shots.requests[1].snapshot_json.is_empty());
+    assert_eq!(shots.requests[1].snapshot_json.capacity(), 0);
+    while shots.requests.len() < CAPTURE_QUEUE {
+        shots
+            .enqueue_bounded_actor_request(&format!("actor-{}", shots.requests.len()), "alice")
+            .unwrap();
+    }
+    let before = shots.metadata_bytes();
+    assert_eq!(
+        shots.enqueue_bounded_snapshot("full", |_| {
+            panic!("full queue must refuse before serialization")
+        }),
+        Err(CaptureError::QueueFull)
+    );
+    assert_eq!(shots.metadata_bytes(), before);
+    assert!(before <= 16_384);
+    println!("render fixture child completed");
+}
+
+#[cfg(feature = "render-test-hooks")]
+#[test]
+fn directory_replacement_and_typed_cancellation_keep_actual_metadata_charges() {
+    const CHILD: &str = "PANEL_CAPTURE_FIXTURE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        run_capture_fixture_child(
+            "window::tests::directory_replacement_and_typed_cancellation_keep_actual_metadata_charges",
+            false,
+        );
+        return;
+    }
+    let _fixture = capture_process_fixture(true, false);
+    let mut shots = ShotState::default();
+    shots
+        .configure_capture_policy(
+            std::num::NonZeroUsize::new(16_384).unwrap(),
+            std::time::Duration::from_secs(30),
+        )
+        .unwrap();
+    let mut directory = None;
+    shots
+        .replace_output_directory(&mut directory, |maximum| {
+            assert!(maximum >= 5);
+            frontend_core::live::record_output_path(std::path::Path::new(""), "shots")
+                .map_err(|_| CaptureError::TooLarge)
+        })
+        .unwrap();
+    let initial_bytes = directory.as_ref().unwrap().capacity();
+    assert_eq!(shots.output_directory_bytes, initial_bytes);
+    assert_eq!(shots.metadata_bytes(), initial_bytes);
+    let policy = shots.capture_policy.unwrap();
+    shots.capture_policy = Some(CapturePolicy {
+        metadata_limit: std::num::NonZeroUsize::new(initial_bytes).unwrap(),
+        readback_timeout: policy.readback_timeout,
+    });
+    assert_eq!(
+        shots.replace_output_directory(&mut directory, |maximum| {
+            assert_eq!(maximum, 0, "the old directory is still charged");
+            Err(CaptureError::TooLarge)
+        }),
+        Err(CaptureError::TooLarge)
+    );
+    assert_eq!(directory.as_deref(), Some(std::path::Path::new("shots")));
+    assert_eq!(shots.metadata_bytes(), initial_bytes);
+    shots.capture_policy = Some(policy);
+    let expected_allowance = policy.metadata_limit.get() - shots.metadata_bytes();
+    shots
+        .replace_output_directory(&mut directory, |maximum| {
+            assert_eq!(maximum, expected_allowance);
+            frontend_core::live::record_output_path(std::path::Path::new(""), "second")
+                .map_err(|_| CaptureError::TooLarge)
+        })
+        .unwrap();
+    let final_bytes = directory.as_ref().unwrap().capacity();
+    assert_eq!(shots.metadata_bytes(), final_bytes);
+    shots
+        .enqueue_bounded_actor_request("cancelled", "alice")
+        .unwrap();
+    shots
+        .fail_capture_label("cancelled", CaptureError::InvalidScene)
+        .unwrap();
+    assert!(shots.requests.is_empty());
+    assert_eq!(
+        shots.status("cancelled"),
+        ShotStatus::FailedCapture(CaptureError::InvalidScene)
+    );
+    assert_eq!(shots.output_directory_bytes, final_bytes);
+    assert!(shots.metadata_bytes() <= policy.metadata_limit.get());
+    println!("render fixture child completed");
+}
+
+#[cfg(feature = "render-test-hooks")]
+fn bounded_window_fixed_layout_receipt() {
+    use std::mem::size_of;
+    println!(
+        "bounded_window_fixed_layout_receipt={}",
+        serde_json::json!({
+            "target_arch": std::env::consts::ARCH,
+            "target_os": std::env::consts::OS,
+            "pointer_bytes": size_of::<usize>(),
+            "debug_assertions": cfg!(debug_assertions),
+            "layouts": {
+                "shot_state": size_of::<ShotState>(),
+                "shot_request": size_of::<ShotRequest>(),
+                "shot_capture": size_of::<ShotCapture>(),
+                "active_capture": size_of::<ActiveCapture>(),
+                "capture_policy": size_of::<CapturePolicy>(),
+                "terminal_status": size_of::<TerminalStatus>(),
+                "terminal_outcome": size_of::<TerminalOutcome>(),
+                "frame_stamp": size_of::<FrameStamp>(),
+                "borrowed_pair_label_stack": size_of::<[[u8; CAPTURE_NAME_BYTES]; 2]>(),
+            },
+            "container_entry_limit": CAPTURE_QUEUE,
+            "scope": "Fixed named envelopes, not allocator-live totals. Variable owned JSON, names, directory and writer paths require the configured capture metadata allowance."
+        })
+    );
+}
+
+#[cfg(feature = "render-test-hooks")]
+#[test]
+fn terminal_capture_admission_precedes_label_and_queue_growth() {
+    const CHILD: &str = "PANEL_CAPTURE_FIXTURE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        run_capture_fixture_child(
+            "window::tests::terminal_capture_admission_precedes_label_and_queue_growth",
+            false,
+        );
+        return;
+    }
+    let _fixture = capture_process_fixture(true, false);
+    let mut shots = ShotState::default();
+    shots
+        .configure_capture_policy(
+            std::num::NonZeroUsize::new(std::mem::size_of::<TerminalStatus>() - 1).unwrap(),
+            std::time::Duration::from_secs(30),
+        )
+        .unwrap();
+    assert_eq!(
+        shots.mark_failed_capture("x", CaptureError::Io),
+        Err(CaptureError::TooLarge)
+    );
+    assert_eq!(shots.terminal.capacity(), 0);
+    assert_eq!(shots.metadata_bytes(), 0);
+    let policy = shots.capture_policy.unwrap();
+    shots.capture_policy = Some(CapturePolicy {
+        metadata_limit: std::num::NonZeroUsize::new(16_384).unwrap(),
+        readback_timeout: policy.readback_timeout,
+    });
+    for index in 0..CAPTURE_QUEUE {
+        shots
+            .mark_failed_capture(&format!("label-{index:02}"), CaptureError::Io)
+            .unwrap();
+    }
+    assert_eq!(shots.terminal.len(), CAPTURE_QUEUE);
+    assert_eq!(shots.terminal.capacity(), CAPTURE_QUEUE);
+    let storage = shots.terminal.as_ptr();
+    for index in CAPTURE_QUEUE..4 * CAPTURE_QUEUE {
+        shots
+            .mark_failed_capture(&format!("label-{index:02}"), CaptureError::Io)
+            .unwrap();
+        assert_eq!(shots.terminal.len(), CAPTURE_QUEUE);
+        assert_eq!(shots.terminal.capacity(), CAPTURE_QUEUE);
+        assert_eq!(shots.terminal.as_ptr(), storage);
+        assert!(shots.metadata_bytes() <= shots.capture_policy.unwrap().metadata_limit.get());
+    }
+    assert_eq!(
+        shots.status("label-31"),
+        ShotStatus::FailedCapture(CaptureError::Io)
+    );
+    bounded_window_fixed_layout_receipt();
+    println!("render fixture child completed");
+}
+
+#[cfg(all(feature = "render-test-hooks", feature = "render-diagnostics"))]
+#[test]
+fn diagnostic_roi_and_capture_stamp_are_atomic() {
+    const CHILD: &str = "PANEL_CAPTURE_FIXTURE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        run_capture_fixture_child(
+            "window::tests::diagnostic_roi_and_capture_stamp_are_atomic",
+            false,
+        );
+        return;
+    }
+
+    let _fixture = capture_process_fixture(true, false);
+    let mut shots = ShotState::default();
+    shots
+        .configure_capture_policy(
+            std::num::NonZeroUsize::new(16_384).unwrap(),
+            std::time::Duration::from_secs(30),
+        )
+        .expect("the explicit process fixture enables bounded capture");
+    let deadline = shots
+        .capture_deadline(std::time::Instant::now())
+        .expect("the fixture supplies an explicit capture deadline");
+    shots
+        .enqueue_with_deadline("roi-shot".into(), "{}".into(), deadline)
+        .expect("the shot request is admitted");
+    assert_eq!(shots.promote_requests(), 1);
+    let permit = shots
+        .reserve_next_readback(
+            client::render::backend::CaptureGeometry::new(64, 64),
+            std::time::Instant::now(),
+            1,
+        )
+        .expect("the process permit admits one ROI shot")
+        .expect("the ROI shot is staged");
+    let current_bytes = shots.metadata_bytes();
+    let mut slot = String::with_capacity(128);
+    slot.push_str("panel-slot");
+    let slot_len = slot.len();
+    let slot_capacity = slot.capacity();
+    assert!(slot_capacity > slot_len);
+    let mut metadata = client::render::diagnostics::PixelRoiMeta::produced(
+        7,
+        client::render::diagnostics::PixelRoiCam {
+            cycle: 1,
+            eye_x: 2,
+            eye_y: 3,
+            eye_z: 4,
+            yaw: 5,
+            pitch: 6,
+            origin_x: 7,
+            origin_z: 8,
+            trace_frame: 9,
+        },
+        client::render::diagnostics::PackedHist::EMPTY,
+        client::render::diagnostics::PackedHist::EMPTY,
+    );
+    metadata.upload = Some(client::render::diagnostics::PixelRoiUpload {
+        frame_id: 7,
+        packed: client::render::diagnostics::PackedHist::EMPTY,
+        rgba: client::render::diagnostics::PackedHist::EMPTY,
+        packed_fp: 0,
+        slot,
+        generation: 1,
+    });
+    let stamp = CaptureStamp {
+        paint_sequence: 1,
+        pixel_roi: Some(client::render::diagnostics::PixelRoiShotBind {
+            meta: metadata,
+            image: client::render::diagnostics::PixelRoiImage {
+                logical_min: [0.0, 0.0],
+                logical_size: [1.0, 1.0],
+                fb_scale: [1.0, 1.0],
+                domain: client::render::diagnostics::PixelRoiCoordDomain::LogicalImGui,
+            },
+        }),
+    };
+    assert_eq!(
+        stamp.metadata_bytes(),
+        std::mem::size_of::<CaptureStamp>() + slot_capacity
+    );
+    let policy = shots.capture_policy.unwrap();
+    let text_only_limit = current_bytes
+        .checked_add(std::mem::size_of::<CaptureStamp>())
+        .and_then(|bytes| bytes.checked_add(slot_len))
+        .unwrap();
+    shots.capture_policy = Some(CapturePolicy {
+        metadata_limit: std::num::NonZeroUsize::new(text_only_limit).unwrap(),
+        readback_timeout: policy.readback_timeout,
+    });
+    assert_eq!(
+        shots.attach_capture_stamp(stamp),
+        Err(CaptureError::TooLarge),
+        "ROI String capacity, not just its UTF-8 length, must fit the job"
+    );
+    assert!(
+        shots
+            .active_capture
+            .as_ref()
+            .is_some_and(|active| active.stamp.is_none()),
+        "a rejected ROI cannot leave a partial capture stamp"
+    );
+    shots.fail_active(CaptureError::TooLarge);
+    drop(permit);
+    assert_eq!(
+        shots.status("roi-shot"),
+        ShotStatus::FailedCapture(CaptureError::TooLarge)
+    );
+    println!("render fixture child completed");
+}
+
+#[cfg(feature = "render-test-hooks")]
+#[test]
+#[ignore = "requires an explicitly configured headless GPU for retained-frame proof"]
+fn actor_window_copy_fences_the_stamped_head() {
+    const CHILD: &str = "PANEL_CAPTURE_FIXTURE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        run_capture_fixture_child(
+            "window::tests::actor_window_copy_fences_the_stamped_head",
+            true,
+        );
+        return;
+    }
+
+    let mut fixture = capture_process_fixture(false, true);
+    assert_eq!(
+        fixture.backend_kind(),
+        client::render::backend::BackendKind::Gpu,
+        "the actor proof must exercise the GPU backend rather than CPU fallback"
+    );
+    let mut client = capture_scene_client();
+    assert!(fixture.paint(&mut client));
+    let first = fixture
+        .output()
+        .take_presented()
+        .expect("the first paint publishes its genuine frame");
+    let first_stamp = *first.stamp();
+    let client::render::backend::FrameOutput::Texture(handle) = first.into_output() else {
+        panic!("GPU paint publishes a texture handle");
+    };
+    let registration = handle
+        .try_register_consumer()
+        .expect("the head installs its retained consumer");
+
+    assert!(fixture.paint(&mut client));
+    let presented = fixture
+        .output()
+        .take_presented()
+        .expect("the retained consumer receives a later genuine paint");
+    let stamp = *presented.stamp();
+    drop(presented.into_output());
+    let consumer = registration
+        .try_take_frame()
+        .expect("the consumer offer can be polled")
+        .expect("the later paint offers the retained frame");
+    assert_eq!(
+        stamp.present_token(),
+        Some(consumer.present_token()),
+        "the mailbox stamp and retained pixels identify one presentation"
+    );
+    assert!(stamp.has_valid_scene());
+    assert_eq!(stamp.head(), first_stamp.head());
+    assert!(stamp.mailbox_sequence() > first_stamp.mailbox_sequence());
+
+    assert!(fixture.paint(&mut client));
+    let newer = fixture
+        .output()
+        .take_presented()
+        .expect("the next paint publishes a newer mailbox frame");
+    let newer_stamp = *newer.stamp();
+    drop(newer.into_output());
+    assert!(newer_stamp.mailbox_sequence() > stamp.mailbox_sequence());
+
+    let mut shots = ShotState::default();
+    shots
+        .configure_capture_policy(
+            std::num::NonZeroUsize::new(16_384).unwrap(),
+            std::time::Duration::from_secs(30),
+        )
+        .expect("the explicit process fixture enables bounded capture");
+    let deadline = shots
+        .capture_deadline(std::time::Instant::now())
+        .expect("the fixture supplies an explicit capture deadline");
+    shots
+        .enqueue_for_actor_with_deadline(
+            "actor-window".into(),
+            "{}".into(),
+            "alice".into(),
+            deadline,
+        )
+        .expect("the actor request is admitted with its deadline");
+    let mailbox = std::sync::Arc::downgrade(fixture.output());
+    let fence = ActorCaptureFence::new(stamp, mailbox, Some(consumer))
+        .expect("the authentic retained frame creates a matching fence");
+    const SNAPSHOT_JSON: &str = "{\"scene\":2,\"accepted\":true}";
+    let expected_allowance = shots
+        .capture_policy
+        .unwrap()
+        .metadata_limit
+        .get()
+        .checked_sub(
+            shots
+                .metadata_bytes()
+                .checked_add(fence.metadata_bytes())
+                .unwrap(),
+        )
+        .unwrap();
+    shots
+        .accept_actor_frame(
+            "alice",
+            |allowance| {
+                assert_eq!(allowance, expected_allowance);
+                let mut snapshot_json = String::new();
+                snapshot_json
+                    .try_reserve_exact(SNAPSHOT_JSON.len())
+                    .map_err(|_| CaptureError::QueueFull)?;
+                if snapshot_json.capacity() > allowance {
+                    return Err(CaptureError::TooLarge);
+                }
+                snapshot_json.push_str(SNAPSHOT_JSON);
+                Ok(snapshot_json)
+            },
+            fence,
+        )
+        .expect("the exact frame and bounded sidecar are accepted together");
+    assert_eq!(shots.wanted[0].1, SNAPSHOT_JSON);
+    assert!(shots.holds_actor_frame("alice"));
+    assert_eq!(
+        shots
+            .actor_consumer_frame("alice")
+            .map(|frame| frame.present_token()),
+        stamp.present_token(),
+        "the accepted old frame remains held after a newer mailbox publication"
+    );
+    assert_eq!(
+        shots.confirm_actor_display("alice", Some(first_stamp)),
+        Err(CaptureError::StaleHead),
+        "an earlier real presentation cannot confirm the accepted frame"
+    );
+    shots
+        .confirm_actor_display("alice", Some(stamp))
+        .expect("the exact accepted frame confirms its focused display");
+
+    let permit = shots
+        .reserve_next_readback(
+            client::render::backend::CaptureGeometry::new(64, 64),
+            std::time::Instant::now(),
+            1,
+        )
+        .expect("confirmed actor work may reserve one readback")
+        .expect("the actor readback is admitted");
+    shots
+        .validate_active_actor_for_staging()
+        .expect("the actor fence remains valid before staging");
+    assert!(shots.holds_actor_frame("alice"));
+    shots.fail_active(CaptureError::Device);
+    drop(permit);
+    assert_eq!(
+        shots.status("actor-window"),
+        ShotStatus::FailedCapture(CaptureError::Device)
+    );
+    println!("render fixture child completed");
+}
+
+#[cfg(feature = "render-test-hooks")]
+fn run_capture_fixture_child(test_name: &str, include_ignored: bool) {
+    const CHILD: &str = "PANEL_CAPTURE_FIXTURE_CHILD";
+    let mut command =
+        std::process::Command::new(std::env::current_exe().expect("current panel test executable"));
+    if include_ignored {
+        command.arg("--ignored");
+    }
+    let output = command
+        .args(["--exact", test_name, "--nocapture"])
+        .env(CHILD, "1")
+        .output()
+        .expect("run the isolated capture fixture test process");
+    assert!(
+        output.status.success(),
+        "capture fixture child failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("render fixture child completed"),
+        "exact test filter did not run the capture fixture child:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+    );
+}
+
+#[cfg(feature = "render-test-hooks")]
+fn capture_process_fixture(
+    prefer_cpu: bool,
+    retained_consumer: bool,
+) -> frontend_core::surface::CaptureFixture {
+    frontend_core::surface::configure_render_fixture(frontend_core::surface::ProcessFixture {
+        grant_ttl: std::time::Duration::from_millis(20),
+        quantum: std::time::Duration::from_millis(40),
+    })
+    .expect("configure this child process before host initialization");
+    if retained_consumer {
+        client::render::backend::configure_retained_present_budget(
+            std::num::NonZeroUsize::new(1).unwrap(),
+        )
+        .expect("one retained present is enough for this isolated head");
+    }
+    frontend_core::surface::CaptureFixture::new(
+        api::identity::SlotKey::from_incarnation(501).unwrap(),
+        prefer_cpu,
+        false,
+    )
+    .expect("construct the process fixture head")
+}
+
+#[cfg(feature = "render-test-hooks")]
+fn capture_scene_client() -> client::client::Client {
+    use client::client::{ClientConfig, ClientRevision};
+    use client::dash3d::TerrainOverlayShape;
+
+    let mut client = client::client::Client::new_with_revision(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/nonexistent-window-capture-fixture".into(),
+            members: true,
+            lowmem: false,
+        },
+        ClientRevision::R289,
+    );
+    client.set_draw(true);
+    client.ingame = true;
+    client.scene_state = 2;
+    client.world.fill_base_level(0);
+    for x in 8..24 {
+        for z in 8..40 {
+            let hsl = ((x * 7 + z * 13) % 60) * 1024 + 2624;
+            client.world.set_ground(
+                0,
+                x,
+                z,
+                TerrainOverlayShape::PLAIN,
+                0,
+                -1,
+                0,
+                0,
+                0,
+                0,
+                hsl,
+                hsl,
+                hsl,
+                hsl,
+                0,
+                0,
+                0,
+                0,
+                0x00ff00,
+                0,
+            );
+        }
+    }
+    client.cam_x = 16 * 128;
+    client.cam_z = 4 * 128;
+    client.cam_y = -600;
+    client.cam_pitch = 200;
+    client.cam_yaw = 0;
+    client
 }
 
 const OCCLUDED_TEST_PX: u32 = 64;
@@ -800,7 +1633,9 @@ fn promoted_flax_shots() -> Mutex<ShotState> {
     let shots = Mutex::new(ShotState::default());
     {
         let mut shots = shots.lock().unwrap();
-        shots.enqueue("flax_aio".into(), "{\"scene\":2}".into());
+        shots
+            .enqueue("flax_aio".into(), "{\"scene\":2}".into())
+            .expect("capture request is accepted");
         assert_eq!(shots.promote_requests(), 1);
     }
     shots
@@ -961,11 +1796,11 @@ fn occluded_acquisition_without_promoted_wanted_records_no_gpu_work() {
     desc.height = u32::MAX;
 
     let shots = Mutex::new(ShotState::default());
-    shots.lock().unwrap().enqueue_for_actor(
-        "flax_aio".into(),
-        "{\"scene\":1}".into(),
-        "bot".into(),
-    );
+    shots
+        .lock()
+        .unwrap()
+        .enqueue_for_actor("flax_aio".into(), "{\"scene\":1}".into(), "bot".into())
+        .expect("actor shot is accepted");
 
     let draw_data = draw_known_rect(&mut context);
     let allocation_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
@@ -1661,14 +2496,18 @@ fn unknown_work_area_still_requests_the_unclamped_rail_need() {
 fn record_arm_flags_a_capture_without_touching_shot_wanted() {
     let mut shots = ShotState::default();
     assert!(!shots.capture_pending());
-    shots.arm_record();
+    shots
+        .arm_record()
+        .expect("legacy recording arm remains available");
     assert!(shots.capture_pending());
     assert!(
         shots.wanted.is_empty(),
         "the recording lane never enters the PNG promotion queue"
     );
     // Idempotent: repeated pacer ticks arm one readback, not one per tick.
-    shots.arm_record();
+    shots
+        .arm_record()
+        .expect("repeated legacy recording arm remains available");
     assert!(shots.capture_pending());
 }
 
@@ -1680,9 +2519,12 @@ fn record_readback_outcomes_route_to_record_done_not_the_png_ledger() {
         ShotCapture {
             label: label.into(),
             snapshot_json: String::new(),
+            paint_sequence: 0,
             width: 2,
             height: 2,
             rgba: vec![0; 16],
+            actor_stamp: None,
+            readback_permit: None,
             #[cfg(feature = "render-diagnostics")]
             pixel_roi: None,
         }

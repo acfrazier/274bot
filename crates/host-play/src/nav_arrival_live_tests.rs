@@ -388,7 +388,10 @@ fn frame_words(frame: FrameOutput) -> Result<(u32, u32, Vec<i32>), String> {
             let height = u32::try_from(pixmap.height).map_err(|error| error.to_string())?;
             Ok((width, height, pixmap.pixels))
         }
-        FrameOutput::Texture(texture) => Ok((texture.width, texture.height, texture.read_back())),
+        FrameOutput::Texture(texture) => {
+            Ok((texture.width(), texture.height(), texture.read_back()))
+        }
+        FrameOutput::Refused(fault) => Err(format!("arrival capture refused: {fault:?}")),
     }
 }
 

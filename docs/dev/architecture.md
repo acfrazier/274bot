@@ -352,6 +352,110 @@ between polls. Scene consumes and composite paints have separate rates.
 `M3_BACKEND=mixed` takes an explicit `M3_CPU_HEADS` count. `M3_FOCUS_INDEX`
 selects either backend's focused head without changing the other heads' simulation.
 
+The slice-4 fixture keeps one 684,032-byte clean CPU scene per drawing CPU
+head after its first successful live scene. Loading restores that storage and
+redraws current overlays through the retained camera. Title invalidates scene
+proof without reallocating the clean image. The GPU's embedded CPU helper
+never owns a clean CPU scene. State zero keeps the existing backend difference:
+GPU clears its scene; CPU can retain old framebuffer pixels. Both report no
+valid scene.
+On a bounded CPU scene or nav-input failure, the backend restores the clean
+scene (or PendingScene), draws current overlays and chrome, and publishes
+the complete pixels. The renderer forwards the typed fault by value through
+the head's `FramePaintStatus` into the mailbox's `render_fault` field.
+Only an incomplete output is `Refused`; a recovered image is usable.
+Without the explicit process fixture, the head never sets this recovery metadata.
+
+Budget scopes are explicit fixture inputs until qualification. Growing scene,
+model, nav, sprite and GPU storage reserves its byte charge before allocation,
+including old-plus-new replacement peaks and nested payloads. Each GPU head
+keeps its own vertex buffer. Host GPU heads share only the process-owned CPU
+capture mesh; its guard is returned before the scene lease is released.
+Transient world sprites are removed on success, resource refusal and unwind.
+Render-backed ground and dynamic sprite storage is released on draw-off;
+simulation ground stamps and persistent placements remain.
+
+`Renderer::render_bytes` traverses actual capacities only on request. It does
+not substitute budget counters for retained allocations. The identity- and
+sequence-checked mailbox adds its output pixels, nav inputs and render-backed
+world storage. Shared decoded stores and context storage are process rows,
+not per-head multipliers. Registered GPU consumer images are a separate
+logical-device domain: one 1,539,180-byte image per active or draining
+registration, zero without a registration. A held image survives later
+display paints and retirement but cannot prove a reattached head's identity.
+
+The mailbox moves `PresentedFrame` output, ROI and `FrameStamp` together.
+The stamp contains the exact head, checked mailbox sequence, scene validity
+and GPU present token. Actor capture accepts that stamp and freezes its
+matching sidecar once. The selected Image item confirms the same stamp before
+the window copy can submit. A held frame N does not become N+1 when a later
+ordinary display paint completes. Fresh sidecars serialize directly from
+borrowed snapshot fields after a byte-count pass. They never build a full
+intermediate JSON Value before metadata admission.
+
+Gated plain snapshot requests also build JSON inside the metadata admission
+lock. Actor requests keep only bounded names until a stamped frame can supply
+the real snapshot. The retained run directory and both worker output paths
+count their actual capacities against that same metadata allowance. Path
+construction reserves the complete admitted capacity before copying; it does
+not grow a copied directory through `join`. The existing four-KiB UTF-8 product
+path envelope still applies even when a fixture supplies a larger aggregate
+metadata allowance. Replacing a run directory charges the old and new owners
+while they overlap; completion releases the two worker paths, not the retained
+run directory.
+
+Window shots, actor proof and journal proof share one process readback
+permit. Fixture callers provide absolute deadlines and metadata ceilings;
+unconfigured gated capture refuses rather than guessing a production timeout.
+Mapping is polled without blocking the slot or UI. Unresolved timed-out
+storage keeps the permit quarantined until completion. Bounded recorder
+frames carry pixels and one sidecar line together; the writer owns the file.
+An independent supervisor owns encoder termination and finalization. A
+quarantined writer prevents re-arming another recorder.
+Gated live exits keep submitting UI frames while polling that supervisor;
+an encoder failure or finalization timeout makes the live result fail. They
+never join a blocked writer on the UI thread. Gate-off exits keep their
+original synchronous finalization.
+
+Recording keeps all three outputs: `record.mp4`, `record.txt` and
+`settings.txt`. Its bounded text and path payload is at most 69,632 bytes:
+thirteen 4,096-byte line/header owners, eight 512-byte settings tracker entries,
+and three 4,096-byte output path buffers. Up to six Arc handles share those
+three path buffers; they do not own six copies. Release layout receipts report
+the fixed descriptors separately. Pixels, capture JSON and labels, the capture
+run directory, and the two still-shot writer paths are separate owners, not
+part of that recorder-only payload total.
+
+
+Completed still shots move their existing RGBA allocation, frozen JSON and
+readback permit into the process-owned evidence writer. The worker creates
+directories, streams PNG bytes, writes JSON and fsyncs both files. It publishes
+the durable result before releasing the permit. The UI polls a completion
+cell without waiting for its mutex. Recording retains that permit until its
+raw frame enters the bounded encoder queue or is destroyed on refusal.
+
+The dedicated `t44_draw_memory` target enables its process fixture before Play
+creates a head. It requires `M3_GRANT_TTL_MS`, `M3_SCENE_QUANTUM_MS` and
+`T44_RENDER_BUDGET_LIMITS_JSON`, with all thirteen fields from
+`DrawingBudgetInputs`. The content census supplies those fixture ceilings.
+The target reports release scalar layouts separately from allocator-live
+observations. It counts shared service storage once and keeps active and
+draining consumer gates in separate rows.
+The main-thread `t44_headed_live` fixture uses the normal panel runner with
+explicit process configuration. Its shared live-map cells cover Wait-mode
+painting while a real background GPU lease is held, and paint-only CPU loading
+while the normal navigation scenario runs. Peer progress counts only real
+ingame clients with a complete scene. The loading clock starts after a
+complete scene exists; it is not evidence of a natural region crossing.
+The fixture reports its own control allocation separately from renderer owners.
+
+
+A refused or nonfresh output does not replace the mailbox's completed image
+or advance its generation. A separate identity-checked frame fault reports
+failures after lease release without manufacturing an active scene lease.
+A fresh output with no resource fault clears that frame fault. A complete
+recovered CPU output advances the generation but keeps its typed fault visible.
+
 ### nav-planner
 
 | module | owns (one reason to change) | notes |

@@ -12,6 +12,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   scene pass that still owns the renderer. Experimental fair-render builds
   also keep simulation and overlays running while another view builds 3D.
   Normal builds retain the existing rendering policy pending qualification.
+- Experimental fair-render builds redraw loading overlays over the retained
+  scene on CPU as well as GPU. CPU views reuse one clean scene image instead
+  of allocating a new copy each paint. Configured scene and capture limits
+  refuse work before oversized allocations. Actor-tagged screenshots keep the
+  selected image and its snapshot together across later paints. PNG and JSON
+  saving runs on the evidence writer instead of the UI thread. Capture queues
+  and recording sidecars have bounded memory, and recording shutdown does not
+  join the encoder on the UI thread. These paths remain opt-in pending qualification.
 - Source builds can now omit the JavaScript runtime with
   `--no-default-features`. These builds keep Gatherer, Grinch and Quester,
   their settings, and native Start, Pause, Stop and paint controls. They do

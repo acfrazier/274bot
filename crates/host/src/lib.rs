@@ -46,8 +46,8 @@ pub use random::{
 pub use render_head::SlotRender;
 pub use slot::{dirty_families, should_emit_tick, DirtyFamilies, DrainResult, Pump};
 pub use slot_io::{
-    map_image_to_applet, wake_channel, FrameBuf, InputEv, ManualMoveIntent, MouseOwner, SlotInput,
-    SlotPark, SlotWake,
+    map_image_to_applet, wake_channel, FrameBuf, FrameStamp, InputEv, ManualMoveIntent, MouseOwner,
+    PresentedFrame, SlotInput, SlotPark, SlotWake,
 };
 #[cfg(feature = "journal-paint-proof")]
 pub use slot_io::{JournalPaintStamp, JournalProofFrame};
@@ -610,7 +610,11 @@ impl Host {
                     .is_some_and(|head| head.backend_kind() == BackendKind::Gpu),
         );
         let t_obs = Instant::now();
-        let busy = observe(client, username, *run_sends, &status, &mut slot.run_policy);
+        let busy = {
+            #[cfg(feature = "render-test-hooks")]
+            let _budget_scope = slot.head.as_ref().and_then(Head::budget_scope);
+            observe(client, username, *run_sends, &status, &mut slot.run_policy)
+        };
         let observe_ns = t_obs.elapsed().as_nanos() as u64;
         slot.observe_ns = slot.observe_ns.wrapping_add(observe_ns);
         if observe_ns > slot.observe_max_ns {

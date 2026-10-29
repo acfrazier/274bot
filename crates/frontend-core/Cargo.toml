@@ -49,6 +49,6 @@ debug-catalog = ["host-play/debug-catalog"]
 live-harness = ["host-play/live-harness", "dep:scenario"]
 memory-profile = ["host-play/memory-profile"]
 memory-profile-no-alloc = ["memory-profile", "host-play/memory-profile-no-alloc"]
-render-diagnostics = ["host/render-diagnostics"]
+render-diagnostics = ["host/render-diagnostics", "host-play/render-diagnostics"]
 # Opt-in test integration for the real host render-fault bridge.
 render-test-hooks = ["host/render-test-hooks"]

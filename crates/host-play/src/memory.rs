@@ -94,7 +94,7 @@ fn take_panel_frame_interval_max_ns() -> u64 {
     PANEL_FRAME_INTERVAL_MAX_NS.swap(0, Relaxed)
 }
 
-/// Installed only by benchmark-enabled frontend binaries; no logging or
+/// Installed only by benchmark-enabled frontends and `t44_draw_memory`; no logging or
 /// allocation inside allocator callbacks. Requested Rust bytes exclude
 /// V8 / native / GPU allocators.
 pub struct CountingAllocator;

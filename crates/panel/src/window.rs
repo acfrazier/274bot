@@ -12,11 +12,13 @@
 //! redraw in the same pump still holds the `Window`. Per-frame sizing uses
 //! ImGui's cached display size instead of `Window::inner_size`.
 
+use std::fmt;
 use std::mem;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, TryRecvError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use crate::headed_record::RECORD_LABEL;
@@ -24,6 +26,7 @@ use dear_imgui_rs as imgui;
 use dear_imgui_rs::{BackendFlags, ConfigFlags, DockFlags, Id, TextureId, WindowFlags};
 use dear_imgui_wgpu as imgui_wgpu;
 use dear_imgui_winit as imgui_winit;
+use frontend_core::surface::{FrameBuf, FrameStamp};
 use pollster::block_on;
 use thiserror::Error;
 use winit::application::ApplicationHandler;
@@ -31,6 +34,11 @@ use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
+
+use client::render::backend::{
+    begin_window_readback, CaptureGeometry, ConsumerFrame, PendingWindowReadback, ReadbackBudget,
+    ReadbackError, ReadbackPermit,
+};
 
 #[path = "work_area.rs"]
 mod work_area;
@@ -95,16 +103,192 @@ pub enum PanelError {
 /// A completed whole-window capture: RGBA8 pixels plus the scenario's
 /// sidecar JSON, ready for the panel frame to write (`window.rs` never
 /// touches the filesystem — the loop side stays pure).
-#[derive(Debug)]
 pub struct ShotCapture {
     pub label: String,
     pub snapshot_json: String,
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+    /// Paint sequence whose complete window texture was copied.
+    pub paint_sequence: u64,
+    /// Frame authority held for an actor-tagged window capture.
+    pub actor_stamp: Option<FrameStamp>,
     /// Copied from the readback job; never the current LIVE camera.
     #[cfg(feature = "render-diagnostics")]
     pub pixel_roi: Option<client::render::diagnostics::PixelRoiShotBind>,
+    /// Keeps the process readback slot charged through output handoff.
+    pub(crate) readback_permit: Option<ReadbackPermit>,
+}
+
+impl fmt::Debug for ShotCapture {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut capture = formatter.debug_struct("ShotCapture");
+        capture
+            .field("label", &self.label)
+            .field("snapshot_json", &self.snapshot_json)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("rgba", &self.rgba)
+            .field("paint_sequence", &self.paint_sequence)
+            .field("actor_stamp", &self.actor_stamp);
+        #[cfg(feature = "render-diagnostics")]
+        capture.field("pixel_roi", &self.pixel_roi);
+        capture
+            .field("readback_permit_held", &self.readback_permit.is_some())
+            .finish()
+    }
+}
+
+impl ShotCapture {
+    fn metadata_bytes(&self) -> usize {
+        let mut bytes = self.snapshot_json.capacity();
+        if self.actor_stamp.is_some() {
+            bytes = bytes.saturating_add(mem::size_of::<FrameStamp>());
+        }
+        #[cfg(feature = "render-diagnostics")]
+        if let Some(pixel_roi) = self.pixel_roi.as_ref() {
+            bytes = bytes.saturating_add(pixel_roi_metadata_bytes(pixel_roi));
+        }
+        bytes
+    }
+}
+fn discard_capture_for_failure(capture: ShotCapture) -> String {
+    let ShotCapture {
+        label,
+        snapshot_json,
+        width: _,
+        height: _,
+        rgba,
+        paint_sequence: _,
+        actor_stamp,
+        #[cfg(feature = "render-diagnostics")]
+        pixel_roi,
+        readback_permit,
+    } = capture;
+    drop(snapshot_json);
+    drop(rgba);
+    drop(actor_stamp);
+    #[cfg(feature = "render-diagnostics")]
+    drop(pixel_roi);
+    drop(readback_permit);
+    label
+}
+
+/// Identity and retained pixels accepted together for one actor capture.
+pub struct ActorCaptureFence {
+    stamp: FrameStamp,
+    mailbox: Weak<FrameBuf>,
+    consumer: Option<ConsumerFrame>,
+    staged: bool,
+}
+
+impl ActorCaptureFence {
+    pub fn new(
+        stamp: FrameStamp,
+        mailbox: Weak<FrameBuf>,
+        consumer: Option<ConsumerFrame>,
+    ) -> Result<Self, CaptureError> {
+        if !stamp.has_valid_scene() {
+            return Err(CaptureError::InvalidScene);
+        }
+        match (stamp.present_token(), consumer.as_ref()) {
+            (None, None) => {}
+            (Some(token), Some(frame))
+                if frame.present_token() == token && frame.has_valid_scene() => {}
+            (Some(_), Some(_)) => return Err(CaptureError::StaleHead),
+            _ => return Err(CaptureError::StaleHead),
+        }
+        let fence = Self {
+            stamp,
+            mailbox,
+            consumer,
+            staged: false,
+        };
+        fence.validate_head()?;
+        Ok(fence)
+    }
+
+    pub const fn stamp(&self) -> FrameStamp {
+        self.stamp
+    }
+
+    pub fn consumer_frame(&self) -> Option<&ConsumerFrame> {
+        self.consumer.as_ref()
+    }
+
+    fn validate_head(&self) -> Result<(), CaptureError> {
+        self.mailbox
+            .upgrade()
+            .filter(|mailbox| mailbox.head() == Some(self.stamp.head()))
+            .map(|_| ())
+            .ok_or(CaptureError::StaleHead)
+    }
+
+    fn validate_before_staging(&self) -> Result<(), CaptureError> {
+        if self.staged {
+            return Err(CaptureError::StaleHead);
+        }
+        self.validate_head()?;
+        match (self.stamp.present_token(), self.consumer.as_ref()) {
+            (None, None) => Ok(()),
+            (Some(token), Some(frame))
+                if frame.present_token() == token && frame.has_valid_scene() =>
+            {
+                Ok(())
+            }
+            _ => Err(CaptureError::StaleHead),
+        }
+    }
+
+    fn validate_after_staging(&self) -> Result<(), CaptureError> {
+        if !self.staged || self.consumer.is_some() {
+            return Err(CaptureError::StaleHead);
+        }
+        self.validate_head()
+    }
+
+    fn release_consumer_after_staging(&mut self) {
+        self.staged = true;
+        drop(self.consumer.take());
+    }
+
+    fn metadata_bytes(&self) -> usize {
+        mem::size_of::<Self>()
+    }
+}
+
+struct AcceptedActorCapture {
+    actor: String,
+    fence: ActorCaptureFence,
+}
+
+struct CaptureStamp {
+    paint_sequence: u64,
+    #[cfg(feature = "render-diagnostics")]
+    pixel_roi: Option<client::render::diagnostics::PixelRoiShotBind>,
+}
+
+impl CaptureStamp {
+    fn metadata_bytes(&self) -> usize {
+        mem::size_of::<Self>().saturating_add({
+            #[cfg(feature = "render-diagnostics")]
+            {
+                self.pixel_roi.as_ref().map_or(0, pixel_roi_metadata_bytes)
+            }
+            #[cfg(not(feature = "render-diagnostics"))]
+            {
+                0
+            }
+        })
+    }
+}
+
+#[cfg(feature = "render-diagnostics")]
+fn pixel_roi_metadata_bytes(bind: &client::render::diagnostics::PixelRoiShotBind) -> usize {
+    bind.meta
+        .upload
+        .as_ref()
+        .map_or(0, |upload| upload.slot.capacity())
 }
 
 /// Observable ownership stage for one labeled capture. Terminal harnesses
@@ -118,8 +302,61 @@ pub enum ShotStatus {
     WritePending,
     Written,
     Failed(String),
+    FailedCapture(CaptureError),
 }
 
+/// Capture refusal at the bounded panel boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+pub enum CaptureError {
+    #[error("capture queue is full")]
+    QueueFull,
+    #[error("capture exceeds the configured byte envelope")]
+    TooLarge,
+    #[error("the process readback slot is busy")]
+    Busy,
+    #[error("capture deadline expired")]
+    Expired,
+    #[error("capture deadline overflows Instant")]
+    DeadlineOverflow,
+    #[error("capture policy contains an invalid zero duration")]
+    InvalidPolicy,
+    #[error("capture request is absent")]
+    MissingActorRequest,
+    #[error("capture belongs to a stale head")]
+    StaleHead,
+    #[error("capture requires a valid scene")]
+    InvalidScene,
+    #[error("retained consumer refused capture: {0:?}")]
+    Readback(ReadbackError),
+    #[error("capture output failed")]
+    Io,
+    #[error("capture device operation failed")]
+    Device,
+    #[error("capture requires the explicit render-test-hooks process fixture")]
+    Inactive,
+    #[error("capture policy is not configured")]
+    PolicyMissing,
+    #[error("window paint sequence exhausted")]
+    SequenceExhausted,
+    #[error("capture request has no explicit deadline")]
+    DeadlineMissing,
+}
+
+#[derive(Clone, Copy)]
+struct CapturePolicy {
+    metadata_limit: NonZeroUsize,
+    readback_timeout: Duration,
+}
+
+struct ActiveCapture {
+    label: Option<String>,
+    snapshot_json: String,
+    deadline: Instant,
+    paint_sequence: u64,
+    recording: bool,
+    actor_capture: bool,
+    stamp: Option<CaptureStamp>,
+}
 /// One labeled capture request. Pair terminal shots carry the actor that
 /// must be the selected visible main actor before this job is promoted
 /// into whole-window readback.
@@ -128,6 +365,7 @@ pub struct ShotRequest {
     pub label: String,
     pub snapshot_json: String,
     pub actor: Option<String>,
+    deadline: Option<Instant>,
 }
 
 /// Whole-window capture coordination between the scenario sink (slot
@@ -135,6 +373,14 @@ pub struct ShotRequest {
 /// and the panel frame (file write).
 #[derive(Default)]
 pub struct ShotState {
+    capture_policy: Option<CapturePolicy>,
+    wanted_deadlines: Vec<Option<Instant>>,
+    active_capture: Option<ActiveCapture>,
+    actor_capture: Option<AcceptedActorCapture>,
+    actor_display_confirmed: bool,
+    actor_display_error: Option<CaptureError>,
+    record_deadline: Option<Instant>,
+    record_drops: u64,
     /// Requests pushed by the scenario sink / pair terminal path, drained
     /// by the UI body.
     pub requests: Vec<ShotRequest>,
@@ -142,10 +388,15 @@ pub struct ShotState {
     pub wanted: Vec<(String, String)>,
     /// Captures completed by the render pass, consumed by the UI body.
     pub done: Vec<ShotCapture>,
-    /// Labels whose PNG and matching snapshot sidecar both wrote.
-    written: Vec<String>,
-    /// Terminal failures retained for the harness and diagnostics.
-    failed: Vec<(String, String)>,
+    /// Most recent terminal outcomes (unbounded in legacy mode).
+    terminal: Vec<TerminalStatus>,
+    /// Active asynchronous write text, charged until a terminal outcome.
+    write_pending_label: Option<String>,
+    write_pending_bytes: usize,
+    /// The panel retains its run directory after individual writes finish.
+    output_directory_bytes: usize,
+    #[cfg(feature = "render-diagnostics")]
+    write_pending_diagnostic_charged: bool,
     /// Headed recording (`HEADED_RECORD=1`): set by the UI body when the
     /// frame pacer fires. The next render pass stages one extra readback
     /// from the same just-rendered texture; the capture lands in
@@ -155,40 +406,274 @@ pub struct ShotState {
     pub record_done: Vec<ShotCapture>,
 }
 
+struct TerminalStatus {
+    label: String,
+    outcome: TerminalOutcome,
+}
+
+enum TerminalOutcome {
+    Written,
+    Failed(String),
+    CaptureFailed(CaptureError),
+}
+
 impl ShotState {
-    pub fn enqueue(&mut self, label: String, snapshot_json: String) {
+    /// Enable bounded capture only after the real test-process render fixture
+    /// has been explicitly configured.
+    pub fn configure_capture_policy(
+        &mut self,
+        metadata_limit: NonZeroUsize,
+        readback_timeout: Duration,
+    ) -> Result<(), CaptureError> {
+        if !render_fair_capture_enabled() {
+            return Err(CaptureError::Inactive);
+        }
+        if readback_timeout.is_zero() {
+            return Err(CaptureError::InvalidPolicy);
+        }
+        if self.capture_policy.is_some()
+            || !self.requests.is_empty()
+            || !self.wanted.is_empty()
+            || self.active_capture.is_some()
+            || self.actor_capture.is_some()
+            || !self.done.is_empty()
+            || self.write_pending_label.is_some()
+            || !self.record_done.is_empty()
+            || !self.terminal.is_empty()
+            || self.record_armed
+            || self.record_deadline.is_some()
+        {
+            return Err(CaptureError::Busy);
+        }
+        self.capture_policy = Some(CapturePolicy {
+            metadata_limit,
+            readback_timeout,
+        });
+        Ok(())
+    }
+
+    pub fn capture_deadline(&self, now: Instant) -> Result<Instant, CaptureError> {
+        if !render_fair_capture_enabled() {
+            return Err(CaptureError::Inactive);
+        }
+        let policy = self.capture_policy.ok_or(CaptureError::PolicyMissing)?;
+        if policy.readback_timeout.is_zero() {
+            return Err(CaptureError::InvalidPolicy);
+        }
+        now.checked_add(policy.readback_timeout)
+            .ok_or(CaptureError::DeadlineOverflow)
+    }
+
+    /// Serialize an untagged request only inside its complete byte allowance.
+    pub(crate) fn enqueue_bounded_snapshot(
+        &mut self,
+        label: &str,
+        build: impl FnOnce(usize) -> Result<String, CaptureError>,
+    ) -> Result<(), CaptureError> {
+        self.enqueue_bounded_request(label, None, build)
+    }
+
+    /// Actor snapshots are rebuilt after a real stamped frame is accepted.
+    /// Do not allocate a speculative JSON snapshot while waiting for that frame.
+    pub(crate) fn enqueue_bounded_actor_request(
+        &mut self,
+        label: &str,
+        actor: &str,
+    ) -> Result<(), CaptureError> {
+        self.enqueue_bounded_request(label, Some(actor), |_| Ok(String::new()))
+    }
+
+    fn enqueue_bounded_request(
+        &mut self,
+        label: &str,
+        actor: Option<&str>,
+        build: impl FnOnce(usize) -> Result<String, CaptureError>,
+    ) -> Result<(), CaptureError> {
+        let deadline = self.capture_deadline(Instant::now())?;
+        if self.requests.len() >= CAPTURE_QUEUE {
+            return Err(CaptureError::QueueFull);
+        }
+        if label.len() > CAPTURE_NAME_BYTES
+            || actor.is_some_and(|actor| actor.len() > CAPTURE_NAME_BYTES)
+        {
+            return Err(CaptureError::TooLarge);
+        }
+        let policy = self.capture_policy.ok_or(CaptureError::PolicyMissing)?;
+        let remaining = policy
+            .metadata_limit
+            .get()
+            .checked_sub(self.metadata_bytes())
+            .ok_or(CaptureError::TooLarge)?;
+        let label = copy_text_with_capacity(label, remaining)?;
+        let remaining = remaining
+            .checked_sub(label.capacity())
+            .ok_or(CaptureError::TooLarge)?;
+        let actor = actor
+            .map(|actor| copy_text_with_capacity(actor, remaining))
+            .transpose()?;
+        let maximum = remaining
+            .checked_sub(actor.as_ref().map_or(0, String::capacity))
+            .ok_or(CaptureError::TooLarge)?;
+        let snapshot_json = build(maximum)?;
+        if snapshot_json.capacity() > maximum {
+            return Err(CaptureError::TooLarge);
+        }
+        self.enqueue_request(ShotRequest {
+            label,
+            snapshot_json,
+            actor,
+            deadline: Some(deadline),
+        })
+    }
+
+    /// Replace the retained directory under the metadata lock. During the
+    /// builder call the old directory still counts, so old/new copies overlap
+    /// only inside the explicit fixture allowance.
+    pub(crate) fn replace_output_directory(
+        &mut self,
+        directory: &mut Option<std::path::PathBuf>,
+        build: impl FnOnce(usize) -> Result<std::path::PathBuf, CaptureError>,
+    ) -> Result<(), CaptureError> {
+        if !render_fair_capture_enabled() {
+            return Err(CaptureError::Inactive);
+        }
+        let policy = self.capture_policy.ok_or(CaptureError::PolicyMissing)?;
+        let maximum = policy
+            .metadata_limit
+            .get()
+            .checked_sub(self.metadata_bytes())
+            .ok_or(CaptureError::TooLarge)?;
+        let path = build(maximum)?;
+        if path.capacity() > maximum {
+            return Err(CaptureError::TooLarge);
+        }
+        let bytes = path.capacity();
+        *directory = Some(path);
+        self.output_directory_bytes = bytes;
+        Ok(())
+    }
+
+    pub fn enqueue(&mut self, label: String, snapshot_json: String) -> Result<(), CaptureError> {
         self.enqueue_request(ShotRequest {
             label,
             snapshot_json,
             actor: None,
-        });
+            deadline: None,
+        })
     }
 
-    pub fn enqueue_for_actor(&mut self, label: String, snapshot_json: String, actor: String) {
+    pub fn enqueue_with_deadline(
+        &mut self,
+        label: String,
+        snapshot_json: String,
+        deadline: Instant,
+    ) -> Result<(), CaptureError> {
+        self.enqueue_request(ShotRequest {
+            label,
+            snapshot_json,
+            actor: None,
+            deadline: Some(deadline),
+        })
+    }
+
+    pub fn enqueue_for_actor(
+        &mut self,
+        label: String,
+        snapshot_json: String,
+        actor: String,
+    ) -> Result<(), CaptureError> {
         self.enqueue_request(ShotRequest {
             label,
             snapshot_json,
             actor: Some(actor),
-        });
+            deadline: None,
+        })
     }
 
-    fn enqueue_request(&mut self, request: ShotRequest) {
-        self.written.retain(|written| written != &request.label);
-        self.failed.retain(|(failed, _)| failed != &request.label);
+    pub fn enqueue_for_actor_with_deadline(
+        &mut self,
+        label: String,
+        snapshot_json: String,
+        actor: String,
+        deadline: Instant,
+    ) -> Result<(), CaptureError> {
+        self.enqueue_request(ShotRequest {
+            label,
+            snapshot_json,
+            actor: Some(actor),
+            deadline: Some(deadline),
+        })
+    }
+
+    fn enqueue_request(&mut self, request: ShotRequest) -> Result<(), CaptureError> {
+        if render_fair_capture_enabled() {
+            let policy = self.capture_policy.ok_or(CaptureError::PolicyMissing)?;
+            if request.deadline.is_none() {
+                return Err(CaptureError::DeadlineMissing);
+            }
+            if request
+                .deadline
+                .is_some_and(|deadline| deadline <= Instant::now())
+            {
+                return Err(CaptureError::Expired);
+            }
+            if self.requests.len() >= CAPTURE_QUEUE {
+                return Err(CaptureError::QueueFull);
+            }
+            if request.label.len() > CAPTURE_NAME_BYTES
+                || request
+                    .actor
+                    .as_ref()
+                    .is_some_and(|actor| actor.len() > CAPTURE_NAME_BYTES)
+                || self
+                    .metadata_bytes()
+                    .checked_add(request.metadata_bytes())
+                    .is_none_or(|bytes| bytes > policy.metadata_limit.get())
+            {
+                return Err(CaptureError::TooLarge);
+            }
+            self.requests
+                .try_reserve_exact(1)
+                .map_err(|_| CaptureError::QueueFull)?;
+        }
+        self.terminal.retain(|status| status.label != request.label);
         self.requests.push(request);
+        Ok(())
     }
 
-    /// Promote untagged jobs. Actor-tagged pair jobs stay queued until
-    /// [`Self::promote_ready`] sees that actor selected and presented.
+    /// Promote untagged jobs. Actor-tagged jobs require an accepted stamped
+    /// frame through [`Self::accept_actor_frame`].
     pub fn promote_requests(&mut self) -> usize {
         self.promote_ready(None, None)
     }
 
-    /// Promote at most one actor-tagged job, and only when that actor is
-    /// both focused and already presented in the game view. Untagged jobs
-    /// promote together only when no actor-tagged job is pending, so two
-    /// pair actors never share one unready whole-window readback.
+    /// Promote untagged jobs. The legacy path retains its actor-name
+    /// readiness behavior; the gated path requires an accepted frame fence.
     pub fn promote_ready(&mut self, focused: Option<&str>, presented: Option<&str>) -> usize {
+        if render_fair_capture_enabled() {
+            if self.actor_capture.is_some() {
+                return 0;
+            }
+            let has_actor = self.requests.iter().any(|request| request.actor.is_some());
+            let mut count = 0;
+            let mut index = 0;
+            while index < self.requests.len() {
+                let promote = self.requests[index].actor.is_none() && !has_actor;
+                if !promote
+                    || self.wanted.len() >= CAPTURE_QUEUE
+                    || self.wanted.try_reserve_exact(1).is_err()
+                    || self.wanted_deadlines.try_reserve_exact(1).is_err()
+                {
+                    index += 1;
+                    continue;
+                }
+                let request = self.requests.remove(index);
+                self.wanted.push((request.label, request.snapshot_json));
+                self.wanted_deadlines.push(request.deadline);
+                count += 1;
+            }
+            return count;
+        }
         let requests = mem::take(&mut self.requests);
         let has_actor = requests.iter().any(|request| request.actor.is_some());
         let mut count = 0;
@@ -215,20 +700,207 @@ impl ShotState {
         count
     }
 
-    /// First actor-tagged job still waiting to be promoted.
+    /// First actor-tagged job still waiting for a presented frame.
     pub fn pending_actor_request(&self) -> Option<&ShotRequest> {
         self.requests.iter().find(|request| request.actor.is_some())
     }
 
-    pub fn capture_in_flight(&self) -> bool {
-        !self.wanted.is_empty() || !self.done.is_empty()
+    /// Accept the selected actor's exact presented frame with a bounded
+    /// snapshot builder. It receives the remaining byte allowance while the
+    /// queued JSON and frame fence are still charged; returned capacity must
+    /// fit within that allowance.
+    pub fn accept_actor_frame(
+        &mut self,
+        actor: &str,
+        build_snapshot: impl FnOnce(usize) -> Result<String, CaptureError>,
+        fence: ActorCaptureFence,
+    ) -> Result<(), CaptureError> {
+        if !render_fair_capture_enabled() {
+            return Err(CaptureError::Inactive);
+        }
+        let policy = self.capture_policy.ok_or(CaptureError::PolicyMissing)?;
+        if actor.len() > CAPTURE_NAME_BYTES {
+            return Err(CaptureError::TooLarge);
+        }
+        let index = self
+            .requests
+            .iter()
+            .position(|request| request.actor.as_deref() == Some(actor))
+            .ok_or(CaptureError::MissingActorRequest)?;
+        if self.actor_capture.is_some()
+            || !self.wanted.is_empty()
+            || self.active_capture.is_some()
+            || !self.done.is_empty()
+            || self.write_pending_label.is_some()
+            || !self.record_done.is_empty()
+        {
+            return Err(CaptureError::Busy);
+        }
+        fence.validate_before_staging()?;
+        let request = &self.requests[index];
+        let deadline = request.deadline.ok_or(CaptureError::DeadlineMissing)?;
+        if deadline <= Instant::now() {
+            return Err(CaptureError::Expired);
+        }
+        if self.wanted.len() >= CAPTURE_QUEUE
+            || self.wanted.try_reserve_exact(1).is_err()
+            || self.wanted_deadlines.try_reserve_exact(1).is_err()
+        {
+            return Err(CaptureError::QueueFull);
+        }
+        let used_with_fence = self
+            .metadata_bytes()
+            .checked_add(fence.metadata_bytes())
+            .ok_or(CaptureError::TooLarge)?;
+        let snapshot_allowance = policy
+            .metadata_limit
+            .get()
+            .checked_sub(used_with_fence)
+            .ok_or(CaptureError::TooLarge)?;
+        let snapshot_json = build_snapshot(snapshot_allowance)?;
+        if snapshot_json.capacity() > snapshot_allowance {
+            return Err(CaptureError::TooLarge);
+        }
+        let new_total = self
+            .metadata_bytes()
+            .checked_sub(request.snapshot_json.capacity())
+            .and_then(|bytes| bytes.checked_add(snapshot_json.capacity()))
+            .and_then(|bytes| bytes.checked_add(fence.metadata_bytes()))
+            .ok_or(CaptureError::TooLarge)?;
+        if new_total > policy.metadata_limit.get() {
+            return Err(CaptureError::TooLarge);
+        }
+        let request = self.requests.remove(index);
+        let actor = request.actor.ok_or(CaptureError::MissingActorRequest)?;
+        self.wanted.push((request.label, snapshot_json));
+        self.wanted_deadlines.push(request.deadline);
+        self.actor_capture = Some(AcceptedActorCapture { actor, fence });
+        self.actor_display_confirmed = false;
+        self.actor_display_error = None;
+        Ok(())
     }
 
-    /// Arm one recording readback for the next render pass. Idempotent:
-    /// the flag is consumed once, so a pacer tick during an occluded
-    /// frame simply captures the next visible one.
-    pub fn arm_record(&mut self) {
+    /// The consumer frame the UI must bind for this accepted actor shot.
+    pub fn actor_consumer_frame(&self, actor: &str) -> Option<&ConsumerFrame> {
+        self.actor_capture
+            .as_ref()
+            .filter(|accepted| accepted.actor == actor)
+            .and_then(|accepted| accepted.fence.consumer_frame())
+    }
+
+    /// Confirm that the accepted actor's exact frame was submitted to the
+    /// focused ImGui image during this UI paint.
+    pub fn confirm_actor_display(
+        &mut self,
+        actor: &str,
+        stamp: Option<FrameStamp>,
+    ) -> Result<(), CaptureError> {
+        self.actor_display_confirmed = false;
+        self.actor_display_error = Some(CaptureError::StaleHead);
+        let accepted = self
+            .actor_capture
+            .as_ref()
+            .ok_or(CaptureError::MissingActorRequest)?;
+        if accepted.actor != actor {
+            return Err(CaptureError::StaleHead);
+        }
+        let stamp = stamp.ok_or(CaptureError::StaleHead)?;
+        if !stamp.has_valid_scene() {
+            self.actor_display_error = Some(CaptureError::InvalidScene);
+            return Err(CaptureError::InvalidScene);
+        }
+        if stamp != accepted.fence.stamp {
+            return Err(CaptureError::StaleHead);
+        }
+        self.actor_display_confirmed = true;
+        self.actor_display_error = None;
+        Ok(())
+    }
+
+    fn reset_actor_display_confirmation(&mut self) {
+        self.actor_display_confirmed = false;
+        self.actor_display_error = None;
+    }
+
+    fn validate_accepted_actor_for_staging(&self) -> Result<(), CaptureError> {
+        if !self.actor_display_confirmed {
+            return Err(self.actor_display_error.unwrap_or(CaptureError::StaleHead));
+        }
+        self.actor_capture
+            .as_ref()
+            .ok_or(CaptureError::StaleHead)?
+            .fence
+            .validate_before_staging()
+    }
+
+    fn validate_active_actor_for_staging(&self) -> Result<(), CaptureError> {
+        let active = self
+            .active_capture
+            .as_ref()
+            .ok_or(CaptureError::StaleHead)?;
+        if active.actor_capture {
+            self.validate_accepted_actor_for_staging()
+        } else {
+            Ok(())
+        }
+    }
+
+    fn release_actor_consumer_after_staging(&mut self) -> Result<(), CaptureError> {
+        let active = self
+            .active_capture
+            .as_ref()
+            .ok_or(CaptureError::StaleHead)?;
+        if active.actor_capture {
+            self.actor_capture
+                .as_mut()
+                .ok_or(CaptureError::StaleHead)?
+                .fence
+                .release_consumer_after_staging();
+        }
+        Ok(())
+    }
+
+    pub fn holds_actor_frame(&self, actor: &str) -> bool {
+        self.actor_capture
+            .as_ref()
+            .is_some_and(|accepted| accepted.actor == actor && !accepted.fence.staged)
+    }
+
+    pub fn capture_in_flight(&self) -> bool {
+        !self.wanted.is_empty()
+            || !self.done.is_empty()
+            || self.active_capture.is_some()
+            || self.actor_capture.is_some()
+            || self.write_pending_label.is_some()
+    }
+
+    /// Arm a legacy recording frame. Gated capture requires an explicit
+    /// caller-owned deadline through `arm_record_with_deadline`.
+    pub fn arm_record(&mut self) -> Result<(), CaptureError> {
+        if render_fair_capture_enabled() {
+            return Err(if self.capture_policy.is_some() {
+                CaptureError::DeadlineMissing
+            } else {
+                CaptureError::PolicyMissing
+            });
+        }
         self.record_armed = true;
+        Ok(())
+    }
+
+    pub fn arm_record_with_deadline(&mut self, deadline: Instant) -> Result<(), CaptureError> {
+        if !render_fair_capture_enabled() {
+            return Err(CaptureError::Inactive);
+        }
+        if self.capture_policy.is_none() {
+            return Err(CaptureError::PolicyMissing);
+        }
+        if deadline <= Instant::now() {
+            return Err(CaptureError::Expired);
+        }
+        self.record_armed = true;
+        self.record_deadline = Some(deadline);
+        Ok(())
     }
 
     /// Take completed recording frames for the recorder pump.
@@ -236,62 +908,285 @@ impl ShotState {
         std::mem::take(&mut self.record_done)
     }
 
-    /// True when the next render pass must stage a readback: a promoted
-    /// shot, a recording frame, or both.
+    /// Drain asynchronous recorder refusals so the recorder can count each
+    /// not-yet-accepted opportunity.
+    pub fn take_record_drops(&mut self) -> u64 {
+        mem::take(&mut self.record_drops)
+    }
+
+    /// True when the next render pass must stage a readback.
     pub fn capture_pending(&self) -> bool {
         !self.wanted.is_empty() || self.record_armed
     }
 
     /// Replace the sidecar on a still-queued actor job so the readback
     /// carries the current scene2 snapshot, not the JSON frozen at enqueue.
-    pub fn refresh_actor_sidecar(&mut self, actor: &str, snapshot_json: String) {
-        if let Some(request) = self
+    pub fn refresh_actor_sidecar(
+        &mut self,
+        actor: &str,
+        snapshot_json: String,
+    ) -> Result<(), CaptureError> {
+        let Some(index) = self
             .requests
-            .iter_mut()
-            .find(|request| request.actor.as_deref() == Some(actor))
-        {
-            request.snapshot_json = snapshot_json;
+            .iter()
+            .position(|request| request.actor.as_deref() == Some(actor))
+        else {
+            return Ok(());
+        };
+        if render_fair_capture_enabled() {
+            let policy = self.capture_policy.ok_or(CaptureError::PolicyMissing)?;
+            let old_bytes = self.requests[index].snapshot_json.capacity();
+            let new_total = self
+                .metadata_bytes()
+                .saturating_sub(old_bytes)
+                .checked_add(snapshot_json.capacity())
+                .ok_or(CaptureError::TooLarge)?;
+            if snapshot_json.capacity() > policy.metadata_limit.get()
+                || new_total > policy.metadata_limit.get()
+            {
+                return Err(CaptureError::TooLarge);
+            }
         }
+        self.requests[index].snapshot_json = snapshot_json;
+        Ok(())
     }
 
     /// Drop pending work for `labels` and retain a terminal failure so a
     /// later unready buffer cannot write after the drain/error.
-    pub fn fail_labels(&mut self, labels: &[String], error: &str) {
-        self.requests
-            .retain(|request| !labels.iter().any(|label| label == &request.label));
-        self.wanted
-            .retain(|(label, _)| !labels.iter().any(|wanted| wanted == label));
-        self.done
-            .retain(|capture| !labels.iter().any(|label| label == &capture.label));
+    pub fn fail_labels(&mut self, labels: &[impl AsRef<str>], error: &str) {
+        self.cancel_capture_requests(|candidate| {
+            labels.iter().any(|label| label.as_ref() == candidate)
+        });
         for label in labels {
-            self.mark_failed(label, error);
+            self.mark_failed(label.as_ref(), error);
+        }
+    }
+
+    pub(crate) fn fail_capture_label(
+        &mut self,
+        label: &str,
+        error: CaptureError,
+    ) -> Result<(), CaptureError> {
+        self.cancel_capture_requests(|candidate| candidate == label);
+        self.mark_failed_capture(label, error)
+    }
+
+    fn cancel_capture_requests(&mut self, matches_label: impl Fn(&str) -> bool) {
+        let failed_actor_capture = self.actor_capture.is_some()
+            && (self.wanted.iter().any(|(wanted, _)| matches_label(wanted))
+                || self
+                    .active_capture
+                    .as_ref()
+                    .and_then(|active| active.label.as_ref())
+                    .is_some_and(|active| matches_label(active)));
+        self.requests
+            .retain(|request| !matches_label(&request.label));
+        self.wanted_deadlines.resize(self.wanted.len(), None);
+        let mut index = 0;
+        while index < self.wanted.len() {
+            if matches_label(&self.wanted[index].0) {
+                self.wanted.remove(index);
+                self.wanted_deadlines.remove(index);
+            } else {
+                index += 1;
+            }
+        }
+        self.done.retain(|capture| !matches_label(&capture.label));
+        if self
+            .active_capture
+            .as_ref()
+            .and_then(|active| active.label.as_ref())
+            .is_some_and(|active| matches_label(active))
+        {
+            self.active_capture = None;
+        }
+        if failed_actor_capture {
+            self.actor_capture = None;
+            self.reset_actor_display_confirmation();
         }
     }
 
     pub fn mark_written(&mut self, label: &str) {
-        self.failed.retain(|(failed, _)| failed != label);
-        if !self.written.iter().any(|written| written == label) {
-            self.written.push(label.to_string());
+        if !render_fair_capture_enabled() {
+            self.clear_write_pending(label);
+            self.terminal.retain(|status| status.label != label);
+            self.terminal.push(TerminalStatus {
+                label: label.to_string(),
+                outcome: TerminalOutcome::Written,
+            });
+            self.trim_terminal_metadata();
+            return;
         }
+        let Some(_) = self.capture_policy else {
+            self.clear_write_pending(label);
+            return;
+        };
+        let pending_label = self.take_write_pending_label(label);
+        let bytes = pending_label.as_ref().map_or(label.len(), String::capacity);
+        let Ok(available) = self.admit_terminal_label(label, bytes) else {
+            return;
+        };
+        let owned_label = match pending_label {
+            Some(label) => label,
+            None => match copy_text_with_capacity(label, available) {
+                Ok(label) => label,
+                Err(_) => return,
+            },
+        };
+        self.terminal.push(TerminalStatus {
+            label: owned_label,
+            outcome: TerminalOutcome::Written,
+        });
     }
 
     pub fn mark_failed(&mut self, label: &str, error: &str) {
-        self.written.retain(|written| written != label);
-        self.failed.retain(|(failed, _)| failed != label);
-        self.failed.push((label.to_string(), error.to_string()));
+        if !render_fair_capture_enabled() {
+            self.clear_write_pending(label);
+            self.terminal.retain(|status| status.label != label);
+            self.terminal.push(TerminalStatus {
+                label: label.to_string(),
+                outcome: TerminalOutcome::Failed(error.to_string()),
+            });
+            self.trim_terminal_metadata();
+            return;
+        }
+        let Some(policy) = self.capture_policy else {
+            self.clear_write_pending(label);
+            return;
+        };
+        let pending_label = self.take_write_pending_label(label);
+        let bytes = pending_label.as_ref().map_or(label.len(), String::capacity);
+        let Ok(available) = self.admit_terminal_label(label, bytes) else {
+            return;
+        };
+        let owned_label = match pending_label {
+            Some(label) => label,
+            None => match copy_text_with_capacity(label, available) {
+                Ok(label) => label,
+                Err(_) => return,
+            },
+        };
+        let available = policy
+            .metadata_limit
+            .get()
+            .saturating_sub(self.metadata_bytes().saturating_add(owned_label.capacity()));
+        let bounded_error = truncate_utf8(error, available);
+        let owned_error = match copy_text_with_capacity(bounded_error, available) {
+            Ok(error) => error,
+            Err(_) => return,
+        };
+        self.terminal.push(TerminalStatus {
+            label: owned_label,
+            outcome: TerminalOutcome::Failed(owned_error),
+        });
+    }
+    pub fn fail_actor_frame(
+        &mut self,
+        actor: &str,
+        error: CaptureError,
+    ) -> Result<(), CaptureError> {
+        if !render_fair_capture_enabled() {
+            return Err(CaptureError::Inactive);
+        }
+        if self.capture_policy.is_none() {
+            return Err(CaptureError::PolicyMissing);
+        }
+        let index = self
+            .requests
+            .iter()
+            .position(|request| request.actor.as_deref() == Some(actor))
+            .ok_or(CaptureError::MissingActorRequest)?;
+        let request = self.requests.remove(index);
+        if let Err(error) = self.mark_failed_capture(&request.label, error) {
+            self.requests.insert(index, request);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn mark_failed_capture(
+        &mut self,
+        label: &str,
+        error: CaptureError,
+    ) -> Result<(), CaptureError> {
+        self.capture_policy.ok_or(CaptureError::PolicyMissing)?;
+        let pending_label = self.take_write_pending_label(label);
+        let bytes = pending_label.as_ref().map_or(label.len(), String::capacity);
+        let available = self.admit_terminal_label(label, bytes)?;
+        let owned_label = match pending_label {
+            Some(label) => label,
+            None => copy_text_with_capacity(label, available)?,
+        };
+        self.terminal.push(TerminalStatus {
+            label: owned_label,
+            outcome: TerminalOutcome::CaptureFailed(error),
+        });
+        Ok(())
+    }
+
+    /// Evict old terminal owners before allocating their replacement. Reserving
+    /// after the queue check also keeps the terminal vector at eight entries.
+    fn admit_terminal_label(&mut self, label: &str, bytes: usize) -> Result<usize, CaptureError> {
+        let policy = self.capture_policy.ok_or(CaptureError::PolicyMissing)?;
+        if label.len() > CAPTURE_NAME_BYTES || bytes > policy.metadata_limit.get() {
+            return Err(CaptureError::TooLarge);
+        }
+        self.terminal.retain(|status| status.label != label);
+        while self.terminal.len() >= CAPTURE_QUEUE
+            || self
+                .metadata_bytes()
+                .checked_add(bytes)
+                .and_then(|total| {
+                    total.checked_add(
+                        self.terminal
+                            .len()
+                            .saturating_add(1)
+                            .saturating_sub(self.terminal.capacity())
+                            .saturating_mul(mem::size_of::<TerminalStatus>()),
+                    )
+                })
+                .is_none_or(|total| total > policy.metadata_limit.get())
+        {
+            if self.terminal.is_empty() {
+                return Err(CaptureError::TooLarge);
+            }
+            self.terminal.remove(0);
+        }
+        self.terminal
+            .try_reserve_exact(1)
+            .map_err(|_| CaptureError::QueueFull)?;
+        policy
+            .metadata_limit
+            .get()
+            .checked_sub(self.metadata_bytes())
+            .filter(|available| *available >= bytes)
+            .ok_or(CaptureError::TooLarge)
     }
 
     pub fn status(&self, label: &str) -> ShotStatus {
-        if let Some((_, error)) = self.failed.iter().rev().find(|(failed, _)| failed == label) {
-            return ShotStatus::Failed(error.clone());
+        if let Some(status) = self
+            .terminal
+            .iter()
+            .rev()
+            .find(|status| status.label == label)
+        {
+            return match &status.outcome {
+                TerminalOutcome::Written => ShotStatus::Written,
+                TerminalOutcome::Failed(error) => ShotStatus::Failed(error.clone()),
+                TerminalOutcome::CaptureFailed(error) => ShotStatus::FailedCapture(*error),
+            };
         }
-        if self.written.iter().any(|written| written == label) {
-            return ShotStatus::Written;
-        }
-        if self.done.iter().any(|capture| capture.label == label) {
+        if self.write_pending_label.as_deref() == Some(label)
+            || self.done.iter().any(|capture| capture.label == label)
+        {
             return ShotStatus::WritePending;
         }
-        if self.wanted.iter().any(|(wanted, _)| wanted == label) {
+        if self
+            .active_capture
+            .as_ref()
+            .is_some_and(|active| !active.recording && active.label.as_deref() == Some(label))
+            || self.wanted.iter().any(|(wanted, _)| wanted == label)
+        {
             return ShotStatus::ReadbackPending;
         }
         if self
@@ -302,6 +1197,598 @@ impl ShotState {
             return ShotStatus::Requested;
         }
         ShotStatus::Missing
+    }
+
+    fn clear_write_pending(&mut self, label: &str) {
+        if self.write_pending_label.as_deref() == Some(label) {
+            self.write_pending_label = None;
+            self.write_pending_bytes = 0;
+            #[cfg(feature = "render-diagnostics")]
+            {
+                self.write_pending_diagnostic_charged = false;
+            }
+        }
+    }
+
+    fn take_write_pending_label(&mut self, label: &str) -> Option<String> {
+        if self.write_pending_label.as_deref() == Some(label) {
+            self.write_pending_bytes = 0;
+            #[cfg(feature = "render-diagnostics")]
+            {
+                self.write_pending_diagnostic_charged = false;
+            }
+            self.write_pending_label.take()
+        } else {
+            None
+        }
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    /// Clone the pending writer label only when its actual capacity fits the
+    /// remaining budget.
+    pub(crate) fn try_clone_pending_diagnostic_label(
+        &mut self,
+        label: &str,
+    ) -> Result<String, CaptureError> {
+        if !render_fair_capture_enabled() {
+            return Err(CaptureError::Inactive);
+        }
+        let policy = self.capture_policy.ok_or(CaptureError::PolicyMissing)?;
+        if self.write_pending_label.as_deref() != Some(label) {
+            return Err(CaptureError::StaleHead);
+        }
+        if self.write_pending_diagnostic_charged {
+            return Err(CaptureError::Busy);
+        }
+        if label.len() > CAPTURE_NAME_BYTES {
+            return Err(CaptureError::TooLarge);
+        }
+        let requested_total = self
+            .metadata_bytes()
+            .checked_add(label.len())
+            .ok_or(CaptureError::TooLarge)?;
+        if requested_total > policy.metadata_limit.get() {
+            return Err(CaptureError::TooLarge);
+        }
+        let mut diagnostic_label = String::new();
+        diagnostic_label
+            .try_reserve_exact(label.len())
+            .map_err(|_| CaptureError::QueueFull)?;
+        let actual_total = self
+            .metadata_bytes()
+            .checked_add(diagnostic_label.capacity())
+            .ok_or(CaptureError::TooLarge)?;
+        if actual_total > policy.metadata_limit.get() {
+            return Err(CaptureError::TooLarge);
+        }
+        diagnostic_label.push_str(label);
+        self.write_pending_bytes = self
+            .write_pending_bytes
+            .checked_add(diagnostic_label.capacity())
+            .ok_or(CaptureError::TooLarge)?;
+        self.write_pending_diagnostic_charged = true;
+        Ok(diagnostic_label)
+    }
+
+    fn record_capture_failure_owned(
+        &mut self,
+        label: &mut String,
+        error: CaptureError,
+    ) -> Result<(), CaptureError> {
+        self.admit_terminal_label(label, label.capacity())?;
+        self.terminal.push(TerminalStatus {
+            label: mem::take(label),
+            outcome: TerminalOutcome::CaptureFailed(error),
+        });
+        Ok(())
+    }
+
+    pub(crate) fn take_done_for_write(&mut self) -> Option<ShotCapture> {
+        if self.write_pending_label.is_some() || self.done.is_empty() {
+            return None;
+        }
+        let capture = self.done.remove(0);
+        let mut pending_label = String::new();
+        if pending_label
+            .try_reserve_exact(capture.label.len())
+            .is_err()
+        {
+            let mut label = discard_capture_for_failure(capture);
+            let _ = self.record_capture_failure_owned(&mut label, CaptureError::QueueFull);
+            return None;
+        }
+        pending_label.push_str(&capture.label);
+        let writer_charge = capture
+            .metadata_bytes()
+            .saturating_add(capture.label.capacity())
+            .saturating_add(pending_label.capacity());
+        if self.capture_policy.is_some_and(|policy| {
+            self.metadata_bytes().saturating_add(writer_charge) > policy.metadata_limit.get()
+        }) {
+            drop(pending_label);
+            let mut label = discard_capture_for_failure(capture);
+            let _ = self.record_capture_failure_owned(&mut label, CaptureError::TooLarge);
+            return None;
+        }
+        self.write_pending_bytes = writer_charge;
+        self.write_pending_label = Some(pending_label);
+        #[cfg(feature = "render-diagnostics")]
+        {
+            self.write_pending_diagnostic_charged = false;
+        }
+        Some(capture)
+    }
+
+    /// Bound all three path owners before the pure builder copies any path.
+    /// The directory remains charged between writes; the two output paths
+    /// stay in the pending-writer charge until durable completion.
+    pub(crate) fn with_pending_output_paths<T>(
+        &mut self,
+        label: &str,
+        build: impl FnOnce(usize) -> Result<(T, usize, usize), CaptureError>,
+    ) -> Result<T, CaptureError> {
+        if !render_fair_capture_enabled() {
+            return Err(CaptureError::Inactive);
+        }
+        let policy = self.capture_policy.ok_or(CaptureError::PolicyMissing)?;
+        if self.write_pending_label.as_deref() != Some(label) {
+            return Err(CaptureError::StaleHead);
+        }
+        let used_without_directory = self
+            .metadata_bytes()
+            .checked_sub(self.output_directory_bytes)
+            .ok_or(CaptureError::TooLarge)?;
+        let available = policy
+            .metadata_limit
+            .get()
+            .checked_sub(used_without_directory)
+            .ok_or(CaptureError::TooLarge)?;
+        let path_limit = available / 3;
+        if path_limit == 0 {
+            return Err(CaptureError::TooLarge);
+        }
+        let (paths, directory_bytes, output_bytes) = build(path_limit)?;
+        if directory_bytes > path_limit || output_bytes > path_limit * 2 {
+            return Err(CaptureError::TooLarge);
+        }
+        self.write_pending_bytes = self
+            .write_pending_bytes
+            .checked_add(output_bytes)
+            .ok_or(CaptureError::TooLarge)?;
+        self.output_directory_bytes = directory_bytes;
+        Ok(paths)
+    }
+
+    fn reserve_next_readback(
+        &mut self,
+        geometry: CaptureGeometry,
+        now: Instant,
+        paint_sequence: u64,
+    ) -> Result<Option<ReadbackPermit>, CaptureError> {
+        if !render_fair_capture_enabled() {
+            return Err(CaptureError::Inactive);
+        }
+        if self.capture_policy.is_none() {
+            return Err(CaptureError::PolicyMissing);
+        }
+        if self.active_capture.is_some() {
+            return Ok(None);
+        }
+        let recording = self.wanted.is_empty() && self.record_armed;
+        if self.wanted.is_empty() && !recording {
+            return Ok(None);
+        }
+        let actor_capture = !recording && self.actor_capture.is_some();
+        if actor_capture {
+            if let Err(error) = self.validate_accepted_actor_for_staging() {
+                let (mut label, _) = self.wanted.remove(0);
+                self.wanted_deadlines.remove(0);
+                self.actor_capture = None;
+                self.reset_actor_display_confirmation();
+                self.record_capture_failure_owned(&mut label, error)?;
+                return Err(error);
+            }
+        }
+        let deadline = if recording {
+            self.record_deadline.ok_or(CaptureError::DeadlineMissing)?
+        } else {
+            self.wanted_deadlines.resize(self.wanted.len(), None);
+            self.wanted_deadlines[0].ok_or(CaptureError::DeadlineMissing)?
+        };
+        if deadline <= now {
+            if recording {
+                self.record_armed = false;
+                self.record_deadline = None;
+                self.record_drops = self.record_drops.saturating_add(1);
+            } else {
+                let (mut label, _) = self.wanted.remove(0);
+                self.wanted_deadlines.remove(0);
+                if actor_capture {
+                    self.actor_capture = None;
+                    self.reset_actor_display_confirmation();
+                }
+                self.record_capture_failure_owned(&mut label, CaptureError::Expired)?;
+            }
+            return Err(CaptureError::Expired);
+        }
+        if recording && self.record_done.len() >= CAPTURE_QUEUE {
+            self.record_armed = false;
+            self.record_deadline = None;
+            self.record_drops = self.record_drops.saturating_add(1);
+            return Err(CaptureError::QueueFull);
+        }
+        if !recording && self.screenshot_done_depth() >= CAPTURE_QUEUE {
+            return Ok(None);
+        }
+        let queue_reservation = if recording {
+            self.record_done.try_reserve_exact(1)
+        } else {
+            self.done.try_reserve_exact(1)
+        };
+        if queue_reservation.is_err() {
+            if recording {
+                self.record_armed = false;
+                self.record_deadline = None;
+                self.record_drops = self.record_drops.saturating_add(1);
+                return Err(CaptureError::QueueFull);
+            }
+            let (mut label, _) = self.wanted.remove(0);
+            self.wanted_deadlines.remove(0);
+            if actor_capture {
+                self.actor_capture = None;
+                self.reset_actor_display_confirmation();
+            }
+            self.record_capture_failure_owned(&mut label, CaptureError::QueueFull)?;
+            return Err(CaptureError::QueueFull);
+        }
+        let permit = match ReadbackBudget::process().try_acquire(geometry, deadline) {
+            Ok(permit) => permit,
+            Err(error) => {
+                let error = map_readback_error(error);
+                if recording {
+                    self.record_armed = false;
+                    self.record_deadline = None;
+                    self.record_drops = self.record_drops.saturating_add(1);
+                    return Err(error);
+                }
+                if error == CaptureError::Busy {
+                    return Ok(None);
+                }
+                let (mut label, _) = self.wanted.remove(0);
+                self.wanted_deadlines.remove(0);
+                if actor_capture {
+                    self.actor_capture = None;
+                    self.reset_actor_display_confirmation();
+                }
+                self.record_capture_failure_owned(&mut label, error)?;
+                return Err(error);
+            }
+        };
+        let (label, snapshot_json) = if recording {
+            self.record_armed = false;
+            self.record_deadline = None;
+            (Some(RECORD_LABEL.to_string()), String::new())
+        } else {
+            let (label, snapshot) = self.wanted.remove(0);
+            self.wanted_deadlines.remove(0);
+            (Some(label), snapshot)
+        };
+        self.active_capture = Some(ActiveCapture {
+            label,
+            snapshot_json,
+            deadline,
+            paint_sequence,
+            recording,
+            actor_capture,
+            stamp: None,
+        });
+        Ok(Some(permit))
+    }
+
+    fn attach_capture_stamp(&mut self, stamp: CaptureStamp) -> Result<(), CaptureError> {
+        if !render_fair_capture_enabled() {
+            return Err(CaptureError::Inactive);
+        }
+        let policy = self.capture_policy.ok_or(CaptureError::PolicyMissing)?;
+        let active = self
+            .active_capture
+            .as_ref()
+            .ok_or(CaptureError::StaleHead)?;
+        if active.stamp.is_some() {
+            return Err(CaptureError::Busy);
+        }
+        let new_total = self
+            .metadata_bytes()
+            .checked_add(stamp.metadata_bytes())
+            .ok_or(CaptureError::TooLarge)?;
+        if new_total > policy.metadata_limit.get() {
+            return Err(CaptureError::TooLarge);
+        }
+        self.active_capture
+            .as_mut()
+            .ok_or(CaptureError::StaleHead)?
+            .stamp = Some(stamp);
+        Ok(())
+    }
+
+    fn refuse_capture_sequence(&mut self) {
+        if !self.wanted.is_empty() {
+            self.wanted_deadlines.resize(self.wanted.len(), None);
+            let (mut label, _) = self.wanted.remove(0);
+            self.wanted_deadlines.remove(0);
+            if self.actor_capture.is_some() {
+                self.actor_capture = None;
+                self.reset_actor_display_confirmation();
+            }
+            let _ = self.record_capture_failure_owned(&mut label, CaptureError::SequenceExhausted);
+        } else if self.record_armed {
+            self.record_armed = false;
+            self.record_deadline = None;
+            self.record_drops = self.record_drops.saturating_add(1);
+        }
+    }
+
+    fn complete_active(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+        permit: ReadbackPermit,
+    ) -> Result<(), CaptureError> {
+        let Some(active) = self.active_capture.as_ref() else {
+            return Err(CaptureError::StaleHead);
+        };
+        let Some(stamp) = active.stamp.as_ref() else {
+            return Err(CaptureError::StaleHead);
+        };
+        let validation = if active.paint_sequence != stamp.paint_sequence {
+            Err(CaptureError::StaleHead)
+        } else if active.deadline <= Instant::now() {
+            Err(CaptureError::Expired)
+        } else if active.actor_capture {
+            self.actor_capture
+                .as_ref()
+                .ok_or(CaptureError::StaleHead)
+                .and_then(|accepted| accepted.fence.validate_after_staging())
+        } else {
+            Ok(())
+        };
+        if let Err(error) = validation {
+            self.fail_active(error);
+            return Err(error);
+        }
+        if active.recording && self.record_done.len() >= CAPTURE_QUEUE {
+            self.fail_active(CaptureError::QueueFull);
+            return Err(CaptureError::QueueFull);
+        }
+        if !active.recording && self.screenshot_done_depth() >= CAPTURE_QUEUE {
+            self.fail_active(CaptureError::QueueFull);
+            return Err(CaptureError::QueueFull);
+        }
+        let capture_stamp = match self
+            .active_capture
+            .as_mut()
+            .and_then(|active| active.stamp.take())
+        {
+            Some(stamp) => stamp,
+            None => {
+                self.fail_active(CaptureError::StaleHead);
+                return Err(CaptureError::StaleHead);
+            }
+        };
+        let active = self.active_capture.take().ok_or(CaptureError::StaleHead)?;
+        let actor_stamp = if active.actor_capture {
+            self.actor_capture
+                .take()
+                .map(|accepted| accepted.fence.stamp)
+        } else {
+            None
+        };
+        if active.actor_capture {
+            self.reset_actor_display_confirmation();
+        }
+        let capture = ShotCapture {
+            label: active.label.unwrap_or_default(),
+            snapshot_json: active.snapshot_json,
+            width,
+            height,
+            rgba,
+            paint_sequence: capture_stamp.paint_sequence,
+            actor_stamp,
+            #[cfg(feature = "render-diagnostics")]
+            pixel_roi: capture_stamp.pixel_roi,
+            readback_permit: Some(permit),
+        };
+        if active.recording {
+            self.record_done.push(capture);
+        } else {
+            self.done.push(capture);
+        }
+        Ok(())
+    }
+
+    fn fail_active(&mut self, error: CaptureError) {
+        let Some(active) = self.active_capture.take() else {
+            return;
+        };
+        if active.actor_capture {
+            self.actor_capture = None;
+            self.reset_actor_display_confirmation();
+        }
+        if active.recording {
+            self.record_drops = self.record_drops.saturating_add(1);
+        } else if let Some(mut label) = active.label {
+            if render_fair_capture_enabled()
+                && self.record_capture_failure_owned(&mut label, error).is_ok()
+            {
+                return;
+            }
+            self.mark_failed(&label, capture_error_message(error));
+        }
+    }
+
+    fn metadata_bytes(&self) -> usize {
+        let mut total = 0_usize;
+        for request in &self.requests {
+            total = total.saturating_add(request.metadata_bytes());
+        }
+        for (label, snapshot) in &self.wanted {
+            total = total.saturating_add(label.capacity().saturating_add(snapshot.capacity()));
+        }
+        if let Some(accepted) = &self.actor_capture {
+            total = total
+                .saturating_add(accepted.actor.capacity())
+                .saturating_add(accepted.fence.metadata_bytes());
+        }
+        for capture in &self.done {
+            total = total
+                .saturating_add(capture.label.capacity())
+                .saturating_add(capture.metadata_bytes());
+        }
+        for capture in &self.record_done {
+            total = total
+                .saturating_add(capture.label.capacity())
+                .saturating_add(capture.metadata_bytes());
+        }
+        total = total.saturating_add(
+            self.terminal
+                .capacity()
+                .saturating_mul(mem::size_of::<TerminalStatus>()),
+        );
+        for status in &self.terminal {
+            total = total
+                .saturating_add(status.label.capacity())
+                .saturating_add(match &status.outcome {
+                    TerminalOutcome::Failed(error) => error.capacity(),
+                    TerminalOutcome::Written | TerminalOutcome::CaptureFailed(_) => 0,
+                });
+        }
+        if let Some(active) = &self.active_capture {
+            total = total.saturating_add(active.metadata_bytes());
+        }
+        total
+            .saturating_add(self.write_pending_bytes)
+            .saturating_add(self.output_directory_bytes)
+    }
+
+    fn trim_terminal_metadata(&mut self) {
+        let Some(policy) = self.capture_policy else {
+            return;
+        };
+        while self.metadata_bytes() > policy.metadata_limit.get() {
+            if !self.terminal.is_empty() {
+                self.terminal.remove(0);
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+impl ShotRequest {
+    fn metadata_bytes(&self) -> usize {
+        self.label
+            .capacity()
+            .saturating_add(self.snapshot_json.capacity())
+            .saturating_add(self.actor.as_ref().map_or(0, String::capacity))
+    }
+}
+
+impl ActiveCapture {
+    fn metadata_bytes(&self) -> usize {
+        self.label
+            .as_ref()
+            .map_or(0, String::capacity)
+            .saturating_add(self.snapshot_json.capacity())
+            .saturating_add(self.stamp.as_ref().map_or(0, CaptureStamp::metadata_bytes))
+    }
+}
+
+pub(crate) fn render_fair_capture_enabled() -> bool {
+    #[cfg(feature = "render-test-hooks")]
+    {
+        frontend_core::surface::render_fair_enabled()
+    }
+    #[cfg(not(feature = "render-test-hooks"))]
+    {
+        false
+    }
+}
+
+fn map_readback_error(error: ReadbackError) -> CaptureError {
+    match error {
+        ReadbackError::Busy => CaptureError::Busy,
+        ReadbackError::StalePresent | ReadbackError::Retired => CaptureError::StaleHead,
+        ReadbackError::InvalidScene => CaptureError::InvalidScene,
+        ReadbackError::Timeout => CaptureError::Expired,
+        ReadbackError::Device => CaptureError::Device,
+        ReadbackError::Ungated | ReadbackError::Limit | ReadbackError::IdentityExhausted => {
+            CaptureError::TooLarge
+        }
+    }
+}
+
+fn capture_error_message(error: CaptureError) -> &'static str {
+    match error {
+        CaptureError::QueueFull => "capture queue is full",
+        CaptureError::TooLarge => "capture exceeds the configured byte envelope",
+        CaptureError::Busy => "process readback slot is busy",
+        CaptureError::Expired => "capture deadline expired",
+        CaptureError::DeadlineOverflow => "capture deadline overflows Instant",
+        CaptureError::InvalidPolicy => "capture policy contains an invalid zero duration",
+        CaptureError::MissingActorRequest => "capture request is absent",
+        CaptureError::StaleHead => "capture belongs to a stale head",
+        CaptureError::InvalidScene => "capture requires a valid scene",
+        CaptureError::Readback(_) => "retained consumer refused capture",
+        CaptureError::Io => "capture output failed",
+        CaptureError::Device => "capture device operation failed",
+        CaptureError::Inactive => "render capture fixture is not active",
+        CaptureError::PolicyMissing => "capture policy is not configured",
+        CaptureError::SequenceExhausted => "window paint sequence exhausted",
+        CaptureError::DeadlineMissing => "capture request has no explicit deadline",
+    }
+}
+
+fn truncate_utf8(text: &str, max_bytes: usize) -> &str {
+    let mut end = text.len().min(max_bytes);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+fn copy_text_with_capacity(text: &str, max_capacity: usize) -> Result<String, CaptureError> {
+    if text.len() > max_capacity {
+        return Err(CaptureError::TooLarge);
+    }
+    let mut owned = String::new();
+    owned
+        .try_reserve_exact(text.len())
+        .map_err(|_| CaptureError::QueueFull)?;
+    if owned.capacity() > max_capacity {
+        return Err(CaptureError::TooLarge);
+    }
+    owned.push_str(text);
+    Ok(owned)
+}
+
+const CAPTURE_QUEUE: usize = 8;
+pub(crate) const CAPTURE_NAME_BYTES: usize = 256;
+
+#[cfg(feature = "render-test-hooks")]
+pub mod test_hooks {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SUBMITTED_PAINTS: AtomicU64 = AtomicU64::new(0);
+
+    /// Actual submitted window paints, not redraw requests or hook callbacks.
+    pub fn submitted_paints() -> u64 {
+        SUBMITTED_PAINTS.load(Ordering::Acquire)
+    }
+
+    pub(super) fn note_submitted_paint() {
+        let _ = SUBMITTED_PAINTS.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            count.checked_add(1)
+        });
     }
 }
 
@@ -522,6 +2009,11 @@ struct AppWindow {
     /// already exists; COPY_SRC backends allocate a one-off instead of
     /// keeping a second framebuffer on every slot.
     offscreen: Option<wgpu::Texture>,
+    /// One nonblocking process-budgeted readback owned through mapping.
+    pending_capture: Option<PendingCapture>,
+    /// Monotonic identity of composed window paints; never sampled at
+    /// completion time.
+    paint_sequence: u64,
 }
 
 impl Drop for AppWindow {
@@ -979,6 +2471,8 @@ impl AppWindow {
             },
 
             offscreen,
+            pending_capture: None,
+            paint_sequence: 0,
         })
     }
 
@@ -989,6 +2483,34 @@ impl AppWindow {
             self.surface.configure(&self.device, &self.surface_desc);
             if self.offscreen.is_some() {
                 self.offscreen = Some(make_offscreen(&self.device, &self.surface_desc));
+            }
+        }
+    }
+
+    fn poll_pending_capture(&mut self, shots: &Mutex<ShotState>) -> bool {
+        let result = match self.pending_capture.as_mut() {
+            Some(capture) => capture.pending.poll(Instant::now()),
+            None => return false,
+        };
+        match result {
+            Ok(None) => false,
+            Ok(Some(completed)) => {
+                let Some(capture) = self.pending_capture.take() else {
+                    return false;
+                };
+                let (rgba, geometry, permit) = completed.into_parts();
+                let mut shots = shots.lock().unwrap();
+                let completion =
+                    shots.complete_active(geometry.width(), geometry.height(), rgba, permit);
+                if let Err(error) = completion {
+                    shots.fail_active(error);
+                }
+                true
+            }
+            Err(error) => {
+                self.pending_capture.take();
+                shots.lock().unwrap().fail_active(map_readback_error(error));
+                true
             }
         }
     }
@@ -1037,6 +2559,9 @@ impl AppWindow {
 
         let mut gpu = Gpu::new(&self.device, &self.queue, &mut self.imgui.renderer);
 
+        if render_fair_capture_enabled() {
+            shots.lock().unwrap().reset_actor_display_confirmation();
+        }
         let exit_requested = gui(ui, &mut gpu);
         // Keep OS cursor/IME state in sync with Dear ImGui's per-frame intent.
         self.imgui.platform.prepare_render_with_ui(ui, &self.window);
@@ -1044,6 +2569,12 @@ impl AppWindow {
         if exit_requested {
             return Ok(true);
         }
+
+        let next_paint_sequence = if render_fair_capture_enabled() {
+            self.paint_sequence.checked_add(1)
+        } else {
+            None
+        };
 
         // Acquire the swapchain image as late as possible to reduce time holding it.
         let (frame, reconfigure_after_present) = match self.surface.get_current_texture() {
@@ -1064,10 +2595,8 @@ impl AppWindow {
                 return Ok(exit_requested);
             }
             wgpu::CurrentSurfaceTexture::Occluded => {
-                // Presentation is blocked, but a promoted capture can still
-                // rasterize the current UI into a COPY_SRC target and
-                // complete without a present. Unpromoted jobs stay queued.
-                let submission = submit_acquired_frame(
+                // An occluded frame renders only for a promoted capture.
+                let submission = submit_acquired_frame_current(
                     &self.device,
                     &self.queue,
                     &mut self.imgui.renderer,
@@ -1077,16 +2606,34 @@ impl AppWindow {
                     self.offscreen.as_ref(),
                     AcquiredFrame::Occluded,
                     shots,
+                    &mut self.pending_capture,
+                    next_paint_sequence,
                 )?;
-                // No image to present: the staged readbacks complete here.
-                if let FrameSubmission::Submitted(readbacks) = submission {
-                    if !readbacks.is_empty() && std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
-                        eprintln!(
-                            "[panel] capture offscreen readback submitted on occluded surface: {}",
-                            readbacks.len()
+                let submitted = !matches!(&submission, &FrameSubmission::Skipped);
+                match submission {
+                    FrameSubmission::Submitted(readbacks) => {
+                        if !readbacks.is_empty() && std::env::var("BOT_DEBUG").as_deref() == Ok("1")
+                        {
+                            eprintln!(
+                                "[panel] capture offscreen readback submitted on occluded surface: {}",
+                                readbacks.len()
+                            );
+                        }
+                        complete_readbacks(
+                            &self.device,
+                            self.surface_desc.format,
+                            readbacks,
+                            shots,
                         );
                     }
-                    complete_readbacks(&self.device, self.surface_desc.format, readbacks, shots);
+                    FrameSubmission::BoundedSubmitted | FrameSubmission::Skipped => {}
+                }
+                if submitted {
+                    if let Some(sequence) = next_paint_sequence {
+                        self.paint_sequence = sequence;
+                        #[cfg(feature = "render-test-hooks")]
+                        test_hooks::note_submitted_paint();
+                    }
                 }
                 return Ok(exit_requested);
             }
@@ -1095,7 +2642,7 @@ impl AppWindow {
             }
         };
 
-        let submission = submit_acquired_frame(
+        let submission = submit_acquired_frame_current(
             &self.device,
             &self.queue,
             &mut self.imgui.renderer,
@@ -1105,21 +2652,36 @@ impl AppWindow {
             self.offscreen.as_ref(),
             AcquiredFrame::Presentable(&frame.texture),
             shots,
+            &mut self.pending_capture,
+            next_paint_sequence,
         )?;
-        // Submit → present → map, in that order: mapping/failed-capture
-        // bookkeeping stays after the present, so a slow capture map never
-        // holds the drawable (the original visible-frame ordering).
+        let submitted = !matches!(&submission, &FrameSubmission::Skipped);
+        // Submit → present → map, in that order: the legacy map bookkeeping
+        // stays after present so it never holds the drawable.
         frame.present();
         #[cfg(feature = "memory-profile")]
         memory_profile_frame.presented();
         if let FrameSubmission::Submitted(readbacks) = submission {
             complete_readbacks(&self.device, self.surface_desc.format, readbacks, shots);
         }
+        if submitted {
+            if let Some(sequence) = next_paint_sequence {
+                self.paint_sequence = sequence;
+                #[cfg(feature = "render-test-hooks")]
+                test_hooks::note_submitted_paint();
+            }
+        }
         if reconfigure_after_present {
             self.surface.configure(&self.device, &self.surface_desc);
         }
         Ok(exit_requested)
     }
+}
+
+/// One pending staging readback; the copy is recorded in the encoder and
+/// the bytes land after submit + poll.
+struct PendingCapture {
+    pending: PendingWindowReadback,
 }
 
 /// One pending staging readback; the copy is recorded in the encoder and
@@ -1177,6 +2739,7 @@ enum AcquiredFrame<'a> {
 enum FrameSubmission {
     Skipped,
     Submitted(Vec<ShotReadback>),
+    BoundedSubmitted,
 }
 
 /// Production draw/capture path for one acquired frame: rasterizes the
@@ -1250,6 +2813,142 @@ fn submit_acquired_frame(
     Ok(FrameSubmission::Submitted(readbacks))
 }
 
+#[allow(clippy::too_many_arguments)] // bounded frame submit packs render and capture owners
+fn submit_acquired_frame_bounded(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut imgui_wgpu::WgpuRenderer,
+    draw_data: &mut imgui::DrawData,
+    clear_color: wgpu::Color,
+    desc: &wgpu::SurfaceConfiguration,
+    offscreen: Option<&wgpu::Texture>,
+    acquired: AcquiredFrame<'_>,
+    shots: &Mutex<ShotState>,
+    pending: &mut Option<PendingCapture>,
+    paint_sequence: Option<u64>,
+) -> Result<FrameSubmission, PanelError> {
+    let present_dest = match acquired {
+        AcquiredFrame::Presentable(image) => Some(image),
+        AcquiredFrame::Occluded => None,
+    };
+    if present_dest.is_none() && !shots.lock().unwrap().capture_pending() {
+        return Ok(FrameSubmission::Skipped);
+    }
+    let one_off;
+    let target = match offscreen {
+        Some(existing) => existing,
+        None => match present_dest {
+            Some(image) => image,
+            None => {
+                one_off = make_offscreen(device, desc);
+                &one_off
+            }
+        },
+    };
+    let blit_dest = present_dest.filter(|_| offscreen.is_some());
+    let mut encoder = encode_ui_frame(device, renderer, draw_data, clear_color, target)?;
+    if let Some(dest) = blit_dest {
+        blit_texture(&mut encoder, target, dest);
+    }
+    queue.submit(Some(encoder.finish()));
+
+    if pending.is_none() {
+        if let Some(paint_sequence) = paint_sequence {
+            let geometry = CaptureGeometry::new(desc.width, desc.height);
+            let reservation = {
+                shots.lock().unwrap().reserve_next_readback(
+                    geometry,
+                    Instant::now(),
+                    paint_sequence,
+                )
+            };
+            if let Ok(Some(permit)) = reservation {
+                let staging_check = shots.lock().unwrap().validate_active_actor_for_staging();
+                if let Err(error) = staging_check {
+                    drop(permit);
+                    shots.lock().unwrap().fail_active(error);
+                } else {
+                    #[cfg(feature = "render-diagnostics")]
+                    let pixel_roi = client::render::diagnostics::snapshot_shot_bind();
+                    let stamp = CaptureStamp {
+                        paint_sequence,
+                        #[cfg(feature = "render-diagnostics")]
+                        pixel_roi,
+                    };
+                    let attach_result = shots.lock().unwrap().attach_capture_stamp(stamp);
+                    if let Err(error) = attach_result {
+                        drop(permit);
+                        shots.lock().unwrap().fail_active(error);
+                    } else {
+                        match begin_window_readback(device, queue, target, permit) {
+                            Ok(readback) => {
+                                let release_result =
+                                    shots.lock().unwrap().release_actor_consumer_after_staging();
+                                if let Err(error) = release_result {
+                                    drop(readback);
+                                    shots.lock().unwrap().fail_active(error);
+                                } else {
+                                    *pending = Some(PendingCapture { pending: readback });
+                                }
+                            }
+                            Err((error, permit)) => {
+                                drop(permit);
+                                shots.lock().unwrap().fail_active(map_readback_error(error));
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            shots.lock().unwrap().refuse_capture_sequence();
+        }
+    }
+    Ok(FrameSubmission::BoundedSubmitted)
+}
+
+#[allow(clippy::too_many_arguments)] // dispatches current panel draw/capture mode
+fn submit_acquired_frame_current(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut imgui_wgpu::WgpuRenderer,
+    draw_data: &mut imgui::DrawData,
+    clear_color: wgpu::Color,
+    desc: &wgpu::SurfaceConfiguration,
+    offscreen: Option<&wgpu::Texture>,
+    acquired: AcquiredFrame<'_>,
+    shots: &Mutex<ShotState>,
+    pending: &mut Option<PendingCapture>,
+    paint_sequence: Option<u64>,
+) -> Result<FrameSubmission, PanelError> {
+    if render_fair_capture_enabled() {
+        submit_acquired_frame_bounded(
+            device,
+            queue,
+            renderer,
+            draw_data,
+            clear_color,
+            desc,
+            offscreen,
+            acquired,
+            shots,
+            pending,
+            paint_sequence,
+        )
+    } else {
+        submit_acquired_frame(
+            device,
+            queue,
+            renderer,
+            draw_data,
+            clear_color,
+            desc,
+            offscreen,
+            acquired,
+            shots,
+        )
+    }
+}
+
 /// Rasterize `draw_data` into `target`, drain the promoted `wanted` shots
 /// into `copy_texture_to_buffer` staging buffers recorded in that same
 /// encoder, optionally blit `target` onto a presentable destination, and
@@ -1266,42 +2965,8 @@ fn submit_ui_frame(
     present_dest: Option<&wgpu::Texture>,
     shots: &Mutex<ShotState>,
 ) -> Result<Vec<ShotReadback>, PanelError> {
-    let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("Render Encoder"),
-    });
-
-    {
-        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Render Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(clear_color),
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-
-        renderer.new_frame().map_err(PanelError::FramePrepare)?;
-        renderer
-            .render_draw_data(draw_data, &mut rpass)
-            .map_err(PanelError::Render)?;
-    }
-
-    // Whole-window shots: drain the UI body's promoted requests, copy the
-    // just-rendered frame into staging buffers (recorded in this encoder),
-    // and map the bytes back after submit. No file I/O — the loop side
-    // stays pure; `done` holds bytes for the panel. An armed recording
-    // frame stages one extra readback from that same texture (routed to
-    // `record_done`, never the PNG ledger).
-    let mut readbacks: Vec<ShotReadback> = Vec::new();
+    let mut encoder = encode_ui_frame(device, renderer, draw_data, clear_color, target)?;
+    let mut readbacks = Vec::new();
     {
         let mut guard = shots.lock().unwrap();
         let mut wanted = mem::take(&mut guard.wanted);
@@ -1320,6 +2985,43 @@ fn submit_ui_frame(
     }
     queue.submit(Some(encoder.finish()));
     Ok(readbacks)
+}
+
+#[allow(clippy::too_many_arguments)] // renderer draw packs frame state and target
+fn encode_ui_frame(
+    device: &wgpu::Device,
+    renderer: &mut imgui_wgpu::WgpuRenderer,
+    draw_data: &mut imgui::DrawData,
+    clear_color: wgpu::Color,
+    target: &wgpu::Texture,
+) -> Result<wgpu::CommandEncoder, PanelError> {
+    let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("Render Encoder"),
+    });
+    {
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(clear_color),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        renderer.new_frame().map_err(PanelError::FramePrepare)?;
+        renderer
+            .render_draw_data(draw_data, &mut rpass)
+            .map_err(PanelError::Render)?;
+    }
+    Ok(encoder)
 }
 
 /// Map the staged readbacks and record their outcomes (a failed map still
@@ -1831,6 +3533,17 @@ where
             )));
             return;
         }
+        let mut readback_pending = false;
+        let mut capture_queued = false;
+        if render_fair_capture_enabled() {
+            if let Some(window) = self.window.as_mut() {
+                if window.poll_pending_capture(self.shots.as_ref()) {
+                    window.window.request_redraw();
+                }
+                readback_pending = window.pending_capture.is_some();
+            }
+            capture_queued = self.shots.lock().unwrap().capture_pending();
+        }
         match self.cfg.redraw {
             RedrawMode::Poll => {
                 event_loop.set_control_flow(render_deadline_control_flow(
@@ -1843,11 +3556,16 @@ where
                 }
             }
             RedrawMode::Wait => {
-                event_loop.set_control_flow(render_deadline_control_flow(
-                    self.cfg.redraw,
-                    pump_now,
-                    render_due,
-                ));
+                if capture_queued && !readback_pending {
+                    if let Some(window) = &self.window {
+                        window.window.request_redraw();
+                    }
+                }
+                event_loop.set_control_flow(if capture_queued || readback_pending {
+                    ControlFlow::Poll
+                } else {
+                    render_deadline_control_flow(self.cfg.redraw, pump_now, render_due)
+                });
             }
             RedrawMode::WaitUntil { fps } => {
                 let frame = Duration::from_secs_f32(1.0f32 / fps.max(1.0));
@@ -1860,11 +3578,11 @@ where
                         window.window.request_redraw();
                     }
                 }
-                event_loop.set_control_flow(render_deadline_control_flow(
-                    self.cfg.redraw,
-                    next_wake,
-                    render_due,
-                ));
+                event_loop.set_control_flow(if readback_pending {
+                    ControlFlow::Poll
+                } else {
+                    render_deadline_control_flow(self.cfg.redraw, next_wake, render_due)
+                });
             }
         }
     }

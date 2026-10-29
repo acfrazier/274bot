@@ -1555,3 +1555,22 @@ fn live_reattach(
     add_probe_receipt(&mut receipt, probe);
     receipt
 }
+
+#[test]
+fn drawing_memory_target_is_not_the_timing_allocator() {
+    let before = host_play::memory::rust_allocator_counts();
+    let allocation = std::hint::black_box(Box::new([0x5a_u8; 23]));
+    let owned = host_play::memory::rust_allocator_counts();
+    drop(allocation);
+    let freed = host_play::memory::rust_allocator_counts();
+    assert_eq!(
+        before,
+        (0, 0, 0),
+        "timing has no installed counting allocator"
+    );
+    assert_eq!(
+        owned, before,
+        "actual timing allocations remain uninstrumented"
+    );
+    assert_eq!(freed, before);
+}

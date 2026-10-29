@@ -2060,6 +2060,8 @@ dependencies = [
  "libc",
  "num-bigint",
  "parking_lot",
+ "serde_json",
+ "sha2",
  "thiserror 2.0.20",
  "tungstenite",
  "vault",

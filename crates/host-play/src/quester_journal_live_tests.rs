@@ -27,6 +27,11 @@
 //! ```text
 //! LIVE=1 BOT_CPU=1 BOT_JOURNAL_HEADED=1 BOT_JOURNAL_CAPTURE_DIR=guest_home\.274bot\smoke\journal cargo test -p host-play --release --features journal-paint-proof --lib live_quester_journal_synthetic_runemysteries -- --ignored --nocapture --test-threads=1
 //! ```
+//!
+//! An explicitly enabled fair-render fixture also supplies
+//! `T44_JOURNAL_RECORD_CEILING`, `T44_JOURNAL_READBACK_TIMEOUT_MS`, and
+//! `T44_RETAINED_PRESENT_CAP`. These are fixture inputs, not production
+//! defaults. Fair capture reports typed refusals instead of hiding them.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -215,6 +220,39 @@ mod headed {
             input.set_full_rate(false);
             input.set_enabled(false);
             let mailbox = FrameBuf::new_for_journal_proof();
+            #[cfg(feature = "render-test-hooks")]
+            if host::render_head::fair_enabled() {
+                let required_count = |name| {
+                    std::env::var(name)
+                        .unwrap_or_else(|_| panic!("fair journal proof requires {name}"))
+                        .parse::<std::num::NonZeroUsize>()
+                        .unwrap_or_else(|_| panic!("{name} must be a positive integer"))
+                };
+                let record_ceiling = required_count("T44_JOURNAL_RECORD_CEILING");
+                let timeout_ms =
+                    u64::try_from(required_count("T44_JOURNAL_READBACK_TIMEOUT_MS").get())
+                        .expect("journal readback timeout fits u64 milliseconds");
+                let retained_cap = required_count("T44_RETAINED_PRESENT_CAP");
+                static RETAINED_CAP: std::sync::OnceLock<std::num::NonZeroUsize> =
+                    std::sync::OnceLock::new();
+                assert_eq!(
+                    *RETAINED_CAP.get_or_init(|| {
+                        client::render::backend::present::configure_retained_present_budget(
+                            retained_cap,
+                        )
+                        .expect("journal fixture configures retained storage before registration");
+                        retained_cap
+                    }),
+                    retained_cap,
+                    "one process uses one explicit retained-present cap"
+                );
+                mailbox
+                    .configure_journal_proof_policy(
+                        record_ceiling,
+                        Duration::from_millis(timeout_ms),
+                    )
+                    .expect("configure the journal fixture before its first paint");
+            }
             let (input_tx, input_rx) = mpsc::channel();
             input.connect_rx(input_rx);
             let (commands, command_rx) = mpsc::channel();
@@ -521,7 +559,16 @@ mod headed {
                 }
                 last_button = shell.mouse_button;
             }
-            if let Some(record) = mailbox.take_journal_proof() {
+            let proof = match mailbox.take_journal_proof_result() {
+                Ok(proof) => proof,
+                Err(client::render::backend::ReadbackError::Busy) => None,
+                Err(error) => {
+                    state.lock().fatal =
+                        Some(format!("headed journal proof capture refused: {error:?}"));
+                    break;
+                }
+            };
+            if let Some(record) = proof {
                 let generation = record.generation;
                 let baseline = state.lock().baseline;
                 if generation > baseline {

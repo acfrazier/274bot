@@ -15,6 +15,7 @@ parking_lot = { version = "0.12", optional = true }
 [features]
 render-diagnostics = ["client/render-diagnostics"]
 render-test-hooks = ["client/render-test-hooks"]
+draw-memory-profile = ["render-test-hooks", "client/draw-memory-profile"]
 performance-profile = []
 # Lossless, immutable paint witnesses for the Windows journal fixture only.
 journal-paint-proof = ["dep:parking_lot"]
@@ -37,4 +38,6 @@ windows-sys = { version = "0.59", features = [
 allocation-counter = "=0.8.1"
 api = { path = "../api", features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
+serde_json = "=1.0.140"
+sha2 = "=0.10.9"
 tungstenite = "0.24"

@@ -7637,6 +7637,46 @@
     {
       "path": "crates/script-js/tests/slot_slot_tests.rs",
       "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/t44_draw_memory.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/src/render/backend/capture.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/src/render/backend/present.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/src/render/backend/readback.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/src/render/backend/retained_camera.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/src/render/budget.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/src/render/graphic_sprites.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "crates/host/tests/render_characterization/content_census.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "crates/panel/tests/t44_headed_live.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/src/render/backend/gpu_retained_tests.rs",
+      "owner": "T4"
     }
   ]
 }

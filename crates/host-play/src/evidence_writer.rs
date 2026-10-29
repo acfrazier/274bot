@@ -20,7 +20,9 @@
 //! loudly like any other capture error, never stall it silently. Drops,
 //! failures and writes are counted ([`EvidenceWriter::stats`]) and logged.
 
+use client::render::backend::ReadbackPermit;
 use std::collections::VecDeque;
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -81,6 +83,21 @@ pub struct EvidenceRequest {
     pub pixels: Vec<i32>,
     pub color: PngColor,
     pub sidecar: Option<EvidenceSidecar>,
+}
+
+/// One owned RGBA capture handed to the background thread.
+pub struct RgbaEvidenceRequest {
+    pub png_path: PathBuf,
+    pub sidecar_path: PathBuf,
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+    pub snapshot_json: String,
+    #[cfg(feature = "render-diagnostics")]
+    pub diagnostic_label: String,
+    #[cfg(feature = "render-diagnostics")]
+    pub pixel_roi: Option<client::render::diagnostics::PixelRoiShotBind>,
+    pub readback_permit: ReadbackPermit,
 }
 
 /// The finished work for one capture. `error` is `None` only when the PNG
@@ -177,9 +194,37 @@ impl EvidenceJob {
     }
 }
 
+enum QueuedRequest {
+    Native(EvidenceRequest),
+    Rgba(RgbaEvidenceRequest),
+}
+
+impl QueuedRequest {
+    fn png_path(&self) -> &PathBuf {
+        match self {
+            Self::Native(request) => &request.png_path,
+            Self::Rgba(request) => &request.png_path,
+        }
+    }
+
+    fn width(&self) -> u32 {
+        match self {
+            Self::Native(request) => request.width,
+            Self::Rgba(request) => request.width,
+        }
+    }
+
+    fn height(&self) -> u32 {
+        match self {
+            Self::Native(request) => request.height,
+            Self::Rgba(request) => request.height,
+        }
+    }
+}
+
 struct QueuedJob {
     job: EvidenceJob,
-    request: EvidenceRequest,
+    request: QueuedRequest,
 }
 
 struct WriterState {
@@ -249,10 +294,17 @@ impl EvidenceWriter {
         }
     }
 
-    /// Hand pixels plus the JSON receipt to the background thread. Only
-    /// locks briefly; blocks at most `submit_wait` when the queue is full,
-    /// then drops with a counted error outcome.
+    /// Hand native pixmap words plus their JSON receipt to the background thread.
     pub fn submit(&self, request: EvidenceRequest) -> EvidenceJob {
+        self.submit_request(QueuedRequest::Native(request))
+    }
+
+    /// Hand owned RGBA bytes and their raw JSON sidecar to the background thread.
+    pub fn submit_rgba(&self, request: RgbaEvidenceRequest) -> EvidenceJob {
+        self.submit_request(QueuedRequest::Rgba(request))
+    }
+
+    fn submit_request(&self, request: QueuedRequest) -> EvidenceJob {
         let mut state = self.inner.state.lock();
         let deadline = Instant::now() + self.inner.config.submit_wait;
         while state.alive && state.queue.len() >= self.inner.config.bound {
@@ -268,29 +320,44 @@ impl EvidenceWriter {
             let dropped = state.stats.dropped;
             let id = state.next_id;
             state.next_id += 1;
+            let width = request.width();
+            let height = request.height();
             drop(state);
             let message = format!(
                 "evidence queue full (bound {}); capture {} dropped (dropped={dropped})",
                 self.inner.config.bound,
-                request.png_path.display(),
+                request.png_path().display(),
             );
             println!(
                 "evidence-dropped png={} dropped={dropped}",
-                request.png_path.display()
+                request.png_path().display()
             );
-            return EvidenceJob::completed(
-                id,
-                EvidenceOutcome {
-                    width: request.width,
-                    height: request.height,
-                    png_bytes: 0,
-                    convert_ms: 0.0,
-                    encode_ms: 0.0,
-                    write_ms: 0.0,
-                    sync_ms: 0.0,
-                    error: Some(message),
-                },
-            );
+            let outcome = EvidenceOutcome {
+                width,
+                height,
+                png_bytes: 0,
+                convert_ms: 0.0,
+                encode_ms: 0.0,
+                write_ms: 0.0,
+                sync_ms: 0.0,
+                error: Some(message),
+            };
+            return match request {
+                QueuedRequest::Native(request) => {
+                    drop(request);
+                    EvidenceJob::completed(id, outcome)
+                }
+                QueuedRequest::Rgba(RgbaEvidenceRequest {
+                    rgba,
+                    readback_permit,
+                    ..
+                }) => {
+                    drop(rgba);
+                    let job = EvidenceJob::completed(id, outcome);
+                    drop(readback_permit);
+                    job
+                }
+            };
         }
         let id = state.next_id;
         state.next_id += 1;
@@ -307,7 +374,7 @@ impl EvidenceWriter {
 
     /// Non-blocking outcome check for the observe hook.
     pub fn poll(&self, job: &EvidenceJob) -> Option<EvidenceOutcome> {
-        job.slot.outcome.lock().clone()
+        job.slot.outcome.try_lock()?.clone()
     }
 
     /// Bounded wait for one capture, for test-thread callers.
@@ -380,7 +447,16 @@ fn worker_loop(inner: Arc<WriterInner>) {
         if let Some(hook) = inner.config.before_write.clone() {
             hook(job.id);
         }
-        let outcome = write_capture(job.id, &request);
+        let (outcome, png_path, readback_permit) = match request {
+            QueuedRequest::Native(request) => {
+                let outcome = write_capture(job.id, &request);
+                (outcome, request.png_path, None)
+            }
+            QueuedRequest::Rgba(request) => {
+                let (outcome, png_path, permit) = write_rgba_capture(job.id, request);
+                (outcome, png_path, Some(permit))
+            }
+        };
         {
             let mut state = inner.state.lock();
             state.active -= 1;
@@ -389,7 +465,10 @@ fn worker_loop(inner: Arc<WriterInner>) {
             } else {
                 state.stats.written += 1;
             }
-            *job.slot.outcome.lock() = Some(outcome.clone());
+            let mut job_outcome = job.slot.outcome.lock();
+            *job_outcome = Some(outcome.clone());
+            drop(readback_permit);
+            drop(job_outcome);
             job.slot.ready.notify_all();
             // Wake flush waiters (and any submitter rechecking state):
             // completion changes `active`/stats observed under `changed`.
@@ -399,14 +478,14 @@ fn worker_loop(inner: Arc<WriterInner>) {
             println!(
                 "evidence-failed id={} png={} error={}",
                 job.id,
-                request.png_path.display(),
+                png_path.display(),
                 outcome.error.as_deref().unwrap_or("unknown"),
             );
         } else {
             println!(
                 "evidence-written id={} png={} {}x{} bytes={} convert_ms={:.1} encode_ms={:.1} write_ms={:.1} sync_ms={:.1}",
                 job.id,
-                request.png_path.display(),
+                png_path.display(),
                 outcome.width,
                 outcome.height,
                 outcome.png_bytes,
@@ -507,6 +586,259 @@ fn write_capture(id: u64, request: &EvidenceRequest) -> EvidenceOutcome {
         write_ms,
         sync_ms,
     )
+}
+
+struct RgbaPngResult {
+    png_bytes: u64,
+    encode_ms: f64,
+    write_ms: f64,
+    sync_ms: f64,
+    error: Option<String>,
+    remove_partial: bool,
+}
+
+impl Default for RgbaPngResult {
+    fn default() -> Self {
+        Self {
+            png_bytes: 0,
+            encode_ms: 0.0,
+            write_ms: 0.0,
+            sync_ms: 0.0,
+            error: None,
+            remove_partial: false,
+        }
+    }
+}
+
+fn create_rgba_parent_dirs(
+    id: u64,
+    png_path: &std::path::Path,
+    sidecar_path: &std::path::Path,
+) -> Option<String> {
+    let png_parent = png_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    let sidecar_parent = sidecar_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    let mut error = None;
+    if let Some(parent) = png_parent {
+        if let Err(dir_error) = std::fs::create_dir_all(parent) {
+            error = Some(format!(
+                "id={id}: create directory {}: {dir_error}",
+                parent.display()
+            ));
+        }
+    }
+    if sidecar_parent != png_parent {
+        if let Some(parent) = sidecar_parent {
+            if let Err(dir_error) = std::fs::create_dir_all(parent) {
+                let detail = format!(
+                    "id={id}: create directory {}: {dir_error}",
+                    parent.display()
+                );
+                error = Some(match error {
+                    Some(png_error) => format!("{png_error} ({detail})"),
+                    None => detail,
+                });
+            }
+        }
+    }
+    error
+}
+
+fn write_rgba_capture(
+    id: u64,
+    request: RgbaEvidenceRequest,
+) -> (EvidenceOutcome, PathBuf, ReadbackPermit) {
+    let png_path = request.png_path;
+    let sidecar_path = request.sidecar_path;
+    let width = request.width;
+    let height = request.height;
+    let rgba = request.rgba;
+    let snapshot_json = request.snapshot_json;
+    #[cfg(feature = "render-diagnostics")]
+    let diagnostic_label = request.diagnostic_label;
+    #[cfg(feature = "render-diagnostics")]
+    let pixel_roi = request.pixel_roi;
+    let readback_permit = request.readback_permit;
+    let mut error = create_rgba_parent_dirs(id, &png_path, &sidecar_path);
+    if error.is_none() {
+        error = validate_rgba_request(id, width, height, &rgba, &readback_permit);
+    }
+    let mut png_write = RgbaPngResult::default();
+    if error.is_none() {
+        png_write = write_rgba_png(&png_path, width, height, &rgba);
+        if let Some(png_error) = png_write.error.take() {
+            if png_write.remove_partial {
+                let _ = std::fs::remove_file(&png_path);
+            }
+            error = Some(format!("id={id}: {png_error}"));
+        }
+    }
+    if let Err(sidecar_error) = std::fs::write(&sidecar_path, snapshot_json.as_bytes())
+        .and_then(|()| sync_file(&sidecar_path))
+    {
+        let detail = format!("id={id}: write {}: {sidecar_error}", sidecar_path.display());
+        error = Some(match error {
+            Some(png_error) => format!("{png_error} ({detail})"),
+            None => detail,
+        });
+    }
+    #[cfg(feature = "render-diagnostics")]
+    if error.is_none() {
+        client::render::diagnostics::dump_png_slot(
+            &rgba,
+            width as i32,
+            height as i32,
+            &diagnostic_label,
+            true,
+            pixel_roi.as_ref(),
+        );
+    }
+    #[cfg(feature = "render-diagnostics")]
+    drop(pixel_roi);
+    #[cfg(feature = "render-diagnostics")]
+    drop(diagnostic_label);
+    drop(rgba);
+    drop(snapshot_json);
+    (
+        EvidenceOutcome {
+            width,
+            height,
+            png_bytes: png_write.png_bytes,
+            convert_ms: 0.0,
+            encode_ms: png_write.encode_ms,
+            write_ms: png_write.write_ms,
+            sync_ms: png_write.sync_ms,
+            error,
+        },
+        png_path,
+        readback_permit,
+    )
+}
+
+fn validate_rgba_request(
+    id: u64,
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    permit: &ReadbackPermit,
+) -> Option<String> {
+    let expected_bytes = usize::try_from(width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .and_then(|pixels| pixels.checked_mul(4))
+        .filter(|bytes| *bytes > 0);
+    let Some(expected_bytes) = expected_bytes else {
+        return Some(format!(
+            "id={id}: RGBA frame has invalid dimensions/data: {width}x{height}, {} bytes",
+            rgba.len()
+        ));
+    };
+    let geometry = permit.geometry();
+    if geometry.width() != width || geometry.height() != height {
+        return Some(format!(
+            "id={id}: RGBA frame dimensions {width}x{height} do not match readback permit {}x{}",
+            geometry.width(),
+            geometry.height()
+        ));
+    }
+    if permit.raw_bytes() != expected_bytes {
+        return Some(format!(
+            "id={id}: RGBA frame byte count {expected_bytes} does not match readback permit {}",
+            permit.raw_bytes()
+        ));
+    }
+    if rgba.len() != expected_bytes {
+        return Some(format!(
+            "id={id}: RGBA frame has invalid byte count: {}x{height} requires {expected_bytes} bytes, got {}",
+            width,
+            rgba.len()
+        ));
+    }
+    None
+}
+
+fn write_rgba_png(path: &std::path::Path, width: u32, height: u32, rgba: &[u8]) -> RgbaPngResult {
+    let file = match std::fs::File::create(path) {
+        Ok(file) => file,
+        Err(error) => {
+            return RgbaPngResult {
+                error: Some(format!("write {}: {error}", path.display())),
+                ..RgbaPngResult::default()
+            };
+        }
+    };
+    let mut buffered = BufWriter::new(file);
+    let encode_start = Instant::now();
+    let encode_error = {
+        let mut encoder = png::Encoder::new(&mut buffered, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        match encoder.write_header() {
+            Ok(mut writer) => writer
+                .write_image_data(rgba)
+                .err()
+                .map(|error| error.to_string()),
+            Err(error) => Some(error.to_string()),
+        }
+    };
+    let encode_ms = encode_start.elapsed().as_secs_f64() * 1000.0;
+    if let Some(error) = encode_error {
+        return RgbaPngResult {
+            encode_ms,
+            error: Some(format!("encode {}: {error}", path.display())),
+            remove_partial: true,
+            ..RgbaPngResult::default()
+        };
+    }
+    let write_start = Instant::now();
+    if let Err(error) = buffered.flush() {
+        return RgbaPngResult {
+            encode_ms,
+            write_ms: write_start.elapsed().as_secs_f64() * 1000.0,
+            error: Some(format!("write {}: {error}", path.display())),
+            remove_partial: true,
+            ..RgbaPngResult::default()
+        };
+    }
+    let write_ms = write_start.elapsed().as_secs_f64() * 1000.0;
+    let png_bytes = match buffered.get_ref().metadata() {
+        Ok(metadata) => metadata.len(),
+        Err(error) => {
+            return RgbaPngResult {
+                encode_ms,
+                write_ms,
+                error: Some(format!("write {}: {error}", path.display())),
+                remove_partial: true,
+                ..RgbaPngResult::default()
+            };
+        }
+    };
+    drop(buffered);
+    let sync_start = Instant::now();
+    if let Err(error) = sync_file(path) {
+        return RgbaPngResult {
+            png_bytes,
+            encode_ms,
+            write_ms,
+            sync_ms: sync_start.elapsed().as_secs_f64() * 1000.0,
+            error: Some(format!("fsync {}: {error}", path.display())),
+            ..RgbaPngResult::default()
+        };
+    }
+    RgbaPngResult {
+        png_bytes,
+        encode_ms,
+        write_ms,
+        sync_ms: sync_start.elapsed().as_secs_f64() * 1000.0,
+        ..RgbaPngResult::default()
+    }
 }
 
 /// fsync a file just written. Opened for writing (never truncating): on
@@ -632,6 +964,31 @@ pub fn write_failure_sidecar(sidecar: EvidenceSidecar, error: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use client::render::backend::{CaptureGeometry, ReadbackBudget};
+
+    #[test]
+    fn poll_does_not_wait_for_a_worker_outcome_lock() {
+        let writer = EvidenceWriter::new(1);
+        let job = EvidenceJob::pending(0);
+        let outcome = job.slot.outcome.lock();
+        assert!(
+            writer.poll(&job).is_none(),
+            "a contended outcome cell must defer to the next UI pass"
+        );
+        drop(outcome);
+        assert!(writer.poll(&job).is_none());
+    }
+
+    static READBACK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn readback_permit(width: u32, height: u32) -> ReadbackPermit {
+        ReadbackBudget::process()
+            .try_acquire(
+                CaptureGeometry::new(width, height),
+                Instant::now() + Duration::from_secs(3600),
+            )
+            .expect("readback permit")
+    }
 
     fn test_pixels(width: u32, height: u32) -> Vec<i32> {
         (0..width * height)
@@ -731,6 +1088,174 @@ mod tests {
         assert_eq!((info.width, info.height), (4, 3));
         assert_eq!(pixels.len(), 4 * 3 * 3);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rgba_capture_preserves_pixels_dimensions_and_raw_json() {
+        let _readback_test_lock = READBACK_TEST_LOCK.lock().expect("readback test lock");
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-evidence-rgba-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock after epoch")
+                .as_nanos()
+        ));
+        let png_path = dir.join("shot.png");
+        let sidecar_path = dir.join("shot.json");
+        let rgba = vec![255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 255, 0, 17, 34, 51, 68];
+        let snapshot_json = "{ \"capture\" : [ 1, 2 ], \"raw\" : true }\n".to_owned();
+        let writer = EvidenceWriter::new(1);
+        let job = writer.submit_rgba(RgbaEvidenceRequest {
+            png_path: png_path.clone(),
+            sidecar_path: sidecar_path.clone(),
+            width: 2,
+            height: 2,
+            rgba: rgba.clone(),
+            snapshot_json: snapshot_json.clone(),
+            #[cfg(feature = "render-diagnostics")]
+            diagnostic_label: "shot".to_owned(),
+            #[cfg(feature = "render-diagnostics")]
+            pixel_roi: None,
+            readback_permit: readback_permit(2, 2),
+        });
+        let outcome = writer
+            .wait(&job, Duration::from_secs(60))
+            .expect("capture completes");
+        assert!(outcome.error.is_none(), "unexpected: {:?}", outcome.error);
+        let file = std::io::BufReader::new(std::fs::File::open(&png_path).expect("png"));
+        let decoder = png::Decoder::new(file);
+        let mut reader = decoder.read_info().expect("PNG info");
+        let mut decoded = vec![0; reader.output_buffer_size().expect("PNG buffer size")];
+        let info = reader.next_frame(&mut decoded).expect("PNG frame");
+        assert_eq!(info.color_type, png::ColorType::Rgba);
+        assert_eq!((info.width, info.height), (2, 2));
+        assert_eq!(decoded, rgba);
+        assert_eq!(
+            std::fs::read(&sidecar_path).expect("raw sidecar"),
+            snapshot_json.as_bytes()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn malformed_rgba_capture_fails_without_writing_a_png() {
+        let _readback_test_lock = READBACK_TEST_LOCK.lock().expect("readback test lock");
+        let dir =
+            std::env::temp_dir().join(format!("274bot-evidence-rgba-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let png_path = dir.join("bad.png");
+        let sidecar_path = dir.join("bad.json");
+        let snapshot_json = "{ \"valid\" : false }\n".to_owned();
+        let writer = EvidenceWriter::new(1);
+        let job = writer.submit_rgba(RgbaEvidenceRequest {
+            png_path: png_path.clone(),
+            sidecar_path: sidecar_path.clone(),
+            width: 2,
+            height: 2,
+            rgba: vec![0; 15],
+            snapshot_json: snapshot_json.clone(),
+            #[cfg(feature = "render-diagnostics")]
+            diagnostic_label: "bad".to_owned(),
+            #[cfg(feature = "render-diagnostics")]
+            pixel_roi: None,
+            readback_permit: readback_permit(2, 2),
+        });
+        let outcome = writer
+            .wait(&job, Duration::from_secs(60))
+            .expect("capture completes");
+        assert!(outcome.error.is_some(), "malformed RGBA must fail");
+        assert!(!png_path.exists(), "malformed RGBA must not write a PNG");
+        assert_eq!(
+            std::fs::read(&sidecar_path).expect("raw sidecar"),
+            snapshot_json.as_bytes()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rgba_permit_covers_gated_write_and_releases_after_publication() {
+        let _readback_test_lock = READBACK_TEST_LOCK.lock().expect("readback test lock");
+        let dir =
+            std::env::temp_dir().join(format!("274bot-evidence-rgba-gate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let (entered_sender, entered_receiver) = std::sync::mpsc::channel();
+        let (release_sender, release_receiver) = std::sync::mpsc::channel();
+        let release_receiver = Arc::new(std::sync::Mutex::new(release_receiver));
+        let hook_receiver = Arc::clone(&release_receiver);
+        let hook: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |_| {
+            entered_sender.send(()).expect("signal writer entry");
+            hook_receiver
+                .lock()
+                .expect("release gate")
+                .recv()
+                .expect("release writer");
+        });
+        let writer = EvidenceWriter::with_config(WriterConfig {
+            bound: 1,
+            submit_wait: Duration::ZERO,
+            before_write: Some(hook),
+        });
+        let job = writer.submit_rgba(RgbaEvidenceRequest {
+            png_path: dir.join("gated.png"),
+            sidecar_path: dir.join("gated.json"),
+            width: 2,
+            height: 2,
+            rgba: vec![64; 16],
+            snapshot_json: "{}".to_owned(),
+            #[cfg(feature = "render-diagnostics")]
+            diagnostic_label: "gated".to_owned(),
+            #[cfg(feature = "render-diagnostics")]
+            pixel_roi: None,
+            readback_permit: readback_permit(2, 2),
+        });
+        entered_receiver
+            .recv_timeout(Duration::from_secs(60))
+            .expect("worker reaches gate");
+        assert!(matches!(
+            ReadbackBudget::process().try_acquire(
+                CaptureGeometry::new(2, 2),
+                Instant::now() + Duration::from_secs(60)
+            ),
+            Err(client::render::backend::ReadbackError::Busy)
+        ));
+        release_sender.send(()).expect("release worker");
+        let outcome = writer
+            .wait(&job, Duration::from_secs(60))
+            .expect("capture completes");
+        assert!(outcome.error.is_none(), "unexpected: {:?}", outcome.error);
+        drop(readback_permit(2, 2));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rejected_rgba_capture_releases_its_readback_permit() {
+        let _readback_test_lock = READBACK_TEST_LOCK.lock().expect("readback test lock");
+        let writer = EvidenceWriter::with_config(WriterConfig {
+            bound: 0,
+            submit_wait: Duration::ZERO,
+            before_write: None,
+        });
+        let job = writer.submit_rgba(RgbaEvidenceRequest {
+            png_path: PathBuf::from("never-rgba.png"),
+            sidecar_path: PathBuf::from("never-rgba.json"),
+            width: 2,
+            height: 2,
+            rgba: vec![0; 16],
+            snapshot_json: "{}".to_owned(),
+            #[cfg(feature = "render-diagnostics")]
+            diagnostic_label: "refused".to_owned(),
+            #[cfg(feature = "render-diagnostics")]
+            pixel_roi: None,
+            readback_permit: readback_permit(2, 2),
+        });
+        assert!(
+            writer
+                .poll(&job)
+                .is_some_and(|outcome| outcome.error.is_some()),
+            "queue refusal completes with an error"
+        );
+        drop(readback_permit(2, 2));
     }
 
     #[test]

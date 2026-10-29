@@ -43,6 +43,7 @@ use crate::render::{
     FrameLease, HeadIdentity, HeadLease, RenderError, RenderPumpLease, RenderService,
     RequestOutcome, ReservationIdentity, SceneHandle,
 };
+use crate::slot_io::FramePaintStatus;
 use crate::FrameBuf;
 
 #[cfg(feature = "render-test-hooks")]
@@ -133,6 +134,12 @@ pub fn workspace_stats() -> WorkspaceStats {
 /// Acknowledge an incident without clearing its totals or live ownership.
 pub fn acknowledge_fault(sequence: u64) -> Result<(), RenderError> {
     PROCESS.service.acknowledge_fault(sequence)
+}
+
+/// Query explicit fixture activation without initializing the render process.
+#[cfg(feature = "render-test-hooks")]
+pub fn fair_enabled() -> bool {
+    fair::enabled()
 }
 
 /// A snapshot of the process's GPU scene-workspace counters.
@@ -248,7 +255,7 @@ impl SlotRender {
             #[cfg(feature = "render-test-hooks")]
             wake: _wake,
             #[cfg(feature = "render-test-hooks")]
-            test_control: None,
+            test_control: fair::configured_test_control(),
         }
     }
 
@@ -319,6 +326,8 @@ pub(crate) struct Head {
     lowmem: bool,
     #[cfg(feature = "render-test-hooks")]
     fair: fair::FairHead,
+    #[cfg(feature = "render-test-hooks")]
+    budget: Option<client::render::budget::RenderBudget>,
 }
 
 impl Head {
@@ -339,6 +348,12 @@ impl Head {
             .service
             .attach(&PROCESS.pump, render.slot, notifier)?;
         let identity = lease.identity();
+        #[cfg(feature = "render-test-hooks")]
+        let budget = fair::head_budget();
+        #[cfg(feature = "render-test-hooks")]
+        let _budget_scope = budget
+            .as_ref()
+            .map(client::render::budget::RenderBudget::scope);
         // GPU-first (the host default): the head prefers the wgpu backend,
         // with `CpuBackend` as the fallback on wgpu init failure
         // (`Renderer::new_prefer` selects, `Renderer::backend_kind` reports);
@@ -363,6 +378,8 @@ impl Head {
             lowmem,
             #[cfg(feature = "render-test-hooks")]
             fair,
+            #[cfg(feature = "render-test-hooks")]
+            budget,
         })
     }
 
@@ -393,18 +410,78 @@ impl Head {
         self.renderer.backend_kind()
     }
 
+    #[cfg(feature = "render-test-hooks")]
+    pub(crate) fn budget_scope(&self) -> Option<client::render::budget::RenderBudgetScope> {
+        self.budget
+            .as_ref()
+            .map(client::render::budget::RenderBudget::scope)
+    }
+
     /// Paint one frame. A GPU head lends its lease to this thread's scene
     /// hook for the frame, so its scene submission runs under a frame lease.
     pub(crate) fn paint(&mut self, client: &mut Client) -> FrameOutput {
         #[cfg(feature = "render-test-hooks")]
-        if fair::enabled() {
-            return fair::paint(self, client);
+        let _budget_scope = self
+            .budget
+            .as_ref()
+            .map(client::render::budget::RenderBudget::scope);
+        let frame = {
+            #[cfg(feature = "render-test-hooks")]
+            if fair::enabled() {
+                self.fair.observe_client_cycle(
+                    self.identity.slot(),
+                    self.renderer.backend_kind(),
+                    client.loop_cycle,
+                    client.ingame && client.scene_state == 2 && self.renderer.has_valid_scene(),
+                );
+                fair::paint(self, client)
+            } else {
+                self.paint_legacy(client)
+            }
+            #[cfg(not(feature = "render-test-hooks"))]
+            self.paint_legacy(client)
+        };
+        #[cfg(feature = "draw-memory-profile")]
+        if let Some(request) = self.output.render_bytes_request(self.identity) {
+            let output_pixels = match &frame {
+                FrameOutput::PixMap(pixmap) => {
+                    pixmap.pixels.capacity() * std::mem::size_of::<i32>()
+                }
+                _ => self.output.render_output_storage_bytes(),
+            };
+            self.output.publish_render_bytes_sample(
+                self.identity,
+                request,
+                self.renderer.render_bytes().with_host_storage(
+                    output_pixels,
+                    client
+                        .nav_debug_paint()
+                        .map_or(0, |paint| paint.retained_bytes()),
+                    client.world.render_storage_bytes(),
+                ),
+            );
         }
+        frame
+    }
+
+    fn paint_legacy(&mut self, client: &mut Client) -> FrameOutput {
         if self.renderer.backend_kind() != BackendKind::Gpu {
             return self.renderer.mainredraw(client);
         }
         let _lent = LentHead::lend(&mut self.lease, &mut self.scenes, &self.wake);
         self.renderer.mainredraw(client)
+    }
+
+    fn publication_status(&self) -> FramePaintStatus {
+        #[cfg(feature = "render-test-hooks")]
+        let recovered_fault = if fair::enabled() {
+            self.renderer.render_fault()
+        } else {
+            None
+        };
+        #[cfg(not(feature = "render-test-hooks"))]
+        let recovered_fault = None;
+        FramePaintStatus::new(self.renderer.has_valid_scene(), recovered_fault)
     }
 
     /// Publish a painted frame into the slot's output mailbox. Refused, and
@@ -413,7 +490,8 @@ impl Head {
     /// `publish_journal_paint` instead.)
     #[cfg(not(feature = "journal-paint-proof"))]
     pub(crate) fn publish(&self, frame: FrameOutput) -> bool {
-        self.output.publish(self.identity, frame)
+        self.output
+            .publish_with_status(self.identity, frame, self.publication_status())
     }
 
     /// `publish` for the journal paint-proof fixture: the same identity check,
@@ -425,7 +503,7 @@ impl Head {
         stamp: crate::JournalPaintStamp,
     ) -> bool {
         self.output
-            .publish_journal_paint(self.identity, frame, stamp)
+            .publish_journal_paint(self.identity, frame, stamp, self.publication_status())
     }
 
     /// Detach in today's order: retire the lease (its generation stops
@@ -787,6 +865,129 @@ mod tests {
         assert_eq!(process.service.fault_stats().totals(), [0, 0, 0]);
         assert!(process.service.fault_stats().latest().is_none());
         drop(lease);
+    }
+
+    #[test]
+    fn unset_production_quantum_never_publishes_recovered_fault_metadata() {
+        use client::client::{ClientConfig, ClientRevision};
+        use client::graphics::PixMap;
+        use client::render::backend::RenderFault;
+        use client::render::budget::{RenderLimit, RenderResource};
+
+        #[cfg(feature = "render-test-hooks")]
+        assert!(!fair::enabled(), "this test does not configure the process");
+        let output = FrameBuf::new();
+        let wake: Arc<dyn Notifier> = Arc::new(HeadWake::default());
+        let render = SlotRender::new(slot(930), Arc::clone(&output), wake);
+        let mut head = Head::attach(&render, true, false).unwrap();
+        let mut client = Client::new_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/nonexistent-unset-render-fault-fixture".into(),
+                members: true,
+                lowmem: false,
+            },
+            ClientRevision::R289,
+        );
+        client.ingame = true;
+        client.draw = true;
+        let fault = RenderLimit::new(RenderResource::NavInput, 2, 1);
+        assert_eq!(client.set_budgeted_nav_debug_paint(Err(fault)), Err(fault));
+        // Inject a receipt without enabling the bounded host path. The
+        // production publication filter must not forward this new metadata.
+        let refused = head.paint(&mut client);
+        assert!(matches!(refused, FrameOutput::Refused(_)));
+        assert_eq!(
+            head.renderer.render_fault(),
+            Some(RenderFault::Budget(fault))
+        );
+        let usable = FrameOutput::PixMap(PixMap::new(1, 1));
+        #[cfg(not(feature = "journal-paint-proof"))]
+        assert!(head.publish(usable));
+        #[cfg(feature = "journal-paint-proof")]
+        assert!(head.publish_journal_paint(
+            usable,
+            crate::JournalPaintStamp {
+                modal_root: -1,
+                journal_paint_hidden: false,
+            },
+        ));
+        assert_eq!(output.generation(), 1);
+        assert_eq!(output.render_fault(), None);
+        head.detach();
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    #[test]
+    fn configured_cpu_head_publishes_usable_recovery_and_fault_metadata() {
+        use client::client::{ClientConfig, ClientPlayer, ClientRevision};
+        use client::render::backend::RenderFault;
+        use client::render::budget::{RenderLimit, RenderResource};
+        use fair::test_hooks::{configure_process, CaptureFixture, ProcessFixture};
+
+        const CHILD: &str = "T44_CPU_RECOVERY_METADATA_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "render_head::tests::configured_cpu_head_publishes_usable_recovery_and_fault_metadata",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .expect("spawn an isolated configured CPU head");
+            assert!(
+                output.status.success(),
+                "configured CPU child failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            return;
+        }
+        configure_process(ProcessFixture {
+            grant_ttl: Duration::from_millis(20),
+            quantum: Duration::from_millis(40),
+        })
+        .unwrap();
+        let mut fixture = CaptureFixture::new(slot(931), true, false).unwrap();
+        let mut client = Client::new_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/nonexistent-configured-cpu-recovery-fixture".into(),
+                members: true,
+                lowmem: false,
+            },
+            ClientRevision::R289,
+        );
+        client.ingame = true;
+        client.draw = true;
+        client.scene_state = 2;
+        client.local_player = Some(ClientPlayer::at(50, 50));
+        client.world.fill_base_level(0);
+        assert!(fixture.paint(&mut client));
+        let baseline = fixture.output().take_presented().unwrap();
+        assert!(baseline.stamp().has_valid_scene());
+        assert_eq!(fixture.output().render_fault(), None);
+        let baseline_sequence = baseline.stamp().mailbox_sequence();
+        drop(baseline);
+
+        let fault = RenderLimit::new(RenderResource::NavInput, 2, 1);
+        assert_eq!(client.set_budgeted_nav_debug_paint(Err(fault)), Err(fault));
+        assert!(fixture.paint(&mut client));
+        assert_eq!(
+            fixture.output().render_fault(),
+            Some(RenderFault::Budget(fault))
+        );
+        let recovered = fixture.output().take_presented().unwrap();
+        assert!(recovered.stamp().has_valid_scene());
+        assert_eq!(recovered.stamp().mailbox_sequence(), baseline_sequence + 1);
+        assert!(matches!(recovered.output(), FrameOutput::PixMap(_)));
+
+        client.set_nav_debug_paint(None);
+        assert!(fixture.paint(&mut client));
+        assert_eq!(fixture.output().render_fault(), None);
     }
 
     #[test]

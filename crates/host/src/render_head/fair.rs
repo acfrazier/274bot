@@ -48,6 +48,14 @@ pub mod test_hooks {
         ) -> Option<client::render::backend::gpu::test_hooks::SceneTestPoint> {
             None
         }
+        fn client_cycle(
+            &self,
+            _slot: SlotKey,
+            _backend: BackendKind,
+            _cycle: i32,
+            _complete_game_scene: bool,
+        ) {
+        }
         fn at(&self, event: RenderTestEvent);
     }
 
@@ -62,24 +70,334 @@ pub mod test_hooks {
         config.fixture = Some(fixture);
         Ok(())
     }
+
+    /// Supply fixture-owned memory ceilings after fair admission is configured,
+    /// and before the first process service or head is constructed.
+    pub fn configure_render_budgets(
+        limits: client::render::budget::RenderBudgetLimits,
+    ) -> Result<(), RenderError> {
+        let mut config = lock(&CONFIG);
+        if config.started || config.fixture.is_none() || config.budget.is_some() {
+            return Err(RenderError::ConfigurationLocked);
+        }
+        config.budget = Some(client::render::budget::RenderBudget::fixture(limits));
+        Ok(())
+    }
+
+    /// Install a caller-owned control for real slots created by a headed
+    /// integration fixture. This cannot enable fair admission on its own.
+    #[cfg(feature = "render-test-hooks")]
+    pub fn configure_process_control(
+        control: Arc<dyn RenderTestControl>,
+    ) -> Result<(), RenderError> {
+        let mut config = lock(&CONFIG);
+        if config.started || config.fixture.is_none() || config.control.is_some() {
+            return Err(RenderError::ConfigurationLocked);
+        }
+        config.control = Some(control);
+        Ok(())
+    }
+
+    /// Genuine producer used by cross-crate capture tests. Stamps can only
+    /// leave this fixture through the real renderer and mailbox publisher.
+    pub struct CaptureFixture {
+        head: Head,
+        render: SlotRender,
+        _park: crate::SlotPark,
+    }
+
+    impl CaptureFixture {
+        pub fn new(slot: SlotKey, prefer_cpu: bool, lowmem: bool) -> Result<Self, RenderError> {
+            let output = FrameBuf::new();
+            let (wake, park) = crate::wake_channel();
+            let render = SlotRender::new(slot, output, Arc::new(wake));
+            let head = Head::attach(&render, prefer_cpu, lowmem)?;
+            Ok(Self {
+                head,
+                render,
+                _park: park,
+            })
+        }
+
+        pub fn output(&self) -> &Arc<FrameBuf> {
+            self.render.output()
+        }
+
+        pub fn backend_kind(&self) -> BackendKind {
+            self.head.backend_kind()
+        }
+
+        pub fn note_due(&mut self, now: Instant) -> Result<(), RenderError> {
+            self.head.note_due(now)
+        }
+
+        pub fn paint(&mut self, client: &mut Client) -> bool {
+            let frame = self.head.paint(client);
+            #[cfg(not(feature = "journal-paint-proof"))]
+            {
+                self.head.publish(frame)
+            }
+            #[cfg(feature = "journal-paint-proof")]
+            {
+                self.head.publish_journal_paint(
+                    frame,
+                    crate::JournalPaintStamp {
+                        modal_root: client.main_modal_id,
+                        journal_paint_hidden: client.journal_paint_hidden(),
+                    },
+                )
+            }
+        }
+    }
+
+    /// Fixed render scalar storage grouped by the accepted memory rows.
+    ///
+    /// `s_head` includes the inline `Head` state other than `Renderer` (already
+    /// reported by the renderer census), the per-head HeadWake and HeadCell Arc
+    /// allocation blocks, enabled head-local budget states, and head-thread
+    /// TLS. It counts neither the aliased HeadWake notifier payload nor the
+    /// pre-existing SlotWake payload. The caller-supplied RenderTestControl Arc
+    /// payload is fixture-owned and is not represented as zero-byte storage.
+    /// `mailbox_per_loaded_bot_bytes` is a separate loaded-bot base row and is
+    /// not multiplied by attached heads. `s_consumer_active_bytes` omits the
+    /// gate block already present in `s_gate`; `s_consumer` is the draining
+    /// receipt, which adds that gate block once when its producer has retired.
+    #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+    pub struct ScalarReceipt {
+        s_head: usize,
+        s_gate: usize,
+        s_consumer_active_bytes: usize,
+        s_consumer: usize,
+        s_service: usize,
+        mailbox_per_loaded_bot_bytes: usize,
+        head_inline_bytes: usize,
+        head_thread_local_bytes: usize,
+        head_wake_arc_allocation_bytes: usize,
+        head_cell_arc_allocation_bytes: usize,
+        head_budget_state_allocation_count: usize,
+        head_budget_arc_allocation_bytes: usize,
+        render_process_static_bytes: usize,
+        fair_process_static_bytes: usize,
+        render_service_arc_allocation_bytes: usize,
+        process_budget_state_allocation_count: usize,
+        process_budget_arc_allocation_bytes: usize,
+        present_gate_arc_allocation_bytes: usize,
+        present_retained_arc_allocation_bytes: usize,
+        present_registration_descriptor_bytes: usize,
+        present_held_frame_descriptor_bytes: usize,
+        present_draining_gate_arc_allocation_bytes: usize,
+        present_process_service_bytes: usize,
+    }
+
+    impl ScalarReceipt {
+        pub const fn s_head(self) -> usize {
+            self.s_head
+        }
+        pub const fn s_gate(self) -> usize {
+            self.s_gate
+        }
+        pub const fn s_consumer_active_bytes(self) -> usize {
+            self.s_consumer_active_bytes
+        }
+        pub const fn s_consumer(self) -> usize {
+            self.s_consumer
+        }
+        pub const fn s_service(self) -> usize {
+            self.s_service
+        }
+        pub const fn mailbox_per_loaded_bot_bytes(self) -> usize {
+            self.mailbox_per_loaded_bot_bytes
+        }
+        pub const fn head_inline_bytes(self) -> usize {
+            self.head_inline_bytes
+        }
+        pub const fn head_thread_local_bytes(self) -> usize {
+            self.head_thread_local_bytes
+        }
+        pub const fn head_wake_arc_allocation_bytes(self) -> usize {
+            self.head_wake_arc_allocation_bytes
+        }
+        pub const fn head_cell_arc_allocation_bytes(self) -> usize {
+            self.head_cell_arc_allocation_bytes
+        }
+        pub const fn head_budget_state_allocation_count(self) -> usize {
+            self.head_budget_state_allocation_count
+        }
+        pub const fn head_budget_arc_allocation_bytes(self) -> usize {
+            self.head_budget_arc_allocation_bytes
+        }
+        pub const fn render_process_static_bytes(self) -> usize {
+            self.render_process_static_bytes
+        }
+        pub const fn fair_process_static_bytes(self) -> usize {
+            self.fair_process_static_bytes
+        }
+        pub const fn render_service_arc_allocation_bytes(self) -> usize {
+            self.render_service_arc_allocation_bytes
+        }
+        pub const fn process_budget_state_allocation_count(self) -> usize {
+            self.process_budget_state_allocation_count
+        }
+        pub const fn process_budget_arc_allocation_bytes(self) -> usize {
+            self.process_budget_arc_allocation_bytes
+        }
+        pub const fn present_gate_arc_allocation_bytes(self) -> usize {
+            self.present_gate_arc_allocation_bytes
+        }
+        pub const fn present_retained_arc_allocation_bytes(self) -> usize {
+            self.present_retained_arc_allocation_bytes
+        }
+        pub const fn present_registration_descriptor_bytes(self) -> usize {
+            self.present_registration_descriptor_bytes
+        }
+        pub const fn present_held_frame_descriptor_bytes(self) -> usize {
+            self.present_held_frame_descriptor_bytes
+        }
+        pub const fn present_draining_gate_arc_allocation_bytes(self) -> usize {
+            self.present_draining_gate_arc_allocation_bytes
+        }
+        pub const fn present_process_service_bytes(self) -> usize {
+            self.present_process_service_bytes
+        }
+    }
+
+    /// Return release `size_of` receipts for one head, one GPU gate, one
+    /// registered/draining consumer and the process-wide render owners.
+    /// No backend renderer census or budget live-byte counter is queried.
+    pub fn scalar_receipt() -> ScalarReceipt {
+        let present = client::render::backend::present::test_hooks::scalar_receipt();
+        let process_budget = super::process_budget_scalar_receipt();
+        let budgets_enabled = process_budget.state_allocation_count != 0;
+        let head_inline_bytes = std::mem::size_of::<Head>() - std::mem::size_of::<Renderer>();
+        let head_thread_local_bytes = super::head_thread_local_bytes(budgets_enabled);
+        let head_wake_arc_allocation_bytes = crate::render::arc_allocation_bytes::<HeadWake>();
+        let head_cell_arc_allocation_bytes = crate::render::head_cell_arc_allocation_bytes();
+        let head_budget_state_allocation_count = if budgets_enabled {
+            client::render::budget::RenderBudget::head_local_state_count()
+        } else {
+            0
+        };
+        let head_budget_arc_allocation_bytes = if budgets_enabled {
+            client::render::budget::RenderBudget::head_local_state_allocation_bytes()
+        } else {
+            0
+        };
+        let s_head = head_inline_bytes
+            + head_thread_local_bytes
+            + head_wake_arc_allocation_bytes
+            + head_cell_arc_allocation_bytes
+            + head_budget_arc_allocation_bytes;
+        let render_process_static_bytes = std::mem::size_of::<LazyLock<ProcessRender>>();
+        let fair_process_static_bytes = super::fair_process_static_bytes();
+        let render_service_arc_allocation_bytes = crate::render::service_arc_allocation_bytes();
+        let present_process_service_bytes = present.process_service_bytes();
+        let s_service = render_process_static_bytes
+            + fair_process_static_bytes
+            + render_service_arc_allocation_bytes
+            + process_budget.state_allocation_bytes
+            + present_process_service_bytes;
+        let s_consumer = present.s_consumer();
+        let present_draining_gate_arc_allocation_bytes = present.draining_gate_allocation_bytes();
+        let s_consumer_active_bytes = s_consumer
+            .checked_sub(present_draining_gate_arc_allocation_bytes)
+            .expect("draining gate allocation is included in the consumer receipt");
+        ScalarReceipt {
+            s_head,
+            s_gate: present.s_gate(),
+            s_consumer_active_bytes,
+            s_consumer,
+            s_service,
+            mailbox_per_loaded_bot_bytes: FrameBuf::fixed_storage_bytes(),
+            head_inline_bytes,
+            head_thread_local_bytes,
+            head_wake_arc_allocation_bytes,
+            head_cell_arc_allocation_bytes,
+            head_budget_state_allocation_count,
+            head_budget_arc_allocation_bytes,
+            render_process_static_bytes,
+            fair_process_static_bytes,
+            render_service_arc_allocation_bytes,
+            process_budget_state_allocation_count: process_budget.state_allocation_count,
+            process_budget_arc_allocation_bytes: process_budget.state_allocation_bytes,
+            present_gate_arc_allocation_bytes: present.gate_allocation_bytes(),
+            present_retained_arc_allocation_bytes: present.retained_present_allocation_bytes(),
+            present_registration_descriptor_bytes: present.registration_descriptor_bytes(),
+            present_held_frame_descriptor_bytes: present.held_frame_descriptor_bytes(),
+            present_draining_gate_arc_allocation_bytes,
+            present_process_service_bytes,
+        }
+    }
 }
 
 struct Configuration {
     started: bool,
     fixture: Option<test_hooks::ProcessFixture>,
+    budget: Option<client::render::budget::RenderBudget>,
+    #[cfg(feature = "render-test-hooks")]
+    control: Option<Arc<dyn test_hooks::RenderTestControl>>,
 }
 static CONFIG: Mutex<Configuration> = Mutex::new(Configuration {
     started: false,
     fixture: None,
+    budget: None,
+    #[cfg(feature = "render-test-hooks")]
+    control: None,
 });
 static FIXTURE: OnceLock<Option<test_hooks::ProcessFixture>> = OnceLock::new();
+static BUDGET: OnceLock<Option<client::render::budget::RenderBudget>> = OnceLock::new();
+
+#[cfg(feature = "render-test-hooks")]
+pub(super) fn configured_test_control() -> Option<Arc<dyn test_hooks::RenderTestControl>> {
+    lock(&CONFIG).control.clone()
+}
+
+#[cfg(feature = "render-test-hooks")]
+fn process_budget_scalar_receipt() -> client::render::budget::RenderBudgetScalarReceipt {
+    let config = lock(&CONFIG);
+    if let Some(budget) = config.budget.as_ref() {
+        return budget.scalar_allocation_receipt(None);
+    }
+    if let Some(budget) = BUDGET.get().and_then(Option::as_ref) {
+        return budget.scalar_allocation_receipt(None);
+    }
+    client::render::budget::RenderBudgetScalarReceipt::default()
+}
+
+#[cfg(feature = "render-test-hooks")]
+fn fair_process_static_bytes() -> usize {
+    std::mem::size_of::<Mutex<Configuration>>()
+        + std::mem::size_of::<OnceLock<Option<test_hooks::ProcessFixture>>>()
+        + std::mem::size_of::<OnceLock<Option<client::render::budget::RenderBudget>>>()
+}
+
+#[cfg(feature = "render-test-hooks")]
+fn head_thread_local_bytes(budgets_enabled: bool) -> usize {
+    std::mem::size_of::<RefCell<Option<GpuFrame>>>()
+        + 2 * std::mem::size_of::<Cell<bool>>()
+        + std::mem::size_of::<Cell<Option<ReservationIdentity>>>()
+        + std::mem::size_of::<RefCell<Option<(HeadIdentity, Arc<dyn test_hooks::RenderTestControl>)>>>(
+        )
+        + if budgets_enabled {
+            client::render::budget::RenderBudget::thread_local_storage_bytes()
+        } else {
+            0
+        }
+}
 
 pub(super) fn initialize() -> Option<test_hooks::ProcessFixture> {
     *FIXTURE.get_or_init(|| {
         let mut config = lock(&CONFIG);
         config.started = true;
+        assert!(BUDGET.set(config.budget.take()).is_ok());
         config.fixture
     })
+}
+
+pub(super) fn head_budget() -> Option<client::render::budget::RenderBudget> {
+    BUDGET
+        .get()
+        .and_then(Option::as_ref)
+        .map(client::render::budget::RenderBudget::for_head)
 }
 
 pub(super) fn enabled() -> bool {
@@ -183,6 +501,8 @@ pub struct HeadFairStats {
     backend: BackendKind,
     has_valid_scene: bool,
     scene_progress: SceneProgress,
+    retained_storage_allocations: u64,
+    retained_storage_bytes: usize,
 }
 
 impl HeadFairStats {
@@ -255,6 +575,12 @@ impl HeadFairStats {
     pub fn scene_progress(&self) -> SceneProgress {
         self.scene_progress
     }
+    pub fn retained_storage_allocations(&self) -> u64 {
+        self.retained_storage_allocations
+    }
+    pub fn retained_storage_bytes(&self) -> usize {
+        self.retained_storage_bytes
+    }
 }
 
 #[derive(Default)]
@@ -275,6 +601,18 @@ pub(super) struct FairHead {
 }
 
 impl FairHead {
+    pub(super) fn observe_client_cycle(
+        &self,
+        slot: SlotKey,
+        backend: BackendKind,
+        cycle: i32,
+        complete_game_scene: bool,
+    ) {
+        if let Some(control) = &self.control {
+            control.client_cycle(slot, backend, cycle, complete_game_scene);
+        }
+    }
+
     pub(super) fn new(
         identity: HeadIdentity,
         backend: BackendKind,
@@ -308,6 +646,8 @@ impl FairHead {
                 backend,
                 has_valid_scene: false,
                 scene_progress: SceneProgress::NoScene,
+                retained_storage_allocations: 0,
+                retained_storage_bytes: 0,
             },
             next_opportunity: NonZeroU64::new(1),
             opportunity: None,
@@ -634,6 +974,8 @@ pub(super) fn paint(head: &mut Head, client: &mut Client) -> FrameOutput {
     }
     head.fair.stats.has_valid_scene = head.renderer.has_valid_scene();
     head.fair.stats.scene_progress = head.renderer.scene_progress();
+    head.fair.stats.retained_storage_allocations = head.renderer.retained_storage_allocations();
+    head.fair.stats.retained_storage_bytes = head.renderer.retained_storage_bytes();
     head.output.publish_fair_stats(head.fair.stats);
     output
 }
@@ -917,7 +1259,7 @@ mod tests {
     }
 
     #[test]
-    fn loading_paint_scope_restores_client_state_after_render_and_unwind() {
+    fn loading_paint_scope_restores_client_state_after_unwind() {
         let mut client = Client::new_with_revision(
             client::client::ClientConfig {
                 host: "127.0.0.1".into(),
@@ -945,5 +1287,59 @@ mod tests {
         client.ingame = false;
         let mut title = LoadingPaintScope::enter(&mut client, true);
         assert_eq!(title.client().scene_state, 2);
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    #[test]
+    fn scalar_receipt_tripwire_records_disjoint_owner_rows() {
+        let receipt = test_hooks::scalar_receipt();
+        assert_eq!(
+            receipt.s_head(),
+            receipt.head_inline_bytes()
+                + receipt.head_thread_local_bytes()
+                + receipt.head_wake_arc_allocation_bytes()
+                + receipt.head_cell_arc_allocation_bytes()
+                + receipt.head_budget_arc_allocation_bytes()
+        );
+        assert_eq!(
+            receipt.s_gate(),
+            receipt.present_gate_arc_allocation_bytes()
+        );
+        assert_eq!(
+            receipt.s_consumer(),
+            receipt.s_consumer_active_bytes()
+                + receipt.present_draining_gate_arc_allocation_bytes()
+        );
+        assert_eq!(
+            receipt.s_service(),
+            receipt.render_process_static_bytes()
+                + receipt.fair_process_static_bytes()
+                + receipt.render_service_arc_allocation_bytes()
+                + receipt.process_budget_arc_allocation_bytes()
+                + receipt.present_process_service_bytes()
+        );
+        assert_eq!(
+            receipt.mailbox_per_loaded_bot_bytes(),
+            FrameBuf::fixed_storage_bytes()
+        );
+        if receipt.process_budget_state_allocation_count() == 0 {
+            assert_eq!(receipt.head_budget_state_allocation_count(), 0);
+            assert_eq!(receipt.head_budget_arc_allocation_bytes(), 0);
+        } else {
+            assert_eq!(
+                receipt.process_budget_state_allocation_count(),
+                client::render::budget::RenderBudget::resource_count()
+            );
+            assert_eq!(
+                receipt.head_budget_state_allocation_count(),
+                client::render::budget::RenderBudget::head_local_state_count()
+            );
+            assert!(receipt.process_budget_arc_allocation_bytes() > 0);
+            assert!(receipt.head_budget_arc_allocation_bytes() > 0);
+        }
+        println!(
+            "T4.4 render scalar receipt tripwire: pointer_bytes={} {receipt:?}",
+            std::mem::size_of::<usize>()
+        );
     }
 }

@@ -907,6 +907,31 @@ struct HeadEntry {
     retained_scene: Option<SceneHandle>,
 }
 
+#[cfg(feature = "render-test-hooks")]
+pub(crate) fn arc_allocation_bytes<T>() -> usize {
+    std::alloc::Layout::new::<(
+        std::sync::atomic::AtomicUsize,
+        std::sync::atomic::AtomicUsize,
+    )>()
+    .extend(std::alloc::Layout::new::<T>())
+    .expect("render Arc allocation layout is representable")
+    .0
+    .pad_to_align()
+    .size()
+}
+
+/// The single process service's Arc allocation, including its reservation table.
+#[cfg(feature = "render-test-hooks")]
+pub(crate) fn service_arc_allocation_bytes() -> usize {
+    arc_allocation_bytes::<ServiceInner>()
+}
+
+/// One attached head's publication cell Arc allocation.
+#[cfg(feature = "render-test-hooks")]
+pub(crate) fn head_cell_arc_allocation_bytes() -> usize {
+    arc_allocation_bytes::<HeadCell>()
+}
+
 #[derive(Debug, Clone, Copy)]
 enum RequestState {
     Idle,
@@ -2187,13 +2212,14 @@ mod tests {
     }
 
     #[test]
-    fn retirement_during_consumed_lease_revokes_output_but_waits_for_real_release() {
+    fn retire_consumed_head_drains_without_stale_publication() {
         let now = clock();
         let (service, pump) = service(now);
         let mut retiring = attach(&service, &pump, 16, Arc::new(NoopNotifier));
         let retiring_cell = Arc::clone(&retiring.cell);
         let peer = attach(&service, &pump, 17, Arc::new(NoopNotifier));
         let token = granted(request(&service, &retiring, now, now));
+        let old_identity = retiring.identity();
         let frame = service.try_consume(&retiring, token, now).unwrap();
         let peer_token = pending(request(&service, &peer, now, now));
         service.retire(&mut retiring, now).unwrap();
@@ -2212,6 +2238,16 @@ mod tests {
         frame.finish(now).unwrap();
         assert_eq!(peer.snapshot().1.state(), ReservationState::Granted);
         assert_eq!(peer.snapshot().1.reservation(), Some(peer_token));
+        let reattached = attach(&service, &pump, 16, Arc::new(NoopNotifier));
+        assert_ne!(
+            reattached.identity().generation(),
+            old_identity.generation()
+        );
+        assert_eq!(reattached.snapshot().1.retained_scene(), None);
+        assert_eq!(
+            service.try_consume(&reattached, token, now).unwrap_err(),
+            RenderError::StaleReservation
+        );
     }
 
     #[test]
@@ -2699,6 +2735,51 @@ mod tests {
     }
 
     #[test]
+    fn expired_cancelled_and_stale_admit_never_loop() {
+        let now = clock();
+        let (service, pump) = service(now);
+
+        let expired = attach(&service, &pump, 913, Arc::new(NoopNotifier));
+        let expired_token = granted(request(&service, &expired, now, now));
+        let expiry = now + TTL;
+        service.pump(&pump, expiry).unwrap();
+        let expired_sequence = expired.snapshot().0;
+        assert_eq!(
+            service
+                .try_consume(&expired, expired_token, expiry)
+                .unwrap_err(),
+            RenderError::Expired
+        );
+        assert_eq!(expired.snapshot().0, expired_sequence);
+
+        let cancelled = attach(&service, &pump, 914, Arc::new(NoopNotifier));
+        let cancelled_token = granted(request(&service, &cancelled, expiry, expiry));
+        service.cancel_request(&cancelled, expiry).unwrap();
+        let cancelled_sequence = cancelled.snapshot().0;
+        assert_eq!(
+            service
+                .try_consume(&cancelled, cancelled_token, expiry)
+                .unwrap_err(),
+            RenderError::Cancelled
+        );
+        assert_eq!(cancelled.snapshot().0, cancelled_sequence);
+
+        let mut retired = attach(&service, &pump, 915, Arc::new(NoopNotifier));
+        let stale_token = granted(request(&service, &retired, expiry, expiry));
+        service.retire(&mut retired, expiry).unwrap();
+        let reattached = attach(&service, &pump, 915, Arc::new(NoopNotifier));
+        let reattached_sequence = reattached.snapshot().0;
+        assert_eq!(
+            service
+                .try_consume(&reattached, stale_token, expiry)
+                .unwrap_err(),
+            RenderError::StaleReservation
+        );
+        assert_eq!(reattached.snapshot().0, reattached_sequence);
+        assert_eq!(service.fault_stats().totals(), [0, 0, 0]);
+    }
+
+    #[test]
     fn lock_fault_survives_failed_paint_and_lease_release() {
         let now = clock();
         let (service, pump) = service(now);
@@ -2898,5 +2979,121 @@ mod tests {
         assert!(after_old_ack.latest().unwrap().active());
         assert_eq!(after_old_ack.totals(), [1, 0, 1]);
         frame.finish(now).unwrap();
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    #[test]
+    fn process_service_scalar_layout_is_complete() {
+        fn round_up(bytes: usize, alignment: usize) -> usize {
+            let remainder = bytes % alignment;
+            if remainder == 0 {
+                bytes
+            } else {
+                bytes + alignment - remainder
+            }
+        }
+
+        fn padded_end(alignment: usize, field_ends: &[usize]) -> usize {
+            let end = field_ends.iter().copied().max().unwrap_or(0);
+            round_up(end, alignment)
+        }
+
+        let head_entry_ends = [
+            std::mem::offset_of!(HeadEntry, identity) + std::mem::size_of::<HeadIdentity>(),
+            std::mem::offset_of!(HeadEntry, fence) + std::mem::size_of::<Fence<HeadIdentity>>(),
+            std::mem::offset_of!(HeadEntry, cell) + std::mem::size_of::<Arc<HeadCell>>(),
+            std::mem::offset_of!(HeadEntry, notifier) + std::mem::size_of::<Arc<dyn Notifier>>(),
+            std::mem::offset_of!(HeadEntry, request) + std::mem::size_of::<RequestState>(),
+            std::mem::offset_of!(HeadEntry, focused) + std::mem::size_of::<bool>(),
+            std::mem::offset_of!(HeadEntry, retained_scene)
+                + std::mem::size_of::<Option<SceneHandle>>(),
+        ];
+        assert_eq!(
+            std::mem::size_of::<HeadEntry>(),
+            padded_end(std::mem::align_of::<HeadEntry>(), &head_entry_ends)
+        );
+
+        let service_state_ends = [
+            std::mem::offset_of!(ServiceState, heads)
+                + std::mem::size_of::<[Option<HeadEntry>; RENDER_HEAD_CAP]>(),
+            std::mem::offset_of!(ServiceState, workspace)
+                + std::mem::size_of::<Option<WorkspaceOwner>>(),
+            std::mem::offset_of!(ServiceState, pump_registered) + std::mem::size_of::<bool>(),
+            std::mem::offset_of!(ServiceState, configuration_locked) + std::mem::size_of::<bool>(),
+            std::mem::offset_of!(ServiceState, consumed_quantum)
+                + std::mem::size_of::<Option<Duration>>(),
+            std::mem::offset_of!(ServiceState, faults) + std::mem::size_of::<RenderFaultStats>(),
+            std::mem::offset_of!(ServiceState, next_fault_sequence)
+                + std::mem::size_of::<Option<NonZeroU64>>(),
+            std::mem::offset_of!(ServiceState, next_head_generation)
+                + std::mem::size_of::<Option<NonZeroU64>>(),
+            std::mem::offset_of!(ServiceState, next_reservation_id)
+                + std::mem::size_of::<Option<NonZeroU64>>(),
+            std::mem::offset_of!(ServiceState, next_insertion_sequence)
+                + std::mem::size_of::<Option<NonZeroU64>>(),
+        ];
+        assert_eq!(
+            std::mem::size_of::<ServiceState>(),
+            padded_end(std::mem::align_of::<ServiceState>(), &service_state_ends)
+        );
+        assert_eq!(
+            std::mem::size_of::<ServiceInner>(),
+            std::mem::size_of::<Duration>() + std::mem::size_of::<Mutex<ServiceState>>()
+        );
+        assert_eq!(
+            std::mem::size_of::<HeadCell>(),
+            std::mem::size_of::<Publication<HeadSnapshot>>()
+        );
+        assert_eq!(
+            std::mem::size_of::<RenderService>(),
+            std::mem::size_of::<Arc<ServiceInner>>()
+        );
+
+        let pump_fields = std::mem::size_of::<Arc<ServiceInner>>() + std::mem::size_of::<bool>();
+        assert_eq!(
+            std::mem::size_of::<RenderPumpLease>(),
+            round_up(pump_fields, std::mem::align_of::<RenderPumpLease>())
+        );
+        let head_lease_fields = std::mem::size_of::<Arc<ServiceInner>>()
+            + std::mem::size_of::<Arc<HeadCell>>()
+            + std::mem::size_of::<HeadIdentity>()
+            + std::mem::size_of::<bool>();
+        assert_eq!(
+            std::mem::size_of::<HeadLease>(),
+            round_up(head_lease_fields, std::mem::align_of::<HeadLease>())
+        );
+        let frame_lease_fields = std::mem::size_of::<Arc<ServiceInner>>()
+            + std::mem::size_of::<Arc<HeadCell>>()
+            + std::mem::size_of::<ReservationIdentity>()
+            + std::mem::size_of::<bool>();
+        assert_eq!(
+            std::mem::size_of::<FrameLease>(),
+            round_up(frame_lease_fields, std::mem::align_of::<FrameLease>())
+        );
+
+        let service_arc_bytes = service_arc_allocation_bytes();
+        let head_cell_arc_bytes = head_cell_arc_allocation_bytes();
+        assert!(
+            service_arc_bytes > std::mem::size_of::<ServiceInner>(),
+            "service receipt includes its Arc allocation header"
+        );
+        assert!(
+            head_cell_arc_bytes > std::mem::size_of::<HeadCell>(),
+            "head-cell receipt includes its Arc allocation header"
+        );
+        println!(
+            "T4.4 render-service scalar receipt: head_entry={} service_state={} service_inner={} service_arc_allocation={} head_cell={} head_cell_arc_allocation={} render_service={} pump_lease={} head_lease={} frame_lease={} head_capacity={}",
+            std::mem::size_of::<HeadEntry>(),
+            std::mem::size_of::<ServiceState>(),
+            std::mem::size_of::<ServiceInner>(),
+            service_arc_bytes,
+            std::mem::size_of::<HeadCell>(),
+            head_cell_arc_bytes,
+            std::mem::size_of::<RenderService>(),
+            std::mem::size_of::<RenderPumpLease>(),
+            std::mem::size_of::<HeadLease>(),
+            std::mem::size_of::<FrameLease>(),
+            RENDER_HEAD_CAP,
+        );
     }
 }

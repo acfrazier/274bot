@@ -85,6 +85,9 @@ fn capture_bank_sweep() {
                     save_ppm(&pix.pixels, &path);
                     return;
                 }
+                Some(FrameOutput::Refused(fault)) => {
+                    fail(&format!("booth capture refused: {fault:?}"));
+                }
                 None => thread::sleep(Duration::from_millis(100)),
             }
         }

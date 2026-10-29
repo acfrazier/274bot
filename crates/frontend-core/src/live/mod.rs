@@ -9,6 +9,10 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 
+pub use host_play::evidence_writer::{
+    EvidenceJob, EvidenceOutcome, EvidenceWriter, RgbaEvidenceRequest, WriterConfig,
+};
+
 /// An owned scenario. The scenario adapter value stays private to this crate.
 pub struct Scenario(Box<scenario::Scenario>);
 
@@ -2178,6 +2182,27 @@ pub fn create_shot_run_dir() -> Result<PathBuf, String> {
     scenario::shot::create_run_dir().map_err(|error| error.to_string())
 }
 
+/// Resolve a per-run shot directory under the explicit capture byte allowance.
+pub fn shot_run_dir_path(max_path_bytes: usize) -> std::io::Result<PathBuf> {
+    scenario::shot::run_dir_path_with_limit(max_path_bytes)
+}
+
+/// Resolve bounded shot output paths without creating directories or files.
+pub fn shot_output_paths(
+    directory: &Path,
+    label: &str,
+    now: std::time::SystemTime,
+    max_path_bytes: usize,
+) -> std::io::Result<(PathBuf, PathBuf)> {
+    scenario::shot::shot_paths_at_with_limit(directory, label, now, max_path_bytes)
+}
+
+/// Resolve a recording child path without exceeding the existing product
+/// representation envelope or growing an owned path beyond that admission.
+pub fn record_output_path(directory: &Path, filename: &str) -> std::io::Result<PathBuf> {
+    scenario::shot::bounded_child_path(directory, filename, scenario::shot::OUTPUT_PATH_BYTES)
+}
+
 /// Write a captured headed shot and its scenario JSON sidecar.
 pub fn write_shot(
     directory: &Path,
@@ -2430,5 +2455,48 @@ mod tests {
             timing.script_elapsed(script_started + std::time::Duration::from_secs(1)),
             Some(std::time::Duration::from_secs(1))
         );
+    }
+
+    #[test]
+    fn shot_output_paths_are_pure_and_enforce_utf8_byte_limit() {
+        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(86_400);
+        let (png, sidecar) =
+            super::shot_output_paths(std::path::Path::new("shots"), "walk courtyard", now, 4096)
+                .expect("shot paths");
+        assert_eq!(
+            png,
+            std::path::PathBuf::from("shots/1970-01-02T00-00-00_walk_courtyard.png")
+        );
+        assert_eq!(
+            sidecar,
+            std::path::PathBuf::from("shots/1970-01-02T00-00-00_walk_courtyard.json")
+        );
+
+        let label = "x";
+        let suffix_bytes =
+            scenario::shot::stamp_utc(now).len() + 1 + scenario::shot::safe_label(label).len() + 5;
+        let directory_bytes = 4096 - 1 - suffix_bytes;
+        let directory = std::path::PathBuf::from("d".repeat(directory_bytes));
+        let (png, sidecar) = super::shot_output_paths(&directory, label, now, 4096)
+            .expect("paths at the byte limit");
+        assert_eq!(png.to_str().expect("UTF-8 PNG path").len(), 4095);
+        assert_eq!(sidecar.to_str().expect("UTF-8 sidecar path").len(), 4096);
+
+        let oversized = std::path::PathBuf::from(format!("d{}", "d".repeat(directory_bytes)));
+        let error = super::shot_output_paths(&oversized, label, now, 4096)
+            .expect_err("oversized path must fail");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shot_output_paths_reject_non_utf8_directory() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let directory = std::path::PathBuf::from(std::ffi::OsString::from_vec(vec![0xff]));
+        let error = super::shot_output_paths(&directory, "shot", std::time::UNIX_EPOCH, 4096)
+            .expect_err("non-UTF-8 directory must fail");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("not valid UTF-8"));
     }
 }

@@ -16,7 +16,7 @@ use crate::chrome::{
 use crate::focus::{draw_for_slot, should_capture, should_draw};
 use crate::game_view::GameView;
 use crate::grid::grid_cells;
-use crate::headed_record::{HeadedRecord, RecordFrame, SettingState, StepInfo};
+use crate::headed_record::{HeadedRecord, RecordFinish, RecordFrame, SettingState, StepInfo};
 use crate::overlay::{PathOverlay, QueueCards};
 use crate::paint::PaintOverlay;
 use crate::picker;
@@ -158,6 +158,11 @@ enum DockLayout {
     Rail,
 }
 
+struct PendingShotWrite {
+    label: String,
+    job: frontend_core::live::EvidenceJob,
+}
+
 /// Per-frame panel state: lazily-created game texture and the session (vault,
 /// running slots, focus).
 struct PanelState {
@@ -222,6 +227,9 @@ struct PanelState {
     /// or lazily on the first write (the interactive F12 capture has no
     /// run start to hook).
     shot_dir: Option<PathBuf>,
+    /// One metadata-only completion handle; the shared writer owns the raw
+    /// pixels and process readback permit until durable completion.
+    shot_write: Option<PendingShotWrite>,
     /// Opt-in headed recording (`HEADED_RECORD=1`): periodic whole-window
     /// frames into `<shot_dir>/record.mp4`, a step/tick sidecar
     /// (`record.txt`) and a settings-state sidecar (`settings.txt`).
@@ -673,6 +681,7 @@ impl PanelState {
             last_fit_need: None,
             shot_state,
             shot_dir: None,
+            shot_write: None,
             record: HeadedRecord::from_env(),
             walk_map: WalkMapRenderer::new(),
         };
@@ -736,13 +745,34 @@ impl PanelState {
     }
 }
 
+fn new_shot_state() -> Arc<Mutex<crate::window::ShotState>> {
+    let mut shots = crate::window::ShotState::default();
+    if crate::window::render_fair_capture_enabled() {
+        let metadata = std::env::var("T44_CAPTURE_METADATA_BYTES")
+            .ok()
+            .and_then(|value| value.parse::<std::num::NonZeroUsize>().ok());
+        let timeout_ms = std::env::var("T44_CAPTURE_READBACK_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse::<std::num::NonZeroU64>().ok());
+        if let (Some(metadata), Some(timeout_ms)) = (metadata, timeout_ms) {
+            if let Err(error) =
+                shots.configure_capture_policy(metadata, Duration::from_millis(timeout_ms.get()))
+            {
+                api::host_log!(
+                    api::hostlog::Category::Lifecycle,
+                    api::hostlog::Level::Warn,
+                    "capture fixture configuration refused: {error}"
+                );
+            }
+        }
+    }
+    Arc::new(Mutex::new(shots))
+}
+
 #[cfg(test)]
 impl Default for PanelState {
     fn default() -> Self {
-        Self::with_session(
-            Session::new(),
-            Arc::new(Mutex::new(crate::window::ShotState::default())),
-        )
+        Self::with_session(Session::new(), new_shot_state())
     }
 }
 
@@ -1032,6 +1062,33 @@ fn enqueue_manual_shot(state: &mut PanelState) {
         eprintln!("[panel] F12: no focused slot has a live snapshot");
         return;
     };
+    if crate::window::render_fair_capture_enabled() {
+        let mut shots = state.shot_state.lock().unwrap();
+        let result = state
+            .session
+            .core
+            .with_slot_snapshot(&focused, |snapshot| {
+                if !snapshot.ingame() || snapshot.tile().is_none() {
+                    return Err(crate::window::CaptureError::InvalidScene);
+                }
+                shots.enqueue_bounded_snapshot(&label, |maximum| {
+                    live_harness::bounded_snapshot_json(snapshot, maximum)
+                })
+            })
+            .unwrap_or(Err(crate::window::CaptureError::StaleHead));
+        match result {
+            Ok(()) => println!("[panel] F12: shot {label} queued"),
+            Err(error) => {
+                let _ = shots.mark_failed_capture(&label, error);
+                api::host_log!(
+                    api::hostlog::Category::Lifecycle,
+                    api::hostlog::Level::Warn,
+                    "F12 capture refused: {error}"
+                );
+            }
+        }
+        return;
+    }
     let json = state.session.core.with_slot_snapshot(&focused, |snapshot| {
         if !snapshot.ingame() || snapshot.tile().is_none() {
             return Err(format!(
@@ -1052,12 +1109,18 @@ fn enqueue_manual_shot(state: &mut PanelState) {
         }
         Some(Ok(json)) => json,
     };
-    state
-        .shot_state
-        .lock()
-        .unwrap()
-        .enqueue(label.clone(), json);
-    println!("[panel] F12: shot {label} queued");
+    let mut shots = state.shot_state.lock().unwrap();
+    match live_harness::enqueue_capture(&mut shots, &label, json, None) {
+        Ok(()) => println!("[panel] F12: shot {label} queued"),
+        Err(error) => {
+            shots.mark_failed(&label, &error.to_string());
+            api::host_log!(
+                api::hostlog::Category::Lifecycle,
+                api::hostlog::Level::Warn,
+                "F12 capture refused: {error}"
+            );
+        }
+    }
 }
 
 /// `--live NAME` wins over `BOT_LIVE`. Empty env is ignored. `--smoke`
@@ -1536,6 +1599,109 @@ fn capture_game_mouse(
     }
 }
 
+/// Move one mailbox envelope into its displayed view. Only a pending actor
+/// proof asks for a retained consumer or serializes a scene sidecar.
+fn present_actor_frame(
+    gpu: &mut Gpu,
+    view: &mut GameView,
+    session: &Session,
+    shots: &Arc<Mutex<crate::window::ShotState>>,
+    actor: &str,
+    mailbox: &Arc<frontend_core::surface::FrameBuf>,
+    frame: frontend_core::surface::PresentedFrame,
+) -> u64 {
+    let stamp = *frame.stamp();
+    #[cfg(feature = "render-diagnostics")]
+    let mut frame = frame;
+    #[cfg(feature = "render-diagnostics")]
+    {
+        client::render::diagnostics::prepare_present_roi(
+            frame
+                .take_roi()
+                .map(|roi| (roi, actor, stamp.mailbox_sequence())),
+        );
+        match frame.output() {
+            client::render::backend::FrameOutput::PixMap(_) => {
+                client::render::diagnostics::arm_game_image_cpu_upload();
+            }
+            client::render::backend::FrameOutput::Texture(_) => {
+                client::render::diagnostics::arm_game_image_gpu_present();
+            }
+            client::render::backend::FrameOutput::Refused(_) => {}
+        }
+    }
+    let pending = crate::window::render_fair_capture_enabled()
+        && session.focused_name().as_deref() == Some(actor)
+        && shots
+            .lock()
+            .unwrap()
+            .pending_actor_request()
+            .and_then(|request| request.actor.as_deref())
+            == Some(actor);
+    let retained = pending.then(|| view.try_capture_frame(&frame));
+    view.present_stamped(
+        gpu,
+        frame,
+        retained
+            .as_ref()
+            .and_then(|result| result.as_ref().ok())
+            .and_then(Option::as_ref),
+    );
+    match retained {
+        Some(Ok(consumer)) => {
+            let accepted =
+                crate::window::ActorCaptureFence::new(stamp, Arc::downgrade(mailbox), consumer)
+                    .and_then(|fence| {
+                        shots.lock().unwrap().accept_actor_frame(
+                            actor,
+                            |maximum| bounded_pair_actor_sidecar(session, actor, maximum),
+                            fence,
+                        )
+                    });
+            if let Err(error) = accepted {
+                if !matches!(
+                    error,
+                    crate::window::CaptureError::Busy
+                        | crate::window::CaptureError::StaleHead
+                        | crate::window::CaptureError::InvalidScene
+                ) {
+                    if let Err(failure) = shots.lock().unwrap().fail_actor_frame(actor, error) {
+                        api::host_log!(
+                            api::hostlog::Category::Lifecycle,
+                            api::hostlog::Level::Error,
+                            "capture {actor}: {error}; refusal failed: {failure}"
+                        );
+                    }
+                }
+            }
+        }
+        Some(Err(error)) => {
+            use client::render::backend::ReadbackError;
+            if !matches!(
+                error,
+                ReadbackError::Busy
+                    | ReadbackError::StalePresent
+                    | ReadbackError::InvalidScene
+                    | ReadbackError::Retired
+            ) {
+                let refusal = crate::window::CaptureError::Readback(error);
+                if let Err(failure) = shots.lock().unwrap().fail_actor_frame(actor, refusal) {
+                    api::host_log!(
+                        api::hostlog::Category::Lifecycle,
+                        api::hostlog::Level::Error,
+                        "capture {actor}: {refusal}; refusal failed: {failure}"
+                    );
+                }
+            }
+        }
+        _ => {
+            // The raw/CPU view has replaced any previously retained view.
+            view.release_capture_registration();
+        }
+    }
+    stamp.mailbox_sequence()
+}
+
 /// Single-bot / rail Game pane: native 765×503, centred in the leaf.
 /// Does not scale with the host window; grid mode fits cells to avail.
 fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
@@ -1574,34 +1740,38 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         // same skip the old snapshot path gave.
         let gen = buf.as_ref().map(|p| p.generation()).unwrap_or(0);
         let dirty = state.last_upload.as_ref() != Some(&(name.clone(), gen));
-        if dirty {
-            let took_frame = if let Some(frame) = buf.as_ref().and_then(|p| p.take()) {
-                if let Some(view) = state.game_view.as_mut() {
-                    #[cfg(feature = "render-diagnostics")]
-                    {
-                        let roi = buf.as_ref().and_then(|p| p.take_pixel_roi());
-                        client::render::diagnostics::prepare_present_roi(
-                            roi.map(|r| (r, name.as_str(), gen)),
-                        );
-                        match &frame {
-                            client::render::backend::FrameOutput::PixMap(_) => {
-                                client::render::diagnostics::arm_game_image_cpu_upload();
-                            }
-                            client::render::backend::FrameOutput::Texture(_) => {
-                                client::render::diagnostics::arm_game_image_gpu_present();
-                            }
-                        }
-                    }
-                    view.present(gpu, frame);
+        let held = crate::window::render_fair_capture_enabled()
+            && state.shot_state.lock().unwrap().holds_actor_frame(&name);
+        if dirty && !held {
+            if let (Some(mailbox), Some(view)) = (buf.as_ref(), state.game_view.as_mut()) {
+                if let Some(frame) = mailbox.take_presented() {
+                    let sequence = present_actor_frame(
+                        gpu,
+                        view,
+                        &state.session,
+                        &state.shot_state,
+                        &name,
+                        mailbox,
+                        frame,
+                    );
+                    record_presented_upload(&mut state.last_upload, name.clone(), sequence, true);
                 }
-                true
-            } else {
-                false
-            };
-            record_presented_upload(&mut state.last_upload, name.clone(), gen, took_frame);
+            }
         }
         let view = state.game_view.as_ref().expect("game view initialized");
         ui.image(view.tex_id, size);
+        if crate::window::render_fair_capture_enabled() {
+            let mut shots = state.shot_state.lock().unwrap();
+            if shots.holds_actor_frame(&name) {
+                if let Err(error) = shots.confirm_actor_display(&name, view.presented_stamp()) {
+                    api::host_log!(
+                        api::hostlog::Category::Lifecycle,
+                        api::hostlog::Level::Warn,
+                        "capture {name} display refused: {error}"
+                    );
+                }
+            }
+        }
         // The capture gate and anchor belong to the Image item. Read
         // them now: after the overlays the last submitted item is no
         // longer guaranteed to be the Image.
@@ -1629,10 +1799,16 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         // Script-paint overlay: the focused slot's paint renders in an
         // ImGui window over the chatbox rect — never on the game texture.
         let paint = focused_paint(&state.session);
+        if let Some(fault) = buf.as_ref().and_then(|pixels| pixels.render_fault()) {
+            ui.text_disabled(format!("render fault: {fault:?}"));
+        }
         pointer_in_paint = overlay_script_paint(ui, gpu, state, paint, min, size);
     } else {
         ui.text_disabled("renderer off");
         state.paint.release_canvas(gpu);
+        if let Some(view) = state.game_view.as_mut() {
+            view.unbind_client(gpu);
+        }
     }
     capture_game_mouse(
         ui,
@@ -6421,21 +6597,49 @@ fn cell_body(
             None => false,
         }
     };
-    if !game_pane_owns {
-        // `take` moves the stored frame out; `present` routes it: the
-        // `PixMap` (CPU) arm uploads into the tile's owned texture, the
-        // `Texture` (GPU) arm binds the client's frame view directly.
-        if let Some(frame) = state
-            .session
-            .core
-            .slot_io(name)
-            .and_then(|s| s.pixels.take())
-        {
-            tv.view.present(gpu, frame);
+    let held = crate::window::render_fair_capture_enabled()
+        && state.shot_state.lock().unwrap().holds_actor_frame(name);
+    if !game_pane_owns && !held {
+        if let Some(slot) = state.session.core.slot_io(name) {
+            if let Some(frame) = slot.pixels.take_presented() {
+                present_actor_frame(
+                    gpu,
+                    &mut tv.view,
+                    &state.session,
+                    &state.shot_state,
+                    name,
+                    &slot.pixels,
+                    frame,
+                );
+            }
         }
     }
     ui.image(tv.view.tex_id, size);
-    ui.is_item_clicked_with_button(MouseButton::Left)
+    if crate::window::render_fair_capture_enabled()
+        && state.session.wall.grid
+        && state.session.focused_name().as_deref() == Some(name)
+    {
+        let mut shots = state.shot_state.lock().unwrap();
+        if shots.holds_actor_frame(name) {
+            if let Err(error) = shots.confirm_actor_display(name, tv.view.presented_stamp()) {
+                api::host_log!(
+                    api::hostlog::Category::Lifecycle,
+                    api::hostlog::Level::Warn,
+                    "capture {name} display refused: {error}"
+                );
+            }
+        }
+    }
+    let clicked = ui.is_item_clicked_with_button(MouseButton::Left);
+    let render_fault = state
+        .session
+        .core
+        .slot_io(name)
+        .and_then(|slot| slot.pixels.render_fault());
+    if let Some(fault) = render_fault {
+        ui.text_disabled(format!("render fault: {fault:?}"));
+    }
+    clicked
 }
 
 /// Rail tile body: the fixed `TILE_W`×`TILE_H` case of [`cell_body`].
@@ -7873,6 +8077,27 @@ fn live_exit_code(live: &LiveHarness, failure: Option<&str>) -> Option<i32> {
 /// or `--smoke` (temp `test` vault, one whole-window shot at scene 2,
 /// exit 0). `--prepare-fixture` is offline-only and never opens a window.
 pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
+    run_panel_inner(args, None)
+}
+
+/// Main-thread headed fixture; it cannot activate admission or choose budgets.
+#[cfg(feature = "render-test-hooks")]
+pub fn run_panel_render_fixture(
+    args: PanelArgs,
+    redraw: RedrawMode,
+) -> Result<(), window::PanelError> {
+    if !frontend_core::surface::render_fair_enabled() {
+        return Err(window::PanelError::LiveHarnessFailure(
+            "render fixture process is not configured".into(),
+        ));
+    }
+    run_panel_inner(args, Some(redraw))
+}
+
+fn run_panel_inner(
+    args: PanelArgs,
+    redraw_override: Option<RedrawMode>,
+) -> Result<(), window::PanelError> {
     if let Some(scenario) = args.mode.prepare_fixture_name() {
         return run_offline_prepare_fixture(&args, scenario).map_err(|e| {
             eprintln!("FAIL: {e}");
@@ -7886,7 +8111,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
             .ok()
             .flatten()
             .is_some();
-    let shot_state = Arc::new(Mutex::new(crate::window::ShotState::default()));
+    let shot_state = new_shot_state();
     let mut instance_prompt = None;
     let mut running = None;
     match frontend_core::launch::acquire_instance(InstanceKind::Panel, skip_lock) {
@@ -7905,6 +8130,9 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     let mut presented = false;
 
     let mut cfg = runner_config();
+    if let Some(redraw) = redraw_override {
+        cfg.redraw = redraw;
+    }
     let mut window_title = running
         .borrow()
         .as_ref()
@@ -7993,6 +8221,149 @@ fn panel_gpu_shutdown(
     }
 }
 
+fn shot_evidence_writer() -> &'static frontend_core::live::EvidenceWriter {
+    // Process ownership prevents Drop from joining a blocked writer on the
+    // UI thread. The readback permit admits only one raw image to this path.
+    static WRITER: std::sync::LazyLock<frontend_core::live::EvidenceWriter> =
+        std::sync::LazyLock::new(|| {
+            frontend_core::live::EvidenceWriter::with_config(frontend_core::live::WriterConfig {
+                bound: 1,
+                submit_wait: Duration::ZERO,
+                ..Default::default()
+            })
+        });
+    &WRITER
+}
+
+fn fail_shot_output(state: &PanelState, label: &str, error: crate::window::CaptureError) {
+    api::host_log!(
+        api::hostlog::Category::Lifecycle,
+        api::hostlog::Level::Error,
+        "shot {label} output refused: {error}"
+    );
+    if let Err(failure) = state
+        .shot_state
+        .lock()
+        .unwrap()
+        .mark_failed_capture(label, error)
+    {
+        api::host_log!(
+            api::hostlog::Category::Lifecycle,
+            api::hostlog::Level::Error,
+            "shot {label} refusal could not be retained: {failure}"
+        );
+    }
+}
+
+fn pump_async_shot_output(state: &mut PanelState) -> usize {
+    let mut written = 0;
+    if let Some(pending) = state.shot_write.as_ref() {
+        let Some(outcome) = shot_evidence_writer().poll(&pending.job) else {
+            return 0;
+        };
+        let pending = state.shot_write.take().expect("polled shot output");
+        if let Some(error) = outcome.error {
+            api::host_log!(
+                api::hostlog::Category::Lifecycle,
+                api::hostlog::Level::Error,
+                "shot {} output failed: {error}",
+                pending.label
+            );
+            fail_shot_output(state, &pending.label, crate::window::CaptureError::Io);
+        } else {
+            state
+                .shot_state
+                .lock()
+                .unwrap()
+                .mark_written(&pending.label);
+            println!("[panel] shot {} written", pending.label);
+            written += 1;
+        }
+    }
+    let Some(mut capture) = state.shot_state.lock().unwrap().take_done_for_write() else {
+        return written;
+    };
+    let output_paths = {
+        let directory = &mut state.shot_dir;
+        let mut shots = state.shot_state.lock().unwrap();
+        shots.with_pending_output_paths(&capture.label, |max_path_bytes| {
+            let candidate = if directory.is_none() {
+                Some(
+                    frontend_core::live::shot_run_dir_path(max_path_bytes)
+                        .map_err(|_| crate::window::CaptureError::TooLarge)?,
+                )
+            } else {
+                None
+            };
+            let dir = directory
+                .as_ref()
+                .or(candidate.as_ref())
+                .ok_or(crate::window::CaptureError::Device)?;
+            if dir.capacity() > max_path_bytes {
+                return Err(crate::window::CaptureError::TooLarge);
+            }
+            let paths = frontend_core::live::shot_output_paths(
+                dir,
+                &capture.label,
+                std::time::SystemTime::now(),
+                max_path_bytes,
+            )
+            .map_err(|_| crate::window::CaptureError::TooLarge)?;
+            let directory_bytes = dir.capacity();
+            let output_bytes = paths
+                .0
+                .capacity()
+                .checked_add(paths.1.capacity())
+                .ok_or(crate::window::CaptureError::TooLarge)?;
+            if let Some(created) = candidate {
+                *directory = Some(created);
+            }
+            Ok((paths, directory_bytes, output_bytes))
+        })
+    };
+    let (png_path, sidecar_path) = match output_paths {
+        Ok(paths) => paths,
+        Err(error) => {
+            fail_shot_output(state, &capture.label, error);
+            return written;
+        }
+    };
+    #[cfg(feature = "render-diagnostics")]
+    let diagnostic_label = match {
+        let mut shots = state.shot_state.lock().unwrap();
+        shots.try_clone_pending_diagnostic_label(&capture.label)
+    } {
+        Ok(label) => label,
+        Err(error) => {
+            fail_shot_output(state, &capture.label, error);
+            return written;
+        }
+    };
+    let Some(readback_permit) = capture.readback_permit.take() else {
+        fail_shot_output(state, &capture.label, crate::window::CaptureError::Device);
+        return written;
+    };
+    let request = frontend_core::live::RgbaEvidenceRequest {
+        png_path,
+        sidecar_path,
+        width: capture.width,
+        height: capture.height,
+        rgba: capture.rgba,
+        snapshot_json: capture.snapshot_json,
+        readback_permit,
+        #[cfg(feature = "render-diagnostics")]
+        diagnostic_label,
+        #[cfg(feature = "render-diagnostics")]
+        pixel_roi: capture.pixel_roi,
+    };
+    let job = shot_evidence_writer().submit_rgba(request);
+    state.shot_write = Some(PendingShotWrite {
+        label: capture.label,
+        job,
+    });
+    written
+}
+
 /// Whole-window shots (the 377 harness pattern): write completed captures
 /// to the per-run dir, then hand the scenario sink's new requests to the
 /// next render pass's readback. The per-run dir is created lazily on the
@@ -8000,11 +8371,18 @@ fn panel_gpu_shutdown(
 /// Returns how many shots were written this frame — the `--smoke` watch
 /// exits 0 once its single scene2 shot lands.
 fn pump_shots(state: &mut PanelState) -> usize {
-    let done = {
+    let fair = crate::window::render_fair_capture_enabled();
+    let done = if fair {
+        Vec::new()
+    } else {
         let mut shots = state.shot_state.lock().unwrap();
         std::mem::take(&mut shots.done)
     };
-    let mut written = 0;
+    let mut written = if fair {
+        pump_async_shot_output(state)
+    } else {
+        0
+    };
     for cap in done {
         if state.shot_dir.is_none() {
             match frontend_core::live::create_shot_run_dir() {
@@ -8067,6 +8445,12 @@ fn pump_shots(state: &mut PanelState) -> usize {
     if !hold {
         drive_pair_capture_focus(state);
         let focused = state.session.focused_name();
+        if crate::window::render_fair_capture_enabled() {
+            // Actor promotion happens only with the exact accepted mailbox
+            // envelope in present_actor_frame, never a later name/JSON pair.
+            state.shot_state.lock().unwrap().promote_requests();
+            return written;
+        }
         // Rebuild current scene2 JSON only for the pending actor-tagged job.
         // Ordinary focused frames and untagged promote must not serialize.
         let pending_actor_is_focused = focused.as_deref().is_some_and(|actor| {
@@ -8094,15 +8478,31 @@ fn pump_shots(state: &mut PanelState) -> usize {
             eprintln!("[panel] capture queued for readback: {labels}");
         }
         if let (Some(actor), Some(json)) = (presented.as_deref(), ready_json) {
-            shots.refresh_actor_sidecar(actor, json);
+            if let Err(error) = shots.refresh_actor_sidecar(actor, json) {
+                if let Some(label) = shots
+                    .pending_actor_request()
+                    .map(|request| request.label.clone())
+                {
+                    shots.mark_failed(&label, &error.to_string());
+                }
+            }
         }
         shots.promote_ready(focused.as_deref(), presented.as_deref());
     }
     written
 }
 
-/// Headed recording (`HEADED_RECORD=1`): arm once the session's shot dir
-/// exists, stage one whole-window readback when the pacer fires, and move
+fn arm_record_output(record: &mut HeadedRecord, directory: &std::path::Path, scenario: &str) {
+    if let Err(error) = record.arm(directory, scenario) {
+        crate::headed_record::log_diagnostic(
+            api::hostlog::Level::Error,
+            format_args!("headed record: arm refused: {error:?}"),
+        );
+    }
+}
+
+/// Headed recording (`HEADED_RECORD=1`): arm once the session's shot path
+/// is resolved, stage one whole-window readback when the pacer fires, and move
 /// completed frames into the background encoder. A live run keeps its
 /// harness-created shot dir and scenario name; an interactive session
 /// creates a shot dir of its own and records as `interactive`. When the
@@ -8112,9 +8512,35 @@ fn pump_shots(state: &mut PanelState) -> usize {
 fn pump_record(state: &mut PanelState) {
     if state.record.needs_arm() {
         let scenario = state.session.core.live_runner().scenario_name();
-        if state.live.is_some() {
+        if crate::window::render_fair_capture_enabled() {
+            if state.live.is_none() || scenario.is_some() {
+                if state.shot_dir.is_none() {
+                    let result = state.shot_state.lock().unwrap().replace_output_directory(
+                        &mut state.shot_dir,
+                        |maximum| {
+                            frontend_core::live::shot_run_dir_path(maximum)
+                                .map_err(|_| crate::window::CaptureError::TooLarge)
+                        },
+                    );
+                    if let Err(error) = result {
+                        crate::headed_record::log_diagnostic(
+                            api::hostlog::Level::Warn,
+                            format_args!("headed record: directory refused: {error}"),
+                        );
+                        state.record.abandon();
+                    }
+                }
+                if let Some(directory) = state.shot_dir.as_deref() {
+                    arm_record_output(
+                        &mut state.record,
+                        directory,
+                        scenario.unwrap_or("interactive"),
+                    );
+                }
+            }
+        } else if state.live.is_some() {
             if let (Some(dir), Some(scenario)) = (state.shot_dir.clone(), scenario) {
-                state.record.arm(&dir, scenario);
+                arm_record_output(&mut state.record, &dir, scenario);
             }
         } else {
             if state.shot_dir.is_none() {
@@ -8133,7 +8559,7 @@ fn pump_record(state: &mut PanelState) {
                 }
             }
             if let Some(dir) = state.shot_dir.clone() {
-                state.record.arm(&dir, scenario.unwrap_or("interactive"));
+                arm_record_output(&mut state.record, &dir, scenario.unwrap_or("interactive"));
             }
         }
     }
@@ -8141,26 +8567,59 @@ fn pump_record(state: &mut PanelState) {
         return;
     }
     pump_record_settings(state);
-    if state.record.is_due(Instant::now()) {
-        state.shot_state.lock().unwrap().arm_record();
+    let now = Instant::now();
+    if state.record.is_due(now) {
+        if crate::window::render_fair_capture_enabled() {
+            let arm_result = match state.record.readback_deadline(now) {
+                Some(deadline) => state
+                    .shot_state
+                    .lock()
+                    .unwrap()
+                    .arm_record_with_deadline(deadline),
+                None => Err(window::CaptureError::DeadlineMissing),
+            };
+            if let Err(error) = arm_result {
+                state.record.note_capture_drop();
+                crate::headed_record::log_diagnostic(
+                    api::hostlog::Level::Warn,
+                    format_args!("headed record capture refused: {error}"),
+                );
+            }
+        } else if let Err(error) = state.shot_state.lock().unwrap().arm_record() {
+            state.record.note_capture_drop();
+            crate::headed_record::log_diagnostic(
+                api::hostlog::Level::Warn,
+                format_args!("headed record capture refused: {error}"),
+            );
+        }
     }
-    let frames: Vec<RecordFrame> = state
-        .shot_state
-        .lock()
-        .unwrap()
-        .take_record()
+    let (captures, refused) = {
+        let mut shots = state.shot_state.lock().unwrap();
+        (shots.take_record(), shots.take_record_drops())
+    };
+    state.record.note_capture_drops(refused);
+    let frames: Vec<RecordFrame> = captures
         .into_iter()
-        .map(|capture| RecordFrame {
-            width: capture.width,
-            height: capture.height,
-            rgba: capture.rgba,
+        .map(|capture| {
+            RecordFrame::window_rgba(
+                capture.width,
+                capture.height,
+                capture.rgba,
+                capture.paint_sequence,
+                capture.readback_permit,
+            )
         })
         .collect();
     if frames.is_empty() {
         return;
     }
     let step = record_step_info(&state.session);
-    state.record.pump_frames(frames, &step);
+    if let Err(error) = state.record.pump_frames(frames, &step) {
+        crate::headed_record::log_diagnostic(
+            api::hostlog::Level::Warn,
+            format_args!("headed record frame refused: {error}"),
+        );
+    }
 }
 
 /// Move the watched saved-setting transitions (the core's preference
@@ -8293,6 +8752,22 @@ fn current_pair_actor_sidecar(session: &Session, actor: &str) -> Option<String> 
         .flatten()
 }
 
+fn bounded_pair_actor_sidecar(
+    session: &Session,
+    actor: &str,
+    maximum: usize,
+) -> Result<String, crate::window::CaptureError> {
+    session
+        .core
+        .with_slot_snapshot(actor, |snapshot| {
+            if !snapshot.ingame() || snapshot.scene_state() != 2 {
+                return Err(crate::window::CaptureError::InvalidScene);
+            }
+            bounded_actor_snapshot_json(actor, snapshot, maximum)
+        })
+        .unwrap_or(Err(crate::window::CaptureError::StaleHead))
+}
+
 fn record_presented_upload(
     last_upload: &mut Option<(String, u64)>,
     name: String,
@@ -8301,6 +8776,29 @@ fn record_presented_upload(
 ) {
     if took_frame {
         *last_upload = Some((name, gen));
+    }
+}
+
+/// A live exit polls the independent recorder while continuing normal UI
+/// frames. The supervisor owns its deadline; this path never waits on IO.
+pub(super) fn finish_recording_for_exit(
+    record: &mut HeadedRecord,
+    live_failure: &Mutex<Option<String>>,
+) -> bool {
+    record.finish();
+    if !crate::window::render_fair_capture_enabled() {
+        return true;
+    }
+    match record.poll_finish(Instant::now()) {
+        RecordFinish::Finalizing => false,
+        RecordFinish::Idle | RecordFinish::Complete => true,
+        status @ (RecordFinish::TimedOut | RecordFinish::Failed) => {
+            live_failure
+                .lock()
+                .unwrap()
+                .get_or_insert_with(|| format!("headed recording finalization failed: {status:?}"));
+            true
+        }
     }
 }
 
@@ -8316,17 +8814,30 @@ fn frame_pumps(state: &mut PanelState, live_failure: &Mutex<Option<String>>) -> 
     let wrote_shots = pump_shots(state);
     pump_record(state);
     state.session.pump_status();
+    if crate::window::render_fair_capture_enabled() && live_failure.lock().unwrap().is_some() {
+        return finish_recording_for_exit(&mut state.record, live_failure);
+    }
     #[cfg(feature = "memory-profile")]
     if let Some(run) = state.memory.as_mut() {
         state.session.memory_focus(run);
         match run.poll(&state.session.core) {
             Ok(true) => {
+                if crate::window::render_fair_capture_enabled() {
+                    if !state.record.is_finalizing() {
+                        eprintln!("PASS: memory panel observation complete");
+                    }
+                    return finish_recording_for_exit(&mut state.record, live_failure);
+                }
                 eprintln!("PASS: memory panel observation complete");
                 exit_after_work_shutdown(0);
             }
             Ok(false) => {}
             Err(error) => {
                 eprintln!("FAIL: memory panel: {error}");
+                if crate::window::render_fair_capture_enabled() {
+                    *live_failure.lock().unwrap() = Some(error.to_string());
+                    return finish_recording_for_exit(&mut state.record, live_failure);
+                }
                 exit_after_work_shutdown(1);
             }
         }
@@ -8347,17 +8858,16 @@ fn frame_pumps(state: &mut PanelState, live_failure: &Mutex<Option<String>>) -> 
             wrote_shots,
         );
         if let Some(code) = live_exit_code(live, failure.as_deref()) {
-            // PASS and FAIL both finalize the recording now, so the mp4
-            // trailer lands before the window exits (window close is
-            // covered by the recorder's `Drop`).
-            state.record.finish();
+            // Gate-off finalization remains synchronous. The gated path
+            // keeps submitting UI frames until the supervisor reports its
+            // terminal outcome, without waiting for a writer on this thread.
             if code == 1 {
                 if let Some(msg) = failure.as_deref().or_else(|| live.failure()) {
                     eprintln!("FAIL: {msg}");
                     *live_failure.lock().unwrap() = Some(msg.to_owned());
                 }
             }
-            return true;
+            return finish_recording_for_exit(&mut state.record, live_failure);
         }
     }
     false

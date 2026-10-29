@@ -79,14 +79,17 @@ fn live_draw_area_and_capture_walk() {
         let non_zero = match pixels.take() {
             Some(FrameOutput::PixMap(pix)) => pix.pixels.iter().filter(|&&p| p != 0).count(),
             Some(FrameOutput::Texture(handle)) => {
-                let width = handle.width as usize;
-                let height = handle.height as usize;
+                let width = handle.width() as usize;
+                let height = handle.height() as usize;
                 handle
                     .read_back()
                     .iter()
                     .take(width * height)
                     .filter(|&&p| p != 0)
                     .count()
+            }
+            Some(FrameOutput::Refused(fault)) => {
+                fail(&format!("panel-view render refused: {fault:?}"));
             }
             None => 0,
         };

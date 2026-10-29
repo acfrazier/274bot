@@ -21,10 +21,12 @@ use std::time::{Duration, Instant};
 
 use api::hostlog::{Category, Level, Source};
 use api::snapshot::WorldTile;
-use client::client::Client;
+use client::render::budget::{BudgetCharge, RenderLimit};
+#[cfg(test)]
+use client::render::nav_debug::NavDebugPaint;
 use client::render::nav_debug::{
-    NavDebugCell, NavDebugColors, NavDebugHull, NavDebugPaint, CORNER_NE, CORNER_NW, CORNER_SE,
-    CORNER_SW, FACE_E, FACE_N, FACE_S, FACE_W,
+    NavDebugCell, NavDebugColors, NavDebugHull, NavDebugPaintBuilder, CORNER_NE, CORNER_NW,
+    CORNER_SE, CORNER_SW, FACE_E, FACE_N, FACE_S, FACE_W,
 };
 use client::sound::output::AudioOut;
 use frontend_core::command::{DrawSwitch, RasterMode};
@@ -47,12 +49,16 @@ use frontend_core::MapBakeChoice;
 use frontend_core::{CurePoison, SurvivalEdit};
 #[cfg(test)]
 use host_play::SlotStatus;
+use nav_planner::contract::{LegView, RouteView};
+use nav_planner::paint::{collision_at_with, reached, MAX_DRAW_TILES, NEAR_FULL_DENSITY};
+#[cfg(test)]
 use nav_planner::paint::{
-    collision_at_with, hop_captions, hull_targets, reached, remaining_path_tiles, remaining_trail,
-    select_draw_indices, trail_tones, HopCaption, HullTarget, PathTile, TrailTone,
+    hop_captions, hull_targets, remaining_path_tiles, remaining_trail, select_draw_indices,
+    trail_tones, HopCaption, HullTarget, PathTile, TrailTone,
 };
 use nav_planner::router::{FindOptions, Route};
 use nav_planner::tile::Tile;
+use nav_planner::transport::TransportKind;
 use nav_planner::world::NavWorld;
 
 use crate::focus::{draw_for_slot, full_rate_for, render_focused_for};
@@ -455,6 +461,7 @@ fn scene_route_fingerprint(route: Option<&ScenePaintRoute<'_>>) -> u64 {
 
 /// Route-only outputs. No route borrow or owner lock reaches the scene painter
 /// or the camera update.
+#[cfg(test)]
 #[derive(Default)]
 struct SceneRoutePaint {
     path: Vec<PathTile>,
@@ -462,6 +469,7 @@ struct SceneRoutePaint {
     hulls: Vec<HullTarget>,
 }
 
+#[cfg(test)]
 impl SceneRoutePaint {
     fn build(
         world: &NavWorld,
@@ -530,6 +538,7 @@ fn retire_client_trail(client: &mut Client, here: Option<WorldTile>) {
 /// paint. The producer (`try_move_path`) is debug-only; retirement runs
 /// independently every frame so an inactive slot cannot retain a stale
 /// trail. `here == None` keeps a pending trail during startup/network wait.
+#[cfg(test)]
 fn live_client_trail(client: &mut Client, here: Option<WorldTile>) -> Vec<WorldTile> {
     let base_x = client.map_build_base_x;
     let base_z = client.map_build_base_z;
@@ -560,6 +569,7 @@ fn live_client_trail(client: &mut Client, here: Option<WorldTile>) -> Vec<WorldT
 /// `run_on` its two-tone state, and `click` the
 /// traveller's current walk aim. World-to-scene is
 /// `(x - map_build_base_x, z - map_build_base_z)`.
+#[cfg(test)]
 #[expect(
     clippy::too_many_arguments,
     reason = "the scene painter consumes these facts at one call site"
@@ -752,23 +762,568 @@ fn publish_nav_debug(
     client.set_nav_debug_paint(Some(paint));
 }
 
+fn update_nav_debug_flags(flags_owner: bool, drawing: bool, settings: &NavSettings) {
+    if !flags_owner {
+        return;
+    }
+    if drawing && (settings.collision_fill || settings.nsew_labels) {
+        crate::picker::ensure_flags_sidecar();
+    } else {
+        crate::picker::drop_flags_sidecar();
+    }
+}
+
+/// Build one complete, scene-local nav paint candidate without copying
+/// route facts that the client cannot draw.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one frame owns the source facts and the scene bounds"
+)]
+fn try_build_nav_debug_paint(
+    world: &NavWorld,
+    route: Option<WalkRoutePath<'_>>,
+    here: Option<WorldTile>,
+    trail: &[(i32, i32)],
+    run_on: bool,
+    click: Option<WorldTile>,
+    settings: &NavSettings,
+    base_x: i32,
+    base_z: i32,
+) -> Result<(NavDebugPaint, Option<BudgetCharge>), RenderLimit> {
+    let route = route.and_then(|route| route_view_for_paint(world, route));
+    let first_leg = route.map_or(0, |route| first_remaining_leg(route, here));
+    let show_collision = settings.collision_fill;
+    let show_nsew = settings.nsew_labels;
+    let show_path = settings.show_nav_path;
+    let show_trail = show_path && settings.client_trail;
+    let show_hulls = show_path && settings.hop_labels;
+    let show_labels = show_hulls;
+
+    let defaults = NavDebugColors::default();
+    let colors = NavDebugColors {
+        collision: parse_html_color(&settings.color_collision, defaults.collision),
+        nsew: parse_html_color(&settings.color_text, defaults.nsew),
+        path: parse_html_color(&settings.color_path, defaults.path),
+        path_hop: parse_html_color(&settings.color_transport, defaults.path_hop),
+        trail: parse_html_color(&settings.color_client, defaults.trail),
+        trail_run: parse_html_color(&settings.color_client_run_alt, defaults.trail_run),
+        hull: parse_html_color(&settings.color_transport, defaults.hull),
+        click: parse_html_color(&settings.color_click, defaults.click),
+        ..defaults
+    };
+
+    let sidecar = if show_collision || show_nsew {
+        crate::picker::flags_sidecar_for(
+            world.collision.origin,
+            world.collision.width,
+            world.collision.height,
+        )
+    } else {
+        None
+    };
+    let side = sidecar.as_deref().map(Vec::as_slice);
+    let reach_bits = if show_collision || show_nsew {
+        crate::picker::reach_bitset(world)
+    } else {
+        None
+    };
+
+    let mut collision_count = 0usize;
+    visit_collision_facts(world, base_x, base_z, settings, side, reach_bits, |_| {
+        collision_count = collision_count.saturating_add(1);
+        Ok(())
+    })?;
+
+    let path_len = if show_path {
+        route.map_or(Ok(0), |route| {
+            visit_remaining_path_tiles(route, here, first_leg, |_, _, _| Ok(()))
+        })?
+    } else {
+        0
+    };
+    let mut path_count = 0usize;
+    if show_path {
+        if let Some(route) = route {
+            visit_remaining_path_tiles(route, here, first_leg, |index, tile, transport| {
+                if selected_path_index(index, path_len, transport)
+                    && scene_coordinates(tile, base_x, base_z).is_some()
+                {
+                    path_count = path_count.saturating_add(1);
+                }
+                Ok(())
+            })?;
+        }
+    }
+
+    let mut hull_count = 0usize;
+    if show_hulls {
+        if let Some(route) = route {
+            visit_hull_targets(route, here, first_leg, base_x, base_z, |_| {
+                hull_count = hull_count.saturating_add(1);
+                Ok(())
+            })?;
+        }
+    }
+    let mut label_count = 0usize;
+    let mut label_bytes = 0usize;
+    if show_labels {
+        if let Some(route) = route {
+            visit_hop_labels(route, first_leg, base_x, base_z, |_, _, text| {
+                label_count = label_count.saturating_add(1);
+                label_bytes = label_bytes.saturating_add(text.len());
+                Ok(())
+            })?;
+        }
+    }
+
+    let (trail_start, trail_end) = if show_trail {
+        trail_bounds(trail, here, base_x, base_z)
+    } else {
+        (0, 0)
+    };
+    let mut trail_count = 0usize;
+    for &(sx, sz) in &trail[trail_start..trail_end] {
+        let Some(tile) = trail_world_tile(sx, sz, base_x, base_z) else {
+            continue;
+        };
+        if scene_coordinates(tile, base_x, base_z).is_some() {
+            trail_count = trail_count.saturating_add(1);
+        }
+    }
+
+    let mut builder = NavDebugPaintBuilder::with_capacity(
+        collision_count,
+        path_count,
+        trail_count,
+        hull_count,
+        label_count,
+        label_bytes,
+    )?;
+    builder.set_colors(colors);
+    builder.set_visibility(show_collision, show_nsew, show_path, show_trail, show_hulls);
+    builder.set_click(if show_path {
+        click.and_then(|tile| scene_coordinates(tile, base_x, base_z))
+    } else {
+        None
+    });
+
+    visit_collision_facts(world, base_x, base_z, settings, side, reach_bits, |cell| {
+        builder.push_collision(cell)
+    })?;
+    if show_path {
+        if let Some(route) = route {
+            visit_remaining_path_tiles(route, here, first_leg, |index, tile, transport| {
+                if selected_path_index(index, path_len, transport) {
+                    if let Some((lx, lz)) = scene_coordinates(tile, base_x, base_z) {
+                        builder.push_path((lx, lz, transport))?;
+                    }
+                }
+                Ok(())
+            })?;
+        }
+    }
+    if show_hulls {
+        if let Some(route) = route {
+            visit_hull_targets(route, here, first_leg, base_x, base_z, |hull| {
+                if !builder.contains_hull(hull) {
+                    builder.push_hull(hull)?;
+                }
+                Ok(())
+            })?;
+        }
+    }
+    if show_labels {
+        if let Some(route) = route {
+            visit_hop_labels(route, first_leg, base_x, base_z, |lx, lz, text| {
+                builder.push_label(lx, lz, text)
+            })?;
+        }
+    }
+    for &(sx, sz) in &trail[trail_start..trail_end] {
+        let Some(tile) = trail_world_tile(sx, sz, base_x, base_z) else {
+            continue;
+        };
+        if let Some((lx, lz)) = scene_coordinates(tile, base_x, base_z) {
+            let run_alt = run_on && ((tile.x as i64 + tile.z as i64) & 1) != 0;
+            builder.push_trail((lx, lz, run_alt))?;
+        }
+    }
+    builder.finish()
+}
+
+fn route_view_for_paint<'a>(world: &NavWorld, route: WalkRoutePath<'a>) -> Option<RouteView<'a>> {
+    match route {
+        WalkRoutePath::Legacy(route) => nav_planner::producer::route_view(world, route).ok(),
+        WalkRoutePath::Compact(route) => Some(route),
+    }
+}
+
+fn scene_coordinates(tile: WorldTile, base_x: i32, base_z: i32) -> Option<(i32, i32)> {
+    let lx = tile.x.checked_sub(base_x)?;
+    let lz = tile.z.checked_sub(base_z)?;
+    ((0..SCENE_TILES).contains(&lx) && (0..SCENE_TILES).contains(&lz)).then_some((lx, lz))
+}
+
+fn trail_world_tile(sx: i32, sz: i32, base_x: i32, base_z: i32) -> Option<WorldTile> {
+    Some(WorldTile {
+        x: base_x.checked_add(sx)?,
+        z: base_z.checked_add(sz)?,
+        level: 0,
+    })
+}
+
+fn first_remaining_leg(route: RouteView<'_>, here: Option<WorldTile>) -> usize {
+    let Some(here) = here else {
+        return 0;
+    };
+    route
+        .legs()
+        .take_while(|leg| match *leg {
+            LegView::Walk(tiles) => tiles.last().is_some_and(|last| *last == here),
+            LegView::Transport(hop) => hop.landing() == here,
+        })
+        .count()
+}
+
+fn visit_remaining_path_tiles(
+    route: RouteView<'_>,
+    here: Option<WorldTile>,
+    first_leg: usize,
+    mut visit: impl FnMut(usize, WorldTile, bool) -> Result<(), RenderLimit>,
+) -> Result<usize, RenderLimit> {
+    let mut pending = None;
+    let mut count = 0usize;
+    for (index, leg) in route.legs().enumerate().skip(first_leg) {
+        match leg {
+            LegView::Walk(tiles) => {
+                let tiles = if index == first_leg {
+                    if let Some(here) = here {
+                        if let Some(position) = tiles.iter().position(|tile| *tile == here) {
+                            &tiles[position..]
+                        } else {
+                            tiles
+                        }
+                    } else {
+                        tiles
+                    }
+                } else {
+                    tiles
+                };
+                for &tile in tiles {
+                    queue_path_tile(&mut pending, tile, false, &mut count, &mut visit)?;
+                }
+            }
+            LegView::Transport(hop) => {
+                queue_path_tile(&mut pending, hop.anchor(), true, &mut count, &mut visit)?;
+                queue_path_tile(&mut pending, hop.landing(), true, &mut count, &mut visit)?;
+            }
+        }
+    }
+    flush_path_tile(&mut pending, &mut count, &mut visit)?;
+    Ok(count)
+}
+
+fn queue_path_tile(
+    pending: &mut Option<(WorldTile, bool)>,
+    tile: WorldTile,
+    transport: bool,
+    count: &mut usize,
+    visit: &mut impl FnMut(usize, WorldTile, bool) -> Result<(), RenderLimit>,
+) -> Result<(), RenderLimit> {
+    if let Some((previous, previous_transport)) = pending.as_mut() {
+        if *previous == tile {
+            *previous_transport |= transport;
+            return Ok(());
+        }
+    }
+    flush_path_tile(pending, count, visit)?;
+    *pending = Some((tile, transport));
+    Ok(())
+}
+
+fn flush_path_tile(
+    pending: &mut Option<(WorldTile, bool)>,
+    count: &mut usize,
+    visit: &mut impl FnMut(usize, WorldTile, bool) -> Result<(), RenderLimit>,
+) -> Result<(), RenderLimit> {
+    if let Some((tile, transport)) = pending.take() {
+        visit(*count, tile, transport)?;
+        *count = count.saturating_add(1);
+    }
+    Ok(())
+}
+
+fn selected_path_index(index: usize, path_len: usize, transport: bool) -> bool {
+    if path_len == 0 || index >= path_len {
+        return false;
+    }
+    let near_end = path_len.min(NEAR_FULL_DENSITY);
+    if index < near_end || index == path_len - 1 || transport {
+        return true;
+    }
+    let remaining = path_len - near_end;
+    let sample_budget = MAX_DRAW_TILES.saturating_sub(near_end);
+    if remaining == 0 || sample_budget == 0 {
+        return false;
+    }
+    let stride = remaining.div_ceil(sample_budget).max(1);
+    (index - near_end) % stride == 0
+}
+
+fn visit_hull_targets(
+    route: RouteView<'_>,
+    here: Option<WorldTile>,
+    first_leg: usize,
+    base_x: i32,
+    base_z: i32,
+    mut visit: impl FnMut(NavDebugHull) -> Result<(), RenderLimit>,
+) -> Result<(), RenderLimit> {
+    let mut tile_index = 0usize;
+    let mut seen_loc_hop = false;
+    for (index, leg) in route.legs().enumerate().skip(first_leg) {
+        match leg {
+            LegView::Walk(tiles) => {
+                let mut length = tiles.len();
+                if index == first_leg {
+                    if let Some(here) = here {
+                        if let Some(position) = tiles.iter().position(|tile| *tile == here) {
+                            length = tiles.len() - position;
+                        }
+                    }
+                }
+                tile_index = tile_index.saturating_add(length);
+            }
+            LegView::Transport(hop) => {
+                let kind = hop.kind();
+                if is_loc_backed_hop(kind) {
+                    let next = !seen_loc_hop;
+                    seen_loc_hop = true;
+                    if next || tile_index <= HULL_WINDOW {
+                        if let Some((scene_x, scene_z)) =
+                            scene_coordinates(hop.anchor(), base_x, base_z)
+                        {
+                            visit(NavDebugHull {
+                                loc_id: hop.loc_id(),
+                                scene_x,
+                                scene_z,
+                            })?;
+                        }
+                    }
+                }
+                tile_index = tile_index.saturating_add(2);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_loc_backed_hop(kind: TransportKind) -> bool {
+    matches!(
+        kind,
+        TransportKind::Door
+            | TransportKind::Ladder
+            | TransportKind::Stairs
+            | TransportKind::AgilityShortcut
+    )
+}
+
+fn hop_caption_text(loc_id: i32, kind: TransportKind) -> Option<&'static str> {
+    if loc_id == 733 {
+        return Some("Web");
+    }
+    match kind {
+        TransportKind::Door => Some("Door"),
+        TransportKind::Ladder => Some("Ladder"),
+        TransportKind::Stairs => Some("Stairs"),
+        TransportKind::Boat => Some("Boat"),
+        TransportKind::AgilityShortcut => Some("Shortcut"),
+        TransportKind::Glider => Some("Glider"),
+        TransportKind::SpiritTree => Some("Spirit tree"),
+        TransportKind::Npc => Some("Npc"),
+        TransportKind::Teleport | TransportKind::EssenceExit => None,
+    }
+}
+
+fn visit_hop_labels(
+    route: RouteView<'_>,
+    first_leg: usize,
+    base_x: i32,
+    base_z: i32,
+    mut visit: impl FnMut(i32, i32, &'static str) -> Result<(), RenderLimit>,
+) -> Result<(), RenderLimit> {
+    let mut last_caption_at = None;
+    for leg in route.legs().skip(first_leg) {
+        let LegView::Transport(hop) = leg else {
+            continue;
+        };
+        let Some(text) = hop_caption_text(hop.loc_id(), hop.kind()) else {
+            continue;
+        };
+        let at = hop.anchor();
+        if last_caption_at == Some(at) {
+            continue;
+        }
+        last_caption_at = Some(at);
+        if let Some((lx, lz)) = scene_coordinates(at, base_x, base_z) {
+            visit(lx, lz, text)?;
+        }
+    }
+    Ok(())
+}
+
+fn trail_bounds(
+    trail: &[(i32, i32)],
+    here: Option<WorldTile>,
+    base_x: i32,
+    base_z: i32,
+) -> (usize, usize) {
+    let Some(here) = here else {
+        return (0, trail.len());
+    };
+    match trail.iter().position(|&(sx, sz)| {
+        base_x.checked_add(sx) == Some(here.x) && base_z.checked_add(sz) == Some(here.z)
+    }) {
+        Some(index) if index + 1 < trail.len() => (index, trail.len()),
+        _ => (trail.len(), trail.len()),
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "collision facts need the exact scene, grid, reach and sidecar views"
+)]
+fn visit_collision_facts(
+    world: &NavWorld,
+    base_x: i32,
+    base_z: i32,
+    settings: &NavSettings,
+    side: Option<&[u32]>,
+    reach_bits: Option<&[u64]>,
+    mut visit: impl FnMut(NavDebugCell) -> Result<(), RenderLimit>,
+) -> Result<(), RenderLimit> {
+    if !settings.collision_fill && !settings.nsew_labels {
+        return Ok(());
+    }
+    let (Ok(width), Ok(height)) = (
+        i32::try_from(world.collision.width),
+        i32::try_from(world.collision.height),
+    ) else {
+        return Ok(());
+    };
+    let origin = world.collision.origin;
+    for lz in 0..SCENE_TILES {
+        for lx in 0..SCENE_TILES {
+            let Some(x) = base_x.checked_add(lx) else {
+                continue;
+            };
+            let Some(z) = base_z.checked_add(lz) else {
+                continue;
+            };
+            if !x
+                .checked_sub(origin.x)
+                .is_some_and(|delta| delta >= 0 && delta < width)
+                || !z
+                    .checked_sub(origin.z)
+                    .is_some_and(|delta| delta >= 0 && delta < height)
+            {
+                continue;
+            }
+            let tile = WorldTile {
+                x,
+                z,
+                level: origin.level,
+            };
+            let facts = collision_at_with(&world.collision, tile, side);
+            let mut bits = 0u8;
+            if facts.n {
+                bits |= FACE_N;
+            }
+            if facts.s {
+                bits |= FACE_S;
+            }
+            if facts.e {
+                bits |= FACE_E;
+            }
+            if facts.w {
+                bits |= FACE_W;
+            }
+            if facts.ne {
+                bits |= CORNER_NE;
+            }
+            if facts.se {
+                bits |= CORNER_SE;
+            }
+            if facts.nw {
+                bits |= CORNER_NW;
+            }
+            if facts.sw {
+                bits |= CORNER_SW;
+            }
+            if (settings.collision_fill && (facts.blocked || bits != 0))
+                || (settings.nsew_labels && bits != 0)
+            {
+                visit(NavDebugCell {
+                    lx,
+                    lz,
+                    bits,
+                    blocked: facts.blocked,
+                    reach: reach_bits.is_none_or(|bits| reached(bits, &world.collision, tile)),
+                })?;
+            }
+            // The checked offsets above bound this tile to the baked grid.
+        }
+    }
+    Ok(())
+}
+
+fn camera_path_yaw(
+    world: &NavWorld,
+    route: Option<WalkRoutePath<'_>>,
+    here: Option<WorldTile>,
+) -> Option<i32> {
+    const LOOK_AHEAD: usize = 12;
+    let here = here?;
+    let route = route.and_then(|route| route_view_for_paint(world, route))?;
+    let first_leg = first_remaining_leg(route, Some(here));
+    let mut tiles = [here; LOOK_AHEAD + 1];
+    let mut transport = [false; LOOK_AHEAD + 1];
+    let mut length = 0usize;
+    let mut found_here = false;
+    visit_remaining_path_tiles(route, Some(here), first_leg, |_, tile, hop| {
+        if !found_here {
+            if tile == here {
+                found_here = true;
+                tiles[0] = tile;
+                transport[0] = hop;
+                length = 1;
+            }
+        } else if length < tiles.len() {
+            tiles[length] = tile;
+            transport[length] = hop;
+            length += 1;
+        }
+        Ok(())
+    })
+    .ok()?;
+    found_here.then(|| {
+        nav_planner::camera::path_facing_yaw(
+            here,
+            &tiles[..length],
+            &transport[..length],
+            LOOK_AHEAD,
+        )
+    })?
+}
+
 /// Ease orbit yaw toward the remaining path (host-write, no client opcode).
 /// Desired heading is held until it moves ≥ `TARGET_RETARGET_MIN` so a
 /// corridor does not twitch; ease velocity is ours, not the keycam field
 /// (`follow_camera` would double-integrate it).
-fn apply_path_camera(client: &mut Client, tiles: &[PathTile], here: Option<WorldTile>) {
+fn apply_path_camera(client: &mut Client, sampled: Option<i32>) {
     if client.shell.key_held[1] == 1 || client.shell.key_held[2] == 1 {
         return;
     }
-    let Some(here) = here else {
-        return;
-    };
-    if tiles.is_empty() {
-        return;
-    }
-    let world: Vec<_> = tiles.iter().map(|p| p.tile).collect();
-    let hops: Vec<_> = tiles.iter().map(|p| p.transport).collect();
-    let Some(sampled) = nav_planner::camera::path_facing_yaw(here, &world, &hops, 12) else {
+    let Some(sampled) = sampled else {
         return;
     };
     let mut hold = PATH_CAM.lock().unwrap();
@@ -1494,7 +2049,11 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
                     trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
                     run_on,
                 };
-                let (facts, changed, outputs) =
+                let base_x = c.map_build_base_x;
+                let base_z = c.map_build_base_z;
+                let flags_owner = is_focused || focused.is_none();
+                update_nav_debug_flags(flags_owner, active, &layers);
+                let (facts, changed, camera_yaw, candidate) =
                     live_runner.with_route_for(name, |driven, live_route, live_aim| {
                         frame.with_script_route(|script_route| {
                             let (route, click) = live_or_walk_paint(
@@ -1509,52 +2068,52 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
                                 ..base_facts
                             };
                             let changed = previous != Some(facts);
-                            let path = camera || (changed && active && layers.show_nav_path);
-                            let hops =
-                                changed && active && layers.show_nav_path && layers.hop_labels;
-                            let outputs = if path || hops {
-                                SceneRoutePaint::build(
-                                    &world,
-                                    route.as_ref().map(ScenePaintRoute::projection),
-                                    here,
-                                    path,
-                                    hops,
-                                )
+                            let route_path = route.as_ref().map(ScenePaintRoute::projection);
+                            let camera_yaw = if camera {
+                                camera_path_yaw(&world, route_path, here)
                             } else {
-                                SceneRoutePaint::default()
+                                None
                             };
-                            (facts, changed, outputs)
+                            let candidate = if changed {
+                                active.then(|| {
+                                    try_build_nav_debug_paint(
+                                        &world,
+                                        route_path,
+                                        here,
+                                        &c.try_move_path,
+                                        run_on,
+                                        click,
+                                        &layers,
+                                        base_x,
+                                        base_z,
+                                    )
+                                })
+                            } else {
+                                None
+                            };
+                            (facts, changed, camera_yaw, candidate)
                         })
                     });
                 // The route borrow and the process-wide navs lock end above.
                 if camera {
-                    apply_path_camera(c, &outputs.path, here);
+                    apply_path_camera(c, camera_yaw);
                 }
                 if changed {
-                    // Materialize the full tryMove trail only for an active
-                    // GPU consumer, after releasing the route owner.
-                    let trail_world = if active {
-                        live_client_trail(c, here)
+                    let published = if active {
+                        candidate.is_some_and(|candidate| {
+                            c.set_budgeted_nav_debug_paint(candidate).is_ok()
+                        })
                     } else {
-                        Vec::new()
+                        c.set_nav_debug_paint(None);
+                        true
                     };
-                    let flags_owner = is_focused || focused.is_none();
-                    publish_nav_debug(
-                        c,
-                        &world,
-                        Some(outputs),
-                        &trail_world,
-                        run_on,
-                        facts.click,
-                        &layers,
-                        active,
-                        flags_owner,
-                    );
-                    let recorded = crate::nav_paint_cache::Facts {
-                        trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
-                        ..facts
-                    };
-                    nav_paint_cache.lock().unwrap().record(name, recorded);
+                    if published {
+                        let recorded = crate::nav_paint_cache::Facts {
+                            trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
+                            ..facts
+                        };
+                        nav_paint_cache.lock().unwrap().record(name, recorded);
+                    }
                 }
             }
             None => {
@@ -6089,5 +6648,136 @@ mod fleet_hold_tests {
             std::thread::yield_now();
         }
         assert_eq!(watch.failure(), None);
+    }
+}
+
+#[cfg(test)]
+mod nav_paint_input_tests {
+    use super::*;
+    use nav_planner::collision::WorldCollision;
+    use nav_planner::router::Leg;
+    use nav_planner::transport::{TransportEdge, TransportGraph};
+
+    fn off_scene_ladder_route() -> Route {
+        let at = WorldTile {
+            x: 3_401,
+            z: 3_400,
+            level: 0,
+        };
+        let to = WorldTile {
+            x: 3_402,
+            z: 3_400,
+            level: 0,
+        };
+        Route {
+            legs: vec![
+                Leg::Walk {
+                    tiles: vec![WorldTile {
+                        x: 3_400,
+                        z: 3_400,
+                        level: 0,
+                    }],
+                },
+                Leg::Transport {
+                    edge: Box::new(TransportEdge {
+                        kind: TransportKind::Ladder,
+                        at,
+                        to,
+                        takeoff: None,
+                        player_delta: None,
+                        loc_id: 1,
+                        option: 1,
+                        ticks: 1,
+                        dir: None,
+                        open_loc_id: None,
+                        skill_req: vec![],
+                        item_req: vec![],
+                        consumed_req: vec![],
+                        item_returns: vec![],
+                        quest_req: vec![],
+                        varp_req: vec![],
+                        worn_req: vec![],
+                        worn_all_req: vec![],
+                        forbidden_held: vec![],
+                        forbidden_worn: vec![],
+                        members_req: false,
+                        wildy_cap: None,
+                        quest_gates: None,
+                    }),
+                },
+            ],
+            dest: to,
+            ticks: 1.0,
+        }
+    }
+
+    fn empty_world() -> NavWorld {
+        NavWorld::from_parts(
+            WorldCollision {
+                origin: WorldTile {
+                    x: 3_200,
+                    z: 3_200,
+                    level: 0,
+                },
+                width: 1,
+                height: 1,
+                walk: vec![0],
+                blocked: vec![0],
+                flags: None,
+            },
+            TransportGraph::default(),
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn off_scene_route_hulls_labels_and_trail_allocate_no_paint_storage() {
+        let world = empty_world();
+        let route = off_scene_ladder_route();
+        let settings = NavSettings {
+            show_nav_path: true,
+            hop_labels: true,
+            client_trail: true,
+            ..NavSettings::default()
+        };
+        let (paint, charge) = try_build_nav_debug_paint(
+            &world,
+            Some(WalkRoutePath::Legacy(&route)),
+            None,
+            &[(200, 200)],
+            false,
+            Some(WorldTile {
+                x: 3_400,
+                z: 3_400,
+                level: 0,
+            }),
+            &settings,
+            3_200,
+            3_200,
+        )
+        .unwrap();
+
+        assert!(paint.path.is_empty());
+        assert!(paint.hulls.is_empty());
+        assert!(paint.labels.is_empty());
+        assert!(paint.trail.is_empty());
+        assert_eq!(paint.click, None);
+        assert_eq!(paint.retained_bytes(), 0);
+        assert!(charge.is_none());
+    }
+
+    #[test]
+    fn streaming_path_selection_matches_selector_without_index_storage() {
+        let forced = [48usize, 73, 511, 999];
+        let path_len = 1_000;
+        let expected = select_draw_indices(0, path_len, &forced);
+        for index in 0..path_len {
+            let selected = selected_path_index(index, path_len, forced.contains(&index));
+            assert_eq!(
+                selected,
+                expected.binary_search(&index).is_ok(),
+                "index {index}"
+            );
+        }
     }
 }

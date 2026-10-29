@@ -226,6 +226,31 @@ cells = [
   "panel.headed-nav-script|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p panel --bin panel-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_nav_routes|--locked -p panel --lib app::frame_tests::",
 ]
 
+# Feature-only prototype inputs are supplied by the fixture receipt, never
+# inferred production fairness or byte-budget constants.
+[[cover]]
+globs = [
+  "crates/host/src/render.rs",
+  "crates/host/src/render_head.rs",
+  "crates/host/src/render_head/**",
+  "crates/host/src/slot_io.rs",
+  "crates/host-play/src/play_slots.rs",
+  "crates/host-play/tests/t44_draw_memory.rs",
+  "crates/frontend-core/src/surface.rs",
+  "crates/panel/src/app.rs",
+  "crates/panel/src/game_view.rs",
+  "crates/panel/src/window.rs",
+  "crates/panel/src/headed_record.rs",
+  "crates/panel/tests/t44_headed_live.rs",
+  "vendor/fr-client-rust/crates/client/src/render/**",
+]
+cells = [
+  "panel.render-fair-wait-live|env -u BOT_CPU LIVE=1 T44_HEADED_LIVE=1 T44_HEADED_REDRAW=wait HEADED_RECORD=1 BOT_MEMORY_N=10 BOT_MEMORY_WORKLOAD=idle BOT_MEMORY_RENDER_POLICY=rotating-all BOT_MEMORY_WARMUP_S=10 BOT_MEMORY_OBSERVE_S=30 BOT_MEMORY_TEARDOWN_S=60 BOT_MEMORY_OUTPUT=${LIVE_EVIDENCE_DIR:?}/headed-memory.jsonl T44_HELD_SLOT=${T44_HELD_SLOT:?} T44_HELD_LEASE_MS=${T44_HELD_LEASE_MS:?} M3_GRANT_TTL_MS=${M3_GRANT_TTL_MS:?} M3_SCENE_QUANTUM_MS=${M3_SCENE_QUANTUM_MS:?} T44_RENDER_BUDGET_LIMITS_JSON=\"${T44_RENDER_BUDGET_LIMITS_JSON:?}\" T44_RETAINED_PRESENT_CAP=${T44_RETAINED_PRESENT_CAP:?} T44_CAPTURE_METADATA_BYTES=${T44_CAPTURE_METADATA_BYTES:?} T44_CAPTURE_READBACK_TIMEOUT_MS=${T44_CAPTURE_READBACK_TIMEOUT_MS:?} T44_RECORD_FINISH_TIMEOUT_MS=${T44_RECORD_FINISH_TIMEOUT_MS:?} BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --release --locked -p panel --features memory-profile,render-test-hooks --test t44_headed_live -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?}",
+  "panel.render-fair-cpu-freeze-live|LIVE=1 BOT_CPU=1 T44_HEADED_LIVE=1 T44_HEADED_REDRAW=normal HEADED_RECORD=1 T44_LOADING_AFTER_MS=${T44_LOADING_AFTER_MS:?} T44_LOADING_FOR_MS=${T44_LOADING_FOR_MS:?} M3_GRANT_TTL_MS=${M3_GRANT_TTL_MS:?} M3_SCENE_QUANTUM_MS=${M3_SCENE_QUANTUM_MS:?} T44_RENDER_BUDGET_LIMITS_JSON=\"${T44_RENDER_BUDGET_LIMITS_JSON:?}\" T44_RETAINED_PRESENT_CAP=${T44_RETAINED_PRESENT_CAP:?} T44_CAPTURE_METADATA_BYTES=${T44_CAPTURE_METADATA_BYTES:?} T44_CAPTURE_READBACK_TIMEOUT_MS=${T44_CAPTURE_READBACK_TIMEOUT_MS:?} T44_RECORD_FINISH_TIMEOUT_MS=${T44_RECORD_FINISH_TIMEOUT_MS:?} BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --release --locked -p panel --features render-test-hooks --test t44_headed_live -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_nav_routes",
+  "host.render-fair-drawing-n1|LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip M3_N=1 M3_BACKEND=cpu M3_POLICIES=full,focus1 M3_WARMUP_S=10 M3_OBSERVE_S=30 M3_OUT=${LIVE_EVIDENCE_DIR:?}/drawing-n1 M3_GRANT_TTL_MS=${M3_GRANT_TTL_MS:?} M3_SCENE_QUANTUM_MS=${M3_SCENE_QUANTUM_MS:?} T44_RENDER_BUDGET_LIMITS_JSON=\"${T44_RENDER_BUDGET_LIMITS_JSON:?}\" ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} ${ISOHOME:?} nice -n 10 cargo test --release --locked -p host-play --features draw-memory-profile --test t44_draw_memory t44_cpu_draw_memory_ab -- --ignored --exact --nocapture --test-threads=1",
+  "host.render-fair-drawing-n10|LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip M3_N=10 M3_BACKEND=cpu M3_POLICIES=full,focus1 M3_WARMUP_S=10 M3_OBSERVE_S=30 M3_OUT=${LIVE_EVIDENCE_DIR:?}/drawing-n10 M3_GRANT_TTL_MS=${M3_GRANT_TTL_MS:?} M3_SCENE_QUANTUM_MS=${M3_SCENE_QUANTUM_MS:?} T44_RENDER_BUDGET_LIMITS_JSON=\"${T44_RENDER_BUDGET_LIMITS_JSON:?}\" ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} ${ISOHOME:?} nice -n 10 cargo test --release --locked -p host-play --features draw-memory-profile --test t44_draw_memory t44_cpu_draw_memory_ab -- --ignored --exact --nocapture --test-threads=1",
+]
+
 [[cover]]
 globs = ["crates/tui/src/app.rs"]
 cells = [

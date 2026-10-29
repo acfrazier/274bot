@@ -24,6 +24,7 @@ winit = "0.30"
 pollster = "0.4"
 png = "0.18"
 
+bytemuck = "1"
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
 objc2 = "0.5.2"
@@ -63,9 +64,16 @@ name = "ime_frame"
 path = "tests/ime_frame.rs"
 harness = false
 
+[[test]]
+name = "t44_headed_live"
+path = "tests/t44_headed_live.rs"
+harness = false
+required-features = ["render-test-hooks"]
+
 [features]
 default = ["js"]
 js = ["frontend-core/js"]
+render-test-hooks = ["client/render-test-hooks", "frontend-core/render-test-hooks"]
 render-diagnostics = ["client/render-diagnostics", "frontend-core/render-diagnostics"]
 memory-profile = ["frontend-core/memory-profile"]
 # CPU diagnostic: use System directly, report allocator metrics unavailable.

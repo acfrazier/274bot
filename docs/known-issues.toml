@@ -29,6 +29,19 @@ severity = "medium"
 owner = "T4"
 
 [[item]]
+id = "render-no-scene-cpu-gpu-difference"
+kind = "known-issue"
+area = "Drawing"
+text = """A game view with no current scene can look different in CPU and GPU
+  modes. GPU views blank the scene window; CPU views can keep earlier pixels.
+  Neither image is a current scene, and neither is accepted as scene proof.
+  Wait for region loading to finish before selecting a ground tile or entity."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T4"
+
+[[item]]
 id = "bank-native-planned"
 kind = "not-in-release"
 area = "Scripts"
