@@ -120,6 +120,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   now renders every wall member only when the acknowledgement is saved; if
   the save fails, **only render focused** stays on.
 
+### Quester
+
+- The Quester log now keeps every step line in long quests. Each stage of a
+  guide has its own trace budget, sized from that stage's steps, so later
+  steps still log their start, skip and finish lines instead of being dropped
+  after the run's first 32 different lines. Repeated lines still fold into one
+  line with a count.
+
 ## [0.2.7] — 2026-10-26 — Beta 2
 
 ### Panel and terminal app
