@@ -5927,7 +5927,8 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         let body_clicked = if preview {
             let body_clicked = rail_body(ui, gpu, state, name, draw);
             if reorder && dropped.is_none() {
-                dropped = crate::fleet::profile_drop_target(ui);
+                dropped = crate::fleet::profile_drop_target(ui)
+                    .and_then(crate::fleet::ProfileDrop::dropped);
             }
             body_clicked
         } else {
@@ -6074,7 +6075,8 @@ fn rail_cap(
     record_test_rail_item(ui);
     if let Some(drag) = drag {
         drag.dragging = crate::fleet::profile_drag_source(ui, drag.identity, row.name());
-        drag.dropped = crate::fleet::profile_drop_target(ui);
+        drag.dropped = crate::fleet::profile_drop_target(ui)
+            .and_then(crate::fleet::ProfileDrop::dropped);
         // A drag is not a click: it must not focus the bot.
         clicked &= !drag.dragging;
     }
@@ -6583,6 +6585,12 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 edit_switch_popup(ui, session);
             }
             ui.spacing();
+            // A Load-order write that is pending or failed (a drag in
+            // this list or in the Fleet) says so here, as it does under
+            // the Fleet table: the core holds the state, so it shows on
+            // reopen too and leaves when a later write resolves it or
+            // the error timeout passes.
+            setting_feedback_line(ui, session, Setting::ProfileOrder);
             if let Some(record) = session.core.saves_in_flight().last() {
                 let name = record.destination();
                 ui.text_disabled("saving ");
@@ -6595,12 +6603,11 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             if ui.button_with_size("Close", [w, 0.0]) {
                 session.request_close_profiles();
             }
-            let pending = session.pending_profile_delete.clone();
-            let body = match pending.as_deref() {
-                Some(n) => format!(
+            let body: std::borrow::Cow<'_, str> = match session.pending_profile_delete.as_deref() {
+                Some(n) => std::borrow::Cow::Owned(format!(
                     "Remove {n} from the vault? A running wall member stays up. This cannot be undone."
-                ),
-                None => "Remove this profile from the vault?".into(),
+                )),
+                None => std::borrow::Cow::Borrowed("Remove this profile from the vault?"),
             };
             if scary_confirm_popup(
                 ui,
@@ -6659,16 +6666,22 @@ fn profiles_toolbar(ui: &Ui, session: &mut Session, right: f32) {
     }
 }
 
-/// The height under the split regions: the spacing, the saving line and
-/// Close.
+/// The height under the split regions: the spacing, the Load-order
+/// feedback line while its write is pending or failed, the saving line
+/// and Close.
 fn profiles_footer_height(ui: &Ui, session: &Session) -> f32 {
     let spacing = ui.clone_style().item_spacing()[1];
+    let order = match session.core.setting_status(Setting::ProfileOrder) {
+        SettingStatus::Saved => 0.0,
+        SettingStatus::Pending => ui.text_line_height_with_spacing(),
+        SettingStatus::Failed(text) => wrapped_height(ui, text, ui.content_region_avail()[0]),
+    };
     let saving = if session.core.saves_in_flight().is_empty() {
         0.0
     } else {
         ui.text_line_height_with_spacing()
     };
-    spacing + saving + ui.frame_height_with_spacing()
+    spacing + order + saving + ui.frame_height_with_spacing()
 }
 
 /// The profile list and, when the form or the import is open, the editor
@@ -6762,7 +6775,8 @@ fn profiles_divider(ui: &Ui, id: &str, size: [f32; 2], vertical: bool) -> Option
 /// order). It borrows the core's order entries: no per-frame copy.
 fn profile_list(ui: &Ui, session: &Session, right: f32, size: [f32; 2]) -> ListPick {
     let order = session.core.profile_order();
-    let focused = session.focused_name();
+    // The core's own string, borrowed: no per-frame copy of the name.
+    let focused = session.core.selected();
     let members = session.core.members();
     let multibox = session.multibox;
     // The JavaScript import pane keeps its report while writes settle.
@@ -6785,14 +6799,15 @@ fn profile_list(ui: &Ui, session: &Session, right: f32, size: [f32; 2]) -> ListP
                 let selected = if multibox {
                     members.iter().any(|member| member.as_str() == name)
                 } else {
-                    focused.as_deref() == Some(name)
+                    focused == Some(name)
                 };
                 // A profile whose first save is still being written is not
                 // selectable, editable, deletable or draggable until the
                 // write settles.
                 let saving = session.core.profile_saving(name);
                 let _saving = saving.then(|| ui.begin_disabled());
-                let (p, r, e, d) = chooser_row(ui, name, identity, selected, right, edit_waits);
+                let (p, r, e, d) =
+                    chooser_row(ui, order, name, identity, selected, right, edit_waits);
                 if saving {
                     continue;
                 }
@@ -7613,17 +7628,26 @@ fn lamp_skill_presets() -> Vec<&'static str> {
         .collect()
 }
 
+std::thread_local! {
+    /// One reused buffer for every formatted Profiles row label (the cut
+    /// name, Edit, ✕), built and consumed label by label: a warm frame
+    /// of the list allocates nothing for them.
+    static ROW_LABEL: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
 /// One picker row: name (click focuses / loads; drag reorders the saved
 /// order, with the same profile payload as a Fleet drag), Edit, then red
 /// ✕ (vault delete, confirm). Sibling buttons so an Edit/✕ click never
 /// also picks. The row ends at `right` (see [`chooser_right_edge`]), so
 /// Edit and ✕ stay on screen when the docked window runs past the
-/// display. A name too wide for its slot is clipped by the renderer only:
-/// its tooltip always shows the whole name. `edit_waits` disables Edit
-/// (an import's writes keep the editor pane). Returns (picked, removed,
-/// edit, dropped-profile-raw).
+/// display. A name too wide for its slot is cut with a visible "…"
+/// (drawn from the reused label buffer; the widget id still carries the
+/// whole name), and its tooltip always shows the whole name.
+/// `edit_waits` disables Edit (an import's writes keep the editor pane).
+/// Returns (picked, removed, edit, dropped-profile-raw).
 fn chooser_row(
     ui: &Ui,
+    order: &frontend_core::ProfileOrder,
     name: &str,
     identity: ProfileIdentity,
     selected: bool,
@@ -7636,32 +7660,69 @@ fn chooser_row(
     let edit_w = scale_px(ui, EDIT_W);
     let x_w = scale_px(ui, X_W);
     let name_w = (avail - edit_w - x_w - scale_px(ui, BUTTON_GAP * 2.0)).max(scale_px(ui, 10.0));
-    let loaded = ui
-        .selectable_config(name)
-        .selected(selected)
-        .close_popups(false)
-        .size([name_w, 0.0])
-        .build();
+    let inner_w = name_w - ui.clone_style().frame_padding()[0] * 2.0;
+    let text_w = ui
+        .current_font()
+        .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, name)[0];
+    let cut = text_w > inner_w;
+    let build_name = |label: &str| {
+        ui.selectable_config(label)
+            .selected(selected)
+            .close_popups(false)
+            .size([name_w, 0.0])
+            .build()
+    };
+    let loaded = if cut {
+        ROW_LABEL.with_borrow_mut(|label| {
+            label.clear();
+            crate::picker::ellipsize_into(ui, name, inner_w, label);
+            label.push_str("##");
+            label.push_str(name);
+            build_name(label)
+        })
+    } else {
+        build_name(name)
+    };
+    let (rect_min, rect_max) = (ui.item_rect_min(), ui.item_rect_max());
     if ui.is_item_hovered() {
-        let text_w = ui
-            .current_font()
-            .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, name)[0];
-        ui.set_item_tooltip(if text_w > name_w {
-            name
-        } else {
-            "drag to reorder"
-        });
+        ui.set_item_tooltip(if cut { name } else { "drag to reorder" });
     }
     crate::fleet::profile_drag_source(ui, identity, name);
-    let dropped = crate::fleet::profile_drop_target(ui);
+    let dropped = match crate::fleet::profile_drop_target(ui) {
+        Some(crate::fleet::ProfileDrop::Dropped(raw)) => Some(raw),
+        Some(crate::fleet::ProfileDrop::Hover(raw)) => {
+            // The line marks where the drop would land in this order.
+            let moving = order
+                .entries()
+                .find(|(_, id)| id.raw() == raw)
+                .map(|(_, id)| id);
+            if let Some(before) = crate::fleet::insertion_before(
+                moving.and_then(|moving| order.drop_op(moving, identity)).as_ref(),
+            ) {
+                crate::fleet::profile_insertion_marker(ui, rect_min, rect_max, before);
+            }
+            None
+        }
+        None => None,
+    };
     gap_line(ui);
     let edit = {
         let _waits = ui.begin_disabled_with_cond(edit_waits);
-        ui.button_with_size(format!("Edit##edit-{name}"), [edit_w, 0.0])
+        ROW_LABEL.with_borrow_mut(|label| {
+            label.clear();
+            label.push_str("Edit##edit-");
+            label.push_str(name);
+            ui.button_with_size(&*label, [edit_w, 0.0])
+        })
     };
     gap_line(ui);
     let _red = ui.push_style_color(StyleColor::Text, ERROR);
-    let removed = ui.button_with_size(format!("✕##{name}"), [x_w, 0.0]);
+    let removed = ROW_LABEL.with_borrow_mut(|label| {
+        label.clear();
+        label.push_str("✕##");
+        label.push_str(name);
+        ui.button_with_size(&*label, [x_w, 0.0])
+    });
     (loaded, removed, edit, dropped)
 }
 

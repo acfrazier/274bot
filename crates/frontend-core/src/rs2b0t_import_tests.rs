@@ -692,8 +692,9 @@ fn review_h1_a_superseded_failed_import_is_not_reported_saved() {
 }
 
 /// Import keeps the source file's order in the one saved order: new
-/// profiles land in file sequence (their uids ascend that way, and the
-/// order appends by uid), never alphabetically; an existing profile the
+/// profiles land in file sequence (each creation is recorded in
+/// sequence, and the order appends just-created profiles in that
+/// creation sequence), never alphabetically; an existing profile the
 /// import skips keeps its place, and nothing is loaded.
 #[test]
 fn an_import_keeps_the_source_order() {

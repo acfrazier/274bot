@@ -4851,6 +4851,24 @@ impl ProfilesUi {
         self.draw(None)
     }
 
+    /// One frame with no text log and no colour readback: for allocation
+    /// counts, where the harness's own capture must not count.
+    fn raw_frame(&mut self) {
+        self.session.pump_status();
+        self.ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new(self.display_size, 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let window_pos = self.window_pos;
+        let window_size = self.window_size;
+        {
+            let ui = self.ctx.frame();
+            ui.with_bound_context(|| pin_profiles_geometry_at(window_pos, window_size));
+            super::chooser_window(ui, &mut self.session, None);
+        }
+        self.ctx.render();
+    }
+
     /// Click `label` (its id lives `at`): ImGui presses it on the next
     /// frame; the frame after that shows the result.
     fn click(&mut self, at: At, label: &str) -> Shown {
@@ -5409,7 +5427,22 @@ fn dragging_a_profiles_row_reorders_the_saved_order_only() {
     let members = ui.session.core.members().to_vec();
     let focused = ui.session.focused_name();
     let before = crate::session::reorders_submitted();
+    crate::fleet::take_drop_markers();
     ui.drag_at(rect_center(carol), rect_center(alice));
+    let markers = crate::fleet::take_drop_markers();
+    assert!(
+        !markers.is_empty(),
+        "the hover showed an insertion marker"
+    );
+    let (lands_before, min, max) = *markers.last().unwrap();
+    assert!(
+        lands_before,
+        "carol lands before alice: the marker sits on alice's top edge"
+    );
+    assert!(
+        (min[1] - alice[0][1]).abs() < 1.0 && (max[1] - alice[1][1]).abs() < 1.0,
+        "the marker spans alice's row: {min:?} {max:?} vs {alice:?}"
+    );
     ui.finish_writes();
     ui.frame();
     assert_eq!(
@@ -5438,6 +5471,216 @@ fn dragging_a_profiles_row_reorders_the_saved_order_only() {
         .map(|row| row.name())
         .collect();
     assert_eq!(rows, ["carol", "alice", "bob"], "the Fleet follows");
+}
+
+/// The Profiles window shows a Load-order save's state with the Fleet
+/// window closed, read from the core's setting: "Saving…" while the
+/// write waits, the failure and the durable order when it fails, and
+/// nothing once a later drag saves.
+#[test]
+fn a_profiles_order_save_shows_saving_then_the_failure_then_clears() {
+    use frontend_core::{Setting, SettingStatus};
+    use std::sync::atomic::Ordering;
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("profiles-order-feedback");
+    let mut ui = ProfilesUi::new(
+        "profiles-order-feedback",
+        &[
+            ("alice", "apass", 1),
+            ("bob", "bpass", 2),
+            ("carol", "cpass", 3),
+        ],
+    );
+    ui.session.persist_ui = false;
+    ui.frame();
+    assert_eq!(
+        ui.session.core.profile_order().names(),
+        ["alice", "bob", "carol"]
+    );
+    assert!(!ui.session.fleet_open, "the Fleet window stays closed");
+
+    // A drag whose write waits on the disk says so in Profiles.
+    let (release, failing) = hold_writes(&ui.session);
+    let (carol, _) = ui.item_rect(At::List, "carol");
+    let (alice, _) = ui.item_rect(At::List, "alice");
+    let shown = ui.drag_at(rect_center(carol), rect_center(alice));
+    assert!(
+        shown.has("Saving…"),
+        "the held save says so in Profiles: {}",
+        shown.text
+    );
+
+    // The disk fails it: the message and the durable order show.
+    drop(release);
+    patiently(|| {
+        ui.session.pump_status();
+        ui.session.poll_panel_preferences();
+        match ui.session.core.setting_status(Setting::ProfileOrder) {
+            SettingStatus::Failed(_) => Ok(()),
+            other => Err(format!("the order setting is {other:?}, not failed")),
+        }
+    })
+    .expect("the failed write settles");
+    let shown = ui.frame();
+    assert!(
+        shown.has("Not saved:"),
+        "the failure shows in Profiles: {}",
+        shown.text
+    );
+    assert!(!shown.has("Saving…"), "nothing still saves: {}", shown.text);
+    let at = |name: &str| shown.text.find(name).unwrap_or_else(|| panic!("{name} in {}", shown.text));
+    assert!(
+        at("alice") < at("bob") && at("bob") < at("carol"),
+        "the rows are the durable order again:\n{}",
+        shown.text
+    );
+    assert_eq!(
+        ui.session.core.profile_order().names(),
+        ["alice", "bob", "carol"]
+    );
+
+    // A later drag that saves is the action that resolves the message.
+    failing.store(false, Ordering::SeqCst);
+    let (carol, _) = ui.item_rect(At::List, "carol");
+    let (alice, _) = ui.item_rect(At::List, "alice");
+    ui.drag_at(rect_center(carol), rect_center(alice));
+    patiently(|| {
+        ui.session.pump_status();
+        ui.session.poll_panel_preferences();
+        match ui.session.core.setting_status(Setting::ProfileOrder) {
+            SettingStatus::Saved => Ok(()),
+            other => Err(format!("the order setting is {other:?}, not saved")),
+        }
+    })
+    .expect("the retry saves");
+    let shown = ui.frame();
+    assert!(
+        !shown.has("Not saved:") && !shown.has("Saving…"),
+        "the resolved message is gone: {}",
+        shown.text
+    );
+    assert_eq!(
+        ui.session.core.profile_order().names(),
+        ["carol", "alice", "bob"],
+        "the later move saved"
+    );
+}
+
+/// A profile name too wide for its slot shows a visible "…" where it is
+/// cut (never the whole clipped name), and hovering the row shows the
+/// whole name in its tooltip.
+#[test]
+fn a_cut_profile_name_shows_an_ellipsis_and_the_whole_name_on_hover() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("profiles-long-name");
+    const LONG: &str = "averyverylongprofilenameindeed";
+    let mut ui = ProfilesUi::with_geometry(
+        "profiles-long-name",
+        &[(LONG, "lpass", 1), ("bob", "bpass", 2)],
+        [900.0, 700.0],
+        [0.0, 0.0],
+        [220.0, BASE_WINDOW_H],
+    );
+    let shown = ui.frame();
+    assert!(
+        shown.has("…"),
+        "the cut is marked: {}",
+        shown.text
+    );
+    assert!(
+        !shown.has(LONG),
+        "the whole name does not fit and is not drawn clipped: {}",
+        shown.text
+    );
+    assert!(shown.has("aver"), "the visible prefix shows: {}", shown.text);
+
+    // Hover the long row (found by its Edit button, whose rect is on the
+    // same row): the tooltip carries the whole name.
+    let (edit, _) = ui.item_rect(At::List, &format!("Edit##edit-{LONG}"));
+    let hover = [edit[0][0] - 20.0, (edit[0][1] + edit[1][1]) / 2.0];
+    ui.ctx.io_mut().add_mouse_pos_event(hover);
+    let mut tooltip = false;
+    for _ in 0..90 {
+        if ui.frame().has(LONG) {
+            tooltip = true;
+            break;
+        }
+    }
+    assert!(tooltip, "the hover tooltip shows the whole name");
+}
+
+/// Warm frames of the open Profiles window — the list's rows, one of
+/// them a cut name, and a drag hovering its target with the insertion
+/// marker drawn — allocate no more than the same frames with the
+/// window closed: the list borrows its rows and reuses its label
+/// buffer.
+#[test]
+fn the_profiles_list_adds_no_allocation_to_a_warm_frame() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("profiles-warm-frame");
+    let mut ui = ProfilesUi::new(
+        "profiles-warm-frame",
+        &[
+            ("alice", "apass", 1),
+            ("averyverylongprofilenameindeed", "lpass", 2),
+            ("carol", "cpass", 3),
+        ],
+    );
+    ui.session.persist_ui = false;
+    let (carol, _) = ui.item_rect(At::List, "carol");
+    let (alice, _) = ui.item_rect(At::List, "alice");
+    let frame_calls = |ui: &mut ProfilesUi, frames: usize, drag: bool| {
+        let step = |ui: &mut ProfilesUi, i: usize| {
+            if drag {
+                // Held over alice without release: a hover frame, the
+                // insertion marker's frame.
+                let t = i as f32 / frames.max(1) as f32;
+                ui.ctx.io_mut().add_mouse_pos_event([
+                    rect_center(carol)[0] + (rect_center(alice)[0] - rect_center(carol)[0]) * t,
+                    rect_center(carol)[1] + (rect_center(alice)[1] - rect_center(carol)[1]) * t,
+                ]);
+            }
+            ui.raw_frame();
+        };
+        for i in 0..5 {
+            step(ui, i);
+        }
+        let before = crate::test_alloc::alloc_calls();
+        for i in 0..frames {
+            step(ui, i);
+        }
+        crate::test_alloc::alloc_calls() - before
+    };
+    // Baseline: the same frames with Profiles closed.
+    ui.session.wall.chooser_open = false;
+    let closed = frame_calls(&mut ui, 10, false);
+    ui.session.wall.chooser_open = true;
+    assert_eq!(
+        frame_calls(&mut ui, 10, false),
+        closed,
+        "the open list costs a warm frame allocations"
+    );
+    // Press on carol and drag toward alice, holding the button.
+    ui.ctx.io_mut().add_mouse_pos_event(rect_center(carol));
+    ui.raw_frame();
+    ui.ctx
+        .io_mut()
+        .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, true);
+    ui.raw_frame();
+    crate::fleet::take_drop_markers();
+    assert_eq!(
+        frame_calls(&mut ui, 10, true),
+        closed,
+        "a drag-hover frame of the list costs allocations"
+    );
+    assert!(
+        !crate::fleet::take_drop_markers().is_empty(),
+        "the measured drag frames drew the insertion marker"
+    );
+    ui.ctx
+        .io_mut()
+        .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, false);
+    ui.raw_frame();
 }
 
 /// A save whose write fails after it was accepted shows in the form it came
@@ -7629,11 +7872,27 @@ fn fleet_row_drag_reorders_the_saved_order_around_a_hidden_marked_profile() {
     let before = crate::session::reorders_submitted();
 
     // ax (first shown row) onto dx (last shown row).
+    crate::fleet::take_drop_markers();
     fleet_drag(
         &mut ctx,
         &mut session,
         rect_centre(layout.names[0]),
         rect_centre(layout.names[2]),
+    );
+    let markers = crate::fleet::take_drop_markers();
+    assert!(
+        !markers.is_empty(),
+        "the hover showed an insertion marker"
+    );
+    let (lands_before, min, max) = *markers.last().unwrap();
+    assert!(
+        !lands_before,
+        "ax lands after dx: the marker sits on dx's bottom edge"
+    );
+    assert!(
+        min[1] <= layout.names[2][3] && max[1] >= layout.names[2][1],
+        "the marker is on dx's row: {min:?} {max:?} vs {:?}",
+        layout.names[2]
     );
     assert_eq!(crate::session::reorders_submitted(), before + 1);
     assert_eq!(
@@ -7651,11 +7910,17 @@ fn fleet_row_drag_reorders_the_saved_order_around_a_hidden_marked_profile() {
 
     // And back up: dx (now second shown) onto cx (first shown) goes
     // before it.
+    crate::fleet::take_drop_markers();
     fleet_drag(
         &mut ctx,
         &mut session,
         rect_centre(layout.names[1]),
         rect_centre(layout.names[0]),
+    );
+    let markers = crate::fleet::take_drop_markers();
+    assert!(
+        markers.last().is_some_and(|(before, _, _)| *before),
+        "dx lands before cx: the marker sits on cx's top edge: {markers:?}"
     );
     assert_eq!(saved_order(&session), ["bob", "dx", "cx", "ax"]);
 }

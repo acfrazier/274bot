@@ -7633,6 +7633,14 @@ fn a_profiles_list_move_is_the_order_the_tui_table_draws() {
     let names = ["alice", "bob", "carol"];
     let (mut session, mut app) = tui_with_profiles(&iso, &names);
     drawn_fleet_names(&mut app, &names);
+    // The cursor sits on bob, by identity.
+    let bob = session.core.profile_identity("bob").unwrap();
+    app.table.cursor_to(1, &app.fleet_model);
+    assert_eq!(
+        app.fleet_model
+            .identity(app.table.cursor_row(&app.fleet_model).unwrap()),
+        Some(bob)
+    );
     let op = session
         .core
         .profile_order()
@@ -7659,6 +7667,13 @@ fn a_profiles_list_move_is_the_order_the_tui_table_draws() {
         ["carol", "alice", "bob"],
         "the TUI draws the Profiles move"
     );
+    assert_eq!(
+        app.fleet_model
+            .identity(app.table.cursor_row(&app.fleet_model).unwrap()),
+        Some(bob),
+        "the cursor stays on bob through the Profiles move"
+    );
+    assert_eq!(app.table.cursor, 2, "bob is third in the new order");
     assert_eq!(app.error, None);
 }
 

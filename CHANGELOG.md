@@ -20,9 +20,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   dragging a row there changes the same order as a Fleet drag in the panel
   or **Alt-Up** / **Alt-Down** in the terminal app. A Profiles drag also
   works while the Fleet is sorted by Name or Status, and leaves that sort
-  alone. Importing rs2b0t profiles now keeps the export file's order: new
-  profiles join the end of your saved order in the file's sequence, and a
-  profile you already have keeps its place.
+  alone. While an order change saves, the Profiles list and the Fleet
+  table show **Saving…**; if the save fails, both show the reason and
+  your last saved order comes back. A line on the row under your drag
+  marks where the profile will land, and a name too long for its row is
+  cut with a "…" (hover shows the whole name). Importing rs2b0t
+  profiles now keeps the export file's order: new profiles join the end
+  of your saved order in the file's sequence, and a profile you already
+  have keeps its place.
 
 ### Combat
 
