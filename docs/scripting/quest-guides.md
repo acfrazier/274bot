@@ -179,6 +179,17 @@ Provisioner's bank scan, capacity deposit and withdrawal boundaries are included
 
   Use `"continue"` when content requires a page. Use the object form with `prefer`/`choose`/`line_rules` when content can open a menu. `"none"` never touches dialogue. A `talk` step that adopts an already-open page (no Talk-to sent) answers only through its own `prefer`/`choose`/`line_rules`, never the default last option.
 - **Chat-to-scroll transitions.** An owned conversation can finish on the selected scroll (including the source-proven quest-completion scroll) or book interface after its chat closes. The shared dialogue driver requires a witnessed owned page or an accepted, fresh Continue/Answer receipt; an in-flight advance waits within the existing page bound. An unrelated interface, a refused answer, or a scroll without an owned conversation does not prove dialogue success.
+- **A repeated menu (`answer_once`).** Some NPCs reopen the identical menu after every question. By default `prefer` checks the same entries on every page, so the first matching entry answers the reopened menu again and again. Set `answer_once: true` to skip a `prefer` entry that already answered a page in that conversation and fall through to the next entry in order. It is accepted on `talk` args, in an `interact`/`use_on` `dialogue` object, and on a combat `finish`. `line_rules` and `choose` work as before and do not use up a `prefer` entry. If every `prefer` entry that matches the page has already answered, `strict` fails as it does for a missing answer; without `strict` the usual fallback applies. Author at most 32 entries when `answer_once` is set; more fails to compile with `invalid-dialogue-options`.
+
+  Filliman Tarlock reopens the same four-option menu after each of his three questions, and "Ok, thanks." ends the conversation (`filliman.rs2:14,255-269,233-234`); the next step, using the mirror on him, needs stage `spoken_filliman` (`:276-279`). Answer the repeated menu once and leave:
+
+  ```jsonc
+  "args": {
+    "npc": "filliman_tarlock_spirit",
+    "prefer": ["How long have you been a ghost?", "Ok, thanks."],
+    "answer_once": true
+  }
+  ```
 
 ## Gaps, waits, and combat finish
 

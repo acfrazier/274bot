@@ -26,7 +26,7 @@ use api::snapshot::{ActorKind, ActorTargetView, ChatLineView, GameSnapshot, Worl
 use quester_live::{Cell, Mode, ObserveFamily, StartFamily};
 use scenario::quester::{quester_stage_with_seeds, FixtureLoadout, QuesterStage};
 use scenario::{Proof, Step, StepKind, Wait};
-use script::native::{ScriptStatus, StatusValue};
+use script::native::{NativePhase, ScriptStatus, StatusValue};
 use script::quester::compile::compile_path;
 use script::quester::path::{
     PathDocument, PredicateDocument, ProgressColourDocument, ProgressDocument,
@@ -241,6 +241,18 @@ fn family_path(
             ]
             .into_iter()
             .collect(),
+            carry: Vec::new(),
+        },
+    );
+    // Nature Spirit's Filliman dialogue needs the amulet worn
+    // (`filliman.rs2:22-24`). A named loadout lets the fixture builder give
+    // and wear it before Start through the normal kit path.
+    quest.loadouts.insert(
+        "filliman_wear".to_owned(),
+        QuestLoadoutDocument {
+            worn: [("front".to_owned(), "amulet_of_ghostspeak".to_owned())]
+                .into_iter()
+                .collect(),
             carry: Vec::new(),
         },
     );
@@ -1414,4 +1426,172 @@ fn live_quester_families_main_documents() {
             panic!("{alias} main-document family live proof failed: {error}")
         });
     }
+}
+
+/// Filliman appears at `0_53_52_48_8` when the grotto door is entered
+/// (`quest_druidspirit.rs2:93-101`), one tile from the door placed at
+/// `[3440,3337,0]`. Standing on his tile is safe: the door script opens his
+/// dialogue whether or not `npc_add` accepts an occupied tile.
+const NATURE_SPIRIT_STAND: WorldTile = WorldTile {
+    x: 3440,
+    z: 3336,
+    level: 0,
+};
+const DRUIDSPIRIT_STAGE_REPLY: &str = "get druidspirit: 10";
+const FILLIMAN_STEP: &str = "answer-filliman-once";
+
+#[test]
+#[ignore = "requires LIVE=1 and the already-running shared local Engine L"]
+fn live_dialogue_answer_once_filliman_repeated_menu() {
+    let (selected, quests) = live_data();
+    let (quest_varp_id, quest_varp_alias) = quest_varp(&selected, "druidspirit");
+    assert_eq!(quest_varp_alias, "druidspirit");
+    let door_id = selected
+        .loc_by_config("grotto_door_druidicspirit")
+        .expect("selected R289 grotto door config")
+        .id;
+    let (mut cell, seed, seed_commands) = make_cell(
+        "live-dialogue-answer-once-filliman",
+        ("druidspirit", "Nature Spirit"),
+        10,
+        &[],
+        NATURE_SPIRIT_STAND,
+        Some(FixtureLoadout::Path("filliman_wear")),
+        Arc::clone(&selected),
+    );
+    let query_baseline = insert_quest_stage_query(
+        &mut cell,
+        "getvar druidspirit",
+        DRUIDSPIRIT_STAGE_REPLY,
+        None,
+    );
+    let start_seed = seed;
+    cell.observe_start = Some(Box::new(move |snapshot| {
+        let seed_receipt = start_seed.observe_start(snapshot)?;
+        let here = common_observe_start(snapshot, NATURE_SPIRIT_STAND)?;
+        let stage_witness = quest_stage_witness(
+            snapshot.chat_lines(),
+            query_baseline.load(Ordering::Relaxed),
+            DRUIDSPIRIT_STAGE_REPLY,
+        )
+        .ok_or("Nature Spirit fixture needs a fresh server reply: get druidspirit: 10")?;
+        let door = snapshot
+            .locs()
+            .iter()
+            .find(|loc| loc.id == door_id)
+            .ok_or("pre-Start snapshot did not observe grotto_door_druidicspirit")?;
+        if door.distance > 2
+            || !door
+                .actions
+                .iter()
+                .flatten()
+                .any(|action| action.eq_ignore_ascii_case("Enter"))
+        {
+            return Err(format!(
+                "grotto_door_druidicspirit was not a nearby Enter target: {door:?}"
+            ));
+        }
+        Ok(json!({
+            "fixture": "druidspirit:10",
+            "profile_seed": seed_receipt,
+            "seed_commands": seed_commands,
+            "tile": here,
+            "quest_varp": [quest_varp_id, 10],
+            "quest_varp_alias": quest_varp_alias,
+            "quest_varp_source": "post-relog getvar druidspirit",
+            "quest_varp_witness": stage_witness,
+            "loc": {"config": "grotto_door_druidicspirit", "id": door.id, "name": &door.name,
+                    "tile": door.tile, "distance": door.distance, "actions": &door.actions},
+        }))
+    }));
+    let document = family_path(
+        "cook",
+        "Nature Spirit answer-once family fixture",
+        "cook:0",
+        vec![step(
+            FILLIMAN_STEP,
+            "interact",
+            json!({
+                "target": {"loc": "grotto_door_druidicspirit"},
+                "op": "Enter",
+                "anchor": {
+                    "tile": [3440, 3336, 0],
+                    "source": "289 maps/m53_52.jm2:5135 places the door at [3440,3337,0]; quest_druidspirit.rs2:93-101 spawns Filliman at [3440,3336,0] and opens filliman.rs2:1-16"
+                },
+                "radius": 2,
+                "wait_if_missing": true,
+                "dialogue": {
+                    "prefer": ["How long have you been a ghost?", "Ok, thanks."],
+                    "answer_once": true,
+                    "strict": true
+                }
+            }),
+            true,
+            empty_any(),
+            empty_all(),
+        )],
+        true,
+    );
+    let start = family_start(document, Arc::clone(&selected), Arc::clone(&quests));
+    let menu_pages = Arc::new(AtomicI32::new(0));
+    let step_seen = Arc::new(AtomicI32::new(0));
+    let observed_menus = Arc::clone(&menu_pages);
+    let observed_step = Arc::clone(&step_seen);
+    let mut in_menu = false;
+    let observe_tick: ObserveTick = Box::new(move |snapshot, status| {
+        if status.is_some_and(|status| {
+            status.phase == NativePhase::Working
+                && status_text(status, "step_id") == Some(FILLIMAN_STEP)
+        }) {
+            observed_step.store(1, Ordering::Relaxed);
+        }
+        let chat = snapshot.chat_modal()?;
+        // Count a menu opening once, not each poll of the same page. Text
+        // frames may still arrive after the option rows; the rows identify
+        // the menu. The bug would open the menu until DRIVE_STEPS fails.
+        let menu = chat
+            .options
+            .iter()
+            .any(|option| option.text.eq_ignore_ascii_case("Ok, thanks."));
+        if menu && !in_menu {
+            observed_menus.fetch_add(1, Ordering::Relaxed);
+        }
+        in_menu = menu;
+        None
+    });
+    let menus = Arc::clone(&menu_pages);
+    let seen = Arc::clone(&step_seen);
+    let observe: ObserveFamily = Box::new(move |snapshot, status, lifecycle| {
+        if seen.load(Ordering::Relaxed) == 0
+            || !completed_lifecycle(lifecycle)
+            || snapshot.modals().chat != -1
+        {
+            return Ok(None);
+        }
+        let menu_pages_seen = menus.load(Ordering::Relaxed);
+        if menu_pages_seen != 2 {
+            return Err(format!(
+                "answer_once must answer the question once and leave; observed {menu_pages_seen} menu pages (the page cap is {})",
+                script::quester::families::dialogue::DRIVE_STEPS
+            ));
+        }
+        Ok(Some(json!({
+            "family_step": "interact",
+            "target_config": "grotto_door_druidicspirit",
+            "operation": "Enter",
+            "answer_once": true,
+            "prefer": ["How long have you been a ghost?", "Ok, thanks."],
+            "menu_pages": menu_pages_seen,
+            "page_cap": script::quester::families::dialogue::DRIVE_STEPS,
+            "chat_modal_after": snapshot.modals().chat,
+            "quest_varp_id": quest_varp_id,
+            "quest_varp_after": varp_value(snapshot, quest_varp_id),
+            "quest_stage_after": "druidspirit:20",
+            "quest_stage_source": "filliman.rs2:255-259 raises %druidspirit to spoken_filliman before reopening the menu; :233-234 sends Ok, thanks.",
+            "native_status": native_status_receipt(status),
+        })))
+    });
+    let receipt = quester_live::run_family(cell, start, observe)
+        .unwrap_or_else(|error| panic!("answer_once Filliman family live proof failed: {error}"));
+    assert_eq!(receipt["menu_pages"], 2);
 }

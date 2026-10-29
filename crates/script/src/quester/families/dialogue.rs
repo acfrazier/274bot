@@ -73,12 +73,21 @@ pub struct LineRule {
     pub choose: Arc<str>,
 }
 
+/// `prefer` entries one conversation can remember when `answer_once` is set:
+/// one bit per entry in the driver's fixed-size mask.
+pub const ANSWER_ONCE_PREFER_MAX: usize = u32::BITS as usize;
+
 #[derive(Clone)]
 pub struct DialogueOptions {
     pub prefer: Arc<[Arc<str>]>,
     pub choose: Option<i32>,
     pub line_rules: Arc<[LineRule]>,
     pub strict: bool,
+    /// Skip a `prefer` entry that already answered a page in this
+    /// conversation, falling through to the next entry in order. A repeated
+    /// menu can then be answered once and left. `line_rules` and `choose` are
+    /// unaffected. Compilation caps `prefer` at [`ANSWER_ONCE_PREFER_MAX`].
+    pub answer_once: bool,
     /// Chat continue clicks only: a Main document or modal ends the driver
     /// without a click, so it is left to its owner.
     pub chat_only: bool,
@@ -98,6 +107,7 @@ impl Default for DialogueOptions {
             choose: None,
             line_rules: Arc::clone(&RULES),
             strict: false,
+            answer_once: false,
             chat_only: false,
             gap_ticks: None,
         }
@@ -123,38 +133,94 @@ impl DialogueOptions {
         }
     }
 
-    fn select(&self, obs: &ChatObs<'_>) -> Option<i32> {
+    /// Select the answer for one page. `used` is the conversation's mask of
+    /// `prefer` entries that already answered a page; a selection names the
+    /// entry it used so the caller marks it only after the answer is sent.
+    fn select(&self, obs: &ChatObs<'_>, used: u32) -> Option<Selection> {
         if let Some(rule) = self.line_rules.iter().find(|rule| {
             obs.texts
                 .iter()
                 .any(|text| text_matches(text, &rule.when_line))
         }) {
             match matching_option(obs.options, &rule.choose, self.strict) {
-                Ok(Some(index)) => return Some((index + 1) as i32),
+                Ok(Some(index)) => return Some(Selection::option(index)),
                 Err(()) => return None,
                 Ok(None) if self.strict => return None,
                 Ok(None) => {}
             }
         }
         if let Some(option) = self.choose {
-            return (option > 0 && option as usize <= obs.options.len()).then_some(option);
+            return (option > 0 && option as usize <= obs.options.len())
+                .then(|| Selection::option_fixed(option));
         }
         if self.strict {
-            for fragment in self.prefer.iter() {
+            for (index, fragment) in self.prefer.iter().enumerate() {
+                if self.answer_once && prefer_used(used, index) {
+                    continue;
+                }
                 match matching_option(obs.options, fragment, true) {
-                    Ok(Some(index)) => return Some((index + 1) as i32),
+                    Ok(Some(option)) => {
+                        return Some(Selection {
+                            option: (option + 1) as i32,
+                            prefer: self.answer_once.then_some(index),
+                        })
+                    }
                     Err(()) => return None,
                     Ok(None) => {}
                 }
             }
             None
         } else {
-            Some(
-                pick_preferred(obs.options, &self.prefer)
-                    .map_or(obs.options.len() as i32, |index| (index + 1) as i32),
-            )
+            match self
+                .prefer
+                .iter()
+                .enumerate()
+                .find_map(|(index, fragment)| {
+                    if self.answer_once && prefer_used(used, index) {
+                        return None;
+                    }
+                    matching_option(obs.options, fragment, false)
+                        .ok()
+                        .flatten()
+                        .map(|option| (index, option))
+                }) {
+                Some((index, option)) => Some(Selection {
+                    option: (option + 1) as i32,
+                    prefer: self.answer_once.then_some(index),
+                }),
+                None => Some(Selection::option_fixed(obs.options.len() as i32)),
+            }
         }
     }
+}
+
+/// One chosen answer and the `prefer` entry that chose it, if any.
+#[derive(Debug, Clone, Copy)]
+struct Selection {
+    option: i32,
+    prefer: Option<usize>,
+}
+
+impl Selection {
+    fn option(index: usize) -> Self {
+        Self {
+            option: (index + 1) as i32,
+            prefer: None,
+        }
+    }
+
+    fn option_fixed(option: i32) -> Self {
+        Self {
+            option,
+            prefer: None,
+        }
+    }
+}
+
+/// Whether `prefer[index]` already answered a page in this conversation.
+/// An index outside the mask width is never used; compilation rejects it.
+fn prefer_used(used: u32, index: usize) -> bool {
+    used & 1u32.checked_shl(index as u32).unwrap_or(0) != 0
 }
 
 #[derive(Clone)]
@@ -199,6 +265,10 @@ pub struct Dialogue {
     surface: Surface,
     main_ui: Option<api::game_data::DialogueUiIds>,
     steps: u32,
+    /// `prefer` entries that answered a page in this conversation, one bit
+    /// each. Only read when `answer_once` is set; marked after the answer
+    /// interaction is accepted for sending.
+    answers_used: u32,
     due_tick: u64,
     gap_inventory: Option<u64>,
     gap_position: Option<api::WorldTile>,
@@ -227,6 +297,7 @@ impl NativeMachine for Dialogue {
             phase: Phase::Open,
             main_ui: selected_dialogue_ui(cx),
             steps: 0,
+            answers_used: 0,
             due_tick: 0,
             gap_inventory: None,
             gap_position: None,
@@ -838,7 +909,7 @@ impl Dialogue {
             return Poll::Pending;
         }
         if !obs.options.is_empty() {
-            let Some(option) = self.args.options.select(obs) else {
+            let Some(selection) = self.args.options.select(obs, self.answers_used) else {
                 if self.args.options.strict
                     && self.args.options.prefer.is_empty()
                     && self.args.options.choose.is_none()
@@ -854,8 +925,15 @@ impl Dialogue {
             let ack_page =
                 PageAcknowledgement::capture(obs.modal, obs.r#continue, obs.page_fingerprint());
             let request_id = std::task::ready!(crate::native::defer_budget(
-                cx.emit(InteractReq::Answer { option })
+                cx.emit(InteractReq::Answer {
+                    option: selection.option
+                })
             ))?;
+            if let Some(index) = selection.prefer {
+                if let Some(bit) = 1u32.checked_shl(index as u32) {
+                    self.answers_used |= bit;
+                }
+            }
             self.steps += 1;
             self.ack_page = ack_page;
             self.phase = Phase::WaitChoiceAck;
@@ -1103,15 +1181,6 @@ fn nearest_talk<'a>(cx: &'a ActionContext<'_>, wanted: i32) -> Option<TalkTarget
             })
         })
         .min_by_key(|target| target.distance)
-}
-
-pub fn pick_preferred(
-    options: &[api::snapshot::ChatOptionView],
-    prefer: &[Arc<str>],
-) -> Option<usize> {
-    prefer
-        .iter()
-        .find_map(|fragment| matching_option(options, fragment, false).ok().flatten())
 }
 
 fn text_matches(text: &str, fragment: &str) -> bool {

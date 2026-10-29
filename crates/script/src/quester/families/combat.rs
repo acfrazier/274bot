@@ -235,6 +235,11 @@ struct FinishArgs {
     /// Refuse missing or ambiguous answer text instead of choosing a fallback.
     #[serde(default)]
     strict: bool,
+    /// Skip a `prefer` entry that already answered a page in this
+    /// conversation, so a repeated menu can be answered once and left.
+    /// `line_rules` and `choose` are unaffected.
+    #[serde(default)]
+    answer_once: bool,
     /// Positive game-tick budget for the complete transformation and dialogue.
     max_ticks: u32,
 }
@@ -605,6 +610,7 @@ fn compile_finish(
         choose: args.choose,
         line_rules: args.line_rules,
         strict: args.strict,
+        answer_once: args.answer_once,
         gap_ticks: None,
     })?;
     Ok(FinishConfig {

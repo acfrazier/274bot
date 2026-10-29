@@ -4817,6 +4817,7 @@ fn combat_finish_uses_strict_current_page_line_rules() {
                 choose: "Rule answer".into(),
             }],
             strict: true,
+            answer_once: false,
             gap_ticks: None,
         })
         .unwrap()

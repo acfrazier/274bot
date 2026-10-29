@@ -1286,6 +1286,11 @@ pub(crate) struct DialogueOptionsDocument {
     /// Refuse missing or ambiguous answer text instead of choosing a fallback.
     #[serde(default)]
     strict: bool,
+    /// Skip a `prefer` entry that already answered a page in this
+    /// conversation, so a repeated menu can be answered once and left.
+    /// `line_rules` and `choose` are unaffected.
+    #[serde(default)]
+    answer_once: bool,
     /// Quiet ticks after the chat closes before the conversation counts as
     /// over (default 1). Author it only where the NPC's script closes the chat
     /// and delays before its next page, citing the content lines: the client
@@ -1327,6 +1332,7 @@ fn compile_dialogue_options(
         || args
             .gap_ticks
             .is_some_and(|ticks| !(1..=MAX_GAP_TICKS).contains(&ticks))
+        || (args.answer_once && args.prefer.len() > dialogue::ANSWER_ONCE_PREFER_MAX)
         || args
             .line_rules
             .iter()
@@ -1346,6 +1352,7 @@ fn compile_dialogue_options(
             })
             .collect(),
         strict: args.strict,
+        answer_once: args.answer_once,
         chat_only: false,
         gap_ticks: args.gap_ticks,
     })
@@ -1410,6 +1417,11 @@ pub(crate) struct TalkArgs {
     /// Adopted pages always require authored answers, even when this is false.
     #[serde(default)]
     strict: bool,
+    /// Skip a `prefer` entry that already answered a page in this
+    /// conversation, so a repeated menu can be answered once and left.
+    /// `line_rules` and `choose` are unaffected.
+    #[serde(default)]
+    answer_once: bool,
     /// Quiet ticks after the chat closes before the conversation counts as
     /// over (default 1). Author it only where the NPC's script closes the chat
     /// and delays before its next page, citing the content lines: the client
@@ -1473,6 +1485,7 @@ pub(crate) fn compile_talk(
         choose: arg.choose,
         line_rules: arg.line_rules,
         strict: arg.strict || arg.continue_only,
+        answer_once: arg.answer_once,
         gap_ticks: arg.gap_ticks,
     })?;
     let expect_combat = arg
