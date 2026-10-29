@@ -3526,9 +3526,9 @@ impl QueuedQuester {
         // A requirement block can be changed in Script prefs; a parked run
         // (a refused walk, a failed action) can't, so don't send the user there.
         let recovery = if status == QueueStatus::Blocked {
-            "review Quests/Skip and requirements in Script prefs, resolve the condition, then Stop/Start Quester"
+            "review Quests/Skip and requirements in Script prefs, resolve the condition, then start the Quester again"
         } else {
-            "resolve the condition, then Stop/Start Quester"
+            "resolve the condition, then start the Quester again"
         };
         ScriptFailure {
             code: Arc::from("queue-blocked"),

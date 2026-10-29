@@ -15,6 +15,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   native clue rewrite, although Sherlock itself creates no V8 isolate.
 - The terminal app's script pane now marks the selected compiled (native)
   script card with `>` the same way as a selected JavaScript card.
+- The Quester's blocked message now ends "then start the Quester again": the
+  Stop button is unavailable once the run has ended, so the message names the
+  action you can take.
 
 ### Combat
 
