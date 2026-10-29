@@ -887,9 +887,27 @@ fn blocked_native_work_never_automatically_restarts() {
         code: Arc::from("test-blocked"),
         message: Arc::from("terminal blocked fixture"),
     });
+    let blocked = slot.native_status().expect("terminal blocked status");
+    assert_eq!(blocked.phase, NativePhase::Blocked);
+    assert!(blocked.failure.is_some());
     let run = slot.native_run();
     let now = Instant::now();
     slot.watchdog.arm_fresh(now);
+    assert_eq!(slot.state(), RunState::Running);
+    assert!(
+        !slot.dispatch_open(),
+        "a terminal native failure closes gameplay dispatch"
+    );
+    assert!(
+        !slot.watchdog.frozen(),
+        "the restart guard must not rely on the watchdog freeze"
+    );
+    assert_eq!(
+        slot.restart_from_identity(now)
+            .expect_err("a terminal native failure must deny restart"),
+        "watchdog restart cancelled: blocked"
+    );
+    assert_eq!(slot.native_run(), run);
     assert_eq!(
         slot.feed_watchdog(
             now + crate::watchdog::HARD_STALL,
@@ -903,11 +921,8 @@ fn blocked_native_work_never_automatically_restarts() {
     );
     assert!(
         slot.watchdog.frozen(),
-        "blocked time must not spend recovery deadlines"
+        "a terminal native failure freezes watchdog deadlines"
     );
-    assert!(slot
-        .restart_from_identity(now + crate::watchdog::HARD_STALL)
-        .is_err());
     assert_eq!(slot.native_run(), run);
     assert_eq!(slot.state(), RunState::Running);
 }
@@ -3753,6 +3768,14 @@ fn gatherer_supply_park_keeps_its_run_controls_and_non_gameplay_watchdogs() {
     assert!(parked.failure.is_none(), "a supply park is not terminal");
     assert_eq!(slot.state(), RunState::Running);
     assert_eq!(slot.native_run(), Some(run));
+    assert!(
+        slot.dispatch_open(),
+        "a no-failure supply park keeps gameplay dispatch open"
+    );
+    assert!(
+        !slot.watchdog.frozen(),
+        "a no-failure supply park does not freeze watchdog deadlines"
+    );
     assert_eq!(
         slot.evidence_wait_run,
         Some(run),
@@ -3825,6 +3848,10 @@ fn gatherer_supply_park_keeps_its_run_controls_and_non_gameplay_watchdogs() {
         },
         "the scheduler deadline remains active"
     );
+    restart_and_settle(&mut slot, stalled);
+    let restarted = slot.native_run().unwrap();
+    assert!(restarted.run > run.run, "a no-failure block allows restart");
+    assert_eq!(slot.state(), RunState::Running);
     slot.stop();
     assert_eq!(slot.state(), RunState::Idle);
     assert!(slot.native_run().is_none());

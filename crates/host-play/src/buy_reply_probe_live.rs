@@ -14,6 +14,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
+use std::task::Poll;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -25,7 +26,10 @@ use client::client::Client;
 use host::{FrameBuf, Pump};
 use parking_lot::Mutex;
 use scenario::{self, Proof, RunnerStatus, Scenario, ScenarioRunner, Step, StepKind, Wait};
-use script::native::{ActionContext, ActionError, NativeTick, Script, ScriptFailure, ScriptFlow};
+use script::native::{
+    ActionContext, ActionError, ActionHandle, NativeMachine, NativeTick, Script, ScriptFailure,
+    ScriptFlow,
+};
 use script::shim::InteractReq;
 use serde_json::{json, Value};
 use vault::{Profile, ProfileSettings};
@@ -37,9 +41,9 @@ use super::{run_with_template, ProfileOptions, ScriptStartHandle};
 const ENGINE_L_GAME_PORT: u16 = 47_594;
 const ENGINE_L_HTTP_PORT: u16 = 3_080;
 const REFERENCE_NAV_PACK: &str =
-    "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack";
+    "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack";
 const REFERENCE_NAV_FLAGS: &str =
-    "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navflags";
+    "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navflags";
 const KEEPER_CONFIG: &str = "gerrant";
 const ITEM_ALIAS: &str = "feather";
 const COINS_ALIAS: &str = "coins";
@@ -844,23 +848,22 @@ impl BuyReplyProbeScript {
     }
 }
 
-impl Script for BuyReplyProbeScript {
-    fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
-        let now = tick.cx.evidence().tick;
+impl BuyReplyProbeScript {
+    fn advance(&mut self, cx: &mut ActionContext<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        let now = cx.evidence().tick;
         let phase_name = phase_name(self.phase);
-        self.record_observation(&tick.cx, phase_name);
+        self.record_observation(cx, phase_name);
         let trace_started = self.trace.lock().started;
         if !trace_started {
             let mut trace = self.trace.lock();
             trace.started = true;
             trace.start_tick = Some(now);
-            trace.session = Some(SessionIdentity::from(tick.cx.run()));
+            trace.session = Some(SessionIdentity::from(cx.run()));
         }
 
         let flow = match self.phase {
             Phase::OpenShop => {
-                let shop_open = tick
-                    .cx
+                let shop_open = cx
                     .snapshot()
                     .shop()
                     .is_some_and(|shop| shop.value.open);
@@ -871,8 +874,8 @@ impl Script for BuyReplyProbeScript {
                     )
                 } else {
                     self.open_request_started.get_or_insert(now);
-                    match self.trade_request(&tick.cx) {
-                        Ok(request) => match self.emit(&mut tick.cx, now, request) {
+                    match self.trade_request(cx) {
+                        Ok(request) => match self.emit(cx, now, request) {
                             Ok(Some(request_id)) => {
                                 self.phase = Phase::AwaitOpen {
                                     request_id,
@@ -900,7 +903,7 @@ impl Script for BuyReplyProbeScript {
                 request_tick,
                 mut dispatch_tick,
             } => match self.complete_control(
-                &tick.cx,
+                cx,
                 request_id,
                 request_tick,
                 &mut dispatch_tick,
@@ -917,8 +920,7 @@ impl Script for BuyReplyProbeScript {
                     ScriptFlow::Continue
                 }
                 Ok(true) => {
-                    if tick
-                        .cx
+                    if cx
                         .snapshot()
                         .shop()
                         .is_some_and(|shop| shop.value.open)
@@ -944,14 +946,13 @@ impl Script for BuyReplyProbeScript {
                     self.phase = Phase::DropCoins;
                     ScriptFlow::Continue
                 } else {
-                    let shop_open = tick
-                        .cx
+                    let shop_open = cx
                         .snapshot()
                         .shop()
                         .is_some_and(|shop| shop.value.open);
-                    let held = held_count(&tick.cx, self.fixture.feather.id);
-                    let coins = held_count(&tick.cx, self.fixture.coins.id);
-                    let Some((slot, component, stock)) = self.stock_row(&tick.cx) else {
+                    let held = held_count(cx, self.fixture.feather.id);
+                    let coins = held_count(cx, self.fixture.coins.id);
+                    let Some((slot, component, stock)) = self.stock_row(cx) else {
                         return Ok(
                             self.fail("Gerrant's real feather stock row is unavailable", None)
                         );
@@ -981,7 +982,7 @@ impl Script for BuyReplyProbeScript {
                         )
                     } else {
                         match self.begin_sample(
-                            &mut tick.cx,
+                            cx,
                             Series::Held,
                             next + 1,
                             now,
@@ -1006,7 +1007,7 @@ impl Script for BuyReplyProbeScript {
             }
             Phase::AwaitHeld { sample } => {
                 let pending = self.sample(sample);
-                match self.remember_receipt(&tick.cx, sample) {
+                match self.remember_receipt(cx, sample) {
                     Err(error) => self.sample_error_flow(sample, error),
                     Ok(None) => {
                         if now.saturating_sub(pending.request_tick) >= SAMPLE_REPLY_LIMIT_TICKS {
@@ -1019,7 +1020,7 @@ impl Script for BuyReplyProbeScript {
                         }
                     }
                     Ok(Some(dispatch_tick)) => {
-                        let current = held_count(&tick.cx, self.fixture.feather.id);
+                        let current = held_count(cx, self.fixture.feather.id);
                         if let Some(held_after) =
                             current.filter(|count| *count > pending.held_before.unwrap_or(i32::MAX))
                         {
@@ -1034,7 +1035,7 @@ impl Script for BuyReplyProbeScript {
                                 let row = &mut trace.samples[sample];
                                 row.held_after = Some(held_after);
                                 row.stock_after =
-                                    self.stock_row(&tick.cx).map(|(_, _, stock)| stock);
+                                    self.stock_row(cx).map(|(_, _, stock)| stock);
                                 if let Err(error) = row.mark_reply(now) {
                                     drop(trace);
                                     self.sample_error_flow(sample, error)
@@ -1058,7 +1059,7 @@ impl Script for BuyReplyProbeScript {
                 }
             }
             Phase::DropCoins => {
-                let Some(coins) = held_count(&tick.cx, self.fixture.coins.id) else {
+                let Some(coins) = held_count(cx, self.fixture.coins.id) else {
                     return Ok(self.fail(
                         "inventory projection is unavailable before the zero-coin series",
                         None,
@@ -1067,20 +1068,19 @@ impl Script for BuyReplyProbeScript {
                 if coins == 0 {
                     self.phase = Phase::Refusal { next: 0 };
                     ScriptFlow::Continue
-                } else if !tick
-                    .cx
+                } else if !cx
                     .snapshot()
                     .shop()
                     .is_some_and(|shop| shop.value.open)
                 {
                     self.fail("shop closed before the account-only coin drop", None)
-                } else if self.stock_row(&tick.cx).is_none() {
+                } else if self.stock_row(cx).is_none() {
                     self.fail(
                         "Gerrant must retain feather stock so 0-gp requests are coin-refused, not stock-refused",
                         None,
                     )
                 } else {
-                    let item = tick.cx.snapshot().inventory().and_then(|inventory| {
+                    let item = cx.snapshot().inventory().and_then(|inventory| {
                         inventory
                             .value
                             .iter()
@@ -1099,7 +1099,7 @@ impl Script for BuyReplyProbeScript {
                         self.fail("owned coin stack has no real Drop action", None)
                     } else {
                         match self.emit(
-                            &mut tick.cx,
+                            cx,
                             now,
                             InteractReq::Held {
                                 name: self.fixture.coins.name.to_string(),
@@ -1129,7 +1129,7 @@ impl Script for BuyReplyProbeScript {
                 mut dispatch_tick,
                 coins_before,
             } => match self.complete_control(
-                &tick.cx,
+                cx,
                 request_id,
                 request_tick,
                 &mut dispatch_tick,
@@ -1147,7 +1147,7 @@ impl Script for BuyReplyProbeScript {
                     ScriptFlow::Continue
                 }
                 Ok(true) => {
-                    if held_count(&tick.cx, self.fixture.coins.id) == Some(0) {
+                    if held_count(cx, self.fixture.coins.id) == Some(0) {
                         self.phase = Phase::Refusal { next: 0 };
                         ScriptFlow::Continue
                     } else if self
@@ -1177,14 +1177,13 @@ impl Script for BuyReplyProbeScript {
                     self.phase = Phase::Close { next: 0 };
                     ScriptFlow::Continue
                 } else {
-                    let shop_open = tick
-                        .cx
+                    let shop_open = cx
                         .snapshot()
                         .shop()
                         .is_some_and(|shop| shop.value.open);
-                    let held = held_count(&tick.cx, self.fixture.feather.id);
-                    let coins = held_count(&tick.cx, self.fixture.coins.id);
-                    let Some((slot, component, stock)) = self.stock_row(&tick.cx) else {
+                    let held = held_count(cx, self.fixture.feather.id);
+                    let coins = held_count(cx, self.fixture.coins.id);
+                    let Some((slot, component, stock)) = self.stock_row(cx) else {
                         return Ok(self.fail(
                             "Gerrant feather row is unavailable for zero-coin refusal",
                             None,
@@ -1204,7 +1203,7 @@ impl Script for BuyReplyProbeScript {
                         )
                     } else {
                         match self.begin_sample(
-                            &mut tick.cx,
+                            cx,
                             Series::Refusal,
                             next + 1,
                             now,
@@ -1229,7 +1228,7 @@ impl Script for BuyReplyProbeScript {
             }
             Phase::AwaitRefusal { sample } => {
                 let pending = self.sample(sample);
-                match self.remember_receipt(&tick.cx, sample) {
+                match self.remember_receipt(cx, sample) {
                     Err(error) => self.sample_error_flow(sample, error),
                     Ok(None) => {
                         if now.saturating_sub(pending.request_tick) >= SAMPLE_REPLY_LIMIT_TICKS {
@@ -1243,8 +1242,8 @@ impl Script for BuyReplyProbeScript {
                     }
                     Ok(Some(dispatch_tick)) => {
                         let watermark = self.sample(sample).chat_watermark.unwrap_or(i32::MAX);
-                        let held_after = held_count(&tick.cx, self.fixture.feather.id);
-                        let line = self.refusal_line(&tick.cx, watermark);
+                        let held_after = held_count(cx, self.fixture.feather.id);
+                        let line = self.refusal_line(cx, watermark);
                         if let Some((sequence, text)) = line {
                             if sequence <= watermark {
                                 self.sample_error_flow(sample, "stale refusal line was not newer than the host dispatch watermark")
@@ -1313,7 +1312,7 @@ impl Script for BuyReplyProbeScript {
                 line_tick,
                 held_before,
             } => {
-                let Some(held_after) = held_count(&tick.cx, self.fixture.feather.id) else {
+                let Some(held_after) = held_count(cx, self.fixture.feather.id) else {
                     return Ok(self.sample_error_flow(
                         sample,
                         "pack count became unavailable while settling the refusal",
@@ -1349,14 +1348,14 @@ impl Script for BuyReplyProbeScript {
                     self.phase = Phase::Done;
                     ScriptFlow::Complete
                 } else {
-                    let snapshot = tick.cx.snapshot();
+                    let snapshot = cx.snapshot();
                     let shop = snapshot.shop();
                     let Some(shop) = shop else {
                         return Ok(self.fail("ShopView unavailable before CloseModal sample", None));
                     };
                     let shop_open = shop.value.open;
                     let server_closes = shop.value.server_closes;
-                    let coins_before = held_count(&tick.cx, self.fixture.coins.id);
+                    let coins_before = held_count(cx, self.fixture.coins.id);
                     if !shop_open {
                         self.fail(
                             "CloseModal sample requires a locally open real shop page",
@@ -1364,7 +1363,7 @@ impl Script for BuyReplyProbeScript {
                         )
                     } else {
                         match self.begin_sample(
-                            &mut tick.cx,
+                            cx,
                             Series::Close,
                             next + 1,
                             now,
@@ -1386,7 +1385,7 @@ impl Script for BuyReplyProbeScript {
             }
             Phase::AwaitClose { sample } => {
                 let pending = self.sample(sample);
-                match self.remember_receipt(&tick.cx, sample) {
+                match self.remember_receipt(cx, sample) {
                     Err(error) => self.sample_error_flow(sample, error),
                     Ok(None) => {
                         if now.saturating_sub(pending.request_tick) >= SAMPLE_REPLY_LIMIT_TICKS {
@@ -1400,8 +1399,7 @@ impl Script for BuyReplyProbeScript {
                     }
                     Ok(Some(dispatch_tick)) => {
                         let before = pending.server_closes_before.unwrap_or(u64::MAX);
-                        let current = tick
-                            .cx
+                        let current = cx
                             .snapshot()
                             .shop()
                             .map(|shop| shop.value.server_closes);
@@ -1460,7 +1458,7 @@ impl Script for BuyReplyProbeScript {
                 close_tick,
                 closes_after,
             } => {
-                let snapshot = tick.cx.snapshot();
+                let snapshot = cx.snapshot();
                 let shop = snapshot.shop();
                 if shop.is_some_and(|shop| shop.value.open) {
                     if shop.is_some_and(|shop| shop.value.server_closes != closes_after) {
@@ -1482,8 +1480,8 @@ impl Script for BuyReplyProbeScript {
                         None,
                     )
                 } else {
-                    match self.trade_request(&tick.cx) {
-                        Ok(request) => match self.emit(&mut tick.cx, now, request) {
+                    match self.trade_request(cx) {
+                        Ok(request) => match self.emit(cx, now, request) {
                             Ok(Some(request_id)) => {
                                 self.phase = Phase::AwaitReopen {
                                     next,
@@ -1514,7 +1512,7 @@ impl Script for BuyReplyProbeScript {
                 mut dispatch_tick,
                 closes_after,
             } => match self.complete_control(
-                &tick.cx,
+                cx,
                 request_id,
                 request_tick,
                 &mut dispatch_tick,
@@ -1533,12 +1531,12 @@ impl Script for BuyReplyProbeScript {
                     ScriptFlow::Continue
                 }
                 Ok(true) => {
-                    let snapshot = tick.cx.snapshot();
+                    let snapshot = cx.snapshot();
                     let shop = snapshot.shop();
                     if shop.is_some_and(|shop| shop.value.open) {
                         if shop.is_some_and(|shop| shop.value.server_closes != closes_after) {
                             self.fail("same-keeper Trade changed the server close count outside a CloseModal sample", None)
-                        } else if self.stock_row(&tick.cx).is_none() {
+                        } else if self.stock_row(cx).is_none() {
                             self.fail("fresh same-keeper page has no real feather stock row", None)
                         } else {
                             self.phase = Phase::Close { next };
@@ -1568,6 +1566,71 @@ impl Script for BuyReplyProbeScript {
             Phase::Done => ScriptFlow::Complete,
         };
         Ok(flow)
+    }
+}
+
+impl NativeMachine for BuyReplyProbeScript {
+    type Args = Self;
+    type Output = ScriptFlow;
+
+    fn begin(probe: Self, _cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+        Ok(probe)
+    }
+
+    fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<ScriptFlow, ActionError>> {
+        match self.advance(cx) {
+            Ok(ScriptFlow::Continue) => Poll::Pending,
+            Ok(flow) => Poll::Ready(Ok(flow)),
+            Err(failure) => Poll::Ready(Err(ActionError::Failed(failure.message))),
+        }
+    }
+}
+
+struct OwnedProbeScript {
+    pending: Option<BuyReplyProbeScript>,
+    action: Option<ActionHandle<BuyReplyProbeScript>>,
+    trace: Arc<Mutex<ProbeTrace>>,
+}
+
+impl OwnedProbeScript {
+    fn new(probe: BuyReplyProbeScript) -> Self {
+        Self {
+            trace: Arc::clone(&probe.trace),
+            pending: Some(probe),
+            action: None,
+        }
+    }
+
+    fn failure(&self, error: ActionError) -> ScriptFailure {
+        let message = format!("owned probe action failed: {error}");
+        self.trace.lock().fail(message.clone());
+        ScriptFailure {
+            code: "buy-reply-probe".into(),
+            message: message.into(),
+        }
+    }
+}
+
+impl Script for OwnedProbeScript {
+    fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        if self.action.is_none() {
+            let probe = self.pending.take().expect("probe begins once");
+            self.action = Some(
+                tick.actions
+                    .begin::<BuyReplyProbeScript>(probe, &mut tick.cx)
+                    .map_err(|error| self.failure(error))?,
+            );
+        }
+        match tick
+            .actions
+            .poll(self.action.as_ref().expect("probe action began"), &mut tick.cx)
+        {
+            Poll::Pending => Ok(ScriptFlow::Continue),
+            Poll::Ready(result) => {
+                self.action = None;
+                result.map_err(|error| self.failure(error))
+            }
+        }
     }
 }
 
@@ -1696,7 +1759,7 @@ impl LiveState {
             );
             match handle.start_test_script(
                 &self.account,
-                Box::new(script),
+                Box::new(OwnedProbeScript::new(script)),
                 Some(Arc::clone(&self.selected)),
             ) {
                 Ok(run) => {
