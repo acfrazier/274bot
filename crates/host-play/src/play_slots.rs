@@ -103,6 +103,8 @@ pub(crate) fn script_evidence_dirty(dirty: host::DirtyFamilies) -> bool {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SlotFrameInput {
     pub hold: bool,
+    /// Native owned random event kind for observation; independent of `hold`.
+    pub random_event: Option<host::RandomKind>,
     /// Native/script or escape ownership freezes ordinary frontend movement.
     pub host_move_owned: bool,
     pub manual_move_intent: Option<host::ManualMoveIntent>,
@@ -113,6 +115,17 @@ impl SlotFrameInput {
     /// Number of qualifying gestures in this frame, independent of route ownership.
     pub fn manual_move_count(self) -> usize {
         usize::from(self.manual_move_intent.is_some()) + self.manual_steps
+    }
+}
+
+fn observed_owned_random_event(
+    status: &RandomStatus,
+    session_boundary: bool,
+) -> Option<host::RandomKind> {
+    if session_boundary || !status.ours {
+        None
+    } else {
+        status.kind
     }
 }
 /// Project script and native-navigation ownership into the frame value read
@@ -153,6 +166,7 @@ pub(super) fn take_slot_frame_input(
         .unwrap_or_default();
     let frame = SlotFrameInput {
         hold,
+        random_event: None,
         host_move_owned: false,
         manual_move_intent: input.take_manual_move_intent(),
         manual_steps: wires
@@ -2017,6 +2031,10 @@ fn spawn_slot_thread(
                             // Keep these commands for their normal late send/hold gate.
                             let (mut frame_input, wires) =
                                 take_slot_frame_input(&slot_input, name, &slot_wires, hold);
+                            // This is native random-event provenance, not the
+                            // readiness/session value represented by `hold`.
+                            frame_input.random_event =
+                                observed_owned_random_event(status, session_boundary);
                             take_manual_walk_ownership(
                                 &slot_scripts,
                                 &slot_navs,
@@ -2504,5 +2522,39 @@ mod capacity_class_tests {
             capacity_service_class(true, false, quiet),
             ServiceClass::Quiet
         );
+    }
+}
+
+#[cfg(test)]
+mod observed_owned_random_event_tests {
+    use super::observed_owned_random_event;
+    use crate::RandomStatus;
+
+    #[test]
+    fn only_owned_current_random_status_is_provenance() {
+        let owned = RandomStatus {
+            kind: Some(host::RandomKind::Evade),
+            ours: true,
+            ..RandomStatus::default()
+        };
+        assert_eq!(
+            observed_owned_random_event(&owned, false),
+            Some(host::RandomKind::Evade)
+        );
+        assert_eq!(observed_owned_random_event(&owned, true), None);
+
+        let foreign = RandomStatus {
+            kind: Some(host::RandomKind::Evade),
+            hold: true,
+            ours: false,
+            ..RandomStatus::default()
+        };
+        assert_eq!(observed_owned_random_event(&foreign, false), None);
+
+        let unrelated_hold = RandomStatus {
+            hold: true,
+            ..RandomStatus::default()
+        };
+        assert_eq!(observed_owned_random_event(&unrelated_hold, false), None);
     }
 }

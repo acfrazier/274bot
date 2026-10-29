@@ -69,27 +69,27 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Fixed during development
 
-- The T1.4 transport soak compares real bank regions globally, including
-  Guardian flee/return routes and ordinary replans from their endpoints.
-  It proposes western Falador normal and oak logs, with Falador West bank,
-  radius-five normal Starts, and one radius-twelve oak Start. Each account needs
-  two eligible, reachable trees. Host-router reachability must admit ten
-  distinct normal trees as a capacity witness, not a product assignment.
-  Both arms use the same region, tree tiers, bank, and outer bound.
-  Shared tree selection and contention remain possible.
-  No Gatherer wait policy changes.
-  The checker tests actual host-router routes, client BFS, Gatherer retreats,
-  and initial Guardian flee/return samples. The conservative movement bound
-  remains unproved, including continued flee growth and worst-case scene-box
-  travel. Main accepts this residual risk before diagnostic launch 3.
-  The guard rejects danger-envelope entry or movement beyond a wide outer
-  bound. It records worksite exits without rejecting safe Guardian travel.
+- The T1.4 transport soak uses western Falador normal and oak logs with
+  Falador West bank, radius-five normal Starts, and one radius-twelve oak Start.
+  Each account needs two eligible, reachable trees. Host-router reachability
+  must admit ten distinct normal trees as a capacity witness, not a product
+  assignment. Both arms use the same region, tree tiers, bank, and outer bound.
+  Shared tree selection and contention remain possible. No Gatherer policy changes.
+  The route proof covers workload bank travel, Gatherer retreats and
+  re-approaches, and ordinary recovery during faults. It checks actual
+  host-router routes and client BFS. Random-event routes and their later
+  replans are outside that proof.
+  The boundary oracle records a real owned random-event start before an
+  event-started departure. That excursion is an observation, not a route-gate
+  failure. Attribution ends on safe re-entry. An unrelated workload departure
+  still fails. Death, stall, missed-work, and transport thresholds do not change.
   Only typed, requirement-free, adjacent same-level ordinary door or gate
-  crossings pass the physical-route check. Other transports still fail.
+  crossings pass the workload route check. Other workload transports fail.
   Both native member-mode fields match the custom WSS profile's
   Unknown-to-false rule. The checker records its own and the native
   executable's SHA-256 hashes.
-  The fixture remains blocked pending the scoped audit and final diagnostic.
+  The workload audit and two new thirty-minute Engine L diagnostics precede
+  any authorized Engine A qualification.
   Unroutable client alternatives count as nonmovement. Each resource and bank
   loc still requires an accepted approach witness. Consumer-only corrections
   can recheck retained native routes with identical inputs and request batches.

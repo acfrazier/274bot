@@ -4,7 +4,14 @@ This is a **local candidate gate**, not a claim that the two-hour run has alread
 
 ## Build identity and comparison
 
-The route diagnostic comparator is a disposable local branch rooted at `41f14629b92060dd5954e1b80ca963e76e237a76`. Apply only the byte-identical shared `crates/host-play/tests/t14_soak_live.rs` and its Cargo test declaration. Do not merge or push this comparator. Record both commits and shared-source SHA-256 values before interpreting a pair. Both arms use the same release profile, features `live-harness,test-support`, committed workload, proxy, seed, asset cache, navigation bytes, and process sampler. The candidate also enables its separate `soak-observers` module.
+The route diagnostic comparator is a disposable local branch rooted at `41f14629b92060dd5954e1b80ca963e76e237a76`.
+Apply the byte-identical shared `crates/host-play/tests/t14_soak_live.rs` and its Cargo test declaration.
+Any necessary native event-observation seam must also be byte-identical and must not change product behaviour.
+Record that shared fixture diff in the report.
+Do not merge or push this comparator.
+Record both commits and shared-source SHA-256 values before interpreting a pair.
+Both arms use the same release profile, features `live-harness,test-support`, workload, proxy, seed, asset cache, navigation bytes, and process sampler.
+The candidate also enables its separate `soak-observers` module.
 
 Each pair must record its own source digests. Earlier smoke and qualification attempts used older fixtures; their digests do not identify the current route-safe workload. The baseline trusts the private CA through `SSL_CERT_FILE` and `SSL_CERT_DIR`; the candidate installs that CA in its test TLS configuration before startup. Neither arm changes the OS trust store or Engine binaries.
 
@@ -46,76 +53,69 @@ These failures do not justify a transport threshold change.
 
 ## Workload route check
 
-The proposed fixture is not approved for qualification.
-The baseline diagnostic stopped at `(2678,3471,0)` under the old rectangle oracle.
-The candidate diagnostic stopped on native `resource-unavailable` after approximately 376 phase-zero seconds.
-Neither diagnostic satisfies the thirty-minute requirement.
-Qualification requires the corrected scoped audit and the remaining authorized diagnostic.
-
-The proposed replacement uses normal and oak logs from `woodcutting.falador_west.n`, with Falador West bank.
+The replacement fixture uses normal and oak logs from `woodcutting.falador_west.n`, with Falador West bank.
 Its outer bound is `x=2840..3065, z=3262..3527`.
 The static selection has sixteen normal trees and two oaks.
-Native bank-only screens reject Draynor bank, including Lumbridge trees with that bank, and Varrock West.
-The Falador West bank-only screen does not approve a fixture.
-The candidate-specific full audit must pass before diagnostic launch 3.
+The selected workload audit must pass before the new diagnostics.
+The two earlier diagnostics did not complete thirty minutes and do not satisfy this requirement.
+
+The route-safety proof covers workload movement only:
+
+- worksite to bank and bank to worksite
+- Gatherer retreat and re-approach
+- ordinary replan and Traveller recovery during the fault phases
+
+Random-event movement is outside this proof.
+This exclusion includes Guardian flee routes and their later ordinary replans, with or without stairs.
+The earlier Guardian-derived staircase counterexample is not a workload-route failure.
+Do not search additional regions for this correction.
 
 Ten accounts gather normal logs from the configured real content site.
 Each account retains one radius-five Start anchor from `NORMAL_STARTS`.
 The checker requires at least two eligible normal trees for each account.
 The host router must reach at least two trees from each normal Start.
 Reachable resources must admit ten distinct trees as a capacity witness, not a product assignment.
-Source selection ranks coherent bank-local patches after the initial-flee clearance screen.
-Selection includes the radius-one NPC spawn offset, so the initial flee margin is twenty tiles.
 Actual Gatherers choose their own trees, so shared selection and contention remain possible.
 The fixture does not change the product's bounded-wait policy.
 The other ten accounts gather `SECOND_TIER_KEY` within radius twelve of `SECOND_TIER_START`.
 The shared second-tier patch also needs at least two eligible, reachable trees.
 Both groups use Start selection and the configured bank.
-The cohorts may share a real content site when it supports both resource keys.
 Each account receives Woodcutting 99, one rune axe, and 64 banked spare rune axes.
 
 `NORMAL_SAFE_WALK` defines both resource-census rectangles.
 It is not a movement stop condition.
-The guard rejects every authored danger envelope and movement outside `OUTER_WALK_BOUNDS`.
-The selected region has its own outer bound in the shared harness.
-The product-classified Maze and Mime interiors retain their separate travel rules.
 The guard records a `worksite-exit` event when a bot leaves these rectangles.
 That event does not fail the arm.
-Only danger-envelope entry or movement beyond the outer bound fails the physical-route guard.
+For workload movement, danger-envelope entry or movement beyond `OUTER_WALK_BOUNDS` fails the route guard.
+The product-classified Maze and Mime interiors retain their separate travel rules.
 
 The checker uses each hunter's `wanderrange + huntrange + size`.
 It checks all selected-content hunter placements, independently of combat-level immunity and collision shielding.
-It does not exempt a route because a random event caused it.
-Main selected this oracle from source evidence before diagnostic launch 3.
-Real Guardian/client queries rejected Seers maple access and Seers bank.
-A Swarm flee from `(2724,3493)` enters a highwayman envelope at `(2738,3507)`.
-Hemenster also failed ordinary replans from accepted Guardian endpoints.
-Main requires a global comparison of bank regions before the final diagnostic.
-The comparison includes actual Guardian routes and their ordinary bank/resource replans.
-It may replace maples with willow or oak logs when the safer region lacks usable maples.
-The report records the selected region and the rejected alternatives.
-Miscellania's 140-tile maple placement is not usable for this workload.
-Its content grants kingdom approval instead of logs.
-See `woodcut.rs2:69-76,140-148` and `lumberjack_leif.rs2:29-40`.
+A random event does not make a workload route pass this static check.
+Instead, the generator excludes random-event routes from the workload proof.
+The proof does not claim a complete bound on all possible product movement.
 
-The conservative bound is not met.
-The checked initial-flee and walk routes do not prove the worst-case scene-box flee.
-The native client searches a 104-by-104 scene, whose Chebyshev diameter is 103 tiles.
-Continued Guardian radius growth also remains outside this finite audit.
-Main accepts this residual risk before launch 3, with the same rule for both arms.
+During a soak, the boundary oracle distinguishes workload departures from excursions started by a real owned random event.
+It records the random-event start before attributing a same-frame departure.
+The event-started excursion and its events are observations, not stop conditions.
+Its attribution continues through the later return or replan until safe re-entry.
+An unrelated workload departure after re-entry still fails.
+Readiness holds, foreign events, or missing event evidence must not grant an exemption.
+The two-way fixture test must show both outcomes.
+Death, stall, missed-work, and transport thresholds remain unchanged.
+Do not change product random-event policy or grant immunity.
 
 The custom WSS roster has no membership declaration.
 Its Remote profile resolves Unknown membership as false.
 Guarded local `world.json` membership does not apply to that WSS profile.
 Both the native client's membership field and the native router's member mode must match this false value.
 
-An adjacent ordinary gate or door may pass the physical-route check.
+An adjacent ordinary gate or door may pass the workload route check.
 The edge must have typed Door identity, no requirements, one-tile adjacency, and no level change.
 Every approach, crossing endpoint, and exit walk must stay clear.
 Each accepted crossing requires the corresponding content placement and dispatch evidence.
-The report identifies those locs when the chosen region uses gates or doors.
 The region does not need a gate crossing to qualify.
-Stairs, ladders, teleports, agility shortcuts, and nonadjacent transports still fail closed.
+Stairs, ladders, teleports, agility shortcuts, and nonadjacent transports fail closed for workload routes.
 
 Run the following commands in a worker driver through `aubaine.sh`.
 Do not build or query routes on merlot.
@@ -137,27 +137,19 @@ It checks every footprint, Reach alternative, return observation, Start, and ban
 It calls the production hazard-retreat selector for every resource access stand.
 It calls the actual revision-289 client interaction BFS with cached loc geometry and raw collision flags.
 It covers every resource and bank access origin at every qualifying scene base.
-It also calls the actual client BFS for every short Traveller aim in the closed origin set.
+It also calls the actual client BFS for every short Traveller aim in the closed workload-origin set.
 These aims include both directions, click-ahead, scene clipping, and stalled-walk recovery.
 It queries every alternative goal from all starts, access stands, and retreat destinations.
-It repeats those queries from every intermediate route tile until the replan-origin set is closed.
+It repeats those queries from every intermediate workload-route tile until the replan-origin set is closed.
 This includes blocked-origin escape after a resource changes.
-The real Guardian and Client also check all selected-content initial-flee range groups.
-Each worksite and bank tile receives all adjacent NPC spawn directions and the same-tile fallback.
-The Guardian chooses its real ordered exact goals, nearest fallback, and nearer-ring retries.
-The probe stops after the first accepted flee.
-It checks exact return walks from every intermediate accepted flee tile.
-It also checks every goal in the Guardian's four-tile hazard ring through the real client BFS.
-Every accepted Guardian tile enters the ordinary replan closure.
-The result sets `complete_movement_coverage` and `guardian_continuation_covered` to false.
-A scoped pass does not establish a complete movement bound.
-The checker examines complete walk legs and permits only the ordinary crossings described above.
-It rejects routes inside any hunter envelope or outside the wide outer bound.
-The result retains source, content-map, catalogue, v17 pack, raw-flag and client-config hashes.
+Random-event endpoints do not seed that closure.
+The checker examines complete workload walk legs and permits only the ordinary crossings described above.
+It rejects workload routes inside any hunter envelope or outside the outer bound.
+The result retains source, content-map, catalogue, v17 pack, raw-flag, and client-config hashes.
 Native route rows use lossless gzip compression in `*-routes.jsonl.gz`.
 
 An unroutable client alternative returns before movement encoding.
-The checker counts this outcome as nonmovement for loc approaches, ordinary walk aims, and Guardian walks.
+The checker counts this outcome as nonmovement for loc approaches and ordinary walk aims.
 Every selected resource and bank loc must still have an actual accepted client approach witness.
 Other client errors fail the check.
 
@@ -167,36 +159,39 @@ Replay requires identical selected input hashes and identical generated request 
 It reads every retained native output row again without executing the unchanged native producer.
 It does not convert an earlier verdict into a pass without checking the rows.
 
-The old Catherby fixture did not constrain route geometry.
-The Gatherer bounds resource origins, not every approach or bank-return tile.
+The old Catherby fixture bounded resource origins, not every approach or bank-return tile.
 Baseline attempt 12 reached `(2813,3477,0)`, inside the wolf's retained envelope.
 Candidate attempt 1 reached `(2811,3473,0)`, outside its then-approved rectangle.
 Actual client/v17 Swarm flee paths can reach both old observed tiles.
-This proves a possible movement source. It does not identify either historical NPC.
-Guardian walks omit their cause and NPC from logs. Main will file that separate product finding.
-Do not change product logging or exempt danger-envelope entry.
-Evidence and the route analysis are in `TRACK-T1/T1.4/soak-route-1028/report.md`.
+This establishes a possible movement source, not either historical event's identity.
+The old logs do not identify the exact cause or NPC.
+Keep that attribution limit in the report.
+Evidence and route analysis are in `TRACK-T1/T1.4/soak-route-1028/report.md`.
 
 ## Nonqualifying diagnostics
 
-Engine L diagnostics retain all twenty accounts and all committed fault phases.
-Two diagnostic launches already failed, so only launch 3 remains authorized.
-Run the corrected candidate arm once after the scoped audit and two-way tests pass.
-Do not repeat either earlier arm or treat this one arm as paired qualification evidence.
-Use an owned three-character account prefix.
+Main authorized two new thirty-minute Engine L diagnostics after the chance-outcome ruling.
+Run one baseline and one candidate arm after the workload audit and two-way oracle tests pass.
+Retain all twenty accounts, the same fault configuration, and an owned three-character account prefix.
+Use fresh absent evidence directories for both arms.
 The diagnostic duration starts at the first script Start after the setup barrier:
 
 ```sh
+python3 -B tools/t14_soak_run.py --mode baseline --repo "$BASELINE_REPO" \
+  --seed 1027 --diagnostic-seconds 1800 --name-prefix srt \
+  --engine-dir "$ENGINE_L_DIR" --upstream-port 3080 \
+  --output "$SOAK_EVIDENCE_DIR/diagnostic-baseline-chance"
 python3 -B tools/t14_soak_run.py --mode candidate --repo "$CANDIDATE_REPO" \
   --seed 1027 --diagnostic-seconds 1800 --name-prefix srt \
   --engine-dir "$ENGINE_L_DIR" --upstream-port 3080 \
-  --output "$SOAK_EVIDENCE_DIR/diagnostic-candidate-corrected"
+  --output "$SOAK_EVIDENCE_DIR/diagnostic-candidate-chance"
 ```
 
 These runs cannot qualify the gate.
 The committed qualification remains twenty accounts for 7200 seconds.
 Its workload, account seed, fault phases, warmup, progress budgets, and limits remain unchanged.
-Run the next Engine A arms without diagnostic or engine-override arguments.
+The report must provide exact Engine A commands without diagnostic or engine-override arguments.
+Only Main can authorize those qualifying runs.
 
 Each run preserves `effective-config.json`, `run-manifest.json`, `nav-identity.json`, `cohort.log`, `cohort-exit.json`, `pid.json`, external `process-samples.jsonl` (10-second `/proc` RSS, monotonic clock, task count and every task's `comm`), the Play test's per-slot events/summary, `proxy/ready.json`, `proxy/soak-start.json`, `proxy/connections.jsonl`, and `proxy.log`. Candidate additionally records `candidate-five-compartment-ledger.jsonl` at every ten-second sample and `candidate-wss-payloads.jsonl` SHA snapshots each minute and at shutdown. The ledger's **250,760 bytes are only five named logical reservations**: 16 KiB received plaintext, 128 KiB pending TLS output, 64 KiB handshake deframer, 5000-byte outbound ring and 32 KiB inbound ring. Known actual ring occupancy and accessible TLS bytes are separate fields; unavailable private rustls/tungstenite occupancy is null, never fabricated as zero. This is **not** an actual whole-connection allocation measurement. Compare whole-process RSS slope/final against baseline, and perform the separate G5-E deterministic scoped counting-allocator test for requested-layout bytes, high-water and unexplained deltas. Allocator requested bytes are not allocator usable bytes.
 

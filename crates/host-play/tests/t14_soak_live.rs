@@ -154,53 +154,413 @@ fn worksite_exit(
 fn work_route_escape(outer_bounds: &[SafeWalk], tile: (i32, i32, i32)) -> bool {
     danger_envelopes().iter().any(|(spawn, radius)| {
         tile.2 == spawn.level && (tile.0 - spawn.x).abs().max((tile.1 - spawn.z).abs()) <= *radius
-    }) || (!safe_walk_contains(outer_bounds, tile)
-        && api::random::trapped_area(tile.0, tile.1, tile.2).is_none())
+    }) || !safe_walk_contains(outer_bounds, tile)
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct RandomRouteAttribution {
+    observed_event: Option<host::RandomKind>,
+    attributed_kind: Option<host::RandomKind>,
+    event_origin: Option<(i32, i32, i32)>,
+    excursion: bool,
+    return_pending: bool,
+    progress_fence_pending: bool,
+    progress_baseline: Option<WorkProgress>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct WorkProgress {
+    trips: Option<u64>,
+    yielded: Option<u64>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct RandomRouteUpdate {
+    event_started: Option<host::RandomKind>,
+    status_ended: Option<host::RandomKind>,
+    status_end_clear_reason: Option<&'static str>,
+    excursion_started: Option<host::RandomKind>,
+    reentered: Option<host::RandomKind>,
+    reentry_clear_reason: Option<&'static str>,
+    work_progress_resumed: Option<host::RandomKind>,
+    attribution_cleared: bool,
+    route_escape_exempt: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RandomRouteLog {
+    event_name: &'static str,
+    kind: host::RandomKind,
+    attribution_cleared: bool,
+    clear_reason: Option<&'static str>,
+}
+
+impl RandomRouteUpdate {
+    fn log_events(self) -> [Option<RandomRouteLog>; 5] {
+        [
+            self.event_started.map(|kind| RandomRouteLog {
+                event_name: "random-event-start",
+                kind,
+                attribution_cleared: false,
+                clear_reason: None,
+            }),
+            self.status_ended.map(|kind| RandomRouteLog {
+                event_name: "random-event-route-status-ended",
+                kind,
+                attribution_cleared: self.status_end_clear_reason.is_some(),
+                clear_reason: self.status_end_clear_reason,
+            }),
+            self.excursion_started.map(|kind| RandomRouteLog {
+                event_name: "random-event-route-excursion",
+                kind,
+                attribution_cleared: false,
+                clear_reason: None,
+            }),
+            self.reentered.map(|kind| RandomRouteLog {
+                event_name: "random-event-route-reentry",
+                kind,
+                attribution_cleared: true,
+                clear_reason: self.reentry_clear_reason,
+            }),
+            self.work_progress_resumed.map(|kind| RandomRouteLog {
+                event_name: "random-event-route-work-progress-resumed",
+                kind,
+                attribution_cleared: true,
+                clear_reason: Some("work-progress-resumed"),
+            }),
+        ]
+    }
+}
+
+impl WorkProgress {
+    fn advance(baseline: &mut Option<u64>, current: Option<u64>) -> bool {
+        let previous = *baseline;
+        let increased = previous
+            .zip(current)
+            .is_some_and(|(previous, current)| current > previous);
+        if let Some(current) = current {
+            *baseline = Some(previous.map_or(current, |previous| previous.max(current)));
+        }
+        increased
+    }
+}
+
+impl RandomRouteAttribution {
+    fn clear(&mut self) {
+        self.attributed_kind = None;
+        self.event_origin = None;
+        self.excursion = false;
+        self.return_pending = false;
+        self.progress_fence_pending = false;
+        self.progress_baseline = None;
+    }
+
+    fn observe(
+        &mut self,
+        random_event: Option<host::RandomKind>,
+        tile: Option<(i32, i32, i32)>,
+        route_escape: Option<bool>,
+    ) -> RandomRouteUpdate {
+        let previous_event = self.observed_event;
+        let event_started = random_event.filter(|kind| previous_event != Some(*kind));
+        let status_ended = previous_event.filter(|_| random_event.is_none());
+        self.observed_event = random_event;
+        if let Some(kind) = event_started.filter(|_| !self.excursion) {
+            self.attributed_kind = Some(kind);
+            self.event_origin = tile;
+            self.return_pending = false;
+            self.progress_fence_pending = false;
+            self.progress_baseline = None;
+        }
+
+        let mut update = RandomRouteUpdate {
+            event_started,
+            status_ended,
+            ..RandomRouteUpdate::default()
+        };
+        if let Some(kind) = status_ended {
+            let moved_from_origin = kind == host::RandomKind::Evade
+                && self
+                    .event_origin
+                    .is_some_and(|origin| tile.is_some_and(|tile| tile != origin));
+            if moved_from_origin {
+                // The native Evade resolver walks back to the pre-flee tile
+                // after its event kind disappears; retain only that return.
+                self.return_pending = true;
+            } else if !self.excursion {
+                self.clear();
+                update.attribution_cleared = true;
+                update.status_end_clear_reason = Some("event-ended-without-movement");
+            }
+            if self.attributed_kind.is_some() {
+                self.progress_fence_pending = true;
+                self.progress_baseline = None;
+            }
+        }
+
+        match route_escape {
+            Some(true) => {
+                let event_is_attributed = random_event == self.attributed_kind
+                    && random_event.is_some();
+                let native_evade_return =
+                    self.return_pending && self.attributed_kind == Some(host::RandomKind::Evade);
+                if !self.excursion && (event_is_attributed || native_evade_return) {
+                    self.excursion = true;
+                    update.excursion_started = self.attributed_kind;
+                }
+                update.route_escape_exempt = self.excursion;
+            }
+            Some(false) => {
+                if self.return_pending && tile == self.event_origin {
+                    update.reentered = self.attributed_kind;
+                    update.reentry_clear_reason = Some("evade-return-origin");
+                    self.clear();
+                    update.attribution_cleared = true;
+                } else if !self.return_pending && self.excursion {
+                    update.reentered = self.attributed_kind;
+                    update.reentry_clear_reason = Some("safe-reentry");
+                    self.clear();
+                    update.attribution_cleared = true;
+                }
+            }
+            None => {}
+        }
+        update
+    }
+
+    fn observe_work_progress(
+        &mut self,
+        sample: &StatusSample,
+        route_escape: Option<bool>,
+    ) -> RandomRouteUpdate {
+        let mut update = RandomRouteUpdate::default();
+        if self.attributed_kind.is_none()
+            || self.observed_event.is_some()
+            || (!self.excursion && !self.return_pending)
+        {
+            return update;
+        }
+
+        let progress = WorkProgress {
+            trips: sample.trips,
+            yielded: sample.yielded,
+        };
+        if self.progress_fence_pending {
+            self.progress_fence_pending = false;
+            self.progress_baseline = Some(progress);
+            return update;
+        }
+
+        let Some(baseline) = self.progress_baseline.as_mut() else {
+            self.progress_baseline = Some(progress);
+            return update;
+        };
+        let yielded_increased = WorkProgress::advance(&mut baseline.yielded, progress.yielded);
+        let trips_increased = WorkProgress::advance(&mut baseline.trips, progress.trips);
+        if route_escape == Some(false) && (yielded_increased || trips_increased) {
+            update.work_progress_resumed = self.attributed_kind;
+            update.attribution_cleared = true;
+            self.clear();
+        }
+        update
+    }
+}
+
+fn route_oracle_failure(
+    script_started: bool,
+    route_escape: Option<bool>,
+    update: &RandomRouteUpdate,
+) -> bool {
+    script_started
+        && route_escape.is_some_and(|escaped| escaped && !update.route_escape_exempt)
+}
+
+fn status_progress(trips: u64, yielded: u64) -> StatusSample {
+    StatusSample {
+        trips: Some(trips),
+        yielded: Some(yielded),
+        ..StatusSample::default()
+    }
 }
 
 #[test]
-fn work_route_guard_accepts_safe_guardian_flee_and_random_event_travel() {
-    // Actual client/v17 bank flee: 2944,3366 -> 2950,3372, NPC 391.
-    // T14-SOAK-ROUTE/falador-bank-positive-16.json retains the native receipt.
-    let flee = [
-        (2944, 3366, 0),
-        (2944, 3365, 0),
-        (2944, 3364, 0),
-        (2944, 3363, 0),
-        (2944, 3362, 0),
-        (2944, 3361, 0),
-        (2944, 3360, 0),
-        (2944, 3359, 0),
-        (2944, 3358, 0),
-        (2945, 3358, 0),
-        (2946, 3358, 0),
-        (2947, 3358, 0),
-        (2948, 3358, 0),
-        (2949, 3358, 0),
-        (2949, 3359, 0),
-        (2949, 3360, 0),
-        (2949, 3361, 0),
-        (2949, 3362, 0),
-        (2949, 3363, 0),
-        (2949, 3364, 0),
-        (2950, 3365, 0),
-        (2950, 3366, 0),
-        (2950, 3367, 0),
-        (2950, 3368, 0),
-        (2950, 3369, 0),
-        (2950, 3370, 0),
-        (2950, 3371, 0),
-        (2950, 3372, 0),
-    ];
-    assert!(!safe_walk_contains(NORMAL_SAFE_WALK, flee[20]));
-    for tile in flee {
-        assert!(!work_route_escape(OUTER_WALK_BOUNDS, tile), "{tile:?}");
-    }
-    // The product identifies these Maze/Mime interiors separately.
-    for tile in [(2891, 4597, 0), (31 * 64, 74 * 64, 0)] {
-        assert!(!work_route_escape(OUTER_WALK_BOUNDS, tile));
-        assert!(work_route_escape(OUTER_WALK_BOUNDS, (tile.0, tile.1, 1)));
-    }
+fn workload_route_violation_is_not_exempted_by_missing_event_or_hold() {
+    let unsafe_tile = (NORMAL_STARTS[0].0, NORMAL_STARTS[0].1, 1);
+    assert!(work_route_escape(OUTER_WALK_BOUNDS, unsafe_tile));
+
+    let held = host_play::SlotFrameInput {
+        hold: true,
+        random_event: None,
+        ..host_play::SlotFrameInput::default()
+    };
+    let mut attribution = RandomRouteAttribution::default();
+    let update = attribution.observe(held.random_event, Some(unsafe_tile), Some(true));
+    assert!(route_oracle_failure(true, Some(true), &update));
+}
+
+#[test]
+fn owned_random_event_logs_before_the_same_frame_route_excursion() {
+    let origin = (NORMAL_STARTS[0].0, NORMAL_STARTS[0].1, 0);
+    let unsafe_tile = (origin.0, origin.1, 1);
+    assert!(!work_route_escape(OUTER_WALK_BOUNDS, origin));
+    assert!(work_route_escape(OUTER_WALK_BOUNDS, unsafe_tile));
+
+    let mut same_frame_attribution = RandomRouteAttribution::default();
+    let same_frame = same_frame_attribution.observe(
+        Some(host::RandomKind::Evade),
+        Some(unsafe_tile),
+        Some(true),
+    );
+    let same_frame_logs = same_frame.log_events();
+    assert_eq!(
+        same_frame_logs[0].map(|event| event.event_name),
+        Some("random-event-start")
+    );
+    assert_eq!(
+        same_frame_logs[2].map(|event| event.event_name),
+        Some("random-event-route-excursion")
+    );
+    assert!(!route_oracle_failure(true, Some(true), &same_frame));
+
+    let mut attribution = RandomRouteAttribution::default();
+    let start = attribution.observe(Some(host::RandomKind::Evade), Some(origin), Some(false));
+    assert_eq!(
+        start.log_events()[0].map(|event| event.event_name),
+        Some("random-event-start")
+    );
+    let departure =
+        attribution.observe(Some(host::RandomKind::Evade), Some(unsafe_tile), Some(true));
+    assert_eq!(
+        departure.log_events()[2].map(|event| event.event_name),
+        Some("random-event-route-excursion")
+    );
+    assert!(departure.route_escape_exempt);
+    assert!(!route_oracle_failure(true, Some(true), &departure));
+}
+
+#[test]
+fn event_ended_before_evade_replan_keeps_attribution_until_return() {
+    let origin = (NORMAL_STARTS[0].0, NORMAL_STARTS[0].1, 0);
+    let moved = (origin.0 + 1, origin.1, 0);
+    let unsafe_tile = (origin.0, origin.1, 1);
+    assert!(!work_route_escape(OUTER_WALK_BOUNDS, origin));
+    assert!(!work_route_escape(OUTER_WALK_BOUNDS, moved));
+    assert!(work_route_escape(OUTER_WALK_BOUNDS, unsafe_tile));
+
+    let mut attribution = RandomRouteAttribution::default();
+    attribution.observe(Some(host::RandomKind::Evade), Some(origin), Some(false));
+    attribution.observe(Some(host::RandomKind::Evade), Some(moved), Some(false));
+    let ended = attribution.observe(None, Some(moved), Some(false));
+    assert_eq!(ended.status_ended, Some(host::RandomKind::Evade));
+    assert!(!ended.attribution_cleared);
+    assert!(attribution.return_pending);
+
+    let replan = attribution.observe(None, Some(unsafe_tile), Some(true));
+    assert!(replan.route_escape_exempt);
+    assert!(!route_oracle_failure(true, Some(true), &replan));
+    assert_eq!(
+        replan.log_events()[2].map(|event| event.event_name),
+        Some("random-event-route-excursion")
+    );
+
+    // The return can cross back into the approved area before the native
+    // walk reaches its exact pre-flee tile.
+    let waypoint = attribution.observe(None, Some(moved), Some(false));
+    assert!(!waypoint.attribution_cleared);
+    assert!(attribution.return_pending);
+    assert!(attribution.excursion);
+    let stair_replan = attribution.observe(None, Some(unsafe_tile), Some(true));
+    assert!(stair_replan.route_escape_exempt);
+    assert!(!route_oracle_failure(true, Some(true), &stair_replan));
+
+    let returned = attribution.observe(None, Some(origin), Some(false));
+    assert_eq!(returned.reentered, Some(host::RandomKind::Evade));
+    assert!(returned.attribution_cleared);
+    let later_workload_departure = attribution.observe(None, Some(unsafe_tile), Some(true));
+    assert!(route_oracle_failure(
+        true,
+        Some(true),
+        &later_workload_departure
+    ));
+}
+
+#[test]
+fn event_ended_without_movement_does_not_exempt_a_later_departure() {
+    let origin = (NORMAL_STARTS[0].0, NORMAL_STARTS[0].1, 0);
+    let unsafe_tile = (origin.0, origin.1, 1);
+    let mut attribution = RandomRouteAttribution::default();
+    attribution.observe(Some(host::RandomKind::Evade), Some(origin), Some(false));
+    let ended = attribution.observe(None, Some(origin), Some(false));
+    assert_eq!(ended.status_ended, Some(host::RandomKind::Evade));
+    assert!(ended.attribution_cleared);
+    assert!(!attribution.return_pending);
+
+    let later_departure = attribution.observe(None, Some(unsafe_tile), Some(true));
+    assert!(route_oracle_failure(true, Some(true), &later_departure));
+}
+
+#[test]
+fn resumed_work_progress_clears_evade_attribution_at_safe_work_tile() {
+    let origin = (NORMAL_STARTS[0].0, NORMAL_STARTS[0].1, 0);
+    let work_tile = (origin.0 + 1, origin.1, 0);
+    let unsafe_tile = (origin.0, origin.1, 1);
+    assert_ne!(work_tile, origin);
+    assert!(!work_route_escape(OUTER_WALK_BOUNDS, work_tile));
+    assert!(safe_walk_contains(NORMAL_SAFE_WALK, work_tile));
+    assert!(work_route_escape(OUTER_WALK_BOUNDS, unsafe_tile));
+
+    let mut attribution = RandomRouteAttribution::default();
+    attribution.observe(Some(host::RandomKind::Evade), Some(origin), Some(false));
+    let excursion = attribution.observe(
+        Some(host::RandomKind::Evade),
+        Some(unsafe_tile),
+        Some(true),
+    );
+    assert!(excursion.route_escape_exempt);
+    let ended = attribution.observe(None, Some(unsafe_tile), Some(true));
+    assert_eq!(ended.status_ended, Some(host::RandomKind::Evade));
+    assert!(ended.route_escape_exempt);
+    assert!(attribution.return_pending);
+
+    let work_return = attribution.observe(None, Some(work_tile), Some(false));
+    assert!(!work_return.attribution_cleared);
+    assert!(attribution.return_pending);
+
+    // This first post-event sample can include an increment observed from
+    // before the event; it fences that value rather than proving resumption.
+    let first_post_event = status_progress(0, 5);
+    let fenced = attribution.observe_work_progress(&first_post_event, Some(false));
+    assert!(!fenced.attribution_cleared);
+    assert!(!attribution.progress_fence_pending);
+    assert_eq!(
+        attribution.progress_baseline,
+        Some(WorkProgress {
+            trips: Some(0),
+            yielded: Some(5),
+        })
+    );
+
+    let unchanged = attribution.observe_work_progress(&status_progress(0, 5), Some(false));
+    assert!(!unchanged.attribution_cleared);
+    assert!(attribution.return_pending);
+
+    let resumed = attribution.observe_work_progress(&status_progress(0, 6), Some(false));
+    assert!(resumed.attribution_cleared);
+    let clear_event = resumed
+        .log_events()
+        .into_iter()
+        .flatten()
+        .find(|event| event.event_name == "random-event-route-work-progress-resumed")
+        .expect("work progress clear event");
+    assert!(clear_event.attribution_cleared);
+    assert_eq!(clear_event.clear_reason, Some("work-progress-resumed"));
+
+    let later_workload_departure = attribution.observe(None, Some(unsafe_tile), Some(true));
+    assert!(route_oracle_failure(
+        true,
+        Some(true),
+        &later_workload_departure
+    ));
 }
 
 #[test]
@@ -317,6 +677,7 @@ struct Actor {
     script_start_budget_ticks: u32,
     script_running_observed: bool,
     last_tile: Option<(i32, i32, i32)>,
+    random_route: RandomRouteAttribution,
     walk_tile_changes: u64,
     last_trips: u64,
     bank_cycles: u64,
@@ -415,7 +776,7 @@ fn script_start_budget_expires_without_running_after_actual_start() {
     );
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct StatusSample {
     phase: String,
     trips: Option<u64>,
@@ -1273,6 +1634,7 @@ fn make_actor(
         script_running_observed: false,
         script_running_monotonic_ns: None,
         last_tile: None,
+        random_route: RandomRouteAttribution::default(),
         walk_tile_changes: 0,
         last_trips: 0,
         bank_cycles: 0,
@@ -1323,6 +1685,31 @@ fn record_scene2(actor: &mut Actor, writer: &EventWriter, run_started: Instant) 
     }
 }
 
+fn record_random_route_observation(
+    actor: &mut Actor,
+    writer: &EventWriter,
+    run_started: Instant,
+    tile: Option<(i32, i32, i32)>,
+    observation: RandomRouteLog,
+) {
+    let wall_ms = match time_ms() {
+        Ok(wall_ms) => wall_ms,
+        Err(error) => {
+            actor.failure = Some(error);
+            return;
+        }
+    };
+    let mut event = event_base(observation.event_name, actor, run_started, wall_ms);
+    event["random_event_kind"] = json!(format!("{:?}", observation.kind));
+    event["random_event_active"] = json!(actor.random_route.observed_event.is_some());
+    event["tile"] = json!(tile);
+    event["attribution_cleared"] = json!(observation.attribution_cleared);
+    event["attribution_clear_reason"] = json!(observation.clear_reason);
+    if let Err(error) = writer.write(&event) {
+        actor.failure = Some(error);
+    }
+}
+
 fn drive_frame(
     actor: &mut Actor,
     client: &mut client::client::Client,
@@ -1333,7 +1720,20 @@ fn drive_frame(
     let drain = actor.pump.drain_client(client);
     host::publish_snapshot(&mut actor.snapshot, client, drain);
     record_scene2(actor, writer, run_started);
-    if let Some(tile) = actor.snapshot.tile() {
+
+    let tile = actor.snapshot.tile();
+    let route_escape =
+        tile.map(|tile| work_route_escape(actor.site.outer_bounds, tile));
+    let route_update = actor
+        .random_route
+        .observe(frame.random_event, tile, route_escape);
+    // Ordered records keep a same-frame native event start ahead of its
+    // boundary departure and record each state transition once.
+    for observation in route_update.log_events().into_iter().flatten() {
+        record_random_route_observation(actor, writer, run_started, tile, observation);
+    }
+
+    if let Some(tile) = tile {
         let previous = actor.last_tile;
         if actor.script_started_at.is_some() && previous.is_some_and(|last| last != tile) {
             actor.walk_tile_changes = actor.walk_tile_changes.saturating_add(1);
@@ -1352,7 +1752,7 @@ fn drive_frame(
             }
         }
         actor.last_tile = Some(tile);
-        if actor.script_started_at.is_some() && work_route_escape(actor.site.outer_bounds, tile) {
+        if route_oracle_failure(actor.script_started_at.is_some(), route_escape, &route_update) {
             fail_actor(
                 actor,
                 writer,
@@ -1364,6 +1764,7 @@ fn drive_frame(
             );
         }
     }
+
     if matches!(
         actor.runner.status(),
         RunnerStatus::Passed | RunnerStatus::Failed(_)
@@ -1986,6 +2387,20 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
                                 .task_status_monotonic_ns
                                 .get_or_insert(now_monotonic_ns);
                             let sample = status_sample(status);
+                            let tile = actor.snapshot.tile();
+                            let route_escape = tile
+                                .map(|tile| work_route_escape(actor.site.outer_bounds, tile));
+                            let route_update =
+                                actor.random_route.observe_work_progress(&sample, route_escape);
+                            for observation in route_update.log_events().into_iter().flatten() {
+                                record_random_route_observation(
+                                    &mut actor,
+                                    &event_writer,
+                                    run_started,
+                                    tile,
+                                    observation,
+                                );
+                            }
                             let bank = sample.bank.as_deref().unwrap_or("");
                             let trips = sample.trips.unwrap_or(0);
                             if trips < actor.last_trips {
