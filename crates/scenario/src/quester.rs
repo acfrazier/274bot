@@ -176,8 +176,13 @@ pub const FIXTURE_PROFILES: &[QuestFixtureProfile] = &[
         display: "Vampire Slayer",
         profile: TestProfile::Base40,
     },
-    // PATHS-OVERNIGHT folder Paths. Base40 until the operator names Base60
+    // PATHS-OVERNIGHT folder Paths. Base40 unless the operator names Base60
     // or a recorded live run establishes the need.
+    QuestFixtureProfile {
+        quest: "arthur",
+        display: "Merlin's Crystal",
+        profile: TestProfile::Base60,
+    },
     QuestFixtureProfile {
         quest: "cog",
         display: "Clock Tower",
@@ -700,19 +705,13 @@ pub fn quester_stage_with_seeds(
     build_quest_fixture(request, role, stage_varp, seed_vars)
 }
 
-/// Build the same single-account Base40 fixture for headed and headless
-/// Path runs. `stage: None` starts from a clean quest account; an explicit
-/// stage uses the shared stage-seeding builder.
+/// Build the fixture profile named by the quest row for headed and headless
+/// Path runs. `stage: None` starts from clean quest state; an explicit stage
+/// uses the shared stage-seeding builder.
 pub fn build_quester_path_fixture(
     request: QuesterPathFixture<'_>,
 ) -> Result<QuesterFixture, String> {
     let row = fixture_row(request.path.id.0.as_ref())?;
-    if row.profile != TestProfile::Base40 {
-        return Err(format!(
-            "{} does not have a Base40 qualification profile",
-            request.path.id.0
-        ));
-    }
     if row.display != request.quest_display {
         return Err(format!(
             "{} fixture display {:?} differs from requested {:?}",
@@ -1923,6 +1922,7 @@ mod tests {
             "legends",
             "elemental_workshop",
             "horror",
+            "arthur",
         ] {
             assert_eq!(fixture_profile(quest).unwrap(), TestProfile::Base60);
         }

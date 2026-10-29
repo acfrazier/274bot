@@ -72,15 +72,9 @@ use std::time::Duration;
 /// ran about 31 minutes overnight).
 const DEADLINE: Duration = Duration::from_secs(2700);
 
-/// The harness row for an env-driven quest: static id, display and profile,
-/// so the cell needs no allocation to satisfy fixture lifetimes. Refuses
-/// quests the profile table moved off Base40.
+/// The harness row for an env-driven quest: static id, display and profile.
 fn smoke_row(quest: &str) -> Result<QuestFixtureProfile, String> {
-    let row = scenario::quester::fixture_row(quest)?;
-    if row.profile != TestProfile::Base40 {
-        return Err(format!("{quest} is not a Base40 smoke quest"));
-    }
-    Ok(row)
+    scenario::quester::fixture_row(quest)
 }
 
 /// Select the same embedded or folder-backed source the headed entry uses.
@@ -207,6 +201,12 @@ mod smoke_tests {
 
     fn parse_seeds(text: &str) -> Result<QuesterPathSeeds, String> {
         scenario::quester::parse_quester_path_seeds(text, "QUESTER_SEEDS")
+    }
+
+    #[test]
+    fn base60_arthur_profile_is_accepted_by_smoke_selection() {
+        let row = smoke_row("arthur").unwrap();
+        assert_eq!(row.profile, TestProfile::Base60);
     }
 
     fn cook_cell(seeds: &QuesterPathSeeds) -> Cell {
