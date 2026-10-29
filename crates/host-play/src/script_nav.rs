@@ -7738,6 +7738,144 @@ mod diagnostic_tests {
     #[ignore = "requires BOT_ROUTE_PARITY_NAVPACK and BOT_ROUTE_PARITY_OUT; real 17-case per-goal corpus"]
     fn ordinary_and_single_candidate_routes_match_across_the_real_corpus() {
         use std::collections::{HashMap, HashSet};
+        use std::io::Write as _;
+
+        fn snapshot_for_state(state: &WorldState) -> GameSnapshot {
+            fn item(
+                id: i32,
+                count: i32,
+                container: api::snapshot::ItemContainer,
+                slot: i32,
+            ) -> api::snapshot::ItemView {
+                api::snapshot::ItemView {
+                    def: api::ItemDefView {
+                        id,
+                        name: None,
+                        stackable: false,
+                        members: false,
+                        base_value: 0,
+                        noted: false,
+                        certificate_link: -1,
+                        certificate_template: -1,
+                    },
+                    container,
+                    action_family: api::snapshot::ItemActionFamily::Held,
+                    slot,
+                    count,
+                    actions: Vec::new(),
+                    component_id: 0,
+                }
+            }
+
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+
+            let mut inventory = state
+                .inv
+                .iter()
+                .map(|(&id, &count)| (id, count))
+                .collect::<Vec<_>>();
+            inventory.sort_unstable_by_key(|&(id, _)| id);
+            snapshot.seed_inventory(
+                inventory
+                    .into_iter()
+                    .enumerate()
+                    .map(|(slot, (id, count))| {
+                        item(
+                            id,
+                            count,
+                            api::snapshot::ItemContainer::Inventory,
+                            i32::try_from(slot).unwrap(),
+                        )
+                    })
+                    .collect(),
+                28,
+            );
+            snapshot.seed_inventory_packet_generations(state.inventory_ready.then_some(1), None);
+
+            let mut worn = state.worn.iter().copied().collect::<Vec<_>>();
+            worn.sort_unstable();
+            snapshot.seed_equipment(
+                worn.into_iter()
+                    .enumerate()
+                    .map(|(slot, id)| {
+                        item(
+                            id,
+                            1,
+                            api::snapshot::ItemContainer::Equipment,
+                            i32::try_from(slot).unwrap(),
+                        )
+                    })
+                    .collect(),
+            );
+            snapshot.seed_equipment_packet_generation(state.equipment_ready.then_some(1));
+
+            let combat_base = match state.combat_level {
+                Some(126) => Some([99; 7]),
+                Some(3) => Some([3; 7]),
+                Some(50) => Some([40, 39, 40, 40, 40, 39, 40]),
+                None => None,
+                Some(level) => panic!("unexpected route fixture combat level {level}"),
+            };
+            let mut stat_indices = state.stats.keys().copied().collect::<Vec<_>>();
+            if combat_base.is_some() {
+                stat_indices.extend(0..7);
+            }
+            stat_indices.sort_unstable();
+            stat_indices.dedup();
+            snapshot.seed_stats(
+                stat_indices
+                    .into_iter()
+                    .map(|index| {
+                        let effective = state.stats.get(&index).copied().unwrap_or(0);
+                        let base = combat_base
+                            .and_then(|levels| {
+                                usize::try_from(index)
+                                    .ok()
+                                    .and_then(|slot| levels.get(slot).copied())
+                            })
+                            .unwrap_or(effective);
+                        api::snapshot::StatView {
+                            index,
+                            name: format!("skill-{index}"),
+                            effective,
+                            base,
+                            xp: 0,
+                            used: true,
+                        }
+                    })
+                    .collect(),
+            );
+
+            let mut varps = state
+                .varps
+                .iter()
+                .map(|(&index, &value)| (index, value))
+                .collect::<Vec<_>>();
+            varps.sort_unstable_by_key(|&(index, _)| index);
+            snapshot.seed_varps(
+                varps
+                    .into_iter()
+                    .map(|(index, value)| api::snapshot::VarpView { index, value })
+                    .collect(),
+            );
+
+            let mut quests = state.quests.iter().cloned().collect::<Vec<_>>();
+            quests.sort_unstable();
+            snapshot.seed_quest_statuses(
+                quests
+                    .into_iter()
+                    .enumerate()
+                    .map(|(component_id, name)| api::snapshot::QuestStatusView {
+                        component_id: i32::try_from(component_id).unwrap(),
+                        name,
+                        colour: nav_planner::world_state::QUEST_COMPLETE_COLOUR,
+                    })
+                    .collect(),
+                true,
+            );
+            snapshot
+        }
 
         let pack = std::path::PathBuf::from(
             std::env::var_os("BOT_ROUTE_PARITY_NAVPACK").expect("set the real 289 navpack"),
@@ -7944,6 +8082,10 @@ mod diagnostic_tests {
             ("all_off_control", lumbridge, vec![falador], default, empty),
         ];
         let mut records = Vec::new();
+        let cached_route_output = output.with_extension("cached.routes");
+        let fresh_route_output = output.with_extension("fresh.routes");
+        let mut cached_route_bytes = std::fs::File::create(&cached_route_output).unwrap();
+        let mut fresh_route_bytes = std::fs::File::create(&fresh_route_output).unwrap();
         let started = Instant::now();
         for (index, (name, from, goals, opts, state)) in cases.into_iter().enumerate() {
             if index == 5 {
@@ -7971,8 +8113,39 @@ mod diagnostic_tests {
             };
             let pair_count = selected.len();
             let mut routed = 0;
+            let snapshot = snapshot_for_state(&state);
+            let mut cache = crate::script_runtime::NavWorldStateCache::default();
+            let here = Some((from.x, from.z, from.level));
+            let cached_state = crate::script_runtime::nav_world_state_for_observe(
+                &mut cache,
+                here,
+                &snapshot,
+                true,
+                false,
+                state.map_members,
+                1,
+                1,
+                1,
+            )
+            .expect("active route corpus state");
+            let cached_again = crate::script_runtime::nav_world_state_for_observe(
+                &mut cache,
+                here,
+                &snapshot,
+                true,
+                false,
+                state.map_members,
+                1,
+                1,
+                1,
+            )
+            .expect("reused route corpus state");
+            assert!(Arc::ptr_eq(&cached_state, &cached_again));
+            let fresh_state =
+                Arc::new(WorldState::from_snapshot(&snapshot).with_map_members(state.map_members));
+            assert_eq!(cached_state.as_ref(), fresh_state.as_ref());
             for goal in selected.drain(..) {
-                let request = |candidate_goals| {
+                let request = |route_state: Arc<WorldState>, candidate_goals| {
                     let mut request = stage_request(Arc::clone(&world));
                     request.from = from;
                     request.to = goal;
@@ -7984,21 +8157,52 @@ mod diagnostic_tests {
                         1,
                         crate::WalkGlobals::default(),
                     );
-                    request.state = Some(Arc::new(state.clone()));
+                    request.state = Some(route_state);
                     request.candidate_goals = candidate_goals;
                     request
                 };
-                let (ordinary, _) = request(None).drive_route_job_for_test();
-                let (candidate, _) =
-                    request(Some(script::native::WalkGoals::new(vec![goal]).unwrap()))
-                        .drive_route_job_for_test();
-                match (ordinary, candidate) {
-                    (RouteOutcome::Routed(ordinary), RouteOutcome::Routed(candidate)) => {
-                        assert_eq!(ordinary, candidate, "{name}: {from:?} -> {goal:?}");
+                let (ordinary, _) =
+                    request(Arc::clone(&cached_state), None).drive_route_job_for_test();
+                let (candidate, _) = request(
+                    Arc::clone(&cached_state),
+                    Some(script::native::WalkGoals::new(vec![goal]).unwrap()),
+                )
+                .drive_route_job_for_test();
+                let (fresh, _) = request(Arc::clone(&fresh_state), None).drive_route_job_for_test();
+                match (ordinary, candidate, fresh) {
+                    (
+                        RouteOutcome::Routed(ordinary),
+                        RouteOutcome::Routed(candidate),
+                        RouteOutcome::Routed(fresh),
+                    ) => {
+                        assert_eq!(
+                            ordinary, candidate,
+                            "{name}: candidate route {from:?} -> {goal:?}"
+                        );
+                        assert_eq!(
+                            ordinary, fresh,
+                            "{name}: cached/fresh route {from:?} -> {goal:?}"
+                        );
+                        cached_route_bytes
+                            .write_all(
+                                format!("{name}\t{from:?}\t{goal:?}\t{ordinary:?}\n").as_bytes(),
+                            )
+                            .unwrap();
+                        fresh_route_bytes
+                            .write_all(
+                                format!("{name}\t{from:?}\t{goal:?}\t{fresh:?}\n").as_bytes(),
+                            )
+                            .unwrap();
                         routed += 1;
                     }
-                    (RouteOutcome::NoPath, RouteOutcome::NoPath) => {}
-                    _ => panic!("{name}: route availability changed for {from:?} -> {goal:?}"),
+                    (RouteOutcome::NoPath, RouteOutcome::NoPath, RouteOutcome::NoPath) => {
+                        let line = format!("{name}\t{from:?}\t{goal:?}\tno-path\n");
+                        cached_route_bytes.write_all(line.as_bytes()).unwrap();
+                        fresh_route_bytes.write_all(line.as_bytes()).unwrap();
+                    }
+                    _ => panic!(
+                        "{name}: cached/fresh route availability changed for {from:?} -> {goal:?}"
+                    ),
                 }
             }
             let record = serde_json::json!({
@@ -8024,6 +8228,18 @@ mod diagnostic_tests {
             .unwrap();
         }
         assert_eq!(records.len(), 17);
+        cached_route_bytes.flush().unwrap();
+        fresh_route_bytes.flush().unwrap();
+        assert_eq!(
+            std::fs::metadata(&cached_route_output).unwrap().len(),
+            std::fs::metadata(&fresh_route_output).unwrap().len(),
+            "cached and fresh route corpus byte lengths differ"
+        );
+        println!(
+            "cached/fresh route bytes written: {} and {}",
+            cached_route_output.display(),
+            fresh_route_output.display()
+        );
     }
 
     #[test]

@@ -620,10 +620,12 @@ impl Host {
                 });
             });
             slot.observe_cost_frames = slot.observe_cost_frames.wrapping_add(1);
-            slot.observe_cost_allocations =
-                slot.observe_cost_allocations.wrapping_add(allocations.count_total);
-            slot.observe_cost_allocated_bytes =
-                slot.observe_cost_allocated_bytes.wrapping_add(allocations.bytes_total);
+            slot.observe_cost_allocations = slot
+                .observe_cost_allocations
+                .wrapping_add(allocations.count_total);
+            slot.observe_cost_allocated_bytes = slot
+                .observe_cost_allocated_bytes
+                .wrapping_add(allocations.bytes_total);
             if let Some(cpu_ns) = cpu_ns {
                 slot.observe_cost_cpu_ns = slot.observe_cost_cpu_ns.wrapping_add(cpu_ns);
                 slot.observe_cost_cpu_samples = slot.observe_cost_cpu_samples.wrapping_add(1);

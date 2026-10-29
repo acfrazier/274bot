@@ -147,8 +147,7 @@ impl SlotTiming {
             .raster_ns
             .fetch_max(self.base_raster_ns.saturating_add(raster_ns), Relaxed);
         self.totals.observe_cpu_ns.fetch_max(
-            self.base_observe_cpu_ns
-                .saturating_add(observe_cost.cpu_ns),
+            self.base_observe_cpu_ns.saturating_add(observe_cost.cpu_ns),
             Relaxed,
         );
         self.totals.observe_cpu_samples.fetch_max(
