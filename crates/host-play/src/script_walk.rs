@@ -21,7 +21,6 @@ use script::combat::schedule::elapsed;
 use script::combat::{GuardFailure, GuardOp, GuardProtect};
 
 use super::play_status::lock_statuses;
-use super::script_nav::WALK_NO_PROGRESS_INFO_TICKS;
 use super::{
     log_walk_arm_bot, open_bank_at_here, BankFetchFlight, FlightTarget, NavBot, PendingBankFetch,
     ScriptWalkArm, SlotStatus,
