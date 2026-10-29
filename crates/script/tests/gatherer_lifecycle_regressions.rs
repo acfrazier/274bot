@@ -2769,10 +2769,7 @@ fn death_recovery_reads_loaded_stock_instead_of_skipping_a_needed_supply_trip() 
         tick(&mut slot, &death, now);
         if let Some(action) = slot.take_native_action() {
             assert!(
-                matches!(
-                    &action.effect,
-                    HostEffect::Interaction(InteractReq::Close)
-                ),
+                matches!(&action.effect, HostEffect::Interaction(InteractReq::Close)),
                 "an empty loaded bank may be closed, but must not produce a withdrawal"
             );
             closes += 1;
@@ -2785,7 +2782,10 @@ fn death_recovery_reads_loaded_stock_instead_of_skipping_a_needed_supply_trip() 
             break;
         }
     }
-    assert_eq!(closes, 1, "parked recovery must close the open empty bank once");
+    assert_eq!(
+        closes, 1,
+        "parked recovery must close the open empty bank once"
+    );
     let status = slot.native_status().unwrap();
     assert_eq!(status.phase, NativePhase::Blocked);
     assert!(status.failure.is_none(), "an empty bank parks recovery");

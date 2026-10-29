@@ -1718,8 +1718,7 @@ impl Gatherer {
                         );
                     }
                     Poll::Ready(Err(error)) => {
-                        run.cancel(tick.actions);
-                        self.acquire_failure(run, error, &tick.cx);
+                        self.acquire_failure(run, error, tick);
                     }
                 }
             }
@@ -1733,8 +1732,7 @@ impl Gatherer {
                     self.fail("action-error", "a park close selected a child");
                 }
                 Poll::Ready(Err(error)) => {
-                    run.cancel(tick.actions);
-                    self.acquire_failure(run, error, &tick.cx);
+                    self.acquire_failure(run, error, tick);
                 }
             },
         }
@@ -1745,11 +1743,15 @@ impl Gatherer {
 
     fn acquire_failure(
         &mut self,
-        run: AcquireRun,
+        mut run: AcquireRun,
         error: ActionError,
-        cx: &crate::native::ActionContext<'_>,
+        tick: &mut NativeTick<'_>,
     ) {
         let stage = run.progress().2;
+        // Cancellation moves the core to Done, so retain the failing stage
+        // before releasing its native children.
+        run.cancel(tick.actions);
+        let cx = &tick.cx;
         if let Some((request, block)) = run.into_blocked() {
             self.park_supply(request, block, cx.evidence().tick);
             return;
@@ -3149,7 +3151,7 @@ mod tests {
                 gatherer.acquire_failure(
                     run,
                     ActionError::Failed(Arc::from(format!("{code}: observed tool detail"))),
-                    &tick.cx,
+                    tick,
                 );
             });
             let failure = gatherer
