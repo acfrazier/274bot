@@ -87,6 +87,8 @@ pub enum Mode {
     /// Pass when the published stage key is one of `expect` (a key equal to
     /// the Path's `colour.complete` also passes on the green quest tab).
     Stage { expect: Vec<String> },
+    /// The family observer must prove completion or this exact named stop.
+    ExpectedNamedStop { reason: String },
     /// Pass on quest complete with one Start, zero deaths and no park.
     Clean,
     /// Stop mid-step once at each stage key (in order), Start again, complete.
@@ -100,6 +102,7 @@ impl Mode {
     fn name(&self) -> &'static str {
         match self {
             Mode::Stage { .. } => "stage",
+            Mode::ExpectedNamedStop { .. } => "expected-named-stop",
             Mode::Clean => "clean",
             Mode::Restart { .. } => "restart",
             Mode::Death { .. } => "death",
@@ -462,6 +465,17 @@ fn parked(status: &ScriptStatus) -> Option<String> {
     text(status, "block_reason").map(str::to_owned)
 }
 
+/// Match only the explicitly expected native park, not another blocked state.
+pub fn has_named_stop(status: Option<&ScriptStatus>, reason: &str) -> bool {
+    status.is_some_and(|status| {
+        status.phase == NativePhase::Blocked
+            && status.failure.as_ref().is_some_and(|failure| {
+                failure.code.as_ref() == "parked" && failure.message.as_ref() == reason
+            })
+            && text(status, "block_reason") == Some(reason)
+    })
+}
+
 fn observed_tile(snapshot: &GameSnapshot) -> Option<WorldTile> {
     snapshot
         .tile()
@@ -651,6 +665,13 @@ impl RunPlan {
 
     fn is_pair(&self) -> bool {
         matches!(self, Self::Pair(_))
+    }
+
+    fn expected_named_stop(&self) -> Option<&str> {
+        match self {
+            Self::Single(Mode::ExpectedNamedStop { reason }) => Some(reason),
+            _ => None,
+        }
     }
 
     fn restart_targets(&self) -> Option<Vec<PairStage>> {
@@ -986,6 +1007,13 @@ fn run_inner(
     observe_tick: Option<ObserveTick>,
     quester_path: bool,
 ) -> Result<Value, String> {
+    if let Mode::ExpectedNamedStop { reason } = &cell.mode {
+        if reason.trim().is_empty() || observe_family.is_none() {
+            return Err(
+                "expected named stop requires a non-empty reason and family observer".into(),
+            );
+        }
+    }
     let Cell {
         quest,
         display,
@@ -1834,15 +1862,26 @@ fn run_cells(
                     }
                 }
             } else if !restart_settling {
+                let expected_stop = mode.expected_named_stop().filter(|reason| {
+                    observe_family.is_some()
+                        && has_named_stop(observation.status.as_deref(), reason)
+                });
                 if let Some(error) = &observation.last_error {
-                    break 'run Err(format!("{} Quester lifecycle error: {error}", names[index]));
+                    if expected_stop != Some(error.as_str()) {
+                        break 'run Err(format!(
+                            "{} Quester lifecycle error: {error}",
+                            names[index]
+                        ));
+                    }
                 }
                 if let Some(status) = observation.status.as_deref() {
                     if let Some(reason) = parked(status) {
-                        break 'run Err(format!(
-                            "{} Quester parked/blocked: {reason}",
-                            names[index]
-                        ));
+                        if expected_stop.is_none() {
+                            break 'run Err(format!(
+                                "{} Quester parked/blocked: {reason}",
+                                names[index]
+                            ));
+                        }
                     }
                 }
             }
@@ -2856,6 +2895,49 @@ mod tests {
         assert!(!has_native_start(Some("Sherlock"), false));
         assert!(!has_native_start(None, true));
         assert!(!has_native_start(Some(""), true));
+    }
+
+    #[test]
+    fn named_stop_mode_accepts_only_the_explicit_native_park() {
+        use script::native::{ScriptFailure, StatusField};
+
+        let reason = "GAP-test-drop-budget";
+        let mut status = ScriptStatus {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            card: script::CompiledId("Quester"),
+            phase: NativePhase::Blocked,
+            active_settings: 0,
+            pending_settings: None,
+            fields: Arc::from([StatusField {
+                key: "block_reason",
+                label: "Block reason",
+                value: StatusValue::Text(Arc::from(reason)),
+            }]),
+            failure: Some(ScriptFailure {
+                code: Arc::from("parked"),
+                message: Arc::from(reason),
+            }),
+        };
+        assert!(has_named_stop(Some(&status), reason));
+        assert!(!has_named_stop(None, reason));
+        assert!(!has_named_stop(Some(&status), "another stop"));
+        status.phase = NativePhase::Working;
+        assert!(!has_named_stop(Some(&status), reason));
+        status.phase = NativePhase::Blocked;
+        status.failure.as_mut().unwrap().code = Arc::from("failed");
+        assert!(!has_named_stop(Some(&status), reason));
+        status.failure.as_mut().unwrap().code = Arc::from("parked");
+        status.fields = Arc::from([]);
+        assert!(!has_named_stop(Some(&status), reason));
+        let mode = RunPlan::Single(Mode::ExpectedNamedStop {
+            reason: reason.into(),
+        });
+        assert_eq!(mode.expected_named_stop(), Some(reason));
+        assert!(RunPlan::Single(Mode::Clean).expected_named_stop().is_none());
     }
 
     fn settings(gang: &str) -> Map<String, Value> {

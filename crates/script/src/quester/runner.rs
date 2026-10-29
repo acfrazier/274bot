@@ -2650,9 +2650,6 @@ impl Quester {
                 }
             };
             self.selection_since = None;
-            if selected.is_none() {
-                self.last_outcome = None;
-            }
             let Some((index, advances, prelude)) = selected else {
                 if self
                     .path
@@ -2662,6 +2659,7 @@ impl Quester {
                 {
                     return Ok(self.finish_quest(tick));
                 }
+                self.last_outcome = None;
                 if self
                     .path
                     .sequences

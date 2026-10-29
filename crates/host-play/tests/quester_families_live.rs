@@ -195,8 +195,7 @@ fn make_cell(
 ) -> (Cell, scenario::quester::QuesterSeed, Vec<String>) {
     make_cell_with_requirements(
         name,
-        (quest, display),
-        quest_stage,
+        (quest, display, quest_stage),
         items,
         stand,
         loadout,
@@ -207,8 +206,7 @@ fn make_cell(
 
 fn make_cell_with_requirements(
     name: &'static str,
-    (quest, display): (&'static str, &'static str),
-    quest_stage: i32,
+    (quest, display, quest_stage): (&'static str, &'static str, i32),
     items: &'static [(&'static str, i32)],
     stand: WorldTile,
     loadout: Option<FixtureLoadout<'_>>,
@@ -358,6 +356,7 @@ fn family_path(
         terminal,
         order: script::quester::path::SequenceOrder::Authored,
         recovery_entry: None,
+        cross: Vec::new(),
         steps,
     }];
     document
@@ -377,6 +376,7 @@ fn family_path_uses_valid_colour_fallback_instead_of_empty_text_rule() {
                 &quests,
                 cap,
                 &script::local_state::OperatorLoadouts::absent(),
+                None,
             )
         })
         .unwrap()
@@ -512,6 +512,7 @@ fn family_start(
                     &quests,
                     cap,
                     &script::local_state::OperatorLoadouts::absent(),
+                    None,
                 )
             }
         })
@@ -1767,8 +1768,9 @@ const NORMAL_TREE_TILE: WorldTile = WorldTile {
     z: 3252,
     level: 0,
 };
-const ENTRANA_DROP_MAX_KILLS: u32 = 12;
-const ENTRANA_DROP_STOP: &str = "bronze-axe-not-found-after-12-kills";
+// zombie.rs2:102-110 gives 50/128 per kill. Missing 24 kills is (78/128)^24.
+const ENTRANA_DROP_MAX_KILLS: u32 = 24;
+const ENTRANA_DROP_STOP: &str = "bronze-axe-not-found-after-24-kills";
 const JAIL_KEY_LIFETIME_TICKS: u32 = 100;
 const ENTRANA_ZOMBIE_SOURCE: &str =
     "content/maps/m44_152.jm2:8477-8481; content/scripts/_unpack/225/all.npc:1877-1894; content/scripts/drop tables/scripts/zombie.rs2:102-110";
@@ -1779,6 +1781,53 @@ const NORMAL_TREE_SOURCE: &str =
 const SHORTBOW_MENU_SOURCE: &str = "content/scripts/skill_fletching/scripts/cut_logs.rs2:18-47";
 const SHORTBOW_RECIPE_SOURCE: &str =
     "content/scripts/skill_fletching/configs/cut_logs/cut_logs.dbrow:1-7";
+
+fn entrana_drop_outcome(
+    completed_without_stop: bool,
+    named_stop: bool,
+    kills: i64,
+    axes: i32,
+) -> Result<&'static str, String> {
+    let budget = i64::from(ENTRANA_DROP_MAX_KILLS);
+    if completed_without_stop && !named_stop && (1..=budget).contains(&kills) && axes == 1 {
+        Ok("drop_acquired")
+    } else if !completed_without_stop && named_stop && kills == budget && axes == 0 {
+        Ok("kill_budget_spent")
+    } else {
+        Err(format!(
+            "invalid until_drop outcome: completed_without_stop={completed_without_stop}, \
+             named_stop={named_stop}, confirmed_kills={kills}/{budget}, axes={axes}"
+        ))
+    }
+}
+
+#[test]
+fn until_drop_oracle_accepts_both_bounded_outcomes_and_rejects_other_ends() {
+    let budget = i64::from(ENTRANA_DROP_MAX_KILLS);
+    assert_eq!(
+        entrana_drop_outcome(true, false, 1, 1).unwrap(),
+        "drop_acquired"
+    );
+    assert_eq!(
+        entrana_drop_outcome(true, false, budget, 1).unwrap(),
+        "drop_acquired"
+    );
+    assert_eq!(
+        entrana_drop_outcome(false, true, budget, 0).unwrap(),
+        "kill_budget_spent"
+    );
+    for (completed, stopped, kills, axes) in [
+        (true, true, budget, 1),
+        (true, false, 0, 1),
+        (true, false, budget + 1, 1),
+        (true, false, 1, 0),
+        (false, true, budget - 1, 0),
+        (false, true, budget, 1),
+        (false, false, budget, 0),
+    ] {
+        assert!(entrana_drop_outcome(completed, stopped, kills, axes).is_err());
+    }
+}
 
 #[test]
 #[ignore = "requires LIVE=1 and the already-running local Engine Q"]
@@ -1800,6 +1849,9 @@ fn live_quester_families_until_drop_on_entrana() {
         Arc::clone(&selected),
     );
     cell.scenario.settings.deadline = Duration::from_secs(600);
+    cell.mode = Mode::ExpectedNamedStop {
+        reason: ENTRANA_DROP_STOP.into(),
+    };
     let start_seed = seed;
     let start_selected = Arc::clone(&selected);
     cell.observe_start = Some(Box::new(move |snapshot| {
@@ -1897,25 +1949,24 @@ fn live_quester_families_until_drop_on_entrana() {
                 confirmed_kills = Some(confirmed_kills.unwrap_or(0).max(kills));
             }
         }
-        if lifecycle.is_none() {
+        let Some(lifecycle) = lifecycle else {
             return Ok(None);
+        };
+        let kills = confirmed_kills.ok_or("until_drop exposed no combat_kills status")?;
+        if !combat_step_seen {
+            return Err("until_drop terminal receipt never observed its combat step".into());
         }
-        if !completed_lifecycle(lifecycle) {
-            return Err(format!(
-                "chance-only Entrana route did not complete before named stop {ENTRANA_DROP_STOP}; \
-                 confirmed Killed={confirmed_kills:?}; status={:?}",
-                native_status_receipt(status)
-            ));
-        }
-        let kills =
-            confirmed_kills.ok_or("completed until_drop step exposed no combat_kills status")?;
-        if !combat_step_seen || kills <= 0 || kills > i64::from(ENTRANA_DROP_MAX_KILLS) {
-            return Err(format!(
-                "until_drop receipt was not a confirmed bounded fight: \
-                 step_seen={combat_step_seen}, confirmed_kills={kills}"
-            ));
-        }
-        require_item(snapshot, axe_id, 1, "bronze_axe")?;
+        let completed_without_stop = completed_lifecycle(Some(lifecycle))
+            && status.is_some_and(|status| {
+                status.phase != NativePhase::Blocked
+                    && status.failure.is_none()
+                    && status_text(status, "block_reason").is_none()
+            });
+        let named_stop = quester_live::has_named_stop(status, ENTRANA_DROP_STOP)
+            && lifecycle.state == script::ScriptTerminalState::Failed
+            && lifecycle.reason == ENTRANA_DROP_STOP;
+        let axes = item_count(snapshot, axe_id);
+        let outcome = entrana_drop_outcome(completed_without_stop, named_stop, kills, axes)?;
         Ok(Some(json!({
             "family_step": "combat",
             "step_id": "until-drop-bronze-axe",
@@ -1924,7 +1975,10 @@ fn live_quester_families_until_drop_on_entrana() {
             "drop": "bronze_axe",
             "drop_chance": [50, 128],
             "max_kills": ENTRANA_DROP_MAX_KILLS,
-            "named_stop": ENTRANA_DROP_STOP,
+            "configured_stop": ENTRANA_DROP_STOP,
+            "observed_stop": named_stop.then_some(ENTRANA_DROP_STOP),
+            "outcome": outcome,
+            "axes_held": axes,
             "combat_step_seen": combat_step_seen,
             "confirmed_kills": kills,
             "target_item_seeded": false,
@@ -2160,8 +2214,7 @@ fn live_quester_families_make_from_open_fletching_menu() {
     let product_id = item_id(&selected, "unstrung_shortbow");
     let (mut cell, seed, seed_commands) = make_cell_with_requirements(
         "live-quester-families-open-fletching-menu",
-        ("cook", "Cook's Assistant"),
-        0,
+        ("cook", "Cook's Assistant", 0),
         &[("bronze_axe", 1), ("knife", 1)],
         FLETCHING_STAND,
         None,
@@ -2349,8 +2402,7 @@ fn live_quester_families_bronze_bar_on_anvil_makes_wire() {
     let bronze_wire_id = item_id(&selected, "bronzecraftwire");
     let (mut cell, seed, seed_commands) = make_cell_with_requirements(
         "live-quester-families-bronze-wire-on-anvil",
-        ("cook", "Cook's Assistant"),
-        0,
+        ("cook", "Cook's Assistant", 0),
         &[("bronze_pickaxe", 1), ("hammer", 1)],
         BRONZE_COPPER_TILE,
         None,
