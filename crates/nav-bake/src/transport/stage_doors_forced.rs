@@ -327,6 +327,9 @@ struct Motion<'a> {
     moved: bool,
     ticks: i32,
     gate_read: bool,
+    /// OpLoc closes modals before starting the handler. Consume that proof at
+    /// the first command; no later close may run an unmodelled close trigger.
+    entry_modal_closed: bool,
     entrance: Option<entrances::Inputs<'a>>,
     returned: Option<Val>,
     value_query: bool,
@@ -409,6 +412,7 @@ impl Motion<'_> {
                         .as_deref()
                         .is_none_or(|body| body.iter().all(|s| self.presentation(s)))
                 {
+                    self.entry_modal_closed = false;
                     return End::Continue;
                 }
                 for (test, body) in arms {
@@ -441,7 +445,10 @@ impl Motion<'_> {
                     End::Return
                 }
             }
-            Stmt::Call(_, _) if self.presentation(stmt) => End::Continue,
+            Stmt::Call(_, _) if self.presentation(stmt) => {
+                self.entry_modal_closed = false;
+                End::Continue
+            }
             Stmt::Call(name, args) => self.call(name, args, env),
             _ => End::Refused,
         }
@@ -493,6 +500,23 @@ impl Motion<'_> {
     }
 
     fn call(&mut self, name: &str, args: &[Expr], env: &Env) -> End {
+        let entry_modal_closed = std::mem::replace(&mut self.entry_modal_closed, false);
+        if name == "if_close" {
+            // OpLocHandler.ts:53 clears pending actions, which calls
+            // Player.closeModal before this script starts. Without a prior
+            // command or yield this second close cannot run an IF_CLOSE script.
+            return if self.entrance.is_some()
+                && entry_modal_closed
+                && self.ticks == 1
+                && !self.value_query
+                && self.timer.is_none()
+                && args.is_empty()
+            {
+                End::Continue
+            } else {
+                End::Refused
+            };
+        }
         if self.entrance.is_some() {
             if let Some(end) = self.entrance_call(name, args, env) {
                 return end;
@@ -1121,6 +1145,7 @@ pub(super) fn forced_move_edges(
                                 moved: false,
                                 ticks: 1,
                                 gate_read: false,
+                                entry_modal_closed: false,
                                 entrance: None,
                                 returned: None,
                                 value_query: false,

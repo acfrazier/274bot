@@ -717,6 +717,16 @@ impl Motion<'_> {
     }
 
     pub(super) fn entrance_call(&mut self, name: &str, args: &[Expr], env: &Env) -> Option<End> {
+        if name == "npc_facesquare" {
+            // NpcOps.ts:103-106 changes only the selected NPC's facing tile.
+            return Some(
+                if matches!(args, [coord] if matches!(self.value(coord, env), Some(Val::Coord(_)))) {
+                    End::Continue
+                } else {
+                    End::Refused
+                },
+            );
+        }
         let proc = name.strip_prefix('~');
         if self.timer.is_some()
             && (matches!(
@@ -910,6 +920,7 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
             moved: false,
             ticks: 1,
             gate_read: false,
+            entry_modal_closed: true,
             entrance: Some(Inputs {
                 facts,
                 positions,

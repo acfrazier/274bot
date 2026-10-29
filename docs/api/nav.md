@@ -452,6 +452,10 @@ skipped. Their unproved trajectories stay impassable. A direct shipyard entry
 requires Grand Tree progress at least 80 and Monkey Madness progress above 1;
 exit requires only the Grand Tree condition. These conditions do not mean that
 both quests must be complete.
+The direct shipyard arm can close an interface only as its first command,
+before any yield. The engine closes modals before it dispatches the loc op;
+this second close therefore cannot run a close trigger. A prior command or
+yield removes that proof. NPC facing changes do not move the player.
 
 Requirement-gated loc ops also derive deterministic force-walk and exact-move
 trajectories, following source proc/label calls, checked arithmetic, placement

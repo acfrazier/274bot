@@ -2062,6 +2062,8 @@ return(false);
 
 #[path = "stage_doors_gates_tests.rs"]
 mod gates;
+#[path = "stage_doors_content_gates_tests.rs"]
+mod content_gates;
 
 const BLACK_KNIGHTS_AGGRO: &str = r#"
 [proc,black_knights_aggro](coord $first_search_coord, coord $all_search_coord)
