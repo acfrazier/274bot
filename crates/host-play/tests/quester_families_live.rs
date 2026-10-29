@@ -1776,8 +1776,7 @@ const JAIL_KEY_SOURCE: &str =
     "content/maps/m45_151.jm2:8528; content/scripts/drop tables/scripts/jailer.rs2:1-10";
 const NORMAL_TREE_SOURCE: &str =
     "content/maps/m40_50.jm2:5891; content/pack/loc.pack:1277; content/scripts/skill_woodcutting/configs/trees.dbrow:1-16";
-const SHORTBOW_MENU_SOURCE: &str =
-    "content/scripts/skill_fletching/scripts/cut_logs.rs2:18-41";
+const SHORTBOW_MENU_SOURCE: &str = "content/scripts/skill_fletching/scripts/cut_logs.rs2:18-47";
 const SHORTBOW_RECIPE_SOURCE: &str =
     "content/scripts/skill_fletching/configs/cut_logs/cut_logs.dbrow:1-7";
 
@@ -1789,8 +1788,7 @@ fn live_quester_families_until_drop_on_entrana() {
         .npc_by_config("zombie_entranan")
         .expect("selected R289 Entrana zombie config")
         .id;
-    let zombie_type =
-        usize::try_from(zombie_id).expect("selected zombie type id is nonnegative");
+    let zombie_type = usize::try_from(zombie_id).expect("selected zombie type id is nonnegative");
     let axe_id = item_id(&selected, "bronze_axe");
     let (mut cell, seed, seed_commands) = make_cell(
         "live-quester-families-until-drop-entrana",
@@ -1909,8 +1907,8 @@ fn live_quester_families_until_drop_on_entrana() {
                 native_status_receipt(status)
             ));
         }
-        let kills = confirmed_kills
-            .ok_or("completed until_drop step exposed no combat_kills status")?;
+        let kills =
+            confirmed_kills.ok_or("completed until_drop step exposed no combat_kills status")?;
         if !combat_step_seen || kills <= 0 || kills > i64::from(ENTRANA_DROP_MAX_KILLS) {
             return Err(format!(
                 "until_drop receipt was not a confirmed bounded fight: \
@@ -1937,7 +1935,12 @@ fn live_quester_families_until_drop_on_entrana() {
     });
     let receipt = quester_live::run_family(cell, start, observe)
         .unwrap_or_else(|error| panic!("Entrana until_drop live proof failed: {error}"));
-    assert!(receipt["family_receipt"]["confirmed_kills"].as_i64().unwrap() > 0);
+    assert!(
+        receipt["family_receipt"]["confirmed_kills"]
+            .as_i64()
+            .unwrap()
+            > 0
+    );
     assert_eq!(receipt["family_receipt"]["target_item_seeded"], false);
 }
 
@@ -2233,7 +2236,8 @@ fn live_quester_families_make_from_open_fletching_menu() {
                 }),
                 false,
                 empty_any(),
-                fact("modal_open", json!({})),
+                // skill_multi3 opens chat products, not the modal_open main panel.
+                empty_all(),
             ),
             step(
                 "make-unstrung-shortbow",
@@ -2279,8 +2283,7 @@ fn live_quester_families_make_from_open_fletching_menu() {
             let step_id = status_text(status, "step_id");
             gather_step_seen |= step_id == Some("gather-normal-log");
             use_on_step_seen |= step_id == Some("open-fletching-menu");
-            menu_open_after_use_on |= step_id == Some("open-fletching-menu")
-                && snapshot.modals().main != -1;
+            menu_open_after_use_on |= use_on_step_seen && !snapshot.make_products().is_empty();
             make_step_seen |= step_id == Some("make-unstrung-shortbow");
         }
         if lifecycle.is_none() {
@@ -2551,10 +2554,9 @@ fn live_quester_families_bronze_bar_on_anvil_makes_wire() {
             .iter()
             .any(|item| item.def.id == bronze_wire_id);
         main_make_wire_row_seen |= wire_menu_row_visible;
-        anvil_menu_open_after_use_on |=
-            step_id == Some("use-bronze-bar-on-anvil")
-                && snapshot.modals().main != -1
-                && wire_menu_row_visible;
+        anvil_menu_open_after_use_on |= step_id == Some("use-bronze-bar-on-anvil")
+            && snapshot.modals().main != -1
+            && wire_menu_row_visible;
         if lifecycle.is_none() {
             return Ok(None);
         }
@@ -2637,8 +2639,5 @@ fn live_quester_families_bronze_bar_on_anvil_makes_wire() {
         receipt["family_receipt"]["anvil_menu_open_after_use_on"],
         true
     );
-    assert_eq!(
-        receipt["family_receipt"]["main_make_wire_row_seen"],
-        true
-    );
+    assert_eq!(receipt["family_receipt"]["main_make_wire_row_seen"], true);
 }

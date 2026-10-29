@@ -2,8 +2,8 @@
 //!
 //! `drop tables/scripts/jailer.rs2:10` posts the jail key for 100 game ticks.
 //! This adapter owns that authored bound, not a second pickup machine.
-use super::reach::{Reach, ReachArgs, ReachKind};
 use super::super::compile::{FamilyReceipt, StepContext, StepOutcome, StepPlan, StepRun};
+use super::reach::{Reach, ReachArgs, ReachKind};
 use crate::native::{ActionError, ActionHandle, NativeActions};
 use api::WorldTile;
 use std::sync::Arc;
@@ -56,7 +56,9 @@ impl StepPlan for TimedGroundPlan {
 
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         let ReachKind::Ground { id, .. } = self.args.kind else {
-            return Err(ActionError::Unavailable(Arc::from("timed Take requires a ground item")));
+            return Err(ActionError::Unavailable(Arc::from(
+                "timed Take requires a ground item",
+            )));
         };
         Ok(Box::new(TimedGroundRun {
             args: self.args.clone(),
@@ -113,10 +115,16 @@ impl StepRun for TimedGroundRun {
         }
         if self.reach.is_none() {
             self.reach = Some(std::task::ready!(crate::native::defer_budget(
-                cx.tick.actions.begin::<Reach>(self.args.clone(), &mut cx.tick.cx),
+                cx.tick
+                    .actions
+                    .begin::<Reach>(self.args.clone(), &mut cx.tick.cx),
             ))?);
         }
-        match cx.tick.actions.poll(self.reach.as_ref().unwrap(), &mut cx.tick.cx) {
+        match cx
+            .tick
+            .actions
+            .poll(self.reach.as_ref().unwrap(), &mut cx.tick.cx)
+        {
             Poll::Pending | Poll::Ready(Ok(true)) => Poll::Pending,
             Poll::Ready(Ok(false)) => {
                 self.reach = None;

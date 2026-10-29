@@ -728,7 +728,9 @@ mod tests {
         };
         assert!(SnapshotView::new(None, stamp).main_make().is_none());
         let mut snapshot = GameSnapshot::new();
-        assert!(SnapshotView::new(Some(&snapshot), stamp).main_make().is_none());
+        assert!(SnapshotView::new(Some(&snapshot), stamp)
+            .main_make()
+            .is_none());
         snapshot.seed_ingame(2);
         let view = SnapshotView::new(Some(&snapshot), stamp);
         let rows = view.main_make().unwrap();

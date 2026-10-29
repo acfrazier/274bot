@@ -3,10 +3,14 @@ use serde_json::json;
 
 fn timed_plan(max_ticks: u32) -> Arc<dyn StepPlan> {
     compile_context_test(|cx| {
-        compile_interact(test_args(json!({
-            "target": {"ground": "egg"}, "op": "Take", "radius": 2,
-            "max_ticks": max_ticks
-        })), cx).unwrap()
+        compile_interact(
+            test_args(json!({
+                "target": {"ground": "egg"}, "op": "Take", "radius": 2,
+                "max_ticks": max_ticks
+            })),
+            cx,
+        )
+        .unwrap()
     })
 }
 
@@ -38,11 +42,13 @@ fn timed_ground_budget_uses_observed_ticks_not_host_time_or_poll_count() {
         assert!(with_tick(&snapshot, &mut ledger, 10, |tick| {
             tick.cx.active_now = Duration::from_secs(99_999);
             with_step(tick, |cx| run.poll(cx))
-        }).is_pending());
+        })
+        .is_pending());
     }
     assert!(with_tick(&snapshot, &mut ledger, 109, |tick| {
         with_step(tick, |cx| run.poll(cx))
-    }).is_pending());
+    })
+    .is_pending());
     assert!(matches!(with_tick(&snapshot, &mut ledger, 110, |tick| {
         with_step(tick, |cx| run.poll(cx))
     }), Poll::Ready(Err(ActionError::Blocked(reason)))
@@ -51,15 +57,18 @@ fn timed_ground_budget_uses_observed_ticks_not_host_time_or_poll_count() {
 }
 
 fn hold_egg(snapshot: &mut GameSnapshot) {
-    snapshot.seed_inventory(vec![ItemView {
-        def: def(1944, "Egg"),
-        count: 1,
-        slot: 0,
-        container: ItemContainer::Inventory,
-        action_family: ItemActionFamily::Held,
-        actions: vec![],
-        component_id: 3214,
-    }], 28);
+    snapshot.seed_inventory(
+        vec![ItemView {
+            def: def(1944, "Egg"),
+            count: 1,
+            slot: 0,
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            actions: vec![],
+            component_id: 3214,
+        }],
+        28,
+    );
 }
 
 #[test]
@@ -74,21 +83,30 @@ fn timed_ground_takes_late_spawn_and_receipts_inventory_gain() {
     });
     assert!(with_tick(&snapshot, &mut ledger, 11, |tick| {
         with_step(tick, |cx| run.poll(cx))
-    }).is_pending());
+    })
+    .is_pending());
     assert!(ledger.as_ref().unwrap().outbox.is_empty());
     snapshot.seed_ground_items(vec![ground()]);
     assert!(with_tick(&snapshot, &mut ledger, 109, |tick| {
         with_step(tick, |cx| run.poll(cx))
-    }).is_pending());
-    assert!(matches!(emitted(&ledger), InteractReq::Obj { id: Some(1944), action, .. } if action == "Take"));
+    })
+    .is_pending());
+    assert!(
+        matches!(emitted(&ledger), InteractReq::Obj { id: Some(1944), action, .. } if action == "Take")
+    );
     accept_last(&mut ledger, 109, true);
     hold_egg(&mut snapshot);
     let outcome = with_tick(&snapshot, &mut ledger, 110, |tick| {
         with_step(tick, |cx| run.poll(cx))
     });
-    let Poll::Ready(Ok(outcome)) = outcome else { panic!("inventory at budget boundary must settle") };
+    let Poll::Ready(Ok(outcome)) = outcome else {
+        panic!("inventory at budget boundary must settle")
+    };
     let receipt = outcome.receipt.unwrap();
-    let receipt = receipt.as_any().downcast_ref::<super::super::timed_ground::TimedGroundReceipt>().unwrap();
+    let receipt = receipt
+        .as_any()
+        .downcast_ref::<super::super::timed_ground::TimedGroundReceipt>()
+        .unwrap();
     assert_eq!((receipt.waited_ticks, receipt.held), (100, 1));
 }
 
@@ -101,7 +119,10 @@ fn timed_ground_refuses_inventory_first_seen_after_deadline() {
         with_step(tick, |cx| plan.begin(cx).unwrap())
     });
     hold_egg(&mut snapshot);
-    assert!(matches!(with_tick(&snapshot, &mut ledger, 111, |tick| {
-        with_step(tick, |cx| run.poll(cx))
-    }), Poll::Ready(Err(ActionError::Blocked(_)))));
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 111, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        }),
+        Poll::Ready(Err(ActionError::Blocked(_)))
+    ));
 }
