@@ -2487,10 +2487,20 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
             budget_ticks: 900,
         },
     });
+    // The close step sends nothing to the game. It is a `Repeat` so that the
+    // solver's pack and bank are still observed once per game tick until the
+    // bank closes; the arm and the 120-tick budget are the oracle's own.
+    let close_witness = Arc::clone(&witness);
     steps.push(Step {
         name: "watch ClueSolver close the reward bank",
-        kind: StepKind::Perform {
-            send: Box::new(|_, _| true),
+        kind: StepKind::Repeat {
+            send: Box::new(move |_, snap| {
+                close_witness
+                    .lock()
+                    .expect("clue witness mutex")
+                    .observe(0, snap);
+                true
+            }),
         },
         wait: Wait {
             arm: Proof::BankClosed,

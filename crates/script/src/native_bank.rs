@@ -2883,17 +2883,14 @@ mod tests {
         );
     }
 
-    /// The derived bounds: the select fallback is the host job's window in
-    /// whole production ticks, and no smaller (the kernel never gives up
-    /// before the host job's own window has closed); the side-view wait is
-    /// the one observed tick after the flush that carries the table.
+    /// The select fallback is the host job's window in whole production
+    /// ticks and no smaller: the kernel never gives up before the host job's
+    /// own window has closed, and never waits a whole tick longer than it.
     #[test]
-    fn derived_bounds_match_their_authorities() {
+    fn the_select_fallback_never_gives_up_before_the_host_window_closes() {
         let window = BANK_PICK_HOST_WINDOW_MS;
         assert!(SELECT_FALLBACK_TICKS * ops::SERVER_TICK_MS >= window);
         assert!((SELECT_FALLBACK_TICKS - 1) * ops::SERVER_TICK_MS < window);
-        assert_eq!(SELECT_FALLBACK_TICKS, 9);
-        assert_eq!(SIDE_VIEW_TICKS, 1);
     }
 
     /// Size tripwire: a wait deadline is one observed tick (no clock), so a
@@ -5250,10 +5247,10 @@ mod tests {
             poll.is_pending(),
             "a posted empty side cannot hide a held candidate"
         );
-        with_tick(&snapshot, &mut ledger, 1 + SIDE_VIEW_TICKS - 1, |tick| {
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         });
-        let poll = with_tick(&snapshot, &mut ledger, 1 + SIDE_VIEW_TICKS, |tick| {
+        let poll = with_tick(&snapshot, &mut ledger, 2, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(matches!(
@@ -5267,10 +5264,10 @@ mod tests {
         let mut ledger = None;
         let (handle, poll) = begin_bank(&snapshot, &mut ledger, all());
         assert!(poll.is_pending(), "a side root still down is not posted");
-        with_tick(&snapshot, &mut ledger, 1 + SIDE_VIEW_TICKS - 1, |tick| {
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         });
-        let poll = with_tick(&snapshot, &mut ledger, 1 + SIDE_VIEW_TICKS, |tick| {
+        let poll = with_tick(&snapshot, &mut ledger, 2, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(matches!(
@@ -5294,10 +5291,10 @@ mod tests {
             ),
         );
         assert!(poll.is_pending());
-        with_tick(&snapshot, &mut ledger, 1 + SIDE_VIEW_TICKS - 1, |tick| {
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         });
-        let poll = with_tick(&snapshot, &mut ledger, 1 + SIDE_VIEW_TICKS, |tick| {
+        let poll = with_tick(&snapshot, &mut ledger, 2, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(matches!(
@@ -5338,7 +5335,7 @@ mod tests {
                 0,
             )],
         );
-        let poll = with_tick(&snapshot, &mut ledger, 1 + SIDE_VIEW_TICKS, |tick| {
+        let poll = with_tick(&snapshot, &mut ledger, 2, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(
@@ -5346,7 +5343,7 @@ mod tests {
             "the click went out instead of the wait failing: {poll:?}"
         );
         assert!(matches!(
-            acknowledge(&mut ledger, 1 + SIDE_VIEW_TICKS),
+            acknowledge(&mut ledger, 2),
             HostEffect::Interaction(InteractReq::InvButton { id: 526, .. })
         ));
     }
