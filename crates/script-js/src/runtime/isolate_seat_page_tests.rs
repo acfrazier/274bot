@@ -951,7 +951,11 @@ fn an_embedded_hunt_child_steps_only_its_owner_and_continues_into_the_family() {
     );
     dispatch(&iso, 1, 0);
     assert_eq!(called(&iso).len(), startup, "a live child runs no hook");
-    assert_eq!(steps_of_probe(&iso), probe_steps, "the unrelated row is inactive");
+    assert_eq!(
+        steps_of_probe(&iso),
+        probe_steps,
+        "the unrelated row is inactive"
+    );
     assert_eq!(
         iso.probe("typeof globalThis.__done").unwrap(),
         serde_json::json!("undefined"),
@@ -971,7 +975,10 @@ fn an_embedded_hunt_child_steps_only_its_owner_and_continues_into_the_family() {
     let delta = &called(&iso)[after_live..];
     assert_eq!(
         delta,
-        [serde_json::json!(["log", "could not open the bank. Will retry."])],
+        [serde_json::json!([
+            "log",
+            "could not open the bank. Will retry."
+        ])],
         "exactly the family's own continuation ran"
     );
     let ended = settled(&iso)

@@ -2985,19 +2985,21 @@ mod clue_witness_tests {
         const RUNE_DAGGER: i32 = 1213;
         let initial = [(COINS, 1_000), (DAGGER, 1)];
         let rewards = [SHORTBOW, RUNE_DAGGER];
-        let all = [
-            (COINS, 1_000),
-            (DAGGER, 1),
-            (SHORTBOW, 1),
-            (RUNE_DAGGER, 1),
-        ];
+        let all = [(COINS, 1_000), (DAGGER, 1), (SHORTBOW, 1), (RUNE_DAGGER, 1)];
         let mut bank = ClueBankRecord::default();
         // No loaded bank: nothing is recorded.
         record(&mut bank, 30, &all, None, &rewards, &initial);
         assert!(bank.summary(&rewards).contains("bank_opened=none"));
         // Older stock of a watched id is the baseline of the first loaded
         // observation, never a deposit.
-        record(&mut bank, 40, &all, Some(&[(DAGGER, 3)]), &rewards, &initial);
+        record(
+            &mut bank,
+            40,
+            &all,
+            Some(&[(DAGGER, 3)]),
+            &rewards,
+            &initial,
+        );
         record(
             &mut bank,
             41,

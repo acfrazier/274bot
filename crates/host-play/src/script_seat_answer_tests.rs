@@ -684,10 +684,7 @@ fn seat_answer_wake_survives_a_slow_tick_skip() {
     );
     let logs = frames.slot.lock().unwrap().take_pending_logs();
     let skipped = format!("skipped stale ticks -> {}", tick + 2);
-    assert!(
-        logs.iter().any(|line| *line == skipped),
-        "the skip ran: {logs:?}"
-    );
+    assert!(logs.contains(&skipped), "the skip ran: {logs:?}");
     assert_eq!(
         frames.probe("__rs2b0t_host.tick"),
         serde_json::json!(tick + 1),

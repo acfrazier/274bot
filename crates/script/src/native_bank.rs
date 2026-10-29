@@ -2736,7 +2736,7 @@ mod tests {
         let mut ledger = None;
         let handle = with_tick(&snapshot, &mut ledger, 1, |frame| {
             frame.cx.active_now = Duration::ZERO;
-            let handle = frame
+            frame
                 .actions
                 .begin::<Select>(
                     SelectArgs {
@@ -2756,8 +2756,7 @@ mod tests {
                     },
                     &mut frame.cx,
                 )
-                .unwrap();
-            handle
+                .unwrap()
         });
         // The first poll, at its own observed tick, dispatches the request.
         with_tick(&snapshot, &mut ledger, dispatch_tick, |frame| {
