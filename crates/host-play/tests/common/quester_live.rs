@@ -930,6 +930,7 @@ fn capture_receipt(
     mut extra: Value,
 ) -> Value {
     extra["label"] = json!(label);
+    extra["tick"] = json!(actor.snapshot.tick());
     extra["role"] = json!(actor.role);
     extra["account"] = json!(actor.account);
     extra["status"] = status.map(status_json).unwrap_or(Value::Null);
@@ -943,10 +944,10 @@ fn capture_receipt(
     extra
 }
 
-fn append_status(path: &Path, status: &ScriptStatus) -> Result<Value, String> {
+fn append_status(path: &Path, status: &ScriptStatus, tick: u32) -> Result<Value, String> {
     use std::io::Write;
     let logged = status_json(status);
-    let line = json!({"t_ms": epoch_nanos()? / 1_000_000, "status": logged});
+    let line = json!({"t_ms": epoch_nanos()? / 1_000_000, "tick": tick, "status": logged});
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -1119,6 +1120,15 @@ fn run_cells(
         isolated.set_rs2b0t(&catalog_root);
     }
     api::hostlog::set_debug(true);
+    let campaign_tick_limit = std::env::var("QUEST_CAMPAIGN_TICKS")
+        .ok()
+        .map(|raw| {
+            raw.parse::<u32>()
+                .ok()
+                .filter(|ticks| *ticks > 0)
+                .ok_or_else(|| "QUEST_CAMPAIGN_TICKS must be a positive observed-tick count".to_owned())
+        })
+        .transpose()?;
 
     for cell in &mut cells {
         cell.scenario.settings.nav.engine_speed_ms = None;
@@ -1186,7 +1196,9 @@ fn run_cells(
         directories.push(directory);
     }
 
-    let track_steps = mode.death_target().is_some() || mode.restart_step_target().is_some();
+    let track_steps = campaign_tick_limit.is_some()
+        || mode.death_target().is_some()
+        || mode.restart_step_target().is_some();
     let evidence = Arc::new(EvidenceWriter::new(
         host_play::evidence_writer::DEFAULT_QUEUE_BOUND,
     ));
@@ -1672,6 +1684,7 @@ fn run_cells(
                             actor.last_step_observation = Some(step_key);
                             actor.step_observations.push(json!({
                                 "run": format!("{:?}", status.run),
+                                "tick": actor.snapshot.tick(),
                                 "stage": stage,
                                 "step_id": text(status, "step_id"),
                                 "child_step_id": text(status, "child_step_id"),
@@ -1711,7 +1724,9 @@ fn run_cells(
             };
             let logged = status_json(status);
             if last_logged[index].as_ref() != Some(&logged) {
-                match append_status(&status_logs[index], status) {
+                let tick = shared.lock().map_err(|_| "live state poisoned")?
+                    .actors[index].snapshot.tick();
+                match append_status(&status_logs[index], status, tick) {
                     Ok(logged) => last_logged[index] = Some(logged),
                     Err(error) => break 'run Err(format!("status log {}: {error}", names[index])),
                 }
@@ -1782,6 +1797,11 @@ fn run_cells(
                     if let Some(stage) = status_stage(status, actor.quest) {
                         if actor.stages_seen.last() != Some(&stage) {
                             actor.stages_seen.push(stage.clone());
+                            actor.transitions.push(json!({
+                                "event": "stage",
+                                "stage": stage,
+                                "tick": actor.snapshot.tick(),
+                            }));
                             let label = format!("stage-{}", stage.replace(':', "-"));
                             let receipt = capture_receipt(actor, &label, Some(status), json!({}));
                             actor.pending_captures.push((label, receipt));
@@ -2557,6 +2577,16 @@ fn run_cells(
             _ => {}
         }
 
+        if let Some(limit) = campaign_tick_limit {
+            let state = shared.lock().map_err(|_| "live state poisoned")?;
+            if let Some(actor) = state.actors.iter().find(|actor| actor.snapshot.tick() >= limit) {
+                break Err(format!(
+                    "observed-tick deadline: {} reached {} ticks (limit {limit})",
+                    actor.account, actor.snapshot.tick()
+                ));
+            }
+        }
+
         if Instant::now() >= deadline {
             let statuses = observations
                 .iter()
@@ -2672,6 +2702,10 @@ fn run_cells(
                     "cell": actor.label,
                     "quest": actor.quest,
                     "display": actor.display,
+                    "observed_ticks": actor.snapshot.tick(),
+                    "quest_complete": quest_done(&actor.snapshot, actor.display)
+                        || actor.owned_card_complete,
+                    "last_tile": actor.last_tile.map(|tile| [tile.x, tile.z, tile.level]),
                     "settings": actor.start_settings,
                     "status_log": status_logs[index],
                     "fixture_receipt": actor.start_receipt,
@@ -2740,6 +2774,9 @@ fn run_cells(
             "mode": mode.name(),
             "result": format!("{result:?}"),
             "account": actor["account"],
+            "observed_ticks": actor["observed_ticks"],
+            "quest_complete": actor["quest_complete"],
+            "step_observations": actor["step_observations"],
             "game_port": profile.client().game_port(),
             "nav_pack": profile.nav_pack(),
             "settings": actor["settings"],

@@ -176,6 +176,138 @@ fn live_quester_path_smoke() {
     result.unwrap();
 }
 
+/// Campaign plans use the quest-watch translator, not qualification profiles.
+#[derive(serde::Deserialize)]
+struct CampaignManifest {
+    accounts: Vec<CampaignAccount>,
+}
+
+#[derive(serde::Deserialize)]
+struct CampaignAccount {
+    quest: String,
+    plan: PathBuf,
+    gang: Option<String>,
+}
+
+static CAMPAIGN_LOGS: std::sync::Mutex<Vec<serde_json::Value>> =
+    std::sync::Mutex::new(Vec::new());
+struct CampaignLogSink;
+static CAMPAIGN_LOG_SINK: CampaignLogSink = CampaignLogSink;
+
+impl api::hostlog::Sink for CampaignLogSink {
+    fn record(&self, record: &api::hostlog::Record<'_>) {
+        CAMPAIGN_LOGS.lock().unwrap().push(serde_json::json!({
+            "account": record.slot,
+            "tick": record.tick,
+            "source": record.source.label(),
+            "level": record.level.label(),
+            "message": record.message,
+        }));
+    }
+}
+
+fn campaign_cells(manifest_path: &std::path::Path) -> Result<Vec<Cell>, String> {
+    let manifest: CampaignManifest = serde_json::from_slice(
+        &std::fs::read(manifest_path).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    if !(1..=2).contains(&manifest.accounts.len()) {
+        return Err("campaign requires one account, or two reciprocal partner roles".into());
+    }
+    let quest = &manifest.accounts[0].quest;
+    if manifest.accounts.iter().any(|account| &account.quest != quest) {
+        return Err("campaign runs exactly one guide per command".into());
+    }
+    let folder = std::env::var_os("QUESTER_PATH_DIR")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .ok_or("campaign requires absolute QUESTER_PATH_DIR (folder mode)")?;
+    if scenario::quester::reload_quester_path_source(quest, Some(&folder))? != "folder" {
+        return Err("campaign must load its guide from the staging folder".into());
+    }
+    let row = scenario::quester::fixture_row(quest)?;
+    let (path, _) = scenario::quester::load_quester_path_document(quest)?;
+    if path.partner.is_some() != (manifest.accounts.len() == 2) {
+        return Err("campaign account count does not match the guide's partner declaration".into());
+    }
+    if manifest.accounts.len() == 2
+        && (manifest.accounts[0].gang.as_deref() != Some("phoenix")
+            || manifest.accounts[1].gang.as_deref() != Some("blackarm"))
+    {
+        return Err("campaign partner roles must be ordered phoenix then blackarm".into());
+    }
+    manifest.accounts.iter().map(|account| {
+        let plan_path = manifest_path.parent().ok_or("manifest has no parent")?.join(&account.plan);
+        let text = std::fs::read_to_string(&plan_path).map_err(|error| error.to_string())?;
+        let plan: serde_json::Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+        if plan["quest"].as_str() != Some(quest) {
+            return Err("campaign seed plan quest does not match its guide".into());
+        }
+        let mut scenario = scenario::quest_watch::quest_campaign_scenario(&text)?;
+        scenario.settings.deadline = DEADLINE;
+        let mut settings = serde_json::Map::from_iter([
+            ("quests".into(), serde_json::json!([quest])),
+            ("allow_teleports".into(), true.into()),
+            ("allow_wilderness".into(), true.into()),
+            ("allow_danger_zones".into(), true.into()),
+        ]);
+        if let Some(gang) = &account.gang {
+            settings.insert("gang".into(), gang.clone().into());
+        }
+        Ok(Cell {
+            quest: row.quest,
+            display: row.display,
+            label: "campaign".into(),
+            scenario,
+            start_settings: settings,
+            mode: Mode::Clean,
+            observe_start: Some(Box::new(move |snapshot| Ok(serde_json::json!({
+                "seed_plan": plan,
+                "tick": snapshot.tick(),
+                "tile": snapshot.tile(),
+                "inventory": snapshot.inventory().iter().filter(|item| item.count > 0)
+                    .map(|item| [item.def.id, item.count]).collect::<Vec<_>>(),
+                "stats": snapshot.stats().iter().map(|stat|
+                    serde_json::json!({"index": stat.index, "base": stat.base, "effective": stat.effective})
+                ).collect::<Vec<_>>(),
+            })))),
+        })
+    }).collect()
+}
+
+#[test]
+#[ignore = "QUEST-CAMPAIGN: exact authored seeds, Engine Q, staging folder and observed-tick deadline"]
+fn live_quester_campaign() {
+    assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
+    assert_eq!(std::env::var("WORLD_GAME_PORT").as_deref(), Ok("44694"));
+    assert!(std::env::var_os("QUESTER_TICK_MS").is_none(),
+        "campaign must not change or restore the shared Engine Q tick speed");
+    assert!(std::env::var_os("QUEST_CAMPAIGN_TICKS").is_some());
+    assert!(api::hostlog::install_sink(&CAMPAIGN_LOG_SINK),
+        "campaign needs its own session log sink");
+    let manifest = PathBuf::from(std::env::var_os("QUEST_CAMPAIGN_MANIFEST")
+        .expect("QUEST_CAMPAIGN_MANIFEST"));
+    let cells = campaign_cells(&manifest).unwrap_or_else(|error| panic!("{error}"));
+    let result = if cells.len() == 2 {
+        let roles: [Cell; 2] = cells.try_into().unwrap_or_else(|_| unreachable!());
+        quester_live::run_pair(quester_live::PairCell {
+            roles,
+            mode: quester_live::PairMode::Clean,
+        })
+    } else {
+        quester_live::run(cells.into_iter().next().unwrap())
+    };
+    let root = PathBuf::from(std::env::var_os("LIVE_EVIDENCE_DIR").expect("LIVE_EVIDENCE_DIR"));
+    let logs = CAMPAIGN_LOGS.lock().unwrap();
+    let mut file = std::fs::File::create(root.join("session.jsonl")).unwrap();
+    use std::io::Write;
+    for line in logs.iter() {
+        writeln!(file, "{line}").unwrap();
+    }
+    println!("QUEST-CAMPAIGN result={:?}", result.is_ok());
+    result.unwrap();
+}
+
 #[cfg(test)]
 mod smoke_tests {
     use super::*;

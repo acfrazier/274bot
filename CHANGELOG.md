@@ -63,6 +63,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Quester
 
+- The quest campaign harness can now seed an exact authored account, run a
+  staged folder guide headlessly, and record game-tick stage changes,
+  completion, debug logs and CPU screenshots. It reuses the quest-watch
+  seed checks and the existing single-account and partner live drivers.
+
 - Quest guides can now opt in to answering a repeated menu question once and
   then moving on. `answer_once: true` skips a `prefer` entry that already
   answered an accepted page in the same conversation and falls through to the

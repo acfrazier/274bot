@@ -1,7 +1,7 @@
-//! QUEST-WATCH seed-only scenarios: log one fixed account in, apply one
-//! authored seed plan with per-account cheats, prove the exact account
-//! state from the snapshot, then log out. No script ever Starts here;
-//! the panel run that later logs the account in owns the quest.
+//! QUEST-WATCH seed-only scenarios and the QUEST-CAMPAIGN seed-to-Start
+//! builder. Both apply an authored plan and prove the exact account state;
+//! the watch scenario logs out, while the campaign scenario starts Quester
+//! after the seed proof so the quest run inherits the saved start tile.
 //!
 //! The plan is a JSON file named by `QUEST_WATCH_SEED`, translated from
 //! a QUEST-TERRA `seed.json` by the evidence-tree harness
@@ -125,7 +125,28 @@ pub fn quest_watch_seed_scenario_from_env() -> Result<Scenario, String> {
     build_seed_scenario(plan)
 }
 
+/// Build the reusable QUEST-CAMPAIGN seed-to-Start scenario from a translated
+/// quest-watch plan JSON document.
+pub fn quest_campaign_scenario(seed_json: &str) -> Result<Scenario, String> {
+    let plan: SeedPlan = serde_json::from_str(seed_json)
+        .map_err(|error| format!("parse quest campaign seed JSON: {error}"))?;
+    build_seed_scenario_with_mode(plan, SeedScenarioMode::Campaign)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SeedScenarioMode {
+    Watch,
+    Campaign,
+}
+
 fn build_seed_scenario(plan: SeedPlan) -> Result<Scenario, String> {
+    build_seed_scenario_with_mode(plan, SeedScenarioMode::Watch)
+}
+
+fn build_seed_scenario_with_mode(
+    plan: SeedPlan,
+    mode: SeedScenarioMode,
+) -> Result<Scenario, String> {
     let selected = api::game_data::for_revision(ClientRevision::R289)?;
     let stand = WorldTile {
         x: plan.start_tile[0],
@@ -572,38 +593,59 @@ fn build_seed_scenario(plan: SeedPlan) -> Result<Scenario, String> {
             budget_ticks: 200,
         },
     });
-    // Repeat the logout press once per game tick: combat at the start
-    // tile refuses single presses until 10 seconds after combat ends,
-    // and the first press that lands in a quiet gap logs out cleanly.
-    steps.push(Step {
-        name: "log out with the seed saved",
-        kind: StepKind::Repeat {
-            send: Box::new(|client, _| {
-                let ifaces = std::sync::Arc::clone(&client.ifaces);
-                api::interact::logout(client, ifaces.as_slice())
-            }),
-        },
-        wait: Wait {
-            arm: Proof::LoggedOut,
-            budget_ticks: 600,
-        },
-    });
+    match mode {
+        SeedScenarioMode::Watch => steps.push(Step {
+            name: "log out with the seed saved",
+            kind: StepKind::Repeat {
+                send: Box::new(|client, _| {
+                    let ifaces = std::sync::Arc::clone(&client.ifaces);
+                    api::interact::logout(client, ifaces.as_slice())
+                }),
+            },
+            wait: Wait {
+                arm: Proof::LoggedOut,
+                budget_ticks: 600,
+            },
+        }),
+        SeedScenarioMode::Campaign => steps.push(Step {
+            name: "start Quester",
+            kind: StepKind::StartScript,
+            wait: Wait {
+                arm: Proof::SideTabAvailable { index: 3 },
+                budget_ticks: 100,
+            },
+        }),
+    }
 
+    let (name, proof, start_script, terminal_shot) = match mode {
+        SeedScenarioMode::Watch => (
+            "quest_watch_seed",
+            Proof::LoggedOut,
+            None,
+            Some("quest_watch_seed"),
+        ),
+        SeedScenarioMode::Campaign => (
+            "quest_campaign",
+            Proof::SideTabAvailable { index: 3 },
+            Some("Quester"),
+            Some("quest_campaign"),
+        ),
+    };
     Ok(Scenario {
-        name: "quest_watch_seed",
+        name,
         seed: Seed {
             profiles: vec![("test", "test")],
             mainland: true,
         },
         steps,
-        proof: Proof::LoggedOut,
+        proof,
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
             deadline: Duration::from_secs(900),
-            start_script: None,
-            terminal_shot: Some("quest_watch_seed"),
+            start_script,
+            terminal_shot,
             nav: crate::gold_script_nav(),
             ..Default::default()
         },
@@ -713,6 +755,82 @@ pub(crate) fn seed_scenario_for_test() -> Scenario {
 mod tests {
     use super::*;
 
+    const CAMPAIGN_TEST_SEED_JSON: &str = r#"{
+        "quest": "mortton",
+        "quest_varp": "morttonquest",
+        "quest_display": "Shades of Mortton",
+        "stats": {
+            "herblore": 15,
+            "crafting": 20,
+            "firemaking": 5,
+            "attack": 50,
+            "strength": 50,
+            "defence": 50,
+            "hitpoints": 50
+        },
+        "items": [
+            {"alias": "tarrominvial", "count": 2, "where": "inventory"},
+            {"alias": "ashes", "count": 2, "where": "inventory"},
+            {"alias": "rune_scimitar", "count": 1, "where": "worn"},
+            {"alias": "lobster", "count": 16, "where": "inventory"},
+            {"alias": "hammer", "count": 1, "where": "bank"},
+            {"alias": "woodplank", "count": 50, "where": "bank"}
+        ],
+        "completed": [
+            {"varp": "priestperil", "value": 60, "display": "Priest in Peril"}
+        ],
+        "quest_points": 1,
+        "qp_varp_id": 101,
+        "start_tile": [3481, 3279, 0]
+    }"#;
+
+    fn item_id_counts(items: &[(&str, i32)]) -> BTreeMap<i32, i32> {
+        let selected = api::game_data::for_revision(ClientRevision::R289)
+            .expect("R289 content loads");
+        items
+            .iter()
+            .map(|(alias, count)| {
+                let item = selected
+                    .item_by_alias(alias)
+                    .unwrap_or_else(|| panic!("test item alias {alias:?} exists"));
+                (item.id, *count)
+            })
+            .collect()
+    }
+
+    fn seeded_item_id_counts(scenario: &Scenario, step_name: &str) -> BTreeMap<i32, i32> {
+        scenario
+            .steps
+            .iter()
+            .filter(|step| step.name == step_name)
+            .map(|step| match step.wait.arm {
+                Proof::ItemId { id, count } => (id, count),
+                proof => panic!("{step_name} has unexpected proof {proof:?}"),
+            })
+            .collect()
+    }
+
+    fn assert_same_seed_step(left: &Step, right: &Step) {
+        assert_eq!(left.name, right.name);
+        assert_eq!(left.wait.arm, right.wait.arm);
+        assert_eq!(left.wait.budget_ticks, right.wait.budget_ticks);
+        match (&left.kind, &right.kind) {
+            (StepKind::Perform { .. }, StepKind::Perform { .. }) => {}
+            (
+                StepKind::Await {
+                    evidence: left_evidence,
+                    ..
+                },
+                StepKind::Await {
+                    evidence: right_evidence,
+                    ..
+                },
+            ) => assert_eq!(left_evidence, right_evidence),
+            (StepKind::Relog, StepKind::Relog) => {}
+            _ => panic!("seed step kinds differ between campaign and watch"),
+        }
+    }
+
     fn plan(text: &str) -> SeedPlan {
         serde_json::from_str(text).expect("plan parses")
     }
@@ -759,5 +877,102 @@ mod tests {
         assert!(matches!(scenario.proof, Proof::LoggedOut));
         assert_eq!(scenario.settings.start_script, None);
         assert!(scenario.seed.mainland);
+        assert!(!scenario
+            .steps
+            .iter()
+            .any(|step| matches!(step.kind, StepKind::StartScript)));
+        let logout = scenario.steps.last().expect("watch ends with logout");
+        assert_eq!(logout.name, "log out with the seed saved");
+        assert!(matches!(logout.kind, StepKind::Repeat { .. }));
+        assert_eq!(logout.wait.arm, Proof::LoggedOut);
+    }
+
+    #[test]
+    fn campaign_seed_starts_quester_after_the_exact_watch_seed() {
+        let campaign = quest_campaign_scenario(CAMPAIGN_TEST_SEED_JSON)
+            .expect("campaign seed plan builds");
+        let watch = build_seed_scenario(plan(CAMPAIGN_TEST_SEED_JSON))
+            .expect("watch seed plan builds");
+        let start = campaign
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .expect("campaign has its Quester Start");
+
+        assert_eq!(campaign.name, "quest_campaign");
+        assert_eq!(
+            campaign
+                .steps
+                .iter()
+                .filter(|step| matches!(step.kind, StepKind::StartScript))
+                .count(),
+            1
+        );
+        assert_eq!(start, campaign.steps.len() - 1, "Start is the terminal step");
+        assert_eq!(start, watch.steps.len() - 1, "campaign omits only logout");
+        assert_eq!(campaign.steps[start].wait.arm, Proof::SideTabAvailable { index: 3 });
+        assert_eq!(campaign.steps[start].wait.budget_ticks, 100);
+        assert_eq!(campaign.settings.start_script, Some("Quester"));
+        assert_eq!(campaign.settings.terminal_shot, Some("quest_campaign"));
+        assert_eq!(campaign.proof, Proof::SideTabAvailable { index: 3 });
+
+        for (campaign_step, watch_step) in
+            campaign.steps[..start].iter().zip(&watch.steps[..start])
+        {
+            assert_same_seed_step(campaign_step, watch_step);
+        }
+
+        let stat_steps: Vec<_> = campaign.steps[..start]
+            .iter()
+            .filter(|step| step.name == "seed exact skill level")
+            .collect();
+        assert_eq!(stat_steps.len(), 7);
+        assert!(stat_steps.iter().all(|step| {
+            matches!(step.kind, StepKind::Perform { .. })
+                && step.wait.arm == Proof::SideTabAvailable { index: 3 }
+                && step.wait.budget_ticks == 100
+        }));
+
+        assert_eq!(
+            seeded_item_id_counts(&campaign, "seed one inventory item"),
+            item_id_counts(&[("tarrominvial", 2), ("ashes", 2), ("lobster", 16)])
+        );
+        assert_eq!(
+            seeded_item_id_counts(&campaign, "seed one worn item"),
+            item_id_counts(&[("rune_scimitar", 1)])
+        );
+        let worn_id = *item_id_counts(&[("rune_scimitar", 1)])
+            .keys()
+            .next()
+            .expect("worn item has an id");
+        let wear_step = campaign.steps[..start]
+            .iter()
+            .find(|step| step.name == "wear one seeded item")
+            .expect("campaign wears the seeded equipment");
+        assert_eq!(wear_step.wait.arm, Proof::EquipmentId { id: worn_id });
+
+        let bank_seed_steps: Vec<_> = campaign.steps[..start]
+            .iter()
+            .filter(|step| step.name == "seed one bank item")
+            .collect();
+        assert_eq!(bank_seed_steps.len(), 2);
+        assert!(bank_seed_steps.iter().all(|step| {
+            step.wait.arm == Proof::SideTabAvailable { index: 3 }
+                && step.wait.budget_ticks == 100
+        }));
+        assert!(campaign.steps[..start].iter().any(|step| {
+            step.name == "prove the exact seeded stats, kit, tile and quest state"
+                && matches!(step.kind, StepKind::Await { .. })
+        }));
+        assert!(campaign.steps[..start].iter().any(|step| {
+            step.name == "prove the exact seeded bank"
+                && matches!(step.kind, StepKind::Await { .. })
+                && step.wait.arm == Proof::BankOpen
+        }));
+    }
+
+    #[test]
+    fn campaign_seed_rejects_malformed_json() {
+        assert!(quest_campaign_scenario("{").is_err());
     }
 }
