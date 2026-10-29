@@ -1959,7 +1959,7 @@ fn teller_frame(client: &mut Client, shared: &Mutex<TellerLive>, account: &str) 
     if let Some(outcome) = completed {
         let mut live = shared.lock();
         live.capture_written = true;
-        live.capture_error = outcome.error;
+        live.capture_error = outcome.into_error();
     }
 }
 

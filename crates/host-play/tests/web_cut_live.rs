@@ -716,11 +716,11 @@ fn save_capture(
         }),
     });
     match writer.wait(&job, DEFAULT_FLUSH_WAIT) {
-        Some(outcome) if outcome.error.is_none() => {}
+        Some(outcome) if outcome.error().is_none() => {}
         Some(outcome) => panic!(
             "write web-cut evidence {}: {}",
             run_dir.display(),
-            outcome.error.unwrap_or_else(|| "unknown".into()),
+            outcome.into_error().unwrap_or_else(|| "unknown".into()),
         ),
         None => panic!(
             "web-cut evidence writer did not finish before its deadline: {}",

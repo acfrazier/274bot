@@ -380,7 +380,7 @@ impl BankChoiceState {
                     completed.push((
                         pending.label.clone(),
                         pending.png_path.display().to_string(),
-                        outcome.error,
+                        outcome.into_error(),
                     ));
                     false
                 }
@@ -1478,7 +1478,7 @@ fn run_quester_recovery_live() -> Result<(), String> {
                 .pending_jobs
                 .retain(|pending| match frame_evidence.poll(&pending.job) {
                     Some(outcome) => {
-                        completed.push((pending.png_path.clone(), outcome.error));
+                        completed.push((pending.png_path.clone(), outcome.into_error()));
                         false
                     }
                     None => true,

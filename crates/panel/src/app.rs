@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::chrome::{
     button_cells, button_cells_min, button_row_layout, equal_button_width, move_heading,
@@ -1800,7 +1800,7 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         // ImGui window over the chatbox rect — never on the game texture.
         let paint = focused_paint(&state.session);
         if let Some(fault) = buf.as_ref().and_then(|pixels| pixels.render_fault()) {
-            ui.text_disabled(format!("render fault: {fault:?}"));
+            ui.text_disabled(format!("render fault: {fault}"));
         }
         pointer_in_paint = overlay_script_paint(ui, gpu, state, paint, min, size);
     } else {
@@ -6637,7 +6637,7 @@ fn cell_body(
         .slot_io(name)
         .and_then(|slot| slot.pixels.render_fault());
     if let Some(fault) = render_fault {
-        ui.text_disabled(format!("render fault: {fault:?}"));
+        ui.text_disabled(format!("render fault: {fault}"));
     }
     clicked
 }
@@ -8226,11 +8226,9 @@ fn shot_evidence_writer() -> &'static frontend_core::live::EvidenceWriter {
     // UI thread. The readback permit admits only one raw image to this path.
     static WRITER: std::sync::LazyLock<frontend_core::live::EvidenceWriter> =
         std::sync::LazyLock::new(|| {
-            frontend_core::live::EvidenceWriter::with_config(frontend_core::live::WriterConfig {
-                bound: 1,
-                submit_wait: Duration::ZERO,
-                ..Default::default()
-            })
+            frontend_core::live::EvidenceWriter::with_config(
+                frontend_core::live::WriterConfig::new(1, Duration::ZERO),
+            )
         });
     &WRITER
 }
@@ -8262,7 +8260,7 @@ fn pump_async_shot_output(state: &mut PanelState) -> usize {
             return 0;
         };
         let pending = state.shot_write.take().expect("polled shot output");
-        if let Some(error) = outcome.error {
+        if let Some(error) = outcome.into_error() {
             api::host_log!(
                 api::hostlog::Category::Lifecycle,
                 api::hostlog::Level::Error,
@@ -8343,19 +8341,17 @@ fn pump_async_shot_output(state: &mut PanelState) -> usize {
         fail_shot_output(state, &capture.label, crate::window::CaptureError::Device);
         return written;
     };
-    let request = frontend_core::live::RgbaEvidenceRequest {
+    let request = frontend_core::live::RgbaEvidenceRequest::new(
         png_path,
         sidecar_path,
-        width: capture.width,
-        height: capture.height,
-        rgba: capture.rgba,
-        snapshot_json: capture.snapshot_json,
+        capture.width,
+        capture.height,
+        capture.rgba,
+        capture.snapshot_json,
         readback_permit,
-        #[cfg(feature = "render-diagnostics")]
-        diagnostic_label,
-        #[cfg(feature = "render-diagnostics")]
-        pixel_roi: capture.pixel_roi,
-    };
+    );
+    #[cfg(feature = "render-diagnostics")]
+    let request = request.with_diagnostics(diagnostic_label, capture.pixel_roi);
     let job = shot_evidence_writer().submit_rgba(request);
     state.shot_write = Some(PendingShotWrite {
         label: capture.label,

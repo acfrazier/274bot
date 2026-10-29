@@ -2800,6 +2800,46 @@
       "classification": "borrowed",
       "owner": "T3",
       "reason": "T5.3-S3 saved, pending or failed state of one setting, borrowing the core's retained failure text; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/host-play/src/evidence_writer.rs|EvidenceJob",
+      "path": "crates/host-play/src/evidence_writer.rs",
+      "symbol": "EvidenceJob",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3-C5 live evidence seam: cloneable handle to one writer-owned capture outcome; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/host-play/src/evidence_writer.rs|EvidenceOutcome",
+      "path": "crates/host-play/src/evidence_writer.rs",
+      "symbol": "EvidenceOutcome",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3-C5 live evidence seam: durable capture dimensions, byte counts, timings and error; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/host-play/src/evidence_writer.rs|EvidenceWriter",
+      "path": "crates/host-play/src/evidence_writer.rs",
+      "symbol": "EvidenceWriter",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3-C5 live evidence seam: background writer owner used by the panel; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/host-play/src/evidence_writer.rs|RgbaEvidenceRequest",
+      "path": "crates/host-play/src/evidence_writer.rs",
+      "symbol": "RgbaEvidenceRequest",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3-C5 live evidence seam: transfers RGBA bytes, paths, JSON and the readback permit once; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/host-play/src/evidence_writer.rs|WriterConfig",
+      "path": "crates/host-play/src/evidence_writer.rs",
+      "symbol": "WriterConfig",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3-C5 live evidence seam: scalar queue bound and submit wait; test-only write gate under cfg(test); register in the introducing commit, no allowance."
     }
   ],
   "violations": [

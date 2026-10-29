@@ -15,7 +15,7 @@
 //! files are durable.
 //!
 //! When the bounded queue is full, `submit` blocks briefly (bounded by
-//! [`WriterConfig::submit_wait`]) and then drops with a counted error rather
+//! [`WriterConfig::submit_wait()`]) and then drops with a counted error rather
 //! than stalling the slot: a dropped terminal capture must fail the cell
 //! loudly like any other capture error, never stall it silently. Drops,
 //! failures and writes are counted ([`EvidenceWriter::stats`]) and logged.
@@ -87,31 +87,108 @@ pub struct EvidenceRequest {
 
 /// One owned RGBA capture handed to the background thread.
 pub struct RgbaEvidenceRequest {
-    pub png_path: PathBuf,
-    pub sidecar_path: PathBuf,
-    pub width: u32,
-    pub height: u32,
-    pub rgba: Vec<u8>,
-    pub snapshot_json: String,
+    png_path: PathBuf,
+    sidecar_path: PathBuf,
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+    snapshot_json: String,
     #[cfg(feature = "render-diagnostics")]
-    pub diagnostic_label: String,
+    diagnostic_label: String,
     #[cfg(feature = "render-diagnostics")]
-    pub pixel_roi: Option<client::render::diagnostics::PixelRoiShotBind>,
-    pub readback_permit: ReadbackPermit,
+    pixel_roi: Option<client::render::diagnostics::PixelRoiShotBind>,
+    readback_permit: ReadbackPermit,
+}
+
+impl RgbaEvidenceRequest {
+    /// Create an owned RGBA capture request.
+    pub fn new(
+        png_path: PathBuf,
+        sidecar_path: PathBuf,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+        snapshot_json: String,
+        readback_permit: ReadbackPermit,
+    ) -> Self {
+        Self {
+            png_path,
+            sidecar_path,
+            width,
+            height,
+            rgba,
+            snapshot_json,
+            #[cfg(feature = "render-diagnostics")]
+            diagnostic_label: String::new(),
+            #[cfg(feature = "render-diagnostics")]
+            pixel_roi: None,
+            readback_permit,
+        }
+    }
+
+    /// Set the diagnostic label and pixel region for this capture.
+    #[cfg(feature = "render-diagnostics")]
+    pub fn with_diagnostics(
+        mut self,
+        diagnostic_label: String,
+        pixel_roi: Option<client::render::diagnostics::PixelRoiShotBind>,
+    ) -> Self {
+        self.diagnostic_label = diagnostic_label;
+        self.pixel_roi = pixel_roi;
+        self
+    }
 }
 
 /// The finished work for one capture. `error` is `None` only when the PNG
 /// (and the sidecar, when present) are written and fsynced.
 #[derive(Debug, Clone)]
 pub struct EvidenceOutcome {
-    pub width: u32,
-    pub height: u32,
-    pub png_bytes: u64,
-    pub convert_ms: f64,
-    pub encode_ms: f64,
-    pub write_ms: f64,
-    pub sync_ms: f64,
-    pub error: Option<String>,
+    width: u32,
+    height: u32,
+    png_bytes: u64,
+    convert_ms: f64,
+    encode_ms: f64,
+    write_ms: f64,
+    sync_ms: f64,
+    error: Option<String>,
+}
+
+impl EvidenceOutcome {
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub fn png_bytes(&self) -> u64 {
+        self.png_bytes
+    }
+
+    pub fn convert_ms(&self) -> f64 {
+        self.convert_ms
+    }
+
+    pub fn encode_ms(&self) -> f64 {
+        self.encode_ms
+    }
+
+    pub fn write_ms(&self) -> f64 {
+        self.write_ms
+    }
+
+    pub fn sync_ms(&self) -> f64 {
+        self.sync_ms
+    }
+
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    pub fn into_error(self) -> Option<String> {
+        self.error
+    }
 }
 
 /// Queue/drop counters. `dropped` counts queue-full submits; `failed` counts
@@ -127,12 +204,42 @@ pub struct WriterStats {
 /// Writer tuning. `bound == 0` drops every submit after `submit_wait`.
 #[derive(Clone)]
 pub struct WriterConfig {
-    pub bound: usize,
-    pub submit_wait: Duration,
+    bound: usize,
+    submit_wait: Duration,
     /// Test-only gate the worker calls with the job id just before
     /// `write_capture`. Absent in non-test builds, so it costs nothing there.
     #[cfg(test)]
-    pub before_write: Option<Arc<dyn Fn(u64) + Send + Sync>>,
+    before_write: Option<Arc<dyn Fn(u64) + Send + Sync>>,
+}
+
+impl WriterConfig {
+    /// Create writer tuning with a queue bound and submit wait.
+    pub fn new(bound: usize, submit_wait: Duration) -> Self {
+        Self {
+            bound,
+            submit_wait,
+            #[cfg(test)]
+            before_write: None,
+        }
+    }
+
+    pub fn bound(&self) -> usize {
+        self.bound
+    }
+
+    pub fn submit_wait(&self) -> Duration {
+        self.submit_wait
+    }
+
+    /// Install a unit-test gate before the worker writes a capture.
+    #[cfg(test)]
+    pub(crate) fn with_before_write(
+        mut self,
+        before_write: Arc<dyn Fn(u64) + Send + Sync>,
+    ) -> Self {
+        self.before_write = Some(before_write);
+        self
+    }
 }
 
 impl std::fmt::Debug for WriterConfig {
@@ -146,12 +253,7 @@ impl std::fmt::Debug for WriterConfig {
 
 impl Default for WriterConfig {
     fn default() -> Self {
-        Self {
-            bound: DEFAULT_QUEUE_BOUND,
-            submit_wait: DEFAULT_SUBMIT_WAIT,
-            #[cfg(test)]
-            before_write: None,
-        }
+        Self::new(DEFAULT_QUEUE_BOUND, DEFAULT_SUBMIT_WAIT)
     }
 }
 
@@ -252,10 +354,7 @@ pub struct EvidenceWriter {
 
 impl EvidenceWriter {
     pub fn new(bound: usize) -> Self {
-        Self::with_config(WriterConfig {
-            bound,
-            ..WriterConfig::default()
-        })
+        Self::with_config(WriterConfig::new(bound, DEFAULT_SUBMIT_WAIT))
     }
 
     pub fn with_config(config: WriterConfig) -> Self {
@@ -1043,7 +1142,7 @@ mod tests {
         let outcome = writer
             .wait(&job, Duration::from_secs(60))
             .expect("capture completes");
-        assert!(outcome.error.is_none(), "unexpected: {:?}", outcome.error);
+        assert!(outcome.error().is_none(), "unexpected: {:?}", outcome.error());
         assert!(writer.flush(Duration::from_secs(60)));
         let on_disk = std::fs::read(&png_path).expect("png");
         assert_eq!(on_disk, direct_encode(16, 9, &test_pixels(16, 9)));
@@ -1077,7 +1176,7 @@ mod tests {
         let outcome = writer
             .wait(&job, Duration::from_secs(60))
             .expect("capture completes");
-        assert!(outcome.error.is_none(), "unexpected: {:?}", outcome.error);
+        assert!(outcome.error().is_none(), "unexpected: {:?}", outcome.error());
         let file = std::io::BufReader::new(std::fs::File::open(&png_path).expect("png"));
         let mut decoder = png::Decoder::new(file);
         decoder.set_transformations(png::Transformations::normalize_to_color8());
@@ -1106,23 +1205,22 @@ mod tests {
         let rgba = vec![255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 255, 0, 17, 34, 51, 68];
         let snapshot_json = "{ \"capture\" : [ 1, 2 ], \"raw\" : true }\n".to_owned();
         let writer = EvidenceWriter::new(1);
-        let job = writer.submit_rgba(RgbaEvidenceRequest {
-            png_path: png_path.clone(),
-            sidecar_path: sidecar_path.clone(),
-            width: 2,
-            height: 2,
-            rgba: rgba.clone(),
-            snapshot_json: snapshot_json.clone(),
-            #[cfg(feature = "render-diagnostics")]
-            diagnostic_label: "shot".to_owned(),
-            #[cfg(feature = "render-diagnostics")]
-            pixel_roi: None,
-            readback_permit: readback_permit(2, 2),
-        });
+        let request = RgbaEvidenceRequest::new(
+            png_path.clone(),
+            sidecar_path.clone(),
+            2,
+            2,
+            rgba.clone(),
+            snapshot_json.clone(),
+            readback_permit(2, 2),
+        );
+        #[cfg(feature = "render-diagnostics")]
+        let request = request.with_diagnostics("shot".to_owned(), None);
+        let job = writer.submit_rgba(request);
         let outcome = writer
             .wait(&job, Duration::from_secs(60))
             .expect("capture completes");
-        assert!(outcome.error.is_none(), "unexpected: {:?}", outcome.error);
+        assert!(outcome.error().is_none(), "unexpected: {:?}", outcome.error());
         let file = std::io::BufReader::new(std::fs::File::open(&png_path).expect("png"));
         let decoder = png::Decoder::new(file);
         let mut reader = decoder.read_info().expect("PNG info");
@@ -1148,23 +1246,22 @@ mod tests {
         let sidecar_path = dir.join("bad.json");
         let snapshot_json = "{ \"valid\" : false }\n".to_owned();
         let writer = EvidenceWriter::new(1);
-        let job = writer.submit_rgba(RgbaEvidenceRequest {
-            png_path: png_path.clone(),
-            sidecar_path: sidecar_path.clone(),
-            width: 2,
-            height: 2,
-            rgba: vec![0; 15],
-            snapshot_json: snapshot_json.clone(),
-            #[cfg(feature = "render-diagnostics")]
-            diagnostic_label: "bad".to_owned(),
-            #[cfg(feature = "render-diagnostics")]
-            pixel_roi: None,
-            readback_permit: readback_permit(2, 2),
-        });
+        let request = RgbaEvidenceRequest::new(
+            png_path.clone(),
+            sidecar_path.clone(),
+            2,
+            2,
+            vec![0; 15],
+            snapshot_json.clone(),
+            readback_permit(2, 2),
+        );
+        #[cfg(feature = "render-diagnostics")]
+        let request = request.with_diagnostics("bad".to_owned(), None);
+        let job = writer.submit_rgba(request);
         let outcome = writer
             .wait(&job, Duration::from_secs(60))
             .expect("capture completes");
-        assert!(outcome.error.is_some(), "malformed RGBA must fail");
+        assert!(outcome.error().is_some(), "malformed RGBA must fail");
         assert!(!png_path.exists(), "malformed RGBA must not write a PNG");
         assert_eq!(
             std::fs::read(&sidecar_path).expect("raw sidecar"),
@@ -1191,24 +1288,21 @@ mod tests {
                 .recv()
                 .expect("release writer");
         });
-        let writer = EvidenceWriter::with_config(WriterConfig {
-            bound: 1,
-            submit_wait: Duration::ZERO,
-            before_write: Some(hook),
-        });
-        let job = writer.submit_rgba(RgbaEvidenceRequest {
-            png_path: dir.join("gated.png"),
-            sidecar_path: dir.join("gated.json"),
-            width: 2,
-            height: 2,
-            rgba: vec![64; 16],
-            snapshot_json: "{}".to_owned(),
-            #[cfg(feature = "render-diagnostics")]
-            diagnostic_label: "gated".to_owned(),
-            #[cfg(feature = "render-diagnostics")]
-            pixel_roi: None,
-            readback_permit: readback_permit(2, 2),
-        });
+        let writer = EvidenceWriter::with_config(
+            WriterConfig::new(1, Duration::ZERO).with_before_write(hook),
+        );
+        let request = RgbaEvidenceRequest::new(
+            dir.join("gated.png"),
+            dir.join("gated.json"),
+            2,
+            2,
+            vec![64; 16],
+            "{}".to_owned(),
+            readback_permit(2, 2),
+        );
+        #[cfg(feature = "render-diagnostics")]
+        let request = request.with_diagnostics("gated".to_owned(), None);
+        let job = writer.submit_rgba(request);
         entered_receiver
             .recv_timeout(Duration::from_secs(60))
             .expect("worker reaches gate");
@@ -1223,7 +1317,7 @@ mod tests {
         let outcome = writer
             .wait(&job, Duration::from_secs(60))
             .expect("capture completes");
-        assert!(outcome.error.is_none(), "unexpected: {:?}", outcome.error);
+        assert!(outcome.error().is_none(), "unexpected: {:?}", outcome.error());
         drop(readback_permit(2, 2));
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1231,28 +1325,23 @@ mod tests {
     #[test]
     fn rejected_rgba_capture_releases_its_readback_permit() {
         let _readback_test_lock = READBACK_TEST_LOCK.lock().expect("readback test lock");
-        let writer = EvidenceWriter::with_config(WriterConfig {
-            bound: 0,
-            submit_wait: Duration::ZERO,
-            before_write: None,
-        });
-        let job = writer.submit_rgba(RgbaEvidenceRequest {
-            png_path: PathBuf::from("never-rgba.png"),
-            sidecar_path: PathBuf::from("never-rgba.json"),
-            width: 2,
-            height: 2,
-            rgba: vec![0; 16],
-            snapshot_json: "{}".to_owned(),
-            #[cfg(feature = "render-diagnostics")]
-            diagnostic_label: "refused".to_owned(),
-            #[cfg(feature = "render-diagnostics")]
-            pixel_roi: None,
-            readback_permit: readback_permit(2, 2),
-        });
+        let writer = EvidenceWriter::with_config(WriterConfig::new(0, Duration::ZERO));
+        let request = RgbaEvidenceRequest::new(
+            PathBuf::from("never-rgba.png"),
+            PathBuf::from("never-rgba.json"),
+            2,
+            2,
+            vec![0; 16],
+            "{}".to_owned(),
+            readback_permit(2, 2),
+        );
+        #[cfg(feature = "render-diagnostics")]
+        let request = request.with_diagnostics("refused".to_owned(), None);
+        let job = writer.submit_rgba(request);
         assert!(
             writer
                 .poll(&job)
-                .is_some_and(|outcome| outcome.error.is_some()),
+                .is_some_and(|outcome| outcome.error().is_some()),
             "queue refusal completes with an error"
         );
         drop(readback_permit(2, 2));
@@ -1282,7 +1371,7 @@ mod tests {
         let outcome = writer
             .wait(&job, Duration::from_secs(60))
             .expect("capture completes");
-        assert!(outcome.error.is_some(), "invalid frame must fail");
+        assert!(outcome.error().is_some(), "invalid frame must fail");
         assert!(!png_path.exists(), "no PNG is left behind on failure");
         let receipt: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&json_path).expect("failure receipt"))
@@ -1298,11 +1387,10 @@ mod tests {
 
     #[test]
     fn full_queue_drops_with_a_counted_error() {
-        let writer = EvidenceWriter::with_config(WriterConfig {
-            bound: 0,
-            submit_wait: Duration::from_millis(1),
-            before_write: None,
-        });
+        let writer = EvidenceWriter::with_config(WriterConfig::new(
+            0,
+            Duration::from_millis(1),
+        ));
         let job = writer.submit(EvidenceRequest {
             png_path: PathBuf::from("never.png"),
             width: 2,
@@ -1312,7 +1400,7 @@ mod tests {
             sidecar: None,
         });
         let outcome = writer.poll(&job).expect("drop completes inline");
-        assert!(outcome.error.is_some(), "drop must carry an error");
+        assert!(outcome.error().is_some(), "drop must carry an error");
         assert_eq!(writer.stats().dropped, 1);
     }
 
@@ -1379,11 +1467,9 @@ mod tests {
         });
         let hook_gate = Arc::clone(&gate);
         let hook: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |id| hook_gate.hook(id));
-        let writer = Arc::new(EvidenceWriter::with_config(WriterConfig {
-            bound: 1,
-            submit_wait: Duration::from_secs(60),
-            before_write: Some(hook),
-        }));
+        let writer = Arc::new(EvidenceWriter::with_config(
+            WriterConfig::new(1, Duration::from_secs(60)).with_before_write(hook),
+        ));
         let request = |name: &str| EvidenceRequest {
             png_path: dir.join(name),
             width: 2,
@@ -1436,7 +1522,7 @@ mod tests {
             let outcome = writer
                 .wait(job, Duration::from_secs(60))
                 .expect("capture completes");
-            assert!(outcome.error.is_none(), "unexpected: {:?}", outcome.error);
+            assert!(outcome.error().is_none(), "unexpected: {:?}", outcome.error());
         }
         assert!(writer.flush(Duration::from_secs(60)));
         assert_eq!(writer.stats().dropped, 0);

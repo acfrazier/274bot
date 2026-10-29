@@ -595,13 +595,13 @@ pub(super) fn write_capture(
                 sidecar: None,
             });
             match writer.wait(&job, evidence_writer::DEFAULT_FLUSH_WAIT) {
-                Some(outcome) if outcome.error.is_none() => (
+                Some(outcome) if outcome.error().is_none() => (
                     true,
                     json!({
                         "frame_source": "host::FrameBuf actual rendered FrameOutput",
                         "png_file": png_path.file_name().and_then(|name| name.to_str()),
-                        "width": outcome.width,
-                        "height": outcome.height,
+                        "width": outcome.width(),
+                        "height": outcome.height(),
                         "png_written": true,
                     }),
                 ),
@@ -611,7 +611,7 @@ pub(super) fn write_capture(
                         "frame_source": "host::FrameBuf actual rendered FrameOutput",
                         "png_file": png_path.file_name().and_then(|name| name.to_str()),
                         "png_written": false,
-                        "png_error": outcome.error.unwrap_or_else(|| "unknown".into()),
+                        "png_error": outcome.into_error().unwrap_or_else(|| "unknown".into()),
                     }),
                 ),
                 None => (

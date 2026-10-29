@@ -747,7 +747,7 @@ pub(super) fn frame(client: &mut Client, shared: &Mutex<Cell>, account: &str) {
     if let Some(outcome) = completed {
         let mut cell = shared.lock();
         cell.capture_written = true;
-        cell.capture_error = outcome.error;
+        cell.capture_error = outcome.into_error();
     }
     shared.lock().snapshot = Some(snapshot);
 }

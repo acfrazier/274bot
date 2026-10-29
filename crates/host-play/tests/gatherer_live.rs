@@ -6311,7 +6311,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             // result under a 20 s deadline, which is the bounded flush.
             let completed = frame_capture_job.lock().ok().and_then(|mut job| {
                 let outcome = frame_evidence.poll(&job.as_ref()?.job)?;
-                let result = outcome.error.map_or(Ok(()), Err);
+                let result = outcome.into_error().map_or(Ok(()), Err);
                 job.take();
                 Some(result)
             });

@@ -1538,7 +1538,7 @@ fn run_cells(
                         completed.push((
                             pending.label.clone(),
                             pending.png_path.clone(),
-                            outcome.error,
+                            outcome.into_error(),
                         ));
                         false
                     }
