@@ -9,7 +9,7 @@
     "druidic-ritual",
     "herblore-31",
     "thieving-30",
-    "agility-40"
+    "agility-67"
   ],
   "tested_stats": null,
   "partner": null,
@@ -60,10 +60,10 @@
       }
       ,
       {
-        "id": "agility-40",
-        "kind": {"Skill": {"skill": "agility", "level": 40}},
+        "id": "agility-67",
+        "kind": {"Skill": {"skill": "agility", "level": 67}},
         "at": "start",
-        "source": "content/scripts/areas/area_yanille/scripts/agility_dungeon.rs2:30-34"
+        "source": "content/scripts/areas/area_yanille/scripts/agility_dungeon.rs2:1-5,30-34,85-90"
       }
     ],
     "items": [],
@@ -71,7 +71,10 @@
     "bank": "nearest",
     "coin_float": 41631,
     "loadouts": {},
-    "areas": {},
+    "areas": {
+      "salarin-chamber": {"boxes": [[2610,9502,2618,9527,0]], "source": "content/maps/m40_148.jm2:8207,9083"},
+      "sinister-chest-room": {"boxes": [[2560,9499,2572,9512,0]], "source": "content/maps/m40_148.jm2:4888,5613,5789"}
+    },
     "tools": [
       "obj:death_climbingboots",
       "obj:vodka",
@@ -935,11 +938,32 @@
               "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "mindrune", "qty": 1000}}}
             },
             {
+              "id": "climb-to-salarin", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"loc": "climbingcaverocks1"}, "op": "Climb-up", "anchor": {"tile": [2616,9572,0], "source": "content/maps/m40_149.jm2:5928; content/pack/loc.pack:2318"}, "radius": 3},
+              "comment": "The town cellar and Yanille stairs reach the lower floor; the rubble requires Agility 67 and lands in Salarin's chamber. content/scripts/ladders+stairs/scripts/stairs.rs2:90-95,127-134; content/scripts/areas/area_yanille/scripts/agility_dungeon.rs2:85-90.",
+              "skip_if": {"Any": [{"Fact": {"kind": "in_area", "version": 1, "args": {"area": "salarin-chamber"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "sinister_key"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}]},
+              "settle": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "salarin-chamber"}}}
+            },
+            {
               "id": "salarin-sinister-key", "kind": "combat", "version": 1, "advances": false,
               "args": {"target": {"npc": "salarin_the_twisted", "not_targeting_others": true, "pick": "nearest"}, "tactic": {"kind": "open", "style": "mage", "engage_radius": 8, "auto_retaliate": false}, "spells": ["wind_strike"], "fallback_spells": false, "stand": {"tile": [2613,9523,0], "source": "content/maps/m40_148.jm2:9083; content/pack/npc.pack:206"}, "lost_radius": 20, "kill_budget_ticks": 500, "until_drop": {"obj": "sinister_key", "max_kills": 114, "stop": "GAP-salarin-sinister-key-budget"}},
               "comment": "content/scripts/drop tables/scripts/salarin_the_twisted.rs2:17,43-46 gives the key at 10/128. content/scripts/skill_combat/scripts/player/player_magic.rs2:203-220 sets successful Wind Strike damage to 9.",
               "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "sinister_key"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}]},
               "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "sinister_key"}}}
+            },
+            {
+              "id": "leave-salarin-chamber", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"loc": "climbingcaverocks2"}, "op": "Climb-down", "anchor": {"tile": [2615,9504,0], "source": "content/maps/m40_148.jm2:8207; content/pack/loc.pack:2319"}, "radius": 3},
+              "comment": "content/scripts/areas/area_yanille/scripts/agility_dungeon.rs2:93-95 returns to the lower floor.",
+              "skip_if": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "salarin-chamber"}}}},
+              "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [2616,9571,0], "radius": 3}}}
+            },
+            {
+              "id": "squeeze-to-sinister-chest", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"loc": "obstical_pipe4"}, "op": "Squeeze-through", "anchor": {"tile": [2576,9506,0], "source": "content/maps/m40_148.jm2:5789; content/pack/loc.pack:2291"}, "radius": 2},
+              "comment": "The outside cellar and ledge lead to the eastern pipe. The pipe requires Agility 49. content/scripts/ladders+stairs/scripts/stairs.rs2:127-134; content/scripts/areas/area_yanille/scripts/agility_dungeon.rs2:1-28,30-45.",
+              "skip_if": {"Any": [{"Fact": {"kind": "in_area", "version": 1, "args": {"area": "sinister-chest-room"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}]},
+              "settle": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "sinister-chest-room"}}}
             },
             {
               "id": "approach-sinister-chest", "kind": "walk", "version": 1, "advances": false,
@@ -967,6 +991,13 @@
               "comment": "content/scripts/skill_herblore/scripts/identifying/identify.rs2:13-14,58-73; content/scripts/skill_herblore/configs/herbs.obj:89-105 requires Herblore 25.",
               "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}]},
               "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}
+            },
+            {
+              "id": "leave-sinister-chest-room", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"loc": "obstical_pipe4"}, "op": "Squeeze-through", "anchor": {"tile": [2573,9506,0], "source": "content/maps/m40_148.jm2:5613; content/pack/loc.pack:2291"}, "radius": 2},
+              "comment": "content/scripts/areas/area_yanille/scripts/agility_dungeon.rs2:1-28 moves east through the pipe.",
+              "skip_if": {"Not": {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "sinister-chest-room"}}}},
+              "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [2578,9506,0], "radius": 2}}}
             },
             {
               "id": "brew-ranarr-potion", "kind": "use_on", "version": 1, "advances": false,
