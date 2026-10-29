@@ -18182,13 +18182,11 @@ fn nav_world_state_for_observe_skips_when_idle_and_nav_unarmed() {
         "idle slot with no armed nav must not build WorldState"
     );
     assert!(
-        nav_world_state_for_observe(&mut cache, here, &snap, true, false, false, 0, 0, 0)
-            .is_some(),
+        nav_world_state_for_observe(&mut cache, here, &snap, true, false, false, 0, 0, 0).is_some(),
         "Running script must get WorldState for the walk arm"
     );
     assert!(
-        nav_world_state_for_observe(&mut cache, here, &snap, false, true, false, 0, 0, 0)
-            .is_some(),
+        nav_world_state_for_observe(&mut cache, here, &snap, false, true, false, 0, 0, 0).is_some(),
         "armed nav bot must get WorldState for interact walks"
     );
 }

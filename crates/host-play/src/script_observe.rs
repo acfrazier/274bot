@@ -2253,16 +2253,8 @@ impl WorldStateCacheKey {
     ) -> Self {
         let gens = snapshot.gens();
         Self {
-            inventory: (
-                gens.inv,
-                gens.iface,
-                snapshot.inventory_packet_generation(),
-            ),
-            equipment: (
-                gens.inv,
-                gens.iface,
-                snapshot.equipment_packet_generation(),
-            ),
+            inventory: (gens.inv, gens.iface, snapshot.inventory_packet_generation()),
+            equipment: (gens.inv, gens.iface, snapshot.equipment_packet_generation()),
             stats: gens.stat,
             varps: gens.varp,
             completed_quests: gens.iface,
@@ -2666,9 +2658,7 @@ mod world_state_cache_tests {
         );
 
         let invalidation = snapshot_with(
-            |generations| {
-                generations.invalidations = generations.invalidations.wrapping_add(1)
-            },
+            |generations| generations.invalidations = generations.invalidations.wrapping_add(1),
             Some(3),
             Some(4),
         );
@@ -2706,11 +2696,7 @@ mod world_state_cache_tests {
     }
 
     fn stats_snapshot(generation: u64, effective: i32) -> GameSnapshot {
-        let snapshot = snapshot_with(
-            |generations| generations.stat = generation,
-            None,
-            None,
-        );
+        let snapshot = snapshot_with(|generations| generations.stat = generation, None, None);
         let mut snapshot = snapshot;
         snapshot.seed_stats(vec![StatView {
             index: 10,
@@ -2738,7 +2724,11 @@ mod world_state_cache_tests {
             !Arc::ptr_eq(&first, &second),
             "a changed stats generation must replace the cached state"
         );
-        assert_eq!(first.stats.get(&10), Some(&68), "queued frame A stays stable");
+        assert_eq!(
+            first.stats.get(&10),
+            Some(&68),
+            "queued frame A stays stable"
+        );
         assert_eq!(
             second.stats.get(&10),
             Some(&69),
@@ -2789,20 +2779,18 @@ mod world_state_cache_tests {
             &state
         ));
 
-        assert!(
-            super::nav_world_state_for_observe(
-                &mut cache,
-                Some((1, 2, 0)),
-                &snapshot,
-                false,
-                false,
-                false,
-                1,
-                1,
-                1,
-            )
-            .is_none()
-        );
+        assert!(super::nav_world_state_for_observe(
+            &mut cache,
+            Some((1, 2, 0)),
+            &snapshot,
+            false,
+            false,
+            false,
+            1,
+            1,
+            1,
+        )
+        .is_none());
         assert!(cache.key.is_none());
         assert!(cache.state.is_none());
     }

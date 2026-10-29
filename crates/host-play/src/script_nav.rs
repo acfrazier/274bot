@@ -4715,10 +4715,7 @@ impl ScriptWalkArm {
                     request.required_after,
                 )
             });
-        let state = self
-            .state
-            .take()
-            .expect("request state was captured");
+        let state = self.state.take().expect("request state was captured");
         self.state = Some(patch_route_quest_evidence(state, evidence));
         let exclusions = ScriptRouteExclusions {
             cross: request.cross.to_vec(),
@@ -5231,21 +5228,19 @@ impl ScriptWalkArm {
                     .get(&self.name)
                     .and_then(|bot| bot.quest_context.clone());
                 if let Some(context) = context.as_ref() {
-                    let base_state =
-                        state.take().unwrap_or_else(|| Arc::new(WorldState::from_snapshot(snapshot)));
-                    let evidence = captured_route_quests(
-                        family,
-                        Some(context),
-                        snapshot,
-                        None,
-                        context.stamp,
-                    );
+                    let base_state = state
+                        .take()
+                        .unwrap_or_else(|| Arc::new(WorldState::from_snapshot(snapshot)));
+                    let evidence =
+                        captured_route_quests(family, Some(context), snapshot, None, context.stamp);
                     state = Some(patch_route_quest_evidence(base_state, evidence));
                 }
             }
         }
         let (mut opts, exclusions) = if let Some((basis, exclusions)) = frozen {
-            let base_state = state.take().unwrap_or_else(|| Arc::new(WorldState::empty()));
+            let base_state = state
+                .take()
+                .unwrap_or_else(|| Arc::new(WorldState::empty()));
             state = Some(patch_route_quest_evidence(
                 base_state,
                 basis.quest_evidence.clone(),

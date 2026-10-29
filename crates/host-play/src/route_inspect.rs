@@ -2448,7 +2448,16 @@ pub(super) fn queue_inspect_shared(
     obj_names: Option<Arc<ObjNames>>,
     req: InspectRequest,
 ) {
-    queue_inspect_captured(navs, name, world, state.cloned(), bank, cache, obj_names, req);
+    queue_inspect_captured(
+        navs,
+        name,
+        world,
+        state.cloned(),
+        bank,
+        cache,
+        obj_names,
+        req,
+    );
 }
 
 #[cfg(test)]
