@@ -2242,11 +2242,7 @@ struct WorldStateCacheKey {
 }
 
 impl WorldStateCacheKey {
-    fn for_snapshot(
-        snapshot: &GameSnapshot,
-        map_members: bool,
-        session_epoch: u64,
-    ) -> Self {
+    fn for_snapshot(snapshot: &GameSnapshot, map_members: bool, session_epoch: u64) -> Self {
         let gens = snapshot.gens();
         Self {
             inventory: (gens.inv, gens.iface, snapshot.inventory_packet_generation()),
@@ -2307,7 +2303,6 @@ pub(super) fn try_clone_world_state(
         quest_evidence: state.quest_evidence.clone(),
     })
 }
-
 
 /// Per-slot cache of snapshot-derived facts. It never stores quest evidence.
 /// Route captures attach evidence from the current context at queue time.
@@ -2574,11 +2569,7 @@ mod world_state_cache_tests {
         snapshot
     }
 
-    fn key(
-        snapshot: &GameSnapshot,
-        map_members: bool,
-        session_epoch: u64,
-    ) -> WorldStateCacheKey {
+    fn key(snapshot: &GameSnapshot, map_members: bool, session_epoch: u64) -> WorldStateCacheKey {
         WorldStateCacheKey::for_snapshot(snapshot, map_members, session_epoch)
     }
 
@@ -2659,24 +2650,14 @@ mod world_state_cache_tests {
             Some(3),
             Some(4),
         );
-        assert_only_differs(
-            baseline,
-            key(&stats, false, 5),
-            &["stats"],
-            "stats family",
-        );
+        assert_only_differs(baseline, key(&stats, false, 5), &["stats"], "stats family");
 
         let varps = snapshot_with(
             |generations| generations.varp = generations.varp.wrapping_add(1),
             Some(3),
             Some(4),
         );
-        assert_only_differs(
-            baseline,
-            key(&varps, false, 5),
-            &["varps"],
-            "varps family",
-        );
+        assert_only_differs(baseline, key(&varps, false, 5), &["varps"], "varps family");
 
         let session = snapshot_with(
             |generations| generations.session = generations.session.wrapping_add(1),
@@ -2855,7 +2836,6 @@ mod world_state_cache_tests {
             "late-profile WorldState retained {retained_bytes} bytes"
         );
     }
-
 
     #[test]
     fn inactive_observation_releases_the_slot_cache() {

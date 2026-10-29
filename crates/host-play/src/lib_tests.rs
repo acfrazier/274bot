@@ -18177,8 +18177,7 @@ fn nav_world_state_for_observe_skips_when_idle_and_nav_unarmed() {
     let here = Some((3200, 3200, 0));
     let mut cache = super::script_runtime::NavWorldStateCache::default();
     assert!(
-        nav_world_state_for_observe(&mut cache, here, &snap, false, false, false, 0)
-            .is_none(),
+        nav_world_state_for_observe(&mut cache, here, &snap, false, false, false, 0).is_none(),
         "idle slot with no armed nav must not build WorldState"
     );
     assert!(
@@ -18232,8 +18231,7 @@ fn starting_script_frame_builds_nav_facts() {
     let nav_facts =
         crate::play_slots::script_state_builds_nav_facts(Some(script::RunState::Starting));
     assert!(
-        nav_world_state_for_observe(&mut cache, here, &snap, nav_facts, false, true, 0)
-            .is_some(),
+        nav_world_state_for_observe(&mut cache, here, &snap, nav_facts, false, true, 0).is_some(),
         "a Starting frame must build WorldState so the first walk sees posted skills"
     );
 }

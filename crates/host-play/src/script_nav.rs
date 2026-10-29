@@ -1106,8 +1106,7 @@ impl RouteJob {
             match Arc::try_unwrap(state) {
                 Ok(state) => Arc::new(state),
                 Err(shared) => Arc::new(
-                    super::try_clone_world_state(&shared)
-                        .map_err(|_| RouteJobError::Allocation)?,
+                    super::try_clone_world_state(&shared).map_err(|_| RouteJobError::Allocation)?,
                 ),
             }
         } else {
