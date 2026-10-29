@@ -37,6 +37,10 @@
          "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"troll","any":["troll:10"]}}}}
       ]},
       {"stage":"troll:10","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"buy-climbing-boots","kind":"talk","version":1,"advances":false,
+         "args":{"npc":"death_sherpa","anchor":{"tile":[2820,3556,0],"source":"content/maps/m44_55.jm2:6372; content/pack/npc.pack:1072"},"leash":8,"prefer":["Can I buy some Climbing boots?","OK, sounds good.","Nothing, thanks!"],"strict":true},
+         "comment":"content/scripts/quests/quest_death/scripts/death_sherpa.rs2:2-24 sells one pair for 12 coins after Death Plateau.",
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"death_climbingboots"}}},{"Fact":{"kind":"worn","version":1,"args":{"obj":"death_climbingboots"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"death_climbingboots"}}}},
         {"id":"wear-climbing-boots","kind":"equip","version":1,
          "comment":"content/scripts/quests/quest_troll/scripts/quest_troll.rs2:1-14 requires worn climbing boots at the lower crossing.",
          "args":{"obj":"death_climbingboots"},"skip_if":{"Fact":{"kind":"worn","version":1,"args":{"obj":"death_climbingboots"}}},"settle":{"Fact":{"kind":"worn","version":1,"args":{"obj":"death_climbingboots"}}}},

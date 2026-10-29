@@ -10,7 +10,7 @@
       { "id": "upass", "kind": { "Quest": "upass" }, "at": "start", "source": "C:scripts/quests/quest_legends/scripts/legends_guard.rs2:47-52" },
       { "id": "waterfall", "kind": { "Quest": "waterfall" }, "at": "start", "source": "C:scripts/quests/quest_legends/scripts/legends_guard.rs2:47-52" }
     ],
-    "items": [], "acquire": {}, "bank": "nearest", "coin_float": 0, "loadouts": {}, "areas": {}, "tools": ["obj:thkaramjamap", "obj:papyrus", "obj:charcoal", "obj:machette"], "owns_inventory": true
+    "items": [], "acquire": {}, "bank": "nearest", "coin_float": 0, "loadouts": {}, "areas": {}, "tools": ["obj:thkaramjamap", "obj:machette", "obj:bronze_axe"], "owns_inventory": true
   },
   "roles": [{ "role": null, "progress_binding": "journal:legends", "progress": {
     "colour": { "not_started": "legends:0", "in_progress": "legends:1", "complete": "legends:complete" }, "rules": [], "flags": [], "monotonic": false

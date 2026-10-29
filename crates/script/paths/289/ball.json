@@ -10,10 +10,7 @@
     "members": true,
     "quest_points": 4,
     "requirements": [],
-    "items": [
-      {"obj":"cheese","qty":1,"kind":"must_have"},
-      {"obj":"leather_gloves","qty":1,"kind":"must_have"}
-    ],
+    "items": [],
     "acquire": {},
     "bank": "nearest",
     "coin_float": 0,
@@ -23,7 +20,7 @@
       "garden_entry": {"boxes": [[2900,3463,2902,3464,0]], "source":"content/maps/m45_54.jm2:5145; south side of back door"}
     },
     "tools": ["obj:witches_doorkey","obj:magnet"],
-    "owns_inventory": false
+    "owns_inventory": true
   },
   "roles": [{
     "role": null,
@@ -47,6 +44,8 @@
          "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"ball","is":"in_progress"}}}}
       ]},
       {"stage":"ball:1","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"buy-cheese","kind":"buy","version":1,"args":{"shop":{"npc":"wydin","anchor":{"tile":[3014,3204,0],"source":"content/maps/m47_50.jm2:10005; content/pack/npc.pack:558"}},"obj":"cheese","qty":1,"est_gp":4},"comment":"content/scripts/areas/area_port_sarim/configs/port_sarim.inv:105-121; content/scripts/areas/area_port_sarim/configs/port_sarim.npc:155-184; content/scripts/skill_cooking/configs/cooking_inv/configs/pizza/pizza.obj:192-195.","skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"cheese"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"cheese"}}}},
+        {"id":"buy-gloves","kind":"buy","version":1,"args":{"shop":{"npc":"tailorp","anchor":{"tile":[3281,3398,0],"source":"content/maps/m51_53.jm2:6739; content/pack/npc.pack:555"}},"obj":"leather_gloves","qty":1,"est_gp":7},"comment":"content/scripts/areas/area_varrock/configs/varrock.inv:101-116; content/scripts/areas/area_varrock/configs/varrock.npc:363-397; content/scripts/skill_crafting/configs/leather/leather_gear.obj:1-4.","skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"leather_gloves"}}},{"Fact":{"kind":"worn","version":1,"args":{"obj":"leather_gloves"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"leather_gloves"}}}},
         {"id":"house-key","kind":"interact","version":1,"advances":false,
          "comment":"content/scripts/quests/quest_ball/scripts/quest_ball.rs2:1-8; content/maps/m45_54.jm2:5115",
          "args":{"target":{"loc":"witchpot"},"op":"Look-under","anchor":{"tile":[2900,3474,0],"source":"content/maps/m45_54.jm2:5115"},"radius":5},

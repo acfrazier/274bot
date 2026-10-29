@@ -195,6 +195,9 @@
           "terminal": false,
           "recovery_entry": null,
           "steps": [
+            {"id":"mine-iron-ore","kind":"gather","version":1,"advances":false,"args":{"skill":"mining","resource":"iron","until":{"obj":"iron_ore","qty":8},"anchor":{"tile":[2968,3239,0],"source":"content/maps/m46_50.jm2:5666; content/pack/loc.pack:2093; content/scripts/skill_mining/configs/mine.dbrow:49-60"},"radius":3,"settle_ms":300000},"comment":"Mining 15 and a pickaxe obtain iron ore. Each smelt consumes one ore and can fail: content/scripts/skill_smithing/scripts/smelting/smelting.rs2:190-208.","skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_bar"}}},{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"iron_ore","qty":8}}}]},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"iron_ore","qty":8}}}},
+            {"id":"smelt-iron-bar","kind":"use_on","version":1,"advances":false,"args":{"item":"iron_ore","target":{"loc":"furnace1"},"anchor":{"tile":[2974,3369,0],"source":"content/maps/m46_52.jm2:7888; content/scripts/skill_smithing/scripts/smelting/smelting.rs2:1-29,100-115"},"radius":3,"product":"iron_bar","settle_ms":15000,"until":{"obj":"iron_bar","qty":1}},"comment":"content/scripts/skill_smithing/configs/smelting/smelting.struct:17-26 requires Smithing 15. Eight ores do not guarantee success.","skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_bar"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_bar"}}}},
+            {"id":"chop-pen-log","kind":"gather","version":1,"advances":false,"args":{"skill":"woodcutting","resource":"normal","until":{"obj":"logs","qty":1},"anchor":{"tile":[2613,3252,0],"source":"content/maps/m40_50.jm2:5891; content/scripts/skill_woodcutting/configs/trees.dbrow:1-7"}},"comment":"content/scripts/skill_woodcutting/scripts/woodcut.rs2:5-9,79-108 cuts a normal log with an axe.","skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"logs"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"logs"}}}},
             {
               "id": "sail-to-miscellania",
               "kind": "talk",
@@ -237,6 +240,7 @@
               },
               "advances": false
             },
+            {"id":"buy-royal-flower","kind":"talk","version":1,"advances":false,"args":{"npc":"misc_flowergirl","anchor":{"tile":[2514,3866,0],"source":"content/maps/m39_60.jm2:8743; content/pack/npc.pack:1379"},"leash":8,"prefer":["Yes, please."],"strict":true},"comment":"content/scripts/areas/area_miscellania/scripts/flower_girl.rs2:1-25 sells one flower item for 15 coins.","skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"flowers_waterfall_quest_mixed"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"flowers_waterfall_quest_mixed"}}}},
             {
               "id": "request-audience",
               "kind": "talk",
