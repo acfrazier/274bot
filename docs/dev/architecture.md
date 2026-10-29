@@ -7,7 +7,7 @@
 and runtime boundaries, not a line-count budget and not a copy of a TypeScript
 lint stack.
 
-0.2.7 Beta 2 is the current release. Revision 289 is the production revision: the product is
+0.2.8 Beta 2 is the current release. Revision 289 is the production revision: the product is
 built, tested and claimed for it. Revision 274 is best-effort: it may run,
 but it is neither tested nor claimed.
 

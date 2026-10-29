@@ -8,7 +8,7 @@
 
 ## Developer overview: the Agent API
 
-Beta kernel surface a bot agent codes against in 0.2.7 Beta 2: reading world state,
+Beta kernel surface a bot agent codes against in 0.2.8 Beta 2: reading world state,
 acting, settling, navigating, and logging in — through the `api` crate
 (`crates/api`), `nav-planner` (`crates/nav-planner`), `nav-executor`
 (`crates/nav-executor`) and the host tick. The script
