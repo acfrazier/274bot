@@ -3512,6 +3512,7 @@ fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen(
         ),
         api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
         Arc::default(),
+        None,
     )
     .unwrap();
     assert!(wait_until(5_000, || {
@@ -5527,6 +5528,7 @@ fn lifecycle_followups_stop_clears_combat_raise_but_preserves_user_prayer() {
                 &quests,
                 cap,
                 &script::local_state::OperatorLoadouts::absent(),
+                None,
             )
         }
     })

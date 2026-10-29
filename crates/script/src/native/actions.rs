@@ -4,6 +4,34 @@ use super::*;
 use crate::native_bank::{BankPickReceipt, BankPickRequest};
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 
+/// Add the stage's declared grants to this step's declared route grants.
+/// Named consent never enables the blanket danger opt-in.
+fn apply_stage_cross(request: &mut WalkRequest, stage: Option<&[Arc<str>]>) {
+    let Some(stage) = stage else {
+        return;
+    };
+    request.options.allow_danger_zones = WalkBit::Forbid;
+    let duplicates = request
+        .cross
+        .iter()
+        .enumerate()
+        .filter(|(index, zone)| request.cross[..*index].contains(zone))
+        .count();
+    let missing = stage
+        .iter()
+        .filter(|zone| !request.cross.contains(zone))
+        .count();
+    if missing != 0 || duplicates != 0 {
+        let mut cross = Vec::with_capacity(request.cross.len() - duplicates + missing);
+        for zone in request.cross.iter().chain(stage) {
+            if !cross.contains(zone) {
+                cross.push(Arc::clone(zone));
+            }
+        }
+        request.cross = cross.into_boxed_slice();
+    }
+}
+
 impl ActionContext<'_> {
     pub(super) fn owner(&self) -> Result<Arc<Owner>, ActionError> {
         let owner = self
@@ -267,7 +295,7 @@ impl ActionContext<'_> {
 
     /// Queue a compute-only walk assessment. It shares the owner's outbox but
     /// neither spends a game-event allowance nor claims movement authority.
-    pub fn assess_walk(&mut self, request: WalkRequest) -> Result<u64, ActionError> {
+    pub fn assess_walk(&mut self, mut request: WalkRequest) -> Result<u64, ActionError> {
         if !self.eligible {
             return Err(ActionError::Held);
         }
@@ -284,6 +312,7 @@ impl ActionContext<'_> {
                 super::WalkGoalsError::IncompatibleArrival,
             ));
         }
+        apply_stage_cross(&mut request, self.stage_cross.as_deref());
         let ledger = self.ledger.get_or_insert_with(Default::default);
         let owner = match ledger.assess_owner.as_ref() {
             Some(owner) if owner.run == run && owner.live() => Arc::clone(owner),
@@ -337,7 +366,7 @@ impl ActionContext<'_> {
         Some(receipt)
     }
 
-    pub fn walk(&mut self, request: WalkRequest) -> Result<u64, ActionError> {
+    pub fn walk(&mut self, mut request: WalkRequest) -> Result<u64, ActionError> {
         let owner = self.owner()?;
         if request.required_after.run != self.run() {
             return Err(ActionError::Stale);
@@ -351,6 +380,7 @@ impl ActionContext<'_> {
                 super::WalkGoalsError::IncompatibleArrival,
             ));
         }
+        apply_stage_cross(&mut request, self.stage_cross.as_deref());
         if !self.budget.event(false) {
             return Err(ActionError::BudgetExhausted);
         }
@@ -918,6 +948,7 @@ mod tests {
         let mut budget = ledger::TickBudget::default();
         budget.observe(1);
         let mut cx = ActionContext {
+            stage_cross: None,
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
@@ -1283,6 +1314,7 @@ mod tests {
         let mut budget = ledger::TickBudget::default();
         budget.observe(1);
         let mut cx = ActionContext {
+            stage_cross: None,
             condition: None,
             poison_unknown_pulse: u8::MAX,
             evidence,
@@ -2659,6 +2691,74 @@ mod tests {
                 .unwrap()
                 .complete_assess_walk(&revoked_authority, advisory_failure(revoked, evidence));
             assert!(cx.assess_receipt(revoked).is_none());
+        });
+    }
+
+    #[test]
+    fn stage_cross_unions_step_grants_without_disabling_survival() {
+        let mut ledger = None;
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            cx.stage_cross = Some(Arc::from([Arc::from("declared-zone")]));
+            let mut request = assessment_walk_request(cx.evidence());
+            request.cross = vec![Arc::from("step-zone")].into_boxed_slice();
+            request.options.allow_danger_zones = WalkBit::Allow;
+            request.protect = true;
+            request.food_guard = true;
+            let mut actions = NativeActions { _private: () };
+            let handle = actions.begin::<walk::Walk>(request, cx).unwrap();
+            let HostEffect::Walk(request) = &cx.ledger.as_ref().unwrap().outbox[0].effect else {
+                panic!("the native walk must reach the existing host route path");
+            };
+            assert_eq!(
+                request
+                    .cross
+                    .iter()
+                    .map(AsRef::as_ref)
+                    .collect::<Vec<&str>>(),
+                ["step-zone", "declared-zone"]
+            );
+            assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
+            assert!(request.protect && request.food_guard);
+            assert_eq!(request.allow, WalkAllow::default());
+            drop(handle);
+            actions
+                .assess_walk(assessment_walk_request(cx.evidence()), cx)
+                .unwrap();
+            let HostEffect::AssessWalk(request) =
+                &cx.ledger.as_ref().unwrap().outbox.last().unwrap().effect
+            else {
+                panic!("the advisory must use the same stage declaration");
+            };
+            assert_eq!(request.cross.as_ref(), &[Arc::<str>::from("declared-zone")]);
+            assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
+        });
+    }
+
+    #[test]
+    fn stage_cross_deduplicates_grants_and_preserves_prelude_step_consent() {
+        let mut ledger = None;
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let stage = [Arc::<str>::from("declared-zone")];
+            let mut request = assessment_walk_request(cx.evidence());
+            request.cross = vec![Arc::clone(&stage[0]), Arc::clone(&stage[0])].into_boxed_slice();
+            apply_stage_cross(&mut request, Some(&stage));
+            assert_eq!(request.cross.as_ref(), &stage);
+            let mut prelude = assessment_walk_request(cx.evidence());
+            prelude.cross = vec![Arc::from("prelude-zone")].into_boxed_slice();
+            apply_stage_cross(&mut prelude, Some(&[]));
+            assert_eq!(prelude.cross.as_ref(), &[Arc::<str>::from("prelude-zone")]);
+            assert_eq!(prelude.options.allow_danger_zones, WalkBit::Forbid);
+            let mut next_step = assessment_walk_request(cx.evidence());
+            apply_stage_cross(&mut next_step, Some(&[]));
+            assert!(
+                next_step.cross.is_empty(),
+                "a fresh step inherits no earlier grants"
+            );
+            assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
+            let mut ordinary = assessment_walk_request(cx.evidence());
+            ordinary.options.allow_danger_zones = WalkBit::Allow;
+            apply_stage_cross(&mut ordinary, None);
+            assert_eq!(ordinary.options.allow_danger_zones, WalkBit::Allow);
         });
     }
 }

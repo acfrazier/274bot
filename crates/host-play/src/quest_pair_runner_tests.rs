@@ -61,7 +61,9 @@ impl Driver for NoopDriver {
     fn loc_typecode(&self, _: i32, _: i32) -> Option<i32> {
         None
     }
-    fn send_packet(&mut self, packet: &api::prot::Send) -> Result<(), api::prot::PacketError> { packet.write_for_revision(self.revision(), &mut self.out) }
+    fn send_packet(&mut self, packet: &api::prot::Send) -> Result<(), api::prot::PacketError> {
+        packet.write_for_revision(self.revision(), &mut self.out)
+    }
     fn login(&mut self, _: &str, _: &str, _: bool) -> bool {
         false
     }
@@ -230,6 +232,7 @@ fn paired_path(
                 worker,
                 Some(gang),
                 &script::local_state::OperatorLoadouts::absent(),
+                None,
             )
         }
     })
@@ -732,6 +735,7 @@ fn quest_pair_r2_runner_mismatched_queue_waits_for_solo_row_without_reserving_pe
                 &selected,
                 &quests,
                 worker,
+                None,
             )
             .unwrap()
         }
@@ -963,6 +967,7 @@ fn phase_path(
                 worker,
                 Some(gang),
                 &script::local_state::OperatorLoadouts::absent(),
+                None,
             )
         }
     })

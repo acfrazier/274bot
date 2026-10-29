@@ -20,6 +20,7 @@ use api::selected::{
     ClientRevision, FactKey, FamilyPreparation, ItemAmount, QuestGate, RequirementKind,
     SkillMinimum, SourceSpan, Truth,
 };
+use nav_planner::contract::{PackId, ZoneTableView};
 use sha2::{Digest, Sha256};
 use std::{
     any::Any,
@@ -250,6 +251,7 @@ pub struct CompiledSequence {
     pub stage: FactKey,
     pub terminal: bool,
     pub order: super::path::SequenceOrder,
+    pub cross: Arc<[Arc<str>]>,
     pub steps: Vec<CompiledStep>,
 }
 
@@ -430,6 +432,8 @@ struct CacheKey {
     /// operator row overrides a compiled kit of the same name, so rows
     /// are part of the compiled identity.
     loadouts: [u8; 32],
+    /// Pack that supplied the stable navigation-zone catalog.
+    nav_pack: Option<PackId>,
 }
 
 static CACHE: std::sync::LazyLock<Mutex<HashMap<CacheKey, Weak<CompiledPath>>>> =
@@ -464,16 +468,17 @@ pub fn digest_bytes(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
 
-/// Compile `bytes` against the selected facts and the operator's loadout
-/// rows (`operator`: the slot's local-state lease, or explicitly absent).
+/// Compile `bytes` against selected facts, the nav zone catalog, and operator
+/// loadout rows (`operator`: the slot's local-state lease, or explicitly absent).
 pub fn compile_path(
     bytes: &[u8],
     selected: &SelectedGameData,
     quests: &QuestCatalog,
     worker: &mut FamilyPreparation,
     operator: &OperatorLoadouts,
+    zones: Option<ZoneTableView<'_>>,
 ) -> Result<Arc<CompiledPath>, CompileError> {
-    compile_path_for_gang(bytes, selected, quests, worker, None, operator)
+    compile_path_for_gang(bytes, selected, quests, worker, None, operator, zones)
 }
 
 /// Select an immutable gang role after the owned membership read.
@@ -484,6 +489,7 @@ pub fn compile_path_for_gang(
     worker: &mut FamilyPreparation,
     gang: Option<super::pair::Gang>,
     operator: &OperatorLoadouts,
+    zones: Option<ZoneTableView<'_>>,
 ) -> Result<Arc<CompiledPath>, CompileError> {
     let digest = digest_bytes(bytes);
     let (revision, engine, content) = match selected.selected_pin() {
@@ -508,6 +514,7 @@ pub fn compile_path_for_gang(
         abi: abi_set(),
         gang,
         loadouts: operator.digest(),
+        nav_pack: zones.map(ZoneTableView::pack),
     };
     if let Ok(cache) = CACHE.lock() {
         if let Some(hit) = cache.get(&key).and_then(Weak::upgrade) {
@@ -518,7 +525,7 @@ pub fn compile_path_for_gang(
         .map_err(|error| CompileError::code("invalid-json").with_detail(error.to_string()))?;
     let gathering = prepare_gathering(&document, selected, worker)?;
     let compiled = Arc::new(compile_uncached(
-        &document, digest, selected, quests, gathering, gang, operator,
+        &document, digest, selected, quests, gathering, gang, operator, zones,
     )?);
     if let Ok(mut cache) = CACHE.lock() {
         cache.retain(|_, weak| weak.strong_count() > 0);
@@ -536,6 +543,303 @@ pub(super) fn prepare_gathering(
         .then(|| selected.prepare_gathering(worker))
         .transpose()
         .map_err(|_| CompileError::code("gathering-unavailable").with_path(document.id.clone()))
+}
+
+fn cross_id_error(
+    document: &PathDocument,
+    id: &str,
+    owner: &str,
+    step: Option<&FactKey>,
+) -> CompileError {
+    let mut error = CompileError::code("unknown-cross-id")
+        .with_path(document.id.clone())
+        .with_detail(format!(
+            "{owner} references unknown navigation zone id {id:?}"
+        ));
+    error.step = step.cloned();
+    error
+}
+
+fn route_cross_union_len(
+    ids: &[serde_json::Value],
+    stage_cross: &[super::path::RequiredZoneDocument],
+) -> usize {
+    let mut count = 0;
+    for (index, value) in ids.iter().enumerate() {
+        let Some(id) = value.as_str() else {
+            continue;
+        };
+        if ids[..index]
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|previous| previous == id)
+            || stage_cross.iter().any(|zone| zone.id.as_str() == id)
+        {
+            continue;
+        }
+        count += 1;
+    }
+    for (index, zone) in stage_cross.iter().enumerate() {
+        if stage_cross[..index]
+            .iter()
+            .any(|previous| previous.id == zone.id)
+        {
+            continue;
+        }
+        count += 1;
+    }
+    count
+}
+
+fn is_route_cross_kind(kind: &str) -> bool {
+    matches!(kind, "walk" | "combat")
+}
+
+fn nested_step_parts(value: &serde_json::Value) -> Option<(&str, &str, &serde_json::Value)> {
+    let object = value.as_object()?;
+    if object.keys().any(|key| {
+        ![
+            "id", "kind", "version", "args", "comment", "advances", "skip_if", "settle",
+        ]
+        .contains(&key.as_str())
+    }) || !object.contains_key("skip_if")
+        || !object.contains_key("settle")
+        || object
+            .get("version")
+            .and_then(serde_json::Value::as_u64)
+            .is_none_or(|version| version > u64::from(u16::MAX))
+        || object
+            .get("comment")
+            .is_some_and(|comment| !comment.is_null() && !comment.is_string())
+        || object
+            .get("advances")
+            .is_some_and(|advances| !advances.is_null() && !advances.is_boolean())
+    {
+        return None;
+    }
+    Some((
+        object.get("id")?.as_str()?,
+        object.get("kind")?.as_str()?,
+        object.get("args")?,
+    ))
+}
+
+fn visit_nested_step_documents(
+    value: &serde_json::Value,
+    visit: &mut impl FnMut(&str, &str, &serde_json::Value) -> Result<(), CompileError>,
+) -> Result<(), CompileError> {
+    match value {
+        serde_json::Value::Object(object) => {
+            if let Some((id, kind, args)) = nested_step_parts(value) {
+                visit(id, kind, args)?;
+                visit_nested_step_documents(args, visit)?;
+            } else {
+                for value in object.values() {
+                    visit_nested_step_documents(value, visit)?;
+                }
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                visit_nested_step_documents(value, visit)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_step_cross_array(
+    document: &PathDocument,
+    role: &super::path::PathRoleDocument,
+    step_id: &FactKey,
+    sequence: Option<&super::path::SequenceDocument>,
+    ids: &[serde_json::Value],
+    zones: Option<ZoneTableView<'_>>,
+) -> Result<(), CompileError> {
+    let maximum = nav_planner::contract::MAX_ZONE_KEYS;
+    if ids.len() > maximum {
+        let stage = sequence
+            .map(|sequence| format!(" in stage {:?}", sequence.stage.0))
+            .unwrap_or_default();
+        let mut error = CompileError::code("too-many-route-cross")
+            .with_path(document.id.clone())
+            .with_detail(format!(
+                "step {:?}{stage} declares {} cross values; the maximum per route is {maximum}",
+                step_id.0,
+                ids.len()
+            ));
+        error.step = Some(step_id.clone());
+        return Err(error);
+    }
+
+    if ids.iter().any(serde_json::Value::is_string) && zones.is_none() {
+        let mut error = CompileError::code("cross-catalog-unavailable")
+            .with_path(document.id.clone())
+            .with_detail(format!(
+                "the nav zone catalog is required to validate step {:?} cross ids",
+                step_id.0
+            ));
+        error.step = Some(step_id.clone());
+        return Err(error);
+    }
+    for id in ids.iter().filter_map(serde_json::Value::as_str) {
+        if zones.is_some_and(|zones| zones.resolve(id).is_none()) {
+            return Err(cross_id_error(
+                document,
+                id,
+                &format!("step {:?}", step_id.0),
+                Some(step_id),
+            ));
+        }
+    }
+
+    let check_stage = |stage: Option<&super::path::SequenceDocument>| -> Result<(), CompileError> {
+        let stage_cross = stage.map_or(&[][..], |sequence| sequence.cross.as_slice());
+        let union_len = route_cross_union_len(ids, stage_cross);
+        if union_len > maximum {
+            let stage_detail = stage
+                .map(|sequence| format!(" and stage {:?}", sequence.stage.0))
+                .unwrap_or_default();
+            let mut error = CompileError::code("too-many-route-cross")
+                    .with_path(document.id.clone())
+                    .with_detail(format!(
+                        "step {:?}{stage_detail} grants {union_len} unique cross ids; the maximum per route is {maximum}",
+                        step_id.0
+                    ));
+            error.step = Some(step_id.clone());
+            return Err(error);
+        }
+        Ok(())
+    };
+
+    if let Some(sequence) = sequence {
+        check_stage(Some(sequence))?;
+    } else if role.sequences.is_empty() {
+        check_stage(None)?;
+    } else {
+        // Unscoped steps, including automatically provisioned recipes, can
+        // run while any stage is current, so validate each possible union.
+        for sequence in &role.sequences {
+            check_stage(Some(sequence))?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_route_step_cross(
+    document: &PathDocument,
+    role: &super::path::PathRoleDocument,
+    step_id: &FactKey,
+    sequence: Option<&super::path::SequenceDocument>,
+    args: &serde_json::Value,
+    zones: Option<ZoneTableView<'_>>,
+) -> Result<(), CompileError> {
+    if let Some(ids) = args.get("cross").and_then(serde_json::Value::as_array) {
+        validate_step_cross_array(document, role, step_id, sequence, ids, zones)?;
+    }
+    Ok(())
+}
+
+fn validate_step_cross(
+    document: &PathDocument,
+    role: &super::path::PathRoleDocument,
+    step: &super::path::StepDocument,
+    sequence: Option<&super::path::SequenceDocument>,
+    zones: Option<ZoneTableView<'_>>,
+) -> Result<(), CompileError> {
+    if is_route_cross_kind(&step.kind) {
+        validate_route_step_cross(document, role, &step.id, sequence, &step.args, zones)?;
+    }
+    let mut validate_nested = |id: &str, kind: &str, args: &serde_json::Value| {
+        if is_route_cross_kind(kind) {
+            validate_route_step_cross(document, role, &FactKey::new(id), sequence, args, zones)?;
+        }
+        Ok(())
+    };
+    visit_nested_step_documents(&step.args, &mut validate_nested)
+}
+
+fn validate_cross_ids(
+    document: &PathDocument,
+    header: &super::path::QuestHeaderDocument,
+    role: &super::path::PathRoleDocument,
+    zones: Option<ZoneTableView<'_>>,
+) -> Result<(), CompileError> {
+    if role
+        .sequences
+        .iter()
+        .any(|sequence| !sequence.cross.is_empty())
+        && zones.is_none()
+    {
+        return Err(CompileError::code("cross-catalog-unavailable")
+            .with_path(document.id.clone())
+            .with_detail("the nav zone catalog is required to validate stage cross ids"));
+    }
+
+    for sequence in &role.sequences {
+        if sequence.cross.len() > nav_planner::contract::MAX_ZONE_KEYS {
+            return Err(CompileError::code("too-many-stage-cross")
+                .with_path(document.id.clone())
+                .with_detail(format!(
+                    "stage {:?} declares {} cross identities; the maximum is {}",
+                    sequence.stage.0,
+                    sequence.cross.len(),
+                    nav_planner::contract::MAX_ZONE_KEYS
+                )));
+        }
+        if sequence.cross.iter().enumerate().any(|(index, zone)| {
+            sequence.cross[..index]
+                .iter()
+                .any(|previous| previous.id == zone.id)
+        }) {
+            return Err(CompileError::code("duplicate-cross-id")
+                .with_path(document.id.clone())
+                .with_detail(format!("stage {:?} repeats a cross id", sequence.stage.0)));
+        }
+        for zone in &sequence.cross {
+            if zone.id.trim().is_empty() {
+                return Err(CompileError::code("empty-cross-id")
+                    .with_path(document.id.clone())
+                    .with_detail(format!(
+                        "stage {:?} has an empty cross id",
+                        sequence.stage.0
+                    )));
+            }
+            if zone.name.trim().is_empty() || zone.reason.trim().is_empty() {
+                return Err(CompileError::code("empty-cross-guide-text")
+                    .with_path(document.id.clone())
+                    .with_detail(format!(
+                        "stage {:?} cross id {:?} needs non-empty name and reason",
+                        sequence.stage.0, zone.id
+                    )));
+            }
+            if zones.is_some_and(|zones| zones.resolve(&zone.id).is_none()) {
+                return Err(cross_id_error(
+                    document,
+                    &zone.id,
+                    &format!("stage {:?}", sequence.stage.0),
+                    None,
+                ));
+            }
+        }
+    }
+
+    for step in header
+        .acquire
+        .values()
+        .flatten()
+        .chain(role.prelude.iter())
+        .chain(role.progress_reader.iter())
+    {
+        validate_step_cross(document, role, step, None, zones)?;
+    }
+    for sequence in &role.sequences {
+        for step in &sequence.steps {
+            validate_step_cross(document, role, step, Some(sequence), zones)?;
+        }
+    }
+    Ok(())
 }
 
 fn uses_gathering(document: &PathDocument) -> bool {
@@ -566,22 +870,56 @@ pub fn prepare_for_test<R: Send + 'static>(
 }
 
 /// Test helper: compile without the process cache and with no operator
-/// loadout rows.
+/// loadout rows or zone catalog.
 pub fn compile_uncached_for_test(
     document: &PathDocument,
     selected: &SelectedGameData,
     quests: &QuestCatalog,
 ) -> Result<Arc<CompiledPath>, CompileError> {
-    compile_uncached_for_test_with_loadouts(document, selected, quests, &OperatorLoadouts::absent())
+    compile_uncached_for_test_with_context(
+        document,
+        selected,
+        quests,
+        &OperatorLoadouts::absent(),
+        None,
+        None,
+    )
 }
 
-/// Test helper: compile without the process cache, against `operator`'s
-/// rows.
+/// Test helper: compile with one actual zone catalog.
+pub fn compile_uncached_for_test_with_zones(
+    document: &PathDocument,
+    selected: &SelectedGameData,
+    quests: &QuestCatalog,
+    zones: ZoneTableView<'_>,
+) -> Result<Arc<CompiledPath>, CompileError> {
+    compile_uncached_for_test_with_context(
+        document,
+        selected,
+        quests,
+        &OperatorLoadouts::absent(),
+        None,
+        Some(zones),
+    )
+}
+
+/// Test helper: compile without the process cache, against `operator`'s rows.
 pub fn compile_uncached_for_test_with_loadouts(
     document: &PathDocument,
     selected: &SelectedGameData,
     quests: &QuestCatalog,
     operator: &OperatorLoadouts,
+) -> Result<Arc<CompiledPath>, CompileError> {
+    compile_uncached_for_test_with_context(document, selected, quests, operator, None, None)
+}
+
+fn compile_uncached_for_test_with_context(
+    document: &PathDocument,
+    selected: &SelectedGameData,
+    quests: &QuestCatalog,
+    operator: &OperatorLoadouts,
+    gang: Option<super::pair::Gang>,
+    zones: Option<ZoneTableView<'_>>,
 ) -> Result<Arc<CompiledPath>, CompileError> {
     let gathering = uses_gathering(document)
         .then(|| api::gather_methods::cached(selected))
@@ -592,8 +930,9 @@ pub fn compile_uncached_for_test_with_loadouts(
         selected,
         quests,
         gathering,
-        None,
+        gang,
         operator,
+        zones,
     )
     .map(Arc::new)
 }
@@ -606,19 +945,32 @@ pub fn compile_uncached_for_test_as(
     quests: &QuestCatalog,
     gang: super::pair::Gang,
 ) -> Result<Arc<CompiledPath>, CompileError> {
-    let gathering = uses_gathering(document)
-        .then(|| api::gather_methods::cached(selected))
-        .flatten();
-    compile_uncached(
+    compile_uncached_for_test_with_context(
         document,
-        digest_bytes(b"test"),
         selected,
         quests,
-        gathering,
-        Some(gang),
         &OperatorLoadouts::absent(),
+        Some(gang),
+        None,
     )
-    .map(Arc::new)
+}
+
+/// Test helper: compile a partner Path against one actual zone catalog.
+pub fn compile_uncached_for_test_as_with_zones(
+    document: &PathDocument,
+    selected: &SelectedGameData,
+    quests: &QuestCatalog,
+    gang: super::pair::Gang,
+    zones: ZoneTableView<'_>,
+) -> Result<Arc<CompiledPath>, CompileError> {
+    compile_uncached_for_test_with_context(
+        document,
+        selected,
+        quests,
+        &OperatorLoadouts::absent(),
+        Some(gang),
+        Some(zones),
+    )
 }
 
 fn compile_requirement(
@@ -697,6 +1049,7 @@ pub(super) fn compile_uncached(
     gathering: Option<Arc<GatherCatalog>>,
     gang: Option<super::pair::Gang>,
     operator: &OperatorLoadouts,
+    zones: Option<ZoneTableView<'_>>,
 ) -> Result<CompiledPath, CompileError> {
     if document.schema != super::path::PATH_SCHEMA {
         return Err(CompileError::code("unsupported-schema").with_path(document.id.clone()));
@@ -732,6 +1085,7 @@ pub(super) fn compile_uncached(
         }
         &document.roles[0]
     };
+    validate_cross_ids(document, header, role, zones)?;
     if document.kind == super::path::PathKind::Miniquest && role.progress_reader.is_none() {
         return Err(CompileError::code("missing-miniquest-reader").with_path(document.id.clone()));
     }
@@ -1054,6 +1408,12 @@ pub(super) fn compile_uncached(
             stage: sequence.stage.clone(),
             terminal: sequence.terminal,
             order: sequence.order,
+            cross: sequence
+                .cross
+                .iter()
+                .map(|zone| Arc::<str>::from(zone.id.as_str()))
+                .collect::<Vec<_>>()
+                .into(),
             steps,
         });
     }
@@ -1891,6 +2251,21 @@ mod tests {
         QuestCatalog::from_identity(data.quest_identity()).unwrap_or_else(|_| QuestCatalog::empty())
     }
 
+    fn real_nav_lease() -> nav_planner::contract::NavLease {
+        let pack = std::path::PathBuf::from(
+            std::env::var_os("NAV_PACK").expect("set NAV_PACK to the real 289 nav pack"),
+        );
+        let bytes = std::fs::read(&pack)
+            .unwrap_or_else(|error| panic!("read real 289 pack {}: {error}", pack.display()));
+        let world = nav_planner::world::NavWorld::from_bytes(&bytes)
+            .unwrap_or_else(|error| panic!("load real 289 pack {}: {error}", pack.display()));
+        nav_planner::contract::NavLease::wrap(
+            Arc::new(world),
+            nav_planner::contract::PackDigest::of(&bytes),
+        )
+        .expect("create a lease for the real 289 zone catalog")
+    }
+
     /// Reproducible release-build measurements for the admitted Path compile
     /// allowance: a complex bundled Path, the largest bundled document, and
     /// a valid Path padded to the 1 MiB input ceiling. A new digest keeps each
@@ -1901,6 +2276,8 @@ mod tests {
         FamilyPreparation::run(move |worker| {
             let data = selected();
             let quests = quests(&data);
+            let nav = real_nav_lease();
+            let zones = nav.zones().expect("real 289 zone catalog");
             let largest = crate::quester::registry::PathRegistry::Bundled
                 .ids()
                 .into_iter()
@@ -1924,8 +2301,14 @@ mod tests {
                     b' ',
                 );
                 let started = std::time::Instant::now();
-                let result =
-                    compile_path(&bytes, &data, &quests, worker, &OperatorLoadouts::absent());
+                let result = compile_path(
+                    &bytes,
+                    &data,
+                    &quests,
+                    worker,
+                    &OperatorLoadouts::absent(),
+                    Some(zones),
+                );
                 eprintln!(
                     "QUESTER_COMPILE_POLICY name={name} bytes={} elapsed={:?}",
                     bytes.len(),
@@ -1951,6 +2334,7 @@ mod tests {
                 &quests,
                 worker,
                 &OperatorLoadouts::absent(),
+                None,
             )
             .unwrap();
             let hit = compile_path(
@@ -1959,14 +2343,22 @@ mod tests {
                 &quests,
                 worker,
                 &OperatorLoadouts::absent(),
+                None,
             )
             .unwrap();
             assert!(Arc::ptr_eq(&first, &hit));
             let mut changed: serde_json::Value = serde_json::from_slice(cook_bytes()).unwrap();
             changed["id"] = serde_json::json!("cook-cache-different");
             let bytes = serde_json::to_vec(&changed).unwrap();
-            let miss =
-                compile_path(&bytes, &data, &quests, worker, &OperatorLoadouts::absent()).unwrap();
+            let miss = compile_path(
+                &bytes,
+                &data,
+                &quests,
+                worker,
+                &OperatorLoadouts::absent(),
+                None,
+            )
+            .unwrap();
             assert!(!Arc::ptr_eq(&first, &miss));
             assert_eq!(first.id.0.as_ref(), "cook");
             assert_eq!(miss.id.0.as_ref(), "cook-cache-different");
@@ -2002,8 +2394,15 @@ mod tests {
             });
             document["roles"][0]["progress_reader"] = reader;
             let bytes = serde_json::to_vec(&document).unwrap();
-            let compiled =
-                compile_path(&bytes, &data, &quests, worker, &OperatorLoadouts::absent()).unwrap();
+            let compiled = compile_path(
+                &bytes,
+                &data,
+                &quests,
+                worker,
+                &OperatorLoadouts::absent(),
+                None,
+            )
+            .unwrap();
             assert_eq!(
                 compiled.progress_reader.as_ref().unwrap().id.0.as_ref(),
                 "gather-progress-reader"
@@ -2156,6 +2555,391 @@ mod tests {
             Err(err) => err,
             Ok(_) => panic!("compile must fail"),
         }
+    }
+    fn stage_cross_declaration(
+        id: &str,
+        name: &str,
+        reason: &str,
+    ) -> crate::quester::path::RequiredZoneDocument {
+        crate::quester::path::RequiredZoneDocument {
+            id: id.into(),
+            name: name.into(),
+            reason: reason.into(),
+        }
+    }
+
+    fn stage_cross_lease(ids: &[&str]) -> nav_planner::contract::NavLease {
+        crate::gatherer::select::tests::test_nav_lease(|world| {
+            let rect = nav_planner::router::AvoidRect {
+                min_x: 0,
+                max_x: 0,
+                min_z: 0,
+                max_z: 0,
+                level: Some(0),
+            };
+            let zones = ids
+                .iter()
+                .enumerate()
+                .map(|(index, _)| {
+                    nav_planner::zones::Zone::hazard(
+                        rect,
+                        0,
+                        u16::try_from(index).expect("fixture zone index fits"),
+                    )
+                })
+                .collect();
+            let kinds = ids
+                .iter()
+                .map(|id| nav_planner::zones::ZoneKind::new(*id, *id, -1, 0, false, false))
+                .collect();
+            let table = nav_planner::zones::ZoneTable::from_parts(
+                zones,
+                kinds,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                world.collision.origin,
+                world.collision.width as u32,
+                world.collision.height as u32,
+                &world.graph.wilderness,
+            )
+            .expect("stage cross fixture");
+            world.graph.zones = Some(table);
+        })
+    }
+
+    fn compile_with_stage_cross(
+        document: &PathDocument,
+        ids: &[&str],
+    ) -> Result<Arc<CompiledPath>, CompileError> {
+        let data = selected();
+        let quests = quests(&data);
+        let lease = stage_cross_lease(ids);
+        compile_uncached_for_test_with_zones(
+            document,
+            &data,
+            &quests,
+            lease.zones().expect("fixture zone catalog"),
+        )
+    }
+
+    #[test]
+    fn stage_cross_compiles_exact_catalog_ids() {
+        let id = "stage-zone-0";
+        let mut document = decode_cook().unwrap();
+        document.roles[0].sequences[0].cross = vec![stage_cross_declaration(
+            id,
+            "Stage zone",
+            "Cross to the next room.",
+        )];
+
+        let compiled = compile_with_stage_cross(&document, &[id]).unwrap();
+        assert_eq!(compiled.sequences[0].cross.len(), 1);
+        assert_eq!(compiled.sequences[0].cross[0].as_ref(), id);
+    }
+
+    #[test]
+    fn stage_cross_rejects_unknown_catalog_ids() {
+        let mut document = decode_cook().unwrap();
+        document.roles[0].sequences[0].cross = vec![stage_cross_declaration(
+            "missing-zone",
+            "Missing zone",
+            "This identity is not in the selected pack.",
+        )];
+
+        let error = compile_with_stage_cross(&document, &["known-zone"])
+            .err()
+            .expect("invalid zone declaration must fail");
+        assert_eq!(error.code.as_ref(), "unknown-cross-id");
+    }
+
+    #[test]
+    fn stage_cross_requires_a_catalog_when_declarations_exist() {
+        let mut document = decode_cook().unwrap();
+        document.roles[0].sequences[0].cross = vec![stage_cross_declaration(
+            "stage-zone",
+            "Stage zone",
+            "Cross to the next room.",
+        )];
+        let data = selected();
+        let error = compile_uncached_for_test(&document, &data, &quests(&data))
+            .err()
+            .expect("invalid guide must fail");
+        assert_eq!(error.code.as_ref(), "cross-catalog-unavailable");
+    }
+
+    #[test]
+    fn stage_cross_rejects_duplicate_ids() {
+        let mut document = decode_cook().unwrap();
+        let declaration =
+            stage_cross_declaration("stage-zone", "Stage zone", "Cross to the next room.");
+        document.roles[0].sequences[0].cross = vec![declaration.clone(), declaration];
+
+        let error = compile_with_stage_cross(&document, &["stage-zone"])
+            .err()
+            .expect("invalid zone declaration must fail");
+        assert_eq!(error.code.as_ref(), "duplicate-cross-id");
+    }
+
+    #[test]
+    fn stage_cross_rejects_blank_ids_and_guide_text() {
+        let mut document = decode_cook().unwrap();
+        document.roles[0].sequences[0].cross =
+            vec![stage_cross_declaration("  ", "Stage zone", "Cross safely.")];
+        let error = compile_with_stage_cross(&document, &["stage-zone"])
+            .err()
+            .expect("invalid zone declaration must fail");
+        assert_eq!(error.code.as_ref(), "empty-cross-id");
+
+        document.roles[0].sequences[0].cross =
+            vec![stage_cross_declaration("stage-zone", "  ", "Cross safely.")];
+        let error = compile_with_stage_cross(&document, &["stage-zone"])
+            .err()
+            .expect("invalid zone declaration must fail");
+        assert_eq!(error.code.as_ref(), "empty-cross-guide-text");
+
+        document.roles[0].sequences[0].cross =
+            vec![stage_cross_declaration("stage-zone", "Stage zone", "  ")];
+        let error = compile_with_stage_cross(&document, &["stage-zone"])
+            .err()
+            .expect("invalid zone declaration must fail");
+        assert_eq!(error.code.as_ref(), "empty-cross-guide-text");
+    }
+
+    #[test]
+    fn stage_cross_accepts_eight_ids_and_rejects_nine() {
+        let ids: Vec<_> = (0..=nav_planner::contract::MAX_ZONE_KEYS)
+            .map(|index| format!("stage-zone-{index}"))
+            .collect();
+        let id_refs: Vec<_> = ids.iter().map(String::as_str).collect();
+        let mut document = decode_cook().unwrap();
+        document.roles[0].sequences[0].cross = id_refs[..nav_planner::contract::MAX_ZONE_KEYS]
+            .iter()
+            .map(|id| stage_cross_declaration(id, "Stage zone", "Cross to the next room."))
+            .collect();
+
+        let compiled = compile_with_stage_cross(&document, &id_refs).unwrap();
+        assert_eq!(
+            compiled.sequences[0]
+                .cross
+                .iter()
+                .map(|id| id.as_ref())
+                .collect::<Vec<_>>(),
+            id_refs[..nav_planner::contract::MAX_ZONE_KEYS].to_vec(),
+        );
+
+        document.roles[0].sequences[0]
+            .cross
+            .push(stage_cross_declaration(
+                id_refs[nav_planner::contract::MAX_ZONE_KEYS],
+                "Stage zone",
+                "Cross to the next room.",
+            ));
+        let error = compile_with_stage_cross(&document, &id_refs)
+            .err()
+            .expect("invalid zone declaration must fail");
+        assert_eq!(error.code.as_ref(), "too-many-stage-cross");
+    }
+    #[test]
+    fn stage_cross_defaults_to_empty_without_a_catalog() {
+        let document = decode_cook().unwrap();
+        assert!(document.roles[0]
+            .sequences
+            .iter()
+            .all(|sequence| sequence.cross.is_empty()));
+
+        let data = selected();
+        let compiled = compile_uncached_for_test(&document, &data, &quests(&data)).unwrap();
+        assert!(compiled
+            .sequences
+            .iter()
+            .all(|sequence| sequence.cross.is_empty()));
+    }
+
+    #[test]
+    fn step_cross_rejects_unknown_catalog_ids() {
+        let mut document = decode_cook().unwrap();
+        let walk = document.roles[0].sequences[0]
+            .steps
+            .iter_mut()
+            .find(|step| step.id.0.as_ref() == "walk-mill-top")
+            .expect("Cook has a walk step");
+        walk.args["cross"] = serde_json::json!(["missing-zone"]);
+
+        let error = compile_with_stage_cross(&document, &["known-zone"])
+            .err()
+            .expect("invalid zone declaration must fail");
+        assert_eq!(error.code.as_ref(), "unknown-cross-id");
+        assert_eq!(error.step, Some(FactKey::new("walk-mill-top")));
+    }
+
+    #[test]
+    fn step_cross_requires_a_catalog_when_declarations_exist() {
+        let mut document = decode_cook().unwrap();
+        let walk = document.roles[0].sequences[0]
+            .steps
+            .iter_mut()
+            .find(|step| step.id.0.as_ref() == "walk-mill-top")
+            .expect("Cook has a walk step");
+        walk.args["cross"] = serde_json::json!(["known-zone"]);
+
+        let data = selected();
+        let error = compile_uncached_for_test(&document, &data, &quests(&data))
+            .err()
+            .expect("invalid guide must fail");
+        assert_eq!(error.code.as_ref(), "cross-catalog-unavailable");
+    }
+
+    #[test]
+    fn non_route_cross_arguments_are_not_route_authority() {
+        let document = decode_cook().unwrap();
+        let role = &document.roles[0];
+        let sequence = &role.sequences[0];
+        let mut talk = sequence
+            .steps
+            .iter()
+            .find(|step| step.kind == "talk")
+            .expect("Cook has a talk step")
+            .clone();
+        talk.args["cross"] = serde_json::json!(["missing-zone"]);
+
+        validate_step_cross(&document, role, &talk, Some(sequence), None)
+            .expect("unrelated family data is not route consent");
+    }
+
+    #[test]
+    fn nested_step_cross_is_checked_in_every_authored_step_list() {
+        for location in ["acquire", "prelude", "progress_reader", "sequence"] {
+            let mut document = decode_cook().unwrap();
+            let mut walk = document.roles[0].sequences[0]
+                .steps
+                .iter()
+                .find(|step| step.id.0.as_ref() == "walk-mill-top")
+                .expect("Cook has a walk step")
+                .clone();
+            walk.id = FactKey::new("parent-route");
+            walk.args["nested"] = serde_json::json!({
+                "route": {
+                    "id": "nested-route",
+                    "kind": "walk",
+                    "version": 1,
+                    "args": { "cross": ["missing-zone"] },
+                    "skip_if": { "Any": [] },
+                    "settle": { "Any": [] }
+                }
+            });
+            match location {
+                "acquire" => {
+                    document
+                        .quest
+                        .as_mut()
+                        .unwrap()
+                        .acquire
+                        .insert("acquire:cross-test".into(), vec![walk.clone()]);
+                }
+                "prelude" => document.roles[0].prelude.push(walk.clone()),
+                "progress_reader" => document.roles[0].progress_reader = Some(walk.clone()),
+                "sequence" => document.roles[0].sequences[0].steps.push(walk.clone()),
+                _ => unreachable!(),
+            }
+
+            let error = compile_with_stage_cross(&document, &["known-zone"])
+                .err()
+                .expect("invalid zone declaration must fail");
+            assert_eq!(error.code.as_ref(), "unknown-cross-id", "{location}");
+            assert_eq!(error.step, Some(FactKey::new("nested-route")), "{location}");
+        }
+    }
+
+    #[test]
+    fn step_and_stage_cross_union_is_limited_to_eight_ids() {
+        let ids: Vec<_> = (0..=nav_planner::contract::MAX_ZONE_KEYS)
+            .map(|index| format!("route-zone-{index}"))
+            .collect();
+        let id_refs: Vec<_> = ids.iter().map(String::as_str).collect();
+        let mut document = decode_cook().unwrap();
+        document.roles[0].sequences[0].cross = id_refs[..nav_planner::contract::MAX_ZONE_KEYS]
+            .iter()
+            .map(|id| stage_cross_declaration(id, "Stage zone", "Cross to the next room."))
+            .collect();
+        let walk = document.roles[0].sequences[0]
+            .steps
+            .iter_mut()
+            .find(|step| step.id.0.as_ref() == "walk-mill-top")
+            .expect("Cook has a walk step");
+        walk.args["cross"] =
+            serde_json::json!([id_refs[0], id_refs[nav_planner::contract::MAX_ZONE_KEYS],]);
+
+        let error = compile_with_stage_cross(&document, &id_refs)
+            .err()
+            .expect("invalid zone declaration must fail");
+        assert_eq!(error.code.as_ref(), "too-many-route-cross");
+        assert!(error
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("9 unique cross ids"));
+    }
+
+    #[test]
+    fn step_and_stage_cross_union_deduplicates_shared_ids() {
+        let ids: Vec<_> = (0..nav_planner::contract::MAX_ZONE_KEYS)
+            .map(|index| format!("route-zone-{index}"))
+            .collect();
+        let id_refs: Vec<_> = ids.iter().map(String::as_str).collect();
+        let mut document = decode_cook().unwrap();
+        document.roles[0].sequences[0].cross = id_refs
+            .iter()
+            .map(|id| stage_cross_declaration(id, "Stage zone", "Cross to the next room."))
+            .collect();
+        let walk = document.roles[0].sequences[0]
+            .steps
+            .iter_mut()
+            .find(|step| step.id.0.as_ref() == "walk-mill-top")
+            .expect("Cook has a walk step");
+        walk.args["cross"] = serde_json::json!([id_refs[0]]);
+
+        compile_with_stage_cross(&document, &id_refs)
+            .expect("the same grant from the step and stage counts only once");
+    }
+
+    #[test]
+    fn compile_cache_separates_navigation_catalog_identities() {
+        let mut document = decode_cook().unwrap();
+        document.roles[0].sequences[0].cross = vec![stage_cross_declaration(
+            "stage-zone",
+            "Stage zone",
+            "Cross safely.",
+        )];
+        let bytes = serde_json::to_vec(&document).unwrap();
+
+        prepare_for_test(move |worker| {
+            let data = selected();
+            let quests = quests(&data);
+            let first_nav = stage_cross_lease(&["stage-zone"]);
+            let first = compile_path(
+                &bytes,
+                &data,
+                &quests,
+                worker,
+                &OperatorLoadouts::absent(),
+                first_nav.zones(),
+            )
+            .unwrap();
+
+            let second_nav = stage_cross_lease(&["stage-zone"]);
+            let second = compile_path(
+                &bytes,
+                &data,
+                &quests,
+                worker,
+                &OperatorLoadouts::absent(),
+                second_nav.zones(),
+            )
+            .unwrap();
+
+            assert!(!Arc::ptr_eq(&first, &second));
+        });
     }
 
     fn acquire_recipe_step(id: &str, recipe: &str) -> StepDocument {
@@ -2581,8 +3365,6 @@ mod tests {
 
     #[test]
     fn path_walk_crossing_and_protection_compile_independently() {
-        let data = selected();
-        let quests = quests(&data);
         for args in [
             serde_json::json!({
                 "tile": [3224, 3200, 0],
@@ -2611,7 +3393,7 @@ mod tests {
                 version: 1,
                 args: serde_json::json!({ "tile": [3224, 3200, 0], "radius": 1 }),
             };
-            compile_uncached_for_test(&document, &data, &quests)
+            compile_with_stage_cross(&document, &["death-plateau-throwers"])
                 .expect("a named crossing or protection does not require the other");
         }
     }
@@ -2638,9 +3420,7 @@ mod tests {
             version: 1,
             args: serde_json::json!({ "tile": [3224, 3200, 0], "radius": 1 }),
         };
-        let data = selected();
-        let quests = quests(&data);
-        compile_uncached_for_test(&document, &data, &quests)
+        compile_with_stage_cross(&document, &["death-plateau-throwers"])
             .expect("guard protect admits a named zone crossing");
     }
 

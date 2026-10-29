@@ -636,7 +636,7 @@ export async function tick(api) {
             .any(|action| matches!(action.effect, script::native::HostEffect::Walk { .. })),
         "no bank walk after a failed leave"
     );
-    let (_, legacy, _) = slot.slot.drain_host_interacts();
+    let (_, legacy, _) = slot.slot.drain_host_interacts(None);
     assert!(!legacy
         .iter()
         .any(|row| matches!(row.req, script::shim::InteractReq::WalkNear { .. })));

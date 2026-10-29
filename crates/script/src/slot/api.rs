@@ -307,7 +307,7 @@ impl SlotScript {
                 self.stop_api_combat(*request_id)
             }
             crate::shim::InteractReq::ProgressRead { request_id, name } => {
-                self.start_api_progress(*request_id, name);
+                self.start_api_progress(*request_id, name, None);
             }
             _ => unreachable!("API control admission"),
         }
@@ -505,6 +505,7 @@ impl SlotScript {
             Arc::clone(&banks),
             Arc::clone(&retained),
             String::new(),
+            None,
         ) {
             Ok(job) => {
                 self.control_generation = generation;
@@ -600,6 +601,7 @@ impl SlotScript {
                 Arc::clone(banks),
                 Arc::clone(retained),
                 String::new(),
+                None,
             ) {
                 Ok(job) => {
                     seat.gather = GatherSeat::Preparing {

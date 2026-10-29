@@ -169,6 +169,7 @@ pub struct ScriptStartHandle {
     navs: Arc<Mutex<HashMap<String, NavBot>>>,
     statuses: Arc<Mutex<Vec<crate::SlotStatus>>>,
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
+    world: Option<Arc<nav_planner::world::NavWorld>>,
     named_banks: Arc<api::named_banks::NamedBankFacts>,
     /// The Play's state composition: a Start without caller-owned loadouts
     /// leases the operator's rows from it. `None` for the legacy direct
@@ -359,12 +360,20 @@ impl ScriptStartHandle {
                 } else if script::compiled_card(id).is_none() {
                     Err(Refused(format!("not ported: {}", id.0)))
                 } else if let Some(selected) = self.game_data.clone() {
+                    let nav = (id == script::quester::card::CARD.id)
+                        .then(|| {
+                            self.world
+                                .as_ref()
+                                .and_then(|world| nav_planner::producer::lease(world).ok())
+                        })
+                        .flatten();
                     slot.start_compiled(
                         name,
                         id,
                         Arc::new(bag),
                         selected,
                         Arc::clone(&self.named_banks),
+                        nav,
                     )
                     .map_err(|error| Refused(error.to_string()))
                 } else {
@@ -661,6 +670,13 @@ impl Play {
         })?;
         let banks = Arc::clone(&self.named_banks);
         let quester = id == script::quester::card::CARD.id;
+        let nav = quester
+            .then(|| {
+                self.world
+                    .as_ref()
+                    .and_then(|world| nav_planner::producer::lease(world).ok())
+            })
+            .flatten();
         let cold_gathering =
             id == script::CompiledId("Gatherer") && selected.try_gathering().is_none();
         let settings_input = script::preparation::PreparationInput::for_settings(revision, &bag)?;
@@ -713,23 +729,26 @@ impl Play {
                                 )
                                 .map_err(script::native::StartError::Facts)?,
                             );
-                            registry_preparation = Some(
+                            let source =
+                                folder_source.take().expect("Quester folder source captured");
+                            let preparation =
                                 script::quester::registry::RegistryPreparation::from_source(
-                                    folder_source.take().expect("Quester folder source captured"),
+                                    source,
                                     Arc::clone(&selected),
                                     Arc::clone(&quests),
+                                    nav.clone(),
                                 )
-                                .map_err(|error| {
-                                    script::native::StartError::Unavailable(
-                                        format!(
-                                            "{}: {}",
-                                            error.code,
-                                            error.detail.as_deref().unwrap_or("Path reload failed")
-                                        )
-                                        .into(),
+                            .map_err(|error| {
+                                script::native::StartError::Unavailable(
+                                    format!(
+                                        "{}: {}",
+                                        error.code,
+                                        error.detail.as_deref().unwrap_or("Path reload failed")
                                     )
-                                })?,
-                            );
+                                    .into(),
+                                )
+                            })?;
+                            registry_preparation = Some(preparation);
                             registry_quests = Some(quests);
                         }
                         registry_preparation
@@ -809,6 +828,8 @@ impl Play {
                             Arc::clone(&selected),
                             Arc::clone(&banks),
                             ready,
+                            nav.as_ref()
+                                .and_then(nav_planner::contract::NavLease::zones),
                         )
                         .map(|config| PreparedScriptConfig {
                             config,
@@ -1005,6 +1026,7 @@ impl Play {
             navs: Arc::clone(&self.navs),
             statuses: Arc::clone(&self.statuses),
             game_data: self.game_data.clone(),
+            world: self.world.clone(),
             named_banks: Arc::clone(&self.named_banks),
             state: self.local_state.clone(),
         }

@@ -1047,6 +1047,7 @@ fn started_with_banks(
         Arc::new(bag),
         Arc::clone(selected),
         banks,
+        None,
     )
     .unwrap();
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -1579,6 +1580,7 @@ fn restart_required_edit_is_not_applied_in_place() {
             prepared_selected,
             Arc::default(),
             None,
+            None,
         )
     })
     .unwrap()
@@ -1745,6 +1747,7 @@ fn restart_required_edit_supersedes_an_older_boundary_edit() {
                 selected,
                 Arc::default(),
                 None,
+                None,
             )
         })
         .unwrap()
@@ -1834,6 +1837,7 @@ fn power_to_bank_edit_waits_for_the_live_drop_batch_and_the_next_full_pack() {
             ),
             preparation_selected,
             Arc::default(),
+            None,
             None,
         )
     })
@@ -2247,6 +2251,7 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
                 Arc::new(settings),
                 selected,
                 facts,
+                None,
                 None,
             )
         }
@@ -3400,6 +3405,7 @@ fn site_first_walk_resume_and_changed_site_fresh_start_keep_selected_resource_an
             worker_selected,
             Arc::default(),
             None,
+            None,
         )
     })
     .unwrap()
@@ -3423,6 +3429,7 @@ fn site_first_walk_resume_and_changed_site_fresh_start_keep_selected_resource_an
         Arc::new(site_willow_bag("woodcutting.market")),
         Arc::clone(&selected),
         Arc::default(),
+        None,
     )
     .unwrap();
     let deadline = Instant::now() + Duration::from_secs(20);

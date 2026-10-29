@@ -519,7 +519,7 @@ fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows()
     let broker = ChannelBroker::default();
     let sender = broker.slot(SLOT);
     let peers = ["bob", "carol", "dave"].map(|name| broker.slot(name));
-    let (_, receiver_rows, _) = receiver.slot().lock().unwrap().drain_host_interacts();
+    let (_, receiver_rows, _) = receiver.slot().lock().unwrap().drain_host_interacts(None);
     let receiver_generation = receiver.slot().lock().unwrap().runtime_generation();
     let receiver_channel_id = receiver_rows
         .iter()
@@ -632,7 +632,7 @@ fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows()
     );
     rig.probe("__channel.close()");
     rig.isolate_tick_without_host_drain();
-    let (_, rows, owned) = rig.slot().lock().unwrap().drain_host_interacts();
+    let (_, rows, owned) = rig.slot().lock().unwrap().drain_host_interacts(None);
     assert!(owned);
     sender.pump(
         rig.slot().lock().unwrap().runtime_generation(),
@@ -1060,7 +1060,7 @@ impl GatherReconnectRig {
     fn drain_host(&self) -> (Vec<script::shim::InteractReq>, bool) {
         let cell = self.slot();
         let mut slot = cell.lock().unwrap();
-        let (policy, requests, owned) = drain_observed_host_interacts(&mut slot);
+        let (policy, requests, owned) = drain_observed_host_interacts(&mut slot, None);
         assert!(policy.is_none(), "fixture emits no run-policy update");
         (
             requests.into_iter().map(|queued| queued.req).collect(),

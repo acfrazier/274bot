@@ -4467,6 +4467,29 @@
         "flag"
       ]
     },
+    "RequiredZoneDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "reason"
+      ]
+    },
     "SequenceDocument": {
       "type": "object",
       "additionalProperties": false,
@@ -4496,6 +4519,14 @@
         "order": {
           "$ref": "#/$defs/SequenceOrder",
           "default": "authored"
+        },
+        "cross": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RequiredZoneDocument"
+          },
+          "maxItems": 8,
+          "default": []
         },
         "steps": {
           "type": "array",

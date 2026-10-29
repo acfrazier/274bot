@@ -37,7 +37,7 @@ fn held_frame(slot: &mut SlotScript, reqs: Vec<InteractReq>) {
     let mut pages = slot.surface.as_ref().unwrap().drain_seat_batches();
     pages.push(page(slot, reqs));
     slot.surface.as_ref().unwrap().restore_seat_batches(pages);
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
 }
 
 fn held_rows(slot: &SlotScript) -> Vec<InteractReq> {
@@ -61,7 +61,7 @@ fn floor(energy: i32) -> InteractReq {
 
 fn resumed_policy(slot: &mut SlotScript) -> Option<Option<RunPolicyOverride>> {
     slot.seat_guardian_hold(false);
-    let (policy, _, _) = slot.drain_host_interacts();
+    let (policy, _, _) = slot.drain_host_interacts(None);
     policy
 }
 
@@ -167,7 +167,7 @@ fn held_camera_yaws_end_at_the_last_yaw_without_a_hold_cap() {
     assert_eq!(held_rows(&slot), [InteractReq::SetCameraYaw { yaw: 141 }]);
     assert_eq!(slot.seat.as_ref().unwrap().dropped(), dropped_before);
     slot.seat_guardian_hold(false);
-    let (_, reqs, _) = slot.drain_host_interacts();
+    let (_, reqs, _) = slot.drain_host_interacts(None);
     slot.stop();
     assert_eq!(
         reqs.into_iter()
@@ -335,7 +335,7 @@ fn held_wait_fold_matches_the_event_order_replay_through_the_slot() {
             held_frame(&mut slot, reqs);
         }
         slot.seat_guardian_hold(false);
-        let _ = slot.drain_host_interacts();
+        let _ = slot.drain_host_interacts(None);
         let facts = slot.drain_lifecycle();
         slot.feed_watchdog(now, None, &[], false, true, &facts);
         assert_eq!(
@@ -356,7 +356,7 @@ fn held_settle_then_enqueue_keeps_the_later_wait() {
     held_frame(&mut slot, vec![InteractReq::WaitSettled]);
     held_frame(&mut slot, vec![InteractReq::WaitEnqueued]);
     slot.seat_guardian_hold(false);
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     let facts = slot.drain_lifecycle();
     slot.feed_watchdog(Instant::now(), None, &[], false, true, &facts);
     let active = slot.watchdog().wait_active();
@@ -453,7 +453,7 @@ fn held_channel_lane_refuses_only_posts_and_keeps_order() {
     );
     assert!(rows.len() > HELD_LIFECYCLE_ROWS - HeldReplacement::KEYS);
     slot.seat_guardian_hold(false);
-    let (_, reqs, _) = slot.drain_host_interacts();
+    let (_, reqs, _) = slot.drain_host_interacts(None);
     let delivered: Vec<_> = reqs.into_iter().map(|queued| queued.req).collect();
     let seat_dropped = slot.seat.as_ref().unwrap().dropped() - dropped_before;
     slot.stop();
@@ -543,7 +543,7 @@ fn held_resume_delivers_an_authorized_inspect_after_141_previews() {
     let rows = held_rows(&slot);
     let before = dropped(&slot);
     slot.seat_guardian_hold(false);
-    let (_, reqs, _) = slot.drain_host_interacts();
+    let (_, reqs, _) = slot.drain_host_interacts(None);
     let after = dropped(&slot);
     slot.stop();
     assert_eq!(
@@ -589,7 +589,7 @@ fn held_resume_delivers_late_replacements_after_141_opens() {
     );
     let before = dropped(&slot);
     slot.seat_guardian_hold(false);
-    let (policy, reqs, _) = slot.drain_host_interacts();
+    let (policy, reqs, _) = slot.drain_host_interacts(None);
     let watchdog = std::mem::take(&mut slot.seat_lifecycle);
     let after = dropped(&slot);
     slot.stop();
@@ -631,7 +631,7 @@ fn held_resume_keeps_close_and_inspect_after_a_full_post_lane_and_every_replacem
     let rows = held_rows(&slot);
     let refused = dropped(&slot) - start;
     slot.seat_guardian_hold(false);
-    let (_, reqs, _) = slot.drain_host_interacts();
+    let (_, reqs, _) = slot.drain_host_interacts(None);
     let after = dropped(&slot) - start;
     slot.stop();
     assert_eq!(
@@ -691,7 +691,7 @@ fn held_resume_delivers_every_retained_row_across_takes_in_order() {
     let rows = held_rows(&slot);
     let before = dropped(&slot);
     slot.seat_guardian_hold(false);
-    let (policy, reqs, _) = slot.drain_host_interacts();
+    let (policy, reqs, _) = slot.drain_host_interacts(None);
     let after = dropped(&slot);
     slot.stop();
     let mut expected = vec![InteractReq::AbortWalk { request_id: 5 }];
@@ -761,8 +761,8 @@ fn held_resume_pages_around_queued_rows_and_later_batches_queue_behind() {
     pages.push(page(&slot, vec![lane_open(999)]));
     slot.surface.as_ref().unwrap().restore_seat_batches(pages);
     let before = dropped(&slot);
-    let (_, first, _) = slot.drain_host_interacts();
-    let (_, second, _) = slot.drain_host_interacts();
+    let (_, first, _) = slot.drain_host_interacts(None);
+    let (_, second, _) = slot.drain_host_interacts(None);
     let after = dropped(&slot);
     slot.stop();
     assert_eq!(
@@ -837,7 +837,7 @@ fn drain_retained_with_progress(
         if held_rows(slot).is_empty() {
             return (delivered, frame);
         }
-        let (_, reqs, _) = slot.drain_host_interacts();
+        let (_, reqs, _) = slot.drain_host_interacts(None);
         let before = delivered.len();
         delivered.extend(
             requests(reqs)
@@ -946,7 +946,7 @@ fn held_second_hold_keeps_the_controls_of_a_waiting_fold() {
         .as_ref()
         .unwrap()
         .restore_seat_batches(vec![admit]);
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     let live = |slot: &SlotScript| {
         slot.seat
             .as_ref()
@@ -980,14 +980,14 @@ fn held_second_hold_keeps_the_controls_of_a_waiting_fold() {
             )
             .unwrap();
     }
-    let (_, first, _) = slot.drain_host_interacts();
+    let (_, first, _) = slot.drain_host_interacts(None);
     assert_eq!(first.len(), 141, "the waiting rows take the first frame");
     assert!(live(&slot), "the cancel waits with the retained fold");
     slot.seat_guardian_hold(true);
     held_frame(&mut slot, vec![lane_open(50)]);
     slot.seat_guardian_hold(false);
     let before = dropped(&slot);
-    let (_, resumed, _) = slot.drain_host_interacts();
+    let (_, resumed, _) = slot.drain_host_interacts(None);
     let still_live = live(&slot);
     let after = dropped(&slot);
     slot.stop();
@@ -1045,18 +1045,18 @@ fn rehold_while_the_fold_waits(
         .as_ref()
         .unwrap()
         .restore_seat_batches(vec![initial]);
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     for batch in newer {
         slot.seat_guardian_hold(false);
         fill_seat_queue(slot);
         let mut batches = slot.surface.as_ref().unwrap().drain_seat_batches();
         batches.push(batch);
         slot.surface.as_ref().unwrap().restore_seat_batches(batches);
-        let (_, first, _) = slot.drain_host_interacts();
+        let (_, first, _) = slot.drain_host_interacts(None);
         assert_eq!(first.len(), 141, "the blocking rows take the frame");
         assert_eq!(held_rows(slot).len(), 20, "the fold still waits");
         slot.seat_guardian_hold(true);
-        let _ = slot.drain_host_interacts();
+        let _ = slot.drain_host_interacts(None);
     }
     let mut carried = slot.surface.as_ref().unwrap().drain_seat_batches();
     assert_eq!(carried.len(), 1, "one folded batch");
@@ -1079,7 +1079,7 @@ fn held_rehold_keeps_a_phase_that_returns_to_an_earlier_value() {
         .as_ref()
         .unwrap()
         .restore_seat_batches(vec![admit]);
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     let mut initial = page(&slot, (1..=20).map(lane_open).collect());
     initial.machine_events = vec![machine_event(1, Phase(NativePhase::Waiting))];
     let newer = [NativePhase::Working, NativePhase::Waiting]
@@ -1101,7 +1101,7 @@ fn held_rehold_keeps_a_phase_that_returns_to_an_earlier_value() {
         .unwrap()
         .restore_seat_batches(vec![carried]);
     slot.seat_guardian_hold(false);
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     let phase = slot.seat.as_ref().unwrap().machine_phase(id(1));
     slot.stop();
     assert_eq!(
@@ -1129,6 +1129,7 @@ fn held_rehold_phase_a_b_a_ends_at_the_newest_phase() {
         decoded(vec![start_input(&slot, 1, NativeKind::Hunt)], Vec::new()),
         0,
         &[],
+        None,
     );
     let mut initial = page(&slot, (1..=20).map(lane_open).collect());
     initial.machine_events = vec![machine_event(1, Phase(NativePhase::Waiting))];
@@ -1147,7 +1148,7 @@ fn held_rehold_phase_a_b_a_ends_at_the_newest_phase() {
         .restore_seat_batches(vec![carried]);
     slot.seat_guardian_hold(false);
     let before = dropped(&slot);
-    let (_, delivered, _) = slot.drain_host_interacts();
+    let (_, delivered, _) = slot.drain_host_interacts(None);
     let phase = slot.seat.as_ref().unwrap().machine_phase(id(1));
     let after = dropped(&slot);
     slot.stop();
@@ -1197,7 +1198,7 @@ fn held_rehold_carries_a_repeated_mirror_revoke_once() {
     slot.seat_guardian_hold(false);
     let late_before = slot.seat.as_ref().unwrap().late_controls();
     let before = dropped(&slot);
-    let (_, delivered, _) = slot.drain_host_interacts();
+    let (_, delivered, _) = slot.drain_host_interacts(None);
     let seat = slot.seat.as_ref().unwrap();
     let (consumed, late_after) = (seat.mirror_revokes_consumed(), seat.late_controls());
     let after = dropped(&slot);
@@ -1334,8 +1335,8 @@ fn host_held_tick_keeps_the_walk_abort_and_drops_gameplay() {
         .unwrap()
         .restore_seat_batches(vec![batch]);
     let before = dropped(&slot);
-    let (_, held, _) = slot.drain_host_interacts();
-    let (_, still, _) = slot.drain_host_interacts();
+    let (_, held, _) = slot.drain_host_interacts(None);
+    let (_, still, _) = slot.drain_host_interacts(None);
     let seat = slot.seat.as_ref().unwrap();
     let (frozen, admitted) = (
         seat.held(),
@@ -1343,8 +1344,8 @@ fn host_held_tick_keeps_the_walk_abort_and_drops_gameplay() {
     );
     let held_dropped = dropped(&slot) - before;
     slot.seat_host_hold(false);
-    let (_, after, _) = slot.drain_host_interacts();
-    let (_, later, _) = slot.drain_host_interacts();
+    let (_, after, _) = slot.drain_host_interacts(None);
+    let (_, later, _) = slot.drain_host_interacts(None);
     slot.stop();
     assert!(!frozen, "a host hold does not freeze the seat");
     assert!(
@@ -1392,7 +1393,7 @@ fn drained_frame(
     let mut pages = slot.surface.as_ref().unwrap().drain_seat_batches();
     pages.push(page(slot, reqs));
     slot.surface.as_ref().unwrap().restore_seat_batches(pages);
-    let (policy, reqs, _) = slot.drain_host_interacts();
+    let (policy, reqs, _) = slot.drain_host_interacts(None);
     (policy, requests(reqs))
 }
 
@@ -1428,8 +1429,8 @@ fn watchdog_held_tick_keeps_walk_aborts_in_send_order_and_drops_gameplay() {
     );
     let held_dropped = dropped(&slot) - before;
     end_watchdog_hold(&mut slot);
-    let (_, after, _) = slot.drain_host_interacts();
-    let (_, later, _) = slot.drain_host_interacts();
+    let (_, after, _) = slot.drain_host_interacts(None);
+    let (_, later, _) = slot.drain_host_interacts(None);
     slot.stop();
     assert_eq!(first, (None, Vec::new()), "the held frame delivers nothing");
     assert_eq!(second, (None, Vec::new()), "the aborts wait for the hold");
@@ -1469,10 +1470,10 @@ fn watchdog_held_tick_keeps_a_walk_abort_queued_in_the_seat() {
     hold_for_watchdog(&mut slot);
     slot.seat_held_tick();
     let reserved = slot.seat.as_ref().unwrap().reserved_releases();
-    let (_, held, _) = slot.drain_host_interacts();
+    let (_, held, _) = slot.drain_host_interacts(None);
     slot.seat_held_tick();
     end_watchdog_hold(&mut slot);
-    let (_, after, _) = slot.drain_host_interacts();
+    let (_, after, _) = slot.drain_host_interacts(None);
     slot.stop();
     assert_eq!(reserved, 1, "the abort keeps its walk release slot");
     assert!(requests(held).is_empty(), "the abort waits for the hold");
@@ -1568,6 +1569,7 @@ fn guardian_hold_neither_completes_nor_starts_a_native() {
         decoded(vec![start_input(&slot, 1, NativeKind::Hunt)], Vec::new()),
         0,
         &[],
+        None,
     );
     let state = |slot: &SlotScript| {
         let seat = slot.seat.as_ref().unwrap();
@@ -1585,12 +1587,13 @@ fn guardian_hold_neither_completes_nor_starts_a_native() {
         .as_ref()
         .unwrap()
         .restore_seat_batches(vec![held]);
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     let after_frame = state(&slot);
     slot.consume_seat_batch(
         decoded(vec![start_input(&slot, 2, NativeKind::Hunt)], Vec::new()),
         0,
         &[machine_event(1, Done)],
+        None,
     );
     let after_batch = state(&slot);
     slot.stop();
@@ -1666,7 +1669,7 @@ fn held_stubbed_wait_fold_matches_event_order() {
     );
 
     slot.seat_guardian_hold(false);
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     let folded = slot.drain_lifecycle();
     slot.feed_watchdog(now, None, &[], false, true, &folded);
     let count = slot.watchdog().wait_inflight();
@@ -1730,7 +1733,7 @@ fn held_stubbed_channel_fold_delivers_late_close() {
     let held = held_rows(&slot);
     let before = dropped(&slot);
     slot.seat_guardian_hold(false);
-    let (_, reqs, _) = slot.drain_host_interacts();
+    let (_, reqs, _) = slot.drain_host_interacts(None);
     let after = dropped(&slot);
     slot.stop();
 

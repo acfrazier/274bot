@@ -20,6 +20,7 @@ pub mod paint_style;
 #[path = "paint_tests.rs"]
 mod paint_tests;
 pub mod paths;
+mod prestart_zones;
 mod vocab;
 pub(crate) use loadouts::Refused;
 pub use loadouts::{LoadoutForm, Loadouts, LoadoutsError, LoadoutsErrorKind, WornSlot};
@@ -35,6 +36,9 @@ pub use paint::{
 pub use paint_layout::{
     clipped_prefix, ButtonItem, ChromeItem, FooterLayout, PaintLayout, PaintRect, PaintSlot,
     RowItem, TabItem,
+};
+pub use prestart_zones::{
+    QuesterStartZone, QuesterStartZoneCache, QuesterStartZoneScope, QuesterStartZones,
 };
 pub use vocab::{
     format_setting_value, CardRuntime, CardSource, CompiledCardId, OwnedSchema, SchemaRef,

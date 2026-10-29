@@ -52,6 +52,8 @@ pub struct CompiledTick<'a> {
     /// Packed world collision for off-scene Area arrival (resource return
     /// stands). `None` in a bare ctx or when the host has no nav pack.
     pub collision: Option<nav_planner::contract::CollisionView<'a>>,
+    /// Immutable pack lease retained by off-pump Path compilation.
+    pub nav: Option<nav_planner::contract::NavLease>,
     /// Lazy, read-only danger admission for compiled target selection.
     /// Missing navigation data is not permission to start a new walk.
     pub walk_danger: Option<&'a dyn crate::native::WalkDangerQuery>,

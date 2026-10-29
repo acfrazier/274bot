@@ -4147,6 +4147,80 @@ fn script_prefs_labels_wrap_inside_the_normal_and_narrow_window() {
 }
 
 #[test]
+fn script_section_discloses_only_the_selected_quester_queue() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let dir = TestDir::new("quester-start-zone-disclosure");
+    let mut session = crate::session::Session::new();
+    let mut vault =
+        frontend_core::test_support::VaultFixture::create(&dir.join("vault"), "test-passphrase-01");
+    let compiled_settings = serde_json::json!({
+        "schema_version": 3,
+        "values": {
+            "quests": ["arthur"],
+            "include_draft_guides": true
+        }
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    vault.put(frontend_core::test_support::session::with_settings_bag(
+        frontend_core::test_support::FixtureProfile::new("alice", "pw").uid(1),
+        &format!(
+            "compiled:{}",
+            frontend_core::scripts::CompiledCardId::QUESTER.as_str()
+        ),
+        compiled_settings,
+    ));
+    frontend_core::test_support::session::install_vault(&mut session.core, vault);
+    session.set_focus_for_test("alice");
+    session.script_sel = Some(ScriptChoice::compiled(
+        frontend_core::scripts::CompiledCardId::QUESTER,
+    ));
+
+    let mut ctx = dock_host_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([1600.0, 1600.0], 1.0 / 60.0)
+            .renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        ui.window("Selected Quester zone disclosure")
+            .size([1400.0, 1500.0], dear_imgui_rs::Condition::Always)
+            .build(|| super::script_section(ui, &mut session));
+        ui.log_finish();
+    }
+    ctx.render();
+
+    let text = drawn.0.take();
+    assert!(text.contains("Start zone scope"), "{text}");
+    assert!(
+        text.contains("Merlin's Crystal (arthur) · stage arthur:3"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Keep Le Faye Renegade Knight (2773,3399,0)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Cross the keep's ground floor to reach Sir Mordred."),
+        "{text}"
+    );
+    assert!(
+        !text.contains("Prince Ali Rescue"),
+        "only the selected Arthur queue is disclosed: {text}"
+    );
+    let disclosure = text.find("Start zone scope").unwrap();
+    let start_button = text.rfind("[ Start ]").expect("the Start control is drawn");
+    assert!(
+        disclosure < start_button,
+        "zone consent appears before Start: {text}"
+    );
+}
+
+#[test]
 fn script_prefs_draw_number_bounds_and_invalid_text_at_the_field() {
     let _guard = crate::test_support::imgui_context_guard();
     let mut ctx = dock_host_context();

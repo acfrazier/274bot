@@ -36,6 +36,7 @@ fn start(slot: &mut crate::SlotScript) {
             Arc::new(serde_json::from_value(serde_json::json!({"quests": ["cook"]})).unwrap()),
             api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
             Arc::default(),
+            None,
         )
         .unwrap();
         match settle_result(slot) {

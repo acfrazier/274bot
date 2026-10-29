@@ -180,8 +180,9 @@ fn start_api_gather_and_wait(slot: &mut SlotScript, selected: &api::game_data::S
         },
         0,
         &[],
+        None,
     );
-    let (policy, visible, owned) = slot.drain_host_interacts();
+    let (policy, visible, owned) = slot.drain_host_interacts(None);
     assert!(policy.is_none());
     assert!(
         visible
@@ -200,7 +201,7 @@ fn start_api_gather_and_wait(slot: &mut SlotScript, selected: &api::game_data::S
     while slot.native_status().is_none() && Instant::now() < deadline {
         native_tick_at(slot, selected, tick, None, false);
         tick += 1;
-        let (_, visible, _) = slot.drain_host_interacts();
+        let (_, visible, _) = slot.drain_host_interacts(None);
         assert!(
             visible
                 .iter()
@@ -456,7 +457,7 @@ fn session_reset_discards_old_surface_policy_batch() {
 
     run.set_generation(1);
     slot.reset_session_work();
-    let (old_policy, old_requests, _) = slot.drain_host_interacts();
+    let (old_policy, old_requests, _) = slot.drain_host_interacts(None);
     assert!(
         old_policy.is_none() && old_requests.is_empty(),
         "the old connection generation stays fenced"
@@ -1194,6 +1195,7 @@ fn compiled_ctx<'a>(
             reach_flood: None,
             bank_memory: None,
             collision: None,
+            nav: None,
             hold: false,
             world_members: api::selected::Truth::Unknown,
             interacts: None,
@@ -1404,7 +1406,7 @@ fn run_stub_walk_tick(slot: &mut SlotScript, n: u64) -> (i32, i32, i32) {
 
 fn held_stub_walk_tick(slot: &mut SlotScript, run: &StubSurfaceHandle, n: u64, now: Instant) {
     let here = run_stub_walk_tick(slot, n);
-    let (_, game_rows, _) = slot.drain_host_interacts();
+    let (_, game_rows, _) = slot.drain_host_interacts(None);
     assert!(
         game_rows.iter().all(|row| !matches!(
             &row.req,
@@ -1477,6 +1479,7 @@ fn stub_walk_in_slot_custody_at_reconnect_requests_fresh_walk() {
             queued.batch,
             queued.observed_walk_outcome_seq,
             &queued.machine_events,
+            None,
         );
     }
     let in_custody = slot
@@ -1494,7 +1497,7 @@ fn stub_walk_in_slot_custody_at_reconnect_requests_fresh_walk() {
 
     assert!(slot.reconnect_session_work());
     slot.on_is_up(true);
-    let (_, discarded, _) = slot.drain_host_interacts();
+    let (_, discarded, _) = slot.drain_host_interacts(None);
     assert!(
         !discarded.iter().any(|row| is_test_walk(&row.req)),
         "the old-session walk is discarded: {discarded:?}"
@@ -1503,7 +1506,7 @@ fn stub_walk_in_slot_custody_at_reconnect_requests_fresh_walk() {
     run.set_generation(1);
     align_ready_test_seat(&mut slot);
     run.queue_seat_batches([queued_stub_walk_batch(1)]);
-    let (_, fresh, _) = slot.drain_host_interacts();
+    let (_, fresh, _) = slot.drain_host_interacts(None);
     let fresh: Vec<_> = fresh
         .into_iter()
         .filter(|row| is_test_walk(&row.req))

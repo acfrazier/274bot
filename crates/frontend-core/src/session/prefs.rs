@@ -572,7 +572,14 @@ impl<Io> OperatorSession<Io> {
         paths: &mut crate::QuesterPathsController,
         selected: Option<Arc<api::game_data::SelectedGameData>>,
     ) {
-        paths.advance(selected);
+        let nav = if paths.needs_navigation() {
+            self.nav_world()
+                .as_ref()
+                .and_then(|world| nav_planner::producer::lease(world).ok())
+        } else {
+            None
+        };
+        paths.advance(selected, nav);
         if let Some((request, outcome)) = paths.take_settled_reload() {
             let (terminal, detail) = match outcome {
                 Ok(()) => (
@@ -915,11 +922,15 @@ impl<Io> OperatorSession<Io> {
         surface: &mut S,
     ) -> Applied {
         let selected = self.commands.take_quester_game_data();
+        let nav = self
+            .nav_world()
+            .as_ref()
+            .and_then(|world| nav_planner::producer::lease(world).ok());
         let mut models = surface.models();
         let Some(paths) = models.quester.as_deref_mut() else {
             return no_model("Quest Paths");
         };
-        match paths.request_reload_for(request, selected) {
+        match paths.request_reload_for(request, selected, nav) {
             Ok(()) => Applied::Later,
             Err(crate::quester_paths::ReloadRefused::Running) => {
                 Applied::Skipped(SkipReason::NotReady)
@@ -927,6 +938,10 @@ impl<Io> OperatorSession<Io> {
             Err(crate::quester_paths::ReloadRefused::NoGameData) => Applied::Rejected(
                 Rejection::NotApplicable,
                 Some("Load a profile before reloading quest Paths.".into()),
+            ),
+            Err(crate::quester_paths::ReloadRefused::NoNavData) => Applied::Rejected(
+                Rejection::NotApplicable,
+                Some("Wait for the navigation map before reloading quest Paths.".into()),
             ),
         }
     }

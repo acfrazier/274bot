@@ -311,6 +311,7 @@ pub struct PrepareContext<'a> {
     pub pin: Arc<SelectedPin>,
     pub banks: Arc<api::named_banks::NamedBankFacts>,
     pub families: &'a mut FamilyPreparation,
+    pub zones: Option<nav_planner::contract::ZoneTableView<'a>>,
 }
 
 pub type PrepareCard =
@@ -687,6 +688,7 @@ pub fn with_test_tick<R>(
         prompt_port: None,
         actions: &mut actions,
         cx: ActionContext {
+            stage_cross: None,
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
@@ -774,6 +776,8 @@ pub struct ActionContext<'a> {
     pub(crate) evidence: EvidenceStamp,
     pub(crate) pin: &'a SelectedPin,
     pub(crate) snapshot: SnapshotView<'a>,
+    /// Frame-local stage consent. Every route keeps the existing named `cross` path.
+    pub(crate) stage_cross: Option<Arc<[Arc<str>]>>,
     pub(crate) condition: Option<api::condition::BotCondition>,
     pub(crate) poison_unknown_pulse: u8,
     pub(crate) cure_poison: crate::survival::CurePoison,

@@ -14,6 +14,7 @@ fn fixture() -> (Gatherer, GameSnapshot) {
     let (config, mut snapshot) = FamilyPreparation::run(|families| {
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let mut cx = crate::native::PrepareContext {
+            zones: None,
             pin: selected.selected_pin().unwrap(),
             selected,
             banks: Arc::default(),
@@ -53,6 +54,7 @@ fn catherby_fishing_fixture() -> (Gatherer, GameSnapshot) {
             settings.insert(key.into(), value);
         }
         let mut cx = crate::native::PrepareContext {
+            zones: None,
             pin: selected.selected_pin().unwrap(),
             selected,
             banks: Arc::default(),
@@ -683,6 +685,7 @@ fn bank_fixture(bank_choice: Option<&'static str>) -> (Gatherer, GameSnapshot) {
             settings.insert("bank".into(), serde_json::json!(bank));
         }
         let mut cx = crate::native::PrepareContext {
+            zones: None,
             pin: selected.selected_pin().unwrap(),
             selected,
             banks,
@@ -1757,6 +1760,7 @@ fn power_gatherer_rejects_bank_edit_at_lower_mine() {
     let (power_config, bank_config) = FamilyPreparation::run(|families| {
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let mut cx = crate::native::PrepareContext {
+            zones: None,
             pin: selected.selected_pin().unwrap(),
             selected,
             banks: Arc::default(),

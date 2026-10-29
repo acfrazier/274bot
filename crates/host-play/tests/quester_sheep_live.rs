@@ -761,6 +761,7 @@ fn start_sheep(selected: Arc<SelectedGameData>, quests: Arc<QuestCatalog>) -> St
                     &quests,
                     cap,
                     &script::local_state::OperatorLoadouts::absent(),
+                    None,
                 )
             }
         })

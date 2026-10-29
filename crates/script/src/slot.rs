@@ -2564,9 +2564,10 @@ impl SlotScript {
         batch: DecodedSeatBatch,
         observed_walk_outcome_seq: u64,
         machine_events: &[crate::native::seat_rows::SeatMachineEvent],
+        nav: Option<&nav_planner::contract::NavLease>,
     ) {
         if self.admit_seat_batch(&batch) {
-            self.apply_seat_batch(batch, observed_walk_outcome_seq, machine_events);
+            self.apply_seat_batch(batch, observed_walk_outcome_seq, machine_events, nav);
         }
     }
 
@@ -2578,7 +2579,7 @@ impl SlotScript {
         observed_walk_outcome_seq: u64,
         machine_events: &[crate::native::seat_rows::SeatMachineEvent],
     ) {
-        self.consume_seat_batch(batch, observed_walk_outcome_seq, machine_events);
+        self.consume_seat_batch(batch, observed_walk_outcome_seq, machine_events, None);
     }
 
     /// Preflight a batch before any of its rows reaches the seat. A
@@ -2632,6 +2633,7 @@ impl SlotScript {
         mut batch: DecodedSeatBatch,
         observed_walk_outcome_seq: u64,
         machine_events: &[crate::native::seat_rows::SeatMachineEvent],
+        nav: Option<&nav_planner::contract::NavLease>,
     ) {
         let execution = self
             .seat_fence
@@ -2726,7 +2728,7 @@ impl SlotScript {
                             self.start_api_combat(start.id.get(), &Arc::new(request));
                         }
                         SeatStartArgs::QuestProgress(name) => {
-                            self.start_api_progress(start.id.get(), &name);
+                            self.start_api_progress(start.id.get(), &name, nav.cloned());
                         }
                         SeatStartArgs::Bank(request) => {
                             self.start_bank(start.id, request);
@@ -2993,6 +2995,7 @@ impl SlotScript {
     fn consume_held_fold(
         &mut self,
         mut queued: crate::native::seat_rows::QueuedSeatBatch,
+        nav: Option<&nav_planner::contract::NavLease>,
     ) -> Option<crate::native::seat_rows::QueuedSeatBatch> {
         if !self.admit_seat_batch(&queued.batch) {
             return None;
@@ -3009,6 +3012,7 @@ impl SlotScript {
                     queued.batch,
                     queued.observed_walk_outcome_seq,
                     &queued.machine_events,
+                    nav,
                 );
                 return None;
             }
@@ -3144,6 +3148,7 @@ impl SlotScript {
     /// is "an update was sent"; the inner option is replace versus clear.
     pub fn drain_host_interacts(
         &mut self,
+        nav: Option<&nav_planner::contract::NavLease>,
     ) -> (
         Option<Option<api::run_policy::RunPolicyOverride>>,
         Vec<crate::interact::QueuedInteract>,
@@ -3254,7 +3259,7 @@ impl SlotScript {
             }
             self.release_held_fold(&mut queued);
             if queued.held_fold {
-                if let Some(rest) = self.consume_held_fold(queued) {
+                if let Some(rest) = self.consume_held_fold(queued, nav) {
                     paging = true;
                     carried.push(rest);
                 }
@@ -3264,6 +3269,7 @@ impl SlotScript {
                 queued.batch,
                 queued.observed_walk_outcome_seq,
                 &queued.machine_events,
+                nav,
             );
         }
         if !carried.is_empty() {

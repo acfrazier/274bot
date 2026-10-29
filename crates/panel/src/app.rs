@@ -2746,6 +2746,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
             session.cancel_reload();
         }
     }
+    quester_start_zone_disclosure(ui, session, active);
     let (sw, sstack) = scaled_button_row_layout(ui, ui.content_region_avail()[0], SCRIPT_ROW.len());
     {
         let _start = if active {
@@ -2814,6 +2815,49 @@ fn script_section(ui: &Ui, session: &mut Session) {
         .and_then(|detail| detail.walk_risk())
     {
         kv_row(ui, "Walk risk", reason);
+    }
+}
+
+fn quester_start_zone_disclosure(ui: &Ui, session: &mut Session, active: bool) {
+    let selected = session
+        .script_sel
+        .as_ref()
+        .and_then(ScriptChoice::compiled_id)
+        == Some(frontend_core::scripts::CompiledCardId::QUESTER);
+    if !selected {
+        session.quester_start_zone_cache.clear();
+        return;
+    }
+    if active {
+        return;
+    }
+    session.refresh_quester_start_zone_cache();
+    ui.spacing();
+    ui.separator();
+    ui.text_colored(ACCENT, "Start zone scope");
+    match session.quester_start_zone_view() {
+        Some(Ok(zones)) if zones.is_empty() => {
+            ui.text_wrapped(
+                "Start accepts only declared zones. No zones are declared. Survival remains active.",
+            );
+        }
+        Some(Ok(zones)) => {
+            ui.text_wrapped("Start accepts only these zones. Survival remains active.");
+            ui.text_disabled("Scroll this panel to read the full list.");
+            for scope in &zones.scopes {
+                ui.text_colored(ACCENT, scope.display_label.as_str());
+                for zone in &scope.zones {
+                    ui.text_wrapped(zone.display_label.as_str());
+                    ui.text_disabled("Guide reason:");
+                    ui.text_wrapped(zone.reason.as_str());
+                }
+            }
+        }
+        Some(Err(reason)) => {
+            ui.text_wrapped("The selected Quester scope is unavailable.");
+            ui.text_wrapped(reason);
+        }
+        None => {}
     }
 }
 

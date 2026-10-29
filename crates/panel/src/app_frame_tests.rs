@@ -1718,3 +1718,36 @@ fn a_preview_fold_shows_its_saving_and_failure_in_its_own_tile() {
         );
     }
 }
+#[test]
+fn panel_driver_shows_quester_zone_disclosure_before_start() {
+    let (mut session, _dir) = session_with_play("frame-quester-zone-disclosure", &["alice"]);
+    session.script_sel = Some(ScriptChoice::compiled(CompiledCardId::QUESTER));
+    session
+        .ui
+        .collapsed
+        .entry("alice".into())
+        .or_default()
+        .insert("script".into(), false);
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        return;
+    };
+    rig.frame(Pointer::Away);
+    assert!(rig.text.contains("Start zone scope"), "{}", rig.text);
+    assert!(
+        rig.text.contains("Start accepts only these zones."),
+        "{}",
+        rig.text
+    );
+    assert!(
+        rig.text.contains("Survival remains active."),
+        "{}",
+        rig.text
+    );
+    assert!(
+        rig.text.contains("Prince Ali Rescue (prince)"),
+        "{}",
+        rig.text
+    );
+    assert!(rig.text.contains("draynor-jail-guards"), "{}", rig.text);
+    assert!(rig.text.contains("Guide reason:"), "{}", rig.text);
+}

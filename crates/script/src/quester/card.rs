@@ -315,17 +315,18 @@ fn prepare(
         let quests = Arc::new(
             QuestCatalog::from_identity(cx.selected.quest_identity()).map_err(StartError::Facts)?,
         );
-        let registry = registry::reload_with_catalog(&cx.selected, Some(&quests), cx.families)
-            .map_err(|error| {
-                StartError::Unavailable(
-                    format!(
-                        "{}: {}",
-                        error.code,
-                        error.detail.as_deref().unwrap_or("Path reload failed")
+        let registry =
+            registry::reload_with_catalog(&cx.selected, Some(&quests), cx.zones, cx.families)
+                .map_err(|error| {
+                    StartError::Unavailable(
+                        format!(
+                            "{}: {}",
+                            error.code,
+                            error.detail.as_deref().unwrap_or("Path reload failed")
+                        )
+                        .into(),
                     )
-                    .into(),
-                )
-            })?;
+                })?;
         Ok(QuesterRegistryReady { registry, quests })
     })
 }
@@ -462,6 +463,7 @@ mod tests {
         FamilyPreparation::run(move |families| {
             let pin = selected.selected_pin().unwrap();
             let mut cx = PrepareContext {
+                zones: None,
                 selected,
                 pin,
                 banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
@@ -715,6 +717,7 @@ mod tests {
         FamilyPreparation::run(move |families| {
             let pin = selected.selected_pin().unwrap();
             let mut cx = PrepareContext {
+                zones: None,
                 selected,
                 pin,
                 banks: Arc::new(api::named_banks::NamedBankFacts::empty()),

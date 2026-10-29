@@ -101,6 +101,7 @@ pub(super) struct PendingCompiledStart {
     selected: Arc<api::game_data::SelectedGameData>,
     banks: Arc<api::named_banks::NamedBankFacts>,
     retained: Arc<Mutex<RetainedMemory>>,
+    nav: Option<nav_planner::contract::NavLease>,
     account: String,
 }
 
@@ -114,6 +115,7 @@ impl PendingCompiledStart {
             Arc::clone(&self.banks),
             Arc::clone(&self.retained),
             self.account.clone(),
+            self.nav.clone(),
         )
     }
 }
@@ -397,6 +399,7 @@ pub(super) fn frame_context<'a>(
             .with_reach(ctx.compiled.reach)
             .with_bank_memory(ctx.compiled.bank_memory)
             .with_world_members(ctx.compiled.world_members),
+        stage_cross: None,
         condition: ctx.compiled.condition.filter(|fact| {
             fact.session == api::condition::SessionMark::Live
                 && ctx
@@ -528,6 +531,7 @@ impl CompiledRun {
                         cure_poison: ctx.compiled.cure_poison,
                         world_members: ctx.compiled.world_members,
                         collision: ctx.compiled.collision,
+                        nav: ctx.compiled.nav.clone(),
                         walk_danger: ctx.compiled.walk_danger,
                         hold: ctx.compiled.hold,
                         service_gate: ctx.compiled.service_gate,
@@ -627,6 +631,7 @@ pub fn prepare_config(
     selected: Arc<api::game_data::SelectedGameData>,
     banks: Arc<api::named_banks::NamedBankFacts>,
     quester: Option<crate::quester::card::QuesterRegistryReady>,
+    zones: Option<nav_planner::contract::ZoneTableView<'_>>,
 ) -> Result<Arc<PreparedConfig>, StartError> {
     let card = crate::compiled_card(id)
         .ok_or_else(|| StartError::Unavailable(format!("not ported: {}", id.0).into()))?;
@@ -636,6 +641,7 @@ pub fn prepare_config(
         pin,
         banks,
         families: worker,
+        zones,
     };
     let config = catch_unwind(AssertUnwindSafe(|| {
         if card.id == crate::quester::card::CARD.id {
@@ -691,6 +697,7 @@ pub(super) fn prepare_run(
     banks: Arc<api::named_banks::NamedBankFacts>,
     retained: Arc<Mutex<RetainedMemory>>,
     account: String,
+    nav: Option<nav_planner::contract::NavLease>,
 ) -> Result<Preparation, PrepareRunError> {
     let quester = card.id == crate::quester::card::CARD.id;
     let cold_gathering =
@@ -807,11 +814,14 @@ pub(super) fn prepare_run(
                                 )
                                 .map_err(StartError::Facts)?,
                             );
-                            state.preparation = Some(Box::new(
+                            let source =
+                                state.source.take().expect("Quester folder source captured");
+                            let preparation =
                                 crate::quester::registry::RegistryPreparation::from_source(
-                                    state.source.take().expect("Quester folder source captured"),
+                                    source,
                                     Arc::clone(&selected),
                                     Arc::clone(&quests),
+                                    nav.clone(),
                                 )
                                 .map_err(|error| {
                                     StartError::Unavailable(
@@ -822,8 +832,8 @@ pub(super) fn prepare_run(
                                         )
                                         .into(),
                                     )
-                                })?,
-                            ));
+                                })?;
+                            state.preparation = Some(Box::new(preparation));
                             state.quests = Some(quests);
                         }
                         let preparation = state
@@ -879,6 +889,8 @@ pub(super) fn prepare_run(
                             Arc::clone(&selected),
                             state.banks.take().expect("Quester banks retained"),
                             Some(ready),
+                            nav.as_ref()
+                                .and_then(nav_planner::contract::NavLease::zones),
                         )?;
                         completed = state.actions + 1;
                         stage = Stage::Construct {
@@ -903,6 +915,7 @@ pub(super) fn prepare_run(
                             bag,
                             Arc::clone(&selected),
                             banks,
+                            None,
                             None,
                         )?;
                         completed = regular_total - 1;
@@ -1076,6 +1089,7 @@ impl SlotScript {
         bag: Arc<SettingsBag>,
         selected: Arc<api::game_data::SelectedGameData>,
         banks: Arc<api::named_banks::NamedBankFacts>,
+        nav: Option<nav_planner::contract::NavLease>,
     ) -> Result<(), StartError> {
         if self.quest_pairs.as_ref().is_some_and(|pairs| pairs.busy()) {
             return Err(StartError::Unavailable("Stop this pair first".into()));
@@ -1118,6 +1132,7 @@ impl SlotScript {
             Arc::clone(&banks),
             Arc::clone(&retained),
             account.to_owned(),
+            nav.clone(),
         );
         match job {
             Ok(job) => self.preparing = Some(Box::new(job)),
@@ -1130,6 +1145,7 @@ impl SlotScript {
                     banks,
                     retained,
                     account: account.to_owned(),
+                    nav,
                 });
             }
             Err(PrepareRunError::Other(error)) => return Err(error),

@@ -8154,6 +8154,7 @@ fn run_case(case: Case) {
                 &quests,
                 cap,
                 &script::local_state::OperatorLoadouts::absent(),
+                None,
             )
         }
     })

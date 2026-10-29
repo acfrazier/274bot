@@ -411,6 +411,7 @@ fn third_queued_death_stops_the_slot_and_retains_blocked_status() {
                 &quests,
                 cap,
                 &crate::local_state::OperatorLoadouts::absent(),
+                None,
             )
         }
     })
@@ -555,6 +556,7 @@ fn folder_override_and_draft_activate_from_the_queue_and_publish_their_source() 
                 &selected,
                 &quests,
                 worker,
+                None,
             )
             .unwrap()
         })
