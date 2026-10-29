@@ -1236,28 +1236,14 @@ fn initial_luthas_move_stages_without_a_posted_row_then_replans_orthogonally() {
     );
     let (result, ops) = recovery_step_observed(&mut recover, &mut clock, &mut logs);
     assert_eq!(result, None);
-    assert!(matches!(ops.as_slice(), [InteractReq::Walk { .. }]));
-    let talk_stand = walk_tile(&ops[0]);
     assert!(
-        orthogonally_adjacent(talk_stand, npc),
-        "the posted row is used to replan the actual talk approach: {talk_stand:?}"
+        ops.is_empty(),
+        "the staging tile is already an orthogonal talk stand: {ops:?}"
     );
-
-    let talk_walk = ops[0].clone();
-    world.here = talk_stand;
-    world.post();
-    world.tick += 1;
-    post_walk_outcome(
-        world.tick,
-        token(&talk_walk),
-        world.here,
-        talk_stand,
-        0,
-        false,
+    assert!(
+        orthogonally_adjacent(staging_tile, npc),
+        "the staging tile is orthogonal to the posted Luthas tile"
     );
-    let (result, ops) = recovery_step_observed(&mut recover, &mut clock, &mut logs);
-    assert_eq!(result, None);
-    assert!(ops.is_empty());
     let (result, ops) = recovery_step(&mut world, &mut recover, &mut clock, &mut logs);
     assert_eq!(result, None);
     assert!(
