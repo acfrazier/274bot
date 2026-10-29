@@ -36,31 +36,31 @@ const GATHERER_SITE_STEP: &str = "stand at the live Draynor normal tree before S
 const GATHERER_TREE_PROOF_STEP: &str = "confirm the selected-289 normal tree is live before Start";
 const GATHERER_RELOG_STEP: &str = "relog successfully so the inventory tab binds before Start";
 
-// Ten radius-five normal-tree Start patches in the Hemenster content site.
+// Ten radius-five normal-tree Start patches in the western Falador content site.
 // The offline audit checks sampled production routes and initial Guardian
 // travel. It does not prove the worst-case scene-box flee bound.
 const NORMAL_STARTS: [(i32, i32); 10] = [
-    (2680, 3417),
-    (2652, 3418),
-    (2650, 3418),
-    (2651, 3418),
-    (2685, 3418),
-    (2686, 3429),
-    (2686, 3432),
-    (2649, 3423),
-    (2686, 3433),
-    (2681, 3436),
+    (2946, 3399),
+    (2946, 3412),
+    (2946, 3417),
+    (2947, 3404),
+    (2951, 3399),
+    (2952, 3417),
+    (2958, 3399),
+    (2958, 3404),
+    (2958, 3412),
+    (2958, 3417),
 ];
 const NORMAL_RADIUS: i32 = 5;
-const NORMAL_SITE_ID: &str = "woodcutting.hemenster";
-const SECOND_TIER_SITE_ID: &str = "woodcutting.flax";
-const SECOND_TIER_START: (i32, i32) = (2748, 3464);
-const SECOND_TIER_KEY: &str = "maple";
-const SECOND_TIER_LOG_ID: i32 = 1517;
-const SECOND_TIER_LEVEL: i32 = 45;
+const NORMAL_SITE_ID: &str = "woodcutting.falador_west.n";
+const SECOND_TIER_SITE_ID: &str = "woodcutting.falador_west.n";
+const SECOND_TIER_START: (i32, i32) = (2946, 3399);
+const SECOND_TIER_KEY: &str = "oak";
+const SECOND_TIER_LOG_ID: i32 = 1521;
+const SECOND_TIER_LEVEL: i32 = 15;
 const SECOND_TIER_RADIUS: i32 = 12;
-const SOAK_BANK: &str = "Catherby";
-const SOAK_BANK_PREFIX: &str = "Catherby; Reachable;";
+const SOAK_BANK: &str = "Falador West";
+const SOAK_BANK_PREFIX: &str = "Falador West; Reachable;";
 
 #[derive(Clone, Copy)]
 struct SafeWalk {
@@ -82,26 +82,26 @@ impl SafeWalk {
 // travel can leave this rectangle without entering an authored danger envelope.
 const NORMAL_SAFE_WALK: &[SafeWalk] = &[
     SafeWalk {
-        min_x: 2644,
-        max_x: 2691,
-        min_z: 3412,
-        max_z: 3441,
+        min_x: 2941,
+        max_x: 2963,
+        min_z: 3394,
+        max_z: 3422,
     },
     SafeWalk {
-        min_x: 2743,
-        max_x: 2775,
-        min_z: 3442,
-        max_z: 3480,
+        min_x: 2934,
+        max_x: 2958,
+        min_z: 3387,
+        max_z: 3411,
     },
 ];
 
-// Wide map-square bounds leave room for content-distance Guardian travel.
+// Selected-region bounds leave room for the sampled Guardian travel.
 // The danger-envelope guard remains active everywhere in this bound.
 const OUTER_WALK_BOUNDS: &[SafeWalk] = &[SafeWalk {
-    min_x: 2624,
-    max_x: 2879,
-    min_z: 3392,
-    max_z: 3583,
+    min_x: 2840,
+    max_x: 3065,
+    min_z: 3262,
+    max_z: 3527,
 }];
 
 fn danger_envelopes() -> &'static [(WorldTile, i32)] {
@@ -160,36 +160,37 @@ fn work_route_escape(outer_bounds: &[SafeWalk], tile: (i32, i32, i32)) -> bool {
 
 #[test]
 fn work_route_guard_accepts_safe_guardian_flee_and_random_event_travel() {
-    // Actual client/v17 Swarm flee receipt: 2695,3473 -> 2677,3455.
-    // The receipt crosses the old worksite rectangle at 2679,3460.
+    // Actual client/v17 bank flee: 2944,3366 -> 2950,3372, NPC 391.
+    // T14-SOAK-ROUTE/falador-bank-positive-16.json retains the native receipt.
     let flee = [
-        (2695, 3473, 0),
-        (2695, 3472, 0),
-        (2695, 3471, 0),
-        (2694, 3470, 0),
-        (2693, 3470, 0),
-        (2692, 3470, 0),
-        (2691, 3470, 0),
-        (2690, 3470, 0),
-        (2689, 3470, 0),
-        (2688, 3469, 0),
-        (2687, 3468, 0),
-        (2686, 3468, 0),
-        (2685, 3468, 0),
-        (2684, 3467, 0),
-        (2683, 3466, 0),
-        (2683, 3465, 0),
-        (2683, 3464, 0),
-        (2682, 3463, 0),
-        (2681, 3462, 0),
-        (2680, 3461, 0),
-        (2679, 3460, 0),
-        (2678, 3460, 0),
-        (2677, 3459, 0),
-        (2677, 3458, 0),
-        (2677, 3457, 0),
-        (2677, 3456, 0),
-        (2677, 3455, 0),
+        (2944, 3366, 0),
+        (2944, 3365, 0),
+        (2944, 3364, 0),
+        (2944, 3363, 0),
+        (2944, 3362, 0),
+        (2944, 3361, 0),
+        (2944, 3360, 0),
+        (2944, 3359, 0),
+        (2944, 3358, 0),
+        (2945, 3358, 0),
+        (2946, 3358, 0),
+        (2947, 3358, 0),
+        (2948, 3358, 0),
+        (2949, 3358, 0),
+        (2949, 3359, 0),
+        (2949, 3360, 0),
+        (2949, 3361, 0),
+        (2949, 3362, 0),
+        (2949, 3363, 0),
+        (2949, 3364, 0),
+        (2950, 3365, 0),
+        (2950, 3366, 0),
+        (2950, 3367, 0),
+        (2950, 3368, 0),
+        (2950, 3369, 0),
+        (2950, 3370, 0),
+        (2950, 3371, 0),
+        (2950, 3372, 0),
     ];
     assert!(!safe_walk_contains(NORMAL_SAFE_WALK, flee[20]));
     for tile in flee {
@@ -211,8 +212,8 @@ fn worksite_census_and_bank_guard_use_distinct_bounds() {
             }
         }
     }
-    assert!(!safe_walk_contains(NORMAL_SAFE_WALK, (2808, 3443, 0)));
-    assert!(!work_route_escape(OUTER_WALK_BOUNDS, (2808, 3443, 0)));
+    assert!(!safe_walk_contains(NORMAL_SAFE_WALK, (2944, 3366, 0)));
+    assert!(!work_route_escape(OUTER_WALK_BOUNDS, (2944, 3366, 0)));
     for dx in -SECOND_TIER_RADIUS..=SECOND_TIER_RADIUS {
         for dz in -SECOND_TIER_RADIUS..=SECOND_TIER_RADIUS {
             assert!(safe_walk_contains(
@@ -225,8 +226,8 @@ fn worksite_census_and_bank_guard_use_distinct_bounds() {
 
 #[test]
 fn worksite_departure_is_recorded_without_failing_the_route_guard() {
-    let inside = (2691, 3420, 0);
-    let outside = (2692, 3420, 0);
+    let inside = (2963, 3400, 0);
+    let outside = (2964, 3400, 0);
     assert!(worksite_exit(NORMAL_SAFE_WALK, Some(inside), outside));
     assert!(!work_route_escape(OUTER_WALK_BOUNDS, outside));
     assert!(!worksite_exit(NORMAL_SAFE_WALK, Some(outside), inside));
@@ -243,16 +244,17 @@ fn work_route_guard_rejects_every_danger_envelope_and_outer_boundary() {
             }
         }
     }
-    // The western wolf-envelope edge is inside the wide outer bound.
-    assert!(safe_walk_contains(OUTER_WALK_BOUNDS, (2812, 3495, 0)));
+    // Historical unsafe route tiles stay forbidden after a region change.
     assert!(work_route_escape(OUTER_WALK_BOUNDS, (2812, 3495, 0)));
     assert!(work_route_escape(OUTER_WALK_BOUNDS, (2813, 3477, 0)));
+    let bounds = OUTER_WALK_BOUNDS[0];
+    let (x, z) = NORMAL_STARTS[0];
     for tile in [
-        (2623, 3480, 0),
-        (2880, 3480, 0),
-        (2700, 3391, 0),
-        (2700, 3584, 0),
-        (2700, 3480, 1),
+        (bounds.min_x - 1, z, 0),
+        (bounds.max_x + 1, z, 0),
+        (x, bounds.min_z - 1, 0),
+        (x, bounds.max_z + 1, 0),
+        (x, z, 1),
     ] {
         assert!(work_route_escape(OUTER_WALK_BOUNDS, tile), "{tile:?}");
     }

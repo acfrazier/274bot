@@ -20,7 +20,7 @@ class RouteSafetyTests(unittest.TestCase):
         self.assertTrue(audit.ordinary_gate_route(route))
         self.assertEqual(audit.route_violations(route, [(2624, 2879, 3392, 3583)], []), [])
         for replacement in [
-            dict(to=[2768, 3444, 0]), dict(to=[2767, 3444, 1]),
+            dict(to=[2766, 3444, 0]), dict(to=[2768, 3444, 0]), dict(to=[2767, 3444, 1]),
             dict(kind="Stairs"), dict(kind="AgilityShortcut"),
             dict(kind="Teleport"), dict(has_requirements=True),
         ]:
@@ -106,6 +106,31 @@ class RouteSafetyTests(unittest.TestCase):
             failures = audit.route_violations({"tiles": [tile]}, outer, hunters)
             self.assertIn("outside-outer-bound", {row["reason"] for row in failures})
 
+    def test_actual_falador_west_bank_guardian_flee_passes(self):
+        # T14-SOAK-ROUTE/falador-bank-positive-16.json, NPC 391, scene 2848,3272.
+        points = [
+            (2944, 3366), (2944, 3365), (2944, 3364), (2944, 3363),
+            (2944, 3362), (2944, 3361), (2944, 3360), (2944, 3359),
+            (2944, 3358), (2945, 3358), (2946, 3358), (2947, 3358),
+            (2948, 3358), (2949, 3358), (2949, 3359), (2949, 3360),
+            (2949, 3361), (2949, 3362), (2949, 3363), (2949, 3364),
+            (2950, 3365), (2950, 3366), (2950, 3367), (2950, 3368),
+            (2950, 3369), (2950, 3370), (2950, 3371), (2950, 3372),
+        ]
+        game = json.loads((audit.ROOT / "crates/api/data/game-data/289.json").read_text())
+        self.assertEqual(audit.route_violations(
+            {"tiles": [[x, z, 0] for x, z in points]},
+            [(2840, 3065, 3262, 3527)], audit.hunter_envelopes(game)), [])
+
+    def test_actual_varrock_west_guardian_hunter_segment_is_rejected(self):
+        # Consecutive native BFS tiles, not the complete 209-tile route.
+        route = {"tiles": [[3237, 3502, 0], [3236, 3502, 0], [3235, 3502, 0]]}
+        game = json.loads((audit.ROOT / "crates/api/data/game-data/289.json").read_text())
+        failures = audit.route_violations(
+            route, [(3144, 3247, 3408, 3511)], audit.hunter_envelopes(game))
+        self.assertEqual({row["reason"] for row in failures}, {"hunter-envelope"})
+        self.assertTrue(any(row["hunter"]["name"] == "brownbear" for row in failures))
+
     def test_guardian_requests_cover_content_ranges_spawns_and_hazard_ring(self):
         game = json.loads((audit.ROOT / "crates/api/data/game-data/289.json").read_text())
         origins = {(2695, 3473, 0), (2808, 3443, 0)}
@@ -169,6 +194,21 @@ class RouteSafetyTests(unittest.TestCase):
             audit.normal_patch_capacity(trees, 2)
         trees.append(dict(kind="normal", owners=[0, 1]))
         self.assertEqual(audit.normal_patch_capacity(trees, 2), [2, 2])
+
+    def test_normal_reachable_capacity_requires_two_alternatives_per_start(self):
+        with self.assertRaisesRegex(ValueError, "two reachable trees, found 1"):
+            audit.normal_reachable_matching([{0}, {1, 2}])
+
+    def test_normal_reachable_capacity_rejects_shared_pool_too_small_for_starts(self):
+        with self.assertRaisesRegex(ValueError, "no full distinct-tree reachability matching"):
+            audit.normal_reachable_matching([{0, 1}, {0, 1}, {0, 1}])
+
+    def test_normal_reachable_capacity_rematches_instead_of_fixing_product_selection(self):
+        reachable = [{0, 1}, {0, 2}, {2, 3}]
+        witness = audit.normal_reachable_matching(reachable)
+        self.assertEqual(len(set(witness)), len(reachable))
+        for owner, tree in enumerate(witness):
+            self.assertIn(tree, reachable[owner])
 
     def test_fixture_reads_second_tier_constants_and_key(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -242,6 +282,10 @@ class RouteSafetyTests(unittest.TestCase):
                     self.assertTrue(all(row["owners"] == ["second-tier"] for row in selected))
                     self.assertEqual({row["id"] for row in selected},
                                      {2 if key == "oak" else 3})
+                    with self.assertRaisesRegex(ValueError, "fewer than two authored second-tier"):
+                        audit.census(
+                            content, game, starts, second_start, 5, 0,
+                            key, "normal-site", "second-site", "Test bank")
 
     def test_route_audit_reads_normal_and_second_tier_radii(self):
         with tempfile.TemporaryDirectory() as folder:

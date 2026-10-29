@@ -193,8 +193,8 @@ def census(content, game, starts, second_start, normal_radius, second_radius,
                 resources.append(dict(kind=kind, id=ident, origin=[x, z, 0], width=width,
                                       height=height, owners=owners, source=f"{path}:{number}",
                                       shape=values[1], angle=values[2] if len(values) > 2 else 0))
-    if not any(row["kind"] == "second-tier" for row in resources):
-        raise ValueError(f"no authored second-tier {second_key} resources within its Start radius")
+    if sum(row["kind"] == "second-tier" for row in resources) < 2:
+        raise ValueError(f"fewer than two authored second-tier {second_key} resources within its Start radius")
     if len(bank_locs) != len(bank_rows):
         raise ValueError(f"selected-content maps do not contain every {bank_name} bank loc")
     return resources, hunter_envelopes(game), sources, bank_locs
@@ -235,6 +235,33 @@ def normal_patch_capacity(resources, patch_count):
         if count < 2:
             raise ValueError(f"normal patch {index} requires at least two eligible trees, found {count}")
     return counts
+
+
+def normal_reachable_matching(reachable):
+    """Return a capacity witness, not a product tree assignment."""
+    for owner, trees in enumerate(reachable):
+        if len(trees) < 2:
+            raise ValueError(
+                f"normal Start {owner} requires at least two reachable trees, found {len(trees)}")
+    matched = {}
+
+    def augment(owner, seen):
+        for tree in sorted(reachable[owner]):
+            if tree in seen:
+                continue
+            seen.add(tree)
+            if tree not in matched or augment(matched[tree], seen):
+                matched[tree] = owner
+                return True
+        return False
+
+    for owner in range(len(reachable)):
+        if not augment(owner, set()):
+            raise ValueError("normal Starts have no full distinct-tree reachability matching")
+    witness = [None] * len(reachable)
+    for tree, owner in matched.items():
+        witness[owner] = tree
+    return witness
 
 
 def goals_for(resource):
@@ -391,6 +418,7 @@ def main():
         source, catalog, config, args.pack, args.flags, args.cache / "config", *sorted(maps),
         ROOT / "crates/host/src/random.rs", ROOT / "crates/host/src/random/guardian.rs",
         ROOT / "crates/host-play/examples/soak_routes.rs",
+        args.router.resolve(strict=True),
         args.content / "scripts/general_use/configs/gates.loc",
         args.content / "scripts/general_use/scripts/gates.rs2",
     ]}
@@ -422,6 +450,7 @@ def main():
     ordinary_gate_locs = set()
     walk_recoveries = set()
     blocked, processed, bank_reachable, resource_reached = set(), set(), set(), set()
+    normal_reachable = [set() for _ in starts]
     pending = set(targets)
     guardian_counts = dict.fromkeys(("guardian-flee", "guardian-return", "guardian-hazard"), 0)
     guardian_scenarios = set()
@@ -430,7 +459,7 @@ def main():
         for owner in resource["owners"]:
             start = (*second_start, 0) if owner == "second-tier" else (*starts[owner], 0)
             for target in goals_for(resource):
-                access.setdefault((start, target), set()).add(index)
+                access.setdefault((start, target), set()).add((index, owner))
     violations, tile_cache = [], {}
     round_number, walk_rounds = 0, 0
     while files:
@@ -470,9 +499,13 @@ def main():
                     retreat_count += 1
                     targets.add(target)
                     pending.add(target)
-                if target in bank_goals:
-                    bank_reachable.add(origin)
-                resource_reached.update(access.get((origin, target), ()))
+                if row["kind"] == "route":
+                    if target in bank_goals:
+                        bank_reachable.add(origin)
+                    for index, owner in access.get((origin, target), ()):
+                        resource_reached.add(index)
+                        if owner != "second-tier":
+                            normal_reachable[owner].add(index)
                 pending.update(tuple(t) for t in row["tiles"])
                 failures = route_violations(row, outer_bounds, hunters, tile_cache)
                 if failures:
@@ -512,6 +545,11 @@ def main():
     for index, resource in enumerate(resources):
         if index not in resource_reached:
             errors.append(f"resource has no access route from its Start: {resource['origin']}")
+    normal_matching = []
+    try:
+        normal_matching = normal_reachable_matching(normal_reachable)
+    except ValueError as error:
+        errors.append(str(error))
     isolated = processed - blocked - bank_reachable
     if isolated:
         errors.append(f"{len(isolated)} standable origins have no bank-access route")
@@ -529,10 +567,14 @@ def main():
                   guardian_scenarios=len(guardian_scenarios), guardian_work_bank_tiles=len(guardian_origins),
                   guardian_ranges=guardian_ranges,
                   normal_radius=normal_radius, normal_patch_trees=patch_counts,
+                  normal_patch_reachable_trees=[len(trees) for trees in normal_reachable],
+                  normal_capacity_witness=normal_matching,
                   second_tier_key=second_key, second_tier_start=second_start,
                   second_tier_radius=second_radius, bank=bank_name, resources=resources,
                   hunters_checked=len(hunters),
                   sources=sources, replay_source=str(args.replay) if args.replay else None,
+                  checker_source=str(Path(__file__).resolve()),
+                  checker_sha256=digest(Path(__file__).resolve()),
                   violation_count=len(violations), violations=violations[:30], errors=errors,
                   complete_movement_coverage=False, guardian_continuation_covered=False,
                   residual_risk="The conservative bound is not met. The initial-flee and walk routes checked here do not bound continued Guardian radius growth or a worst-case 104-by-104 client scene-box detour.",

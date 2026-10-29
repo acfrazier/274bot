@@ -35,7 +35,7 @@ python3 tools/t14_soak_run.py --mode candidate \
 
 A **diagnostic-only** baseline run may append `--diagnostic-no-ws-faults` with `--smoke` to retain TCP segmentation/latency while disabling only proxy B fragmentation/Ping. This mode cannot run qualification or satisfy the baseline/candidate fault comparison; use fresh absent evidence directories and do not alter `soak-config.json`.
 
-Smoke runs use two accounts for 180 seconds and only the **first** approved latency phase; they never qualify the gate. Main runs the full candidate and baseline two-hour qualification with the same two commands **without** `--smoke`, using fresh absent directories. All accounts complete their stock Gatherer setup through the same proxies **without injected faults**. Each scenario's `StepKind::Relog` binds the inventory tab: its connection exit is allowed only before t0, after the runner logged its logout packet at that exact step for that slot, and must be followed by a connected return; any other setup exit fails. A cohort barrier holds the script Starts until every slot completes this setup. The fault clock t0 is the **first successful script Start after the barrier**, recorded by the Play runner in an atomic `proxy/soak-start.json` marker and confirmed by the proxy's `fault_phase_zero` receipt; the first WebSocket 101 during setup is not t0. The exact 7,200-second qualifying window includes warmup and all four 1,800-second proxy phases. The cohorts log in through Play's normal queue, each reaches scene 2, and each exercises a real Gatherer bank loop across at least two named content sites. Warmup ends at the later of 900 seconds after t0 and the last slot's scene-2 arrival plus one real bank cycle per slot. No session exit during the window is requested, including warmup. RSS slopes exclude warmup, and the summary reports each slope-window duration. No seeded test frame, synthetic bank counter or idle twenty-slot login is evidence of that workload.
+Smoke runs use two accounts for 180 seconds and only the **first** approved latency phase; they never qualify the gate. Main runs the full candidate and baseline two-hour qualification with the same two commands **without** `--smoke`, using fresh absent directories. All accounts complete their stock Gatherer setup through the same proxies **without injected faults**. Each scenario's `StepKind::Relog` binds the inventory tab: its connection exit is allowed only before t0, after the runner logged its logout packet at that exact step for that slot, and must be followed by a connected return; any other setup exit fails. A cohort barrier holds the script Starts until every slot completes this setup. The fault clock t0 is the **first successful script Start after the barrier**, recorded by the Play runner in an atomic `proxy/soak-start.json` marker and confirmed by the proxy's `fault_phase_zero` receipt; the first WebSocket 101 during setup is not t0. The exact 7,200-second qualifying window includes warmup and all four 1,800-second proxy phases. The cohorts log in through Play's normal queue, each reaches scene 2, and each exercises a real Gatherer bank loop for its configured tree tier. Warmup ends at the later of 900 seconds after t0 and the last slot's scene-2 arrival plus one real bank cycle per slot. No session exit during the window is requested, including warmup. RSS slopes exclude warmup, and the summary reports each slope-window duration. No seeded test frame, synthetic bank counter or idle twenty-slot login is evidence of that workload.
 
 **Woodcutting fixture correction, after the nonqualifying candidate smoke:** `smoke-candidate-289144-m/events.jsonl:33-39` records the Draynor oak slot at `(3115,3242,0)`, followed by one death, respawn at `(3222,3218,0)`, and an unexpected script stop at t0+101 s. Engine `content/maps/m48_50.jm2:6688-6694` places jail guard NPC 917 at `(3120,3238,0)` (map origin `(3072,3200)`); `content/pack/npc.pack:918` identifies it, and `content/scripts/areas/area_draynor/configs/draynor.npc:152-182` sets `huntrange=5` and `huntmode=aggressive_melee`. The observed tile was within its range. No transport payload divergence or unexpected connection exit was observed. Main approved replacing this unsafe workload site, not changing a fault value or ignoring the death.
 
@@ -52,14 +52,24 @@ The candidate diagnostic stopped on native `resource-unavailable` after approxim
 Neither diagnostic satisfies the thirty-minute requirement.
 Qualification requires the corrected scoped audit and the remaining authorized diagnostic.
 
+The proposed replacement uses normal and oak logs from `woodcutting.falador_west.n`, with Falador West bank.
+Its outer bound is `x=2840..3065, z=3262..3527`.
+The static selection has sixteen normal trees and two oaks.
+Native bank-only screens reject Draynor bank, including Lumbridge trees with that bank, and Varrock West.
+The Falador West bank-only screen does not approve a fixture.
+The candidate-specific full audit must pass before diagnostic launch 3.
+
 Ten accounts gather normal logs from the configured real content site.
 Each account retains one radius-five Start anchor from `NORMAL_STARTS`.
 The checker requires at least two eligible normal trees for each account.
-The source selection ranks patches by their minimum access-tile clearance.
+The host router must reach at least two trees from each normal Start.
+Reachable resources must admit ten distinct trees as a capacity witness, not a product assignment.
+Source selection ranks coherent bank-local patches after the initial-flee clearance screen.
 Selection includes the radius-one NPC spawn offset, so the initial flee margin is twenty tiles.
 Actual Gatherers choose their own trees, so shared selection and contention remain possible.
 The fixture does not change the product's bounded-wait policy.
 The other ten accounts gather `SECOND_TIER_KEY` within radius twelve of `SECOND_TIER_START`.
+The shared second-tier patch also needs at least two eligible, reachable trees.
 Both groups use Start selection and the configured bank.
 The cohorts may share a real content site when it supports both resource keys.
 Each account receives Woodcutting 99, one rune axe, and 64 banked spare rune axes.
@@ -94,6 +104,11 @@ The native client searches a 104-by-104 scene, whose Chebyshev diameter is 103 t
 Continued Guardian radius growth also remains outside this finite audit.
 Main accepts this residual risk before launch 3, with the same rule for both arms.
 
+The custom WSS roster has no membership declaration.
+Its Remote profile resolves Unknown membership as false.
+Guarded local `world.json` membership does not apply to that WSS profile.
+Both the native client's membership field and the native router's member mode must match this false value.
+
 An adjacent ordinary gate or door may pass the physical-route check.
 The edge must have typed Door identity, no requirements, one-tile adjacency, and no level change.
 Every approach, crossing endpoint, and exit walk must stay clear.
@@ -116,7 +131,7 @@ python3 -B -m unittest discover -s tools -p test_t14_soak_routes.py -v
 ```
 
 The checker enumerates all authored resources in each normal patch.
-It rejects a normal patch with fewer than two eligible trees.
+It rejects either tier's patch when it has fewer than two eligible trees.
 It includes every second-tier resource within the retained Start radius.
 It checks every footprint, Reach alternative, return observation, Start, and bank access goal.
 It calls the production hazard-retreat selector for every resource access stand.

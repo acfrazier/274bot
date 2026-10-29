@@ -71,10 +71,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 - The T1.4 transport soak compares real bank regions globally, including
   Guardian flee/return routes and ordinary replans from their endpoints.
-  It uses radius-five normal-tree Start patches and a radius-twelve Start
-  patch for maple, willow, or oak logs. Each normal account needs at least
-  two eligible trees. Both arms use the same region, tree tiers, bank, and
-  outer bound. Shared tree selection and contention remain possible.
+  It proposes western Falador normal and oak logs, with Falador West bank,
+  radius-five normal Starts, and one radius-twelve oak Start. Each account needs
+  two eligible, reachable trees. Host-router reachability must admit ten
+  distinct normal trees as a capacity witness, not a product assignment.
+  Both arms use the same region, tree tiers, bank, and outer bound.
+  Shared tree selection and contention remain possible.
   No Gatherer wait policy changes.
   The checker tests actual host-router routes, client BFS, Gatherer retreats,
   and initial Guardian flee/return samples. The conservative movement bound
@@ -84,6 +86,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   bound. It records worksite exits without rejecting safe Guardian travel.
   Only typed, requirement-free, adjacent same-level ordinary door or gate
   crossings pass the physical-route check. Other transports still fail.
+  Both native member-mode fields match the custom WSS profile's
+  Unknown-to-false rule. The checker records its own and the native
+  executable's SHA-256 hashes.
   The fixture remains blocked pending the scoped audit and final diagnostic.
   Unroutable client alternatives count as nonmovement. Each resource and bank
   loc still requires an accepted approach witness. Consumer-only corrections
