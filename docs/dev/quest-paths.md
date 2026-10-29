@@ -123,6 +123,7 @@ An inventory increase at the final permitted tick still completes.
 An increase first observed after that tick does not complete.
 Expiry parks with `ground pickup exceeded its tick budget`.
 The typed receipt records the observed tick count and the final held count.
+The status fields expose these values as `ground_waited_ticks` and `ground_held`.
 
 The compiler rejects zero, other target kinds, and operations other than `Take`.
 This form cannot combine `max_ticks` with:

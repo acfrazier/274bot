@@ -1430,6 +1430,29 @@ impl Quester {
             });
         }
         append_combat_status(&mut fields, combat_status);
+        if let Some(receipt) = outcome
+            .and_then(|outcome| outcome.receipt.as_ref())
+            .and_then(|receipt| {
+                receipt
+                    .as_any()
+                    .downcast_ref::<super::families::timed_ground::TimedGroundReceipt>()
+            })
+        {
+            fields.extend([
+                StatusField {
+                    key: "ground_waited_ticks",
+                    label: "Ground pickup observed ticks",
+                    value: StatusValue::Integer(
+                        i64::try_from(receipt.waited_ticks).unwrap_or(i64::MAX),
+                    ),
+                },
+                StatusField {
+                    key: "ground_held",
+                    label: "Ground pickup held",
+                    value: StatusValue::Integer(i64::from(receipt.held)),
+                },
+            ]);
+        }
         if let Some(progress) = &self.progress {
             fields.push(StatusField {
                 key: "quest",
@@ -4058,7 +4081,7 @@ mod tests {
         assert!(bytes < 4096, "Quester is {bytes} bytes");
     }
     #[test]
-    fn combat_report_is_exposed_in_quester_status() {
+    fn family_receipts_are_exposed_in_quester_status() {
         use crate::combat::{CombatEnd, CombatReport};
         use api::quest_progress::EvidenceStamp;
 
@@ -4205,6 +4228,24 @@ mod tests {
         assert!(output.0[3].fields.iter().any(|field| {
             field.key == "combat_kills" && matches!(field.value, StatusValue::Integer(0))
         }));
+        script.last_combat = None;
+        script.last_outcome = Some(StepOutcome {
+            progress: None,
+            evidence: report.evidence,
+            receipt: Some(Arc::new(
+                super::super::families::timed_ground::TimedGroundReceipt {
+                    waited_ticks: 100,
+                    held: 1,
+                },
+            )),
+        });
+        script.publish(&mut output);
+        assert_eq!(output.0.len(), 5);
+        for (key, expected) in [("ground_waited_ticks", 100), ("ground_held", 1)] {
+            assert!(output.0[4].fields.iter().any(|field| {
+                field.key == key && matches!(field.value, StatusValue::Integer(value) if value == expected)
+            }));
+        }
     }
 
     #[test]
