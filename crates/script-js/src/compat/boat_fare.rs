@@ -1370,14 +1370,7 @@ impl Recover {
                 }
                 Err(true) => {
                     if talk_row(&facts.luthas_name).is_some() {
-                        return Self::talk_posted(
-                            facts,
-                            second,
-                            attempt,
-                            tried_stands,
-                            cx,
-                            logs,
-                        );
+                        return Self::talk_posted(facts, second, attempt, tried_stands, cx, logs);
                     }
                     let detail = "the staging walk ended without Luthas in view";
                     log_staging_failure(logs, attempt, staging_tile, detail);
