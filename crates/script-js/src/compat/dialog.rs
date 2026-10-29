@@ -84,9 +84,8 @@ impl NativeObservation {
         let self_slot = session.self_slot().unwrap_or(-1);
         let attacker_evidence = self_slot >= 0
             && (session.npcs().is_some_and(|npcs| {
-                npcs.iter().any(|npc| {
-                    targets_local_player(npc.target_kind, npc.target_index, self_slot)
-                })
+                npcs.iter()
+                    .any(|npc| targets_local_player(npc.target_kind, npc.target_index, self_slot))
             }) || session.players().is_some_and(|players| {
                 players.iter().any(|player| {
                     targets_local_player(player.target_kind, player.target_index, self_slot)
@@ -722,8 +721,7 @@ mod tests {
     /// Stand in for a decoded post carrying `obs`.
     fn post(obs: &NativeObservation) {
         observed::post(obs.tick, |post| {
-            post
-                .session(obs.ingame)
+            post.session(obs.ingame)
                 .self_slot(LOCAL_SLOT)
                 .hold(obs.hold)
                 .ours(obs.ours)

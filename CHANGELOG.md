@@ -81,6 +81,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - Quester's anchored prewalk for an unseen loc now accepts any standable tile
   within the anchor radius, leaving the final, live-loc approach to select an
   accessible interaction side.
+- Talk steps now approach NPCs within the configured interaction distance
+  before opening their dialogue. Damage from a quest dialogue no longer looks
+  like an attack when no visible NPC or player targets the bot. A failed walk
+  also reports where its route ended.
 
 ### Scripting
 
