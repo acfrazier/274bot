@@ -1230,10 +1230,11 @@ fn prerequisite_state_layout_and_ten_repeated_walks_stay_bounded() {
     // snapshot fixture, and learned state all remain inside the measured call.
     let peak =
         allocation_counter::measure(|| conversation_completes(ConsentSwitch::PrereqDialogue));
-    println!("prereq layouts slot={} memory={} fact={} observation={} wait={} budget={} run={} walk={}; empty={empty:?}; learned={learned:?}; ten-fact-updates={repeated:?}; ten-completed-walks={completed_walks:?}; route-evidence-copy={copied:?}; inclusive-resolution={peak:?}",
+    println!("prereq layouts slot={} memory={} fact={} observation={} wait={} budget={} run={} walk={} interrupted-receipt={}; empty={empty:?}; learned={learned:?}; ten-fact-updates={repeated:?}; ten-completed-walks={completed_walks:?}; route-evidence-copy={copied:?}; inclusive-resolution={peak:?}",
         size_of::<SlotState>(), size_of::<SessionMemory>(), size_of::<Fact>(),
         size_of::<RefusalObservation>(), size_of::<TickWait>(), size_of::<PrereqBudget>(),
-        size_of::<PrereqRun>(), size_of::<super::super::walk::PrereqWalk>());
+        size_of::<PrereqRun>(), size_of::<super::super::walk::PrereqWalk>(),
+        size_of::<crate::native::WalkReceipt>());
 }
 
 #[test]

@@ -146,6 +146,7 @@ struct Reads {
     items: Vec<i32>,
     npc: Vec<Expr>,
     quests: HashSet<String>,
+    stage_thresholds: HashMap<String, HashSet<i32>>,
     stage_partitionable: bool,
     seen: HashSet<String>,
     valid: bool,
