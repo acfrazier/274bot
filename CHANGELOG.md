@@ -32,57 +32,23 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - The 0.2.7 known issue that WalkTo keeps its earlier selection when you change
   Fleet marks while it is open is no longer listed. WalkTo follows those
   changes, and a new test checks this. 274bot did not change WalkTo for this.
-- A saved setting now takes effect only after its save has reached the disk.
-  Before, the panel and the terminal app applied a checkbox at once and kept it
-  even when the save then failed. This covers capture input and the 50 fps
-  switches, the walk and danger permissions, the manual-walk pause, the map-bake
-  choice, the Quest Paths folder and switch, the session log file, and
-  "Don't show again" on the notices. In the panel it also covers the remembered
-  server revision, the Game pane's none/GPU/CPU raster and its highmem/lowmem
-  mode: the revision a session binds with, the saved raster and memory mode and
-  the GPU/CPU choice in use change only when the save lands, and the control
-  shows your choice meanwhile. While a save is pending the control shows your
-  choice and "Saving…". A save that fails puts the control back to the saved
-  value and shows the reason beside it, for example "Not saved: …". The reason
-  stays until you try again, or for 15 seconds. A failed "Don't show again" no
-  longer disappears silently: the dialog stays open and shows why. Closing and
-  reopening a settings window, or the dialog, shows the same state. A change
-  saved by another running copy of the program reaches every control, each time
-  it saves. The Game pane's raster and memory controls follow it while no bot
-  is focused; with a bot focused they show that bot's own saved modes. When
-  focus ends (for example you remove the last focused bot), they show the saved
-  value at once. The server revision follows it while no session is bound. A
-  control you are typing in, or whose own save is still pending, keeps your
-  entry until its save ends. A pending raster or memory choice, with its
-  "Saving…" and its reason, belongs to the bot you made it for: when you focus
-  another bot, that bot's controls show its own values. Layout, colour, order,
-  fold and remembered-folder changes still show at once and go back if the save
-  fails; in the panel each shows "Saving…" and the reason at its own control
-  (the palette, Fleet columns and toolbar fold, section and category order,
-  folds, the rail and Grid preview folds, file dialogs and the Debug tab).
-  Saves of one setting never mix up which one failed, also when several end at
-  once, and when several raster or memory choices end at once the newest one
-  takes effect. The session log file reports whether the file could open or
-  keep writing, not only that you turned it on; the terminal app's Logs line
-  follows it whoever turned it on, and a failure there leaves after 15 seconds.
-  In the terminal app's settings popup, a selected setting whose reason is
-  taller than the popup (a long path on an 80x24 terminal) says that more is
-  below, and Up and Down scroll through it, also when the notices leave it
-  only two lines. Notices under the rows that do not fit say that more are
-  above or below, and PgUp and PgDn scroll through them, so a failed dismiss
-  can be read to its end on an 80x24 terminal. A setting the save queue
-  refuses outright (it is full) is logged as a refused command. A failed
-  automatic save of the Load order shows in the Fleet window (panel) and on the
-  message line (terminal app), which also says "Load order: saving…" while it
-  is written. A failed save is final: nothing saves it again by itself, also
-  not after the other program releases the preferences file; only a new change
-  of that setting starts a new save.
-  Before, the panel's Browse window saved the category order again in each
-  frame after a failure, so its category chips and the General config's
-  Global section said "Saving…" without end, and the order was written later
-  without a new action. "Don't show again" in the panel's render-all warning
-  now renders every wall member only when the acknowledgement is saved; if
-  the save fails, **only render focused** stays on.
+- A saved setting now takes effect only after its save reaches the disk.
+  Before, the panel and the terminal app applied a change at once and kept it
+  even when the save failed. While a save is pending, the control shows your
+  choice and "Saving…". If the save fails, the control goes back to the saved
+  value and shows why ("Not saved: …") until you try again, or for 15 seconds.
+  Nothing saves it again by itself. This covers the switches in the settings
+  windows (capture input, 50 fps, walk and danger permissions, manual-walk
+  pause, map bake, Quest Paths, session log file), the panel's server revision,
+  the Game pane's raster and memory modes for each bot, and "Don't show again"
+  on notices, which now keeps the dialog open and shows why when the save
+  fails. Layout, colour, order and fold changes still apply at once and go back
+  if their save fails. A change saved by another running copy of 274bot reaches
+  every control. The session log setting shows whether the file could be opened
+  and written. In the terminal app's settings popup, long reasons and notices
+  can be scrolled on an 80x24 terminal. Before, the panel's Browse window could
+  save its category order again on every frame after a failure and show
+  "Saving…" without end.
 
 ### Combat
 
