@@ -924,11 +924,10 @@ impl Dialogue {
             };
             let ack_page =
                 PageAcknowledgement::capture(obs.modal, obs.r#continue, obs.page_fingerprint());
-            let request_id = std::task::ready!(crate::native::defer_budget(
-                cx.emit(InteractReq::Answer {
+            let request_id =
+                std::task::ready!(crate::native::defer_budget(cx.emit(InteractReq::Answer {
                     option: selection.option
-                })
-            ))?;
+                })))?;
             if let Some(index) = selection.prefer {
                 if let Some(bit) = 1u32.checked_shl(index as u32) {
                     self.answers_used |= bit;

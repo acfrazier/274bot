@@ -1407,7 +1407,10 @@ fn drive_filliman(answer_once: bool) -> (Vec<i32>, bool) {
     assert!(poll(&thanks, 8).is_pending());
     let closed = menu_page(-1, &[], &[], -1);
     assert!(poll(&closed, 9).is_pending());
-    let completed = matches!(poll(&closed, 10), Poll::Ready(Ok(DialogueOutcome::Completed)));
+    let completed = matches!(
+        poll(&closed, 10),
+        Poll::Ready(Ok(DialogueOutcome::Completed))
+    );
     (answers(&ledger), completed)
 }
 
