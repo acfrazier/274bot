@@ -208,6 +208,7 @@ export async function tick(api) {{
             api::identity::Scope::Slot(api::identity::SlotKey::from_incarnation(1).unwrap()),
             &world,
             Some(&state),
+            &GameSnapshot::new(),
             NativeBankPickInput {
                 request,
                 authority,
@@ -383,6 +384,7 @@ fn typed_select_air_fallback_is_opt_in_when_no_route_target_exists() {
                 api::identity::Scope::Slot(api::identity::SlotKey::from_incarnation(1).unwrap()),
                 &world,
                 Some(&WorldState::empty()),
+                &GameSnapshot::new(),
                 NativeBankPickInput {
                     request,
                     authority,
@@ -495,6 +497,7 @@ fn typed_select_routes_before_using_a_closer_air_fallback_with_compatibility_bou
         api::identity::Scope::Slot(api::identity::SlotKey::from_incarnation(1).unwrap()),
         &Some(world),
         Some(&WorldState::empty()),
+        &GameSnapshot::new(),
         NativeBankPickInput {
             request,
             authority,
@@ -524,6 +527,90 @@ fn typed_select_routes_before_using_a_closer_air_fallback_with_compatibility_bou
     assert!(
         navs.lock().unwrap()["test"].route.is_none(),
         "select does not walk"
+    );
+    slot.stop();
+}
+
+#[test]
+fn native_bank_selection_captures_quest_rows_before_search_and_keeps_the_view_immutable() {
+    let banks = vec![bank("bank", 12, 12)];
+    let (mut slot, action) = native_pick_action(banks.clone(), tile(0, 0), None, false);
+    let selected = slot
+        .compiled_game_data()
+        .expect("real native selected data");
+    let worker_data = Arc::clone(&selected);
+    let input = script::preparation::PreparationInput::new(1, 0, 8 * 1024 * 1024, 2 * 1024 * 1024)
+        .expect("quest preparation budget");
+    script::preparation::submit(
+        script::preparation::PreparationKind::Profile,
+        Scope::Process,
+        input,
+        move |worker| worker_data.prepare_quests(worker),
+    )
+    .expect("submit quest preparation")
+    .join()
+    .expect("quest preparation worker")
+    .expect("prepare selected quests");
+    let identity = selected.quest_family_identity().expect("quest family");
+    let family = nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema);
+    let quests = selected.try_quests().expect("prepared quests");
+    let quest = quests.iter().next().expect("selected quest row");
+    let gate = api::selected::QuestGate::Complete(quest.id.clone());
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_quest_statuses(
+        vec![api::snapshot::QuestStatusView {
+            component_id: 1,
+            name: quest.display.to_string(),
+            colour: nav_planner::world_state::QUEST_COMPLETE_COLOUR,
+        }],
+        true,
+    );
+    let authority = action.authority();
+    let script::native::HostEffect::BankPick(request) = action.effect else {
+        panic!("real native Select must emit BankPick");
+    };
+    let evidence = EvidenceStamp {
+        run: authority.run(),
+        tick: 1,
+        sequence: 1,
+    };
+    let mut world = world(false);
+    Arc::get_mut(&mut world).unwrap().graph.quest_family = Some(family);
+    let navs = navs(banks);
+    navs.lock().unwrap().get_mut("test").unwrap().quest_context =
+        super::super::script_nav::route_quest_context(&slot, 1);
+    queue_native_bank_pick_scoped(
+        &navs,
+        "test",
+        api::identity::Scope::Slot(api::identity::SlotKey::from_incarnation(1).unwrap()),
+        &Some(world),
+        Some(&WorldState::empty()),
+        &snapshot,
+        NativeBankPickInput {
+            request,
+            authority,
+            evidence,
+        },
+        None,
+    );
+    let captured = navs.lock().unwrap()["test"]
+        .bank_pick
+        .current
+        .as_ref()
+        .expect("bank search owns the admitted request")
+        .job
+        .request
+        .state
+        .quest_evidence
+        .clone()
+        .expect("bank search receives the composed quest evidence");
+    assert_eq!(captured.test(&gate), api::selected::Truth::True);
+    snapshot.seed_quest_statuses(Vec::new(), false);
+    assert_eq!(
+        captured.test(&gate),
+        api::selected::Truth::True,
+        "later frames cannot change an admitted service search"
     );
     slot.stop();
 }
@@ -2243,6 +2330,7 @@ mod bank_pick_capture {
                 scope(),
                 &Some(world(false)),
                 Some(&state),
+                &GameSnapshot::new(),
                 tile(0, 0),
                 FindOptions::default(),
                 7,

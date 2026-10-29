@@ -231,12 +231,6 @@ impl ScriptStartHandle {
         script_runtime::manual_route_state(&slot, snapshot, base, world)
     }
 
-    pub(crate) fn manual_route_run(&self, name: &str) -> Option<api::selected::RunKey> {
-        let slot = script_slot(&self.scripts, name)?;
-        let slot = slot.lock().ok()?;
-        slot.manual_route_run()
-    }
-
     pub(crate) fn record_gate_refusal(
         &self,
         name: &str,

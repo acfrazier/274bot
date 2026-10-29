@@ -70,6 +70,7 @@ pub(super) fn native_pick_action(
         }
     }
     let mut slot = script::SlotScript::new();
+    slot.bind_incarnation(1);
     slot.start_test_script(
         Box::new(Selecting {
             args: Some(SelectArgs {

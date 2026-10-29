@@ -4484,6 +4484,22 @@ fn captured_route_quests(
         })
     }
 }
+/// Service selection uses the same request-time evidence view as a walk.
+pub(super) fn captured_service_quests(
+    family: nav_planner::quest_gates::QuestFamilyId,
+    context: Option<&RouteQuestContext>,
+    snapshot: &GameSnapshot,
+    required_after: Option<EvidenceStamp>,
+) -> Option<nav_planner::quest_gates::QuestEvidence> {
+    let context = context?;
+    captured_route_quests(
+        family,
+        Some(context),
+        snapshot,
+        None,
+        required_after.unwrap_or(context.stamp),
+    )
+}
 
 /// The first Load request remains the logical owner while native repair walks
 /// use their own request IDs. Only an active compatibility walk allocates this.
@@ -9327,6 +9343,7 @@ mod route_quest_provider_tests {
             observed,
         });
         let with_memory_context = RouteQuestContext {
+            prereq_catalog: selected.try_prereq_steps(),
             selected,
             stamp: observed,
             local_state: Some(state),
@@ -9343,6 +9360,18 @@ mod route_quest_provider_tests {
         assert_eq!(
             evidence.owned_provider_bytes() - without_memory_bytes,
             std::mem::size_of::<api::prereq_knowledge::Fact>()
+        );
+        let service_evidence = captured_service_quests(
+            family,
+            Some(&with_memory_context),
+            &snapshot,
+            Some(observed),
+        )
+        .expect("service selection captures the same immutable memory");
+        assert_eq!(service_evidence.test(&gate), Truth::False);
+        assert_eq!(
+            service_evidence.owned_provider_bytes(),
+            evidence.owned_provider_bytes()
         );
     }
 

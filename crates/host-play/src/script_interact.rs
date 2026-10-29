@@ -804,6 +804,7 @@ where
                         scope,
                         world,
                         state,
+                        snapshot,
                         WorldTile { x, z, level },
                         snapshot
                             .stats()

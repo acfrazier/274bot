@@ -1764,6 +1764,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                     scope,
                                     world,
                                     state.as_ref(),
+                                    snapshot,
                                     super::bank::NativeBankPickInput {
                                         request,
                                         authority,
