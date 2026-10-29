@@ -424,6 +424,7 @@ impl NativeMachine for Combat {
         }
         self.flags |= OBSERVED;
         self.counters.ticks = self.counters.ticks.saturating_add(1);
+        let stand_failures_before_receipt = self.stand_walk_failures;
         if self.phase != Phase::Escape {
             if let Some(receipt) = self.pending_walk.and_then(|id| cx.walk_receipt(id.get())) {
                 // A stand-approach walk is identified by its context, as
@@ -623,6 +624,14 @@ impl NativeMachine for Combat {
                                 self.flags |= LEASH_WALKED;
                                 return Poll::Pending;
                             }
+                        }
+                        // A completed handle drops this machine before
+                        // the quest step can inspect it. If this poll
+                        // changed the stand count, keep the machine alive
+                        // for one more poll so the step mirrors the exact
+                        // count before it seeds the next attempt.
+                        if self.stand_walk_failures != stand_failures_before_receipt {
+                            return Poll::Pending;
                         }
                         return Poll::Ready(Ok(self.report(evidence)));
                     }
