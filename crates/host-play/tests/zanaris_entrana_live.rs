@@ -15,6 +15,8 @@ const QUEST: &str = "zanaris";
 const DISPLAY: &str = "Lost City";
 const STAGE: &str = "zanaris:1";
 const NEXT_STAGE: &str = "zanaris:2";
+// R289 content defines `^zanaris_started = 1` in `scripts/quests/quest_zanaris/configs/quest_zanaris.constant`.
+const STAGE_VALUE: i32 = 1;
 const BASE40_LEVEL: i32 = scenario::quester::TestProfile::Base40.combat_level() as i32;
 const BASE40_STATS: [(u8, i32); 7] = [
     (0, BASE40_LEVEL),
@@ -99,17 +101,22 @@ fn zanaris_navigation_cell() -> Result<Cell, String> {
         .progress
         .as_ref()
         .ok_or("Zanaris Path has no progress program")?;
-    let mut stage_values = progress
-        .rules
-        .iter()
-        .filter(|rule| rule.stage.0.as_ref() == STAGE)
-        .filter_map(|rule| rule.varp);
-    let stage_value = stage_values
-        .next()
-        .ok_or("Zanaris stage has no authored varp hint")?;
-    if stage_values.any(|value| value != stage_value) {
-        return Err("Zanaris stage has contradictory varp hints".into());
+    let mut stage_found = false;
+    for rule in &progress.rules {
+        if rule.stage.0.as_ref() != STAGE {
+            continue;
+        }
+        stage_found = true;
+        if let Some(value) = rule.varp {
+            if value != STAGE_VALUE {
+                return Err("Zanaris stage has contradictory varp hints".into());
+            }
+        }
     }
+    if !stage_found {
+        return Err("Zanaris Path has no stage 1 progress rule".into());
+    }
+    let stage_value = STAGE_VALUE;
     let knife_id = selected
         .item_by_alias("knife")
         .map(|item| item.id)
