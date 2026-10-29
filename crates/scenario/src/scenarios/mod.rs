@@ -122,8 +122,6 @@ pub(crate) use production::{
     thiever_guard_no_bank_scenario, thiever_scenario, vial_filler_east_scenario,
     vial_filler_scenario, wildy_agility_scenario,
 };
-#[cfg(any(test, feature = "test-support"))]
-pub(crate) use quester::quester_skip_scenario;
 pub(crate) use quester::{
     quester_cook_login_scenario, quester_cook_restart_scenario, quester_cook_resume_scenario,
     quester_cook_scenario, quester_path_scenario, quester_queue_scenario,

@@ -4,7 +4,6 @@
 //! The `script` crate's types stay behind these; conversions are
 //! crate-private.
 
-use api::selected::RunKey;
 use script::ScriptSel;
 #[cfg(feature = "js")]
 use {script_js::LoadShape as ScriptLoadShape, script_js::LoadStage as ScriptLoadStage};
@@ -626,11 +625,6 @@ impl<'a> StatusView<'a> {
     /// The compiled card that published it.
     pub fn card(&self) -> CompiledCardId {
         CompiledCardId::from_script(self.0.card)
-    }
-
-    /// The native run identity published with this status.
-    pub fn run(&self) -> RunKey {
-        self.0.run
     }
 
     /// The settings revision the run applies.

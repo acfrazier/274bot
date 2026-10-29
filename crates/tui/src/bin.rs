@@ -3113,28 +3113,6 @@ impl TuiSession {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    /// Request a skip for the focused Quester through the shared command
-    /// boundary; its refusal text is shown on the expiring message line.
-    fn script_skip_quest(&mut self, app: &mut TuiApp, target: Option<api::selected::RunKey>) {
-        let Some(name) = app.focused_name() else {
-            self.refuse_command(
-                app,
-                OperatorCommand::SkipQuest { target },
-                &[],
-                Unavailable::NoFocusedBot.need(),
-                "script: no focused profile",
-            );
-            return;
-        };
-        let result = self.submit_with(
-            app,
-            OperatorCommand::SkipQuest { target },
-            Targets::Profile(&name),
-        );
-        app.error = result.err();
-    }
-
     /// Stop the focused slot's script.
     fn script_stop(&mut self, app: &mut TuiApp) {
         if let Some(name) = app.focused_name() {
@@ -5054,8 +5032,6 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::Remove(name) => session.remove(app, &name),
         AppAction::ScriptStart(sel) => session.script_start(app, &sel),
         AppAction::ScriptPause => session.script_toggle_pause(app),
-        #[cfg(any(test, feature = "test-support"))]
-        AppAction::ScriptSkipQuest(target) => session.script_skip_quest(app, target),
         AppAction::ScriptStop => session.script_stop(app),
         AppAction::ScriptBrowse =>
         {
@@ -5276,7 +5252,7 @@ mod tests;
 
 #[cfg(test)]
 #[path = "manual_click_live_tests.rs"]
-pub(crate) mod manual_click_live_tests;
+mod manual_click_live_tests;
 
 #[cfg(test)]
 #[path = "bin_loop_tests.rs"]

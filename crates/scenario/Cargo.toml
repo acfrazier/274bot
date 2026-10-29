@@ -14,9 +14,3 @@ serde = { version = "=1.0.219", features = ["derive"] }
 serde_json = "=1.0.140"
 # Path-backed qualification reuses the product's document types, without V8.
 script = { path = "../script", default-features = false }
-
-[features]
-# Test-only scenario rows (the Skip quest live cell); enabled from
-# dev-dependencies, never production builds. The row's own steps never
-# skip: the host cell drives the Skip quest control.
-test-support = []

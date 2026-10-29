@@ -562,7 +562,7 @@ fn assert_correlated_user_input(before: &serde_json::Value, after: &serde_json::
 /// Draw `app` at `cols`x`rows` and write the frame as `{stamp}_{label}.txt`
 /// (one line per row) and `.json` (every cell's symbol and colours, with
 /// `proof`) under `dir`: the terminal app's capture receipt.
-pub(crate) fn capture(
+pub(super) fn capture(
     app: &mut TuiApp,
     cols: u16,
     rows: u16,

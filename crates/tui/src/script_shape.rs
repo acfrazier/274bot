@@ -34,13 +34,11 @@ pub const SCRIPT_BULK_BUTTONS: [&str; 2] = ["Start fleet", "Stop fleet"];
 /// same commands the buttons emit, reachable when the pane is clipped.
 /// Pause also toggles Resume.
 #[cfg(feature = "js")]
-pub const SCRIPT_KEYS: &[(&str, char)] = &[
+pub const SCRIPT_KEYS: [(&str, char); 10] = [
     ("Browse", 'b'),
     ("Start", 't'),
     ("Pause", 'P'),
     ("Stop", 'e'),
-    #[cfg(any(test, feature = "test-support"))]
-    ("Skip quest", 'X'),
     ("Load", 'f'),
     ("Params", 'v'),
     ("Reload", 'R'),
@@ -49,13 +47,11 @@ pub const SCRIPT_KEYS: &[(&str, char)] = &[
     ("Stop fleet", 'E'),
 ];
 #[cfg(not(feature = "js"))]
-pub const SCRIPT_KEYS: &[(&str, char)] = &[
+pub const SCRIPT_KEYS: [(&str, char); 7] = [
     ("Browse", 'b'),
     ("Start", 't'),
     ("Pause", 'P'),
     ("Stop", 'e'),
-    #[cfg(any(test, feature = "test-support"))]
-    ("Skip quest", 'X'),
     ("Params", 'v'),
     ("Start fleet", 'T'),
     ("Stop fleet", 'E'),
@@ -442,31 +438,18 @@ impl<'a> ScriptPane<'a> {
     }
 
     /// The main row's buttons, left to right (Pause reads Resume while
-    /// paused); the `test-support` Skip quest button appears only while a
-    /// Quester is running or paused.
+    /// paused).
     fn main_buttons(&self) -> impl Iterator<Item = &'static str> {
         let state = self.state;
-        #[cfg(any(test, feature = "test-support"))]
-        let skip_quest = matches!(state, ScriptRunState::Running | ScriptRunState::Paused)
-            && self
-                .native_status
-                .is_some_and(|status| status.card() == CompiledCardId::QUESTER);
-        let buttons = SCRIPT_BUTTONS.iter().map(move |b| {
+        SCRIPT_BUTTONS.iter().map(move |b| {
             if *b == "Pause" {
                 pause_button_label(state)
             } else {
                 b
             }
-        });
-        #[cfg(any(test, feature = "test-support"))]
-        {
-            buttons.chain(skip_quest.then_some("Skip quest"))
-        }
-        #[cfg(not(any(test, feature = "test-support")))]
-        {
-            buttons
-        }
+        })
     }
+
     /// The bulk row's buttons, left to right.
     fn bulk_buttons(&self) -> impl Iterator<Item = &'static str> {
         #[cfg(feature = "js")]

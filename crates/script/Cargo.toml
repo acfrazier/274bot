@@ -8,10 +8,6 @@ publish = false
 # Integration-only core test seams, enabled through test dependencies.
 # Preserve map order in test-hook fixtures and snapshots.
 test-hooks = ["api/test-hooks", "api/test-support", "serde_json/preserve_order"]
-# Test-only Skip quest control (the operator parks a queued quest). A
-# release build has no hook, handler or reason text; enabled from
-# dev-dependencies, never production builds.
-test-support = []
 canvas-raster = ["dep:tiny-skia", "dep:ab_glyph"]
 path-schema = ["dep:schemars", "api/path-schema"]
 

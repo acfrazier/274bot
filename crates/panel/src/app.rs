@@ -2814,26 +2814,14 @@ fn script_section(ui: &Ui, session: &mut Session) {
             session.script_stop();
         }
     }
-    #[cfg(any(test, feature = "test-support"))]
-    let mut skip_quest = false;
     let native = session
         .core
         .fleet_view()
         .detail()
         .and_then(|detail| detail.native_status());
-    #[cfg(any(test, feature = "test-support"))]
-    let target = native.map(|status| status.run());
     let status = frontend_core::views::script_status_label(state, native);
     if let Some(native) = native {
         kv_row(ui, "status", status);
-        #[cfg(any(test, feature = "test-support"))]
-        if matches!(state, ScriptRunState::Running | ScriptRunState::Paused)
-            && native.card() == frontend_core::scripts::CompiledCardId::QUESTER
-        {
-            ui.same_line();
-            skip_quest = ui.small_button("Skip quest");
-            ui.set_item_tooltip("park the active quest row and continue with the next queue item");
-        }
         if let Some(reason) = frontend_core::views::script_status_reason(native) {
             ui.text_wrapped(reason);
         }
@@ -2845,10 +2833,6 @@ fn script_section(ui: &Ui, session: &mut Session) {
             Some(err) => kv_row(ui, "status", &format!("{status}: {err}")),
             None => kv_row(ui, "status", status),
         }
-    }
-    #[cfg(any(test, feature = "test-support"))]
-    if skip_quest {
-        session.script_skip_quest(target);
     }
     if let Some(reason) = session
         .core

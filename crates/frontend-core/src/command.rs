@@ -49,8 +49,6 @@ use api::lifecycle::{
 use api::process_condition::{
     ConditionId, ProcessCapability, ProcessConditions, ProcessServiceCondition, UnavailableTerminal,
 };
-#[cfg(feature = "test-support")]
-use api::selected::RunKey;
 
 use crate::map_bake::MapBakeChoice;
 use crate::nav_prefs::NavPreference;
@@ -148,10 +146,6 @@ pub enum OperatorCommand {
     /// Pause the running script (`OperatorSession::toggle_pause`,
     /// `session.rs:1728-1750`).
     PauseScript,
-    #[cfg(feature = "test-support")]
-    /// Request a skip for the active Quester run at its next eligible tick.
-    /// `target` fences the command against a stale native status view.
-    SkipQuest { target: Option<RunKey> },
     /// Resume a paused script through the same operator row.
     ResumeScript,
     /// Stop the script (`OperatorSession::{stop_script, stop_scripts}`,
@@ -721,7 +715,7 @@ const ROUTED_MOVEMENT: &[ProcessCapability] = &[
 impl OperatorCommand {
     /// Every row once (parameterized rows with a representative value), for
     /// exhaustive checks.
-    pub const ALL: [OperatorCommand; 97 + cfg!(feature = "test-support") as usize] = [
+    pub const ALL: [OperatorCommand; 97] = [
         Self::Load,
         Self::Remove,
         Self::Login,
@@ -742,8 +736,6 @@ impl OperatorCommand {
         Self::StartScript,
         Self::PauseScript,
         Self::ResumeScript,
-        #[cfg(feature = "test-support")]
-        Self::SkipQuest { target: None },
         Self::StopScript,
         Self::CancelQueuedStart,
         Self::PickBrowseCard,
@@ -998,8 +990,6 @@ impl OperatorCommand {
     /// How a pending member settles.
     pub const fn settles(self) -> Settles {
         match self {
-            #[cfg(feature = "test-support")]
-            Self::SkipQuest { .. } => Settles::AtDispatch,
             Self::Login | Self::Logout | Self::RelogNow => Settles::IntentApplied,
             Self::Select
             | Self::SetMark(_)
