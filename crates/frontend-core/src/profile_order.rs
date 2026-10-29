@@ -577,9 +577,11 @@ mod tests {
             (4, "mike"),
             (3, "zed"),
         ];
-        assert!(saved
-            .reconcile(rows.iter().copied(), |_| false, &[3, 4, 5])
-            .stored_changed);
+        assert!(
+            saved
+                .reconcile(rows.iter().copied(), |_| false, &[3, 4, 5])
+                .stored_changed
+        );
         assert_eq!(
             names(&saved),
             ["bob", "alice", "zed", "mike", "anna", "dave"]
@@ -633,7 +635,11 @@ mod tests {
         let mut saved = order(&["alice", "bob", "carol"]);
         assert!(
             !saved
-                .reconcile([(1, "alice"), (3, "carol")].into_iter(), |uid| uid == 2, &[])
+                .reconcile(
+                    [(1, "alice"), (3, "carol")].into_iter(),
+                    |uid| uid == 2,
+                    &[]
+                )
                 .stored_changed
         );
         assert_eq!(names(&saved), ["alice", "carol"]);
@@ -653,7 +659,11 @@ mod tests {
         // Deleted again, now durable: dropped, and a write is needed.
         assert!(
             !saved
-                .reconcile([(1, "alice"), (3, "carol")].into_iter(), |uid| uid == 2, &[])
+                .reconcile(
+                    [(1, "alice"), (3, "carol")].into_iter(),
+                    |uid| uid == 2,
+                    &[]
+                )
                 .stored_changed
         );
         assert!(sync(&mut saved, &[(1, "alice"), (3, "carol")]));
@@ -689,7 +699,11 @@ mod tests {
     #[test]
     fn a_renumber_keeps_a_pending_deletions_place() {
         let mut saved = order(&["a", "b", "c", "d"]);
-        saved.reconcile([(1, "a"), (2, "b"), (4, "d")].into_iter(), |uid| uid == 3, &[]);
+        saved.reconcile(
+            [(1, "a"), (2, "b"), (4, "d")].into_iter(),
+            |uid| uid == 3,
+            &[],
+        );
         saved.renumber();
         keys_ok(&saved);
         assert!(!sync(&mut saved, &[(1, "a"), (2, "b"), (3, "c"), (4, "d")]));
