@@ -43,7 +43,7 @@
       }
     ],
     "items": [],
-    "acquire": {},
+    "acquire": {"STOP-iron-smelting-20-failures":[{"id":"mine-one-iron-ore","kind":"gather","version":1,"advances":false,"args":{"skill":"mining","resource":"iron","until":{"obj":"iron_ore","qty":1},"anchor":{"tile":[2968,3239,0],"source":"/Users/acfrazier/experiments/lostcity-289/content/maps/m46_50.jm2:5666; /Users/acfrazier/experiments/lostcity-289/content/pack/loc.pack:2093; /Users/acfrazier/experiments/lostcity-289/content/scripts/skill_mining/configs/mine.dbrow:49-60"},"radius":3,"settle_ms":300000},"comment":"Mining 15 yields iron ore: /Users/acfrazier/experiments/lostcity-289/content/scripts/skill_mining/configs/mine.dbrow:49-60.","skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_bar"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_ore"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_ore"}}}},{"id":"smelt-one-iron-ore","kind":"use_on","version":1,"advances":false,"args":{"item":"iron_ore","target":{"loc":"furnace1"},"anchor":{"tile":[2974,3369,0],"source":"/Users/acfrazier/experiments/lostcity-289/content/maps/m46_52.jm2:7888; /Users/acfrazier/experiments/lostcity-289/content/scripts/skill_smithing/scripts/smelting/smelting.rs2:1-29,100-115"},"radius":3,"settle_ms":15000},"comment":"One ore is consumed per attempt. Without a forging ring, each attempt fails with probability 1/2. /Users/acfrazier/experiments/lostcity-289/content/scripts/skill_smithing/scripts/smelting/smelting.rs2:190-208.","skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_bar"}}},"settle":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_bar"}}},{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_ore"}}}}]}}]},
     "bank": "nearest",
     "coin_float": 0,
     "loadouts": {},
@@ -113,6 +113,7 @@
       "obj:death_climbingboots",
       "obj:maple_logs",
       "obj:iron_bar",
+      "obj:cabbage",
       "obj:rope",
       "obj:bucket_wax",
       "obj:swamp_tar",
@@ -446,19 +447,13 @@
               "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "maple_logs"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "yew_logs"}}}]},
               "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "maple_logs"}}}
             },
+            {"id":"acquire-iron-bar","kind":"acquire","version":1,"advances":false,"args":{"recipe":"STOP-iron-smelting-20-failures","max_restarts":19},"comment":"At most 20 smelts. All 20 fail with probability 1/1048576 without a forging ring: /Users/acfrazier/experiments/lostcity-289/content/scripts/skill_smithing/scripts/smelting/smelting.rs2:190-208.","skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_bar"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"iron_bar"}}}},
             {
-              "id": "mine-iron-ore", "kind": "gather", "version": 1, "advances": false,
-              "args": {"skill": "mining", "resource": "iron", "until": {"obj": "iron_ore", "qty": 8}, "anchor": {"tile": [2968,3239,0], "source": "content/maps/m46_50.jm2:5666; content/pack/loc.pack:2093; content/scripts/skill_mining/configs/mine.dbrow:49-60"}, "radius": 3, "settle_ms": 300000},
-              "comment": "Mining 15 obtains iron ore: content/scripts/skill_mining/configs/mine.dbrow:49-60. Eight ores do not guarantee a successful smelt: content/scripts/skill_smithing/scripts/smelting/smelting.rs2:190-208.",
-              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_bar"}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "iron_ore", "qty": 8}}}]},
-              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "iron_ore", "qty": 8}}}
-            },
-            {
-              "id": "smelt-iron-bar", "kind": "use_on", "version": 1, "advances": false,
-              "args": {"item": "iron_ore", "target": {"loc": "furnace1"}, "anchor": {"tile": [2974,3369,0], "source": "content/maps/m46_52.jm2:7888; content/scripts/skill_smithing/scripts/smelting/smelting.rs2:1-29,100-115"}, "radius": 3, "product": "iron_bar", "settle_ms": 15000, "until": {"obj": "iron_bar", "qty": 1}},
-              "comment": "Smithing 15 is required: content/scripts/skill_smithing/configs/smelting/smelting.struct:17-26. A failed smelt consumes ore, and eight attempts are not guaranteed: content/scripts/skill_smithing/scripts/smelting/smelting.rs2:190-208.",
-              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_bar"}}},
-              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_bar"}}}
+              "id": "pick-arrg-food", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"loc": "cabbage"}, "op": "Pick", "anchor": {"tile": [3046,3287,0], "source": "/Users/acfrazier/experiments/lostcity-289/content/maps/m47_51.jm2:5743-5756; /Users/acfrazier/experiments/lostcity-289/content/pack/loc.pack:1162"}, "radius": 12, "wait_if_missing": true, "until": {"obj": "cabbage", "qty": 10}, "settle_ms": 180000},
+              "comment": "The cabbage patch replenishes after 70 ticks. Each cabbage heals one hitpoint: /Users/acfrazier/experiments/lostcity-289/content/scripts/general_use/scripts/pickables.rs2:42-51; /Users/acfrazier/experiments/lostcity-289/content/scripts/player/configs/consumption/consume_normal.dbrow:32-38.",
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "cabbage", "qty": 10}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "cabbage", "qty": 10}}}
             },
             {
               "id": "collect-sled",
