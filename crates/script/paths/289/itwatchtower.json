@@ -184,12 +184,12 @@
           "recovery_entry": null,
           "order": "authored",
           "cross": [
-            { "id": "scorpion@2865,3156,0", "name": "Scorpion (2865,3156,0)", "reason": "The boat route to Betty crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." },
-            { "id": "scorpion@2870,3159,0", "name": "Scorpion (2870,3159,0)", "reason": "The boat route to Betty crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." },
-            { "id": "snake@2875,3164,0", "name": "Snake (2875,3164,0)", "reason": "The boat route to Betty crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." },
-            { "id": "scorpion@2861,3165,0", "name": "Scorpion (2861,3165,0)", "reason": "The boat route to Betty crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." },
-            { "id": "scorpion@2863,3169,0", "name": "Scorpion (2863,3169,0)", "reason": "The boat route to Betty crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." },
-            { "id": "scorpion@2862,3180,0", "name": "Scorpion (2862,3180,0)", "reason": "The boat route to Betty crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." }
+            { "id": "scorpion@2865,3156,0", "name": "Scorpion (2865,3156,0)", "reason": "The boat route to Betty and back crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." },
+            { "id": "scorpion@2870,3159,0", "name": "Scorpion (2870,3159,0)", "reason": "The boat route to Betty and back crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." },
+            { "id": "snake@2875,3164,0", "name": "Snake (2875,3164,0)", "reason": "The boat route to Betty and back crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." },
+            { "id": "scorpion@2861,3165,0", "name": "Scorpion (2861,3165,0)", "reason": "The boat route to Betty and back crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." },
+            { "id": "scorpion@2863,3169,0", "name": "Scorpion (2863,3169,0)", "reason": "The boat route to Betty and back crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." },
+            { "id": "scorpion@2862,3180,0", "name": "Scorpion (2862,3180,0)", "reason": "The boat route to Betty and back crosses Karamja. QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-74,130-137; QUEST-CAMPAIGN/triage/review-batch-5.md:283-312." }
           ],
           "steps": [
             {
@@ -223,6 +223,25 @@
                 }
               },
               "comment": "Betty stocks death runes: content/scripts/areas/area_port_sarim/configs/port_sarim.inv:49. Base cost 30 and sell multiplier 1000 give 30 at full stock: content/scripts/skill_magic/configs/runes.obj:74-78; content/scripts/areas/area_port_sarim/configs/port_sarim.npc:219-222; content/scripts/shop/scripts/shop.rs2:131-147,183-192.",
+              "advances": false
+            },
+            {
+              "id": "return-to-tower-window",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [2548, 3119, 0],
+                "radius": 2,
+                "source": "content/maps/m39_48.jm2:6087; QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-70,98,115"
+              },
+              "skip_if": {
+                "Any": [
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2548, 3119, 0], "radius": 2 } } },
+                  { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2544, 3112, 2], "radius": 4 } } }
+                ]
+              },
+              "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2548, 3119, 0], "radius": 2 } } },
+              "comment": "Return by Captain Tobias from Port Sarim to Karamja for 30 coins. Cross Karamja through the six declared zones. Pay the Brimhaven customs officer 30 coins for Ardougne, then walk to the tower window near Yanille. Fares and NPCs: content/scripts/areas/area_port_sarim/scripts/sailors.rs2:1-31; content/maps/m47_50.jm2:10010; content/scripts/areas/area_karamja/scripts/customs_officer.rs2:1-3,45-84; content/maps/m43_50.jm2:4911-4913; QUEST-CAMPAIGN/triage/itwatchtower-gap-1.md:68-70,98.",
               "advances": false
             },
             {
