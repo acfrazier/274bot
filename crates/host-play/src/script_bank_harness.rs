@@ -376,7 +376,10 @@ pub fn measures_captured_native_bank_pick_cpu() {
     eprintln!("bank_pick_captured_cpu {output}");
     assert_eq!(result.kind, PickKind::Reachable);
     let index = result.index.expect("the actual search returns a bank");
-    assert_eq!(request.facts.as_ref().unwrap().banks()[index].name, explicit);
+    assert_eq!(
+        request.facts.as_ref().unwrap().banks()[index].name,
+        explicit
+    );
     assert!(charge_bytes <= BANK_PICK_JOB_BYTES);
     drop(slot);
 }

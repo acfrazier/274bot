@@ -532,8 +532,7 @@ fn run_cell(variant: Variant) {
             frame(client, &frame_cell, &frame_account);
             if client.ingame && client.scene_state == 2 {
                 monitor.rebuild(client);
-                frame_trace.lock().final_bank_open =
-                    Some(monitor.bank_component_id() >= 0);
+                frame_trace.lock().final_bank_open = Some(monitor.bank_component_id() >= 0);
             }
         },
     )
