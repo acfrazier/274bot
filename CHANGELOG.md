@@ -87,6 +87,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Scripting
 
+- `api.questIdentity` now returns the state variable and completion value for
+  four quests whose row held a script procedure name or zero. The Digsite Quest
+  and Clock Tower rows name the varp each progress procedure reads
+  (`itexamlevel` and `cogquest`); Monkey Madness and Troll Romance report
+  completion 9 and 45 from their own constant files.
+
 - Bank opening now waits for its own walk to finish. A completed walk from
   a script could reuse the bank walk's request number and end the bank walk
   before the bot reached the bank. The host now checks the route generation

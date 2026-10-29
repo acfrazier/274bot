@@ -1659,6 +1659,65 @@ for (const revision of [274, 289]) {
 }
 fs.rmSync(constantJournalRoot, { recursive: true, force: true });
 
+// Rule 1: a proc progress operand resolves to the one varp its body returns; a proc name never lands in `varp`.
+const procOperandRoot = questFixture((files) => {
+    files['scripts/player/interfaces/questlist.if'] += '[itexam]\ny=7\ntext=Digsite Quest\n';
+    files['pack/varp.pack'] += '131=itexamlevel\n';
+    files['scripts/general/configs/quest.constant'] += '^itexam_complete = 9\n^itexam_questpoints = 2\n';
+    files['scripts/quests/quest_itexam/scripts/quest_itexam.rs2'] = `[proc,itexam_progress]()(int)
+return (getbit_range(%itexamlevel, 0, 3));
+`;
+});
+for (const revision of [274, 289]) {
+    const facts = extractQuestIdentityFacts(procOperandRoot, revision);
+    const row = facts.rows.find((entry) => entry.id === 'itexam');
+    assert.deepEqual([row?.varp, row?.varp_id, row?.complete, row?.quest_points], ['itexamlevel', 131, 9, 2]);
+    assert.equal(JSON.stringify(facts.rows).includes('~itexam_progress'), false, 'a proc call is never stored as the varp');
+}
+fs.rmSync(procOperandRoot, { recursive: true, force: true });
+
+// Rule 2: a complete constant absent from quest.constant resolves in the quest's own .constant file.
+const questLocalConstantRoot = questFixture((files) => {
+    files['scripts/general/scripts/quests.rs2'] += '~send_quest_progress_colour(questlist:mm, %mm_main, ^mm_complete);\n';
+    files['scripts/player/interfaces/questlist.if'] += '[mm]\ny=8\ntext=Monkey Madness\n';
+    files['pack/varp.pack'] += '365=mm_main\n';
+    files['scripts/quests/quest_mm/configs/quest_mm.constant'] = `^mm_received_reward = 8
+^mm_complete = 9
+`;
+});
+for (const revision of [274, 289]) {
+    const row = extractQuestIdentityFacts(questLocalConstantRoot, revision).rows.find((entry) => entry.id === 'mm');
+    assert.deepEqual([row?.varp, row?.varp_id, row?.complete], ['mm_main', 365, 9]);
+}
+fs.rmSync(questLocalConstantRoot, { recursive: true, force: true });
+
+// Rule 3: an operand that still cannot be resolved keeps today's row values and prints one warning naming the quest.
+const unresolvedRoot = questFixture((files) => {
+    files['scripts/player/interfaces/questlist.if'] += '[elemental_workshop]\ny=9\ntext=Elemental Workshop\n[itexam]\ny=7\ntext=Digsite Quest\n';
+    files['pack/varp.pack'] += '299=elemental_workshop_bits\n';
+    files['scripts/general/configs/quest.constant'] += '^itexam_complete = 9\n^itexam_questpoints = 2\n';
+});
+const warnings: string[] = [];
+const consoleWarn = console.warn;
+console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); };
+const unresolvedFacts = (() => {
+    try {
+        return extractQuestIdentityFacts(unresolvedRoot, 289);
+    } finally {
+        console.warn = consoleWarn;
+    }
+})();
+const elemental = unresolvedFacts.rows.find((entry) => entry.id === 'elemental_workshop');
+assert.deepEqual([elemental?.varp, elemental?.varp_id, elemental?.complete], ['elemental_workshop_bits', 299, 0], 'a computed complete operand keeps 0');
+const unresolvedItexam = unresolvedFacts.rows.find((entry) => entry.id === 'itexam');
+assert.deepEqual([unresolvedItexam?.varp, unresolvedItexam?.varp_id, unresolvedItexam?.complete], ['~itexam_progress', -1, 9], 'a missing proc keeps the operand text');
+assert.equal(warnings.length, 2, 'one warning line per unresolved quest');
+assert.match(warnings[0], /^quest_identity: elemental_workshop /);
+assert.match(warnings[0], /complete operand/);
+assert.match(warnings[1], /^quest_identity: itexam /);
+assert.match(warnings[1], /progress operand ~itexam_progress/);
+fs.rmSync(unresolvedRoot, { recursive: true, force: true });
+
 for (const body of [
     `[proc,unrelated]
 def_string $title = "Not Cook's Assistant";
