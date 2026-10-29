@@ -384,6 +384,7 @@
               "args": {
                 "target": {
                   "npc": "jonny_the_beard",
+                  "pick": "nearest",
                   "not_targeting_others": true
                 },
                 "stand": {
@@ -1095,6 +1096,7 @@
               "args": {
                 "target": {
                   "npc": "weaponsmaster",
+                  "pick": "nearest",
                   "not_targeting_others": true
                 },
                 "stand": {
