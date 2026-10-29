@@ -174,12 +174,12 @@ const OAK_EDGE_TARGET: WorldTile = WorldTile {
     z: 3205,
     level: 0,
 };
-const OAK_ABSENT_START: WorldTile = WorldTile {
+const OAK_NO_PLACEMENT_START: WorldTile = WorldTile {
     x: 2809,
     z: 3441,
     level: 0,
 };
-const OAK_ABSENT_BANK_BOOTH: WorldTile = WorldTile {
+const OAK_NO_PLACEMENT_BANK_BOOTH: WorldTile = WorldTile {
     x: 2809,
     z: 3442,
     level: 0,
@@ -224,7 +224,7 @@ impl Cell {
             (Self::Woodcutting, LiveCase::OakRespawn) => "gatherer_wc_respawn",
             (Self::Woodcutting, LiveCase::OakNearEdge) => "gatherer_wc_near_edge",
             (Self::Woodcutting, LiveCase::LocationAuto) => "gatherer_location_modes",
-            (Self::Woodcutting, LiveCase::OakAbsentArea) => "gatherer_wc_absent",
+            (Self::Woodcutting, LiveCase::OakNoPlacementArea) => "gatherer_wc_area_no_placement",
             (Self::Mining, LiveCase::GasHazard) => "gatherer_mine_gas_hazard",
             (Self::Woodcutting, LiveCase::WoodcuttingBank) => "gatherer_wc_bank",
             (Self::Woodcutting, LiveCase::WoodcuttingBankUnwieldable) => {
@@ -283,7 +283,7 @@ impl Cell {
             LiveCase::PauseResumeOtherPlane => "GATHERER_RETURN_PAUSE_TILE",
             LiveCase::ReconnectReturn => "GATHERER_RECONNECT_RETURN_TILE",
             LiveCase::GasHazard => "GATHERER_GAS_TILE",
-            LiveCase::OakAbsentArea => "GATHERER_WC_ABSENT_TILE",
+            LiveCase::OakNoPlacementArea => "GATHERER_WC_NO_PLACEMENT_TILE",
             LiveCase::RandomEvent | LiveCase::MazeRandom => "GATHERER_WC_TILE",
             LiveCase::DeathReturn
             | LiveCase::DeathNoStock
@@ -370,7 +370,7 @@ impl Cell {
                 Self::Woodcutting,
                 LiveCase::OakRespawn
                 | LiveCase::OakNearEdge
-                | LiveCase::OakAbsentArea
+                | LiveCase::OakNoPlacementArea
                 | LiveCase::WoodcuttingBank
                 | LiveCase::BankCostFirstGoal
                 | LiveCase::BankCostNoCandidate
@@ -415,7 +415,7 @@ impl Cell {
                 Self::Woodcutting,
                 LiveCase::OakRespawn
                 | LiveCase::OakNearEdge
-                | LiveCase::OakAbsentArea
+                | LiveCase::OakNoPlacementArea
                 | LiveCase::WoodcuttingBank
                 | LiveCase::BankCostFirstGoal
                 | LiveCase::BankCostNoCandidate
@@ -449,7 +449,7 @@ impl Cell {
                 case,
                 LiveCase::OakRespawn
                     | LiveCase::OakNearEdge
-                    | LiveCase::OakAbsentArea
+                    | LiveCase::OakNoPlacementArea
                     | LiveCase::WoodcuttingBank
                     | LiveCase::WoodcuttingBankUnwieldable
                     | LiveCase::BankCostFirstGoal
@@ -656,7 +656,7 @@ impl Cell {
                 | LiveCase::FishBankSoak => 32,
                 LiveCase::FishHarpoonBankAuto => 40,
                 LiveCase::OakNearEdge => 64,
-                LiveCase::OakAbsentArea => 2,
+                LiveCase::OakNoPlacementArea => 2,
                 LiveCase::GasHazard => 12,
                 _ => 12,
             }),
@@ -866,7 +866,7 @@ enum LiveCase {
     OakRespawn,
     OakNearEdge,
     LocationAuto,
-    OakAbsentArea,
+    OakNoPlacementArea,
     GasHazard,
     WoodcuttingBank,
     WoodcuttingBankUnwieldable,
@@ -915,7 +915,7 @@ impl LiveCase {
             Self::OakRespawn => "oak-respawn",
             Self::OakNearEdge => "oak-near-edge",
             Self::LocationAuto => "location-auto",
-            Self::OakAbsentArea => "oak-absent-area",
+            Self::OakNoPlacementArea => "oak-no-placement-area",
             Self::GasHazard => "gas-hazard",
             Self::WoodcuttingBank => "woodcutting-bank",
             Self::WoodcuttingBankUnwieldable => "woodcutting-bank-unwieldable",
@@ -2025,7 +2025,7 @@ impl GatherSlot {
     }
 
     fn is_real_content_death_reprovision(&self) -> bool {
-        self.case == LiveCase::DeathReturn
+        self.case.is_death_recovery()
             && self.plan.seed_locs.is_empty()
             && self.plan.oak_tiles.is_empty()
     }
@@ -2078,17 +2078,22 @@ impl GatherSlot {
                     })
             }
             LiveCase::OakNearEdge => {
-                (self.witness.preflight_build_observed || self.expected_preflight_build())
-                    && self
-                        .plan
-                        .edge_oak
-                        .is_some_and(|tile| latest.live_oaks.contains(&tile_key(tile)))
+                self.expected_preflight_build()
+                    && latest.build.is_some_and(|build| {
+                        self.plan.edge_oak.is_some_and(|tile| {
+                            build.outside_gap(tile_key(tile)).is_some_and(|gap| gap > 0)
+                                && !latest.live_oaks.contains(&tile_key(tile))
+                        }) && latest
+                            .tile
+                            .and_then(|tile| build.edge_distance(tile))
+                            .is_some_and(|distance| distance <= 20)
+                    })
             }
             LiveCase::GasHazard => latest.live_iron_tiles.contains(&tile_key(self.target)),
-            LiveCase::OakAbsentArea => {
+            LiveCase::OakNoPlacementArea => {
                 latest.bank_booths.iter().any(|&booth| {
                     tile_distance(booth, self.target).is_some_and(|distance| distance <= 1)
-                        && tile_distance(booth, OAK_ABSENT_BANK_BOOTH)
+                        && tile_distance(booth, OAK_NO_PLACEMENT_BANK_BOOTH)
                             .is_some_and(|distance| distance <= 1)
                 }) && latest
                     .live_oaks
@@ -3610,17 +3615,30 @@ impl GatherSlot {
                         )?;
                         self.phase = Prep::WaitEdgeStart;
                     } else if self.case == LiveCase::LocationAuto {
+                        let reachable = api::query::SceneQuery::new(
+                            self.snapshot.scene(),
+                            self.snapshot
+                                .tile()
+                                .map(|(x, z, level)| WorldTile { x, z, level }),
+                        )
+                        .flood_reach()
+                        .ok_or("Auto fixture has no observed collision reachability")?;
                         let start = self
                             .latest
                             .as_ref()
                             .and_then(|latest| {
                                 latest.build.and_then(|build| {
-                                    auto_start_candidate(self.target, build, &latest.normal_trees)
+                                    auto_start_candidate(
+                                        self.target,
+                                        build,
+                                        &latest.normal_trees,
+                                        |tile| reachable.at(&tile).0,
+                                    )
                                 })
                             })
                             .ok_or_else(|| {
                                 format!(
-                                    "{} has no empty Auto ring adjacent to observed real trees",
+                                    "{} has no reachable empty Auto ring adjacent to observed real trees",
                                     self.name()
                                 )
                             })?;
@@ -4375,8 +4393,9 @@ impl GatherSlot {
                         && self.witness.bank_loaded_observed
                         && text_field(status, "bank").is_some_and(|bank| bank.ends_with("; Supply"))
                 }
-                LiveCase::OakAbsentArea => {
-                    code == "resource-unavailable" && message.starts_with("resource-unavailable")
+                LiveCase::OakNoPlacementArea => {
+                    code == "area-invalid"
+                        && message == "no selected method has an accessible placement in the area"
                 }
                 LiveCase::MazeRandom => {
                     let inside = self
@@ -4722,16 +4741,7 @@ impl GatherSlot {
                 }
                 Ok(())
             }
-            LiveCase::OakAbsentArea => {
-                let absent_seen = self
-                    .witness
-                    .status_values
-                    .get("absent")
-                    .is_some_and(|values| {
-                        values
-                            .iter()
-                            .any(|value| value.parse::<i64>().is_ok_and(|count| count > 0))
-                    });
+            LiveCase::OakNoPlacementArea => {
                 let no_output = self.witness.last_status_yielded == 0
                     && self.witness.last_status_dropped == 0
                     && !self.witness.script_moved_after_start
@@ -4739,14 +4749,13 @@ impl GatherSlot {
                         latest.product_count == 0 && latest.xp == self.baseline_xp()
                     });
                 if !self.witness.native_phases.contains("Blocked")
-                    || self.witness.failure_code.as_deref() != Some("resource-unavailable")
-                    || !absent_seen
+                    || self.witness.failure_code.as_deref() != Some("area-invalid")
                     || self.witness.native_phases.contains("Waiting")
                     || self.witness.wait_until.is_some()
                     || !no_output
                 {
                     return Err(format!(
-                        "{} did not fail promptly on the observed absent-only area: {:?}",
+                        "{} did not reject the area without a placement before moving, waiting, or producing output: {:?}",
                         self.name(),
                         self.witness
                     ));
@@ -5232,6 +5241,7 @@ fn auto_start_candidate(
     origin: WorldTile,
     build: BuildRect,
     normal_trees: &BTreeSet<(i32, i32, i32)>,
+    reachable: impl Fn(WorldTile) -> bool,
 ) -> Option<WorldTile> {
     if build.level != origin.level || build.width <= 0 || build.height <= 0 {
         return None;
@@ -5248,9 +5258,10 @@ fn auto_start_candidate(
                 z,
                 level: build.level,
             };
-            if normal_trees
-                .iter()
-                .any(|&tree| tile_distance(tree, candidate).is_some_and(|distance| distance <= 32))
+            if !reachable(candidate)
+                || normal_trees.iter().any(|&tree| {
+                    tile_distance(tree, candidate).is_some_and(|distance| distance <= 32)
+                })
                 || !normal_trees.iter().any(|&tree| {
                     tile_distance(tree, candidate)
                         .is_some_and(|distance| (33..=128).contains(&distance))
@@ -5625,7 +5636,9 @@ fn fixture_plan(
             )?);
             fixture_tile("GATHERER_WC_EDGE_START_TILE", OAK_EDGE_START)?
         }
-        LiveCase::OakAbsentArea => fixture_tile("GATHERER_WC_ABSENT_TILE", OAK_ABSENT_START)?,
+        LiveCase::OakNoPlacementArea => {
+            fixture_tile("GATHERER_WC_NO_PLACEMENT_TILE", OAK_NO_PLACEMENT_START)?
+        }
         LiveCase::LocationAuto => fixture_tile("GATHERER_AUTO_START_TILE", AUTO_START)?,
         LiveCase::GasHazard => fixture_tile("GATHERER_GAS_TILE", GAS_START)?,
         LiveCase::WoodcuttingBank
@@ -6857,7 +6870,7 @@ fn run_cell_with_fixture(
                     && (!fish_spot_soak
                         || Instant::now() >= started_at + PREP_DEADLINE + POWER_DEADLINE)
             }
-            LiveCase::FishBaitGate | LiveCase::OakAbsentArea => witness.failure_code.is_some(),
+            LiveCase::FishBaitGate | LiveCase::OakNoPlacementArea => witness.failure_code.is_some(),
             LiveCase::MazeRandom => maze_random_complete(&witness),
             LiveCase::OakRespawn => {
                 witness.all_oaks_depleted_at_wait && witness.first_regrown_gather_tick.is_some()
@@ -7728,9 +7741,9 @@ fn gatherer_location_modes() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, GATHERER_WC_ABSENT_TILE and local 289 engine"]
-fn gatherer_wc_absent() {
-    run_cell(Cell::Woodcutting, LiveCase::OakAbsentArea).unwrap();
+#[ignore = "requires LIVE=1, GATHERER_WC_NO_PLACEMENT_TILE and local 289 engine"]
+fn gatherer_wc_area_no_placement() {
+    run_cell(Cell::Woodcutting, LiveCase::OakNoPlacementArea).unwrap();
 }
 
 #[test]
@@ -8333,6 +8346,39 @@ mod bank_conservation_tests {
                 .unwrap_err();
             assert!(error.contains("was not conserved"), "{error}");
             assert!(!slot.unsettled_items.is_empty());
+        }
+    }
+
+    #[test]
+    fn every_real_death_variant_requires_exact_reprovision_bank_increases() {
+        for case in [
+            LiveCase::DeathReturn,
+            LiveCase::DeathRespawnRegion,
+            LiveCase::DeathNoStock,
+            LiveCase::DeathReturnRefused,
+            LiveCase::DeathWatchdogPending,
+            LiveCase::DeathWatchdogProving,
+        ] {
+            let mut slot = real_death_slot_at_bank();
+            slot.case = case;
+            let after = reprovision_deposit_observation(
+                &mut slot,
+                &[(KEBAB_ID, 7), (BEER_ID, 8), (1521, 5)],
+            );
+            slot.observe_running(Some(after), slot.capture()).unwrap();
+            assert!(slot.unsettled_items.is_empty(), "{case:?}");
+            assert_eq!(slot.witness.death_reprovision_deposits.len(), 1);
+
+            let mut missing = real_death_slot_at_bank();
+            missing.case = case;
+            let after = reprovision_deposit_observation(
+                &mut missing,
+                &[(KEBAB_ID, 6), (BEER_ID, 8), (1521, 5)],
+            );
+            let error = missing
+                .observe_running(Some(after), missing.capture())
+                .unwrap_err();
+            assert!(error.contains("was not conserved"), "{case:?}: {error}");
         }
     }
 
@@ -10091,12 +10137,56 @@ mod gatherer_real_content_fixture_tests {
         };
         let real_scene_trees =
             BTreeSet::from([tile_key(AUTO_START), tile_key(world_tile(2409, 3480))]);
-        let start = auto_start_candidate(AUTO_START, build, &real_scene_trees)
+        let start = auto_start_candidate(AUTO_START, build, &real_scene_trees, |_| true)
             .expect("real scene tree placements should admit an empty Auto ring");
         assert!(real_scene_trees
             .iter()
             .all(|&tree| { tile_distance(tree, start).is_none_or(|distance| distance > 32) }));
         assert!(!auto_next_group(start, &real_scene_trees).is_empty());
+        assert!(auto_start_candidate(AUTO_START, build, &real_scene_trees, |_| false).is_none());
+        let alternate =
+            auto_start_candidate(AUTO_START, build, &real_scene_trees, |tile| tile != start)
+                .expect("an inaccessible closest tile must not hide another empty ring");
+        assert_ne!(alternate, start);
+    }
+
+    #[test]
+    fn near_edge_fixture_starts_before_the_outside_oak_loads() {
+        let (target, plan, task) = fixture_plan(Cell::Woodcutting, LiveCase::OakNearEdge).unwrap();
+        let mut slot = GatherSlot::new(
+            Cell::Woodcutting,
+            LiveCase::OakNearEdge,
+            target,
+            plan,
+            task,
+            false,
+        );
+        let mut observation = slot.capture();
+        observation.tile = Some(tile_key(OAK_EDGE_START));
+        observation.build = Some(BuildRect {
+            base_x: (OAK_EDGE_PREFLIGHT.x.div_euclid(8) - 6) * 8,
+            base_z: (OAK_EDGE_PREFLIGHT.z.div_euclid(8) - 6) * 8,
+            width: 104,
+            height: 104,
+            level: OAK_EDGE_PREFLIGHT.level,
+        });
+        slot.latest = Some(observation.clone());
+        assert!(slot.fixture_ready());
+        slot.latest
+            .as_mut()
+            .unwrap()
+            .live_oaks
+            .insert(tile_key(OAK_EDGE_TARGET));
+        assert!(
+            !slot.fixture_ready(),
+            "an already loaded oak cannot prove scene-edge approach"
+        );
+        observation.tile = Some(tile_key(OAK_EDGE_PREFLIGHT));
+        slot.latest = Some(observation);
+        assert!(
+            !slot.fixture_ready(),
+            "the initial actor must be within twenty tiles of the edge"
+        );
     }
 
     #[test]
@@ -10127,12 +10217,12 @@ mod gatherer_real_content_fixture_tests {
     }
 
     #[test]
-    fn absent_oak_fixture_checks_real_catherby_booth_and_no_nearby_oaks() {
+    fn no_placement_oak_fixture_checks_real_catherby_booth_and_no_nearby_oaks() {
         let (target, plan, task) =
-            fixture_plan(Cell::Woodcutting, LiveCase::OakAbsentArea).unwrap();
-        assert_eq!(target, OAK_ABSENT_START);
+            fixture_plan(Cell::Woodcutting, LiveCase::OakNoPlacementArea).unwrap();
+        assert_eq!(target, OAK_NO_PLACEMENT_START);
         assert_eq!(
-            tile_distance(tile_key(OAK_ABSENT_BANK_BOOTH), target),
+            tile_distance(tile_key(OAK_NO_PLACEMENT_BANK_BOOTH), target),
             Some(1)
         );
         assert!(plan.seed_locs.is_empty());
@@ -10140,6 +10230,46 @@ mod gatherer_real_content_fixture_tests {
         assert!(plan.inventory_seed.is_empty());
         assert!(plan.bank_seed.is_empty());
         assert!(task.is_none());
+    }
+
+    #[test]
+    fn no_placement_verdict_requires_area_invalid_without_gameplay() {
+        let fixture = || {
+            let (target, plan, task) =
+                fixture_plan(Cell::Woodcutting, LiveCase::OakNoPlacementArea).unwrap();
+            let mut slot = GatherSlot::new(
+                Cell::Woodcutting,
+                LiveCase::OakNoPlacementArea,
+                target,
+                plan,
+                task,
+                false,
+            );
+            let observation = slot.capture();
+            slot.baseline = Some(observation.clone());
+            slot.latest = Some(observation);
+            slot.witness.native_phases.insert("Blocked".into());
+            slot.witness.failure_code = Some("area-invalid".into());
+            slot
+        };
+        fixture().qualifies().unwrap();
+        let invalidators: [fn(&mut GatherSlot); 8] = [
+            |slot| slot.witness.failure_code = Some("resource-unavailable".into()),
+            |slot| slot.witness.last_status_yielded = 1,
+            |slot| slot.witness.last_status_dropped = 1,
+            |slot| slot.witness.script_moved_after_start = true,
+            |slot| {
+                slot.witness.native_phases.insert("Waiting".into());
+            },
+            |slot| slot.witness.wait_until = Some(1),
+            |slot| slot.latest.as_mut().unwrap().xp += 1,
+            |slot| slot.latest.as_mut().unwrap().product_count += 1,
+        ];
+        for invalidate in invalidators {
+            let mut slot = fixture();
+            invalidate(&mut slot);
+            assert!(slot.qualifies().is_err());
+        }
     }
 }
 
