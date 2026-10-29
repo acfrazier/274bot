@@ -174,9 +174,9 @@
               "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "thread"}}}
             },
             {
-              "id": "collect-four-coal", "kind": "combat", "version": 1, "advances": false,
-              "args": {"target": {"npc": "dwarf_normal", "not_targeting_others": true, "pick": "nearest"}, "stand": {"tile": [2998, 3445, 0], "source": "content/maps/m46_53.jm2:5949; content/pack/npc.pack:119"}, "lost_radius": 20, "kill_budget_ticks": 5000, "tactic": {"kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true}, "loot": [{"obj": "coal", "qty": 4}], "until": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "coal", "qty": 4}}}},
-              "comment": "content/scripts/drop tables/scripts/dwarf.rs2:1-13,43-50 gives coal with random result 102 or 103 of 128. This route does not require Mining 30 (content/scripts/skill_mining/configs/mine.dbrow:62-73).",
+              "id": "mine-four-coal", "kind": "gather", "version": 1, "advances": false,
+              "args": {"skill": "mining", "resource": "coal", "until": {"obj": "coal", "qty": 4}, "anchor": {"tile": [2582, 3479, 0], "source": "content/maps/m40_54.jm2:4815; content/pack/loc.pack:2097; content/scripts/skill_mining/configs/mine.dbrow:62-74"}, "radius": 6, "settle_ms": 600000},
+              "comment": "content/scripts/skill_mining/configs/mine.dbrow:62-74 requires Mining 30 and produces coal. content/scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:226-237 consumes four coal.",
               "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "coal", "qty": 4}}},
               "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "coal", "qty": 4}}}
             },
