@@ -213,7 +213,6 @@ fn take_retry_id(
 fn fail_walk(
     iso: &LoadIsolate,
     snapshot_tick: u64,
-    outcome_seq: u64,
     request_id: u64,
     here: TileInput,
     x: i32,
@@ -222,7 +221,7 @@ fn fail_walk(
 ) {
     iso.post_snapshot(encode_snapshot_with_native(
         &base_snapshot(snapshot_tick, here),
-        fail_native(outcome_seq, 0, request_id, x, z, radius),
+        fail_native(snapshot_tick, 0, request_id, x, z, radius),
     ));
     iso.on_game_tick(snapshot_tick);
 }
@@ -278,14 +277,14 @@ export default class T extends LoopingBot {
 fn isolate_nopath_outcome_retries_once_then_returns_false() {
     let iso = LoadIsolate::spawn(walk_src(300_000), LoadShape::CompatClass, vec![]).unwrap();
     let request_id = park_walk(&iso);
-    fail_walk(&iso, 2, 1, request_id, far(), 2820, 3556, 1);
+    fail_walk(&iso, 2, request_id, far(), 2820, 3556, 1);
     assert_eq!(
         iso.probe("__rs_ok").unwrap(),
         serde_json::Value::Null,
         "the first NoPath starts a fresh host walk"
     );
     let retry_id = take_retry_id(&iso, request_id, 2820, 3556, 1, false);
-    fail_walk(&iso, 3, 2, retry_id, far(), 2820, 3556, 1);
+    fail_walk(&iso, 3, retry_id, far(), 2820, 3556, 1);
     assert_eq!(
         iso.probe("__rs_ok").unwrap(),
         false,
@@ -438,30 +437,21 @@ fn isolate_pending_timeout_retries_once_then_returns_false() {
 fn isolate_drain_then_wrong_request_id_does_not_settle() {
     let iso = LoadIsolate::spawn(walk_src(300_000), LoadShape::CompatClass, vec![]).unwrap();
     let request_id = park_walk(&iso);
-    fail_walk(
-        &iso,
-        2,
-        1,
-        request_id.wrapping_add(7),
-        far(),
-        2820,
-        3556,
-        1,
-    );
+    fail_walk(&iso, 2, request_id.wrapping_add(7), far(), 2820, 3556, 1);
     assert_eq!(
         iso.probe("__rs_ok").unwrap(),
         serde_json::Value::Null,
         "same-target NoPath for a different request id must not settle"
     );
     assert!(iso.drain_interacts().is_empty(), "wrong id starts no retry");
-    fail_walk(&iso, 3, 2, request_id, far(), 2820, 3556, 1);
+    fail_walk(&iso, 3, request_id, far(), 2820, 3556, 1);
     assert_eq!(
         iso.probe("__rs_ok").unwrap(),
         serde_json::Value::Null,
         "the matching first NoPath starts one retry"
     );
     let retry_id = take_retry_id(&iso, request_id, 2820, 3556, 1, false);
-    fail_walk(&iso, 4, 3, retry_id, far(), 2820, 3556, 1);
+    fail_walk(&iso, 4, retry_id, far(), 2820, 3556, 1);
     assert_eq!(iso.probe("__rs_ok").unwrap(), false);
     iso.join();
 }
@@ -490,14 +480,14 @@ fn isolate_same_target_old_request_id_does_not_settle_new_wait() {
         "late same-target NoPath for request id 5 must not settle the new wait"
     );
     assert!(iso.drain_interacts().is_empty(), "the stale id starts no retry");
-    fail_walk(&iso, 3, 3, request_id, far(), 2820, 3556, 1);
+    fail_walk(&iso, 3, request_id, far(), 2820, 3556, 1);
     assert_eq!(
         iso.probe("__rs_ok").unwrap(),
         serde_json::Value::Null,
         "the matching first NoPath starts one retry"
     );
     let retry_id = take_retry_id(&iso, request_id, 2820, 3556, 1, false);
-    fail_walk(&iso, 4, 4, retry_id, far(), 2820, 3556, 1);
+    fail_walk(&iso, 4, retry_id, far(), 2820, 3556, 1);
     assert_eq!(iso.probe("__rs_ok").unwrap(), false);
     iso.join();
 }
@@ -571,23 +561,24 @@ fn park_two_walks(iso: &LoadIsolate) -> (u64, u64) {
 fn isolate_two_same_target_begins_delayed_first_id_does_not_settle_second() {
     let iso = LoadIsolate::spawn(overlapping_walk_src(), LoadShape::CompatClass, vec![]).unwrap();
     let (first_id, second_id) = park_two_walks(&iso);
-    fail_walk(&iso, 2, 1, first_id, far(), 2820, 3556, 1);
+    fail_walk(&iso, 2, first_id, far(), 2820, 3556, 1);
     assert_eq!(
         iso.probe("__rs_b").unwrap(),
         serde_json::Value::Null,
         "the first request id does not settle the later wait"
     );
     assert_eq!(iso.probe("__rs_a").unwrap(), serde_json::Value::Null);
-    let retry_a = take_retry_id(&iso, first_id, 2820, 3556, 1, false);
-    fail_walk(&iso, 3, 2, second_id, far(), 2820, 3556, 1);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "an outcome for the displaced request starts no retry"
+    );
+    fail_walk(&iso, 3, second_id, far(), 2820, 3556, 1);
     assert_eq!(iso.probe("__rs_b").unwrap(), serde_json::Value::Null);
     assert_eq!(iso.probe("__rs_a").unwrap(), serde_json::Value::Null);
-    let retry_b = take_retry_id(&iso, second_id, 2820, 3556, 1, false);
-    fail_walk(&iso, 4, 3, retry_a, far(), 2820, 3556, 1);
-    assert_eq!(iso.probe("__rs_a").unwrap(), false);
-    assert_eq!(iso.probe("__rs_b").unwrap(), serde_json::Value::Null);
-    fail_walk(&iso, 5, 4, retry_b, far(), 2820, 3556, 1);
+    let retry_id = take_retry_id(&iso, second_id, 2820, 3556, 1, false);
+    fail_walk(&iso, 4, retry_id, far(), 2820, 3556, 1);
     assert_eq!(iso.probe("__rs_b").unwrap(), false);
+    assert_eq!(iso.probe("__rs_a").unwrap(), serde_json::Value::Null);
     iso.join();
 }
 
@@ -627,26 +618,17 @@ fn isolate_held_matching_refusal_survives_later_old_outcome_until_resume() {
     assert_eq!(
         iso.probe("__rs_b").unwrap(),
         serde_json::Value::Null,
-        "releasing the hold starts retries without settling either walk"
+        "releasing the hold starts a retry without settling the walk"
     );
-    assert_eq!(iso.probe("__rs_a").unwrap(), serde_json::Value::Null);
-    let retries = iso.drain_interacts();
-    assert_eq!(retries.len(), 2, "both held failures get one fresh route");
-    let retry_a = retry_id(&retries[0], first_id, 2820, 3556, 1);
-    let retry_b = retry_id(&retries[1], second_id, 2820, 3556, 1);
-    assert_ne!(retry_a, retry_b);
+    let retry_id = take_retry_id(&iso, second_id, 2820, 3556, 1, false);
 
-    fail_walk(&iso, 5, 3, retry_a, far(), 2820, 3556, 1);
-    let a = iso.probe("__rs_a").unwrap();
-    let b = iso.probe("__rs_b").unwrap();
-    assert!(
-        (a == false && b == serde_json::Value::Null)
-            || (a == serde_json::Value::Null && b == false),
-        "one retry settles and the other stays pending: a={a}, b={b}"
-    );
-    fail_walk(&iso, 6, 4, retry_b, far(), 2820, 3556, 1);
-    assert_eq!(iso.probe("__rs_a").unwrap(), false);
+    fail_walk(&iso, 5, retry_id, far(), 2820, 3556, 1);
     assert_eq!(iso.probe("__rs_b").unwrap(), false);
+    assert_eq!(
+        iso.probe("__rs_a").unwrap(),
+        serde_json::Value::Null,
+        "the displaced first request remains unsettled"
+    );
     iso.join();
 }
 
@@ -677,26 +659,17 @@ fn isolate_paused_matching_refusal_survives_later_old_outcome_until_resume() {
     assert_eq!(
         iso.probe("__rs_b").unwrap(),
         serde_json::Value::Null,
-        "resuming starts retries without settling either walk"
+        "resuming starts a retry without settling the walk"
     );
-    assert_eq!(iso.probe("__rs_a").unwrap(), serde_json::Value::Null);
-    let retries = iso.drain_interacts();
-    assert_eq!(retries.len(), 2, "both paused failures get one fresh route");
-    let retry_a = retry_id(&retries[0], first_id, 2820, 3556, 1);
-    let retry_b = retry_id(&retries[1], second_id, 2820, 3556, 1);
-    assert_ne!(retry_a, retry_b);
+    let retry_id = take_retry_id(&iso, second_id, 2820, 3556, 1, false);
 
-    fail_walk(&iso, 5, 3, retry_a, far(), 2820, 3556, 1);
-    let a = iso.probe("__rs_a").unwrap();
-    let b = iso.probe("__rs_b").unwrap();
-    assert!(
-        (a == false && b == serde_json::Value::Null)
-            || (a == serde_json::Value::Null && b == false),
-        "one retry settles and the other stays pending: a={a}, b={b}"
-    );
-    fail_walk(&iso, 6, 4, retry_b, far(), 2820, 3556, 1);
-    assert_eq!(iso.probe("__rs_a").unwrap(), false);
+    fail_walk(&iso, 5, retry_id, far(), 2820, 3556, 1);
     assert_eq!(iso.probe("__rs_b").unwrap(), false);
+    assert_eq!(
+        iso.probe("__rs_a").unwrap(),
+        serde_json::Value::Null,
+        "the displaced first request remains unsettled"
+    );
     iso.join();
 }
 
@@ -826,14 +799,14 @@ fn walk_to_off_scene_world_dest_queues_native_walk_not_scene_walk_to() {
         serde_json::Value::Null,
         "pending native walk must not settle without arrival or matching refusal"
     );
-    fail_walk(&iso, 3, 1, request_id, chaos_here(), 3096, 9868, 0);
+    fail_walk(&iso, 3, request_id, chaos_here(), 3096, 9868, 0);
     assert_eq!(
         iso.probe("__rs_ok").unwrap(),
         serde_json::Value::Null,
         "the first failure keeps the off-scene walk pending on a fresh request"
     );
     let retry_id = take_retry_id(&iso, request_id, 3096, 9868, 0, false);
-    fail_walk(&iso, 4, 2, retry_id, chaos_here(), 3096, 9868, 0);
+    fail_walk(&iso, 4, retry_id, chaos_here(), 3096, 9868, 0);
     assert_eq!(iso.probe("__rs_ok").unwrap(), false);
     iso.join();
 }
