@@ -15,7 +15,7 @@
 #[path = "common/quester_live.rs"]
 mod quester_live;
 
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -1465,6 +1465,54 @@ fn live_dialogue_answer_once_filliman_repeated_menu() {
         DRUIDSPIRIT_STAGE_REPLY,
         None,
     );
+    // After the conversation closes, read the server-side stage again. The
+    // quest varp is not transmitted to the client, so a `getvar` reply is
+    // the only direct proof of `spoken_filliman`. This is a read-only
+    // per-account diagnostic, not a seed.
+    let saw_open = Arc::new(AtomicBool::new(false));
+    let saw_chat = Arc::clone(&saw_open);
+    let await_closed = Step {
+        name: "wait for Filliman's chat to close",
+        kind: StepKind::Await {
+            evidence: "the Filliman conversation chat was open and then closed",
+            ready: Box::new(move |snapshot| {
+                let open = snapshot.modals().chat != -1;
+                if open {
+                    saw_chat.store(true, Ordering::Relaxed);
+                }
+                saw_chat.load(Ordering::Relaxed) && !open
+            }),
+            summary: None,
+        },
+        wait: Wait {
+            arm: Proof::SideTabAvailable { index: 3 },
+            budget_ticks: 200,
+        },
+    };
+    let read_stage = Step {
+        name: "read the stage after Filliman's conversation",
+        kind: StepKind::Perform {
+            send: Box::new(|client: &mut _, _: &GameSnapshot| {
+                api::interact::cheat(client, "getvar druidspirit").is_sent()
+            }),
+        },
+        wait: Wait {
+            arm: Proof::FreshChat {
+                needle: "get druidspirit: 20",
+            },
+            budget_ticks: 100,
+        },
+    };
+    let completion_proof = cell
+        .scenario
+        .steps
+        .len()
+        .checked_sub(1)
+        .expect("family fixture has a completion proof step");
+    cell.scenario.steps.splice(
+        completion_proof..completion_proof,
+        [await_closed, read_stage],
+    );
     let start_seed = seed;
     cell.observe_start = Some(Box::new(move |snapshot| {
         let seed_receipt = start_seed.observe_start(snapshot)?;
@@ -1527,13 +1575,17 @@ fn live_dialogue_answer_once_filliman_repeated_menu() {
                 }
             }),
             true,
-            empty_any(),
+            fact(
+                "npc_present",
+                json!({"npc": "filliman_tarlock_spirit"}),
+            ),
             empty_all(),
         )],
         true,
     );
     let start = family_start(document, Arc::clone(&selected), Arc::clone(&quests));
-    let mut menu_pages = 0;
+    let mut menu_openings = 0;
+    let mut first_menu_pages = None;
     let mut step_seen = false;
     let mut in_menu = false;
     let observe: ObserveFamily = Box::new(move |snapshot, status, lifecycle| {
@@ -1543,26 +1595,40 @@ fn live_dialogue_answer_once_filliman_repeated_menu() {
         }) {
             step_seen = true;
         }
-        // Count a menu opening once, not each poll of the same page.
-        // Text frames may still arrive after the option rows; the rows
-        // identify the menu. Without answer_once the driver re-answers
-        // the question until DRIVE_STEPS fails.
-        let menu = snapshot
-            .chat_options()
-            .iter()
-            .any(|option| option.text.eq_ignore_ascii_case("Ok, thanks."));
-        if menu && !in_menu {
-            menu_pages += 1;
+        // Count a menu opening once, not each poll of the same page. Text
+        // frames may still arrive after the option rows; the rows identify
+        // the menu. Freeze at the first close.
+        let closed = snapshot.modals().chat == -1;
+        if first_menu_pages.is_none() {
+            let menu = snapshot
+                .chat_options()
+                .iter()
+                .any(|option| option.text.eq_ignore_ascii_case("Ok, thanks."));
+            if menu && !in_menu {
+                menu_openings += 1;
+            }
+            in_menu = menu;
+            if menu_openings == 2 && closed {
+                first_menu_pages = Some(menu_openings);
+            }
         }
-        in_menu = menu;
-        if !step_seen || !completed_lifecycle(lifecycle) || snapshot.modals().chat != -1 {
+        let Some(stage_witness) = snapshot.chat_lines().iter().find(|line| {
+            line.type_ == 0
+                && line.username.is_none()
+                && line.text == "get druidspirit: 20"
+        }) else {
+            return Ok(None);
+        };
+        if !step_seen || !completed_lifecycle(lifecycle) {
             return Ok(None);
         }
-        if menu_pages != 2 {
+        let Some(menus) = first_menu_pages else {
             return Err(format!(
-                "answer_once must answer the question once and leave; observed {menu_pages} menu pages (the page cap is {})",
-                script::quester::families::dialogue::DRIVE_STEPS
+                "answer_once dialogue closed after {menu_openings} menu openings, not 2"
             ));
+        };
+        if snapshot.modals().chat != -1 {
+            return Ok(None);
         }
         Ok(Some(json!({
             "family_step": "interact",
@@ -1570,13 +1636,15 @@ fn live_dialogue_answer_once_filliman_repeated_menu() {
             "operation": "Enter",
             "answer_once": true,
             "prefer": ["How long have you been a ghost?", "Ok, thanks."],
-            "menu_pages": menu_pages,
+            "menu_pages": menus,
             "page_cap": script::quester::families::dialogue::DRIVE_STEPS,
             "chat_modal_after": snapshot.modals().chat,
             "quest_varp_id": quest_varp_id,
-            "quest_varp_after": varp_value(snapshot, quest_varp_id),
+            "quest_varp_after": 20,
+            "quest_varp_source": "post-dialogue getvar druidspirit",
+            "quest_varp_witness": stage_witness,
             "quest_stage_after": "druidspirit:20",
-            "quest_stage_source": "filliman.rs2:255-259 raises %druidspirit to spoken_filliman before reopening the menu; :233-234 sends Ok, thanks.",
+            "quest_stage_source": "filliman.rs2:255-261 raises %druidspirit to spoken_filliman before reopening the menu; :233-234 sends Ok, thanks.",
             "native_status": native_status_receipt(status),
         })))
     });
