@@ -340,7 +340,7 @@
           "steps": [
             {
               "id": "buy-climbing-boots", "kind": "talk", "version": 1, "advances": false,
-              "args": {"npc": "death_sherpa", "anchor": {"tile": [2820,3556,0], "source": "content/maps/m44_55.jm2:6372; content/pack/npc.pack:1072"}, "leash": 8, "prefer": ["Can I buy some Climbing boots?", "OK, sounds good.", "Nothing, thanks!"], "strict": true},
+              "args": {"npc": "death_sherpa", "anchor": {"tile": [2820,3556,0], "source": "content/maps/m44_55.jm2:6372; content/pack/npc.pack:1072"}, "leash": 8, "prefer": ["Can I buy some Climbing boots?", "OK, sounds good.", "Nothing, thanks!"], "strict": true, "answer_once": true},
               "comment": "content/scripts/quests/quest_death/scripts/death_sherpa.rs2:1-24 charges 12 coins.",
               "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "death_climbingboots"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "death_climbingboots"}}}]},
               "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "death_climbingboots"}}}
