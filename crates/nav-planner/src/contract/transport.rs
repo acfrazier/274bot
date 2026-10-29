@@ -4,7 +4,8 @@
 
 use std::fmt;
 
-use api::prereq_steps::{CrossingId, QuestGate};
+use api::prereq_steps::CrossingId;
+use api::selected::QuestGate;
 use api::snapshot::WorldTile;
 
 use crate::transport::TransportEdge;
