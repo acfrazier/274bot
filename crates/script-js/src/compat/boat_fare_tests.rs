@@ -1699,12 +1699,30 @@ fn walk_to_waits_out_the_frozen_300_second_default() {
     assert_eq!(machine::take(h), Take::Pending);
     machine::age(h, 240_000);
     world.post();
+    let retry = tick();
+    assert!(
+        matches!(
+            retry.as_slice(),
+            [InteractReq::AbortWalk { request_id }, op]
+                if *request_id == token(&first[0]) && walk_near(PORT_SARIM, 2)(op)
+        ),
+        "the failed first walk aborts and starts one fresh host walk: {retry:?}"
+    );
+    let retry_token = token(&retry[1]);
+    assert_eq!(
+        machine::take(h),
+        Take::Pending,
+        "the first failed walk does not end walkTo"
+    );
+
+    machine::age(h, 300_000);
+    world.post();
     assert_eq!(
         tick(),
         vec![InteractReq::AbortWalk {
-            request_id: token(&first[0])
+            request_id: retry_token
         }],
-        "the bound stops the host follow"
+        "the one fresh host walk keeps the frozen 300-second bound"
     );
     assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
 }

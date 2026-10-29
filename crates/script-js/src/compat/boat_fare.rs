@@ -1520,7 +1520,7 @@ impl Recover {
                         Ok(stage) => stage,
                         Err(done) => return Some(done),
                     }
-                } else if settled {
+                } else if settled && crate::reach_query::arrived(*staging_tile, 2) {
                     let detail = "the staging walk ended without Luthas in view";
                     log_staging_failure(logs, *attempt, *staging_tile, detail);
                     Stage::WaitLuthas {
