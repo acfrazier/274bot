@@ -768,7 +768,7 @@ impl StepRun for MakeRun {
             ))?);
             return Poll::Pending;
         }
-        if let Some(handle) = &self.trigger {
+        if let Some(handle) = &mut self.trigger {
             match handle.poll(cx.tick.actions, &mut cx.tick.cx, cx.tick.state) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),

@@ -2,6 +2,7 @@
 //!
 //! Only the running primitive owns a native action. The trip releases that
 //! action before afterDeposit, so a callback may start its own bank operation.
+use super::*;
 use crate::bank::ops::{self, NoteIntent};
 use crate::bank::request::{
     BankSeatArgs, BankSeatOperation, BANK_NEAREST_HOOK_AFTER_DEPOSIT, BANK_NEAREST_HOOK_DEPOSIT,

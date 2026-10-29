@@ -1570,11 +1570,15 @@ pub fn last_chat_seq(cx: &ActionContext<'_>) -> i32 {
         .unwrap_or(0)
 }
 
-fn saw_cant_reach(cx: &ActionContext<'_>, since: i32) -> bool {
+pub(in crate::quester) fn saw_cant_reach(cx: &ActionContext<'_>, since: i32) -> bool {
     saw_game_message(cx, since, CANT_REACH)
 }
 
-pub(super) fn saw_game_message(cx: &ActionContext<'_>, since: i32, message: &str) -> bool {
+pub(in crate::quester) fn saw_game_message(
+    cx: &ActionContext<'_>,
+    since: i32,
+    message: &str,
+) -> bool {
     cx.snapshot().chat_lines(since).is_some_and(|lines| {
         lines.value.iter().any(|line| {
             line.username.is_none()

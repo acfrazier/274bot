@@ -8,7 +8,7 @@ use api::selected::RunKey;
 use std::sync::Arc;
 use std::task::Poll;
 
-pub(super) const CARD: CompiledCard = CompiledCard {
+pub(crate) const CARD: CompiledCard = CompiledCard {
     id: CompiledId("WalkTo"),
     native_kind: crate::native::request::NativeKind::Walk,
     name: "WalkTo",

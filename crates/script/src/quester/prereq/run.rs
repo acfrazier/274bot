@@ -877,7 +877,7 @@ fn frame_observation(
     if data.selected_pin().ok()?.as_ref() != cx.pin() {
         return None;
     }
-    api::quest_progress::observe_quest_gate(&data.try_quests()?, gate, cx.snapshot(), floor)
+    api::quest_progress::observe_quest_gate(data.try_quests()?.as_ref(), gate, cx.snapshot(), floor)
 }
 fn page(cx: &ActionContext<'_>) -> PageAcknowledgement {
     cx.snapshot()
@@ -1212,7 +1212,7 @@ impl ChatDrive {
                             inventory
                                 .value
                                 .iter()
-                                .filter(|item| item.id > 0 && item.count > 0)
+                                .filter(|item| item.def.id > 0 && item.count > 0)
                                 .count(),
                         )
                     });

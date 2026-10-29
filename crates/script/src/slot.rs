@@ -2274,6 +2274,7 @@ impl SlotScript {
                 refusal: None,
                 assessment: None,
                 escape: None,
+                prereq_allow: Default::default(),
             });
             ledger
                 .outbox

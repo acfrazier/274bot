@@ -273,6 +273,9 @@ fn error_reason(error: &ActionError) -> Arc<str> {
         ActionError::Blocked(why) => Arc::from(format!("blocked:{why}")),
         ActionError::CombatInterrupted => Arc::from("combat-interrupted"),
         ActionError::NeedsEvidence(_) => Arc::from("needs-evidence"),
+        ActionError::NeedsStep(gates) => Arc::from(format!("needs-step:{gates:?}")),
+        ActionError::GateRefused(observation) => Arc::from(format!("gate-refused:{observation:?}")),
+        ActionError::Prerequisite(refusal) => Arc::from(format!("prerequisite:{refusal}")),
         ActionError::GroundTake(api::ground_take::GroundRefusal::Capacity) => {
             Arc::from("ground-take-capacity")
         }
