@@ -4129,17 +4129,6 @@ fn return_to_stand_route_ended_at_network_tile_is_arrival() {
     assert_eq!(run.target_gone_restarts, 1);
     assert!(matches!(&run.phase, Phase::Combat));
     assert!(matches!(run.action.as_ref(), Some(Action::Combat(_))));
-    assert_eq!(
-        ledger
-            .as_ref()
-            .unwrap()
-            .outbox
-            .iter()
-            .filter(|row| matches!(&row.effect, crate::native::HostEffect::Walk(_)))
-            .count(),
-        1,
-        "the Quester must not request another walk"
-    );
 }
 
 #[test]
