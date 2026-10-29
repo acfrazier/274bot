@@ -392,7 +392,7 @@ impl Harness {
                 name: api::snapshot::stat_name(0).into(),
                 effective: 1,
                 base: 1,
-                xp: self.tick as u32,
+                xp: self.tick as i32,
                 used: api::snapshot::stat_used(0),
             }]);
         }
