@@ -24,7 +24,7 @@ large_types_passed_by_value = "deny"
 assigning_clones = "deny"
 
 [workspace.package]
-version = "0.2.7"
+version = "0.2.8"
 
 [workspace.dependencies]
 client = { path = "vendor/fr-client-rust/crates/client" }
