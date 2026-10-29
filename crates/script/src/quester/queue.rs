@@ -75,6 +75,16 @@ impl QueueStatus {
     }
 }
 
+/// Where a run stopped when it parked, kept after the executor is dropped so
+/// the queue-level Blocked status can still name the stage and step.
+#[derive(Debug, Clone)]
+pub struct ParkedRun {
+    pub quest: Arc<str>,
+    pub stage: Option<Arc<str>>,
+    pub step: Arc<str>,
+    pub failure: Arc<str>,
+}
+
 #[derive(Debug, Clone)]
 pub struct QueueRow {
     /// Original release-index ordinal, independent of vector position.
@@ -82,6 +92,10 @@ pub struct QueueRow {
     pub picked: bool,
     pub skipped: bool,
     pub status: QueueStatus,
+    /// The last parked run, set only while `status` is `Parked`. Every string
+    /// is shared with the compiled Path or the failure, so a park allocates
+    /// one `ParkedRun` and nothing else.
+    pub parked: Option<Arc<ParkedRun>>,
 }
 
 #[derive(Debug, Clone)]
@@ -178,6 +192,7 @@ impl Queue {
                 picked,
                 skipped,
                 status,
+                parked: None,
             });
             reasons.push(path.unavailable.as_deref().map(Arc::from));
         }
@@ -317,8 +332,19 @@ impl Queue {
         self.set_state(position, QueueStatus::Blocked, Some(reason));
     }
 
-    pub fn mark_parked(&mut self, position: usize, reason: Arc<str>) {
+    pub fn mark_parked(&mut self, position: usize, run: ParkedRun) {
+        let reason = Arc::clone(&run.failure);
         self.set_state(position, QueueStatus::Parked, Some(reason));
+        if let Some(row) = self.rows.get_mut(position) {
+            row.parked = Some(Arc::new(run));
+        }
+    }
+
+    /// The last parked run on `position`, for the queue-level Blocked status.
+    pub fn parked(&self, position: usize) -> Option<&ParkedRun> {
+        self.rows
+            .get(position)
+            .and_then(|row| row.parked.as_deref())
     }
 
     /// A changed quest/status/equipment observation may make an earlier
@@ -361,6 +387,9 @@ impl Queue {
             (self.rows.get_mut(position), self.reasons.get_mut(position))
         {
             row.status = status;
+            if status != QueueStatus::Parked {
+                row.parked = None;
+            }
             *reason_slot = reason;
         }
     }
@@ -547,7 +576,12 @@ mod tests {
         assert_eq!(queue.id(1), Some("sheep"));
         assert_eq!(queue.id(2), Some("runemysteries"));
         assert_eq!(queue.file(0), Some("cook.json"));
-        assert_eq!(std::mem::size_of::<QueueRow>(), 4);
+        // 4 -> 16 bytes: the row keeps `parked: Option<Arc<ParkedRun>>` so the
+        // Blocked status can name the stage and step after a park. One pointer
+        // per row; the 68-row index costs 1,088 B instead of 272 B, and each
+        // parked row adds one `Arc` header plus four shared fat pointers.
+        assert_eq!(std::mem::size_of::<QueueRow>(), 16);
+        assert_eq!(std::mem::size_of::<ParkedRun>(), 64);
         assert_eq!(queue.status_text(), "????");
         assert!(!queue.all_done());
     }
@@ -617,7 +651,15 @@ mod tests {
             Queue::from_index(&index, settings(&[], &["romeojuliet", "cook"], &[])).unwrap();
         queue.mark_done(0);
         queue.mark_blocked(1, Arc::from("blocked"));
-        queue.mark_parked(3, Arc::from("operator"));
+        queue.mark_parked(
+            3,
+            ParkedRun {
+                quest: Arc::from("romeojuliet"),
+                stage: Some(Arc::from("not_started")),
+                step: Arc::from("talk-juliet"),
+                failure: Arc::from("operator"),
+            },
+        );
         assert_eq!(queue.status_text(), "DB?P");
     }
 
