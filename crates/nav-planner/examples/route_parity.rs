@@ -82,8 +82,9 @@ fn quest_state(
 ) -> Result<WorldState, String> {
     let (facts, identity) = data
         .quest_identity_for_bake()
-        .map_err(|error| error.to_string())?;
-    let catalog = QuestCatalog::from_identity(Some(&facts)).map_err(|error| error.to_string())?;
+        .map_err(|error| format!("quest identity: {error:?}"))?;
+    let catalog =
+        QuestCatalog::from_identity(Some(&facts)).map_err(|error| format!("catalog: {error:?}"))?;
     let stamp = EvidenceStamp {
         run: RunKey {
             slot: 1,
@@ -121,7 +122,9 @@ fn quest_state(
     };
     let mut state = rich_state();
     for (quest, _, _) in signals {
-        let facts = catalog.quest(quest).map_err(|error| error.to_string())?;
+        let facts = catalog
+            .quest(quest)
+            .map_err(|error| format!("quest {quest}: {error:?}"))?;
         state.quests.remove(facts.display.as_ref());
     }
     state.inventory_ready = true;
