@@ -462,7 +462,7 @@
         },
         {"stage":"crest:7","required":[],"terminal":false,"recovery_entry":null,"steps":[
           {"id":"open-jewellery-interface","kind":"use_on","version":1,"advances":false,
-           "comment":"content/scripts/skill_smithing/scripts/smelting/smelting.rs2:1-14; content/scripts/skill_crafting/scripts/jewellery/jewellery.rs2:16-29,174-175; content/maps/m50_50.jm2:7131. Seed supplies perfect bars.",
+           "comment":"content/scripts/skill_smithing/scripts/smelting/smelting.rs2:1-14; content/scripts/skill_crafting/scripts/jewellery/jewellery.rs2:16-29,174-175; content/maps/m50_50.jm2:7131. The perfect bar must be obtained from the mine before this step.",
            "args":{"item":"perfect_gold_bar","target":{"loc":"furnace1"},"anchor":{"tile":[3226,3255,0],"source":"content/maps/m50_50.jm2:7131"},"radius":5},
            "skip_if":{"Fact":{"kind":"modal_open","version":1,"args":{}}},
            "settle":{"Fact":{"kind":"modal_open","version":1,"args":{}}}}
