@@ -348,6 +348,7 @@
           "args": {
             "target": {
               "npc": "ice_queen",
+              "pick": "nearest",
               "not_targeting_others": true
             },
             "stand": {
@@ -627,6 +628,7 @@
           "args": {
             "target": {
               "npc": "fire_bird",
+              "pick": "nearest",
               "not_targeting_others": true
             },
             "stand": {
@@ -1656,7 +1658,9 @@
               "version": 1,
               "args": {
                 "target": {
-                  "npc": "grip"
+                  "npc": "grip",
+                  "pick": "nearest",
+                  "not_targeting_others": true
                 },
                 "stand": {
                   "tile": [
@@ -2035,6 +2039,7 @@
           "args": {
             "target": {
               "npc": "ice_queen",
+              "pick": "nearest",
               "not_targeting_others": true
             },
             "stand": {
@@ -2314,6 +2319,7 @@
           "args": {
             "target": {
               "npc": "fire_bird",
+              "pick": "nearest",
               "not_targeting_others": true
             },
             "stand": {
