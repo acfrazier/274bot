@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use api::identity::Deadline;
+use api::prereq_knowledge::Observation;
 use api::quest_progress::{EvidenceProvider, EvidenceStamp};
 use api::selected::{FactKey, QuestGate, RunKey, Truth};
 use api::snapshot::WorldTile;
@@ -222,8 +223,11 @@ fn install_positive_gate(world: &mut NavWorld, gate: PositiveGate) {
 struct FixedEvidence(Truth);
 
 impl EvidenceProvider for FixedEvidence {
-    fn test_gate(&self, _: &QuestGate, _: EvidenceStamp) -> Truth {
-        self.0
+    fn observe_gate(&self, _: &QuestGate, required_after: EvidenceStamp) -> Option<Observation> {
+        Some(Observation {
+            truth: self.0,
+            observed: Some(required_after),
+        })
     }
 }
 
