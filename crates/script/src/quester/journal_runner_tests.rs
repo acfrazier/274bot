@@ -9,7 +9,7 @@ use crate::quester::families::tests::{
 use crate::quester::path::{PredicateDocument, ProgressRuleDocument};
 use api::selected::Truth;
 use api::snapshot::{GameSnapshot, QuestStatusView, VarpView};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 fn fixture(journal: bool) -> (Quester, GameSnapshot) {
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
