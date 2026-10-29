@@ -64,7 +64,6 @@
          "args":{"target":{"loc":"harmless_dead_palm_mid","tile":[3502,3426,0],"source":"content/maps/m54_53.jm2:5555"},"op":"Climb up","anchor":{"tile":[3502,3426,0],"source":"content/maps/m54_53.jm2:5555"},"radius":4},
          "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[3502,3427,0],"radius":0}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[3502,3427,0],"radius":0}}}}
       ]},
-      {"stage":"routequest:52","required":[],"terminal":false,"recovery_entry":null,"steps":[]},
       {"stage":"routequest:complete","required":[],"terminal":true,"recovery_entry":null,"steps":[]}
     ]
   }]
