@@ -748,6 +748,42 @@ fn visible_continue_without_chat_root_is_not_a_combat_close() {
 }
 
 #[test]
+fn continuation_waits_for_content_page_after_post_fight_close() {
+    use super::tests::seed_dialogue_combat;
+
+    let mut snapshot = snapshot();
+    seed_dialogue_combat(&mut snapshot, true);
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        let combat = tick.cx.snapshot().in_combat().unwrap().value;
+        assert!(combat.in_combat);
+        assert!(combat.target.is_none());
+        tick.actions
+            .begin::<Dialogue>(continuation_args(), &mut tick.cx)
+            .unwrap()
+    });
+
+    // The content closes the previous page before it opens its first page.
+    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+
+    snapshot.seed_chat_modal(-1, vec!["STOP! Please... spare my son.".into()]);
+    snapshot.seed_chat_options(vec![], 10005);
+    assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::ContinueDialog {
+            component_id: None
+        }
+    ));
+}
+
+#[test]
 fn owned_chat_waits_for_a_fresh_acceptance_before_draining_a_selected_scroll() {
     let ids = dialogue_ui();
     let mut snapshot = snapshot();
