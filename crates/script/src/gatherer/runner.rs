@@ -3809,7 +3809,7 @@ mod tests {
                 .filter(|action| matches!(
                     &action.effect,
                     crate::native::HostEffect::Interaction(crate::shim::InteractReq::InvButton {
-                        id: 201 | 202 | 203,
+                        id: 201..=203,
                         ..
                     })
                 ))
@@ -4186,7 +4186,7 @@ mod tests {
         );
 
         with_tick_output(&snapshot, &mut ledger, 1, &mut output, |tick| {
-            tick.cx.condition = Some(condition.clone());
+            tick.cx.condition = Some(condition);
             tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
             assert!(matches!(gatherer.tick(tick).unwrap(), ScriptFlow::Continue));
         });

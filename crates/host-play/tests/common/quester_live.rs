@@ -2358,7 +2358,7 @@ fn run_cells(
                 .find(|status| status.username.as_str() == names[0])
         });
         if let Some(control) = profile_control.as_mut() {
-            let state = match shared.lock() {
+            let mut state = match shared.lock() {
                 Ok(state) => state,
                 Err(_) => break 'run Err("live state poisoned".into()),
             };
@@ -2372,7 +2372,18 @@ fn run_cells(
                 let previous = profile.settings.survival.cure_poison;
                 if previous != policy {
                     profile.settings.survival.cure_poison = policy;
-                    let snapshot = &state.actors[0].snapshot;
+                    let (snapshot_tick, chat_modal, chat_options) = {
+                        let snapshot = &state.actors[0].snapshot;
+                        (
+                            snapshot.tick(),
+                            snapshot.modals().chat,
+                            snapshot
+                                .chat_options()
+                                .iter()
+                                .map(|option| option.text.clone())
+                                .collect::<Vec<_>>(),
+                        )
+                    };
                     play.remember_profile(profile.clone());
                     let slot_mirror_policy =
                         play.arm(&profile.username)
@@ -2388,11 +2399,11 @@ fn run_cells(
                         "setting": "cure_poison",
                         "before": cure_poison_name(previous),
                         "after": cure_poison_name(policy),
-                        "tick": snapshot.tick(),
-                        "chat_modal": snapshot.modals().chat,
-                        "chat_options": snapshot.chat_options().iter().map(|option| option.text.clone()).collect::<Vec<_>>(),
+                        "tick": snapshot_tick,
+                        "chat_modal": chat_modal,
+                        "chat_options": chat_options,
                         "slot_mirror_policy": slot_mirror_policy,
-                        "slot_mirror_tick": snapshot.tick(),
+                        "slot_mirror_tick": snapshot_tick,
                         "slot_mirror_updated": slot_mirror_updated,
                     }));
                 }

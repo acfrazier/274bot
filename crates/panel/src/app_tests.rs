@@ -268,10 +268,9 @@ fn a_parked_quester_shows_its_phase_and_reason_on_the_status_card() {
 
 #[test]
 fn status_card_shows_poison_survival_need() {
-    use script::survival::{
-        cure::CureWhy,
-        math::{NeedWhy, SurvivalNeed},
-        Decision, Owner, SurvivalReport,
+    use frontend_core::{
+        SurvivalCureWhy as CureWhy, SurvivalDecision as Decision, SurvivalNeed,
+        SurvivalNeedWhy as NeedWhy, SurvivalOwner as Owner, SurvivalReport,
     };
 
     let mut detail = frontend_core::SlotDetail::default();

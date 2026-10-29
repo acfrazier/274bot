@@ -499,6 +499,7 @@ fn canonical_sample_status_wire_delta_stays_inside_two_kib() {
         &script::gatherer::status::StatusData {
             skill: "Woodcutting",
             method: Arc::from("woodcutting.normal.op1"),
+            survival: script::survival::SurvivalReport::default(),
             phase: "gathering",
             area: Arc::from("Start (Lumbridge)"),
             target: Arc::from("Tree"),

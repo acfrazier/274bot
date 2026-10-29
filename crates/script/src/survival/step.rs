@@ -481,7 +481,7 @@ mod tests {
     ) -> SurvivalWant {
         let mut ledger = None;
         with_tick(snapshot, &mut ledger, tick_number, |tick| {
-            tick.cx.condition = Some(condition.clone());
+            tick.cx.condition = Some(*condition);
             tick.cx.poison_unknown_pulse = 11;
             tick.cx.cure_poison = policy;
             step.want(&tick.cx, 0)

@@ -5846,7 +5846,7 @@ mod tests {
             &mut ledger,
             1,
             |tick| {
-                tick.cx.condition = Some(condition.clone());
+                tick.cx.condition = Some(condition);
                 tick.cx.cure_poison = CurePoison::WhenNeeded;
                 provision_script.tick(tick).unwrap();
                 assert!(matches!(
@@ -6601,7 +6601,7 @@ mod tests {
         let mut output = StatusCapture::default();
 
         with_tick_output(&snapshot, &mut ledger, 1, &mut output, |tick| {
-            tick.cx.condition = Some(condition.clone());
+            tick.cx.condition = Some(condition);
             tick.cx.cure_poison = CurePoison::WhenNeeded;
             assert!(matches!(script.tick(tick).unwrap(), ScriptFlow::Continue));
         });

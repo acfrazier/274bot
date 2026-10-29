@@ -4956,7 +4956,7 @@ mod tests {
             let active_millis = if tick_number == 9 {
                 4_799
             } else {
-                1_000 + u64::from(tick_number - 2) * 100
+                1_000 + (tick_number - 2) * 100
             };
             let poll = with_tick(&snapshot, &mut ledger, tick_number, |tick| {
                 tick.cx.active_now = Duration::from_millis(active_millis);

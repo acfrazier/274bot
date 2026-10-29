@@ -3611,6 +3611,7 @@ fn compiled_gatherer_paint_controls_pause_resume_and_stop() {
     let data = script::gatherer::status::StatusData {
         skill: "Woodcutting",
         method: Arc::from("normal"),
+        survival: script::survival::SurvivalReport::default(),
         phase: "gathering",
         area: Arc::from("Start"),
         target: Arc::from("Tree"),
@@ -3651,6 +3652,7 @@ fn native_gatherer_paint_controls_pause_resume_and_stop() {
     let data = script::gatherer::status::StatusData {
         skill: "Woodcutting",
         method: Arc::from("normal"),
+        survival: script::survival::SurvivalReport::default(),
         phase: "gathering",
         area: Arc::from("Start"),
         target: Arc::from("Tree"),
