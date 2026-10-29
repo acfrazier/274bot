@@ -63,6 +63,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Quester
 
+- Quest guides now respond to an NPC's "I can't reach that!" message at once:
+  they recover from the NPC's current location when possible, or report the
+  refusal.
 - Quest guides can now kill until a required item drops, with a total kill
   budget and a named stop. The final allowed kill still gets its loot wait.
   The receipt records confirmed kills across re-engagements.
