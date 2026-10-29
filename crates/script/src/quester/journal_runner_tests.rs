@@ -1144,6 +1144,23 @@ fn advancing_settle_timeout_rereads_before_retrying_after_delayed_progress() {
     assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
     assert_eq!(begins.load(Ordering::Relaxed), 1);
     drive(&mut script, &snapshot, &mut ledger, 6);
+    assert!(
+        matches!(
+            ledger
+                .as_ref()
+                .and_then(|ledger| ledger.outbox.first())
+                .map(|action| &action.effect),
+            Some(HostEffect::Interaction(
+                crate::shim::InteractReq::UseOn { .. }
+            ))
+        ),
+        "use-on was not emitted: begins={}, active={}, streak={}, error={:?}, parked={}",
+        begins.load(Ordering::Relaxed),
+        script.step.is_some(),
+        script.fail_streak,
+        script.last_error,
+        script.parked
+    );
     assert!(matches!(
         ack(&mut ledger, 6),
         HostEffect::Interaction(crate::shim::InteractReq::UseOn { .. })
