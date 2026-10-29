@@ -181,7 +181,7 @@ pub fn shared_tables() -> Result<Arc<CombatTables>, GuardRefusal> {
 /// Borrow the existing table for per-tick consumers without changing its
 /// reference count or constructing another selected-data owner.
 pub(crate) fn shared_tables_ref() -> Option<&'static CombatTables> {
-    TABLES.as_ref().as_ref().map(Arc::as_ref)
+    TABLES.as_ref().map(Arc::as_ref)
 }
 
 fn prayer_base(snapshot: &SnapshotView<'_>) -> Option<i32> {
