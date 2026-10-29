@@ -4576,11 +4576,11 @@ fn render_fault_banner_stays_visible_until_acknowledged_and_released() {
     context.set_clipboard_backend(drawn.clone());
     let acknowledged = std::cell::Cell::new(None::<u64>);
 
-    let mut frame = |context: &mut dear_imgui_rs::Context,
-                     active: bool,
-                     acknowledged_sequence: u64,
-                     mouse: [f32; 2],
-                     pressed: bool| {
+    let frame = |context: &mut dear_imgui_rs::Context,
+                 active: bool,
+                 acknowledged_sequence: u64,
+                 mouse: [f32; 2],
+                 pressed: bool| {
         context.io_mut().add_mouse_pos_event(mouse);
         context
             .io_mut()
