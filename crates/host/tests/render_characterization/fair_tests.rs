@@ -269,7 +269,9 @@ fn watch_grant_wake_latency_is_measured_from_publication() {
     let consumed = peer.event(RenderTestPoint::AfterConsume);
     let painted = peer.painted(busy.generation);
     let stats = painted.stats.unwrap();
-    let latency = stats.last_grant_latency().expect("a real cross-slot wake sample");
+    let latency = stats
+        .last_grant_latency()
+        .expect("a real cross-slot wake sample");
     assert_eq!(latency.reservation(), consumed.event.reservation.unwrap());
     assert_eq!(latency.published_at(), published_at);
     assert!(latency.notified_at() >= latency.published_at());

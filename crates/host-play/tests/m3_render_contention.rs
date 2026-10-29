@@ -159,23 +159,14 @@ fn watch_grant_wake_latency_is_measured_from_publication() {
     let notified_at = published_at + Duration::from_millis(7);
     let woke_at = notified_at + Duration::from_millis(11);
     let consumed_at = woke_at + Duration::from_millis(13);
-    let measured = checked_grant_latency_durations(
-        published_at,
-        notified_at,
-        woke_at,
-        consumed_at,
-    )
-    .expect("monotonic grant timestamps");
+    let measured = checked_grant_latency_durations(published_at, notified_at, woke_at, consumed_at)
+        .expect("monotonic grant timestamps");
     assert_eq!(measured.publication_to_notice, Duration::from_millis(7));
     assert_eq!(measured.notice_to_wake, Duration::from_millis(11));
     assert_eq!(measured.publication_to_wake, Duration::from_millis(18));
-    assert_eq!(
-        measured.publication_to_consume,
-        Duration::from_millis(31)
-    );
+    assert_eq!(measured.publication_to_consume, Duration::from_millis(31));
     assert_ne!(
-        measured.publication_to_consume,
-        measured.wake_to_consume,
+        measured.publication_to_consume, measured.wake_to_consume,
         "the measured grant latency must begin at publication, not at wake"
     );
 }
@@ -535,9 +526,7 @@ fn pump_metrics(from: Option<PumpSnapshot>, to: Option<PumpSnapshot>) -> Option<
     let (from, to) = (from?, to?);
     let intervals = to.intervals.saturating_sub(from.intervals);
     let interval_ns = to.interval_ns.saturating_sub(from.interval_ns);
-    let histogram = std::array::from_fn(|i| {
-        to.histogram[i].saturating_sub(from.histogram[i])
-    });
+    let histogram = std::array::from_fn(|i| to.histogram[i].saturating_sub(from.histogram[i]));
     Some(json!({
         "schedule": "earlier-of-returned-deadline-and-consumer-period",
         "consumer_period_ms": CONSUMER_PERIOD.as_millis(),
@@ -576,51 +565,62 @@ fn fair_head_metrics(
     };
     let duration_ms = |current_value: Duration, previous_value: Option<Duration>| {
         if interval_identity {
-            json!(current_value.saturating_sub(previous_value.unwrap_or_default()).as_secs_f64() * 1e3)
+            json!(
+                current_value
+                    .saturating_sub(previous_value.unwrap_or_default())
+                    .as_secs_f64()
+                    * 1e3
+            )
         } else {
             Value::Null
         }
     };
-    let consumes = interval_identity
-        .then(|| current.scene_consumes().saturating_sub(previous.unwrap().scene_consumes()));
+    let consumes = interval_identity.then(|| {
+        current
+            .scene_consumes()
+            .saturating_sub(previous.unwrap().scene_consumes())
+    });
     let scene_fps = (current.backend() == client::render::backend::BackendKind::Gpu)
         .then(|| consumes.map(|count| count as f64 / seconds))
         .flatten();
-    let latency_metrics = |latency: render_head::GrantLatency,
-                           previous_latency: Option<render_head::GrantLatency>| {
-        let is_new = previous_latency
-            .map(|previous| previous.reservation() != latency.reservation())
-            .unwrap_or(false);
-        let published_at = latency.published_at();
-        let notified_at = latency.notified_at();
-        let woke_at = latency.woke_at();
-        let consumed_at = latency.consumed_at();
-        let durations = checked_grant_latency_durations(
-            published_at,
-            notified_at,
-            woke_at,
-            consumed_at,
-        );
-        json!({
-            "reservation_id": latency.reservation().reservation_id().get(),
-            "new_in_interval": is_new,
-            "published_at_t_s": since_epoch(published_at),
-            "notified_at_t_s": since_epoch(notified_at),
-            "woke_at_t_s": since_epoch(woke_at),
-            "consumed_at_t_s": since_epoch(consumed_at),
-            "timestamps_monotonic": durations.is_some(),
-            "publication_to_notice_ms": durations.map(|value| value.publication_to_notice.as_secs_f64() * 1e3),
-            "notice_to_wake_ms": durations.map(|value| value.notice_to_wake.as_secs_f64() * 1e3),
-            "publication_to_wake_ms": durations.map(|value| value.publication_to_wake.as_secs_f64() * 1e3),
-            "wake_to_consume_ms": durations.map(|value| value.wake_to_consume.as_secs_f64() * 1e3),
-            "publication_to_consume_ms": durations.map(|value| value.publication_to_consume.as_secs_f64() * 1e3),
-        })
-    };
+    let latency_metrics =
+        |latency: render_head::GrantLatency,
+         previous_latency: Option<render_head::GrantLatency>| {
+            let is_new = previous_latency
+                .map(|previous| previous.reservation() != latency.reservation())
+                .unwrap_or(false);
+            let published_at = latency.published_at();
+            let notified_at = latency.notified_at();
+            let woke_at = latency.woke_at();
+            let consumed_at = latency.consumed_at();
+            let durations =
+                checked_grant_latency_durations(published_at, notified_at, woke_at, consumed_at);
+            json!({
+                "reservation_id": latency.reservation().reservation_id().get(),
+                "new_in_interval": is_new,
+                "published_at_t_s": since_epoch(published_at),
+                "notified_at_t_s": since_epoch(notified_at),
+                "woke_at_t_s": since_epoch(woke_at),
+                "consumed_at_t_s": since_epoch(consumed_at),
+                "timestamps_monotonic": durations.is_some(),
+                "publication_to_notice_ms": durations.map(|value| value.publication_to_notice.as_secs_f64() * 1e3),
+                "notice_to_wake_ms": durations.map(|value| value.notice_to_wake.as_secs_f64() * 1e3),
+                "publication_to_wake_ms": durations.map(|value| value.publication_to_wake.as_secs_f64() * 1e3),
+                "wake_to_consume_ms": durations.map(|value| value.wake_to_consume.as_secs_f64() * 1e3),
+                "publication_to_consume_ms": durations.map(|value| value.publication_to_consume.as_secs_f64() * 1e3),
+            })
+        };
     let last_latency = current.last_grant_latency().map(|latency| {
-        latency_metrics(latency, previous.and_then(|stats| stats.last_grant_latency()))
+        latency_metrics(
+            latency,
+            previous.and_then(|stats| stats.last_grant_latency()),
+        )
     });
     let max_latency = current.max_grant_latency().map(|latency| {
-        latency_metrics(latency, previous.and_then(|stats| stats.max_grant_latency()))
+        latency_metrics(
+            latency,
+            previous.and_then(|stats| stats.max_grant_latency()),
+        )
     });
     let identity = current.identity();
     json!({
@@ -733,7 +733,10 @@ fn m3_fair_oracle(
             return Err(format!("{}: fair stats are missing", head.name));
         }
         if !head.identity_matches {
-            return Err(format!("{}: fair stats do not match the live head", head.name));
+            return Err(format!(
+                "{}: fair stats do not match the live head",
+                head.name
+            ));
         }
         if head.paints == 0 {
             return Err(format!("{}: head stopped painting", head.name));
@@ -748,7 +751,10 @@ fn m3_fair_oracle(
             && (!head.has_valid_scene
                 || head.scene_progress == client::render::backend::SceneProgress::NoScene)
         {
-            return Err(format!("{}: CPU head has no live scene progress", head.name));
+            return Err(format!(
+                "{}: CPU head has no live scene progress",
+                head.name
+            ));
         }
     }
     Ok(())
@@ -772,7 +778,10 @@ fn m3_oracle_rejects_paints_without_scene() {
         scene_progress: client::render::backend::SceneProgress::NoScene,
     };
     let error = m3_fair_oracle(1, &[head], [0; 3]).unwrap_err();
-    assert!(error.contains("painted but never consumed a scene"), "{error}");
+    assert!(
+        error.contains("painted but never consumed a scene"),
+        "{error}"
+    );
 }
 
 #[cfg(feature = "render-test-hooks")]
@@ -793,16 +802,26 @@ fn m3_oracle_rejects_missing_refused_and_stopped_heads() {
         scene_progress: client::render::backend::SceneProgress::Rebuilt,
     };
     assert!(m3_fair_oracle(1, &[], [0; 3]).is_err());
-    assert!(
-        m3_fair_oracle(1, &[FairOracleHead { refused: true, ..head }], [0; 3])
-            .unwrap_err()
-            .contains("refused")
-    );
-    assert!(
-        m3_fair_oracle(1, &[FairOracleHead { live: false, ..head }], [0; 3])
-            .unwrap_err()
-            .contains("stopped")
-    );
+    assert!(m3_fair_oracle(
+        1,
+        &[FairOracleHead {
+            refused: true,
+            ..head
+        }],
+        [0; 3]
+    )
+    .unwrap_err()
+    .contains("refused"));
+    assert!(m3_fair_oracle(
+        1,
+        &[FairOracleHead {
+            live: false,
+            ..head
+        }],
+        [0; 3]
+    )
+    .unwrap_err()
+    .contains("stopped"));
 }
 
 #[cfg(feature = "render-test-hooks")]
@@ -817,9 +836,7 @@ fn assert_fair_interval(
         .iter()
         .enumerate()
         .map(|(i, head)| {
-            let status = statuses
-                .iter()
-                .find(|status| status.username == head.name);
+            let status = statuses.iter().find(|status| status.username == head.name);
             let previous = from
                 .fair
                 .as_ref()
@@ -871,10 +888,10 @@ fn assert_fair_interval(
                 }),
                 scene_consumes,
                 has_valid_scene: stats.is_some_and(|stats| stats.has_valid_scene()),
-                scene_progress: stats.map_or(
-                    client::render::backend::SceneProgress::NoScene,
-                    |stats| stats.scene_progress(),
-                ),
+                scene_progress: stats
+                    .map_or(client::render::backend::SceneProgress::NoScene, |stats| {
+                        stats.scene_progress()
+                    }),
             }
         })
         .collect();
@@ -1253,7 +1270,6 @@ fn live_m3_render_contention() {
             }
         })
     };
-
 
     let login_started = Instant::now();
     wait_ingame(&play, n, Duration::from_secs(60 + 30 * n as u64));
