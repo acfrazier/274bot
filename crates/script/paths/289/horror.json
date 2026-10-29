@@ -34,7 +34,7 @@
       "obj:horror_key",
       "obj:woodplank",
       "obj:nails",
-      "obj:hammer"
+      "obj:hammer", "obj:swamp_tar", "obj:molten_glass", "obj:tinderbox"
     ],
     "owns_inventory": true
   },
@@ -48,7 +48,11 @@
           "in_progress": "horror:1",
           "complete": "horror:10"
         },
-        "rules": [],
+        "rules": [
+          {"stage":"horror:4","all":["i must search this place"],"any":[],"not":[],"varp":4},
+          {"stage":"horror:2","all":["lighthouse lamp"],"any":[],"not":[],"varp":2},
+          {"stage":"horror:2","all":["i have relit the lighthouse torch"],"any":[],"not":["i managed to repair"],"varp":2}
+        ],
         "flags": [],
         "monotonic": false
       },
@@ -179,11 +183,67 @@
                   }
                 }
               },
-              "comment": "content/scripts/quests/quest_horror/scripts/quest_horror.rs2:110-137. The config exists but no placement was found in content/maps; see report.",
+              "comment": "content/scripts/quests/quest_horror/scripts/quest_horror.rs2:110-137; content/maps/m40_56.jm2:4102,4882; engine/src/engine/GameMap.ts:263-266.",
               "advances": false
-            }
+            },
+            {"id":"cross-east","kind":"interact","version":1,"advances":false,
+             "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:63-108; content/maps/m40_56.jm2:4102,4882.",
+             "args":{"target":{"loc":"horror_broken_bridge_left_spot","tile":[2596,3608,0],"source":"content/maps/m40_56.jm2:4102,4882; engine/src/engine/GameMap.ts:263-266"},"op":"Cross","radius":4},
+             "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[2599,3608,0],"radius":0}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2599,3608,0],"radius":0}}}},
+            {"id":"repair-bridge-right","kind":"use_on","version":1,"advances":false,
+             "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:139-166; content/maps/m40_56.jm2:4108,4889.",
+             "args":{"item":"woodplank","target":{"loc":"horror_broken_bridge_right_spot","tile":[2598,3608,0],"source":"content/maps/m40_56.jm2:4108,4889; engine/src/engine/GameMap.ts:263-266"},"radius":4},
+             "skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"woodplank"}}}},"settle":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"woodplank"}}}}},
+            {"id":"cross-west","kind":"interact","version":1,"advances":false,
+             "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:63-95; content/maps/m40_56.jm2:4108,4889.",
+             "args":{"target":{"loc":"horror_broken_bridge_right_spot","tile":[2598,3608,0],"source":"content/maps/m40_56.jm2:4108,4889; engine/src/engine/GameMap.ts:263-266"},"op":"Cross","radius":4},
+             "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[2595,3608,0],"radius":0}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2595,3608,0],"radius":0}}}},
+            {"id":"unlock-lighthouse","kind":"use_on","version":1,"advances":false,
+             "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:50-60; content/maps/m39_56.jm2:5133.",
+             "args":{"item":"horror_key","target":{"loc":"horror_lighthouse_doorway","tile":[2509,3636,0],"source":"content/maps/m39_56.jm2:5133"},"radius":4},
+             "skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"horror_key"}}}},"settle":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"horror_key"}}}}},
+            {"id":"enter-lighthouse","kind":"interact","version":1,"advances":true,
+             "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:22-29; content/maps/m39_56.jm2:5133.",
+             "args":{"target":{"loc":"horror_lighthouse_doorway","tile":[2509,3636,0],"source":"content/maps/m39_56.jm2:5133"},"op":"Walk-through","radius":4},
+             "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"horror","any":["horror:2"]}}}}
           ]
         },
+        {"stage":"horror:2","required":[],"terminal":false,"recovery_entry":null,"steps":[
+          {"id":"climb-lighthouse-base","kind":"interact","version":1,"advances":false,
+           "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:186-188; content/maps/m38_71.jm2:5104.",
+           "args":{"target":{"loc":"horror_lighthouse_spiralstairs_base","tile":[2442,4600,0],"source":"content/maps/m38_71.jm2:5104"},"op":"Climb-up","radius":4},
+           "skip_if":{"Fact":{"kind":"on_level","version":1,"args":{"level":1}}},"settle":{"Fact":{"kind":"on_level","version":1,"args":{"level":1}}}},
+          {"id":"climb-lighthouse-middle","kind":"interact","version":1,"advances":false,
+           "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:200-203; content/maps/m38_71.jm2:5380.",
+           "args":{"target":{"loc":"horror_lighthouse_spiralstairs_middle","tile":[2442,4600,1],"source":"content/maps/m38_71.jm2:5380"},"op":"Climb-up","radius":4},
+           "skip_if":{"Fact":{"kind":"on_level","version":1,"args":{"level":2}}},"settle":{"Fact":{"kind":"on_level","version":1,"args":{"level":2}}}},
+          {"id":"tar-lamp","kind":"use_on","version":1,"advances":false,
+           "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:260-268; content/maps/m38_71.jm2:5509.",
+           "args":{"item":"swamp_tar","target":{"loc":"horror_lighthouse_cog_broken","tile":[2443,4599,2],"source":"content/maps/m38_71.jm2:5509"},"radius":4},
+           "skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"swamp_tar"}}}},"settle":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"swamp_tar"}}}}},
+          {"id":"glass-lamp","kind":"use_on","version":1,"advances":false,
+           "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:270-278; content/maps/m38_71.jm2:5509.",
+           "args":{"item":"molten_glass","target":{"loc":"horror_lighthouse_cog_broken","tile":[2443,4599,2],"source":"content/maps/m38_71.jm2:5509"},"radius":4},
+           "skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"molten_glass"}}}},"settle":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"molten_glass"}}}}},
+          {"id":"light-lamp","kind":"use_on","version":1,"advances":true,
+           "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:245-258,283-287; content/maps/m38_71.jm2:5509.",
+           "args":{"item":"tinderbox","target":{"loc":"horror_lighthouse_cog_broken","tile":[2443,4599,2],"source":"content/maps/m38_71.jm2:5509"},"radius":4},
+           "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"horror","any":["horror:4"]}}}}
+        ]},
+        {"stage":"horror:4","required":[],"terminal":false,"recovery_entry":null,"steps":[
+          {"id":"descend-lighthouse-top","kind":"interact","version":1,"advances":false,
+           "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:209-212,283-287; content/maps/m39_56.jm2:5480.",
+           "args":{"target":{"loc":"horror_lighthouse_spiralstairs_top","tile":[2506,3641,2],"source":"content/maps/m39_56.jm2:5480"},"op":"Climb-down","radius":4},
+           "skip_if":{"Not":{"Fact":{"kind":"on_level","version":1,"args":{"level":2}}}},"settle":{"Fact":{"kind":"on_level","version":1,"args":{"level":1}}}},
+          {"id":"descend-lighthouse-middle","kind":"interact","version":1,"advances":false,
+           "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:205-207; content/maps/m38_71.jm2:5380.",
+           "args":{"target":{"loc":"horror_lighthouse_spiralstairs_middle","tile":[2442,4600,1],"source":"content/maps/m38_71.jm2:5380"},"op":"Climb-down","radius":4},
+           "skip_if":{"Fact":{"kind":"on_level","version":1,"args":{"level":0}}},"settle":{"Fact":{"kind":"on_level","version":1,"args":{"level":0}}}},
+          {"id":"descend-iron-ladder","kind":"interact","version":1,"advances":false,
+           "comment":"content/scripts/quests/quest_horror/scripts/quest_horror.rs2:168-178; content/maps/m38_71.jm2:5137.",
+           "args":{"target":{"loc":"horror_ladder_top","tile":[2445,4604,0],"source":"content/maps/m38_71.jm2:5137"},"op":"Climb","radius":4},
+           "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[2518,4618,1],"radius":0}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2518,4618,1],"radius":0}}}}
+        ]},
         {
           "stage": "horror:10",
           "required": [],
