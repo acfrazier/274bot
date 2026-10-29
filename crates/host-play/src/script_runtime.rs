@@ -117,16 +117,16 @@ mod script_observe;
 pub(super) use script_observe::deliver_channel_events;
 #[cfg(all(test, feature = "js"))]
 pub(super) use script_observe::post_script_snapshot;
+use script_observe::try_clone_world_state;
 #[cfg(test)]
 pub(super) use script_observe::{
-    delay_ordered_drain_for_test, install_dispatch_barrier, install_ordered_dispatch_hook,
-    script_observe, script_observe_cached, script_observe_with_npc_boxes, DispatchBarrier,
+    delay_ordered_drain_for_test, drain_observed_host_interacts, install_dispatch_barrier,
+    install_ordered_dispatch_hook, script_observe, script_observe_cached,
+    script_observe_with_npc_boxes, take_script_interacts, DispatchBarrier,
 };
-use script_observe::try_clone_world_state;
 pub(super) use script_observe::{
-    drain_observed_host_interacts, nav_world_state_for_observe, observe_script_inv,
-    script_observe_cached_with_channels, take_script_interacts, NavWorldStateCache,
-    ScriptObservation,
+    nav_world_state_for_observe, observe_script_inv, script_observe_cached_with_channels,
+    NavWorldStateCache, ScriptObservation,
 };
 #[cfg(any(feature = "js", test))]
 pub(super) use script_observe::{project_npc_boxes_for_isolate_snapshot, projected_npc_boxes};
