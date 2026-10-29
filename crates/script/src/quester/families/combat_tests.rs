@@ -4331,22 +4331,15 @@ fn combat_loot_take_settles_after_the_appearance_deadline() {
     .is_pending());
     let deadline = 12 + LOOT_ITEM_WAIT_TICKS;
     for tick in 13..deadline {
-        assert!(with_step_context(&absent, &mut ledger, tick, |cx| {
-            run.poll(cx)
-        })
-        .is_pending());
+        assert!(with_step_context(&absent, &mut ledger, tick, |cx| { run.poll(cx) }).is_pending());
         assert!(run.action.is_none());
     }
-    assert!(with_step_context(&appeared, &mut ledger, deadline, |cx| {
-        run.poll(cx)
-    })
-    .is_pending());
+    assert!(
+        with_step_context(&appeared, &mut ledger, deadline, |cx| { run.poll(cx) }).is_pending()
+    );
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
     assert!(
-        with_step_context(&appeared, &mut ledger, deadline + 1, |cx| {
-            run.poll(cx)
-        })
-        .is_pending(),
+        with_step_context(&appeared, &mut ledger, deadline + 1, |cx| { run.poll(cx) }).is_pending(),
         "an in-flight Take must remain pending after the appearance deadline"
     );
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
@@ -4357,7 +4350,6 @@ fn combat_loot_take_settles_after_the_appearance_deadline() {
     ));
     assert_eq!(run.loot_index, 1);
 }
-
 
 #[test]
 fn missing_combat_loot_wait_is_one_window_for_all_configured_items() {
