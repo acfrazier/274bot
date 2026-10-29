@@ -90,18 +90,72 @@ fn fixture(journal: bool) -> (Quester, GameSnapshot) {
 
 struct AcceptedUseOnPlan(Arc<AtomicUsize>);
 
-struct AcceptedUseOnRun {
+struct AcceptedUseOnMachine {
     request_id: Option<u64>,
+}
+
+impl NativeMachine for AcceptedUseOnMachine {
+    type Args = ();
+    type Output = api::quest_progress::EvidenceStamp;
+
+    fn begin(_: Self::Args, _: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+        Ok(Self { request_id: None })
+    }
+
+    fn poll(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+    ) -> Poll<Result<Self::Output, ActionError>> {
+        if let Some(request_id) = self.request_id {
+            return match cx.interaction_receipt(request_id) {
+                Some(receipt) if receipt.accepted => Poll::Ready(Ok(receipt.evidence)),
+                Some(_) => Poll::Ready(Err(ActionError::Failed(Arc::from(
+                    "use_on interaction was rejected",
+                )))),
+                None => Poll::Pending,
+            };
+        }
+        match cx.emit(crate::shim::InteractReq::UseOn {
+            name: "Rotten apple".into(),
+            kind: "loc".into(),
+            target_name: Some("Mourner's cauldron".into()),
+            x: 0,
+            z: 0,
+            level: 0,
+            index: Some(0),
+            source_item_id: Some(1),
+            source_item_slot: Some(0),
+            target_item_id: None,
+            target_item_slot: None,
+        }) {
+            Ok(request_id) => {
+                self.request_id = Some(request_id);
+                Poll::Pending
+            }
+            Err(ActionError::BudgetExhausted) => Poll::Pending,
+            Err(error) => Poll::Ready(Err(error)),
+        }
+    }
 }
 
 impl super::super::compile::StepPlan for AcceptedUseOnPlan {
     fn begin(
         &self,
-        _: &mut StepContext<'_, '_>,
+        cx: &mut StepContext<'_, '_>,
     ) -> Result<Box<dyn super::super::compile::StepRun>, ActionError> {
         self.0.fetch_add(1, Ordering::Relaxed);
-        Ok(Box::new(AcceptedUseOnRun { request_id: None }))
+        let handle = cx
+            .tick
+            .actions
+            .begin::<AcceptedUseOnMachine>((), &mut cx.tick.cx)?;
+        Ok(Box::new(AcceptedUseOnRun {
+            handle: Some(handle),
+        }))
     }
+}
+
+struct AcceptedUseOnRun {
+    handle: Option<ActionHandle<AcceptedUseOnMachine>>,
 }
 
 impl super::super::compile::StepRun for AcceptedUseOnRun {
@@ -109,40 +163,34 @@ impl super::super::compile::StepRun for AcceptedUseOnRun {
         &mut self,
         cx: &mut StepContext<'_, '_>,
     ) -> Poll<Result<StepOutcome, ActionError>> {
-        let Some(request_id) = self.request_id else {
-            let request_id = match cx.tick.cx.emit(crate::shim::InteractReq::UseOn {
-                name: "Rotten apple".into(),
-                kind: "loc".into(),
-                target_name: Some("Mourner's cauldron".into()),
-                x: 0,
-                z: 0,
-                level: 0,
-                index: Some(0),
-                source_item_id: Some(1),
-                source_item_slot: Some(0),
-                target_item_id: None,
-                target_item_slot: None,
-            }) {
-                Ok(request_id) => request_id,
-                Err(error) => return Poll::Ready(Err(error)),
+        let result = {
+            let Some(handle) = self.handle.as_ref() else {
+                return Poll::Ready(Err(ActionError::Cancelled));
             };
-            self.request_id = Some(request_id);
-            return Poll::Pending;
+            cx.tick.actions.poll(handle, &mut cx.tick.cx)
         };
-        match cx.tick.cx.interaction_receipt(request_id) {
-            Some(receipt) if receipt.accepted => Poll::Ready(Ok(StepOutcome {
-                progress: None,
-                evidence: receipt.evidence,
-                receipt: None,
-            })),
-            Some(_) => Poll::Ready(Err(ActionError::Failed(Arc::from(
-                "use_on interaction was rejected",
-            )))),
-            None => Poll::Pending,
+        match result {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(evidence)) => {
+                self.handle.take();
+                Poll::Ready(Ok(StepOutcome {
+                    progress: None,
+                    evidence,
+                    receipt: None,
+                }))
+            }
+            Poll::Ready(Err(error)) => {
+                self.handle.take();
+                Poll::Ready(Err(error))
+            }
         }
     }
 
-    fn cancel(&mut self, _: &mut NativeActions) {}
+    fn cancel(&mut self, actions: &mut NativeActions) {
+        if let Some(handle) = self.handle.take() {
+            actions.cancel(handle);
+        }
+    }
 }
 
 type Ledger = Option<Box<crate::native::ledger::Ledger>>;
