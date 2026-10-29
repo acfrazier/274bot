@@ -930,7 +930,7 @@ fn quest_walk_retry_begin_defers_when_the_tick_budget_is_exhausted() {
     })
     .is_pending());
     assert_ne!(latest_walk_request(&ledger).0, second_request);
-    assert_eq!(walk_request_count(&ledger), 3);
+    assert_eq!(walk_request_count(&ledger), 1);
 }
 
 #[test]
