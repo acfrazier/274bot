@@ -969,6 +969,14 @@ fn combat_test_run_with_radius(
         abort_escape: AbortEscape::new(),
     }
 }
+
+#[test]
+fn combat_run_size_stays_under_512_bytes() {
+    let size = std::mem::size_of::<CombatRun>();
+    eprintln!("CombatRun size_of={size}");
+    assert!(size <= 512, "CombatRun is {size} bytes");
+}
+
 pub(crate) fn policy_s2_run_for_runner(cx: &mut StepContext<'_, '_>) -> Box<dyn StepRun> {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let mut run = combat_test_run(imp_target(&data), None, None, Vec::new());

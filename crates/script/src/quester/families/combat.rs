@@ -69,9 +69,6 @@ static ABORT_ESCAPE_UNSAFE: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from(ABORT_ESCAPE_UNSAFE_REASON));
 static ABORT_ESCAPE_STALLED: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from(ABORT_ESCAPE_STALLED_REASON));
-static COMBAT_REQUIRED_LOOT_MISSING: std::sync::LazyLock<Arc<str>> = std::sync::LazyLock::new(
-    || Arc::from("required combat loot was not acquired during the post-kill search"),
-);
 /// From hitpoints reaching zero, the queued death callback runs on the next NPC
 /// turn, then arrival delay 1–2 plus `npc_delay(1)` precede the drop: at most
 /// five server ticks (`npc_combat.rs2:78-93`, `Npc.ts:250-253,566-575`,
@@ -1974,8 +1971,8 @@ impl CombatRun {
                 if should_stop {
                     self.finish(cx)
                 } else if missing_required_loot {
-                    Poll::Ready(Err(ActionError::Failed(Arc::clone(
-                        &COMBAT_REQUIRED_LOOT_MISSING,
+                    Poll::Ready(Err(ActionError::Failed(Arc::from(
+                        "required combat loot was not acquired during the post-kill search",
                     ))))
                 } else {
                     self.rebegin_combat(cx, false)
