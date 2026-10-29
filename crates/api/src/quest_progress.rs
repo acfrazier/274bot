@@ -1,8 +1,11 @@
 //! Compact journal/progress evidence shared by the runner, host and nav provider.
 
-use crate::game_data::QuestFamilyIdentity;
+use crate::game_data::{QuestFamilyIdentity, Transmission};
+use crate::prereq_knowledge::Observation;
 use crate::quest_facts::QuestCatalog;
-use crate::selected::{FactKey, Knowledge, QuestGate, RunKey, SelectedPin, SignalRange, Truth};
+use crate::selected::{
+    FactKey, InclusiveRange, Knowledge, QuestGate, RunKey, SelectedPin, SignalRange, Truth,
+};
 use crate::snapshot::{Observed, QuestListStatus, QuestStatusView, SnapshotView};
 use std::sync::Arc;
 
@@ -72,7 +75,12 @@ pub enum ProgressError {
 }
 
 pub trait EvidenceProvider: Send + Sync {
-    fn test_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Truth;
+    fn observe_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Option<Observation>;
+
+    fn test_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Truth {
+        self.observe_gate(gate, required_after)
+            .map_or(Truth::Unknown, |observation| observation.truth)
+    }
 }
 
 /// Resolve one canonical quest identity against the observed quest-list rows.
@@ -99,16 +107,109 @@ fn status_for_display(display: &str, rows: &[QuestStatusView]) -> Option<QuestLi
         .map(QuestStatusView::status)
 }
 
+/// Borrowed ordinary quest-list evaluation for a runner poll. The caller must
+/// validate that the catalog family is the selected family before using it.
+pub fn observe_quest_gate(
+    quests: &QuestCatalog,
+    gate: &QuestGate,
+    snapshot: SnapshotView<'_>,
+    required_after: EvidenceStamp,
+) -> Option<Observation> {
+    let rows = snapshot.quest_statuses()?;
+    let quest_id = match gate {
+        QuestGate::Complete(quest) => quest.0.as_ref(),
+        QuestGate::Window(window) => window.quest.0.as_ref(),
+    };
+    let facts = quests.quest(quest_id).ok()?;
+    let status = status_for_display(&facts.display, rows.value).unwrap_or(QuestListStatus::Unknown);
+    let truth = if !rows.stamp.meets(required_after) {
+        Truth::Unknown
+    } else {
+        match gate {
+            QuestGate::Complete(_) => status_truth(status),
+            QuestGate::Window(window) if window.signal == facts.varp => stage_colour_range(
+                status,
+                facts.complete,
+                facts.stage_domain,
+                facts.colour_authoritative,
+                facts.transmission,
+            )
+            .map_or(Truth::Unknown, |possible| window.values.test(&possible)),
+            QuestGate::Window(_) => Truth::Unknown,
+        }
+    };
+    Some(Observation {
+        truth,
+        observed: Some(rows.stamp),
+    })
+}
+
+fn status_truth(status: QuestListStatus) -> Truth {
+    match status {
+        QuestListStatus::Complete => Truth::True,
+        QuestListStatus::NotStarted | QuestListStatus::InProgress => Truth::False,
+        QuestListStatus::Unknown => Truth::Unknown,
+    }
+}
+
+fn stage_colour_range(
+    status: QuestListStatus,
+    complete: i32,
+    stage_domain: Option<InclusiveRange>,
+    colour_authoritative: bool,
+    transmission: Transmission,
+) -> Option<InclusiveRange> {
+    if !colour_authoritative || transmission != Transmission::NotTransmitted || complete <= 0 {
+        return None;
+    }
+    let domain = stage_domain?;
+    let (Some(domain_min), Some(domain_max)) = (domain.min, domain.max) else {
+        return None;
+    };
+    if domain_min != 0 || domain_max < complete {
+        return None;
+    }
+    let colour_range = match status {
+        QuestListStatus::NotStarted => InclusiveRange {
+            min: Some(0),
+            max: Some(0),
+        },
+        QuestListStatus::InProgress => InclusiveRange {
+            min: Some(1),
+            max: Some(complete - 1),
+        },
+        QuestListStatus::Complete => InclusiveRange {
+            min: Some(complete),
+            max: Some(i32::MAX),
+        },
+        QuestListStatus::Unknown => return None,
+    };
+    intersect_ranges(colour_range, domain)
+}
+
+fn intersect_ranges(left: InclusiveRange, right: InclusiveRange) -> Option<InclusiveRange> {
+    let min = left.min.unwrap_or(i32::MIN).max(right.min.unwrap_or(i32::MIN));
+    let max = left.max.unwrap_or(i32::MAX).min(right.max.unwrap_or(i32::MAX));
+    (min <= max).then_some(InclusiveRange {
+        min: Some(min),
+        max: Some(max),
+    })
+}
+
 #[derive(Debug, Clone)]
 struct QuestListStatusEvidence {
     quest: FactKey,
     status: QuestListStatus,
+    signal: FactKey,
+    complete: i32,
+    stage_domain: Option<InclusiveRange>,
+    colour_authoritative: bool,
+    transmission: Transmission,
 }
-
-/// Completion evidence copied from one observed quest-list frame.
+/// Evidence copied from one observed quest-list frame. It retains only
+/// canonical quest facts needed for complete and stage-window evaluation.
 ///
-/// This provider retains only canonical quest IDs, their observed list status,
-/// and the frame stamp. It does not retain the snapshot or the quest catalog.
+/// This provider retains neither the snapshot nor the quest catalog.
 #[derive(Debug, Clone)]
 pub struct QuestListEvidenceProvider {
     stamp: Option<EvidenceStamp>,
@@ -147,6 +248,11 @@ impl QuestListEvidenceProvider {
                     quest: facts.id.clone(),
                     status: status_for_display(&facts.display, observed.value)
                         .unwrap_or(QuestListStatus::Unknown),
+                    signal: facts.varp.clone(),
+                    complete: facts.complete,
+                    stage_domain: facts.stage_domain,
+                    colour_authoritative: facts.colour_authoritative,
+                    transmission: facts.transmission,
                 })
                 .collect()
         } else {
@@ -167,24 +273,49 @@ impl QuestListEvidenceProvider {
 }
 
 impl EvidenceProvider for QuestListEvidenceProvider {
-    fn test_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Truth {
-        let QuestGate::Complete(quest) = gate else {
-            return Truth::Unknown;
+    fn observe_gate(
+        &self,
+        gate: &QuestGate,
+        required_after: EvidenceStamp,
+    ) -> Option<Observation> {
+        let quest = match gate {
+            QuestGate::Complete(quest) => quest,
+            QuestGate::Window(window) => &window.quest,
         };
-        if !self.family_matches || !self.stamp.is_some_and(|stamp| stamp.meets(required_after)) {
-            return Truth::Unknown;
-        }
-        match self
+        let status = self
             .statuses
             .iter()
-            .find(|status| status.quest == *quest)
-            .map(|status| status.status)
-            .unwrap_or(QuestListStatus::Unknown)
+            .find(|status| status.quest == *quest);
+        let truth = if !self.family_matches
+            || !self.stamp.is_some_and(|stamp| stamp.meets(required_after))
         {
-            QuestListStatus::Complete => Truth::True,
-            QuestListStatus::NotStarted | QuestListStatus::InProgress => Truth::False,
-            QuestListStatus::Unknown => Truth::Unknown,
-        }
+            Truth::Unknown
+        } else {
+            let Some(status) = status else {
+                return Some(Observation {
+                    truth: Truth::Unknown,
+                    observed: self.stamp,
+                });
+            };
+            match gate {
+                QuestGate::Complete(_) => status_truth(status.status),
+                QuestGate::Window(window) if window.signal == status.signal => {
+                    stage_colour_range(
+                        status.status,
+                        status.complete,
+                        status.stage_domain,
+                        status.colour_authoritative,
+                        status.transmission,
+                    )
+                    .map_or(Truth::Unknown, |possible| window.values.test(&possible))
+                }
+                QuestGate::Window(_) => Truth::Unknown,
+            }
+        };
+        Some(Observation {
+            truth,
+            observed: self.stamp,
+        })
     }
 }
 

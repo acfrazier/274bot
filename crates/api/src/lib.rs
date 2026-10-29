@@ -35,6 +35,8 @@ pub mod process_condition;
 pub mod prot;
 pub mod query;
 pub mod quest_facts;
+pub mod prereq_knowledge;
+pub mod prereq_steps;
 pub mod quest_progress;
 pub mod random;
 pub mod run_policy;
