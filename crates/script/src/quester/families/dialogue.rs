@@ -18,11 +18,12 @@ use std::task::Poll;
 /// later script that deliberately closes and reopens the chat authors its
 /// engine hole (`gap_ticks`).
 pub const DIALOG_GAP_TICKS: u64 = 1;
-/// The opening budget for an NPC Talk whose content path reaches a chat page.
-/// A scan covered 797 `[opnpc1,...]` handlers; only chat-reaching paths count
-/// here, with the largest pre-page delay `p_delay(2)` in Captain Siad
-/// (`quest_desertrescue/scripts/captain_siad.rs2:1-11`) and the seven
-/// Underground Pass slaves (`quest_upass/scripts/upass_slave.rs2:1-56`).
+/// The observed-tick budget for the first chat page. For NPC Talk, only
+/// content paths that reach a chat page count toward the bound. A scan covered
+/// 797 `[opnpc1,...]` handlers; the largest pre-page delay on those paths is
+/// `p_delay(2)` in Captain Siad (`quest_desertrescue/scripts/captain_siad.rs2:1-11`)
+/// and the seven Underground Pass slaves
+/// (`quest_upass/scripts/upass_slave.rs2:1-56`).
 /// The engine resumes `P_DELAY` at `currentTick + 1 + N`
 /// (`PlayerOps.ts:376-379`, `World.ts:692-696`), so this is two content ticks
 /// plus one scheduling tick. One observed game tick is one `PLAYER_INFO`
