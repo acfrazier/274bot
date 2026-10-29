@@ -121,9 +121,18 @@ fn main_make_quantity(action: &str) -> Option<i32> {
     if !prefix.eq_ignore_ascii_case("make") {
         return None;
     }
-    let quantity = match action.get(4..)?.trim() {
-        "" => 1,
-        value => value.parse().ok()?,
+    // Column5's posted set labels still dispatch one/five/ten processes:
+    // content/scripts/skill_smithing/interfaces/smithing.if:1245-1254 and
+    // content/scripts/skill_smithing/scripts/smithing/smithing.rs2:25-30.
+    let mut words = action.get(4..)?.split_whitespace();
+    let quantity = match (words.next(), words.next(), words.next()) {
+        (None, None, None) => 1,
+        (Some(unit), None, None) if unit.eq_ignore_ascii_case("set") => 1,
+        (Some(value), None, None) => value.parse().ok()?,
+        (Some(value), Some(unit), None) if unit.eq_ignore_ascii_case("sets") => {
+            value.parse().ok()?
+        }
+        _ => return None,
     };
     (quantity > 0).then_some(quantity)
 }
@@ -903,6 +912,69 @@ mod tests {
             Poll::Ready(Err(ActionError::Failed(reason)))
                 if reason.as_ref() == "production menu did not expose the product"
         ));
+    }
+
+    #[test]
+    fn main_make_accepts_smithing_set_operations() {
+        // smithing.if:1245-1254 posts these labels for column5.
+        // smithing.rs2:25-30 maps them to one, five and ten processes.
+        for (quantity, operation) in [(1, 1), (5, 2), (10, 3)] {
+            let client = main_make_client(
+                1737,
+                "Production row",
+                &["Make set", "Make 5 sets", "Make 10 sets"],
+            );
+            let snapshot = main_make_snapshot(&client);
+            let mut ledger = None;
+            let handle = start_machine(
+                &snapshot,
+                &mut ledger,
+                MakeRequest {
+                    product_id: 1759,
+                    menu_id: 1737,
+                    qty: quantity,
+                    make_x: false,
+                },
+            );
+            let effect = with_tick(&snapshot, &mut ledger, 2, |tick| {
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+                acknowledge_current(&mut tick.cx)
+            });
+            assert!(matches!(
+                effect,
+                HostEffect::Interaction(InteractReq::MakePanel {
+                    id: 1737,
+                    slot: 0,
+                    component: 2210,
+                    operation: selected,
+                }) if selected == operation
+            ));
+        }
+    }
+
+    #[test]
+    fn fixed_main_make_quantities_reject_unknown_or_unbounded_labels() {
+        for (label, quantity) in [
+            ("Make", 1),
+            ("Make 1", 1),
+            ("Make set", 1),
+            ("MAKE 5 SETS", 5),
+            ("Make 10 sets", 10),
+        ] {
+            assert_eq!(main_make_quantity(label), Some(quantity), "{label}");
+        }
+        for label in [
+            "Make X",
+            "Make all",
+            "Make 0 sets",
+            "Make -1 sets",
+            "Make set sets",
+            "Make 5 items",
+            "Make 5 sets now",
+            "Buy 5",
+        ] {
+            assert_eq!(main_make_quantity(label), None, "{label}");
+        }
     }
 
     #[test]

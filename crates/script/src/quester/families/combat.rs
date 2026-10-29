@@ -69,6 +69,13 @@ static ABORT_ESCAPE_UNSAFE: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from(ABORT_ESCAPE_UNSAFE_REASON));
 static ABORT_ESCAPE_STALLED: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from(ABORT_ESCAPE_STALLED_REASON));
+/// From hitpoints reaching zero, the queued death callback runs on the next NPC
+/// turn, then arrival delay 1–2 plus `npc_delay(1)` precede the drop: at most
+/// five server ticks (`npc_combat.rs2:78-93`, `Npc.ts:250-253,566-575`,
+/// `LinkList.ts:67-70`, `npc_death.rs2:15-20`, `NpcOps.ts:97-100,557-571`,
+/// `elemental_earth.rs2:1-6`). Add one observed tick for the single
+/// `PLAYER_INFO` received per tick.
+const LOOT_ITEM_WAIT_TICKS: u64 = 5 + 1;
 
 fn tile_distance(a: api::WorldTile, b: api::WorldTile) -> i32 {
     if a.level != b.level {
@@ -867,6 +874,8 @@ impl StepPlan for CombatPlan {
             action: None,
             phase: Phase::Combat,
             loot_index: 0,
+            loot_wait_deadline: None,
+            loot_missing_this_kill: false,
             last_report: None,
             kills: 0,
             last_outcome: None,
@@ -1209,6 +1218,8 @@ struct CombatRun {
     action: Option<Action>,
     phase: Phase,
     loot_index: usize,
+    loot_wait_deadline: Option<u64>,
+    loot_missing_this_kill: bool,
     last_report: Option<CombatReport>,
     kills: u32,
     last_outcome: Option<StepOutcome>,
@@ -1776,6 +1787,14 @@ impl CombatRun {
             CombatEnd::Killed => {
                 self.phase = Phase::Loot;
                 self.loot_index = 0;
+                self.loot_wait_deadline = Some(
+                    cx.tick
+                        .cx
+                        .evidence()
+                        .tick
+                        .saturating_add(LOOT_ITEM_WAIT_TICKS),
+                );
+                self.loot_missing_this_kill = false;
                 Poll::Pending
             }
             CombatEnd::TargetGone => {
@@ -1821,11 +1840,7 @@ impl CombatRun {
         }
     }
 
-    fn outcome_for(
-        report: CombatReport,
-        target_gone_restarts: u8,
-        kills: u32,
-    ) -> StepOutcome {
+    fn outcome_for(report: CombatReport, target_gone_restarts: u8, kills: u32) -> StepOutcome {
         StepOutcome {
             progress: None,
             evidence: report.evidence,
@@ -1867,9 +1882,20 @@ impl CombatRun {
     }
 
     fn begin_loot(&mut self, cx: &mut StepContext<'_, '_>) -> Result<LootStart, ActionError> {
+        if self.loot.is_empty() {
+            return Ok(LootStart::Complete);
+        }
         let snapshot = cx.tick.cx.snapshot();
+        let tick = cx.tick.cx.evidence().tick;
+        let wait_expired = self
+            .loot_wait_deadline
+            .is_some_and(|deadline| tick > deadline);
         let Some(inventory) = snapshot.inventory() else {
-            return Ok(LootStart::Waiting);
+            return if wait_expired {
+                Err(ActionError::NeedsEvidence(Arc::from([])))
+            } else {
+                Ok(LootStart::Waiting)
+            };
         };
         while let Some(item) = self.loot.get(self.loot_index) {
             let held = inventory
@@ -1881,6 +1907,19 @@ impl CombatRun {
             if held >= i64::from(item.qty) {
                 self.loot_index += 1;
                 continue;
+            }
+            match self.ground_loot_visible(cx, item) {
+                Some(true) => {}
+                Some(false) if wait_expired => {
+                    self.loot_missing_this_kill = true;
+                    self.loot_index += 1;
+                    continue;
+                }
+                Some(false) => return Ok(LootStart::Waiting),
+                None if wait_expired => {
+                    return Err(ActionError::NeedsEvidence(Arc::from([])));
+                }
+                None => return Ok(LootStart::Waiting),
             }
             let handle = cx.tick.actions.begin::<Reach>(
                 ReachArgs {
@@ -1897,11 +1936,22 @@ impl CombatRun {
                 },
                 &mut cx.tick.cx,
             )?;
-            self.loot_index += 1;
             self.action = Some(Action::Loot(handle));
             return Ok(LootStart::Started);
         }
         Ok(LootStart::Complete)
+    }
+
+    fn ground_loot_visible(&self, cx: &StepContext<'_, '_>, item: &LootItem) -> Option<bool> {
+        let snapshot = cx.tick.cx.snapshot();
+        let items = snapshot.ground_items()?;
+        let area = reach::ground_area(self.request.stand, i32::from(self.request.lost_radius));
+        Some(
+            items
+                .value
+                .iter()
+                .any(|row| row.def.id == item.id && area.contains(row.tile, row.distance)),
+        )
     }
 
     fn enter_finish_wait(&mut self, tick: u64) {
@@ -2008,16 +2058,29 @@ impl CombatRun {
         &mut self,
         cx: &mut StepContext<'_, '_>,
     ) -> Poll<Result<StepOutcome, ActionError>> {
-        if self.should_stop(cx) {
+        let should_stop = self.should_stop(cx);
+        let missing_required_loot = !should_stop
+            && self.until_drop.is_none()
+            && self.loot_missing_this_kill
+            && self
+                .until
+                .as_ref()
+                .is_some_and(|predicate| self.evaluate_predicate(predicate, cx) == Truth::False);
+        self.loot_wait_deadline = None;
+        self.loot_missing_this_kill = false;
+        if should_stop {
             return self.finish(cx);
         }
         if let Some(until_drop) = &self.until_drop {
             if self.kills >= until_drop.max_kills {
-                return Poll::Ready(Err(ActionError::Blocked(Arc::clone(
-                    &until_drop.stop,
-                ))));
+                return Poll::Ready(Err(ActionError::Blocked(Arc::clone(&until_drop.stop))));
             }
             return self.rebegin_combat(cx, false);
+        }
+        if missing_required_loot {
+            return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                "required combat loot was not acquired during the post-kill search",
+            ))));
         }
         if self.until.is_none() && self.win.is_none() {
             self.finish(cx)
@@ -2048,19 +2111,15 @@ impl CombatRun {
         let Some(required) = self.until_drop.as_ref() else {
             return false;
         };
-        cx.tick
-            .cx
-            .snapshot()
-            .inventory()
-            .is_some_and(|inventory| {
-                inventory
-                    .value
-                    .iter()
-                    .filter(|item| item.def.id == required.item_id)
-                    .map(|item| i64::from(item.count))
-                    .sum::<i64>()
-                    > 0
-            })
+        cx.tick.cx.snapshot().inventory().is_some_and(|inventory| {
+            inventory
+                .value
+                .iter()
+                .filter(|item| item.def.id == required.item_id)
+                .map(|item| i64::from(item.count))
+                .sum::<i64>()
+                > 0
+        })
     }
 
     fn should_stop(&self, cx: &StepContext<'_, '_>) -> bool {
@@ -2073,7 +2132,6 @@ impl CombatRun {
                 .win
                 .as_ref()
                 .is_some_and(|predicate| self.evaluate_predicate(predicate, cx) == Truth::True)
-
     }
 
     fn finish(&mut self, cx: &StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
@@ -2117,11 +2175,7 @@ impl StepRun for CombatRun {
             return Poll::Pending;
         }
         if matches!(self.phase, Phase::Loot) && self.action.is_none() {
-            match std::task::ready!(crate::native::defer_budget(self.begin_loot(cx))) {
-                Ok(LootStart::Waiting | LootStart::Started) => return Poll::Pending,
-                Ok(LootStart::Complete) => return self.after_loot_complete(cx),
-                Err(error) => return Poll::Ready(Err(error)),
-            }
+            return self.next_loot_or_reengage(cx);
         }
         if !matches!(
             self.phase,
@@ -2181,9 +2235,11 @@ impl StepRun for CombatRun {
                 }
             }
             ActionPoll::Failed(ActionError::Blocked(_)) if matches!(&self.phase, Phase::Loot) => {
-                // Loot is optional: an unreachable ground item does not end
-                // the combat step. Other errors remain visible to the caller.
+                // An unrouteable loot row counts as missed when this step still
+                // needs loot; optional drops remain non-blocking.
                 self.action = None;
+                self.loot_index += 1;
+                self.loot_missing_this_kill = true;
                 self.next_loot_or_reengage(cx)
             }
             ActionPoll::Failed(ActionError::Failed(reason))
@@ -2226,9 +2282,11 @@ impl StepRun for CombatRun {
             ActionPoll::Walk(receipt) => self.on_return_walk(receipt, cx),
             ActionPoll::Loot(taken) => {
                 self.action = None;
+                self.loot_index += 1;
                 if !taken {
                     // A stale or absent drop is not evidence for another click.
                     // The next combat run can produce a fresh ground row.
+                    self.loot_missing_this_kill = true;
                 }
                 self.next_loot_or_reengage(cx)
             }
