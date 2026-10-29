@@ -393,68 +393,6 @@
               "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:1-21,140-186,202-267; content/maps/m44_47.jm2:7573"
             },
             {
-              "id": "give-agility",
-              "kind": "use_on",
-              "version": 1,
-              "advances": true,
-              "args": {
-                "item": "4dose1agility",
-                "target": {
-                  "npc": "tbwt_tamayu"
-                },
-                "anchor": {
-                  "tile": [
-                    2844,
-                    3042,
-                    0
-                  ],
-                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:58-93; content/maps/m44_47.jm2:7573"
-                },
-                "radius": 8,
-                "dialogue": {
-                  "gap_ticks": 4
-                }
-              },
-              "skip_if": {
-                "Any": [
-                  {
-                    "Fact": {
-                      "kind": "flag",
-                      "version": 1,
-                      "args": {
-                        "quest": "tbwt",
-                        "flag": "tbwt:tamayu_agile",
-                        "is": true
-                      }
-                    }
-                  },
-                  {
-                    "Fact": {
-                      "kind": "flag",
-                      "version": 1,
-                      "args": {
-                        "quest": "tbwt",
-                        "flag": "tbwt:tamayu_done",
-                        "is": true
-                      }
-                    }
-                  }
-                ]
-              },
-              "settle": {
-                "Fact": {
-                  "kind": "flag",
-                  "version": 1,
-                  "args": {
-                    "quest": "tbwt",
-                    "flag": "tbwt:tamayu_agile",
-                    "is": true
-                  }
-                }
-              },
-              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:58-93; content/maps/m44_47.jm2:7573"
-            },
-            {
               "id": "meet-tiadeche",
               "kind": "talk",
               "version": 1,
@@ -1506,6 +1444,77 @@
                 }
               },
               "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:96-131; content/maps/m44_47.jm2:7573"
+            },
+            {
+              "id": "GAP-tbwt-agility-arena",
+              "kind": "wait",
+              "version": 1,
+              "args": {"until": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "4dose1agility"}}}, "max_ticks": 20, "park_on_timeout": true},
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "4dose1agility"}}}, {"Fact": {"kind": "flag", "version": 1, "args": {"quest": "tbwt", "flag": "tbwt:tamayu_agile", "is": true}}}, {"Fact": {"kind": "flag", "version": 1, "args": {"quest": "tbwt", "flag": "tbwt:tamayu_done", "is": true}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "4dose1agility"}}},
+              "comment": "GAP: Agility Arena pillar tracking and the ticket exchange widget. The trader sells toadflax for three tickets: content/scripts/minigames/game_agilityarena/scripts/agilityarena_tickettrader.rs2:17-20,51-52,70-76. Successive active pillars award tickets: content/scripts/minigames/game_agilityarena/scripts/agilityarena.rs2:50-84. Herblore 34 produces three-dose potions: content/scripts/skill_herblore/configs/brewing/brew_potion.struct:229-249. This wait does not perform these actions."
+            },
+            {
+              "id": "give-agility",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "4dose1agility",
+                "target": {
+                  "npc": "tbwt_tamayu"
+                },
+                "anchor": {
+                  "tile": [
+                    2844,
+                    3042,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:58-93; content/maps/m44_47.jm2:7573"
+                },
+                "radius": 8,
+                "dialogue": {
+                  "gap_ticks": 4
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tamayu_agile",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tamayu_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "flag": "tbwt:tamayu_agile",
+                    "is": true
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:58-93; content/maps/m44_47.jm2:7573"
             },
             {
               "id": "finish-hunt",
