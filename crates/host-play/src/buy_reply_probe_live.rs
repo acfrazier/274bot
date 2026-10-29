@@ -317,7 +317,6 @@ impl DriverPacketTrace {
         trace
     }
 
-
     fn value(&self) -> (Value, usize, bool) {
         let rows = self
             .packets_by_tick
@@ -2204,11 +2203,7 @@ fn run_live_probe() {
             "failure": trace.failure,
             "player_info_clock": trace.player_info_clock,
         });
-        (
-            samples,
-            trace.observations.clone(),
-            script_trace,
-        )
+        (samples, trace.observations.clone(), script_trace)
     };
     let actions = capture
         .lock()
@@ -2366,8 +2361,14 @@ fn probe_packet_trace_counts_dispatch_bound_opcodes_per_observed_tick() {
     let (rows, max, complete) = DriverPacketTrace::from_actions(&actions).value();
     assert!(complete);
     assert_eq!(max, 2);
-    assert_eq!(rows[0], json!({"tick": 7, "count": 2, "opcodes": [155, 183]}));
-    assert_eq!(rows[1], json!({"tick": 8, "count": 2, "opcodes": [248, 155]}));
+    assert_eq!(
+        rows[0],
+        json!({"tick": 7, "count": 2, "opcodes": [155, 183]})
+    );
+    assert_eq!(
+        rows[1],
+        json!({"tick": 8, "count": 2, "opcodes": [248, 155]})
+    );
 }
 
 #[test]
@@ -2375,8 +2376,12 @@ fn probe_packet_trace_rejects_missing_or_undecodable_dispatch_evidence() {
     for actions in [
         Vec::new(),
         vec![json!({"kind": "interaction", "tick": 7, "wire_opcodes": [155]})],
-        vec![json!({"kind": "interaction", "tick": 7, "wire_decoded": false, "wire_opcodes": [155]})],
-        vec![json!({"kind": "interaction", "tick": 7, "wire_decoded": true, "wire_opcodes": [256]})],
+        vec![
+            json!({"kind": "interaction", "tick": 7, "wire_decoded": false, "wire_opcodes": [155]}),
+        ],
+        vec![
+            json!({"kind": "interaction", "tick": 7, "wire_decoded": true, "wire_opcodes": [256]}),
+        ],
         vec![json!({"kind": "interaction", "wire_decoded": true, "wire_opcodes": [155]})],
     ] {
         assert!(!DriverPacketTrace::from_actions(&actions).value().2);
