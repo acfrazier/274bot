@@ -1105,12 +1105,12 @@ fn wrap_gpu_heads_share_the_scene_workspace_and_both_paint() {
             let before = render_head::workspace_stats();
             let starts = mailboxes.each_ref().map(|mailbox| mailbox.generation());
             std::thread::sleep(Duration::from_millis(1500));
-            let after = render_head::workspace_stats();
             let paints: Vec<u64> = mailboxes
                 .iter()
                 .zip(starts)
                 .map(|(mailbox, start)| mailbox.generation() - start)
                 .collect();
+            let after = render_head::workspace_stats();
             let leased = after.leased() - before.leased();
             let waited = after.waited() - before.waited();
             println!(
@@ -1122,11 +1122,10 @@ fn wrap_gpu_heads_share_the_scene_workspace_and_both_paint() {
                 paints.iter().all(|&paints| paints >= 20),
                 "both GPU heads keep painting: {paints:?}"
             );
-            // The two counters are read at slightly different instants while
-            // both heads paint, so a paint in flight at either window edge
-            // can be leased on one side of the edge and published on the
-            // other: at most one paint per head per edge. Every other
-            // painted scene ran under a lease.
+            // The lease snapshots enclose the mailbox-generation snapshots.
+            // A scheduler pause between reads cannot add uncovered paints.
+            // A scene already in flight at the first snapshot may straddle
+            // that boundary; retain the conservative two-per-head allowance.
             let edges = 2 * paints.len() as u64;
             assert!(
                 leased + edges >= paints.iter().sum::<u64>(),
