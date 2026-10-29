@@ -292,11 +292,7 @@ mod tests {
             (120, 40, "native-survival-120x40"),
             (80, 24, "native-survival-80x24"),
         ] {
-            let capture = render(
-                StatusPane::new(Some(&detail), "—", "lowmem"),
-                width,
-                height,
-            );
+            let capture = render(StatusPane::new(Some(&detail), "—", "lowmem"), width, height);
             assert!(capture.contains(row), "{width}x{height}: {capture:?}");
             if let Some(dir) = &capture_dir {
                 fs::create_dir_all(dir).expect("create TUI capture directory");

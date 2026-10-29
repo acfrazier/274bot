@@ -7,8 +7,8 @@ use api::hostlog::{Category, Emit, Level};
 
 use crate::combat::frame::Frame;
 use crate::combat::policy::{self, EatChoice};
-use crate::combat::select;
 use crate::combat::schedule::Schedule;
+use crate::combat::select;
 use crate::combat::threats::ThreatSet;
 use crate::gatherer::oneop::OneOpArgs;
 use crate::native::ActionContext;
@@ -80,15 +80,12 @@ impl SurvivalStep {
         };
         let tick = frame.tick;
         self.threats.observe(&frame, tables, tick);
-        let danger = self
-            .threats
-            .danger(&frame, tables, tick, false, false);
+        let danger = self.threats.danger(&frame, tables, tick, false, false);
         let exposure = math::exposure(&self.threats, tables, tick);
         let condition = cx.condition();
         let q_unknown = cx.poison_unknown_pulse();
-        let outlook = condition.map(|condition| {
-            poison_math::remaining(condition.poison, exposure, tick, q_unknown)
-        });
+        let outlook = condition
+            .map(|condition| poison_math::remaining(condition.poison, exposure, tick, q_unknown));
         let poison_fire = outlook.map_or(0, |outlook| i32::from(outlook.per_fire_now));
         let schedule = Schedule::default();
         let cure = cure_choice(&CureInputs {
@@ -119,15 +116,8 @@ impl SurvivalStep {
             .with_poison(poison_fire)
             .eat
             .max(eat_floor);
-        let need = math::survival_need(
-            condition,
-            danger,
-            exposure,
-            tick,
-            q_unknown,
-            None,
-            eat_line,
-        );
+        let need =
+            math::survival_need(condition, danger, exposure, tick, q_unknown, None, eat_line);
         let why = match cure {
             CureDecision::Drink { why, .. }
             | CureDecision::EatFruit { why, .. }
@@ -172,8 +162,13 @@ impl SurvivalStep {
         if let Some(need) = need {
             let report_only = matches!(need, SurvivalNeed::Cure { .. })
                 && cx.cure_poison() == crate::survival::CurePoison::Never;
-            let pending_lethal = matches!(need, SurvivalNeed::Cure { why: NeedWhy::Lethal, .. })
-                && outlook.is_some_and(|outlook| outlook.pending);
+            let pending_lethal = matches!(
+                need,
+                SurvivalNeed::Cure {
+                    why: NeedWhy::Lethal,
+                    ..
+                }
+            ) && outlook.is_some_and(|outlook| outlook.pending);
             let held_allowed_cure = matches!(cure, CureDecision::Needed { held: true, .. });
             self.last = SurvivalReport {
                 decision: if self.park.is_some() {
@@ -270,7 +265,12 @@ impl SurvivalStep {
     fn log_context(&self, cx: &ActionContext<'_>) -> (i32, u16, u8, bool) {
         let condition = cx.condition();
         let Some(tables) = crate::combat::guard::shared_tables_ref() else {
-            return (condition.map_or(0, |condition| i32::from(condition.hp)), 0, 0, true);
+            return (
+                condition.map_or(0, |condition| i32::from(condition.hp)),
+                0,
+                0,
+                true,
+            );
         };
         let snapshot = cx.snapshot();
         let tick = u16::try_from(cx.evidence().tick).unwrap_or(u16::MAX);
@@ -347,7 +347,7 @@ fn click(
             Some((OneOpArgs::eat(name, item, count, hp), Decision::Eating))
         }
         CureDecision::None | CureDecision::Needed { .. } => None,
-}
+    }
 }
 
 fn eat_args(
@@ -378,16 +378,16 @@ fn held_item(inventory: &[api::snapshot::ItemView], item_id: i32) -> Option<(&st
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::combat::tables::PotionKind;
+    use crate::gatherer::oneop::OneOpKind;
+    use crate::quester::families::tests::{local_player, with_tick};
+    use crate::survival::CurePoison;
     use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
     use api::obj_names::ItemDefView;
     use api::snapshot::{
         GameSnapshot, HitmarkView, HitmarksView, ItemActionFamily, ItemContainer, ItemView,
         StatView, WorldStateView, WorldTile,
     };
-    use crate::combat::tables::PotionKind;
-    use crate::gatherer::oneop::OneOpKind;
-    use crate::survival::CurePoison;
-    use crate::quester::families::tests::{local_player, with_tick};
 
     fn condition(hp: u8, poison: PoisonState) -> BotCondition {
         BotCondition {
@@ -528,13 +528,7 @@ mod tests {
         );
         let snapshot = snapshot(vec![held(id, "antipoison")]);
         let mut step = SurvivalStep::default();
-        let want = want(
-            &mut step,
-            &snapshot,
-            &condition,
-            CurePoison::WhenNeeded,
-            20,
-        );
+        let want = want(&mut step, &snapshot, &condition, CurePoison::WhenNeeded, 20);
         let SurvivalWant::Click(args) = want else {
             panic!("a held cure must precede emergency food");
         };
@@ -561,13 +555,7 @@ mod tests {
         let snapshot = snapshot(vec![]);
         let mut step = SurvivalStep::default();
         assert!(matches!(
-            want(
-                &mut step,
-                &snapshot,
-                &condition,
-                CurePoison::WhenNeeded,
-                20
-            ),
+            want(&mut step, &snapshot, &condition, CurePoison::WhenNeeded, 20),
             SurvivalWant::Nothing
         ));
         assert_eq!(step.report().decision, Decision::Needed);
@@ -578,13 +566,7 @@ mod tests {
             hit_since_mark: false,
         };
         assert!(matches!(
-            want(
-                &mut step,
-                &snapshot,
-                &condition,
-                CurePoison::WhenNeeded,
-                21
-            ),
+            want(&mut step, &snapshot, &condition, CurePoison::WhenNeeded, 21),
             SurvivalWant::Need(SurvivalNeed::Cure {
                 why: NeedWhy::Lethal,
                 ..
@@ -606,13 +588,7 @@ mod tests {
         let snapshot = snapshot(vec![held(id, "antipoison")]);
         let mut step = SurvivalStep::default();
         assert!(matches!(
-            want(
-                &mut step,
-                &snapshot,
-                &condition,
-                CurePoison::Never,
-                20
-            ),
+            want(&mut step, &snapshot, &condition, CurePoison::Never, 20),
             SurvivalWant::Nothing
         ));
         assert_eq!(step.report().decision, Decision::Needed);

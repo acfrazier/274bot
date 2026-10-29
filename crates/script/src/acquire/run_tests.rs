@@ -669,15 +669,9 @@ fn quester_interrupts_acquire_run_at_transfer_boundary() {
         HostEffect::Interaction(crate::shim::InteractReq::InvButton { id: PRODUCT, .. })
     ));
     assert!(run.transfer_in_flight());
-    crate::quester::families::tests::with_tick_bank(
-        &snapshot,
-        None,
-        &mut ledger,
-        2,
-        |tick| {
-            run.interrupt_transfer(tick.actions);
-        },
-    );
+    crate::quester::families::tests::with_tick_bank(&snapshot, None, &mut ledger, 2, |tick| {
+        run.interrupt_transfer(tick.actions);
+    });
     assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 3, OpenGate::Open).is_pending());
     assert!(ledger.as_ref().unwrap().outbox.is_empty());
 
@@ -701,7 +695,10 @@ fn quester_interrupts_acquire_run_at_transfer_boundary() {
     let (mut snapshot, bank, banks) = fixture();
     open_bank(
         &mut snapshot,
-        Some(vec![bank_row(ITEM, "Widget", 3), bank_row(OTHER, "Other", 1)]),
+        Some(vec![
+            bank_row(ITEM, "Widget", 3),
+            bank_row(OTHER, "Other", 1),
+        ]),
         Vec::new(),
     );
     let request = authored_request(
@@ -733,18 +730,15 @@ fn quester_interrupts_acquire_run_at_transfer_boundary() {
     assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 2, OpenGate::Open).is_pending());
     assert!(matches!(
         complete_interaction(&mut ledger, 2),
-        HostEffect::Interaction(crate::shim::InteractReq::WithdrawX { bank_item_id: ITEM, .. })
+        HostEffect::Interaction(crate::shim::InteractReq::WithdrawX {
+            bank_item_id: ITEM,
+            ..
+        })
     ));
     assert!(run.transfer_in_flight());
-    crate::quester::families::tests::with_tick_bank(
-        &snapshot,
-        None,
-        &mut ledger,
-        3,
-        |tick| {
-            run.interrupt_transfer(tick.actions);
-        },
-    );
+    crate::quester::families::tests::with_tick_bank(&snapshot, None, &mut ledger, 3, |tick| {
+        run.interrupt_transfer(tick.actions);
+    });
     assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 4, OpenGate::Open).is_pending());
     snapshot.seed_inventory(
         vec![item(ITEM, "Widget", 2, ItemContainer::Inventory, &["Use"])],
@@ -752,7 +746,10 @@ fn quester_interrupts_acquire_run_at_transfer_boundary() {
     );
     open_bank(
         &mut snapshot,
-        Some(vec![bank_row(ITEM, "Widget", 1), bank_row(OTHER, "Other", 1)]),
+        Some(vec![
+            bank_row(ITEM, "Widget", 1),
+            bank_row(OTHER, "Other", 1),
+        ]),
         Vec::new(),
     );
     assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 5, OpenGate::Open).is_pending());
@@ -797,7 +794,11 @@ fn acquire_run_active_match_unchanged() {
     shrimp_side.slot = 1;
     let mut anchovy_side = side_row(OTHER, "Anchovy", 1);
     anchovy_side.slot = 2;
-    open_bank(&mut snapshot, Some(Vec::new()), vec![shrimp_side, anchovy_side]);
+    open_bank(
+        &mut snapshot,
+        Some(Vec::new()),
+        vec![shrimp_side, anchovy_side],
+    );
 
     let request = request(
         BankStage::Planned,
@@ -823,13 +824,9 @@ fn acquire_run_active_match_unchanged() {
         HostEffect::Interaction(crate::shim::InteractReq::InvButton { id: PRODUCT, .. })
     ));
 
-    crate::quester::families::tests::with_tick_bank(
-        &snapshot,
-        None,
-        &mut ledger,
-        2,
-        |tick| run.interrupt_transfer(tick.actions),
-    );
+    crate::quester::families::tests::with_tick_bank(&snapshot, None, &mut ledger, 2, |tick| {
+        run.interrupt_transfer(tick.actions)
+    });
     assert!(run.transfer_in_flight());
 
     let mut net = item(

@@ -1875,7 +1875,6 @@ mod tests {
         assert!(request.food_guard);
         assert!(request.allow.food);
     }
-
 }
 
 #[cfg(test)]

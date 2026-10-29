@@ -1,8 +1,6 @@
 //! Pure poison-exposure classification and survival arithmetic.
 
-use api::condition::{
-    poison_math, BotCondition, Exposure, FoodSummary, PoisonState, SessionMark,
-};
+use api::condition::{poison_math, BotCondition, Exposure, FoodSummary, PoisonState, SessionMark};
 
 use crate::combat::request::ActorKind;
 use crate::combat::select;
@@ -130,9 +128,8 @@ pub fn survival_need(
     bank_best_heal: Option<u8>,
     eat_line: i32,
 ) -> Option<SurvivalNeed> {
-    let condition = condition.filter(|condition| {
-        condition.session == SessionMark::Live && condition.hp_known
-    })?;
+    let condition = condition
+        .filter(|condition| condition.session == SessionMark::Live && condition.hp_known)?;
     let lines = select::lines(danger, i32::from(condition.hp_max));
     let poison_active = matches!(
         condition.poison,
@@ -146,11 +143,7 @@ pub fn survival_need(
     } else {
         bank_best_heal.filter(|heal| *heal > 0).unwrap_or(12)
     };
-    let unit = i32::from(ref_heal).min(
-        i32::from(condition.hp_max)
-            .saturating_sub(eat_line)
-            .max(0),
-    );
+    let unit = i32::from(ref_heal).min(i32::from(condition.hp_max).saturating_sub(eat_line).max(0));
     let food = food_credit(&condition.food, condition.hp_max, eat_line);
     let hp = i32::from(condition.hp);
     if poison_active {
@@ -277,15 +270,7 @@ mod tests {
     fn need_none_at_line_latched_weak_source() {
         let condition = fact(60, onset(Some(3)), FoodSummary::default());
         assert_eq!(
-            survival_need(
-                Some(&condition),
-                None,
-                Exposure::None,
-                20,
-                11,
-                None,
-                0,
-            ),
+            survival_need(Some(&condition), None, Exposure::None, 20, 11, None, 0,),
             None
         );
     }
@@ -343,15 +328,7 @@ mod tests {
             },
         );
         assert_eq!(
-            survival_need(
-                Some(&six_food),
-                None,
-                Exposure::None,
-                20,
-                11,
-                None,
-                0,
-            ),
+            survival_need(Some(&six_food), None, Exposure::None, 20, 11, None, 0,),
             None
         );
     }
@@ -410,15 +387,7 @@ mod tests {
     fn need_food_uses_the_effective_eat_floor() {
         let condition = fact(45, PoisonState::Clear, FoodSummary::default());
         assert_eq!(
-            survival_need(
-                Some(&condition),
-                None,
-                Exposure::None,
-                20,
-                11,
-                Some(9),
-                70,
-            ),
+            survival_need(Some(&condition), None, Exposure::None, 20, 11, Some(9), 70,),
             Some(SurvivalNeed::Food {
                 count: 3,
                 ref_heal: 9,
@@ -430,15 +399,7 @@ mod tests {
     fn need_food_uses_default_reference_heal_without_food_facts() {
         let condition = fact(49, PoisonState::Clear, FoodSummary::default());
         assert_eq!(
-            survival_need(
-                Some(&condition),
-                None,
-                Exposure::None,
-                20,
-                11,
-                None,
-                0,
-            ),
+            survival_need(Some(&condition), None, Exposure::None, 20, 11, None, 0,),
             Some(SurvivalNeed::Food {
                 count: 1,
                 ref_heal: 12,

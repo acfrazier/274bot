@@ -1058,7 +1058,10 @@ fn status_row_shows_needed_under_never() {
         &mut scratch
     ));
     assert_eq!(
-        detail.survival().expect("the report is retained").to_string(),
+        detail
+            .survival()
+            .expect("the report is retained")
+            .to_string(),
         "Needed: poisoned: would die; needs antipoison"
     );
 }

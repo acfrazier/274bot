@@ -820,7 +820,6 @@ impl SlotDetail {
     }
 }
 
-
 impl SlotDetail {
     /// The retained native status of the focused slot; `None` for a slot
     /// that runs no native script.

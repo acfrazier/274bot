@@ -3,7 +3,6 @@ use super::compile::{
     AcquisitionTraceOutcome, CompiledPath, CompiledStep, PredicateContext, StepContext,
     StepOutcome, StepRun, StepTraceEvent,
 };
-use crate::gatherer::oneop::{OneOp, OneOpArgs};
 use super::families::combat::CombatReceipt;
 use super::families::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget};
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
@@ -13,6 +12,7 @@ use super::registry::PathSource;
 use super::select::{select_with_skips, sequence_for_stage, SelectionDecision};
 use super::watchdog::{Watchdog, WatchdogAction};
 use crate::combat::{begin_clear_owned_prayers, ClearPrayers, Hygiene, RaisedPrayers};
+use crate::gatherer::oneop::{OneOp, OneOpArgs};
 use crate::native::death::{death_cap_exceeded, default_max_deaths, DeathLatch};
 use crate::native::{
     ActionError, ActionHandle, Interrupt, NativeOutput, NativePhase, NativeTick, Script,
@@ -1523,9 +1523,9 @@ impl Quester {
     }
     fn guarded_survival_step(&self) -> bool {
         self.step.is_some()
-            && self.current_step().is_some_and(|step| {
-                matches!(step.kind.as_ref(), "walk" | "combat")
-            })
+            && self
+                .current_step()
+                .is_some_and(|step| matches!(step.kind.as_ref(), "walk" | "combat"))
     }
 
     fn survival_transfer_in_flight(&self) -> bool {
@@ -1734,7 +1734,6 @@ impl Quester {
         self.survival_deferred = true;
         true
     }
-
 
     fn cancel_step(&mut self, tick: &mut NativeTick<'_>) {
         self.capture_prayer_cleanup();
@@ -5215,14 +5214,14 @@ mod tests {
     }
 
     fn quester_survival_cancels_step_and_restarts(kind: &str) {
+        use crate::quester::compile::PredicatePlan;
+        use crate::survival::CurePoison;
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use api::selected::Truth;
         use api::snapshot::{
             HitmarkView, HitmarksView, ItemActionFamily, ItemContainer, ItemView, StatView,
             WorldStateView,
         };
-        use crate::quester::compile::PredicatePlan;
-        use crate::survival::CurePoison;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         struct NeverSkip;
@@ -5239,10 +5238,7 @@ mod tests {
 
         struct PendingPlan(Arc<Counts>);
         impl super::super::compile::StepPlan for PendingPlan {
-            fn begin(
-                &self,
-                _: &mut StepContext<'_, '_>,
-            ) -> Result<Box<dyn StepRun>, ActionError> {
+            fn begin(&self, _: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
                 self.0.began.fetch_add(1, Ordering::Relaxed);
                 Ok(Box::new(PendingRun(Arc::clone(&self.0))))
             }
@@ -5284,7 +5280,10 @@ mod tests {
         script.cursor = 0;
         script.needs_read = false;
         let sequence = &mut script.path.sequences[script.seq_index];
-        let step = sequence.steps.first_mut().expect("the Cook path has a step");
+        let step = sequence
+            .steps
+            .first_mut()
+            .expect("the Cook path has a step");
         step.kind = Arc::from(kind);
         let counts = Arc::new(Counts {
             began: AtomicUsize::new(0),
@@ -5386,7 +5385,12 @@ mod tests {
             assert_eq!(counts.cancelled.load(Ordering::Relaxed), 1);
             assert!(script.step.is_none());
             assert!(matches!(
-                ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+                ledger
+                    .as_ref()
+                    .unwrap()
+                    .outbox
+                    .last()
+                    .map(|action| &action.effect),
                 Some(crate::native::HostEffect::Interaction(
                     crate::shim::InteractReq::CloseModal
                 ))
@@ -5405,7 +5409,15 @@ mod tests {
                 tick.cx.poison_unknown_pulse = 11;
                 tick.cx.cure_poison = CurePoison::WhenNeeded;
                 let evidence = tick.cx.evidence();
-                let authority = tick.cx.ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+                let authority = tick
+                    .cx
+                    .ledger
+                    .as_ref()
+                    .unwrap()
+                    .outbox
+                    .last()
+                    .unwrap()
+                    .authority();
                 tick.cx.ledger.as_mut().unwrap().complete_interaction(
                     &authority,
                     crate::native::InteractionReceipt {
@@ -5455,24 +5467,21 @@ mod tests {
         snapshot.seed_tick(21);
         snapshot.seed_inventory(vec![], 28);
         super::super::families::tests::with_tick(&snapshot, &mut ledger, 3, |tick| {
-            tick.cx.condition = Some(condition(
-                PoisonState::Immune { until_lower: 80 },
-                5,
-            ));
+            tick.cx.condition = Some(condition(PoisonState::Immune { until_lower: 80 }, 5));
             script.tick(tick).unwrap();
         });
         assert!(script.step.is_none());
         assert!(script.survival_action.is_none());
 
         super::super::families::tests::with_tick(&snapshot, &mut ledger, 4, |tick| {
-            tick.cx.condition = Some(condition(
-                PoisonState::Immune { until_lower: 80 },
-                5,
-            ));
+            tick.cx.condition = Some(condition(PoisonState::Immune { until_lower: 80 }, 5));
             script.tick(tick).unwrap();
         });
         assert_eq!(counts.began.load(Ordering::Relaxed), 2);
-        assert!(script.step.is_some(), "the step resumes after the cure settles");
+        assert!(
+            script.step.is_some(),
+            "the step resumes after the cure settles"
+        );
         assert!(!script.parked);
     }
 
@@ -5497,18 +5506,18 @@ mod tests {
         quester_survival_cancels_step_and_restarts("combat");
     }
 
-
     #[test]
     fn quester_drinks_while_clear_prayers_pending() {
+        use crate::combat::{ClearPrayers, ClearPrayersArgs, RaisedPrayers};
+        use crate::survival::CurePoison;
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use api::snapshot::{
             HitmarkView, HitmarksView, ItemActionFamily, ItemContainer, ItemView, StatView,
             VarpView, WorldStateView,
         };
-        use crate::combat::{ClearPrayers, ClearPrayersArgs, RaisedPrayers};
-        use crate::survival::CurePoison;
 
-        let (mut script, mut snapshot) = status_fixture(super::super::compile::decode_cook().unwrap());
+        let (mut script, mut snapshot) =
+            status_fixture(super::super::compile::decode_cook().unwrap());
         let at = api::WorldTile {
             x: 3200,
             z: 3200,
@@ -5585,26 +5594,29 @@ mod tests {
         script.prayer_cleanup_pending = true;
 
         let mut ledger = None;
-        let handle = super::super::families::tests::with_tick(
-            &snapshot,
-            &mut ledger,
-            1,
-            |tick| {
-                let handle = tick
-                    .actions
-                    .begin::<ClearPrayers>(
-                        ClearPrayersArgs::owned(Arc::clone(&script.selected), owned),
-                        &mut tick.cx,
-                    )
-                    .unwrap();
-                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
-                handle
-            },
-        );
+        let handle = super::super::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<ClearPrayers>(
+                    ClearPrayersArgs::owned(Arc::clone(&script.selected), owned),
+                    &mut tick.cx,
+                )
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
         script.clear_prayers = Some(handle);
         super::super::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
             let evidence = tick.cx.evidence();
-            let authority = tick.cx.ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+            let authority = tick
+                .cx
+                .ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .last()
+                .unwrap()
+                .authority();
             tick.cx.ledger.as_mut().unwrap().complete_interaction(
                 &authority,
                 crate::native::InteractionReceipt {
@@ -5658,7 +5670,15 @@ mod tests {
             tick.cx.condition = Some(condition(PoisonState::Immune { until_lower: 80 }));
             tick.cx.cure_poison = CurePoison::WhenNeeded;
             let evidence = tick.cx.evidence();
-            let authority = tick.cx.ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+            let authority = tick
+                .cx
+                .ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .last()
+                .unwrap()
+                .authority();
             tick.cx.ledger.as_mut().unwrap().complete_interaction(
                 &authority,
                 crate::native::InteractionReceipt {
@@ -5675,14 +5695,22 @@ mod tests {
             tick.cx.cure_poison = CurePoison::WhenNeeded;
             script.tick(tick).unwrap();
         });
-        assert!(script.clear_prayers.is_some(), "cleanup restarts after the drink");
+        assert!(
+            script.clear_prayers.is_some(),
+            "cleanup restarts after the drink"
+        );
         super::super::families::tests::with_tick(&snapshot, &mut ledger, 6, |tick| {
             tick.cx.condition = Some(condition(PoisonState::Immune { until_lower: 80 }));
             tick.cx.cure_poison = CurePoison::WhenNeeded;
             script.tick(tick).unwrap();
         });
         assert!(matches!(
-            ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .last()
+                .map(|action| &action.effect),
             Some(crate::native::HostEffect::Interaction(
                 crate::shim::InteractReq::IfButton { .. }
             ))
@@ -5796,8 +5824,8 @@ mod tests {
         step_script.interrupt(Interrupt::Resume);
         assert!(step_script.step.is_none(), "Resume drops the active step");
 
-        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use crate::survival::CurePoison;
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         let (mut provision_script, snapshot, memory, _) = provisioning_survival_fixture();
         let mut ledger = None;
         let condition = BotCondition {
@@ -5820,7 +5848,13 @@ mod tests {
                 tick.cx.cure_poison = CurePoison::WhenNeeded;
                 provision_script.tick(tick).unwrap();
                 assert!(matches!(
-                    tick.cx.ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+                    tick.cx
+                        .ledger
+                        .as_ref()
+                        .unwrap()
+                        .outbox
+                        .last()
+                        .map(|action| &action.effect),
                     Some(crate::native::HostEffect::Interaction(
                         crate::shim::InteractReq::SetNoteMode { on: false, .. }
                     ))
@@ -5857,14 +5891,14 @@ mod tests {
         api::bank_memory::BankMemory,
         api::snapshot::ItemView,
     ) {
+        use super::super::path::{QuestBankDocument, QuestItemKindDocument};
         use api::bank_memory::{BankMemory, ObservedAt};
+        use api::named_banks::{NamedBank, NamedBankFacts};
+        use api::snapshot::QuestStatusView;
         use api::snapshot::{
             GameSnapshot, HitmarkView, HitmarksView, ItemActionFamily, ItemContainer, ItemView,
             StatView, VarpView, WorldStateView,
         };
-        use api::named_banks::{NamedBank, NamedBankFacts};
-        use api::snapshot::QuestStatusView;
-        use super::super::path::{QuestBankDocument, QuestItemKindDocument};
 
         let stand = api::WorldTile {
             x: 3210,
@@ -6002,8 +6036,8 @@ mod tests {
 
     #[test]
     fn quester_survival_cancels_provisioner_acquire_run() {
-        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use crate::survival::CurePoison;
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
 
         let (mut script, mut snapshot, memory, _) = provisioning_survival_fixture();
         let mut ledger = None;
@@ -6027,7 +6061,13 @@ mod tests {
                 tick.cx.cure_poison = CurePoison::WhenNeeded;
                 script.tick(tick).unwrap();
                 assert!(matches!(
-                    tick.cx.ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+                    tick.cx
+                        .ledger
+                        .as_ref()
+                        .unwrap()
+                        .outbox
+                        .last()
+                        .map(|action| &action.effect),
                     Some(crate::native::HostEffect::Interaction(
                         crate::shim::InteractReq::SetNoteMode { on: false, .. }
                     ))
@@ -6069,9 +6109,9 @@ mod tests {
 
     #[test]
     fn quester_parks_during_provisioning_and_restarts_trip_after_unpark() {
+        use crate::survival::CurePoison;
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use api::snapshot::{ItemActionFamily, ItemContainer};
-        use crate::survival::CurePoison;
 
         let (mut script, mut snapshot, mut memory, bank_item) = provisioning_survival_fixture();
         snapshot.seed_inventory(Vec::new(), 28);
@@ -6189,12 +6229,11 @@ mod tests {
         );
     }
 
-
     #[test]
     fn quester_survival_during_provisioning_with_transfer_in_flight() {
+        use crate::survival::CurePoison;
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use api::snapshot::{ItemActionFamily, ItemContainer};
-        use crate::survival::CurePoison;
 
         let (mut script, mut snapshot, mut memory, bank_item) = provisioning_survival_fixture();
         let mut ledger = None;
@@ -6219,7 +6258,13 @@ mod tests {
                 tick.cx.cure_poison = CurePoison::WhenNeeded;
                 script.tick(tick).unwrap();
                 assert!(matches!(
-                    tick.cx.ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+                    tick.cx
+                        .ledger
+                        .as_ref()
+                        .unwrap()
+                        .outbox
+                        .last()
+                        .map(|action| &action.effect),
                     Some(crate::native::HostEffect::Interaction(
                         crate::shim::InteractReq::SetNoteMode { on: false, .. }
                     ))
@@ -6239,7 +6284,13 @@ mod tests {
                 tick.cx.cure_poison = CurePoison::WhenNeeded;
                 script.tick(tick).unwrap();
                 assert!(matches!(
-                    tick.cx.ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+                    tick.cx
+                        .ledger
+                        .as_ref()
+                        .unwrap()
+                        .outbox
+                        .last()
+                        .map(|action| &action.effect),
                     Some(crate::native::HostEffect::Interaction(
                         crate::shim::InteractReq::WithdrawX { .. }
                     ))
@@ -6335,7 +6386,12 @@ mod tests {
         assert!(!script.provisioner.has_run());
         assert!(!script.survival_interrupting);
         assert!(matches!(
-            ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .last()
+                .map(|action| &action.effect),
             Some(crate::native::HostEffect::Interaction(
                 crate::shim::InteractReq::CloseModal
             ))
@@ -6421,11 +6477,11 @@ mod tests {
 
     #[test]
     fn parked_runner_keeps_eating_and_unparks_when_need_clears() {
-        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
-        use api::snapshot::{ItemActionFamily, ItemContainer, ItemView};
+        use super::super::families::tests::with_tick;
         use crate::native::{HostEffect, ScriptFlow};
         use crate::survival::CurePoison;
-        use super::super::families::tests::with_tick;
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+        use api::snapshot::{ItemActionFamily, ItemContainer, ItemView};
 
         let (mut script, mut snapshot, _, _) = provisioning_survival_fixture();
         snapshot.seed_main_modal(-1, Vec::new());
@@ -6519,10 +6575,10 @@ mod tests {
 
     #[test]
     fn parked_quester_publishes_waiting_continue_status_and_resumes_parked() {
-        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+        use super::super::families::tests::with_tick_output;
         use crate::native::{Interrupt, NativePhase, ScriptFlow};
         use crate::survival::CurePoison;
-        use super::super::families::tests::with_tick_output;
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
 
         let (mut script, mut snapshot, _, _) = provisioning_survival_fixture();
         snapshot.seed_inventory(Vec::new(), 28);
@@ -6568,7 +6624,10 @@ mod tests {
         });
         assert_eq!(script.phase(), ("parked", NativePhase::Waiting));
         assert!(script.waits_for_evidence());
-        let status = output.0.last().expect("continued parked status is published");
+        let status = output
+            .0
+            .last()
+            .expect("continued parked status is published");
         assert_eq!(status.phase, NativePhase::Waiting);
         assert!(status.failure.is_none());
     }

@@ -2670,7 +2670,6 @@ impl NativeMachine for Deposit {
     fn interrupt(&mut self) {
         self.core.interrupt();
     }
-
 }
 
 impl Deposit {
@@ -7652,10 +7651,12 @@ mod tests {
         assert!(deposit
             .inspect(|machine| machine.transfer_in_flight())
             .unwrap_or(false));
-        assert!(with_tick(&deposit_snapshot, &mut deposit_ledger, 3, |tick| {
-            tick.actions.poll(&deposit, &mut tick.cx)
-        })
-        .is_pending());
+        assert!(
+            with_tick(&deposit_snapshot, &mut deposit_ledger, 3, |tick| {
+                tick.actions.poll(&deposit, &mut tick.cx)
+            })
+            .is_pending()
+        );
         deposit_snapshot.seed_inventory(fish_pack(shrimp, 0, net), 28);
         deposit_snapshot.seed_bank_observation(
             10,
@@ -7707,10 +7708,12 @@ mod tests {
         with_tick(&withdraw_snapshot, &mut withdraw_ledger, 1, |tick| {
             assert!(tick.actions.poll(&withdraw, &mut tick.cx).is_pending());
         });
-        assert!(with_tick(&withdraw_snapshot, &mut withdraw_ledger, 2, |tick| {
-            tick.actions.poll(&withdraw, &mut tick.cx)
-        })
-        .is_pending());
+        assert!(
+            with_tick(&withdraw_snapshot, &mut withdraw_ledger, 2, |tick| {
+                tick.actions.poll(&withdraw, &mut tick.cx)
+            })
+            .is_pending()
+        );
         assert!(matches!(
             acknowledge(&mut withdraw_ledger, 2),
             HostEffect::Interaction(InteractReq::WithdrawX {
@@ -7728,14 +7731,13 @@ mod tests {
         assert!(withdraw
             .inspect(|machine| machine.transfer_in_flight())
             .unwrap_or(false));
-        assert!(with_tick(&withdraw_snapshot, &mut withdraw_ledger, 4, |tick| {
-            tick.actions.poll(&withdraw, &mut tick.cx)
-        })
-        .is_pending());
-        withdraw_snapshot.seed_inventory(
-            vec![item(bait, "Bait", 2, ItemContainer::Inventory)],
-            28,
+        assert!(
+            with_tick(&withdraw_snapshot, &mut withdraw_ledger, 4, |tick| {
+                tick.actions.poll(&withdraw, &mut tick.cx)
+            })
+            .is_pending()
         );
+        withdraw_snapshot.seed_inventory(vec![item(bait, "Bait", 2, ItemContainer::Inventory)], 28);
         withdraw_snapshot.seed_bank_observation(
             10,
             2,
@@ -7895,10 +7897,7 @@ mod tests {
         })
         .is_pending());
 
-        snapshot.seed_inventory(
-            vec![item(bait, "Bait", 2, ItemContainer::Inventory)],
-            28,
-        );
+        snapshot.seed_inventory(vec![item(bait, "Bait", 2, ItemContainer::Inventory)], 28);
         snapshot.seed_bank_observation(
             10,
             2,
@@ -7968,10 +7967,7 @@ mod tests {
         with_tick(&snapshot, &mut ledger, 3, |tick| {
             tick.actions.interrupt(&handle);
         });
-        snapshot.seed_inventory(
-            vec![item(bait, "Bait", 2, ItemContainer::Inventory)],
-            28,
-        );
+        snapshot.seed_inventory(vec![item(bait, "Bait", 2, ItemContainer::Inventory)], 28);
         snapshot.seed_bank_observation(
             10,
             2,
@@ -7989,5 +7985,4 @@ mod tests {
         ));
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
     }
-
 }

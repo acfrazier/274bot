@@ -93,7 +93,9 @@ pub(crate) fn survival_need_scenario() -> Scenario {
     steps.push(Step {
         name: "stand at the live Yew work site before Start",
         kind: StepKind::Perform {
-            send: Box::new(|client, _| cheat(client, &tele_args(YEW.level, YEW.x, YEW.z)).is_sent()),
+            send: Box::new(|client, _| {
+                cheat(client, &tele_args(YEW.level, YEW.x, YEW.z)).is_sent()
+            }),
         },
         wait: Wait {
             arm: Proof::Arrived {
@@ -183,8 +185,7 @@ pub(crate) fn survival_need_scenario() -> Scenario {
                     return false;
                 };
                 matches!(
-                    Interactions::new(snapshot, client)
-                        .use_item_on(key, OpTarget::Loc(loc)),
+                    Interactions::new(snapshot, client).use_item_on(key, OpTarget::Loc(loc)),
                     SendResult::Sent { .. }
                 )
             }),

@@ -335,7 +335,15 @@ pub(crate) fn eat_choice(
     tick: u16,
 ) -> Option<EatChoice> {
     eat_choice_with_floor(
-        frame, tables, schedule, danger, poison_fire, hp, hp_max, tick, 0,
+        frame,
+        tables,
+        schedule,
+        danger,
+        poison_fire,
+        hp,
+        hp_max,
+        tick,
+        0,
     )
 }
 

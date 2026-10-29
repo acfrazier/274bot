@@ -2374,15 +2374,14 @@ fn run_cells(
                     profile.settings.survival.cure_poison = policy;
                     let snapshot = &state.actors[0].snapshot;
                     play.remember_profile(profile.clone());
-                    let slot_mirror_policy = play.arm(&profile.username).map(|arm| {
-                        match arm.cure_poison() {
-                            script::survival::CurePoison::WhenNeeded => "when_needed",
-                            script::survival::CurePoison::Always => "always",
-                            script::survival::CurePoison::Never => "never",
-                        }
-                    });
-                    let slot_mirror_updated =
-                        slot_mirror_policy == Some(cure_poison_name(policy));
+                    let slot_mirror_policy =
+                        play.arm(&profile.username)
+                            .map(|arm| match arm.cure_poison() {
+                                script::survival::CurePoison::WhenNeeded => "when_needed",
+                                script::survival::CurePoison::Always => "always",
+                                script::survival::CurePoison::Never => "never",
+                            });
+                    let slot_mirror_updated = slot_mirror_policy == Some(cure_poison_name(policy));
                     state.actors[0].transitions.push(json!({
                         "event": "profile-command",
                         "command": "SetSurvival",

@@ -1902,11 +1902,7 @@ impl Gatherer {
         self.set_event("survival transfer interrupted at boundary");
     }
 
-    fn begin_survival_click(
-        &mut self,
-        mut args: OneOpArgs,
-        tick: &mut NativeTick<'_>,
-    ) -> bool {
+    fn begin_survival_click(&mut self, mut args: OneOpArgs, tick: &mut NativeTick<'_>) -> bool {
         if !tick.cx.may_continue_this_tick() || !self.fence.reserve(1) {
             self.survival_deferred = true;
             return false;
@@ -2563,10 +2559,7 @@ impl Script for Gatherer {
         }
         let recovering = matches!(self.retained.recovery, RecoveryState::Pending { .. });
         let survival_wanted = !recovering && self.poll_survival(tick);
-        if self.failure.is_some()
-            && !survival_wanted
-            && self.survival.parked().is_none()
-        {
+        if self.failure.is_some() && !survival_wanted && self.survival.parked().is_none() {
             self.publish(tick);
             return Ok(ScriptFlow::Blocked(self.failure.clone().unwrap()));
         }
@@ -2706,8 +2699,8 @@ mod switch_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use api::snapshot::{ItemActionFamily, ItemContainer};
     use crate::quester::families::tests::with_tick;
+    use api::snapshot::{ItemActionFamily, ItemContainer};
     use std::mem::size_of;
 
     fn survival_condition(
@@ -3688,9 +3681,9 @@ mod tests {
     }
     #[test]
     fn gatherer_interrupts_deposit_at_transfer_boundary() {
+        use crate::quester::families::tests::{def, with_tick};
         use api::condition::{FoodSummary, PoisonState};
         use api::snapshot::{ItemActionFamily, ItemContainer};
-        use crate::quester::families::tests::{def, with_tick};
 
         let fixture = BaitFixture::new();
         let mut gatherer = fixture.gatherer(GatherRetained::default());
@@ -3712,13 +3705,7 @@ mod tests {
         inventory.push(antipoison_item(3));
         snapshot.seed_inventory(inventory, 28);
         snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
-        let clear = || {
-            survival_condition(
-                PoisonState::Clear,
-                60,
-                FoodSummary::default(),
-            )
-        };
+        let clear = || survival_condition(PoisonState::Clear, 60, FoodSummary::default());
         let onset = || {
             survival_condition(
                 PoisonState::Onset {
@@ -3751,7 +3738,13 @@ mod tests {
             tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
             gatherer.tick(tick).unwrap();
             assert!(matches!(
-                tick.cx.ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+                tick.cx
+                    .ledger
+                    .as_ref()
+                    .unwrap()
+                    .outbox
+                    .last()
+                    .map(|action| &action.effect),
                 Some(crate::native::HostEffect::Interaction(
                     crate::shim::InteractReq::InvButton { id: 201, .. }
                 ))
@@ -3815,9 +3808,10 @@ mod tests {
                 .iter()
                 .filter(|action| matches!(
                     &action.effect,
-                    crate::native::HostEffect::Interaction(
-                        crate::shim::InteractReq::InvButton { id: 201 | 202 | 203, .. }
-                    )
+                    crate::native::HostEffect::Interaction(crate::shim::InteractReq::InvButton {
+                        id: 201 | 202 | 203,
+                        ..
+                    })
                 ))
                 .count(),
             1,
@@ -3834,9 +3828,9 @@ mod tests {
 
     #[test]
     fn gatherer_interrupts_withdraw_at_transfer_boundary() {
+        use crate::quester::families::tests::{def, with_tick};
         use api::condition::{FoodSummary, PoisonState};
         use api::snapshot::{ItemActionFamily, ItemContainer};
-        use crate::quester::families::tests::{def, with_tick};
 
         let fixture = BaitFixture::new();
         let mut gatherer = fixture.gatherer(GatherRetained::default());
@@ -3860,13 +3854,7 @@ mod tests {
             ]),
             Vec::new(),
         );
-        let clear = || {
-            survival_condition(
-                PoisonState::Clear,
-                60,
-                FoodSummary::default(),
-            )
-        };
+        let clear = || survival_condition(PoisonState::Clear, 60, FoodSummary::default());
         let onset = || {
             survival_condition(
                 PoisonState::Onset {
@@ -3907,7 +3895,13 @@ mod tests {
             tick.cx.condition = Some(clear());
             gatherer.tick(tick).unwrap();
             assert!(matches!(
-                tick.cx.ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+                tick.cx
+                    .ledger
+                    .as_ref()
+                    .unwrap()
+                    .outbox
+                    .last()
+                    .map(|action| &action.effect),
                 Some(crate::native::HostEffect::Interaction(
                     crate::shim::InteractReq::SetNoteMode { on: false, .. }
                 ))
@@ -3918,7 +3912,13 @@ mod tests {
             tick.cx.condition = Some(clear());
             gatherer.tick(tick).unwrap();
             assert!(matches!(
-                tick.cx.ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+                tick.cx
+                    .ledger
+                    .as_ref()
+                    .unwrap()
+                    .outbox
+                    .last()
+                    .map(|action| &action.effect),
                 Some(crate::native::HostEffect::Interaction(
                     crate::shim::InteractReq::WithdrawX {
                         bank_item_id: 301,
@@ -3962,7 +3962,10 @@ mod tests {
         snapshot.seed_bank_observation(
             10,
             2,
-            Some(vec![bank_item(301, "Bait", 3, 0), bank_item(302, "Feather", 3, 1)]),
+            Some(vec![
+                bank_item(301, "Bait", 3, 0),
+                bank_item(302, "Feather", 3, 1),
+            ]),
             Vec::new(),
         );
         with_tick(&snapshot, &mut ledger, 5, |tick| {
@@ -3995,10 +3998,10 @@ mod tests {
     }
     #[test]
     fn need_does_not_block_interrupted_transfer_polling_to_boundary() {
-        use api::condition::{FoodSummary, PoisonState};
-        use api::snapshot::{ItemActionFamily, ItemContainer};
         use crate::native::{NativePhase, ScriptFlow};
         use crate::quester::families::tests::{def, with_tick};
+        use api::condition::{FoodSummary, PoisonState};
+        use api::snapshot::{ItemActionFamily, ItemContainer};
 
         let fixture = BaitFixture::new();
         let mut gatherer = fixture.gatherer(GatherRetained::default());
@@ -4012,13 +4015,7 @@ mod tests {
             actions: vec![Some("Withdraw-1".into()), Some("Withdraw-X".into())],
             component_id: 7,
         };
-        let clear = || {
-            survival_condition(
-                PoisonState::Clear,
-                60,
-                FoodSummary::default(),
-            )
-        };
+        let clear = || survival_condition(PoisonState::Clear, 60, FoodSummary::default());
         let need = || {
             survival_condition(
                 PoisonState::Onset {
@@ -4064,7 +4061,13 @@ mod tests {
             tick.cx.condition = Some(clear());
             gatherer.tick(tick).unwrap();
             assert!(matches!(
-                tick.cx.ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+                tick.cx
+                    .ledger
+                    .as_ref()
+                    .unwrap()
+                    .outbox
+                    .last()
+                    .map(|action| &action.effect),
                 Some(crate::native::HostEffect::Interaction(
                     crate::shim::InteractReq::WithdrawX {
                         bank_item_id: 301,
@@ -4108,7 +4111,10 @@ mod tests {
         snapshot.seed_bank_observation(
             10,
             2,
-            Some(vec![bank_item(301, "Bait", 3, 0), bank_item(302, "Feather", 3, 1)]),
+            Some(vec![
+                bank_item(301, "Bait", 3, 0),
+                bank_item(302, "Feather", 3, 1),
+            ]),
             Vec::new(),
         );
         with_tick(&snapshot, &mut ledger, 5, |tick| {
@@ -4147,12 +4153,11 @@ mod tests {
         ));
     }
 
-
     #[test]
     fn parked_gatherer_publishes_waiting_continue_status_and_resumes_parked() {
-        use api::condition::{FoodSummary, PoisonState};
         use crate::native::{Interrupt, NativeOutput, NativePhase, ScriptFlow, ScriptStatus};
         use crate::quester::families::tests::with_tick_output;
+        use api::condition::{FoodSummary, PoisonState};
 
         #[derive(Default)]
         struct Capture(Vec<ScriptStatus>);
@@ -4183,10 +4188,7 @@ mod tests {
         with_tick_output(&snapshot, &mut ledger, 1, &mut output, |tick| {
             tick.cx.condition = Some(condition.clone());
             tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
-            assert!(matches!(
-                gatherer.tick(tick).unwrap(),
-                ScriptFlow::Continue
-            ));
+            assert!(matches!(gatherer.tick(tick).unwrap(), ScriptFlow::Continue));
         });
         assert_eq!(gatherer.phase(), ("parked", NativePhase::Waiting));
         assert!(gatherer.waits_for_evidence());
@@ -4205,14 +4207,14 @@ mod tests {
         with_tick_output(&snapshot, &mut ledger, 2, &mut output, |tick| {
             tick.cx.condition = Some(condition);
             tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
-            assert!(matches!(
-                gatherer.tick(tick).unwrap(),
-                ScriptFlow::Continue
-            ));
+            assert!(matches!(gatherer.tick(tick).unwrap(), ScriptFlow::Continue));
         });
         assert_eq!(gatherer.phase(), ("parked", NativePhase::Waiting));
         assert!(gatherer.waits_for_evidence());
-        let status = output.0.last().expect("continued parked status is published");
+        let status = output
+            .0
+            .last()
+            .expect("continued parked status is published");
         assert_eq!(status.phase, NativePhase::Waiting);
         assert!(status.failure.is_none());
         assert_eq!(gatherer.status_data(None).phase, "parked");
@@ -4220,9 +4222,9 @@ mod tests {
 
     #[test]
     fn status_row_shows_needed_under_never() {
-        use api::condition::PoisonState;
         use crate::native::{NativeOutput, ScriptFlow, ScriptStatus};
         use crate::quester::families::tests::with_tick_output;
+        use api::condition::PoisonState;
 
         #[derive(Default)]
         struct Capture(Vec<ScriptStatus>);
@@ -4265,8 +4267,8 @@ mod tests {
     }
     #[test]
     fn runner_tick_poisoned_frame_allocates_nothing() {
-        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use crate::quester::families::tests::with_tick;
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
 
         let fixture = BaitFixture::new();
         let mut gatherer = fixture.gatherer(GatherRetained::default());
@@ -4315,9 +4317,9 @@ mod tests {
 
     #[test]
     fn runner_tick_parked_frame_allocates_nothing() {
-        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use crate::native::{NativePhase, ScriptFlow};
         use crate::quester::families::tests::with_tick;
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
 
         let fixture = BaitFixture::new();
         let mut gatherer = fixture.gatherer(GatherRetained::default());
@@ -4368,25 +4370,27 @@ mod tests {
         assert!(gatherer.survival.parked().is_some());
     }
 
-
     #[test]
     fn parked_runner_unparks_at_next_exact_fire_without_rescue() {
+        use crate::quester::families::tests::with_tick;
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use api::snapshot::StatView;
-        use crate::quester::families::tests::with_tick;
 
         let fixture = BaitFixture::new();
         let mut gatherer = fixture.gatherer(GatherRetained::default());
         let mut snapshot = fixture.snapshot;
-        snapshot.seed_inventory(vec![ItemView {
-            def: crate::quester::families::tests::def(307, "Fishing rod"),
-            container: api::snapshot::ItemContainer::Inventory,
-            action_family: api::snapshot::ItemActionFamily::Held,
-            slot: 0,
-            count: 1,
-            actions: Vec::new(),
-            component_id: 3214,
-        }], 28);
+        snapshot.seed_inventory(
+            vec![ItemView {
+                def: crate::quester::families::tests::def(307, "Fishing rod"),
+                container: api::snapshot::ItemContainer::Inventory,
+                action_family: api::snapshot::ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: Vec::new(),
+                component_id: 3214,
+            }],
+            28,
+        );
         let condition = |poison, hp| BotCondition {
             tick: 20,
             session: SessionMark::Live,
@@ -4481,18 +4485,11 @@ mod tests {
 
     #[test]
     fn parked_runner_with_food_unparks_at_fire_eight() {
-        use api::condition::{
-            BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark,
-        };
-        use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView, StatView};
         use crate::quester::families::tests::{def, with_tick};
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+        use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView, StatView};
 
-        fn seed(
-            snapshot: &mut GameSnapshot,
-            lobster_id: i32,
-            hp: u8,
-            food_count: u8,
-        ) {
+        fn seed(snapshot: &mut GameSnapshot, lobster_id: i32, hp: u8, food_count: u8) {
             snapshot.seed_stats(vec![StatView {
                 index: 3,
                 name: "hitpoints".into(),

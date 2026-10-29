@@ -59,10 +59,10 @@ fn tick(slot: &mut SlotScript) {
 
 #[test]
 fn slot_keeps_parked_native_run_and_resumes_after_dose() {
-    use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
-    use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView, StatView};
     use crate::native::{HostEffect, InteractionReceipt, NativePhase};
     use crate::survival::CurePoison;
+    use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+    use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView, StatView};
 
     fn fact(tick: u64, poison: PoisonState, hp: u8, antipoison: u8) -> BotCondition {
         BotCondition {
@@ -180,13 +180,7 @@ fn slot_keeps_parked_native_run_and_resumes_after_dose() {
         }],
         28,
     );
-    dispatch(
-        &mut slot,
-        &selected,
-        &snapshot,
-        41,
-        fact(41, onset, 5, 1),
-    );
+    dispatch(&mut slot, &selected, &snapshot, 41, fact(41, onset, 5, 1));
     let action = slot.take_native_action().expect("survival drink action");
     assert_eq!(action.run(), run);
     assert!(matches!(

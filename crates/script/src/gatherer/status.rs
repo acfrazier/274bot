@@ -53,12 +53,7 @@ macro_rules! status_rows {
         [
             $emit!("skill", "Skill", Text, $data.skill),
             $emit!("method", "Method", Text, Arc::clone(&$data.method)),
-            $emit!(
-                "survival",
-                "Survival",
-                Text,
-                format!("{}", $data.survival)
-            ),
+            $emit!("survival", "Survival", Text, format!("{}", $data.survival)),
             $emit!("phase", "Phase", Text, $data.phase),
             $emit!("area", "Area", Text, Arc::clone(&$data.area)),
             $emit!("target", "Target", Text, Arc::clone(&$data.target)),

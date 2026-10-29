@@ -255,7 +255,6 @@ impl Provisioner {
         }
     }
 
-
     pub fn needs_progress_read(&self) -> bool {
         self.acquire_run
             .as_ref()

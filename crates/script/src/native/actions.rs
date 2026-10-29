@@ -784,7 +784,6 @@ impl NativeActions {
         }
     }
 
-
     /// Consume one warning from this walk's live request without completing
     /// its machine or spending an interaction/transition allowance.
     pub fn take_walk_event(
@@ -1285,7 +1284,6 @@ mod tests {
         });
         assert_eq!(inspect_shared(&handle), Some(()));
     }
-
 
     #[test]
     fn handle_drop_contains_panicking_cancellation_payload_destructor() {
