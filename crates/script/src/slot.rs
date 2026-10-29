@@ -444,8 +444,8 @@ pub struct SlotScript {
     /// Diagnostic only: a blocked run has no instance or restart authority.
     terminal_native_status: Option<Arc<crate::native::ScriptStatus>>,
     preparing: Option<Box<Preparation>>,
-    /// One bounded native Start retained across temporary Full admission.
-    pending_compiled_start: Option<compiled::PendingCompiledStart>,
+    /// A full admission queue retains one native Start without enlarging every slot.
+    pending_compiled_start: Option<Box<compiled::PendingCompiledStart>>,
     /// A watchdog restart awaiting capacity keeps its current instance until
     /// the replacement job is accepted on a later slot turn.
     pending_compiled_restart: bool,
@@ -4024,6 +4024,10 @@ impl SlotScript {
                     self.compiled_interacts.clear();
                     self.compiled_interact_outcome_seqs.clear();
                 }
+                self.terminal_native_status = self
+                    .compiled
+                    .as_ref()
+                    .and_then(|run| run.output.status.as_ref().map(Arc::clone));
                 self.teardown_compiled(StopReason::Completed);
                 self.watchdog.cancel_clear();
                 self.state = RunState::Idle;

@@ -9,7 +9,7 @@ use crate::quester::families::tests::{
 use crate::quester::path::{PredicateDocument, ProgressRuleDocument};
 use api::selected::Truth;
 use api::snapshot::{GameSnapshot, QuestStatusView, VarpView};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 fn fixture(journal: bool) -> (Quester, GameSnapshot) {
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
@@ -86,6 +86,111 @@ fn fixture(journal: bool) -> (Quester, GameSnapshot) {
         ),
         snapshot,
     )
+}
+
+struct AcceptedUseOnPlan(Arc<AtomicUsize>);
+
+struct AcceptedUseOnMachine {
+    request_id: Option<u64>,
+}
+
+impl NativeMachine for AcceptedUseOnMachine {
+    type Args = ();
+    type Output = api::quest_progress::EvidenceStamp;
+
+    fn begin(_: Self::Args, _: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+        Ok(Self { request_id: None })
+    }
+
+    fn poll(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+    ) -> Poll<Result<Self::Output, ActionError>> {
+        if let Some(request_id) = self.request_id {
+            return match cx.interaction_receipt(request_id) {
+                Some(receipt) if receipt.accepted => Poll::Ready(Ok(receipt.evidence)),
+                Some(_) => Poll::Ready(Err(ActionError::Failed(Arc::from(
+                    "use_on interaction was rejected",
+                )))),
+                None => Poll::Pending,
+            };
+        }
+        match cx.emit(crate::shim::InteractReq::UseOn {
+            name: "Rotten apple".into(),
+            kind: "loc".into(),
+            target_name: Some("Mourner's cauldron".into()),
+            x: 0,
+            z: 0,
+            level: 0,
+            index: Some(0),
+            source_item_id: Some(1),
+            source_item_slot: Some(0),
+            target_item_id: None,
+            target_item_slot: None,
+        }) {
+            Ok(request_id) => {
+                self.request_id = Some(request_id);
+                Poll::Pending
+            }
+            Err(ActionError::BudgetExhausted) => Poll::Pending,
+            Err(error) => Poll::Ready(Err(error)),
+        }
+    }
+}
+
+impl super::super::compile::StepPlan for AcceptedUseOnPlan {
+    fn begin(
+        &self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Result<Box<dyn super::super::compile::StepRun>, ActionError> {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        let handle = cx
+            .tick
+            .actions
+            .begin::<AcceptedUseOnMachine>((), &mut cx.tick.cx)?;
+        Ok(Box::new(AcceptedUseOnRun {
+            handle: Some(handle),
+        }))
+    }
+}
+
+struct AcceptedUseOnRun {
+    handle: Option<ActionHandle<AcceptedUseOnMachine>>,
+}
+
+impl super::super::compile::StepRun for AcceptedUseOnRun {
+    fn poll(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Poll<Result<StepOutcome, ActionError>> {
+        let result = {
+            let Some(handle) = self.handle.as_ref() else {
+                return Poll::Ready(Err(ActionError::Cancelled));
+            };
+            cx.tick.actions.poll(handle, &mut cx.tick.cx)
+        };
+        match result {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(evidence)) => {
+                self.handle.take();
+                Poll::Ready(Ok(StepOutcome {
+                    progress: None,
+                    evidence,
+                    receipt: None,
+                }))
+            }
+            Poll::Ready(Err(error)) => {
+                self.handle.take();
+                Poll::Ready(Err(error))
+            }
+        }
+    }
+
+    fn cancel(&mut self, actions: &mut NativeActions) {
+        if let Some(handle) = self.handle.take() {
+            actions.cancel(handle);
+        }
+    }
 }
 
 type Ledger = Option<Box<crate::native::ledger::Ledger>>;
@@ -1060,6 +1165,123 @@ fn advances_rereads_before_stage_settle_then_retargets_new_sequence() {
         drive(&mut script, &snapshot, &mut ledger, 12),
         ScriptFlow::Complete
     );
+}
+
+#[test]
+fn advancing_settle_timeout_rereads_before_retrying_after_delayed_progress() {
+    let (mut script, mut snapshot) = fixture(true);
+    snapshot.seed_varps(vec![VarpView {
+        index: 314,
+        value: 0,
+    }]);
+    let begins = Arc::new(AtomicUsize::new(0));
+    let path = Arc::get_mut(&mut script.path).unwrap();
+    let step = &mut path.sequences[1].steps[0];
+    step.kind = Arc::from("use_on");
+    step.plan = Arc::new(AcceptedUseOnPlan(Arc::clone(&begins)));
+
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    finish_read(
+        &mut script,
+        &mut snapshot,
+        &mut ledger,
+        2,
+        "seeded branch",
+    );
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+    assert_eq!(begins.load(Ordering::Relaxed), 1);
+    drive(&mut script, &snapshot, &mut ledger, 6);
+    assert!(
+        matches!(
+            ledger
+                .as_ref()
+                .and_then(|ledger| ledger.outbox.first())
+                .map(|action| &action.effect),
+            Some(HostEffect::Interaction(
+                crate::shim::InteractReq::UseOn { .. }
+            ))
+        ),
+        "use-on was not emitted: begins={}, active={}, streak={}, error={:?}, parked={}",
+        begins.load(Ordering::Relaxed),
+        script.step.is_some(),
+        script.fail_streak,
+        script.last_error,
+        script.parked
+    );
+    assert!(matches!(
+        ack(&mut ledger, 6),
+        HostEffect::Interaction(crate::shim::InteractReq::UseOn { .. })
+    ));
+
+    drive(&mut script, &snapshot, &mut ledger, 7);
+    assert!(script.settling && script.needs_read);
+    assert!(matches!(
+        ledger.as_ref().unwrap().outbox.first().map(|action| &action.effect),
+        Some(HostEffect::Interaction(
+            crate::shim::InteractReq::IfButton { .. }
+        ))
+    ));
+    assert!(matches!(
+        ack(&mut ledger, 7),
+        HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+    ));
+    journal(&mut snapshot, "seeded branch");
+    drive(&mut script, &snapshot, &mut ledger, 8);
+    drive(&mut script, &snapshot, &mut ledger, 9);
+    assert!(matches!(
+        ack(&mut ledger, 9),
+        HostEffect::Interaction(crate::shim::InteractReq::CloseModal)
+    ));
+    snapshot.seed_main_modal(-1, vec![]);
+    drive(&mut script, &snapshot, &mut ledger, 10);
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+    assert!(script.settling && !script.needs_read);
+
+    // The content writes its progress varp after the early journal read.
+    snapshot.seed_varps(vec![VarpView {
+        index: 314,
+        value: 1,
+    }]);
+    for tick in 11..=40 {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+        if !script.settling {
+            break;
+        }
+    }
+    assert!(!script.settling, "the settle window must have timed out");
+    assert_eq!(begins.load(Ordering::Relaxed), 1);
+    assert!(
+        script.needs_read,
+        "the timeout must request a journal read before another attempt"
+    );
+
+    drive(&mut script, &snapshot, &mut ledger, 22);
+    assert!(matches!(
+        ledger.as_ref().unwrap().outbox.first().map(|action| &action.effect),
+        Some(HostEffect::Interaction(
+            crate::shim::InteractReq::IfButton { .. }
+        ))
+    ));
+    assert_eq!(begins.load(Ordering::Relaxed), 1);
+    assert!(matches!(
+        ack(&mut ledger, 22),
+        HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+    ));
+    journal(&mut snapshot, "next branch");
+    drive(&mut script, &snapshot, &mut ledger, 23);
+    drive(&mut script, &snapshot, &mut ledger, 24);
+    assert!(matches!(
+        ack(&mut ledger, 24),
+        HostEffect::Interaction(crate::shim::InteractReq::CloseModal)
+    ));
+    snapshot.seed_main_modal(-1, vec![]);
+    assert_eq!(
+        drive(&mut script, &snapshot, &mut ledger, 25),
+        ScriptFlow::Complete
+    );
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:mid");
+    assert_eq!(begins.load(Ordering::Relaxed), 1);
 }
 
 #[test]

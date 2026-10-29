@@ -1,13 +1,11 @@
 {
   "$schema": "../path.schema.json", "schema": 3, "id": "regicide", "display_name": "Regicide",
-  "required": ["upass", "biohazard", "agility-56", "crafting-10"], "tested_stats": null, "partner": null,
+  "required": ["upass", "biohazard"], "tested_stats": null, "partner": null,
   "quest": {
     "members": true, "quest_points": 3,
     "requirements": [
       {"id":"upass","kind":{"Quest":"upass"},"at":"start","source":"C:scripts/quests/quest_regicide/scripts/regicide_kings_messenger.rs2:1-4"},
-      {"id":"biohazard","kind":{"Quest":"biohazard"},"at":"start","source":"C:scripts/quests/quest_upass/scripts/quest_upass.rs2:80-83"},
-      {"id":"agility-56","kind":{"Skill":{"skill":"agility","level":56}},"at":"start","source":"C:scripts/quests/quest_regicide/scripts/regicide_journal.rs2:16-20"},
-      {"id":"crafting-10","kind":{"Skill":{"skill":"crafting","level":10}},"at":"start","source":"C:scripts/quests/quest_regicide/scripts/regicide_journal.rs2:21-25"}
+      {"id":"biohazard","kind":{"Quest":"biohazard"},"at":"start","source":"C:scripts/quests/quest_upass/scripts/quest_upass.rs2:80-83"}
     ],
     "items": [], "acquire": {}, "bank": "nearest", "coin_float": 0, "loadouts": {}, "areas": {}, "tools": [], "owns_inventory": true
   },
