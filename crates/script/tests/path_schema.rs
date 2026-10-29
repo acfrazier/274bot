@@ -355,6 +355,8 @@ fn bundled_paths_decode_and_compile() {
         move |worker| selected.prepare_gathering(worker)
     })
     .expect("289 gather catalog");
+    // Report every failing Path at once, so one broken draft does not hide the next.
+    let mut failures = Vec::new();
     for entry in index.paths {
         // Unavailable rows may keep their authored Path validated here.
         let Some(file) = entry.file else {
@@ -363,16 +365,30 @@ fn bundled_paths_decode_and_compile() {
         let path = root.join(&file);
         let bytes =
             std::fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-        let document: PathDocument = serde_json::from_slice(&bytes)
-            .unwrap_or_else(|error| panic!("decode {}: {error}", path.display()));
-        assert_eq!(document.id.0.as_ref(), entry.id, "{file} id mismatch");
-        compile_uncached_for_test(&document, &selected, &quests).unwrap_or_else(|error| {
-            panic!(
+        let document: PathDocument = match serde_json::from_slice(&bytes) {
+            Ok(document) => document,
+            Err(error) => {
+                failures.push(format!("{file} decode: {error}"));
+                continue;
+            }
+        };
+        if document.id.0.as_ref() != entry.id {
+            failures.push(format!("{file} id mismatch: {} != {}", document.id.0, entry.id));
+            continue;
+        }
+        if let Err(error) = compile_uncached_for_test(&document, &selected, &quests) {
+            failures.push(format!(
                 "{file} path={} step={:?} code={} detail={:?}",
                 error.path.0, error.step, error.code, error.detail
-            )
-        });
+            ));
+        }
     }
+    assert!(
+        failures.is_empty(),
+        "{} bundled Paths failed:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
     let fixture_dir = root.join("fixtures");
     let mut fixtures = std::fs::read_dir(&fixture_dir)
         .unwrap_or_else(|error| panic!("read {}: {error}", fixture_dir.display()))
