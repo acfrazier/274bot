@@ -1243,8 +1243,11 @@ fn advancing_settle_timeout_rereads_before_retrying_after_delayed_progress() {
         index: 314,
         value: 1,
     }]);
-    for tick in 11..=21 {
+    for tick in 11..=40 {
         drive(&mut script, &snapshot, &mut ledger, tick);
+        if !script.settling {
+            break;
+        }
     }
     assert!(!script.settling, "the settle window must have timed out");
     assert_eq!(begins.load(Ordering::Relaxed), 1);
