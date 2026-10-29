@@ -2915,7 +2915,7 @@
         },
         "make_x": {
           "type": "boolean",
-          "description": "Use the game's Make-X option when available.",
+          "description": "Allow Make-X only when the exact fixed quantity is not posted.",
           "default": false
         }
       },
