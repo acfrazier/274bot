@@ -421,7 +421,7 @@ area = "Scripts"
 text = """When a script starts a trip to the mainland without the boat fare from
   some places on Karamja, for example near the Brimhaven cart, the first walk
   can fail at once. The bot then does not earn the fare and does not cross.
-  Starting nearer to Musa Point works."""
+  No workaround is known."""
 first = "0.2.8"
 target = "0.3.0"
 severity = "medium"
