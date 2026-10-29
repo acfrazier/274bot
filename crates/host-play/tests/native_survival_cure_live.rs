@@ -137,7 +137,7 @@ fn fixture(label: &str, mode: Mode) -> Cell {
             budget_ticks: 40,
         },
     };
-    quester_live::path_cell(PathCell {
+    let mut cell = quester_live::path_cell(PathCell {
         quest: "cook",
         display: "Cook's Assistant",
         label: label.to_owned(),
@@ -153,7 +153,32 @@ fn fixture(label: &str, mode: Mode) -> Cell {
         mode,
         before_relog: vec![stat_seed],
     })
-    .expect("build account-owned live fixture")
+    .expect("build account-owned live fixture");
+    let start_gate = cell
+        .scenario
+        .steps
+        .iter_mut()
+        .find(|step| step.name == "prove the whole fixture profile and loadout before Start")
+        .expect("path fixture profile gate");
+    match &mut start_gate.kind {
+        scenario::StepKind::Await {
+            evidence, ready, ..
+        } => {
+            *evidence = "in-game fixture stand before the pre-Start profile proof";
+            *ready = Box::new(|snapshot| {
+                snapshot.ingame()
+                    && snapshot.scene_state() == 2
+                    && snapshot.tile() == Some((START.x, START.z, START.level))
+            });
+        }
+        _ => panic!("path fixture profile gate is not Await"),
+    }
+    start_gate.wait.arm = scenario::Proof::Arrived {
+        x: START.x,
+        z: START.z,
+        level: START.level,
+    };
+    cell
 }
 
 fn trigger_twisted_chest(
