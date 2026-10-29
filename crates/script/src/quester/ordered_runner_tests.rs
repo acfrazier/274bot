@@ -9,7 +9,7 @@ use crate::native::NativeActions;
 use crate::quester::compile::{PredicateContext, PredicatePlan, StepPlan, StepRun};
 use crate::quester::families::tests::{with_tick, with_tick_output};
 use crate::quester::path::{PathDocument, PredicateDocument, SequenceOrder, StepDocument};
-use api::snapshot::{GameSnapshot, QuestStatusView};
+use api::snapshot::{GameSnapshot, QuestStatusView, StatView};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 const NOT_STARTED: i32 = 0xF80000;
@@ -265,6 +265,7 @@ struct Harness {
     ledger: Option<Box<Ledger>>,
     logs: Logs,
     tick: u64,
+    advance_xp: bool,
     begun: Vec<String>,
 }
 
@@ -288,6 +289,7 @@ impl Harness {
             ledger: None,
             logs: Logs::default(),
             tick: 0,
+            advance_xp: false,
             begun: Vec::new(),
         }
     }
@@ -383,6 +385,17 @@ impl Harness {
             self.tick <= TICK_CAP,
             "the run did not reach the expected state"
         );
+
+        if self.advance_xp {
+            self.snapshot.seed_stats(vec![StatView {
+                index: 0,
+                name: api::snapshot::stat_name(0).into(),
+                effective: 1,
+                base: 1,
+                xp: self.tick as u32,
+                used: api::snapshot::stat_used(0),
+            }]);
+        }
         with_tick_output(
             &self.snapshot,
             &mut self.ledger,
@@ -432,6 +445,7 @@ fn retry_harness(settle_at: Option<usize>) -> (Harness, Arc<AtomicUsize>) {
 
     let mut harness = Harness::new(document);
     harness.script_reads(&[QuestListStatus::NotStarted]);
+    harness.advance_xp = true;
     let attempts = Arc::new(AtomicUsize::new(0));
     let path = Arc::get_mut(&mut harness.script.path).expect("unshared path");
     let step = &mut path.sequences[0].steps[0];
