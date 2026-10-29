@@ -473,10 +473,12 @@ fn campaign_actor_receipts(
             let steps = |steps: &[script::quester::path::StepDocument]| {
                 steps
                     .iter()
-                    .map(|step| serde_json::json!({
-                        "id": step.id, "kind": step.kind,
-                        "settle": step.settle, "skip_if": step.skip_if,
-                    }))
+                    .map(|step| {
+                        serde_json::json!({
+                            "id": step.id, "kind": step.kind,
+                            "settle": step.settle, "skip_if": step.skip_if,
+                        })
+                    })
                     .collect::<Vec<_>>()
             };
             let status_path = actor["status_log"]
@@ -634,7 +636,11 @@ fn captured_gap_fact(
             let truths = items
                 .iter()
                 .map(|item| captured_gap_fact(item, state, guide, selected));
-            return if all { Truth::all(truths) } else { Truth::any(truths) };
+            return if all {
+                Truth::all(truths)
+            } else {
+                Truth::any(truths)
+            };
         }
     }
     if let Some(inner) = predicate.get("Not") {
@@ -645,54 +651,79 @@ fn captured_gap_fact(
         return Truth::Unknown;
     }
     let args = &fact["args"];
-    let answer = (|| {
-        match fact["kind"].as_str()? {
-            "has_item" | "item_count_at_least" => {
-                let id = selected.item_by_alias(args["obj"].as_str()?)?.id;
-                let count = state["inventory"].as_array()?.iter().try_fold(0i64, |sum, row| {
+    let answer = (|| match fact["kind"].as_str()? {
+        "has_item" | "item_count_at_least" => {
+            let id = selected.item_by_alias(args["obj"].as_str()?)?.id;
+            let count = state["inventory"]
+                .as_array()?
+                .iter()
+                .try_fold(0i64, |sum, row| {
                     Some(sum.saturating_add(if row[0].as_i64()? == i64::from(id) {
                         row[1].as_i64()?
                     } else {
                         0
                     }))
                 })?;
-                let minimum = if fact["kind"] == "has_item" { 1 } else { args["qty"].as_i64()? };
-                Some(minimum > 0 && count >= minimum)
-            }
-            "worn" => {
-                let id = selected.item_by_alias(args["obj"].as_str()?)?.id;
-                state["equipment"].as_array()?.iter().try_fold(false, |worn, item| {
+            let minimum = if fact["kind"] == "has_item" {
+                1
+            } else {
+                args["qty"].as_i64()?
+            };
+            Some(minimum > 0 && count >= minimum)
+        }
+        "worn" => {
+            let id = selected.item_by_alias(args["obj"].as_str()?)?.id;
+            state["equipment"]
+                .as_array()?
+                .iter()
+                .try_fold(false, |worn, item| {
                     let observed = item.as_i64()?;
                     Some(worn || observed == i64::from(id))
                 })
-            }
-            "near" => {
-                let [hx, hz, hl] = state["tile"].as_array()?.as_slice() else { return None };
-                let [tx, tz, tl] = args["tile"].as_array()?.as_slice() else { return None };
-                let radius = args["radius"].as_i64()?;
-                Some(radius >= 0 && hl.as_i64()? == tl.as_i64()?
-                    && hx.as_i64()?.abs_diff(tx.as_i64()?) <= radius as u64
-                    && hz.as_i64()?.abs_diff(tz.as_i64()?) <= radius as u64)
-            }
-            "in_area" => {
-                let [x, z, level] = state["tile"].as_array()?.as_slice() else { return None };
-                let (x, z, level) = (x.as_i64()?, z.as_i64()?, level.as_i64()?);
-                let boxes = guide["areas"][args["area"].as_str()?]["boxes"].as_array()?;
-                let mut inside = false;
-                for bounds in boxes {
-                    inside |= x >= bounds[0].as_i64()? && x <= bounds[2].as_i64()?
-                        && z >= bounds[1].as_i64()? && z <= bounds[3].as_i64()?
-                        && level == bounds[4].as_i64()?;
-                }
-                Some(inside)
-            }
-            "stage_in" if args["quest"] == guide["quest"] => {
-                let stage = state["status"]["fields"]["quest"]["stage"].as_str()
-                    .or_else(|| state["status"]["fields"]["stage"].as_str())?;
-                Some(args["any"].as_array()?.iter().any(|candidate| candidate.as_str() == Some(stage)))
-            }
-            _ => None,
         }
+        "near" => {
+            let [hx, hz, hl] = state["tile"].as_array()?.as_slice() else {
+                return None;
+            };
+            let [tx, tz, tl] = args["tile"].as_array()?.as_slice() else {
+                return None;
+            };
+            let radius = args["radius"].as_i64()?;
+            Some(
+                radius >= 0
+                    && hl.as_i64()? == tl.as_i64()?
+                    && hx.as_i64()?.abs_diff(tx.as_i64()?) <= radius as u64
+                    && hz.as_i64()?.abs_diff(tz.as_i64()?) <= radius as u64,
+            )
+        }
+        "in_area" => {
+            let [x, z, level] = state["tile"].as_array()?.as_slice() else {
+                return None;
+            };
+            let (x, z, level) = (x.as_i64()?, z.as_i64()?, level.as_i64()?);
+            let boxes = guide["areas"][args["area"].as_str()?]["boxes"].as_array()?;
+            let mut inside = false;
+            for bounds in boxes {
+                inside |= x >= bounds[0].as_i64()?
+                    && x <= bounds[2].as_i64()?
+                    && z >= bounds[1].as_i64()?
+                    && z <= bounds[3].as_i64()?
+                    && level == bounds[4].as_i64()?;
+            }
+            Some(inside)
+        }
+        "stage_in" if args["quest"] == guide["quest"] => {
+            let stage = state["status"]["fields"]["quest"]["stage"]
+                .as_str()
+                .or_else(|| state["status"]["fields"]["stage"].as_str())?;
+            Some(
+                args["any"]
+                    .as_array()?
+                    .iter()
+                    .any(|candidate| candidate.as_str() == Some(stage)),
+            )
+        }
+        _ => None,
     })();
     match answer {
         Some(true) => Truth::True,
@@ -735,16 +766,23 @@ fn no_step_state_proof(
             continue;
         }
         if status["run"].as_str() != Some(final_run)
-            || fields.get("last_failure").and_then(serde_json::Value::as_str)
+            || fields
+                .get("last_failure")
+                .and_then(serde_json::Value::as_str)
                 .is_some_and(|failure| !failure.is_empty() && failure != gap.park_reason)
-            || fields.get("attempts").is_some_and(|attempts| attempts.as_u64() != Some(0))
+            || fields
+                .get("attempts")
+                .is_some_and(|attempts| attempts.as_u64() != Some(0))
         {
             return None;
         }
         // A journal reread resets the displayed index to zero. It is not a
         // new begin, and neither is the published no-step Blocked status.
         if fields["needs_read"].as_str() != Some("False")
-            || !matches!(fields["action_state"].as_str(), Some("working" | "walking" | "talking" | "fighting" | "banking"))
+            || !matches!(
+                fields["action_state"].as_str(),
+                Some("working" | "walking" | "talking" | "fighting" | "banking")
+            )
         {
             continue;
         }
@@ -759,17 +797,24 @@ fn no_step_state_proof(
         if sequence["stage"].as_str() != Some(stage) {
             return None;
         }
-        let step = sequence["steps"].as_array()?.get(step_index)
+        let step = sequence["steps"]
+            .as_array()?
+            .get(step_index)
             .filter(|step| step["id"].as_str() == Some(step_id))
-            .or_else(|| guide["prelude"].as_array()?.get(step_index)
-                .filter(|step| step["id"].as_str() == Some(step_id)))?;
+            .or_else(|| {
+                guide["prelude"]
+                    .as_array()?
+                    .get(step_index)
+                    .filter(|step| step["id"].as_str() == Some(step_id))
+            })?;
         let key = (stage, step_id, sequence_index, step_index);
         if last_key == Some(key) {
             continue;
         }
-        if prior.iter().any(|previous| previous["stage"].as_str() == Some(stage)
-            && previous["step_id"].as_str() == Some(step_id))
-        {
+        if prior.iter().any(|previous| {
+            previous["stage"].as_str() == Some(stage)
+                && previous["step_id"].as_str() == Some(step_id)
+        }) {
             return None;
         }
         // The runner can only leave an active step for a later selection
@@ -783,8 +828,10 @@ fn no_step_state_proof(
         anchor = Some((stage, step_id, step, tick));
     }
     let (stage, step_id, step, begin_tick) = anchor?;
-    if Some(stage) != gap.stage.as_deref() || step_id != gap.step_id
-        || last_tick <= begin_tick || end["tick"].as_u64()? < last_tick
+    if Some(stage) != gap.stage.as_deref()
+        || step_id != gap.step_id
+        || last_tick <= begin_tick
+        || end["tick"].as_u64()? < last_tick
     {
         return None;
     }
@@ -854,10 +901,14 @@ fn prove_actor_gap(
         .iter()
         .any(|message| message == "quester trace truncated after the event limit");
     if (trace_truncated && gap.park_reason != "no step for stage")
-        || messages.iter().any(|message| message == "quester terminal trace event was truncated")
-        || messages.iter()
+        || messages
+            .iter()
+            .any(|message| message == "quester terminal trace event was truncated")
+        || messages
+            .iter()
             .filter(|message| message.starts_with(&format!("quester {quest}: run start ")))
-            .count() != 1
+            .count()
+            != 1
     {
         return None;
     }
@@ -968,20 +1019,24 @@ fn prove_actor_gap(
                 if trace_truncated { state_steps } else { &[] },
             )?;
             let anchor_begin = root_events.iter().find(|(index, event)| {
-                *index < context_index && event.stage == expected_stage
-                    && event.step_id == gap.step_id && event.event == "begin"
+                *index < context_index
+                    && event.stage == expected_stage
+                    && event.step_id == gap.step_id
+                    && event.event == "begin"
             });
             if (!trace_truncated && anchor_begin.is_none())
-                || anchor_begin.is_some_and(|(begin, _)| root_events.iter().any(|(index, event)| {
-                    *index > *begin && event.event == "begin"
-                }))
+                || anchor_begin.is_some_and(|(begin, _)| {
+                    root_events
+                        .iter()
+                        .any(|(index, event)| *index > *begin && event.event == "begin")
+                })
             {
                 return None;
             }
             for step in state_steps {
-                if !prior.iter().any(|previous| previous["stage"] == step["stage"]
-                    && previous["step_id"] == step["step_id"])
-                {
+                if !prior.iter().any(|previous| {
+                    previous["stage"] == step["stage"] && previous["step_id"] == step["step_id"]
+                }) {
                     prior.push(step.clone());
                 }
             }
@@ -1731,7 +1786,10 @@ mod campaign_gap_tests {
         assert_eq!(proof["step_id"], PRIOR_STEP);
         assert_eq!(proof["stage"], STAGE);
         assert!(proof["prior_steps_settled"].as_bool().unwrap());
-        assert_eq!(proof["accounts"][0]["park_context_step"], "first-skipped-step");
+        assert_eq!(
+            proof["accounts"][0]["park_context_step"],
+            "first-skipped-step"
+        );
         assert_eq!(
             proof["accounts"][0]["prior_steps"][0]["step_id"],
             PRIOR_STEP
@@ -1802,37 +1860,77 @@ mod campaign_gap_tests {
         ];
         let actor = no_step_receipt();
         assert!(campaign_gap_proof(
-            &error_result(), &[Some(gap.clone())], QUEST, &logs, &receipts(actor.clone()),
-        ).is_some());
+            &error_result(),
+            &[Some(gap.clone())],
+            QUEST,
+            &logs,
+            &receipts(actor.clone()),
+        )
+        .is_some());
         let mut after_cap_logs = logs.clone();
         after_cap_logs.remove(1);
-        assert!(campaign_gap_proof(
-            &error_result(), &[Some(gap.clone())], QUEST, &after_cap_logs, &receipts(actor.clone()),
-        ).is_some(), "a fully capped anchor still has uncapped status and end-state proof");
-        for mutation in ["missing statuses", "missing capture", "wrong tile", "malformed tile", "failure", "retry", "later begin", "wrong run", "vacuous goal"] {
+        assert!(
+            campaign_gap_proof(
+                &error_result(),
+                &[Some(gap.clone())],
+                QUEST,
+                &after_cap_logs,
+                &receipts(actor.clone()),
+            )
+            .is_some(),
+            "a fully capped anchor still has uncapped status and end-state proof"
+        );
+        for mutation in [
+            "missing statuses",
+            "missing capture",
+            "wrong tile",
+            "malformed tile",
+            "failure",
+            "retry",
+            "later begin",
+            "wrong run",
+            "vacuous goal",
+        ] {
             let mut bad = actor.clone();
             let evidence = &mut bad["gap_state_evidence"];
             match mutation {
                 "missing statuses" => evidence["statuses"] = serde_json::json!([]),
                 "missing capture" => evidence["end_state"] = serde_json::Value::Null,
-                "wrong tile" => evidence["end_state"]["tile"] = serde_json::json!([3201,3200,0]),
+                "wrong tile" => evidence["end_state"]["tile"] = serde_json::json!([3201, 3200, 0]),
                 "malformed tile" => evidence["end_state"]["tile"] = serde_json::json!([3200]),
-                "failure" => evidence["statuses"][0]["status"]["fields"]["last_failure"] = "expected dialogue did not open".into(),
+                "failure" => {
+                    evidence["statuses"][0]["status"]["fields"]["last_failure"] =
+                        "expected dialogue did not open".into()
+                }
                 "retry" => evidence["statuses"][0]["status"]["fields"]["attempts"] = 1.into(),
                 "later begin" => {
                     let mut later = evidence["statuses"][0].clone();
                     later["tick"] = 41.into();
                     later["status"]["fields"]["step_id"] = "later-step".into();
                     later["status"]["fields"]["step_index"] = 2.into();
-                    evidence["statuses"].as_array_mut().unwrap().insert(1, later);
+                    evidence["statuses"]
+                        .as_array_mut()
+                        .unwrap()
+                        .insert(1, later);
                 }
                 "wrong run" => evidence["statuses"][0]["status"]["run"] = "another run".into(),
-                "vacuous goal" => evidence["guide"]["sequences"][0]["steps"][1]["settle"] = serde_json::json!({"All": []}),
+                "vacuous goal" => {
+                    evidence["guide"]["sequences"][0]["steps"][1]["settle"] =
+                        serde_json::json!({"All": []})
+                }
                 _ => unreachable!(),
             }
-            assert!(campaign_gap_proof(
-                &error_result(), &[Some(gap.clone())], QUEST, &logs, &receipts(bad),
-            ).is_none(), "{mutation}");
+            assert!(
+                campaign_gap_proof(
+                    &error_result(),
+                    &[Some(gap.clone())],
+                    QUEST,
+                    &logs,
+                    &receipts(bad),
+                )
+                .is_none(),
+                "{mutation}"
+            );
         }
         for message in [
             "quester viking: stage viking:8 step earlier (talk) failed: expected dialogue did not open",
@@ -1851,31 +1949,47 @@ mod campaign_gap_tests {
     fn recorded_sheep_status_and_capture_prove_the_anchor_but_not_a_working_final_phase() {
         let packet: serde_json::Value =
             serde_json::from_str(include_str!("fixtures/campaign-sheepherder-gap-2.json")).unwrap();
-        let gap = campaign_gap(&serde_json::json!({"gap": packet["gap"]})).unwrap().unwrap();
+        let gap = campaign_gap(&serde_json::json!({"gap": packet["gap"]}))
+            .unwrap()
+            .unwrap();
         let actor = &packet["receipt"];
         let account = actor["account"].as_str().unwrap();
         let state = no_step_state_proof(&gap, "sheepherder", account, actor)
             .expect("the real uncapped statuses and worn prod establish the boundary");
         assert_eq!(state["prior_steps"].as_array().unwrap().len(), 7);
-        assert_eq!(state["prior_steps"].as_array().unwrap().last().unwrap()["step_id"], "wield-prod");
+        assert_eq!(
+            state["prior_steps"].as_array().unwrap().last().unwrap()["step_id"],
+            "wield-prod"
+        );
         assert_eq!(actor["final_status"]["phase"], "Working");
         let messages = campaign_trace_messages("sheepherder", packet["logs"].as_array().unwrap());
-        assert!(prove_actor_gap(&gap, "sheepherder", account, &messages[account], actor).is_none(),
-            "old receipts must not be silently promoted to a later native phase");
+        assert!(
+            prove_actor_gap(&gap, "sheepherder", account, &messages[account], actor).is_none(),
+            "old receipts must not be silently promoted to a later native phase"
+        );
     }
 
     #[test]
     fn recorded_murder_retry_remains_unclean_despite_end_state_and_trace_cap() {
         let packet: serde_json::Value =
             serde_json::from_str(include_str!("fixtures/campaign-murder-gap-2.json")).unwrap();
-        let gap = campaign_gap(&serde_json::json!({"gap": packet["gap"]})).unwrap().unwrap();
+        let gap = campaign_gap(&serde_json::json!({"gap": packet["gap"]}))
+            .unwrap()
+            .unwrap();
         let actor = &packet["receipt"];
         let account = actor["account"].as_str().unwrap();
-        assert!(actor["gap_state_evidence"]["end_state"]["inventory"].as_array().unwrap()
-            .iter().any(|row| row[0] == 1814));
+        assert!(actor["gap_state_evidence"]["end_state"]["inventory"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row[0] == 1814));
         let messages = campaign_trace_messages("murder", packet["logs"].as_array().unwrap());
-        assert!(messages[account].iter().any(|message| message == "quester trace truncated after the event limit"));
-        assert!(messages[account].iter().any(|message| message.contains("begin (repeated")));
+        assert!(messages[account]
+            .iter()
+            .any(|message| message == "quester trace truncated after the event limit"));
+        assert!(messages[account]
+            .iter()
+            .any(|message| message.contains("begin (repeated")));
         assert!(no_step_state_proof(&gap, "murder", account, actor).is_none());
         assert!(prove_actor_gap(&gap, "murder", account, &messages[account], actor).is_none());
     }
