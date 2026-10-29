@@ -1,4 +1,6 @@
-//! Unattended Cook → Sheep → Romeo & Juliet → Imp Quester queue. Ignored unless LIVE=1.
+//! Unattended `quester_queue` and
+//! `quester_skip_active_cook_parks_then_sheep_completes` live cells.
+//! Ignored unless LIVE=1.
 #![cfg(feature = "live-harness")]
 
 use std::path::{Path, PathBuf};
@@ -12,6 +14,33 @@ use scenario::{RunnerStatus, ScenarioRunner};
 use script::native::{NativePhase, ScriptStatus, StatusValue};
 use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
+
+struct SkipSessionLogRecord {
+    slot: Option<String>,
+    source: api::hostlog::Source,
+    level: api::hostlog::Level,
+    message: String,
+}
+
+struct SkipSessionLog(Mutex<Vec<SkipSessionLogRecord>>);
+
+impl api::hostlog::Sink for SkipSessionLog {
+    fn record(&self, record: &api::hostlog::Record<'_>) {
+        if record
+            .message
+            .starts_with("command accepted: SkipQuest on ")
+        {
+            self.0.lock().unwrap().push(SkipSessionLogRecord {
+                slot: record.slot.map(str::to_owned),
+                source: record.source,
+                level: record.level,
+                message: record.message.to_owned(),
+            });
+        }
+    }
+}
+
+static SKIP_SESSION_LOG: SkipSessionLog = SkipSessionLog(Mutex::new(Vec::new()));
 
 const CELL: &str = "qs_quester_queue";
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -364,6 +393,428 @@ impl QueueEvidence {
     }
 }
 
+#[cfg(feature = "test-support")]
+const SKIP_CELL: &str = "qs_quester_skip";
+#[cfg(feature = "test-support")]
+const SKIP_QUESTS: &[&str] = &["cook", "sheep"];
+
+#[cfg(feature = "test-support")]
+#[derive(Debug, Clone)]
+struct SkipActionReceipt {
+    quest_id: String,
+    step_id: String,
+    action_state: String,
+    child_step_id: Option<String>,
+    phase: String,
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Debug, Clone)]
+struct SkipStatusReceipt {
+    phase: String,
+    queue: String,
+    completed: i64,
+    quest_id: Option<String>,
+    display: Option<String>,
+    step_id: Option<String>,
+    action_state: Option<String>,
+    block_reason: Option<String>,
+    failure: Option<(String, String)>,
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Debug, Clone)]
+struct SkipRequestReceipt {
+    quest_id: String,
+    step_id: String,
+    action: SkipActionReceipt,
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Debug, Clone, Copy)]
+struct SkipCleanupOwnership {
+    script_walk: Option<(i32, i32, i32)>,
+    seat_held: bool,
+    live_actions: usize,
+    compiled_owner_live: bool,
+    seat_results: usize,
+    reserved_releases: usize,
+}
+
+#[cfg(feature = "test-support")]
+impl SkipCleanupOwnership {
+    fn step_released(self) -> bool {
+        self.script_walk.is_none()
+            && !self.seat_held
+            && self.compiled_owner_live
+            && self.live_actions == 1
+            && self.reserved_releases == 0
+    }
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Debug, Default)]
+struct SkipQueueEvidence {
+    skip: Option<SkipRequestReceipt>,
+    active_order: Vec<String>,
+    queue_states: Vec<String>,
+    completed_states: Vec<i64>,
+    cook_parked: bool,
+    cancellation_observed: bool,
+    cleanup_ownership: Option<SkipCleanupOwnership>,
+    sheep_completed: bool,
+    latest: Option<SkipStatusReceipt>,
+}
+
+#[cfg(feature = "test-support")]
+fn queue_row_letter(queue: &str, id: &str) -> Result<char, String> {
+    let position = script::quester::registry::BUNDLED_INDEX
+        .paths
+        .iter()
+        .position(|path| path.id == id)
+        .ok_or_else(|| format!("bundled Quester index has no {id:?} row"))?;
+    queue
+        .chars()
+        .nth(position)
+        .ok_or_else(|| format!("Quester queue status is missing row {id:?}: {queue:?}"))
+}
+
+#[cfg(feature = "test-support")]
+impl SkipQueueEvidence {
+    fn active_cook_action(status: &ScriptStatus) -> Result<Option<SkipActionReceipt>, String> {
+        if status.card != script::CompiledId("Quester")
+            || !matches!(status.phase, NativePhase::Working | NativePhase::Waiting)
+            || text_field(status, "quest_id")?.as_deref() != Some("cook")
+        {
+            return Ok(None);
+        }
+        let Some(step_id) = text_field(status, "step_id")?.filter(|step| !step.is_empty()) else {
+            return Ok(None);
+        };
+        let Some(action_state) = text_field(status, "action_state")? else {
+            return Ok(None);
+        };
+        if action_state != "banking" {
+            return Ok(None);
+        }
+        let child_step_id = text_field(status, "child_step_id")?.filter(|step| !step.is_empty());
+        Ok(Some(SkipActionReceipt {
+            quest_id: "cook".into(),
+            step_id,
+            action_state,
+            child_step_id,
+            phase: format!("{:?}", status.phase),
+        }))
+    }
+
+    fn observe_cancel_ownership(
+        &mut self,
+        status: &ScriptStatus,
+        play: &host_play::Play,
+        name: &str,
+    ) -> Result<(), String> {
+        if self.skip.is_none() || self.cleanup_ownership.is_some() {
+            return Ok(());
+        }
+        if status.phase == NativePhase::Preparing
+            || status.card != script::CompiledId("Quester")
+            || text_field(status, "block_reason")?.as_deref() != Some("skipped by operator")
+        {
+            return Ok(());
+        }
+        let queue = text_field(status, "queue")?.ok_or("parked Quester status is missing queue")?;
+        if queue_row_letter(&queue, "cook")? != 'P'
+            || text_field(status, "quest_id")?.is_some()
+            || text_field(status, "step_id")?.is_some()
+            || text_field(status, "action_state")?.is_some()
+            || text_field(status, "child_step_id")?.is_some()
+        {
+            return Ok(());
+        }
+        let slot_status = play
+            .statuses()
+            .into_iter()
+            .find(|status| status.username == name)
+            .ok_or("live slot status disappeared before skip cancellation proof")?;
+        let seat = play
+            .script_seat_probe(name)
+            .ok_or("Quester slot seat disappeared before skip cancellation proof")?;
+        let ownership = SkipCleanupOwnership {
+            script_walk: slot_status.script_walk(),
+            seat_held: seat.held,
+            live_actions: seat.live,
+            compiled_owner_live: seat.compiled_owner_live,
+            seat_results: seat.results,
+            reserved_releases: seat.reserved_releases,
+        };
+        if ownership.step_released() {
+            self.cleanup_ownership = Some(ownership);
+            self.cancellation_observed = true;
+        }
+        Ok(())
+    }
+
+    fn accept_skip(
+        &mut self,
+        action: SkipActionReceipt,
+        skipped: script::native::SkippedQuest,
+    ) -> Result<(), String> {
+        if self.skip.is_some() {
+            return Err("quester skip cell accepted more than one request".into());
+        }
+        if skipped.quest_id.as_ref() != action.quest_id
+            || skipped.step_id.as_ref() != action.step_id
+        {
+            return Err(format!(
+                "Skip quest identity does not match the active Cook action: result={skipped:?} action={action:?}"
+            ));
+        }
+        self.skip = Some(SkipRequestReceipt {
+            quest_id: skipped.quest_id.to_string(),
+            step_id: skipped.step_id.to_string(),
+            action,
+        });
+        Ok(())
+    }
+
+    fn observe(&mut self, status: &ScriptStatus) -> Result<(), String> {
+        if status.phase == NativePhase::Preparing {
+            return Ok(());
+        }
+        if status.card != script::CompiledId("Quester") {
+            return Err(format!("quester skip status belongs to {:?}", status.card));
+        }
+        let queue = text_field(status, "queue")?.ok_or("Quester status is missing queue text")?;
+        let completed = integer_field(status, "completed")?;
+        let quest_id = text_field(status, "quest_id")?;
+        let display = text_field(status, "display")?;
+        let step_id = text_field(status, "step_id")?;
+        let action_state = text_field(status, "action_state")?;
+        let block_reason = text_field(status, "block_reason")?;
+        if quest_id.is_some() != display.is_some() {
+            return Err(format!(
+                "active Quester path id/display are not paired: id={quest_id:?} display={display:?}"
+            ));
+        }
+        if let Some(id) = quest_id.as_deref() {
+            let expected_display = match id {
+                "cook" => "Cook's Assistant",
+                "sheep" => "Sheep Shearer",
+                _ => return Err(format!("unexpected active Quester path {id:?}")),
+            };
+            if display.as_deref() != Some(expected_display) {
+                return Err(format!(
+                    "active Quester path {id:?} published display {display:?}, expected {expected_display:?}"
+                ));
+            }
+            if self.active_order.last().map(String::as_str) != Some(id) {
+                let expected = SKIP_QUESTS.get(self.active_order.len()).copied();
+                if expected != Some(id) {
+                    return Err(format!(
+                        "Quester skip path order is not Cook → Sheep: {:?} then {id:?}",
+                        self.active_order
+                    ));
+                }
+                if id == "sheep" && !self.cancellation_observed {
+                    return Err(
+                        "Sheep activated before the Cook action cancellation was observed".into(),
+                    );
+                }
+                self.active_order.push(id.to_owned());
+            }
+        }
+        if !(0..=1).contains(&completed) {
+            return Err(format!(
+                "Quester completed count is outside the Cook-skip/Sheep fixture: {completed}"
+            ));
+        }
+        if self.completed_states.last() != Some(&completed) {
+            self.completed_states.push(completed);
+        }
+        if self.queue_states.last() != Some(&queue) {
+            self.queue_states.push(queue.clone());
+        }
+
+        let cook_state = queue_row_letter(&queue, "cook")?;
+        let sheep_state = queue_row_letter(&queue, "sheep")?;
+        if self.skip.is_some() && block_reason.as_deref() == Some("skipped by operator") {
+            if cook_state != 'P' {
+                return Err(format!(
+                    "Cook has the operator skip reason but is not Parked: queue={queue:?}"
+                ));
+            }
+            self.cook_parked = true;
+        }
+        if quest_id.as_deref() == Some("sheep") && cook_state != 'P' {
+            return Err(format!(
+                "Sheep activated before Cook was Parked: queue={queue:?} reason={block_reason:?}"
+            ));
+        }
+        if completed == 1 {
+            if cook_state != 'P' || sheep_state != 'D' {
+                return Err(format!(
+                    "one completion must be Sheep with Cook Parked: queue={queue:?}"
+                ));
+            }
+            self.sheep_completed = true;
+        }
+        if status.phase == NativePhase::Blocked && !self.sheep_completed {
+            return Err(format!(
+                "Quester blocked before Sheep completed: status={status:?}"
+            ));
+        }
+        self.latest = Some(SkipStatusReceipt {
+            phase: format!("{:?}", status.phase),
+            queue,
+            completed,
+            quest_id,
+            display,
+            step_id,
+            action_state,
+            block_reason,
+            failure: status
+                .failure
+                .as_ref()
+                .map(|failure| (failure.code.to_string(), failure.message.to_string())),
+        });
+        Ok(())
+    }
+
+    fn validate_terminal(
+        &self,
+        status: &ScriptStatus,
+        lifecycle: &script::ScriptLifecycleReceipt,
+        run_state: script::RunState,
+        runner_passed: bool,
+        start_count: u32,
+    ) -> Result<(), String> {
+        let skip = self
+            .skip
+            .as_ref()
+            .ok_or("Skip quest was not accepted during an active Cook action")?;
+        if skip.quest_id != "cook"
+            || skip.action.step_id != skip.step_id
+            || skip.action.quest_id != "cook"
+            || skip.step_id.is_empty()
+            || skip.action.action_state.is_empty()
+            || skip.action.phase.is_empty()
+        {
+            return Err(format!("invalid active Cook skip receipt: {skip:?}"));
+        }
+        if self
+            .active_order
+            .iter()
+            .map(String::as_str)
+            .ne(SKIP_QUESTS.iter().copied())
+        {
+            return Err(format!(
+                "active Quester rows were not exactly Cook then Sheep: {:?}",
+                self.active_order
+            ));
+        }
+        if !self.cook_parked || !self.cancellation_observed || !self.sheep_completed {
+            return Err(format!(
+                "skip did not prove Cook Parked/cancelled and Sheep complete: {self:?}"
+            ));
+        }
+        if start_count != 1 || !runner_passed {
+            return Err(format!(
+                "scenario did not pass after one compiled Start: passed={runner_passed} starts={start_count}"
+            ));
+        }
+        if lifecycle.state != script::ScriptTerminalState::Failed
+            || run_state != script::RunState::Idle
+            || status.phase != NativePhase::Blocked
+        {
+            return Err(format!(
+                "the parked Cook row did not produce the normal queue-blocked terminal: state={run_state:?} lifecycle={lifecycle:?} status={status:?}"
+            ));
+        }
+        let failure = status
+            .failure
+            .as_ref()
+            .ok_or("blocked Quester status has no queue failure")?;
+        if failure.code.as_ref() != "queue-blocked"
+            || !failure.message.contains("skipped by operator")
+        {
+            return Err(format!(
+                "the terminal queue failure does not retain the Cook skip reason: {failure:?}"
+            ));
+        }
+        let reason = text_field(status, "block_reason")?;
+        if reason.as_deref() != Some("skipped by operator") {
+            return Err(format!(
+                "terminal Quester status lost the Cook skip reason: {reason:?}"
+            ));
+        }
+        let queue = text_field(status, "queue")?.ok_or("terminal status is missing queue")?;
+        if queue_row_letter(&queue, "cook")? != 'P'
+            || queue_row_letter(&queue, "sheep")? != 'D'
+            || integer_field(status, "completed")? != 1
+        {
+            return Err(format!(
+                "terminal queue is not Cook Parked and Sheep Done: queue={queue:?} status={status:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    fn json(&self) -> Value {
+        let skip = self.skip.as_ref();
+        let latest = self.latest.as_ref();
+        json!({
+            "skip_request": skip.map(|skip| json!({
+                "quest_id": skip.quest_id,
+                "step_id": skip.step_id,
+                "action": {
+                    "quest_id": skip.action.quest_id,
+                    "step_id": skip.action.step_id,
+                    "action_state": skip.action.action_state,
+                    "child_step_id": skip.action.child_step_id,
+                    "native_phase": skip.action.phase,
+                },
+            })),
+            "active_order": self.active_order,
+            "queue_states": self.queue_states,
+            "completed_states": self.completed_states,
+            "cook_parked": self.cook_parked,
+            "active_action_cancelled": self.cancellation_observed,
+            "cancellation_ownership": self.cleanup_ownership.map(|ownership| json!({
+                "script_walk": ownership.script_walk,
+                "seat_held": ownership.seat_held,
+                "live_actions": ownership.live_actions,
+                "compiled_owner_live": ownership.compiled_owner_live,
+                "seat_results": ownership.seat_results,
+                "reserved_releases": ownership.reserved_releases,
+            })),
+            "sheep_completed": self.sheep_completed,
+
+            "latest": latest.map(|status| json!({
+                "native_phase": status.phase,
+                "queue": status.queue,
+                "completed": status.completed,
+                "quest_id": status.quest_id,
+                "display": status.display,
+                "step_id": status.step_id,
+                "action_state": status.action_state,
+                "block_reason": status.block_reason,
+                "failure": status.failure,
+            })),
+        })
+    }
+}
+
+#[cfg(feature = "test-support")]
+fn quester_skip_scenario() -> Result<(scenario::Scenario, Map<String, Value>), String> {
+    let mut scenario =
+        scenario::get("quester_skip").ok_or("scenario registry has no quester_skip")?;
+    let settings = scenario::settings_inject_map(scenario.settings.script_settings_inject)
+        .ok_or("quester_skip scenario has no settings injection")?;
+    scenario.settings.script_settings_inject = None;
+    scenario.settings.script_settings_overrides = Some(settings.clone());
+    Ok((scenario, settings))
+}
+
 fn run_quester_queue() -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Ok(());
@@ -582,8 +1033,463 @@ fn run_quester_queue() -> Result<(), String> {
     result
 }
 
+#[cfg(feature = "test-support")]
+fn run_quester_skip() -> Result<(), String> {
+    if std::env::var("LIVE").as_deref() != Ok("1") {
+        return Ok(());
+    }
+    let name_prefix = required("BOT_LIVE_NAME_PREFIX")?;
+    if !(1..=4).contains(&name_prefix.len()) {
+        return Err(format!(
+            "BOT_LIVE_NAME_PREFIX must be 1..=4 bytes for {CELL} live"
+        ));
+    }
+    if !api::hostlog::install_sink(&SKIP_SESSION_LOG) {
+        return Err("quester skip live requires its own session log sink".into());
+    }
+    SKIP_SESSION_LOG
+        .0
+        .lock()
+        .map_err(|_| "quester skip session log poisoned")?
+        .clear();
+    let _home = script::IsolatedEnv::enter(SKIP_CELL);
+    api::hostlog::set_debug(true);
+    let nav_pack = required_path("WORLD_NAV_PACK")?;
+    let engine_dir = required_path("WORLD_ENGINE_DIR")?;
+    let catalog_root = required_path("RS2B0T")?;
+    let cache_dir = required_path("BOT_CACHE_DIR")?;
+
+    let (scenario, start_settings) = quester_skip_scenario()?;
+    if scenario.name != "quester_skip"
+        || scenario.settings.start_script != Some("Quester")
+        || Value::Object(start_settings.clone())
+            != json!({
+                "quests": SKIP_QUESTS,
+                "order_override": SKIP_QUESTS,
+                "skip": [],
+            })
+    {
+        return Err(format!(
+            "quester skip scenario has an unexpected start: name={} card={:?} settings={start_settings:?}",
+            scenario.name, scenario.settings.start_script
+        ));
+    }
+    let deadline = scenario.settings.deadline;
+    let mainland = scenario.seed.mainland;
+    let temp = TempRoot::new(SKIP_CELL)?;
+    let (profile, template) = selected_profile(
+        nav_pack,
+        engine_dir,
+        catalog_root,
+        cache_dir.clone(),
+        temp.path(),
+    )?;
+    let names = host_play::mint_live_names(1);
+    let account = names
+        .first()
+        .cloned()
+        .ok_or("failed to mint Quester skip live account")?;
+    let password = host_play::mint_live_entries(&names)
+        .first()
+        .map(|(_, password)| password.clone())
+        .ok_or("failed to mint Quester skip live credential")?;
+    let mut runner = ScenarioRunner::with_world(scenario, template.world());
+    runner.set_map_members(profile.map_members());
+    runner.set_live_names(&names);
+    runner.set_shot_sink(Box::new(|_, _| {}));
+    let state = Arc::new(Mutex::new(QuesterQueueState {
+        runner,
+        account: account.clone(),
+        snapshot: GameSnapshot::new(),
+        pump: Pump::new(),
+        start_handle: None,
+        start_settings: start_settings.clone(),
+        start_count: 0,
+        error: None,
+    }));
+    let frame_state = Arc::clone(&state);
+    let frame_account = account.clone();
+    let mut play = host_play::run_with_template(
+        Arc::clone(&template),
+        mainland,
+        vec![],
+        |_| (None, None),
+        move |client, username, hold| {
+            if username == frame_account {
+                frame_state.lock().unwrap().frame(client, hold.hold);
+            }
+        },
+    )?;
+    {
+        let mut slot = state
+            .lock()
+            .map_err(|_| "Quester skip live state poisoned")?;
+        slot.runner.set_obj_names(play.obj_names());
+        slot.start_handle = Some(play.script_start_handle());
+    }
+    play.try_spawn_slot(mint_profile(&account, &password, 1)?, None, None, None)?;
+    play.focus(&account);
+    println!(
+        "{}",
+        json!({
+            "phase": "identity",
+            "live_case": SKIP_CELL,
+            "profile": profile.label(),
+            "game_port": profile.client().game_port(),
+            "nav_pack": profile.nav_pack(),
+            "engine_dir": required_path("WORLD_ENGINE_DIR")?,
+            "catalog_root": profile.catalog_root(),
+            "cache_dir": cache_dir,
+            "account": account,
+            "card": "Quester",
+            "settings": start_settings,
+            "scenario": "quester_skip",
+            "world_speed_change": null,
+        })
+    );
+    let outer_deadline = Instant::now() + deadline + Duration::from_secs(15);
+    let mut evidence = SkipQueueEvidence::default();
+    let result = loop {
+        let script_error = play.script_last_error(&account);
+        let native_status = play.script_native_status(&account);
+        let run_state = play.script_state(&account);
+        let lifecycle = play.script_lifecycle_receipt(&account);
+        if let Some(status) = native_status.as_ref() {
+            if let Err(error) = evidence.observe(status) {
+                break Err(error);
+            }
+            if let Err(error) = evidence.observe_cancel_ownership(status, &play, &account) {
+                break Err(error);
+            }
+        }
+        let (runner_status, start_count, error) = {
+            let mut slot = state
+                .lock()
+                .map_err(|_| "Quester skip live state poisoned")?;
+            if run_state == script::RunState::Running {
+                slot.runner.observe_script_running();
+            }
+            (slot.runner.status(), slot.start_count, slot.error.clone())
+        };
+        if let Some(error) = error {
+            break Err(error);
+        }
+        if let Some(status) = native_status.as_ref() {
+            if evidence.skip.is_none() {
+                if let Some(action) = SkipQueueEvidence::active_cook_action(status)? {
+                    match play.script_skip_quest(&account, Some(status.run)) {
+                        Ok(skipped) => {
+                            evidence.accept_skip(action, skipped.clone())?;
+                            println!(
+                                "{}",
+                                json!({
+                                    "phase": "skip-accepted",
+                                    "live_case": SKIP_CELL,
+                                    "account": account,
+                                    "quest_id": skipped.quest_id,
+                                    "step_id": skipped.step_id,
+                                    "active_action": evidence.skip.as_ref().map(|receipt| json!({
+                                        "action_state": receipt.action.action_state,
+                                        "child_step_id": receipt.action.child_step_id,
+                                        "native_phase": receipt.action.phase,
+                                    })),
+                                })
+                            );
+                        }
+                        Err(failure) => {
+                            break Err(format!(
+                                "Skip quest refused while Cook action was active: {} ({})",
+                                failure.message, failure.code
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(error) = script_error.as_deref() {
+            if !evidence.sheep_completed || !error.contains("skipped by operator") {
+                break Err(format!("Quester skip lifecycle error: {error}"));
+            }
+        }
+        if let Some(receipt) = lifecycle.as_ref() {
+            match receipt.state {
+                script::ScriptTerminalState::Failed => {
+                    if matches!(&runner_status, RunnerStatus::Passed) {
+                        let Some(status) = native_status.as_ref() else {
+                            break Err("failed Quester skip run has no native status".into());
+                        };
+                        if let Err(error) = evidence.validate_terminal(
+                            status,
+                            receipt,
+                            run_state,
+                            true,
+                            start_count,
+                        ) {
+                            break Err(error);
+                        }
+                        println!(
+                            "{}",
+                            json!({
+                                "phase": "witness",
+                                "live_case": SKIP_CELL,
+                                "scenario": "quester_skip",
+                                "native_evidence": evidence.json(),
+                                "runner_status": format!("{runner_status:?}"),
+                                "run_state": format!("{run_state:?}"),
+                                "lifecycle": format!("{receipt:?}"),
+                                "start_count": start_count,
+                            })
+                        );
+                        break Ok(());
+                    }
+                }
+                script::ScriptTerminalState::Completed
+                | script::ScriptTerminalState::Cancelled
+                | script::ScriptTerminalState::Stopped => {
+                    break Err(format!("quester skip run ended unexpectedly: {receipt:?}"));
+                }
+            }
+        }
+        if let RunnerStatus::Failed(error) = &runner_status {
+            break Err(format!("quester skip scenario failed: {error}"));
+        }
+        if Instant::now() >= outer_deadline {
+            let tile = state
+                .lock()
+                .map_err(|_| "Quester skip live state poisoned")?
+                .snapshot
+                .tile();
+            break Err(format!(
+                "quester skip timed out: runner={runner_status:?} native_status={native_status:?} lifecycle={lifecycle:?} run_state={run_state:?} tile={tile:?} evidence={}",
+                evidence.json()
+            ));
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    };
+    let expected_skip_line = evidence.skip.as_ref().map(|skip| {
+        format!(
+            "command accepted: SkipQuest on {account}: {account}: quest_id={} step_id={}",
+            skip.quest_id, skip.step_id
+        )
+    });
+    let accepted_skip_log = SKIP_SESSION_LOG
+        .0
+        .lock()
+        .map_err(|_| "quester skip session log poisoned")?
+        .iter()
+        .find(|entry| {
+            entry.slot.as_deref() == Some(account.as_str())
+                && entry.source == api::hostlog::Source::Host
+                && entry.level == api::hostlog::Level::Info
+                && expected_skip_line
+                    .as_deref()
+                    .is_some_and(|expected| entry.message == expected)
+        })
+        .map(|entry| entry.message.clone());
+    let result = if result.is_ok() && accepted_skip_log.is_none() {
+        Err(format!(
+            "accepted SkipQuest info line missing from session log: {}",
+            expected_skip_line
+                .as_deref()
+                .unwrap_or("no accepted skip receipt")
+        ))
+    } else {
+        result
+    };
+    println!(
+        "{}",
+        json!({
+            "phase": "comparison-terminal",
+            "live_case": SKIP_CELL,
+            "account": account,
+            "result": format!("{result:?}"),
+            "native_evidence": evidence.json(),
+            "accepted_skip_log": accepted_skip_log,
+            "lifecycle": format!("{:?}", play.script_lifecycle_receipt(&account)),
+            "run_state": format!("{:?}", play.script_state(&account)),
+        })
+    );
+    play.stop_slot(&account);
+    result
+}
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=1..4 bytes, explicit WORLD_NAV_PACK/WORLD_ENGINE_DIR/RS2B0T/BOT_CACHE_DIR and Engine L"]
+fn quester_skip_active_cook_parks_then_sheep_completes() {
+    run_quester_skip().unwrap();
+}
 #[test]
 #[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=qs, explicit WORLD_NAV_PACK/WORLD_ENGINE_DIR/RS2B0T/BOT_CACHE_DIR and local 289 engine"]
 fn quester_queue() {
     run_quester_queue().unwrap();
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn skip_probe_waits_for_cook_bank_action() {
+    use script::native::StatusField;
+
+    let status = |step_id: &str, action_state: &str| ScriptStatus {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        card: script::CompiledId("Quester"),
+        phase: NativePhase::Working,
+        active_settings: 1,
+        pending_settings: None,
+        fields: Arc::from([
+            StatusField {
+                key: "quest_id",
+                label: "Quest",
+                value: StatusValue::Text("cook".into()),
+            },
+            StatusField {
+                key: "step_id",
+                label: "Step",
+                value: StatusValue::Text(step_id.into()),
+            },
+            StatusField {
+                key: "action_state",
+                label: "Action",
+                value: StatusValue::Text(action_state.into()),
+            },
+        ]),
+        failure: None,
+    };
+    for action_state in ["talking", "walking"] {
+        let early = status("start", action_state);
+        assert!(SkipQueueEvidence::active_cook_action(&early)
+            .unwrap()
+            .is_none());
+    }
+    let bank = status("start", "banking");
+    let action = SkipQueueEvidence::active_cook_action(&bank)
+        .unwrap()
+        .expect("Cook bank action");
+    assert_eq!(action.step_id, "start");
+    assert_eq!(action.action_state, "banking");
+}
+#[cfg(feature = "test-support")]
+#[test]
+fn skip_cleanup_keeps_only_the_compiled_run_owner() {
+    let released = SkipCleanupOwnership {
+        script_walk: None,
+        seat_held: false,
+        live_actions: 1,
+        compiled_owner_live: true,
+        seat_results: 0,
+        reserved_releases: 0,
+    };
+    assert!(released.step_released());
+    assert!(!SkipCleanupOwnership {
+        live_actions: 2,
+        ..released
+    }
+    .step_released());
+    assert!(!SkipCleanupOwnership {
+        compiled_owner_live: false,
+        ..released
+    }
+    .step_released());
+    assert!(!SkipCleanupOwnership {
+        script_walk: Some((3209, 3215, 0)),
+        ..released
+    }
+    .step_released());
+    assert!(!SkipCleanupOwnership {
+        reserved_releases: 1,
+        ..released
+    }
+    .step_released());
+    assert!(!SkipCleanupOwnership {
+        seat_held: true,
+        ..released
+    }
+    .step_released());
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn skip_terminal_oracle_accepts_idle_failed_and_rejects_error() {
+    use script::native::StatusField;
+
+    let evidence = SkipQueueEvidence {
+        skip: Some(SkipRequestReceipt {
+            quest_id: "cook".into(),
+            step_id: "start".into(),
+            action: SkipActionReceipt {
+                quest_id: "cook".into(),
+                step_id: "start".into(),
+                action_state: "talking".into(),
+                child_step_id: None,
+                phase: "Working".into(),
+            },
+        }),
+        active_order: vec!["cook".into(), "sheep".into()],
+        cook_parked: true,
+        cancellation_observed: true,
+        sheep_completed: true,
+        ..Default::default()
+    };
+    let queue: String = script::quester::registry::BUNDLED_INDEX
+        .paths
+        .iter()
+        .map(|path| if path.id == "sheep" { 'D' } else { 'P' })
+        .collect();
+    let reason = "skipped by operator; resolve the condition, then Stop/Start Quester";
+    let mut status = ScriptStatus {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 1,
+            session: 2,
+        },
+        card: script::CompiledId("Quester"),
+        phase: NativePhase::Blocked,
+        active_settings: 1,
+        pending_settings: None,
+        fields: Arc::from([
+            StatusField {
+                key: "queue",
+                label: "Queue",
+                value: StatusValue::Text(queue.into()),
+            },
+            StatusField {
+                key: "completed",
+                label: "Completed this session",
+                value: StatusValue::Integer(1),
+            },
+            StatusField {
+                key: "block_reason",
+                label: "Queue block reason",
+                value: StatusValue::Text("skipped by operator".into()),
+            },
+        ]),
+        failure: Some(script::native::ScriptFailure {
+            code: "queue-blocked".into(),
+            message: reason.into(),
+        }),
+    };
+    let mut lifecycle = script::ScriptLifecycleReceipt {
+        runtime_generation: 1,
+        state: script::ScriptTerminalState::Failed,
+        tick: 1756,
+        reason: reason.into(),
+    };
+    assert!(evidence
+        .validate_terminal(&status, &lifecycle, script::RunState::Idle, true, 1)
+        .is_ok());
+    assert!(evidence
+        .validate_terminal(&status, &lifecycle, script::RunState::Error, true, 1)
+        .is_err());
+    lifecycle.state = script::ScriptTerminalState::Completed;
+    assert!(evidence
+        .validate_terminal(&status, &lifecycle, script::RunState::Idle, true, 1)
+        .is_err());
+    lifecycle.state = script::ScriptTerminalState::Failed;
+    status.phase = NativePhase::Complete;
+    assert!(evidence
+        .validate_terminal(&status, &lifecycle, script::RunState::Idle, true, 1)
+        .is_err());
 }

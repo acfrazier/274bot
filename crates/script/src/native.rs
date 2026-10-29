@@ -473,6 +473,14 @@ pub struct ScriptFailure {
     pub message: Arc<str>,
 }
 
+/// The active queue row and step accepted by the operator's Skip quest command.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkippedQuest {
+    pub quest_id: Arc<str>,
+    pub step_id: Arc<str>,
+}
+
 pub trait Script: Send {
     /// Visible per-account pairing intent; the Play broker never starts another slot.
     fn pair_settings(&self) -> Option<crate::quester::pair::PairSettings> {
@@ -495,6 +503,14 @@ pub trait Script: Send {
         Err(ScriptFailure {
             code: "read-journal-unsupported".into(),
             message: "this card does not read quest journals".into(),
+        })
+    }
+    /// Park the active queued quest without stopping the script run.
+    #[cfg(any(test, feature = "test-support"))]
+    fn skip_quest(&mut self) -> Result<SkippedQuest, ScriptFailure> {
+        Err(ScriptFailure {
+            code: "not-quester".into(),
+            message: "bot is not running the Quester queue".into(),
         })
     }
     fn interrupt(&mut self, _event: Interrupt) {}

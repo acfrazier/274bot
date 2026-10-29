@@ -11665,3 +11665,41 @@ fn settings_feedback_a_pending_launch_choice_stays_with_its_profile() {
         "Alice's memory failure is not Bob's"
     );
 }
+
+#[test]
+fn panel_skip_quest_refusal_uses_expiring_shared_command_feedback() {
+    use frontend_core::ERROR_MESSAGE_TIMEOUT as TIMEOUT;
+
+    let _iso = IsolatedStores::enter("panel-quester-skip-refusal");
+    let mut s = Session::new();
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(
+            &tmp_vault("panel-quester-skip-refusal"),
+            "test-passphrase-01",
+        ),
+    );
+    let name = "skiprefusalpanel";
+    vault_upsert(&mut s.core, profile(name, "pw", 42));
+    s.persist_ui = false;
+    s.load(name);
+    s.select(name);
+
+    let before = s.core.refusals();
+    s.script_skip_quest(None);
+    let message = "bot is not running the Quester queue";
+    assert_eq!(s.error.as_deref(), Some(message));
+    assert_eq!(s.core.refusals(), before + 1);
+    let lines = refusal_lines_naming(name);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].contains("SkipQuest") && lines[0].contains(message));
+
+    let now = Instant::now();
+    s.expire_error(now);
+    s.expire_error(now + TIMEOUT - Duration::from_secs(1));
+    assert_eq!(s.error.as_deref(), Some(message));
+    s.expire_error(now + TIMEOUT);
+    assert_eq!(s.error, None, "the refusal expires at the shared timeout");
+}
