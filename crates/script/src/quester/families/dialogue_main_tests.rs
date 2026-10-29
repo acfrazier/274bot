@@ -1548,6 +1548,7 @@ fn dialogue_approach_fails_when_npc_keeps_moving_after_content_bound() {
         );
     }
 
+    let final_tick = 2 + u64::from(replan_budget);
     let approach_tick_budget = u64::from(replan_budget)
         .saturating_add(1)
         .saturating_mul(u64::from(DIALOGUE_APPROACH_ROUTE_TICKS));
