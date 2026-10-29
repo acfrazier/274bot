@@ -19,12 +19,11 @@
     "progress":{
       "colour":{"not_started":"routequest:0","in_progress":"routequest:5","complete":"routequest:complete"},
       "rules":[
-        {"stage":"routequest:52","all":["a guard named", "asked me to answer some questions"],"any":[],"not":[],"varp":52},
-        {"stage":"routequest:25","all":["i borrowed the", "hollows"],"any":[],"not":[],"varp":25},
-        {"stage":"routequest:20","all":["the boatman", "but i can use his"],"any":[],"not":[],"varp":20},
-        {"stage":"routequest:15","all":["i've persuaded", "the boatman"],"any":[],"not":[],"varp":15},
-        {"stage":"routequest:10","all":["the boatman", "won't take me"],"any":[],"not":[],"varp":10},
-        {"stage":"routequest:5","all":["the weapons i need to collect are"],"any":[],"not":[],"varp":5}
+        {"stage":"routequest:25","all":["i borrowed the", "hollows"],"any":[],"not":["came across a guard"],"varp":25},
+        {"stage":"routequest:20","all":["the boatman", "but i can use his"],"any":[],"not":["came across a guard"],"varp":20},
+        {"stage":"routequest:15","all":["i've persuaded", "the boatman"],"any":[],"not":["came across a guard"],"varp":15},
+        {"stage":"routequest:10","all":["the boatman", "won't take me"],"any":[],"not":["came across a guard"],"varp":10},
+        {"stage":"routequest:5","all":["the weapons i need to collect are"],"any":[],"not":["came across a guard"],"varp":5}
       ],"flags":[],"monotonic":false
     },
     "prelude":[],"sequences":[
@@ -38,25 +37,25 @@
         {"id":"persuade-cyreg","kind":"talk","version":1,"advances":true,
          "comment":"content/scripts/quests/quest_routequest/scripts/routequest_morton.rs2:57-77,89-96,106-111,125-132,134-153,155-157,174-180,188-216; content/maps/m55_51.jm2:4547. Carry all six steel weapons, five pouch charges and six planks.",
          "args":{"npc":"route_cyreg_paddlehorn","anchor":{"tile":[3522,3284,0],"source":"content/maps/m55_51.jm2:4547"},"leash":8,"prefer":["Give wooden planks to Cyreg.","What kind of a man are you to say that you don't care?","If you don't tell me, their deaths are on your head!","Resourceful enough to get their own steel weapons?","Well, I guess they'll just die without weapons."],"strict":true},
-         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:20","routequest:25","routequest:52"]}}}}
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:20","routequest:25"]}}}}
       ]},
       {"stage":"routequest:10","required":[],"terminal":false,"recovery_entry":null,"steps":[
         {"id":"resume-cyreg-persuasion","kind":"talk","version":1,"advances":true,
          "comment":"content/scripts/quests/quest_routequest/scripts/routequest_morton.rs2:73-77,89-96,106-111,125-132,134-153,155-157,174-180,188-216. This resumes after an interrupted persuasion conversation.",
          "args":{"npc":"route_cyreg_paddlehorn","anchor":{"tile":[3522,3284,0],"source":"content/maps/m55_51.jm2:4547"},"leash":8,"prefer":["Give wooden planks to Cyreg.","What kind of a man are you to say that you don't care?","If you don't tell me, their deaths are on your head!","Resourceful enough to get their own steel weapons?","Well, I guess they'll just die without weapons."],"strict":true},
-         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:20","routequest:25","routequest:52"]}}}}
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:20","routequest:25"]}}}}
       ]},
       {"stage":"routequest:15","required":[],"terminal":false,"recovery_entry":null,"steps":[
         {"id":"give-cyreg-planks","kind":"talk","version":1,"advances":true,
          "comment":"content/scripts/quests/quest_routequest/scripts/routequest_morton.rs2:75-77,188-216. Five druid pouch charges and three planks are required; keep three more planks for the bridge.",
          "args":{"npc":"route_cyreg_paddlehorn","anchor":{"tile":[3522,3284,0],"source":"content/maps/m55_51.jm2:4547"},"leash":8,"prefer":["Give wooden planks to Cyreg."],"strict":true},
-         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:20","routequest:25","routequest:52"]}}}}
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:20","routequest:25"]}}}}
       ]},
       {"stage":"routequest:20","required":[],"terminal":false,"recovery_entry":null,"steps":[
         {"id":"board-mortton-boat","kind":"interact","version":1,"advances":true,
          "comment":"content/scripts/quests/quest_routequest/scripts/routequest_morton.rs2:1-21,34-55; content/maps/m55_51.jm2:4165; content/scripts/_unpack/289/all.loc:1909-1915. The journey contains p_delay(13).",
          "args":{"target":{"loc":"route_rowboat","tile":[3523,3284,0],"source":"content/maps/m55_51.jm2:4165"},"op":"Board","anchor":{"tile":[3523,3284,0],"source":"content/maps/m55_51.jm2:4165"},"radius":4,"dialogue":{"prefer":["Yes, I'll pay ten gold."],"strict":true,"gap_ticks":14}},
-         "skip_if":{"Fact":{"kind":"in_area","version":1,"args":{"area":"hollows"}}},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:25","routequest:52"]}}}}
+         "skip_if":{"Fact":{"kind":"in_area","version":1,"args":{"area":"hollows"}}},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:25"]}}}}
       ]},
       {"stage":"routequest:25","required":[],"terminal":false,"recovery_entry":null,"steps":[
         {"id":"climb-south-tree","kind":"interact","version":1,"advances":false,
