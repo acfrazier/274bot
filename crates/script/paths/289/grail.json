@@ -4,7 +4,8 @@
   "id": "grail",
   "display_name": "Holy Grail",
   "required": [
-    "merlin-complete"
+    "merlin-complete",
+    "attack-20"
   ],
   "tested_stats": null,
   "partner": null,
@@ -19,6 +20,12 @@
         },
         "at": "start",
         "source": "scripts/areas/area_camelot/scripts/king_arthur.rs2:40-45,53-67"
+      },
+      {
+        "id": "attack-20",
+        "kind": {"Skill": {"skill": "attack", "level": 20}},
+        "at": "start",
+        "source": "content/scripts/levelrequire/scripts/tier20.rs2:16; content/scripts/quests/quest_grail/scripts/black_knight_titan.rs2:27-45"
       }
     ],
     "items": [],
@@ -743,51 +750,23 @@
               "advances": false
             },
             {
-              "id": "withdraw-excalibur",
-              "kind": "bank",
+              "id": "reissue-excalibur",
+              "kind": "talk",
               "version": 1,
+              "advances": false,
               "args": {
-                "op": "withdraw",
-                "at": "nearest",
-                "items": [
-                  {
-                    "obj": "excalibur",
-                    "qty": 1
-                  }
-                ]
+                "npc": "ladyofthelake",
+                "anchor": {"tile": [2924, 3405, 0], "source": "content/maps/m45_53.jm2:7656; content/pack/npc.pack:250"},
+                "leash": 8,
+                "prefer": ["I seek the sword Excalibur."],
+                "strict": true
               },
-              "skip_if": {
-                "Any": [
-                  {
-                    "Fact": {
-                      "kind": "has_item",
-                      "version": 1,
-                      "args": {
-                        "obj": "excalibur"
-                      }
-                    }
-                  },
-                  {
-                    "Fact": {
-                      "kind": "worn",
-                      "version": 1,
-                      "args": {
-                        "obj": "excalibur"
-                      }
-                    }
-                  }
-                ]
-              },
-              "settle": {
-                "Fact": {
-                  "kind": "has_item",
-                  "version": 1,
-                  "args": {
-                    "obj": "excalibur"
-                  }
-                }
-              },
-              "comment": "scripts/quests/quest_grail/scripts/black_knight_titan.rs2:27-45"
+              "skip_if": {"Any": [
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "excalibur"}}},
+                {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "excalibur"}}}
+              ]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "excalibur"}}},
+              "comment": "After Merlin's Crystal, the Lady reissues a missing Excalibur for 500 coins: content/scripts/areas/area_taverly/scripts/lady_of_the_lake.rs2:4-5,20-34."
             },
             {
               "id": "reach-whistle-zone",

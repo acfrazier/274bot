@@ -3665,6 +3665,44 @@ fn dialogue_approaches_a_distant_npc_before_talking() {
         );
     });
 }
+#[test]
+fn talk_anchor_approach_uses_area_arrival_within_the_leash() {
+    compile_context_test(|cx| {
+        let anchor = tile(2542, 3170);
+        let plan = compile_talk(
+            test_args::<TalkArgs>(serde_json::json!({
+                "npc": "king_bolren",
+                "anchor": {
+                    "tile": [2542, 3170, 0],
+                    "source": "test fixture"
+                },
+                "leash": 10
+            })),
+            cx,
+        )
+        .unwrap();
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(2528, 3180)));
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |step| plan.begin(step).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        let HostEffect::Walk(request) = &ledger.as_ref().unwrap().outbox[0].effect else {
+            panic!("a talk anchor outside the leash needs an approach walk");
+        };
+        assert_eq!(request.target, anchor);
+        assert_eq!(request.radius, 10);
+        assert_eq!(
+            request.arrival,
+            nav_planner::contract::ArrivalKind::Area,
+            "the interaction leash must accept any tile in its area"
+        );
+    });
+}
 
 #[test]
 fn use_on_chases_a_distant_npc_without_returning_to_the_initial_anchor() {
@@ -5360,6 +5398,143 @@ pub(crate) fn seed_dialogue_combat(snapshot: &mut GameSnapshot, in_combat: bool)
     });
 }
 
+pub(crate) fn seed_dialogue_attacker(snapshot: &mut GameSnapshot, kind: api::snapshot::ActorKind) {
+    let target = api::snapshot::ActorTargetView {
+        kind: api::snapshot::ActorKind::Player,
+        index: 0,
+    };
+    match kind {
+        api::snapshot::ActorKind::Npc => snapshot.seed_npcs(vec![api::snapshot::NpcView {
+            index: 42,
+            r#type: None,
+            name: Some("Attacker".into()),
+            actions: Vec::new(),
+            tile: tile(3254, 3401),
+            distance: 1,
+            animation: -1,
+            animation_frame: 0,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: -1,
+            health: 10,
+            total_health: 10,
+            face_entity: -1,
+            target: Some(target),
+            moving: false,
+            running: false,
+            in_combat: true,
+            level: 1,
+            size: 1,
+            network: tile(3254, 3401),
+            x: 0,
+            z: 0,
+            yaw: 0,
+        }]),
+        api::snapshot::ActorKind::Player => {
+            let mut attacker = local_player(tile(3254, 3401)).player;
+            attacker.index = 42;
+            attacker.actor.target = Some(target);
+            attacker.actor.in_combat = true;
+            snapshot.seed_players(vec![attacker]);
+        }
+    }
+}
+
+#[test]
+fn dialogue_self_damage_without_an_attacker_completes_after_the_close_gap() {
+    use super::dialogue::Dialogue;
+
+    let mut snapshot = ready();
+    // A failed railing repair closes its chat and damage_self raises the
+    // health-bar window without supplying an attacker.
+    snapshot.seed_chat_modal(
+        4882,
+        vec![
+            "You attempt to replace the missing railing...".into(),
+            "but fail and cut yourself trying.".into(),
+        ],
+    );
+    seed_dialogue_combat(&mut snapshot, false);
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(
+                dialogue::DialogueArgs {
+                    target: dialogue::DialogueTarget::Npc {
+                        id: 0,
+                        name: Arc::from("Aubury"),
+                    },
+                    options: dialogue::DialogueOptions {
+                        prefer: Arc::from([]),
+                        choose: None,
+                        ..Default::default()
+                    },
+                },
+                &mut tick.cx,
+            )
+            .unwrap()
+    });
+
+    snapshot.seed_chat_modal(-1, vec![]);
+    seed_dialogue_combat(&mut snapshot, true);
+    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
+    ));
+}
+
+#[test]
+fn dialogue_close_with_a_visible_attacker_interrupts() {
+    use super::dialogue::Dialogue;
+    use crate::native::ActionError;
+
+    for kind in [
+        api::snapshot::ActorKind::Npc,
+        api::snapshot::ActorKind::Player,
+    ] {
+        let mut snapshot = ready();
+        snapshot.seed_chat_modal(4882, vec![]);
+        seed_dialogue_combat(&mut snapshot, false);
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Dialogue>(
+                    dialogue::DialogueArgs {
+                        target: dialogue::DialogueTarget::Npc {
+                            id: 0,
+                            name: Arc::from("Aubury"),
+                        },
+                        options: dialogue::DialogueOptions {
+                            prefer: Arc::from([]),
+                            choose: None,
+                            ..Default::default()
+                        },
+                    },
+                    &mut tick.cx,
+                )
+                .unwrap()
+        });
+        snapshot.seed_chat_modal(-1, vec![]);
+        seed_dialogue_combat(&mut snapshot, true);
+        seed_dialogue_attacker(&mut snapshot, kind);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 2, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            }),
+            Poll::Ready(Err(ActionError::CombatInterrupted))
+        ));
+    }
+}
+
 #[test]
 fn dialogue_hostile_close_never_reports_success() {
     use super::dialogue::Dialogue;
@@ -5387,6 +5562,7 @@ fn dialogue_hostile_close_never_reports_success() {
     });
     snapshot.seed_chat_modal(-1, vec![]);
     seed_dialogue_combat(&mut snapshot, true);
+    seed_dialogue_attacker(&mut snapshot, api::snapshot::ActorKind::Npc);
     let mut result = Poll::Pending;
     for tick in 2..=6 {
         result = with_tick(&snapshot, &mut ledger, tick, |t| {
@@ -5451,6 +5627,7 @@ fn dialogue_combat_interruption_covers_open_and_page_acknowledgements() {
         snapshot.seed_chat_modal(-1, vec![]);
         snapshot.seed_chat_options(vec![], -1);
         seed_dialogue_combat(&mut snapshot, true);
+        super::tests::seed_dialogue_attacker(&mut snapshot, api::snapshot::ActorKind::Npc);
         with_tick(&snapshot, &mut ledger, 3, |t| {
             assert!(matches!(
                 t.actions.poll(&handle, &mut t.cx),
@@ -5618,6 +5795,15 @@ fn dialogue_open_clock_starts_after_approaching_the_npc() {
 
 #[test]
 fn sheep_partial_hand_in_spins_only_the_remaining_unheld_balls() {
+    assert_sheep_partial_spin(true);
+}
+
+#[test]
+fn sheep_spinning_exhausted_inputs_fail_below_the_held_target() {
+    assert_sheep_partial_spin(false);
+}
+
+fn assert_sheep_partial_spin(finish_target: bool) {
     use client::io::ServerProt;
     compile_context_test(|cx| {
         let document: crate::quester::path::PathDocument =
@@ -5720,12 +5906,14 @@ fn sheep_partial_hand_in_spins_only_the_remaining_unheld_balls() {
             }],
             28,
         );
-        let Poll::Ready(Ok(outcome)) = with_tick(&snapshot, &mut ledger, 8, |tick| {
-            with_sheep_step(tick, 12, |cx| run.poll(cx))
-        }) else {
-            panic!("observed production progress must return to Path settlement");
-        };
-        let settle = |cx: &mut StepContext<'_, '_>| {
+        assert!(
+            with_tick(&snapshot, &mut ledger, 8, |tick| {
+                with_sheep_step(tick, 12, |cx| run.poll(cx))
+            })
+            .is_pending(),
+            "partial output must not complete the held target"
+        );
+        let settle = |cx: &mut StepContext<'_, '_>, outcome: Option<&StepOutcome>| {
             step.settle.evaluate(&PredicateContext {
                 cx: &cx.tick.cx,
                 pairs: cx.tick.pairs,
@@ -5733,20 +5921,49 @@ fn sheep_partial_hand_in_spins_only_the_remaining_unheld_balls() {
                 progress: cx.progress,
                 required_after: cx.required_after,
                 chat_since: 0,
-                outcome: Some(&outcome),
+                outcome,
             })
         };
         assert_eq!(
             with_tick(&snapshot, &mut ledger, 8, |tick| {
-                with_sheep_step(tick, 12, settle)
+                with_sheep_step(tick, 12, |cx| settle(cx, None))
             }),
             Truth::False,
             "11 held balls cannot settle the journal's remaining 12"
         );
+        if !finish_target {
+            // No raw wool remains. A final queued output can still arrive within
+            // three ticks (skill_crafting/scripts/spinning/spinning.rs2:83-99).
+            for _ in 0..100 {
+                assert!(with_tick(&snapshot, &mut ledger, 8, |tick| {
+                    with_sheep_step(tick, 12, |cx| run.poll(cx))
+                })
+                .is_pending());
+            }
+            for game_tick in 9..=10 {
+                assert!(with_tick(&snapshot, &mut ledger, game_tick, |tick| {
+                    with_sheep_step(tick, 12, |cx| run.poll(cx))
+                })
+                .is_pending());
+            }
+            assert!(matches!(
+                with_tick(&snapshot, &mut ledger, 11, |tick| {
+                    with_sheep_step(tick, 12, |cx| run.poll(cx))
+                }),
+                Poll::Ready(Err(ActionError::Failed(reason)))
+                    if reason.as_ref() == "production did not reach the held target"
+            ));
+            return;
+        }
         snapshot.seed_inventory(vec![ItemView { count: 12, ..ball }], 28);
+        let Poll::Ready(Ok(outcome)) = with_tick(&snapshot, &mut ledger, 9, |tick| {
+            with_sheep_step(tick, 12, |cx| run.poll(cx))
+        }) else {
+            panic!("the complete held target must finish production");
+        };
         assert_eq!(
             with_tick(&snapshot, &mut ledger, 9, |tick| {
-                with_sheep_step(tick, 12, settle)
+                with_sheep_step(tick, 12, |cx| settle(cx, Some(&outcome)))
             }),
             Truth::True
         );
@@ -8138,3 +8355,6 @@ fn walk_arrival_in_a_new_scene_is_read_on_the_next_tick() {
         );
     }
 }
+
+#[path = "timed_ground_tests.rs"]
+mod timed_ground_tests;

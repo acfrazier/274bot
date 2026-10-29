@@ -5,8 +5,7 @@
   "display_name": "Lost City",
   "required": [
     "crafting:31",
-    "woodcutting:36",
-    "magic:35"
+    "woodcutting:36"
   ],
   "tested_stats": null,
   "partner": null,
@@ -35,23 +34,12 @@
         },
         "at": "start",
         "source": "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2:28-40"
-      },
-      {
-        "id": "magic:35",
-        "kind": {
-          "Skill": {
-            "skill": "magic",
-            "level": 35
-          }
-        },
-        "at": "start",
-        "source": "scripts/skill_combat/configs/magic/magic_combat_spells.dbrow:134-143; authored Fire Bolt tactic, not a quest prerequisite"
       }
     ],
     "items": [],
     "acquire": {},
     "bank": "nearest",
-    "coin_float": 0,
+    "coin_float": 142,
     "loadouts": {
       "entrana": {
         "worn": {},
@@ -202,7 +190,15 @@
           "required": [],
           "terminal": false,
           "recovery_entry": null,
+          "order": "ordered",
           "steps": [
+            {
+              "id": "buy-axe-for-shamus", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "bob", "anchor": {"tile": [3232, 3203, 0], "source": "content/maps/m50_50.jm2:9693"}}, "obj": "bronze_axe", "qty": 1, "est_gp": 16},
+              "comment": "content/scripts/areas/area_lumbridge/configs/lumbridge.inv:1-10; content/scripts/areas/area_lumbridge/configs/lumbridge.npc:129-132; content/scripts/skill_woodcutting/configs/axes/axes.obj:35-38; content/scripts/shop/scripts/shop.rs2:131-147,182-187. Price assumes base stock.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_axe"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_axe"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_axe"}}}
+            },
             {
               "id": "find-shamus",
               "kind": "interact",
@@ -289,6 +285,13 @@
           "terminal": false,
           "recovery_entry": null,
           "steps": [
+            {
+              "id": "buy-entrana-food", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "baker_merchant", "anchor": {"tile": [2654, 3311, 0], "source": "content/maps/m41_51.jm2:10991"}}, "obj": "bread", "qty": 10, "est_gp": 126},
+              "comment": "content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-24; content/scripts/areas/area_ardougne_east/configs/ardougne_east.npc:383-413; content/scripts/skill_cooking/configs/cooking_inv/configs/dough/dough.obj:39-50; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187.",
+              "skip_if": {"Any": [{"Fact": {"kind": "in_area", "version": 1, "args": {"area": "entrana"}}}, {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "dungeon"}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}}]},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}}
+            },
             {
               "id": "remove-equipment",
               "kind": "loadout",
@@ -429,11 +432,7 @@
                 "op": "deposit_all",
                 "at": "nearest",
                 "keep": [
-                  "knife",
-                  "chaosrune",
-                  "airrune",
-                  "firerune",
-                  "lobster"
+                  "knife", "bread"
                 ]
               },
               "skip_if": {
@@ -464,11 +463,7 @@
                           "version": 1,
                           "args": {
                             "objs": [
-                              "knife",
-                              "chaosrune",
-                              "airrune",
-                              "firerune",
-                              "lobster"
+                              "knife", "bread"
                             ]
                           }
                         }
@@ -504,11 +499,7 @@
                       "version": 1,
                       "args": {
                         "objs": [
-                          "knife",
-                          "chaosrune",
-                          "airrune",
-                          "firerune",
-                          "lobster"
+                          "knife", "bread"
                         ]
                       }
                     }
@@ -667,14 +658,10 @@
                 },
                 "tactic": {
                   "kind": "open",
-                  "style": "mage",
+                  "style": "melee",
                   "engage_radius": 12,
                   "auto_retaliate": false
                 },
-                "spells": [
-                  "fire_bolt"
-                ],
-                "fallback_spells": false,
                 "stand": {
                   "tile": [
                     2842,
@@ -685,28 +672,12 @@
                 },
                 "lost_radius": 20,
                 "kill_budget_ticks": 500,
-                "loot": [
-                  "bronze_axe"
-                ],
-                "until": {
-                  "Fact": {
-                    "kind": "has_item",
-                    "version": 1,
-                    "args": {
-                      "obj": "bronze_axe"
-                    }
-                  }
-                }
+                "until_drop": {"obj": "bronze_axe", "max_kills": 19, "stop": "GAP-entrana-zombie-axe-budget"}
               },
-              "skip_if": {
-                "Fact": {
-                  "kind": "has_item",
-                  "version": 1,
-                  "args": {
-                    "obj": "bronze_axe"
-                  }
-                }
-              },
+              "skip_if": {"Any": [
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_axe"}}},
+                {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_axe"}}}
+              ]},
               "settle": {
                 "Fact": {
                   "kind": "has_item",
@@ -716,8 +687,15 @@
                   }
                 }
               },
-              "comment": "scripts/drop tables/scripts/zombie.rs2:102-116; maps/m44_152.jm2:8477-8481; scripts/skill_combat/configs/magic/magic_combat_spells.dbrow:134-143",
+              "comment": "scripts/drop tables/scripts/zombie.rs2:102-116; maps/m44_152.jm2:8477-8481.",
               "advances": false
+            },
+            {
+              "id": "equip-entrana-axe", "kind": "equip", "version": 1,
+              "args": {"obj": "bronze_axe"},
+              "comment": "The axe is a level-1 weapon for the spirit fight. Woodcutting accepts it while worn. content/scripts/levelrequire/scripts/tier1.rs2:1-5; content/scripts/tutorial/scripts/tutorial.rs2:267-280; content/scripts/skill_woodcutting/scripts/woodcut.rs2:159-161,201-205; content/scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2:28-55.",
+              "skip_if": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_axe"}}},
+              "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_axe"}}}
             },
             {
               "id": "summon-spirit",
@@ -771,14 +749,10 @@
                 },
                 "tactic": {
                   "kind": "open",
-                  "style": "mage",
+                  "style": "melee",
                   "engage_radius": 10,
                   "auto_retaliate": false
                 },
-                "spells": [
-                  "fire_bolt"
-                ],
-                "fallback_spells": false,
                 "stand": {
                   "tile": [
                     2860,

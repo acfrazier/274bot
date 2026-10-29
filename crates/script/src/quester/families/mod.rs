@@ -10,6 +10,7 @@ pub mod reach;
 pub mod s2;
 pub mod setting;
 pub mod thieve;
+pub mod timed_ground;
 
 use super::compile::{
     AcquisitionTraceOutcome, CompileContext, CompileError, PredicateContext, PredicatePlan,
@@ -1539,6 +1540,8 @@ struct TalkRun {
     dialogue: Option<ActionHandle<dialogue::Dialogue>>,
     started: bool,
 }
+// 576 B measured (+32 B headroom): both inline action handles store machine state; this approach fix adds no fields.
+const _: [(); 1] = [(); (std::mem::size_of::<TalkRun>() <= 608) as usize];
 impl StepRun for TalkRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         if let Some(handle) = &self.walk {
@@ -1562,11 +1565,11 @@ impl StepRun for TalkRun {
                 let near =
                     here.is_some_and(|here| reach::within(here, tile, i32::from(self.leash)));
                 if !near {
+                    let mut request =
+                        reach::walk_request(tile, self.leash, None, cx.required_after);
+                    request.arrival = nav_planner::contract::ArrivalKind::Area;
                     self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                        cx.tick.actions.begin::<Walk>(
-                            reach::walk_request(tile, self.leash, None, cx.required_after),
-                            &mut cx.tick.cx,
-                        ),
+                        cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
                     ))?);
                     return Poll::Pending;
                 }
@@ -1706,6 +1709,11 @@ pub(crate) struct InteractArgs {
     #[serde(default)]
     #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
     pub(crate) settle_ms: Option<u64>,
+    /// Total observed game-tick budget for a ground-item Take, including spawn wait.
+    /// With this field, the step completes only after the inventory gains the item.
+    #[serde(default)]
+    #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
+    pub(crate) max_ticks: Option<u32>,
     /// Omission drains optional chat and selected Scroll/Book pages without answering menus.
     /// No-page completion requires a fresh idle-player tick after acceptance.
     /// Scene targets outside interaction range also need post-acceptance
@@ -1751,6 +1759,19 @@ pub(crate) fn compile_interact(
         || arg.settle_ms == Some(0)
     {
         return Err(CompileError::code("invalid-args"));
+    }
+    if arg.max_ticks.is_some()
+        && (arg.max_ticks == Some(0)
+            || arg.target.ground.is_none()
+            || !arg.op.eq_ignore_ascii_case("Take")
+            || arg.settle_ms.is_some()
+            || arg.dialogue.is_some()
+            || arg.until.is_some()
+            || arg.wait_until.is_some()
+            || arg.reachable_only
+            || arg.target.tile.is_some())
+    {
+        return Err(CompileError::code("invalid-timed-ground"));
     }
     let tile = anchor_tile(arg.anchor.as_ref())?;
     let ambiguous = arg
@@ -1806,6 +1827,9 @@ pub(crate) fn compile_interact(
     } else {
         return Err(CompileError::code("invalid-args"));
     };
+    if let Some(max_ticks) = arg.max_ticks {
+        return Ok(timed_ground::plan(kind, tile, arg.radius.max(1), max_ticks));
+    }
     let target_tile = if let Some(tile) = arg.target.tile {
         if !matches!(
             kind,

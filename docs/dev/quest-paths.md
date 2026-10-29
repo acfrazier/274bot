@@ -26,6 +26,121 @@ Each `step!` row declares an `AdvanceClass`: `Explicit` or `Default` (`crates/sc
 
 Rerun a failing large guide with `--errors=json --verbose`. JSON gives `instancePath`, `schemaPath`, and data, plus the applicable schema fragment (`parentSchema`) that names the `Args` shape. The text form names only the data path.
 
+## Bounded content acquisitions
+
+### Kill until the required item drops
+
+Use the combat family's `until_drop` policy for a chance-only required item:
+
+```json
+{
+  "until_drop": {
+    "obj": "bronze_axe",
+    "max_kills": 24,
+    "stop": "GAP-entrana-zombie-axe-budget"
+  }
+}
+```
+
+Add this object to the usual `combat` arguments, alongside the target and tactic.
+The policy takes the required item through the combat family's existing loot phase.
+It completes only when the item reaches the inventory.
+The kill count persists across native re-engagements within that step.
+Only a confirmed `Killed` result spends the budget.
+Disappearance, a missing target, or an attempt timeout does not count as a kill.
+
+The final permitted kill still receives the normal loot wait and pickup.
+If the item remains absent, the runner parks with the authored `stop`.
+The combat receipt and the `combat_kills` status field retain the total kill count.
+The policy cannot share a step with `finish`, `until`, or `win`.
+The compiler rejects a zero budget, an empty stop, or an unresolved item.
+
+The guide author derives the kill budget from the content's drop rate.
+Cite that rate and the budget calculation in the guide.
+For Lost City's zombie axe, `drop tables/scripts/zombie.rs2:102-110` gives a rate of 50/128.
+A 24-kill budget leaves a miss probability of `(78/128)^24`, about 0.0007%.
+This is a bound, not a promise that an item will drop.
+Lost City and Eadgar can use this policy for their chance-only axe and key sources.
+
+### Select a production menu opened by item use
+
+Use the existing `use_on` family to open the menu.
+Set its settlement predicate to `modal_open`.
+The item-use step leaves the posted production menu for `make`.
+It does not adopt the menu as dialogue or answer its buttons.
+Then use `make` with neither `loc` nor `anchor`:
+
+```json
+{
+  "product": "unstrung_shortbow",
+  "menu": {
+    "obj": "shortbow",
+    "source": "skill_fletching/scripts/cut_logs.rs2:18-41"
+  },
+  "qty": 1,
+  "make_x": false
+}
+```
+
+The `product` names the output item.
+The optional `menu.obj` names the item represented by the posted menu row.
+Some menus show an input item instead of the output.
+`qty` is a held target: hold at least this many output items after production.
+It is not an instruction to make that many additional items.
+The machine selects the named product and a quantity that does not exceed the remaining target.
+The compiler rejects a missing half of the `loc` and `anchor` trigger pair.
+Existing loc-triggered `make` steps retain both fields.
+
+The same selector works after item-on-item and item-on-loc use.
+Ikov can use it after a knife on logs.
+Zombie Queen can use it for bronze wire smithing.
+Nature Spirit can use it for the silver sickle.
+Dragon Slayer can use it for the unfired bowl.
+These steps reuse the shared production machines and do not add another production loop.
+
+### Take a temporary ground item
+
+Add `max_ticks` to a ground-item `interact` with operation `Take`:
+
+```json
+{
+  "target": { "ground": "jail_key" },
+  "op": "Take",
+  "anchor": {
+    "tile": [2931, 9690, 0],
+    "source": "Use the guide's content-derived Jailer combat stand."
+  },
+  "radius": 8,
+  "max_ticks": 100
+}
+```
+
+Use the guide's actual combat stand, not the example tile.
+The bound starts when the step begins.
+It covers both the missing-spawn wait and inventory settlement.
+Repeated host polls do not spend observed game ticks.
+The step waits for the item without a separate `wait_if_missing` setting.
+A successful Take needs an inventory increase, not merely an accepted click.
+An inventory increase at the final permitted tick still completes.
+An increase first observed after that tick does not complete.
+Expiry parks with `ground pickup exceeded its tick budget`.
+The typed receipt records the observed tick count and the final held count.
+The status fields expose these values as `ground_waited_ticks` and `ground_held`.
+
+The compiler rejects zero, other target kinds, and operations other than `Take`.
+This form cannot combine `max_ticks` with:
+
+- `settle_ms`
+- `dialogue`
+- `until`
+- `wait_until`
+- An exact target tile
+- `reachable_only`
+
+Use the ordinary form for those contracts.
+Scorpion Catcher can use this form for the Jailer key.
+The content posts that key for 100 ticks in `drop tables/scripts/jailer.rs2:10`.
+
 ## Ship a bundled guide
 
 Every bundled guide is indexed and embedded three ways, and all three must agree.

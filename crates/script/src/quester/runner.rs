@@ -450,6 +450,11 @@ fn append_combat_status(fields: &mut Vec<StatusField>, outcome: Option<&StepOutc
         label: "Combat target-gone restarts",
         value: StatusValue::Integer(i64::from(receipt.target_gone_restarts)),
     });
+    fields.push(StatusField {
+        key: "combat_kills",
+        label: "Confirmed kills in step",
+        value: StatusValue::Integer(i64::from(receipt.kills)),
+    });
     if let Some(mode) = report.melee_mode_fallback {
         static MODES: std::sync::LazyLock<[Arc<str>; 4]> = std::sync::LazyLock::new(|| {
             [
@@ -1425,6 +1430,29 @@ impl Quester {
             });
         }
         append_combat_status(&mut fields, combat_status);
+        if let Some(receipt) = outcome
+            .and_then(|outcome| outcome.receipt.as_ref())
+            .and_then(|receipt| {
+                receipt
+                    .as_any()
+                    .downcast_ref::<super::families::timed_ground::TimedGroundReceipt>()
+            })
+        {
+            fields.extend([
+                StatusField {
+                    key: "ground_waited_ticks",
+                    label: "Ground pickup observed ticks",
+                    value: StatusValue::Integer(
+                        i64::try_from(receipt.waited_ticks).unwrap_or(i64::MAX),
+                    ),
+                },
+                StatusField {
+                    key: "ground_held",
+                    label: "Ground pickup held",
+                    value: StatusValue::Integer(i64::from(receipt.held)),
+                },
+            ]);
+        }
         if let Some(progress) = &self.progress {
             fields.push(StatusField {
                 key: "quest",
@@ -4053,7 +4081,14 @@ mod tests {
         assert!(bytes < 4096, "Quester is {bytes} bytes");
     }
     #[test]
-    fn combat_report_is_exposed_in_quester_status() {
+    fn quester_capability_status_field_size_is_bounded() {
+        let bytes = std::mem::size_of::<StatusField>();
+        eprintln!("Quester capability StatusField={bytes}; combat adds one, timed take adds two");
+        assert!(bytes <= 56, "capability status field grew to {bytes} bytes");
+    }
+
+    #[test]
+    fn family_receipts_are_exposed_in_quester_status() {
         use crate::combat::{CombatEnd, CombatReport};
         use api::quest_progress::EvidenceStamp;
 
@@ -4104,6 +4139,7 @@ mod tests {
             receipt: Some(Arc::new(CombatReceipt {
                 report,
                 target_gone_restarts: 1,
+                kills: 0,
             })),
         });
         let mut output = Capture::default();
@@ -4161,6 +4197,7 @@ mod tests {
             receipt: Some(Arc::new(CombatReceipt {
                 report: killed,
                 target_gone_restarts: 1,
+                kills: 1,
             })),
         });
         script.publish(&mut output);
@@ -4168,6 +4205,9 @@ mod tests {
         assert!(output.0[1].fields.iter().any(|field| {
             field.key == "combat_end"
                 && matches!(&field.value, StatusValue::Text(value) if value.as_ref() == "Killed")
+        }));
+        assert!(output.0[1].fields.iter().any(|field| {
+            field.key == "combat_kills" && matches!(field.value, StatusValue::Integer(1))
         }));
         script.last_outcome = None;
         script.publish(&mut output);
@@ -4183,6 +4223,7 @@ mod tests {
             receipt: Some(Arc::new(CombatReceipt {
                 report,
                 target_gone_restarts: 1,
+                kills: 0,
             })),
         });
         script.publish(&mut output);
@@ -4191,6 +4232,34 @@ mod tests {
             field.key == "combat_end"
                 && matches!(&field.value, StatusValue::Text(value) if value.as_ref() == "TargetGone")
         }));
+        assert!(output.0[3].fields.iter().any(|field| {
+            field.key == "combat_kills" && matches!(field.value, StatusValue::Integer(0))
+        }));
+        script.last_combat = None;
+        script.last_outcome = Some(StepOutcome {
+            progress: None,
+            evidence: report.evidence,
+            receipt: Some(Arc::new(
+                super::super::families::timed_ground::TimedGroundReceipt {
+                    waited_ticks: 100,
+                    held: 1,
+                },
+            )),
+        });
+        script.publish(&mut output);
+        assert_eq!(output.0.len(), 5);
+        for (key, expected) in [("ground_waited_ticks", 100), ("ground_held", 1)] {
+            assert!(output.0[4].fields.iter().any(|field| {
+                field.key == key && matches!(field.value, StatusValue::Integer(value) if value == expected)
+            }));
+        }
+        let allocations = allocation_counter::measure(|| {
+            for _ in 0..200 {
+                script.publish(&mut output);
+            }
+        });
+        assert_eq!(allocations.count_total, 0);
+        assert_eq!(output.0.len(), 5, "unchanged timed receipts are not republished");
     }
 
     #[test]
@@ -5955,7 +6024,9 @@ mod tests {
 
     #[test]
     fn combat_interrupted_talk_parks_without_advancing_or_reading() {
-        use super::super::families::tests::{seed_dialogue_combat, with_tick, with_tick_output};
+        use super::super::families::tests::{
+            seed_dialogue_attacker, seed_dialogue_combat, with_tick, with_tick_output,
+        };
         use api::snapshot::{GameSnapshot, QuestStatusView};
         #[derive(Default)]
         struct Capture(Vec<ScriptStatus>);
@@ -6012,6 +6083,7 @@ mod tests {
         let progress_evidence = script.progress.as_ref().unwrap().evidence;
         snapshot.seed_chat_modal(-1, vec![]);
         seed_dialogue_combat(&mut snapshot, true);
+        seed_dialogue_attacker(&mut snapshot, api::snapshot::ActorKind::Npc);
         let mut output = Capture::default();
         for tick in 4..=9 {
             if tick > 4 {

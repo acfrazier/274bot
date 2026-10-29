@@ -58,7 +58,35 @@
       }
     ],
     "items": [],
-    "acquire": {},
+    "acquire": {
+      "GAP-tbwt-karambwan-retry-budget": [
+        {"id":"recover-cooking-vessel","kind":"talk","version":1,"advances":false,
+         "args":{"npc":"tbwt_lubufu","anchor":{"tile":[2770,3169,0],"source":"content/maps/m43_49.jm2:9181"},"leash":8,"prefer":["Actually, I've lost my Karambwan vessel.","... a shark ate it!"],"strict":true},
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel_loaded_with_karambwanji"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_poorly_cooked_karambwan"}}}]},
+         "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel"}}},
+         "comment":"Lubufu replaces a lost vessel after apprenticeship: content/scripts/quests/quest_tbwt/scripts/tbwt_lubufu.rs2:380-392,406-423."},
+        {"id":"catch-replacement-bait","kind":"interact","version":1,"advances":false,
+         "args":{"target":{"npc":"0_43_47_karambwanji"},"op":"Net","anchor":{"tile":[2791,3019,0],"source":"content/maps/m43_47.jm2:6487"},"radius":8,"until":{"obj":"tbwt_raw_karambwanji","qty":1}},
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwanji"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel_loaded_with_karambwanji"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_poorly_cooked_karambwan"}}}]},
+         "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwanji"}}},
+         "comment":"content/scripts/skill_fishing/scripts/fishing_spots/tbwt.rs2:25-53."},
+        {"id":"load-replacement-vessel","kind":"use_on","version":1,"advances":false,
+         "args":{"item":"tbwt_raw_karambwanji","target":{"item":"tbwt_karambwan_vessel"},"product":"tbwt_karambwan_vessel_loaded_with_karambwanji"},
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel_loaded_with_karambwanji"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_poorly_cooked_karambwan"}}}]},
+         "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel_loaded_with_karambwanji"}}},
+         "comment":"content/scripts/quests/quest_tbwt/scripts/quest_tbwt.rs2:42-56,243-258."},
+        {"id":"fish-replacement-karambwan","kind":"interact","version":1,"advances":false,
+         "args":{"target":{"npc":"lubufu_karambwan"},"op":"Fish","anchor":{"tile":[2768,3165,0],"source":"content/maps/m43_49.jm2:9180; content/pack/npc.pack:1179"},"radius":8,"settle_ms":30000},
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_poorly_cooked_karambwan"}}}]},
+         "settle":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel"}}}]},
+         "comment":"Fishing 65; each attempt either catches one fish or consumes the bait: content/scripts/skill_fishing/scripts/fishing_spots/tbwt.rs2:99-133."},
+        {"id":"cook-replacement-karambwan","kind":"use_on","version":1,"advances":false,
+         "args":{"item":"tbwt_raw_karambwan","target":{"loc":"range"},"anchor":{"tile":[2787,3191,0],"source":"content/maps/m43_49.jm2:6474"},"radius":8,"settle_ms":30000},
+         "skip_if":{"Any":[{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_poorly_cooked_karambwan"}}}]},
+         "settle":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_poorly_cooked_karambwan"}}},{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}}}]},
+         "comment":"Before the reward cooking yields the poorly cooked fish or burns it: content/scripts/skill_cooking/scripts/cooking.rs2:32-50,142-154; content/scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:559-571."}
+      ]
+    },
     "bank": "nearest",
     "coin_float": 0,
     "loadouts": {},
@@ -79,15 +107,14 @@
     "tools": [
       "obj:net",
       "obj:4dose1agility",
-      "obj:steel_spear",
+      "obj:iron_spear",
       "obj:banana",
       "obj:karamja_rum",
       "obj:knife",
       "obj:seaweed",
       "obj:pestle_and_mortar",
       "obj:airrune",
-      "obj:firerune",
-      "obj:chaosrune"
+      "obj:mindrune"
     ],
     "owns_inventory": true
   },
@@ -364,68 +391,6 @@
                 }
               },
               "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:1-21,140-186,202-267; content/maps/m44_47.jm2:7573"
-            },
-            {
-              "id": "give-agility",
-              "kind": "use_on",
-              "version": 1,
-              "advances": true,
-              "args": {
-                "item": "4dose1agility",
-                "target": {
-                  "npc": "tbwt_tamayu"
-                },
-                "anchor": {
-                  "tile": [
-                    2844,
-                    3042,
-                    0
-                  ],
-                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:58-93; content/maps/m44_47.jm2:7573"
-                },
-                "radius": 8,
-                "dialogue": {
-                  "gap_ticks": 4
-                }
-              },
-              "skip_if": {
-                "Any": [
-                  {
-                    "Fact": {
-                      "kind": "flag",
-                      "version": 1,
-                      "args": {
-                        "quest": "tbwt",
-                        "flag": "tbwt:tamayu_agile",
-                        "is": true
-                      }
-                    }
-                  },
-                  {
-                    "Fact": {
-                      "kind": "flag",
-                      "version": 1,
-                      "args": {
-                        "quest": "tbwt",
-                        "flag": "tbwt:tamayu_done",
-                        "is": true
-                      }
-                    }
-                  }
-                ]
-              },
-              "settle": {
-                "Fact": {
-                  "kind": "flag",
-                  "version": 1,
-                  "args": {
-                    "quest": "tbwt",
-                    "flag": "tbwt:tamayu_agile",
-                    "is": true
-                  }
-                }
-              },
-              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:58-93; content/maps/m44_47.jm2:7573"
             },
             {
               "id": "meet-tiadeche",
@@ -1206,25 +1171,9 @@
             },
             {
               "id": "cook-poison-karambwan",
-              "kind": "use_on",
+              "kind": "acquire",
               "version": 1,
-              "advances": false,
-              "args": {
-                "item": "tbwt_raw_karambwan",
-                "target": {
-                  "loc": "range"
-                },
-                "product": "tbwt_poorly_cooked_karambwan",
-                "anchor": {
-                  "tile": [
-                    2787,
-                    3191,
-                    0
-                  ],
-                  "source": "content/scripts/skill_cooking/scripts/cooking.rs2:32-50,142-154; content/scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:559-571; content/maps/m43_49.jm2:6474"
-                },
-                "radius": 8
-              },
+              "args": {"recipe": "GAP-tbwt-karambwan-retry-budget", "max_restarts": 31},
               "skip_if": {
                 "Any": [
                   {
@@ -1250,7 +1199,7 @@
                       "kind": "has_item",
                       "version": 1,
                       "args": {
-                        "obj": "tbwt_steel_spear_kp"
+                        "obj": "tbwt_iron_spear_kp"
                       }
                     }
                   },
@@ -1317,7 +1266,7 @@
                       "kind": "has_item",
                       "version": 1,
                       "args": {
-                        "obj": "tbwt_steel_spear_kp"
+                        "obj": "tbwt_iron_spear_kp"
                       }
                     }
                   },
@@ -1357,16 +1306,39 @@
               "comment": "content/scripts/quests/quest_tbwt/scripts/quest_tbwt.rs2:231-234; content/scripts/_unpack/274/all.obj:19-36"
             },
             {
-              "id": "poison-steel-spear",
+              "id": "hunt-jogre-for-iron-spear",
+              "kind": "combat",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {"npc": "jogre", "not_targeting_others": true, "pick": "nearest"},
+                "stand": {"tile": [2916, 3055, 0], "source": "content/maps/m45_47.jm2:7425; content/scripts/_unpack/225/all.npc:2905-2939"},
+                "tactic": {"kind": "open", "style": "melee", "engage_radius": 8, "auto_retaliate": true},
+                "lost_radius": 18,
+                "kill_budget_ticks": 240,
+                "loot": ["tbwt_jogre_bones"],
+                "until_drop": {"obj": "iron_spear", "max_kills": 293, "stop": "GAP-tbwt-jogre-spear-budget"}
+              },
+              "skip_if": {"Any": [
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_spear"}}},
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_iron_spear_kp"}}},
+                {"Fact": {"kind": "flag", "version": 1, "args": {"quest": "tbwt", "flag": "tbwt:tamayu_spear", "is": true}}},
+                {"Fact": {"kind": "flag", "version": 1, "args": {"quest": "tbwt", "flag": "tbwt:tamayu_done", "is": true}}}
+              ]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_spear"}}},
+              "comment": "The quest requires Jogre bones: content/scripts/quests/quest_tbwt/scripts/tbwt_journal.rs2:13-15,149-153; content/scripts/_unpack/225/all.npc:2905-2939. The same kills drop iron spear at 4/129: content/scripts/drop tables/scripts/jogre.rs2:12-22. Expected kills 129/4 = 32.25; (125/129)^293 = 0.00009814. Bronze spears do not set the acceptable flag: content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:96-125."
+            },
+            {
+              "id": "poison-iron-spear",
               "kind": "use_on",
               "version": 1,
               "advances": false,
               "args": {
                 "item": "tbwt_poisonous_karambwan_paste",
                 "target": {
-                  "item": "steel_spear"
+                  "item": "iron_spear"
                 },
-                "product": "tbwt_steel_spear_kp"
+                "product": "tbwt_iron_spear_kp"
               },
               "skip_if": {
                 "Any": [
@@ -1375,7 +1347,7 @@
                       "kind": "has_item",
                       "version": 1,
                       "args": {
-                        "obj": "tbwt_steel_spear_kp"
+                        "obj": "tbwt_iron_spear_kp"
                       }
                     }
                   },
@@ -1408,11 +1380,11 @@
                   "kind": "has_item",
                   "version": 1,
                   "args": {
-                    "obj": "tbwt_steel_spear_kp"
+                    "obj": "tbwt_iron_spear_kp"
                   }
                 }
               },
-              "comment": "content/scripts/skill_combat/scripts/weapon_poison.rs2:10-12,122-134; content/scripts/skill_combat/configs/melee/spears.obj:144-146"
+              "comment": "content/scripts/skill_combat/scripts/weapon_poison.rs2:10-12,122-134; content/scripts/skill_combat/configs/melee/spears.obj:93-96"
             },
             {
               "id": "give-poisoned-spear",
@@ -1420,7 +1392,7 @@
               "version": 1,
               "advances": true,
               "args": {
-                "item": "tbwt_steel_spear_kp",
+                "item": "tbwt_iron_spear_kp",
                 "target": {
                   "npc": "tbwt_tamayu"
                 },
@@ -1474,6 +1446,77 @@
               "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:96-131; content/maps/m44_47.jm2:7573"
             },
             {
+              "id": "GAP-tbwt-agility-arena",
+              "kind": "wait",
+              "version": 1,
+              "args": {"until": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "4dose1agility"}}}, "max_ticks": 20, "park_on_timeout": true},
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "4dose1agility"}}}, {"Fact": {"kind": "flag", "version": 1, "args": {"quest": "tbwt", "flag": "tbwt:tamayu_agile", "is": true}}}, {"Fact": {"kind": "flag", "version": 1, "args": {"quest": "tbwt", "flag": "tbwt:tamayu_done", "is": true}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "4dose1agility"}}},
+              "comment": "GAP: Agility Arena pillar tracking and the ticket exchange widget. The trader sells toadflax for three tickets: content/scripts/minigames/game_agilityarena/scripts/agilityarena_tickettrader.rs2:17-20,51-52,70-76. Successive active pillars award tickets: content/scripts/minigames/game_agilityarena/scripts/agilityarena.rs2:50-84. Herblore 34 produces three-dose potions: content/scripts/skill_herblore/configs/brewing/brew_potion.struct:229-249. This wait does not perform these actions."
+            },
+            {
+              "id": "give-agility",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "4dose1agility",
+                "target": {
+                  "npc": "tbwt_tamayu"
+                },
+                "anchor": {
+                  "tile": [
+                    2844,
+                    3042,
+                    0
+                  ],
+                  "source": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:58-93; content/maps/m44_47.jm2:7573"
+                },
+                "radius": 8,
+                "dialogue": {
+                  "gap_ticks": 4
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tamayu_agile",
+                        "is": true
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "tbwt",
+                        "flag": "tbwt:tamayu_done",
+                        "is": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "tbwt",
+                    "flag": "tbwt:tamayu_agile",
+                    "is": true
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:58-93; content/maps/m44_47.jm2:7573"
+            },
+            {
               "id": "finish-hunt",
               "kind": "talk",
               "version": 1,
@@ -1520,6 +1563,20 @@
               "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:191-196,202-208,271-329; content/maps/m44_47.jm2:7573"
             },
             {
+              "id": "buy-monkey-air-runes", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "betty", "anchor": {"tile": [3012, 3259, 0], "source": "content/maps/m47_50.jm2:10002; content/pack/npc.pack:584"}}, "obj": "airrune", "qty": 50, "est_gp": 225},
+              "skip_if": {"Any": [{"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "airrune", "qty": 50}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_monkey_corpse"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_monkey_skin"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_seaweed_in_monkey_skin_sandwich"}}}, {"Fact": {"kind": "flag", "version": 1, "args": {"quest": "tbwt", "flag": "tbwt:tinsay_sandwich_given", "is": true}}}]},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "airrune", "qty": 50}}},
+              "comment": "Fifty at full stock cost 25*4 + 25*5 = 225: content/scripts/areas/area_port_sarim/configs/port_sarim.inv:35-46; content/scripts/areas/area_port_sarim/configs/port_sarim.npc:187-222; content/scripts/skill_magic/configs/runes.obj:26-30; content/scripts/shop/scripts/shop.rs2:131-147,182-187."
+            },
+            {
+              "id": "buy-monkey-mind-runes", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "betty", "anchor": {"tile": [3012, 3259, 0], "source": "content/maps/m47_50.jm2:10002; content/pack/npc.pack:584"}}, "obj": "mindrune", "qty": 50, "est_gp": 166},
+              "skip_if": {"Any": [{"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "mindrune", "qty": 50}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_monkey_corpse"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_monkey_skin"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_seaweed_in_monkey_skin_sandwich"}}}, {"Fact": {"kind": "flag", "version": 1, "args": {"quest": "tbwt", "flag": "tbwt:tinsay_sandwich_given", "is": true}}}]},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "mindrune", "qty": 50}}},
+              "comment": "Fifty at full stock cost 34*3 + 16*4 = 166: content/scripts/areas/area_port_sarim/configs/port_sarim.inv:35-46; content/scripts/areas/area_port_sarim/configs/port_sarim.npc:187-222; content/scripts/skill_magic/configs/runes.obj:50-54; content/scripts/shop/scripts/shop.rs2:131-147,182-187."
+            },
+            {
               "id": "hunt-monkey",
               "kind": "combat",
               "version": 1,
@@ -1545,7 +1602,7 @@
                   "auto_retaliate": false
                 },
                 "spells": [
-                  "fire_bolt"
+                  "wind_strike"
                 ],
                 "lost_radius": 18,
                 "kill_budget_ticks": 240,
@@ -1705,6 +1762,13 @@
               "comment": "content/scripts/quests/quest_tbwt/scripts/tbwt_tamayu.rs2:27-55; content/maps/m44_47.jm2:7573"
             },
             {
+              "id": "take-seaweed", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"ground": "seaweed"}, "op": "Take", "anchor": {"tile": [2757,3109,0], "source": "content/maps/m43_48.jm2:7135-7139; content/pack/obj.pack:402"}, "radius": 2, "wait_if_missing": true},
+              "comment": "The ground spawn supplies seaweed for the sandwich: content/maps/m43_48.jm2:7135-7139; content/scripts/quests/quest_tbwt/scripts/quest_tbwt.rs2:136-143.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "seaweed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_seaweed_in_monkey_skin_sandwich"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "seaweed"}}}
+            },
+            {
               "id": "make-sandwich",
               "kind": "use_on",
               "version": 1,
@@ -1761,6 +1825,20 @@
                 }
               },
               "comment": "content/scripts/quests/quest_tbwt/scripts/quest_tbwt.rs2:171-177"
+            },
+            {
+              "id": "pick-banana", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"loc": "bananatreefull"}, "op": "Search", "anchor": {"tile": [2909,3158,0], "source": "content/maps/m45_49.jm2:5238; content/pack/loc.pack:2074"}, "radius": 6},
+              "comment": "content/scripts/areas/area_karamja/configs/plantation.loc:1-10 defines Search; content/scripts/areas/area_karamja/scripts/banana_tree.rs2:1-12 adds a banana.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "banana"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_sliced_banana"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_sliced_banana_in_karamja_rum"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "banana"}}}
+            },
+            {
+              "id": "buy-karamja-rum", "kind": "talk", "version": 1, "advances": false,
+              "args": {"npc": "deadmans_bartender", "anchor": {"tile": [2797,3155,0], "source": "content/maps/m43_49.jm2:9209; content/pack/npc.pack:736"}, "leash": 8, "prefer": ["A bottle of rum please."], "strict": true},
+              "comment": "content/scripts/areas/area_brimhaven/scripts/bartender.rs2:22-30 charges 27 coins for the rum.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "karamja_rum"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "tbwt_sliced_banana_in_karamja_rum"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "karamja_rum"}}}
             },
             {
               "id": "slice-banana",
@@ -1908,13 +1986,10 @@
                 },
                 "tactic": {
                   "kind": "open",
-                  "style": "mage",
+                  "style": "melee",
                   "engage_radius": 8,
-                  "auto_retaliate": false
+                  "auto_retaliate": true
                 },
-                "spells": [
-                  "fire_bolt"
-                ],
                 "lost_radius": 18,
                 "kill_budget_ticks": 240,
                 "loot": [

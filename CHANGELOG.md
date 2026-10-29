@@ -73,6 +73,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   `gap-reached` result only when the boundary and prior settlements match.
   Matching native park traces are retained in the boundary proof.
 
+- Quest guides can now kill until a required item drops, with a total kill
+  budget and a named stop. The final allowed kill still gets its loot wait.
+  The receipt records confirmed kills across re-engagements.
+- Quest guides can select a product and quantity from a production menu
+  opened by using an item on another item or on a location.
+- Ground-item Take steps can now use an observed game-tick budget. This
+  lets a guide collect a temporary scripted drop such as the Jailer's key,
+  without a wall-clock spawn wait.
 - Quest guides can now opt in to answering a repeated menu question once and
   then moving on. `answer_once: true` skips a `prefer` entry that already
   answered an accepted page in the same conversation and falls through to the
@@ -83,6 +91,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - Quester's anchored prewalk for an unseen loc now accepts any standable tile
   within the anchor radius, leaving the final, live-loc approach to select an
   accessible interaction side.
+- Talk steps now approach NPCs within the configured interaction distance
+  before opening their dialogue. Damage from a quest dialogue no longer looks
+  like an attack when no visible NPC or player targets the bot. A failed walk
+  also reports where its route ended.
 
 ### Scripting
 

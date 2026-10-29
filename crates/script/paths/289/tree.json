@@ -333,7 +333,15 @@
           "required": [],
           "terminal": false,
           "recovery_entry": null,
+          "order": "ordered",
           "steps": [
+            {
+              "id": "cut-six-logs", "kind": "gather", "version": 1, "advances": false,
+              "args": {"skill": "woodcutting", "resource": "normal", "until": {"obj": "logs", "qty": 6}, "anchor": {"tile": [2613, 3252, 0], "source": "content/maps/m40_50.jm2:5891; content/scripts/skill_woodcutting/configs/trees.dbrow:1-9"}},
+              "comment": "content/scripts/skill_woodcutting/scripts/woodcut.rs2:1-14,91-148 produces normal logs. Montai consumes six: content/scripts/areas/area_gnome/scripts/commander_montai.rs2:6-35.",
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "logs", "qty": 6}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "logs", "qty": 6}}}
+            },
             {
               "id": "montai-deliver-logs",
               "kind": "talk",

@@ -1,10 +1,6 @@
 {
-  "$schema":"../path.schema.json","schema":3,"id":"viking","display_name":"The Fremennik Trials","required":["woodcutting-40","crafting-40","fletching-25"],"tested_stats":null,"partner":null,
-  "quest":{"members":true,"quest_points":3,"requirements":[
-    {"id":"woodcutting-40","kind":{"Skill":{"skill":"woodcutting","level":40}},"at":"start","source":"C:scripts/quests/quest_viking/scripts/viking_journal.rs2:3-8"},
-    {"id":"crafting-40","kind":{"Skill":{"skill":"crafting","level":40}},"at":"start","source":"C:scripts/quests/quest_viking/scripts/viking_journal.rs2:3-8"},
-    {"id":"fletching-25","kind":{"Skill":{"skill":"fletching","level":25}},"at":"start","source":"C:scripts/quests/quest_viking/scripts/viking_journal.rs2:3-8"}
-  ],"items":[],"acquire":{},"bank":"nearest","coin_float":0,"loadouts":{},"areas":{},"tools":[],"owns_inventory":true},
+  "$schema":"../path.schema.json","schema":3,"id":"viking","display_name":"The Fremennik Trials","required":[],"tested_stats":null,"partner":null,
+  "quest":{"members":true,"quest_points":3,"requirements":[],"items":[],"acquire":{},"bank":"nearest","coin_float":0,"loadouts":{},"areas":{},"tools":[],"owns_inventory":true},
   "roles":[{"role":null,"progress_binding":"journal:viking","progress":{"colour":{"not_started":"viking:0","in_progress":"viking:1","complete":"viking:complete"},"rules":[
     {"stage":"viking:peer","all":["the seer will vote for me if i can pass his trial"],"any":[],"not":[],"varp":1},
     {"stage":"viking:1","all":["i spoke to brundt the fremennik chieftan"],"any":[],"not":[],"varp":1}

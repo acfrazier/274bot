@@ -15,7 +15,7 @@
     "bank": "nearest",
     "coin_float": 100,
     "loadouts": {},
-    "areas": {},
+    "areas": { "pen": { "boxes": [[2595, 3351, 2609, 3364, 0]], "source": "C:scripts/quests/quest_sheepherder/configs/sheepherder_area.dbrow:1-3" } },
     "tools": ["obj:poisoned_feed", "obj:cattleprod", "obj:plague_jacket", "obj:plague_trousers"],
     "owns_inventory": false
   },
@@ -57,13 +57,6 @@
         "stage": "sheepherder:2", "required": [], "terminal": false, "recovery_entry": null,
         "steps": [
           {
-            "id": "take-prod", "kind": "interact", "version": 1, "advances": false,
-            "args": { "target": { "ground": "cattleprod" }, "op": "Take", "anchor": { "tile": [2604, 3357, 0], "source": "C:maps/m40_52.jm2:7350; C:pack/obj.pack:279" }, "radius": 2, "wait_if_missing": true },
-            "comment": "C:scripts/quests/quest_sheepherder/scripts/npcs/farmer_brumty.rs2:19-25 directs the player to the prod in the barn.",
-            "skip_if": { "Any": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cattleprod" } } }, { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "cattleprod" } } }] },
-            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cattleprod" } } }
-          },
-          {
             "id": "wear-jacket", "kind": "equip", "version": 1,
             "args": { "obj": "plague_jacket" },
             "comment": "C:scripts/quests/quest_sheepherder/scripts/npcs/diseased_sheep.rs2:36-41 requires the worn jacket and trousers.",
@@ -76,6 +69,20 @@
             "comment": "C:scripts/quests/quest_sheepherder/scripts/npcs/diseased_sheep.rs2:36-41 requires the worn jacket and trousers.",
             "skip_if": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "plague_trousers" } } },
             "settle": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "plague_trousers" } } }
+          },
+          {
+            "id": "open-pen-gate", "kind": "interact", "version": 1, "advances": false,
+            "args": { "target": { "loc": "plaguesheep_gatel" }, "op": "Open", "anchor": { "tile": [2594, 3362, 0], "source": "C:maps/m40_52.jm2:5587; C:pack/loc.pack:167" }, "radius": 2 },
+            "comment": "C:scripts/quests/quest_sheepherder/scripts/locs/sheepherder_gate.rs2:1-18 requires both suit pieces and moves the player into the pen.",
+            "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "pen" } } },
+            "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "pen" } } }
+          },
+          {
+            "id": "take-prod", "kind": "interact", "version": 1, "advances": false,
+            "args": { "target": { "ground": "cattleprod" }, "op": "Take", "anchor": { "tile": [2604, 3357, 0], "source": "C:maps/m40_52.jm2:7350; C:pack/obj.pack:279" }, "radius": 2, "wait_if_missing": true },
+            "comment": "C:scripts/quests/quest_sheepherder/scripts/npcs/farmer_brumty.rs2:19-25 directs the player to the prod in the barn.",
+            "skip_if": { "Any": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cattleprod" } } }, { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "cattleprod" } } }] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cattleprod" } } }
           },
           {
             "id": "wield-prod", "kind": "equip", "version": 1,

@@ -378,6 +378,13 @@
           "recovery_entry": null,
           "steps": [
             {
+              "id": "p-pick-fight-food", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"loc": "cabbage"}, "op": "Pick", "anchor": {"tile": [3046, 3287, 0], "source": "content/maps/m47_51.jm2:5743-5756"}, "radius": 12, "wait_if_missing": true, "until": {"obj": "cabbage", "qty": 10}, "settle_ms": 180000},
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "intelligence_report"}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "cabbage", "qty": 10}}}]},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "cabbage", "qty": 10}}},
+              "comment": "Pick food for Jonny: content/scripts/general_use/scripts/pickables.rs2:42-51; content/scripts/player/configs/consumption/consume_normal.dbrow:32-38."
+            },
+            {
               "id": "p-jonny",
               "kind": "combat",
               "version": 1,
@@ -1043,6 +1050,13 @@
                 }
               },
               "comment": "scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2:134-142,154-166; scripts/areas/area_varrock/scripts/curator.rs2:7-22"
+            },
+            {
+              "id": "b-pick-fight-food", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"loc": "cabbage"}, "op": "Pick", "anchor": {"tile": [3046, 3287, 0], "source": "content/maps/m47_51.jm2:5743-5756"}, "radius": 12, "wait_if_missing": true, "until": {"obj": "cabbage", "qty": 10}, "settle_ms": 180000},
+              "skip_if": {"Any": [{"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "phoenix_crossbow", "qty": 2}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "cabbage", "qty": 10}}}]},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "cabbage", "qty": 10}}},
+              "comment": "Pick food before entering the weapons store: content/scripts/general_use/scripts/pickables.rs2:42-51; content/scripts/player/configs/consumption/consume_normal.dbrow:32-38."
             },
             {
               "id": "b-unlock",

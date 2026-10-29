@@ -14,8 +14,9 @@ use std::task::Poll;
 /// as over, unless the step authors `gap_ticks`. The engine closes chat with
 /// the same `IfClose` at script end (`Player.ts:2223-2229`) and at a script's
 /// own `if_close` before a `p_delay` and a later page, so the client cannot
-/// tell them apart; script end is the normal case, and a Path step whose NPC
-/// closes and reopens the chat authors its engine hole (`gap_ticks`).
+/// know whether a conversation is finished until its close gap settles. A
+/// later script that deliberately closes and reopens the chat authors its
+/// engine hole (`gap_ticks`).
 pub const DIALOG_GAP_TICKS: u64 = 1;
 pub const DIALOGUE_OPEN_MS: u64 = 8_000;
 pub const DIALOGUE_APPROACH_MS: u64 = 20_000;
@@ -294,6 +295,8 @@ pub struct Dialogue {
     chat_page_owned: bool,
     chat_advance_request_id: Option<u64>,
 }
+// Keep retained per-action dialogue state within its reviewed size budget.
+const _: () = assert!(std::mem::size_of::<Dialogue>() <= 384);
 
 impl NativeMachine for Dialogue {
     type Args = DialogueArgs;
@@ -442,10 +445,10 @@ impl NativeMachine for Dialogue {
                 }
             }
         }
-        // NPC melee closes interfaces even when it deals zero damage. A
-        // witnessed combat close is not the quiet end of a conversation.
+        // The local hit window also covers self-damage. Require visible or
+        // slot-owned attacker evidence before treating a closed chat as combat.
         // A visible Continue component is an active page even without a root.
-        if DialogueOutcome::combat_interrupted(obs.ready, obs.in_combat) {
+        if DialogueOutcome::combat_interrupted(obs.ready, obs.in_combat, obs.attacker_evidence) {
             return Poll::Ready(Err(ActionError::CombatInterrupted));
         }
         match self.phase {
@@ -778,7 +781,7 @@ impl Dialogue {
         obs: &MainObs<'_>,
         now: u64,
     ) -> Poll<Result<DialogueOutcome, ActionError>> {
-        if DialogueOutcome::combat_interrupted(obs.open(), obs.in_combat) {
+        if DialogueOutcome::combat_interrupted(obs.open(), obs.in_combat, obs.attacker_evidence) {
             return Poll::Ready(Err(ActionError::CombatInterrupted));
         }
         match self.phase {
@@ -1014,7 +1017,10 @@ struct ChatObs<'a> {
     options: &'a [api::snapshot::ChatOptionView],
     texts: &'a [String],
     in_combat: bool,
+    attacker_evidence: bool,
 }
+// Poll observations remain borrowed stack values, not per-bot retained state.
+const _: () = assert!(std::mem::size_of::<ChatObs<'static>>() <= 64);
 
 impl ChatObs<'_> {
     // The server reuses a chat root and Continue component across successive
@@ -1046,7 +1052,9 @@ struct MainObs<'a> {
     texts: &'a [String],
     tick: u64,
     in_combat: bool,
+    attacker_evidence: bool,
 }
+const _: () = assert!(std::mem::size_of::<MainObs<'static>>() <= 96);
 
 impl MainObs<'_> {
     fn open(&self) -> bool {
@@ -1110,13 +1118,50 @@ pub(super) fn chat_page_open(root: i32, continue_component_id: i32) -> bool {
     root != -1 || continue_component_id >= 0
 }
 
-/// Operation adoption covers chat and selected documents, not unrelated interfaces.
+/// Operation adoption covers dialogue chat and selected documents, not production menus.
 pub(super) fn page_open(cx: &ActionContext<'_>) -> bool {
-    cx.snapshot()
-        .chat_modal()
-        .is_some_and(|chat| chat_page_open(chat.value.root, chat.value.continue_component_id))
+    let snapshot = cx.snapshot();
+    let production_menu = snapshot
+        .make_products()
+        .is_some_and(|products| !products.value.is_empty());
+    (!production_menu
+        && snapshot.chat_modal().is_some_and(|chat| {
+            chat_page_open(chat.value.root, chat.value.continue_component_id)
+        }))
         || observe_main(cx, selected_dialogue_ui(cx))
             .is_some_and(|main| matches!(main.kind, MainKind::Scroll | MainKind::Book))
+}
+
+fn combat_attacker_evidence(cx: &ActionContext<'_>) -> bool {
+    let snapshot = cx.snapshot();
+    // The local combat target is slot-owned state, but only a face entity, not
+    // a hit source, and it may be stale. An attacker outside the rebuilt scene
+    // is not seen; visible actors targeting this local player are separate
+    // evidence.
+    let slot_target = snapshot
+        .in_combat()
+        .is_some_and(|combat| combat.value.target.is_some());
+    let Some(local_index) = snapshot
+        .local_player()
+        .map(|player| player.value.player.index)
+    else {
+        return slot_target;
+    };
+    let local_target = api::snapshot::ActorTargetView {
+        kind: api::snapshot::ActorKind::Player,
+        index: local_index,
+    };
+    slot_target
+        || snapshot.npcs().is_some_and(|npcs| {
+            npcs.value
+                .iter()
+                .any(|npc| npc.target == Some(local_target))
+        })
+        || snapshot.players().is_some_and(|players| {
+            players.value.iter().any(|player| {
+                player.index != local_index && player.actor.target == Some(local_target)
+            })
+        })
 }
 
 fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {
@@ -1138,6 +1183,7 @@ fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {
             .snapshot()
             .in_combat()
             .is_some_and(|combat| combat.value.in_combat),
+        attacker_evidence: combat_attacker_evidence(cx),
     })
 }
 
@@ -1172,6 +1218,7 @@ fn observe_main<'a>(
             .snapshot()
             .in_combat()
             .is_some_and(|combat| combat.value.in_combat),
+        attacker_evidence: combat_attacker_evidence(cx),
     })
 }
 
