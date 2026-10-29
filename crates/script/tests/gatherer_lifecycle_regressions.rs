@@ -2763,17 +2763,29 @@ fn death_recovery_reads_loaded_stock_instead_of_skipping_a_needed_supply_trip() 
     }
 
     death.seed_bank_observation(1, 1, Some(Vec::new()), Vec::new());
+    let mut closes = 0;
     for _ in 0..10 {
         now += 1;
         tick(&mut slot, &death, now);
-        assert!(
-            slot.take_native_action().is_none(),
-            "an empty loaded bank must not produce a withdrawal"
-        );
+        if let Some(action) = slot.take_native_action() {
+            assert!(
+                matches!(
+                    &action.effect,
+                    HostEffect::Interaction(InteractReq::Close)
+                ),
+                "an empty loaded bank may be closed, but must not produce a withdrawal"
+            );
+            closes += 1;
+            let authority = action.authority();
+            let request_id = action.request_id.get();
+            accept_trip_operation(&mut slot, &authority, request_id, now);
+            death.seed_bank_observation(-1, now, None, Vec::new());
+        }
         if slot.native_status().unwrap().phase == NativePhase::Blocked {
             break;
         }
     }
+    assert_eq!(closes, 1, "parked recovery must close the open empty bank once");
     let status = slot.native_status().unwrap();
     assert_eq!(status.phase, NativePhase::Blocked);
     assert!(status.failure.is_none(), "an empty bank parks recovery");
