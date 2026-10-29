@@ -2322,6 +2322,14 @@
       "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/bench.rs|Workload",
+      "path": "crates/frontend-core/src/bench.rs",
+      "symbol": "Workload",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam (benchmark workload choice); registered at the 0.2.8 batch."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/bench.rs|AdapterIdentity",
       "path": "crates/frontend-core/src/bench.rs",
       "symbol": "AdapterIdentity",
