@@ -17,9 +17,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use api::snapshot::WorldTile;
-use client::dash3d::CollisionFlag;
 
-use crate::collision::WorldCollision;
+use crate::collision::{WorldCollision, SQ_BLOCKED, WALK_BLOCK_FLAGS};
 use crate::contract::{NavIdentity, PackDigest, SearchGraphEnvelope};
 use crate::grid::StepGrid;
 use crate::pack::{decode, decode_any_reader, decode_grid, BankStand, PackError};
@@ -28,7 +27,7 @@ use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 /// A fully-blocked stamp: every directional `PL_WALK_*` mask, so the
 /// router's directional step test rejects the tile from any direction
 /// (a 274N grid walk byte is boolean; there are no half-open faces to keep).
-const BLOCKED: u32 = CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::WALK_BLOCK_FLAGS as u32;
+const BLOCKED: u32 = SQ_BLOCKED | WALK_BLOCK_FLAGS;
 
 /// The whole-world collision + transport graph + bank stand table the
 /// router consumes.

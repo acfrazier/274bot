@@ -2,9 +2,8 @@
 
 use api::service_pick::{ServiceCandidate, ServicePick};
 use api::snapshot::WorldTile;
-use client::dash3d::CollisionFlag;
 
-use crate::collision::WorldCollision;
+use crate::collision::{WorldCollision, WALL_EAST, WALL_NORTH, WALL_SOUTH, WALL_WEST};
 use crate::named_banks::{AccessReach, Footprint};
 use crate::router::{find_first_with_avoid_budgets, AvoidRect, FindOptions, FirstRouteSearch};
 use crate::transport::TransportGraph;
@@ -81,14 +80,14 @@ fn wall_between(collision: &WorldCollision, a: WorldTile, b: WorldTile) -> bool 
         return false;
     }
     let (a_face, b_face) = match (b.x - a.x, b.z - a.z) {
-        (0, 1) => (CollisionFlag::W_N, CollisionFlag::W_S),
-        (0, -1) => (CollisionFlag::W_S, CollisionFlag::W_N),
-        (1, 0) => (CollisionFlag::W_E, CollisionFlag::W_W),
-        (-1, 0) => (CollisionFlag::W_W, CollisionFlag::W_E),
+        (0, 1) => (WALL_NORTH, WALL_SOUTH),
+        (0, -1) => (WALL_SOUTH, WALL_NORTH),
+        (1, 0) => (WALL_EAST, WALL_WEST),
+        (-1, 0) => (WALL_WEST, WALL_EAST),
         _ => return false,
     };
-    collision.walkable_word(a.x, a.z, a.level) & a_face as u32 != 0
-        || collision.walkable_word(b.x, b.z, b.level) & b_face as u32 != 0
+    collision.walkable_word(a.x, a.z, a.level) & a_face != 0
+        || collision.walkable_word(b.x, b.z, b.level) & b_face != 0
 }
 
 pub(crate) fn resolve_shop_keepers(

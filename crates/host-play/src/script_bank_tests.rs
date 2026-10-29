@@ -2848,7 +2848,7 @@ mod bank_pick_capture {
             super::super::service_candidates(world, &input.request).expect("eligible service rows");
         let request = super::super::make_service_pick_request(
             input.authority.request_id().get(),
-            nav::producer::lease(world).unwrap(),
+            nav_planner::producer::lease(world).unwrap(),
             None,
             input.request.from,
             FindOptions::default(),
@@ -2899,8 +2899,8 @@ mod bank_pick_capture {
         to: WorldTile,
     ) -> (Arc<NavWorld>, api::selected::QuestGate) {
         use api::selected::{FactKey, InclusiveRange, QuestGate, StageWindow};
-        use nav::quest_gates::{QuestFamilyId, QuestGates};
-        use nav::transport::{TransportEdge, TransportKind};
+        use nav_planner::quest_gates::{QuestFamilyId, QuestGates};
+        use nav_planner::transport::{TransportEdge, TransportKind};
         use std::num::NonZeroU16;
 
         let family = QuestFamilyId::new([7; 32], NonZeroU16::MIN);
@@ -2990,7 +2990,7 @@ mod bank_pick_capture {
             .collect::<Vec<_>>();
         let request = super::super::make_service_pick_request(
             input.authority.request_id().get(),
-            nav::producer::lease(&world).unwrap(),
+            nav_planner::producer::lease(&world).unwrap(),
             None,
             from,
             FindOptions::default(),
@@ -3157,7 +3157,7 @@ mod bank_pick_capture {
         let bot = crate::NavBot {
             requested_exclusions: Some(Arc::new(
                 super::super::super::script_nav::ScriptRouteExclusions {
-                    avoid: vec![nav::router::AvoidRect {
+                    avoid: vec![nav_planner::router::AvoidRect {
                         min_x: 2,
                         max_x: 2,
                         min_z: 0,
@@ -3242,7 +3242,7 @@ mod bank_pick_capture {
             script::native_bank::ServicePickOutcome::NotSettled,
         );
         let bytes = pending.result.owner_result_bytes().unwrap();
-        let ledger = nav::producer::OwnerResultLedger::with_limits(bytes, bytes);
+        let ledger = nav_planner::producer::OwnerResultLedger::with_limits(bytes, bytes);
         let reservation = ledger.try_reserve_bytes(bytes).unwrap();
         let (commit, owner) = super::super::pending_owner_result(pending, reservation);
         {
@@ -3322,11 +3322,13 @@ mod bank_pick_capture {
             "a failed/unavailable cooperative cursor is not reported as NoPath"
         );
         assert_eq!(
-            super::super::service_first_route_error(nav::router::RouteError::BudgetExhausted),
+            super::super::service_first_route_error(
+                nav_planner::router::RouteError::BudgetExhausted
+            ),
             Some(script::native_bank::ServicePickOutcome::BudgetExhausted)
         );
         assert_eq!(
-            super::super::service_first_route_error(nav::router::RouteError::NoPath),
+            super::super::service_first_route_error(nav_planner::router::RouteError::NoPath),
             None,
             "NoPath requires the separate relaxed-gate diagnosis"
         );
@@ -3345,9 +3347,9 @@ mod bank_pick_capture {
             api::identity::Cancellation,
         )>,
         pending_inline: Option<Box<super::super::PendingInlinePick>>,
-        owner_result: Option<Arc<nav::producer::OwnerResult<super::super::PickResult>>>,
-        retired_owner: Option<Arc<nav::producer::OwnerResult<super::super::PickResult>>>,
-        posted: script::isolate_fb::BankSelectionInput,
+        owner_result: Option<Arc<nav_planner::producer::OwnerResult<super::super::PickResult>>>,
+        retired_owner: Option<Arc<nav_planner::producer::OwnerResult<super::super::PickResult>>>,
+        posted: script_js::wire::BankSelectionInput,
         native_receipt: Option<(
             script::native::HostAuthority,
             script::native_bank::BankPickReceipt,

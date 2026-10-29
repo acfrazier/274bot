@@ -1,8 +1,7 @@
 use api::service_pick::{ServiceCandidate, ServiceKind};
 use api::snapshot::WorldTile;
-use client::dash3d::CollisionFlag;
 
-use crate::collision::{pack_walk, WorldCollision};
+use crate::collision::{pack_walk, WorldCollision, WALL_WEST, WALK_SCENERY};
 use crate::named_banks::{AccessReach, Footprint};
 use crate::router::{FindOptions, SearchRequest};
 use crate::service_pick::{
@@ -110,7 +109,7 @@ fn approach_zero_allows_each_side_and_fire_like_footprint_excludes_its_tile() {
 
 #[test]
 fn service_access_excludes_a_walled_shared_edge() {
-    let wc = collision(8, 8, &[(3, 2, CollisionFlag::W_W as u32)]);
+    let wc = collision(8, 8, &[(3, 2, WALL_WEST)]);
     let footprint = Footprint {
         x: 2,
         z: 2,
@@ -206,7 +205,7 @@ fn routed_pick_chooses_cheaper_route_than_air_nearest_candidate() {
 
 #[test]
 fn routed_pick_skips_isolated_keeper_access_in_the_complete_target_set() {
-    let blocked = CollisionFlag::WALK_SCENERY as u32;
+    let blocked = WALK_SCENERY;
     let wc = collision(
         12,
         12,

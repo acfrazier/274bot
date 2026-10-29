@@ -290,7 +290,7 @@ reasons to change.
 | `quest_facts.rs`, `quest_facts/catalog.rs` | quest identity and prereqs; roster rows | stage resolution belongs to the Path |
 | `quest_progress.rs` | compact journal/progress evidence | shared by runner, host and nav provider |
 | `shop_facts.rs` | pinned shop and keeper facts | borrowed config/type joins; posted stock and content prices |
-| `service_pick.rs` | borrowed service candidates and shared resolved keeper rows | plain facts only; collision and search stay in `nav` |
+| `service_pick.rs` | borrowed service candidates and shared resolved keeper rows | plain facts only; collision and search stay in `nav-planner` |
 | `clue_facts.rs` | clue row lookup | over the posted trail family |
 | `clue_logic.rs` | held-step identify | first held step in posted order |
 | `clue_pack.rs` | trail pack budgeting and keep predicate | frozen pack-plan arithmetic |
@@ -348,7 +348,7 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 | `bank_fetch.rs` | BankBudget fetch-and-wear plan | plan only, router stays fail-closed |
 | `camera.rs` | path-facing orbit yaw | pure, host writes yaw per observe |
 | `canlight.rs` | canlight lookup and identity binding | static policy and checked sidecar identity |
-| `collision.rs` | runtime collision models | four planes, walk words, and shared packing primitives |
+| `collision.rs` | runtime collision models and shared masks | four planes, walk words, packed bits, and wall/scenery masks sourced from client flag definitions |
 | `essence.rs` | essence-mine return latch | session-gated return hop |
 | `grid.rs` | walkability grids | step-grid surface |
 | `manifest.rs` | runtime manifest and identity schemas | hashes, verification, and `NavIdentityRow` |
@@ -375,7 +375,7 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 | `movement.rs` | shared directional step rule | router and release producer use the same `step_ok` |
 | `router/grid.rs` | compatibility step-grid A-star | retained for fixture tests; production travel uses the collision+transport router |
 | `router/resources.rs` | resource labels on walk nodes | change only at paid hops |
-| `service_pick.rs`, `service_pick_tests.rs` | shared service-footprint access and complete-domain air/routed selection | prevalidated borrowed access; no `script` dependency |
+| `service_pick.rs`, `service_pick_tests.rs` | shared service-footprint access and complete-domain air/routed selection | prevalidated borrowed access; no `script` dependency; Bank and ShopKeeper share the routed target contract |
 | `tile.rs` | tile coords and distance | x, z, level |
 | `transport.rs` | transport graph orchestration | types, ordering, shared cost and geometry |
 | `transport/` | runtime fare, web-action and Wilderness helpers | source derivation belongs to `nav-bake` |
@@ -727,7 +727,7 @@ libtest exception.
 | `live_gate.rs` | live proof gate for every scenario watch | which shared witness a run qualifies under (paired proofs refuse without the pair gate), per-poll core-gate verdicts, the PASS hold: Pending core first, then the 45 s clean-stop grace; panel and `tui-play` both call it |
 | `live_start.rs` | live catalog Start transaction | stashed isolate Starts fired on StartScript, witness armed immediately before each actual Start, setup failures fail the armed witness; the fleet launch panel and `tui-play` both stash (`fleet_catalog_starts`, feature `live-harness`) |
 | `script_runtime.rs` | per-slot observe, dispatch, and nav continuation | script wall and walk continuation |
-| `script_observe.rs`, `script_snapshot.rs`, `script_interact.rs`, `script_nav.rs`, `script_walk.rs`, `script_bank.rs`, `script_paint.rs`, `script_channels.rs` | per-slot script pump pieces | observation and snapshot posting, interact dispatch, cooperative route-inspection publication and walk continuation, WalkGuard, bank selection as a bounded cursor job on shared WorkAdmission using the shared compact search and one immutable `Arc<WorldState>` backing. Its 192 MiB whole-job charge covers captured input, cursor and result. At five seconds, walking requests use the route-only Single fallback after admission. Non-walking requests return the first candidate without a route, including demand still refused with Full. Full admission and owner-ledger pressure retain retry demand. Other admission refusals and oversized requests publish NoCandidate or walking NoPath. The remaining pieces own paint status and the BroadcastChannel broker. |
+| `script_observe.rs`, `script_snapshot.rs`, `script_interact.rs`, `script_nav.rs`, `script_walk.rs`, `script_bank.rs`, `script_paint.rs`, `script_channels.rs` | per-slot script pump pieces | observation and snapshot posting, interact dispatch, cooperative route-inspection publication and walk continuation, WalkGuard, and bank/service picks as bounded cursor jobs on shared WorkAdmission using the shared compact search and one immutable `Arc<WorldState>` backing. Service picks search the complete eligible access domain without teleports or bank fetch, retaining per-bot avoid rectangles and account gates; NoPath carries the separate unresolved-quest-gate diagnosis. The 192 MiB whole-job charge covers captured input, cursor and result. At five seconds, walking requests use the route-only Single fallback after admission. Non-walking requests return the first candidate without a route, including demand still refused with Full. Full admission and owner-ledger pressure retain retry demand. Other admission refusals and oversized requests publish NoCandidate or walking NoPath. The remaining pieces own paint status and the BroadcastChannel broker. |
 | `walk_arm.rs`, `walk_plan.rs`, `walk_permissions.rs` | operator walk arms and permissions | queued follow and bank-fetch steps, session routes, permission composition at admissions. Selected-bank walks use the same compact route adapter for Traveller and borrowed map paint, without expanding legacy route vectors. |
 | `admission.rs` | shared route-admission seam | advisory survivability estimate under Proceed; no net or poison-clear observer claimed |
 | `slot_bank_memory.rs` | slot thread's hand on its account bank memory | one shared handle per account; the slot thread is the only writer, never across file IO |

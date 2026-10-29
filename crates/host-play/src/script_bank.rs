@@ -829,7 +829,7 @@ impl CooperativeBankPickJob {
             },
             BankPickSearchKind::First => {
                 if let Some(service) = &self.job.request.service {
-                    let mut request = nav::service_pick::routed_request(
+                    let mut request = nav_planner::service_pick::routed_request(
                         self.job.request.from,
                         targets,
                         self.job.request.opts,
@@ -990,8 +990,7 @@ impl CooperativeJob for CooperativeBankPickJob {
                         SearchRequest::MissingItemReqs { .. }
                         | SearchRequest::MissingItemReqsForRoute { .. }
                         | SearchRequest::BlockingZones { .. }
-                        | SearchRequest::EntranceRequirements { .. }
-                        | SearchRequest::UnresolvedQuestGates { .. } => {
+                        | SearchRequest::EntranceRequirements { .. } => {
                             unreachable!("bank-pick request uses a route search variant")
                         }
                     };
@@ -1189,8 +1188,7 @@ impl CooperativeJob for CooperativeBankPickJob {
                                 SearchOutcome::MissingItemReqs(_)
                                 | SearchOutcome::MissingItemReqsForRoute { .. }
                                 | SearchOutcome::BlockingZones(_)
-                                | SearchOutcome::EntranceRequirements(_)
-                                | SearchOutcome::UnresolvedQuestGates(_) => {
+                                | SearchOutcome::EntranceRequirements(_) => {
                                     unreachable!("bank-pick search returns a route outcome")
                                 }
                             }
@@ -1728,14 +1726,18 @@ fn service_pick_context(input: NativeServicePickInput) -> NativeServicePickConte
         evidence: input.evidence,
     }
 }
-fn service_first_route_error(error: nav::router::RouteError) -> Option<ServicePickOutcome> {
+fn service_first_route_error(
+    error: nav_planner::router::RouteError,
+) -> Option<ServicePickOutcome> {
     match error {
-        nav::router::RouteError::NoPath => None,
-        nav::router::RouteError::BudgetExhausted => Some(ServicePickOutcome::BudgetExhausted),
+        nav_planner::router::RouteError::NoPath => None,
+        nav_planner::router::RouteError::BudgetExhausted => {
+            Some(ServicePickOutcome::BudgetExhausted)
+        }
     }
 }
 
-fn service_route_cost(route: &nav::router::CompactRoute) -> Option<u32> {
+fn service_route_cost(route: &nav_planner::router::CompactRoute) -> Option<u32> {
     let ticks = route.ticks();
     if !ticks.is_finite() || !(0.0..=f64::from(u32::MAX)).contains(&ticks) {
         return None;
@@ -2297,7 +2299,7 @@ fn make_bank_pick_request(
 )]
 fn make_service_pick_request(
     request_id: u64,
-    lease: nav::contract::NavLease,
+    lease: nav_planner::contract::NavLease,
     facts: Option<Arc<NamedBankFacts>>,
     from: WorldTile,
     opts: FindOptions,
