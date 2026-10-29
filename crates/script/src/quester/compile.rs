@@ -598,6 +598,29 @@ pub fn compile_uncached_for_test_with_loadouts(
     .map(Arc::new)
 }
 
+/// Test helper: compile a partner Path as the member of `gang`, without the
+/// process cache and with no operator loadout rows.
+pub fn compile_uncached_for_test_as(
+    document: &PathDocument,
+    selected: &SelectedGameData,
+    quests: &QuestCatalog,
+    gang: super::pair::Gang,
+) -> Result<Arc<CompiledPath>, CompileError> {
+    let gathering = uses_gathering(document)
+        .then(|| api::gather_methods::cached(selected))
+        .flatten();
+    compile_uncached(
+        document,
+        digest_bytes(b"test"),
+        selected,
+        quests,
+        gathering,
+        Some(gang),
+        &OperatorLoadouts::absent(),
+    )
+    .map(Arc::new)
+}
+
 fn compile_requirement(
     selected: &SelectedGameData,
     requirement: &QuestRequirementDocument,

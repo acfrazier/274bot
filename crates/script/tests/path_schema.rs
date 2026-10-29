@@ -1,7 +1,9 @@
 use api::game_data::{self, SelectedGameData};
 use api::quest_facts::QuestCatalog;
 use api::selected::{ClientRevision, FactKey};
-use script::quester::compile::{compile_uncached_for_test, CompileError};
+use script::quester::compile::{
+    compile_uncached_for_test, compile_uncached_for_test_as, CompileError,
+};
 use script::quester::path::PathDocument;
 use script::quester::queue::ReleaseIndex;
 use script::quester::schema::{path_schema_path, render};
@@ -376,7 +378,16 @@ fn bundled_paths_decode_and_compile() {
             failures.push(format!("{file} id mismatch: {} != {}", document.id.0, entry.id));
             continue;
         }
-        if let Err(error) = compile_uncached_for_test(&document, &selected, &quests) {
+        // A partner Path compiles only for a gang member, so check it as each declared gang.
+        let results = match &document.partner {
+            Some(declaration) => declaration
+                .roles
+                .iter()
+                .map(|role| compile_uncached_for_test_as(&document, &selected, &quests, role.gang))
+                .collect::<Vec<_>>(),
+            None => vec![compile_uncached_for_test(&document, &selected, &quests)],
+        };
+        for error in results.into_iter().filter_map(Result::err) {
             failures.push(format!(
                 "{file} path={} step={:?} code={} detail={:?}",
                 error.path.0, error.step, error.code, error.detail
