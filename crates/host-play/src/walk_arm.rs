@@ -14,6 +14,7 @@ use crate::script_runtime::{
     session_freezes_follow, step_bank_fetch_on_bot, NavBot, RoutePrereqContent,
 };
 use crate::walk_plan::{route_or_bank_fetch, PendingBankFetch, RouteOutcome};
+use script::combat::risk::RouteAssessment;
 use script::native::{HandoverEntry, OuterIdentity, OuterWalk, WalkHandover, WalkRefusal};
 /// Per-username WalkTo arm: the whole-world [`Traveller`] plus the
 /// [`Route`] it is following. [`arm_walk_on`] stores the route (found

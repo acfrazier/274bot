@@ -197,7 +197,7 @@ fn mage_family_maps_selected_spell_order_and_explicit_fallback() {
 #[test]
 fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
     // The compiled run is erased, but combat walk storage must stay a bare native handle.
-    let _: fn(crate::native::ActionHandle<crate::native::Walk>) -> Action = Action::Walk;
+    let _: fn(crate::native::ActionHandle<Walk>) -> Action = Action::Walk;
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let progress = CompiledProgress {

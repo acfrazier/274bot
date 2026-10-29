@@ -2238,13 +2238,7 @@ impl RouteJob {
 
     fn prereq_content_for_route(&self, route: &CompactRoute) -> Option<Arc<RoutePrereqContent>> {
         let catalog = self.request.prereq_catalog.as_ref()?;
-        let run = self
-            .state
-            .as_ref()?
-            .quest_evidence
-            .as_ref()?
-            .required_after()
-            .run;
+        let run = self.state.quest_evidence.as_ref()?.required_after().run;
         let route = nav_planner::producer::compact_route_view(&self.lease, route).ok()?;
         let gates = nav_planner::router::route_establishable_quest_gates(route, &self.state)?;
         route_prereq_content(catalog, run, gates)
@@ -3775,7 +3769,9 @@ pub(crate) fn publish_route_owner_refusal(
         nav_planner::producer::OwnerResultRefusal::Full { .. }
         | nav_planner::producer::OwnerResultRefusal::SizeOverflow => None,
     };
-    let detail = refusal.map_or_else(|| error.to_string(), |refusal| refusal.to_string());
+    let detail = refusal
+        .as_ref()
+        .map_or_else(|| error.to_string(), |refusal| refusal.to_string());
     publish_accepted_route_refusal(navs, name, generation, request_id, kind, &detail, refusal);
 }
 
@@ -6740,10 +6736,12 @@ impl ScriptRouteRequest {
 }
 impl NavBot {
     /// Retain policy only after the host accepted this exact Load request.
-    pub(crate) fn retain_compat_walk(&mut self, outer: script::native::OuterWalk) -> bool {
-        let script::native::OuterIdentity::Compat { request_id } = outer.identity else {
-            return false;
-        };
+    pub(crate) fn retain_compat_walk(
+        &mut self,
+        request_id: u64,
+        mut options: script::native::WalkOptions,
+        prereq_allow: script::native::PrereqAllow,
+    ) -> bool {
         let Some(context) = self.quest_context.as_ref() else {
             return false;
         };
@@ -6756,13 +6754,55 @@ impl NavBot {
         if let Some(live) = self.compat_walk.as_ref() {
             return live.request_id == request_id && live.run == context.stamp.run;
         }
+        let Ok(radius) = u16::try_from(key.1) else {
+            return false;
+        };
+        let Some(admission) = self.admission.as_deref() else {
+            return false;
+        };
+        options.allow_teleports = script::native::WalkBit::from(Some(key.2));
+        options.allow_wilderness = script::native::WalkBit::from(Some(key.3));
+        options.allow_danger_zones = match admission.policy {
+            script::native::RiskPolicy::Inherit => script::native::WalkBit::Inherit,
+            script::native::RiskPolicy::Proceed => script::native::WalkBit::Allow,
+            script::native::RiskPolicy::Avoid => script::native::WalkBit::Forbid,
+        };
+        let exclusions = self.requested_exclusions.clone();
+        let (avoid, cross) = exclusions.as_ref().map_or_else(
+            || (Box::default(), Box::default()),
+            |exclusions| {
+                (
+                    exclusions
+                        .avoid_wire
+                        .iter()
+                        .filter_map(|entry| match entry {
+                            script::shim::InspectAvoidWire::Catalog(name) => {
+                                Some(Arc::<str>::from(name.as_str()))
+                            }
+                            _ => None,
+                        })
+                        .collect(),
+                    exclusions.cross.clone().into_boxed_slice(),
+                )
+            },
+        );
         self.compat_walk = Some(Box::new(CompatWalk {
             run: context.stamp.run,
             request_id,
             generation: self.route_generation,
             key,
-            exclusions: self.requested_exclusions.clone(),
-            outer: Some(outer),
+            exclusions,
+            outer: Some(script::native::OuterWalk {
+                identity: script::native::OuterIdentity::Compat { request_id },
+                target: key.0,
+                radius,
+                arrival: self.route_arrival,
+                avoid,
+                cross,
+                options,
+                allow_bank_fetch: key.4,
+                prereq_allow,
+            }),
         }));
         true
     }
@@ -7189,7 +7229,7 @@ impl NavBot {
                         .risk_refusal
                         .as_deref()
                         .filter(|(request, _)| *request == owner.request_id().get())
-                        .map(|(_, refusal)| *refusal),
+                        .map(|(_, refusal)| refusal.clone()),
                     escape: self
                         .admission
                         .as_deref()
@@ -7761,6 +7801,8 @@ pub(super) fn preserve_recovery_walk_identity(
             allow_wilderness,
             compat_tile_intent: bot.route_compat_tile_intent,
             allow_bank_fetch,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: bot.walk_request_id,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -7806,6 +7848,16 @@ pub(crate) fn hold_script_nav(
         {
             let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch, _) = requested;
             let request_id = nav.walk_request_id;
+            let (allow_prereq_dialogue, allow_quest_start) = nav
+                .compat_walk
+                .as_ref()
+                .and_then(|walk| walk.outer.as_ref())
+                .map_or((None, None), |outer| {
+                    (
+                        Some(outer.prereq_allow.dialogue),
+                        Some(outer.prereq_allow.quest_start),
+                    )
+                });
             let (avoid, cross) = nav.requested_exclusions.as_deref().map_or_else(
                 || (Vec::new(), Vec::new()),
                 |exclusions| {
@@ -7829,6 +7881,8 @@ pub(crate) fn hold_script_nav(
                     allow_teleports,
                     allow_wilderness,
                     allow_bank_fetch,
+                    allow_prereq_dialogue,
+                    allow_quest_start,
                     request_id,
                     avoid,
                     cross,
@@ -7841,6 +7895,8 @@ pub(crate) fn hold_script_nav(
                     allow_teleports,
                     allow_wilderness,
                     allow_bank_fetch,
+                    allow_prereq_dialogue,
+                    allow_quest_start,
                     request_id,
                     avoid,
                     cross,
@@ -9517,28 +9573,28 @@ mod route_quest_provider_tests {
             walk_request_id: request_id,
             requested_route: Some((target, 3, false, false, true, ZoneExempt::NONE)),
             requested_exclusions: Some(Arc::new(exclusions)),
+            admission: Some(Box::new(crate::admission::Admission::manual(
+                FindOptions {
+                    allow_bank_fetch: true,
+                    ..Default::default()
+                },
+                Default::default(),
+                7,
+                crate::WalkGlobals::default(),
+            ))),
             ..Default::default()
         };
-        assert!(bot.retain_compat_walk(script::native::OuterWalk {
-            identity: script::native::OuterIdentity::Compat { request_id },
-            target,
-            radius: 3,
-            arrival: ArrivalKind::Reach,
-            avoid: vec![Arc::from("named-avoid")].into(),
-            cross: vec![Arc::from("named-cross")].into(),
-            options: script::native::WalkOptions {
-                allow_teleports: script::native::WalkBit::Forbid,
-                allow_wilderness: script::native::WalkBit::Forbid,
-                allow_danger_zones: script::native::WalkBit::Forbid,
+        assert!(bot.retain_compat_walk(
+            request_id,
+            script::native::WalkOptions {
                 allow_quest_start: script::native::WalkBit::Forbid,
                 ..Default::default()
             },
-            allow_bank_fetch: true,
-            prereq_allow: script::native::PrereqAllow {
+            script::native::PrereqAllow {
                 dialogue: true,
-                quest_start: false
+                quest_start: false,
             },
-        }));
+        ));
         bot
     }
 

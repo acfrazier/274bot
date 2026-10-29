@@ -219,6 +219,7 @@ pub fn measures_captured_native_bank_pick_cpu() {
         varps: serde_json::from_value(captured["varps"].clone()).unwrap(),
         quests: serde_json::from_value(captured["quests"].clone()).unwrap(),
         map_members: captured["map_members"].as_bool().unwrap(),
+        establishable: None,
         quest_evidence: None,
     };
     let [x, z, level]: [i32; 3] = serde_json::from_value(capture["from"].clone()).unwrap();

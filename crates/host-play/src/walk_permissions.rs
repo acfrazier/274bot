@@ -138,18 +138,20 @@ impl WalkGlobals {
         self.effective_danger_level().risk_policy(script, walk)
     }
 
-    /// Resolve prerequisite consent. Global and script grants are additive;
-    /// only a request-level Forbid can narrow the resulting grant.
+    /// Resolve additive global, script and request grants; only a
+    /// request-level Forbid can narrow the resulting grant.
     pub(crate) const fn prereq_allow(
         self,
         script: WalkPermissions,
         walk: WalkOptions,
     ) -> PrereqAllow {
         PrereqAllow {
-            dialogue: (self.allow_prereq_dialogue || script.allow_prereq_dialogue)
-                && !matches!(walk.allow_prereq_dialogue, WalkBit::Forbid),
-            quest_start: (self.allow_quest_start || script.allow_quest_start)
-                && !matches!(walk.allow_quest_start, WalkBit::Forbid),
+            dialogue: walk
+                .allow_prereq_dialogue
+                .resolve(self.allow_prereq_dialogue, script.allow_prereq_dialogue),
+            quest_start: walk
+                .allow_quest_start
+                .resolve(self.allow_quest_start, script.allow_quest_start),
         }
     }
 
@@ -872,6 +874,8 @@ pub(crate) fn compiled_options(
             allow_teleports: bit(opts.allow_teleports),
             allow_wilderness: bit(opts.allow_wilderness),
             allow_danger_zones: WalkBit::Inherit,
+            allow_prereq_dialogue: WalkBit::Inherit,
+            allow_quest_start: WalkBit::Inherit,
         },
     );
     FindOptions {
@@ -991,6 +995,14 @@ mod tests {
                 allow_prereq_dialogue: script,
                 allow_quest_start: script,
             };
+            let navs = Arc::new(Mutex::new(HashMap::from([(
+                "alice".to_owned(),
+                super::super::NavBot {
+                    walk_globals: Some(Arc::new(Mutex::new(globals))),
+                    native_permissions: Some(script),
+                    ..Default::default()
+                },
+            )])));
             for (bit, expected) in [
                 (WalkBit::Inherit, inherited),
                 (WalkBit::Allow, true),
@@ -1002,6 +1014,8 @@ mod tests {
                         allow_teleports: bit,
                         allow_wilderness: bit,
                         allow_danger_zones: bit,
+                        allow_prereq_dialogue: WalkBit::Inherit,
+                        allow_quest_start: WalkBit::Inherit,
                     },
                 );
                 assert_eq!(opts.allow_teleports, expected);
@@ -1011,7 +1025,7 @@ mod tests {
             }
             for (request, expected) in [
                 (WalkBit::Inherit, inherited),
-                (WalkBit::Allow, inherited),
+                (WalkBit::Allow, true),
                 (WalkBit::Forbid, false),
             ] {
                 let allowed = globals.prereq_allow(
@@ -1025,7 +1039,30 @@ mod tests {
                 assert_eq!(allowed.dialogue, expected);
                 assert_eq!(
                     allowed.quest_start,
-                    (!global || script.allow_quest_start) && request != WalkBit::Forbid
+                    (request == WalkBit::Allow || !global || script.allow_quest_start)
+                        && request != WalkBit::Forbid
+                );
+                let explicit = match request {
+                    WalkBit::Inherit => None,
+                    WalkBit::Allow => Some(true),
+                    WalkBit::Forbid => Some(false),
+                };
+                assert_eq!(
+                    compiled_prereq_allow(&navs, "alice", explicit, explicit),
+                    allowed,
+                );
+                assert_eq!(
+                    native_prereq_allow(
+                        &navs,
+                        "alice",
+                        WalkOptions {
+                            allow_prereq_dialogue: request,
+                            allow_quest_start: request,
+                            ..Default::default()
+                        },
+                        None,
+                    ),
+                    allowed,
                 );
             }
             assert_eq!(
@@ -1475,6 +1512,8 @@ mod tests {
                     allow_bank_fetch: true,
                     allow_danger_zones: true,
                     survivable_routing: true,
+                    allow_prereq_dialogue: true,
+                    allow_quest_start: true,
                 }))),
                 ..Default::default()
             },

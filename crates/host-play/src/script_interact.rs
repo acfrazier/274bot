@@ -138,7 +138,10 @@ pub(crate) fn retire_logical_walk(
                 return false;
             }
             let (terminal_end, detail) = match result {
-                Ok(receipt) => (receipt.end, receipt.failure_detail()),
+                Ok(receipt) => {
+                    let detail = receipt.failure_detail();
+                    (receipt.end, detail)
+                }
                 Err(error) => {
                     let terminal_end = match &error {
                         script::native::ActionError::Cancelled => {
@@ -245,6 +248,7 @@ pub(crate) fn dispatch_script_interact(
             obj_names_arc: &None,
         },
         None,
+        reqs,
     )
 }
 
@@ -444,6 +448,7 @@ where
             obj_names_arc: &obj_names_arc,
         },
         None,
+        reqs,
     )
 }
 
@@ -643,6 +648,8 @@ where
                 allow_teleports,
                 allow_wilderness,
                 allow_bank_fetch,
+                allow_prereq_dialogue,
+                allow_quest_start,
                 request_id,
                 avoid,
                 cross,
@@ -678,6 +685,14 @@ where
                     None,
                     script::native::WalkEnd::Cancelled,
                 );
+                let prereq_allow = (request_id != 0).then(|| {
+                    super::walk_permissions::compiled_prereq_allow(
+                        navs,
+                        slot,
+                        allow_prereq_dialogue,
+                        allow_quest_start,
+                    )
+                });
                 let arm = ScriptWalkArm {
                     here,
                     world: world.clone(),
@@ -690,6 +705,19 @@ where
                     snapshot, x, z, level, opts, request_id, exclusions,
                 );
                 if queued {
+                    if let Some(prereq_allow) = prereq_allow {
+                        if let Some(bot) = navs.lock().unwrap().get_mut(slot) {
+                            bot.retain_compat_walk(
+                                request_id,
+                                script::native::WalkOptions {
+                                    allow_prereq_dialogue: allow_prereq_dialogue.into(),
+                                    allow_quest_start: allow_quest_start.into(),
+                                    ..Default::default()
+                                },
+                                prereq_allow,
+                            );
+                        }
+                    }
                     record_script_act(
                         navs,
                         slot,
@@ -715,6 +743,8 @@ where
                 allow_teleports,
                 allow_wilderness,
                 allow_bank_fetch,
+                allow_prereq_dialogue,
+                allow_quest_start,
                 request_id,
                 avoid,
                 cross,
@@ -750,6 +780,14 @@ where
                     None,
                     script::native::WalkEnd::Cancelled,
                 );
+                let prereq_allow = (request_id != 0).then(|| {
+                    super::walk_permissions::compiled_prereq_allow(
+                        navs,
+                        slot,
+                        allow_prereq_dialogue,
+                        allow_quest_start,
+                    )
+                });
                 let arm = ScriptWalkArm {
                     here,
                     world: world.clone(),
@@ -770,6 +808,19 @@ where
                     exclusions,
                 );
                 if queued {
+                    if let Some(prereq_allow) = prereq_allow {
+                        if let Some(bot) = navs.lock().unwrap().get_mut(slot) {
+                            bot.retain_compat_walk(
+                                request_id,
+                                script::native::WalkOptions {
+                                    allow_prereq_dialogue: allow_prereq_dialogue.into(),
+                                    allow_quest_start: allow_quest_start.into(),
+                                    ..Default::default()
+                                },
+                                prereq_allow,
+                            );
+                        }
+                    }
                     record_script_act(
                         navs,
                         slot,

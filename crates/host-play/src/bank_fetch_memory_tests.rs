@@ -724,6 +724,7 @@ fn assert_one_trip_only_for_a_hint(arrival: nav_planner::arrival::ArrivalKind) {
         arrival,
         opts: fetch_on(),
         state: Some(state.clone()),
+        prereq_catalog: None,
         bank_origin,
         bank: rows.to_vec(),
         live_geometry: None,

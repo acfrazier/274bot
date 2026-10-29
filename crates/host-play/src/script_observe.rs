@@ -2043,6 +2043,7 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
         assessment,
         refusal,
         escape,
+        prereq_allow: None,
     };
     if let Some((owner, end)) = bot.native_end.take() {
         let request_id = owner.request_id().get();
@@ -2107,7 +2108,7 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
         .risk_refusal
         .as_deref()
         .filter(|(request, _)| *request == request_id)
-        .map(|(_, refusal)| *refusal);
+        .map(|(_, refusal)| refusal.clone());
     let assessment = bot.assessment.clone();
     let escape = bot
         .admission

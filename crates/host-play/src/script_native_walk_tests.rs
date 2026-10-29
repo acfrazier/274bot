@@ -96,6 +96,7 @@ impl Script for WalkerScript {
                 required_after: tick.cx.evidence(),
                 evidence: None,
                 cross: cross.into_boxed_slice(),
+                avoid: Box::default(),
                 protect: shared.protect,
                 food_guard: shared.food_guard,
                 allow: script::native::WalkAllow {
@@ -3450,6 +3451,8 @@ fn native_admission_teleport_and_wilderness_forbids_override_global_grants() {
             allow_teleports: bit,
             allow_wilderness: bit,
             allow_danger_zones: WalkBit::Allow,
+            allow_prereq_dialogue: WalkBit::Inherit,
+            allow_quest_start: WalkBit::Inherit,
         };
         rig.observe(1);
         rig.wait_routed();
@@ -5491,6 +5494,7 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
         arrival,
         opts: FindOptions::default(),
         state: None,
+        prereq_catalog: None,
         bank_origin: api::bank_memory::Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,
@@ -6232,6 +6236,7 @@ mod s2b_admission_contract {
                 required_after,
                 evidence: None,
                 cross: Box::new([]),
+                avoid: Box::new([]),
                 protect: false,
                 food_guard: false,
                 allow: Default::default(),

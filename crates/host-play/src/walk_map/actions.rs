@@ -1,5 +1,6 @@
 use std::fmt;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use api::snapshot::{GameSnapshot, WorldTile};
 use nav_planner::bank_fetch::{plan_bank_fetch, BankFetchError, BankRows};
@@ -460,6 +461,7 @@ fn terminal_at(outcome: &nav_executor::TravelOutcome) -> WorldTile {
         | TravelOutcome::Blocked { at, .. }
         | TravelOutcome::EvidenceUnproven { at, .. }
         | TravelOutcome::EntranceRefused { at, .. }
+        | TravelOutcome::GateRefused { at, .. }
         | TravelOutcome::GaveUp { at, .. } => *at,
     }
 }
@@ -499,6 +501,9 @@ impl fmt::Display for TerminalReason<'_> {
             }
             TravelOutcome::EntranceRefused { requirement, .. } => {
                 write!(f, "EntranceRefused({requirement})")
+            }
+            TravelOutcome::GateRefused { crossing, .. } => {
+                write!(f, "GateRefused({crossing:?})")
             }
             TravelOutcome::GaveUp { .. } => f.write_str("GaveUp"),
         }
@@ -578,7 +583,7 @@ impl WalkSlotStatus {
 }
 
 /// One named slot for [`Play::map_walk_group`].
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct WalkSlotRequest<'a> {
     pub name: &'a str,
     pub state: &'a WorldState,
@@ -587,6 +592,18 @@ pub struct WalkSlotRequest<'a> {
     /// The slot's bank memory rows ([`crate::Play::bank_rows`]).
     pub bank: &'a BankRows,
     pub risk_input: RiskInput,
+}
+
+impl fmt::Debug for WalkSlotRequest<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WalkSlotRequest")
+            .field("name", &self.name)
+            .field("state", &self.state)
+            .field("has_snapshot", &self.snapshot.is_some())
+            .field("bank", &self.bank)
+            .field("risk_input", &self.risk_input)
+            .finish()
+    }
 }
 
 /// Shared destination after the selection is consumed. Each bot gets its own

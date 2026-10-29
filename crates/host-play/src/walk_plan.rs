@@ -25,7 +25,7 @@ pub(crate) enum RoutePath {
         plan: RoutePlanLease,
         lease: NavLease,
         _custody: Arc<dyn Any + Send + Sync>,
-        prereq_content: Option<Arc<crate::script_nav::RoutePrereqContent>>,
+        prereq_content: Option<Arc<crate::script_runtime::RoutePrereqContent>>,
     },
 }
 
@@ -38,7 +38,7 @@ impl RoutePath {
         plan: RoutePlanLease,
         lease: NavLease,
         _custody: Arc<dyn Any + Send + Sync>,
-        prereq_content: Option<Arc<crate::script_nav::RoutePrereqContent>>,
+        prereq_content: Option<Arc<crate::script_runtime::RoutePrereqContent>>,
     ) -> Self {
         Self::Compact {
             plan,
@@ -73,7 +73,7 @@ impl RoutePath {
         self.plan().cloned()
     }
 
-    pub(crate) fn prereq_content(&self) -> Option<&Arc<crate::script_nav::RoutePrereqContent>> {
+    pub(crate) fn prereq_content(&self) -> Option<&Arc<crate::script_runtime::RoutePrereqContent>> {
         match self {
             Self::Legacy(_) => None,
             Self::Compact { prereq_content, .. } => prereq_content.as_ref(),

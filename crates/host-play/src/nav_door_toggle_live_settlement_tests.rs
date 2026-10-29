@@ -76,6 +76,7 @@ impl Script for SettlementWalker {
                 required_after: tick.cx.evidence(),
                 evidence: None,
                 cross: Box::default(),
+                avoid: Box::default(),
                 protect: false,
                 food_guard: false,
                 allow: Default::default(),
