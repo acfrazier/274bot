@@ -502,6 +502,62 @@ impl Traveller {
             .or(Some(transport.to))
     }
 
+    /// The active follow's wait reason, target tile, and target id, in that
+    /// order. A wait target may be a transport anchor; [`Self::current_aim`]
+    /// remains the precise walk/click target.
+    pub fn current_wait_status(
+        &self,
+    ) -> Option<(&'static str, Option<WorldTile>, Option<i32>)> {
+        let run = self.follow.as_ref()?;
+        if run.stun_wait.is_some() {
+            return Some(("stun recovery", self.current_aim(), None));
+        }
+        if let Some(walk) = &run.walk {
+            if !walk.sent {
+                return Some((
+                    if walk.end_refused_ticks > 0 {
+                        "walk send refused"
+                    } else {
+                        "walk not sent"
+                    },
+                    Some(walk.aim),
+                    None,
+                ));
+            }
+            let recovering = walk.stall_idle_ticks > 0 || walk.tries > 1;
+            return Some((
+                if recovering {
+                    "stall recovery"
+                } else {
+                    "walk"
+                },
+                Some(walk.aim),
+                None,
+            ));
+        }
+        if let Some(transport) = &run.transport {
+            let Leg::Transport { edge } = &transport.leg else {
+                return Some(("transport", Some(transport.to), None));
+            };
+            return Some((
+                transport_wait_reason(edge.kind),
+                Some(edge.at),
+                Some(edge.loc_id),
+            ));
+        }
+        if run.settle_until.is_some() {
+            let pending = run.pending_leg.as_ref().and_then(wait_status_for_leg);
+            return Some((
+                "scene settle",
+                pending
+                    .and_then(|(_, target, _)| target)
+                    .or_else(|| self.current_aim()),
+                pending.and_then(|(_, _, target_id)| target_id),
+            ));
+        }
+        run.pending_leg.as_ref().and_then(wait_status_for_leg)
+    }
+
     /// Original-route leg associated with the most recent terminal
     /// [`TravelOutcome`]. `None` for an empty route arrival or before a run
     /// terminates.
@@ -683,6 +739,44 @@ impl FollowLeg {
                 leg
             }
         }
+    }
+}
+
+fn wait_status_for_leg(
+    leg: &FollowLeg,
+) -> Option<(&'static str, Option<WorldTile>, Option<i32>)> {
+    match leg {
+        FollowLeg::Legacy(Leg::Walk { tiles }) => Some(("walk", tiles.last().copied(), None)),
+        FollowLeg::Legacy(Leg::Transport { edge }) => Some((
+            transport_wait_reason(edge.kind),
+            Some(edge.at),
+            Some(edge.loc_id),
+        )),
+        FollowLeg::Plan { plan, index } => match plan_retained_leg(plan, *index)? {
+            nav_planner::router::CompactRouteLeg::Walk(tiles) => {
+                Some(("walk", tiles.last().copied(), None))
+            }
+            nav_planner::router::CompactRouteLeg::Transport(step) => Some((
+                transport_wait_reason(step.kind()),
+                Some(step.anchor()),
+                Some(step.loc_id()),
+            )),
+        },
+    }
+}
+
+fn transport_wait_reason(kind: TransportKind) -> &'static str {
+    match kind {
+        TransportKind::Door => "door",
+        TransportKind::Ladder => "ladder",
+        TransportKind::Stairs => "stairs",
+        TransportKind::Boat => "boat",
+        TransportKind::Teleport => "teleport",
+        TransportKind::AgilityShortcut => "agility shortcut",
+        TransportKind::Glider => "glider",
+        TransportKind::SpiritTree => "spirit tree",
+        TransportKind::Npc => "npc",
+        TransportKind::EssenceExit => "essence exit",
     }
 }
 
@@ -1488,3 +1582,93 @@ fn fire_follow_leg(options: &mut TravelOptions<'_>, leg: &FollowLeg, phase: LegP
 #[cfg(test)]
 #[path = "traveller_tests.rs"]
 mod tests;
+#[cfg(test)]
+mod wait_status_tests {
+    use super::*;
+
+    fn empty_run() -> FollowRun {
+        FollowRun::with_legs(
+            RouteLegSource::Legacy(VecDeque::new()),
+            &TravelOptions::default(),
+        )
+    }
+
+    fn tile(x: i32, z: i32) -> WorldTile {
+        WorldTile { x, z, level: 0 }
+    }
+
+    #[test]
+    fn door_pending_leg_reports_door_anchor_and_id() {
+        let anchor = tile(100, 200);
+        let mut run = empty_run();
+        run.pending_leg = Some(FollowLeg::Legacy(Leg::Transport {
+            edge: Box::new(TransportEdge {
+                takeoff: None,
+                worn_all_req: Vec::new(),
+                forbidden_held: Vec::new(),
+                forbidden_worn: Vec::new(),
+                kind: TransportKind::Door,
+                player_delta: None,
+                at: anchor,
+                to: tile(102, 200),
+                loc_id: 1530,
+                option: 1,
+                ticks: 1,
+                dir: None,
+                open_loc_id: None,
+                skill_req: vec![],
+                item_req: vec![],
+                consumed_req: vec![],
+                item_returns: vec![],
+                quest_req: vec![],
+                varp_req: vec![],
+                worn_req: vec![],
+                members_req: false,
+                wildy_cap: None,
+                quest_gates: None,
+            }),
+        }));
+        let mut traveller = Traveller::new();
+        traveller.follow = Some(run);
+
+        assert_eq!(
+            traveller.current_wait_status(),
+            Some(("door", Some(anchor), Some(1530)))
+        );
+    }
+
+    #[test]
+    fn refused_unsent_walk_reports_send_wait_not_stall_recovery() {
+        let here = tile(100, 200);
+        let aim = tile(101, 200);
+        let leg = FollowLeg::Legacy(Leg::Walk {
+            tiles: vec![here, aim],
+        });
+        let mut run = empty_run();
+        run.walk = Some(WalkHop {
+            leg,
+            cursor: 0,
+            aim,
+            aim_index: 1,
+            sent: false,
+            sent_tick: 0,
+            start_tile: here,
+            first_sent_tick: 0,
+            ticks_waited: 0,
+            sent_tile: None,
+            tries: 0,
+            stall_idle_ticks: 0,
+            stall_idle_last_tick: None,
+            stall_idle_at: None,
+            end_refused_ticks: 1,
+            end_refused_last_tick: Some(1),
+        });
+        let mut traveller = Traveller::new();
+        traveller.follow = Some(run);
+
+        assert_eq!(
+            traveller.current_wait_status(),
+            Some(("walk send refused", Some(aim), None))
+        );
+    }
+}

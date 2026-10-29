@@ -4034,6 +4034,81 @@ fn captured_route_quests(
 /// clone of it one step per player-info tick. [`NavBot::has_route`] is the
 /// "armed" gate the walk hook and the busy flag read. A pending BankBudget
 /// session freezes follow until its steps finish.
+/// Ten distinct observed ticks identify a sustained wait before the default
+/// 60-tick hop budget. This controls logging only and never delays or retries.
+pub(crate) const WALK_NO_PROGRESS_INFO_TICKS: u32 = 10;
+
+pub(crate) struct WalkNoProgress {
+    request_id: u64,
+    tile: WorldTile,
+    last_tick: u32,
+    ticks: u32,
+    reported: bool,
+}
+
+impl Default for WalkNoProgress {
+    fn default() -> Self {
+        Self {
+            request_id: 0,
+            tile: WorldTile { x: 0, z: 0, level: 0 },
+            last_tick: 0,
+            ticks: 0,
+            reported: false,
+        }
+    }
+}
+
+impl WalkNoProgress {
+    pub(crate) fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Return the tick count once, on the first threshold crossing in an
+    /// episode. Repeated snapshots do not count. Movement starts a new episode.
+    pub(crate) fn observe(
+        &mut self,
+        request_id: u64,
+        tile: WorldTile,
+        tick: u32,
+    ) -> Option<u32> {
+        if request_id == 0 {
+            self.reset();
+            return None;
+        }
+        if self.request_id != request_id {
+            self.request_id = request_id;
+            self.tile = tile;
+            self.last_tick = tick;
+            self.ticks = 0;
+            self.reported = false;
+            return None;
+        }
+
+        if self.tile != tile {
+            self.tile = tile;
+            self.last_tick = tick;
+            self.ticks = 0;
+            self.reported = false;
+            return None;
+        }
+
+        let elapsed = tick.wrapping_sub(self.last_tick);
+        if elapsed == 0 || elapsed >= (1 << 31) {
+            return None;
+        }
+
+        self.last_tick = tick;
+        self.ticks = self.ticks.saturating_add(1);
+        if !self.reported && self.ticks >= WALK_NO_PROGRESS_INFO_TICKS {
+            self.reported = true;
+            Some(self.ticks)
+        } else {
+            None
+        }
+    }
+}
+
+
 #[derive(Default)]
 pub(crate) struct NavBot {
     /// The slot-thread condition owner, also read by admission at arm time.
@@ -4098,6 +4173,8 @@ pub(crate) struct NavBot {
     /// Request exclusions retained for reconnect carry and retransmission gates.
     pub(crate) requested_exclusions: Option<Arc<ScriptRouteExclusions>>,
     pub(crate) traveller: Traveller,
+    /// Counts the current no-tile-progress episode for this slot's walk.
+    pub(crate) walk_no_progress: WalkNoProgress,
     pub(crate) route: Option<Arc<Route>>,
     pub(crate) compact_route: Option<RoutePath>,
     /// The walk request id `publish_route` installed `route` for. A retarget

@@ -21,6 +21,7 @@ use script::combat::schedule::elapsed;
 use script::combat::{GuardFailure, GuardOp, GuardProtect};
 
 use super::play_status::lock_statuses;
+use super::script_nav::WALK_NO_PROGRESS_INFO_TICKS;
 use super::{
     log_walk_arm_bot, open_bank_at_here, BankFetchFlight, FlightTarget, NavBot, PendingBankFetch,
     ScriptWalkArm, SlotStatus,
@@ -69,6 +70,7 @@ pub(super) fn abort_walk_on_bot_with_end(bot: &mut NavBot, end: script::native::
     bot.route_loc_geometry = (false, false);
     bot.route_arrival = ArrivalKind::Reach;
     bot.route_quest_evidence = None;
+    bot.walk_no_progress.reset();
     bot.walk_request_id = 0;
     if !manual {
         bot.clear_walk_outcome();
@@ -807,6 +809,9 @@ pub(crate) fn apply_nav_follow_outcome(
     outcome: Option<nav_executor::TravelOutcome>,
     walking_stand: bool,
 ) {
+    if outcome.is_some() && bot.route_request_id == bot.walk_request_id {
+        bot.walk_no_progress.reset();
+    }
     match outcome {
         Some(nav_executor::TravelOutcome::Arrived { .. }) => settle_route_end(bot, false),
         // Frozen `walkResilient` treats EndBlocked as a completed route for
@@ -862,6 +867,96 @@ pub(crate) fn apply_nav_follow_outcome(
         None => {}
     }
 }
+
+struct WalkWaitDetails {
+    reason: &'static str,
+    target: Option<WorldTile>,
+    target_id: Option<i32>,
+    aim: Option<WorldTile>,
+    route_target: Option<WorldTile>,
+}
+
+fn walk_wait_details(
+    bot: &NavBot,
+    override_reason: Option<&'static str>,
+    traveller_wait: Option<(&'static str, Option<WorldTile>, Option<i32>)>,
+) -> WalkWaitDetails {
+    let route_target = bot
+        .requested_route
+        .map(|(target, ..)| target)
+        .or_else(|| bot.route_destination());
+    let (reason, target, target_id) = if let Some(reason) = override_reason {
+        (reason, route_target, None)
+    } else if bot.route_work_pending()
+        && (!bot.has_route() || bot.route_request_id != bot.walk_request_id)
+    {
+        ("route", route_target, None)
+    } else if let Some((reason, target, target_id)) = traveller_wait {
+        (reason, target, target_id)
+    } else if bot.route_work_pending() || bot.has_route() {
+        ("route", route_target, None)
+    } else if bot.bank_fetch.is_some() {
+        ("bank step", route_target, None)
+    } else {
+        ("route", route_target, None)
+    };
+    WalkWaitDetails {
+        reason,
+        target,
+        target_id,
+        aim: bot.traveller.current_aim(),
+        route_target,
+    }
+}
+
+fn record_walk_no_progress(
+    name: &str,
+    bot: &mut NavBot,
+    here: Option<(i32, i32, i32)>,
+    tick: u32,
+    override_reason: Option<&'static str>,
+) {
+    if bot.walk_request_id == 0
+        || bot.requested_route.is_none()
+        || !bot.walk_work_live()
+    {
+        bot.walk_no_progress.reset();
+        return;
+    }
+    let Some((x, z, level)) = here else {
+        bot.walk_no_progress.reset();
+        return;
+    };
+    let tile = WorldTile { x, z, level };
+    let Some(no_progress_ticks) = bot.walk_no_progress.observe(bot.walk_request_id, tile, tick)
+    else {
+        return;
+    };
+    let wait = walk_wait_details(bot, override_reason, bot.traveller.current_wait_status());
+    log_walk_no_progress(name, bot.walk_request_id, tile, no_progress_ticks, wait);
+}
+
+fn log_walk_no_progress(
+    name: &str,
+    request_id: u64,
+    tile: WorldTile,
+    no_progress_ticks: u32,
+    wait: WalkWaitDetails,
+) {
+    api::host_log!(
+        api::hostlog::Category::NavEvent,
+        api::hostlog::Level::Info,
+        slot = name,
+        "walk no-progress request={} tile={tile:?} no_progress_ticks={no_progress_ticks} reason={} target={:?} target_id={:?} aim={:?} route_target={:?}",
+        request_id,
+        wait.reason,
+        wait.target,
+        wait.target_id,
+        wait.aim,
+        wait.route_target,
+    );
+}
+
 
 /// Publish a script walk's destination into `name`'s status row. The caller
 /// must still hold the navigation lock it read `destination` under, so that
@@ -943,14 +1038,23 @@ pub(crate) fn step_nav_bot<D: Driver>(
                     .as_ref()
                     .is_some_and(|off| off.blocks_nav(snapshot.tick() as u16))
                 {
+                    record_walk_no_progress(name, bot, here, snapshot.tick(), Some("walk guard"));
                     return;
                 }
             }
             finish_combat_prayers(driver, snapshot, bot, Some(name));
             if bot.combat_prayer_off.is_some() {
+                record_walk_no_progress(
+                    name,
+                    bot,
+                    here,
+                    snapshot.tick(),
+                    Some("combat prayer cleanup"),
+                );
                 return;
             }
             if bot.slot_escape().is_some() {
+                record_walk_no_progress(name, bot, here, snapshot.tick(), Some("slot escape"));
                 return;
             }
         }
@@ -959,11 +1063,22 @@ pub(crate) fn step_nav_bot<D: Driver>(
     // guardian holds the slot, and the armed route stays latched so it
     // resumes when the hold lifts. BankBudget steps freeze the same way.
     if hold {
+        let mut all = navs.lock().unwrap();
+        if let Some(bot) = all.get_mut(name) {
+            record_walk_no_progress(
+                name,
+                bot,
+                here,
+                snapshot.tick(),
+                Some("random-event hold"),
+            );
+        }
         return;
     }
     if here.is_none() {
         let mut all = navs.lock().unwrap();
         if let Some(bot) = all.get_mut(name) {
+            record_walk_no_progress(name, bot, here, snapshot.tick(), None);
             // A missing player cannot open/withdraw/wear; abort the latched
             // non-Walk step so disconnect does not hang with follow frozen.
             if bank_fetch_freezes_follow(bot) {
@@ -985,6 +1100,13 @@ pub(crate) fn step_nav_bot<D: Driver>(
                 // Close. Walk with a stand sub-route armed falls through
                 // to Traveller::follow — never final_route mid-session.
                 if bank_fetch_freezes_follow(bot) {
+                    record_walk_no_progress(
+                        name,
+                        bot,
+                        here,
+                        snapshot.tick(),
+                        Some("bank step"),
+                    );
                     publish_script_walk(statuses, name, bot.route_destination());
                     return;
                 }
@@ -1242,6 +1364,16 @@ pub(crate) fn step_nav_bot<D: Driver>(
         // Publish while the navigation lock is still held: a Stop's reset
         // and retirement then run wholly before or wholly after this
         // read-and-publish, so a retired run's destination cannot return.
+        record_walk_no_progress(
+            name,
+            bot,
+            here,
+            snapshot.tick(),
+            bot.walk_guard
+                .as_ref()
+                .is_some_and(|guard| guard.blocks_follow(snapshot.tick() as u16))
+                .then_some("walk guard"),
+        );
         publish_script_walk(statuses, name, bot.route_destination());
     }
 }
@@ -2049,3 +2181,7 @@ mod zone_diagnostic_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "script_walk_no_progress_tests.rs"]
+mod no_progress_tests;
