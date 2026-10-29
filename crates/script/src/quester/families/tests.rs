@@ -760,11 +760,13 @@ fn quest_walk_step_retry_budget_resets_for_a_new_step() {
         Some("second step first failure"),
     );
     assert_eq!(failed_request, second_initial_request);
-    assert!(with_tick(&snapshot, &mut ledger, 8, |tick| {
-        with_step(tick, |cx| second.poll(cx))
-    })
-    .is_pending(),
-    "a new step must receive its full retry budget");
+    assert!(
+        with_tick(&snapshot, &mut ledger, 8, |tick| {
+            with_step(tick, |cx| second.poll(cx))
+        })
+        .is_pending(),
+        "a new step must receive its full retry budget"
+    );
     assert_eq!(latest_walk_request(&ledger).0, failed_request);
     assert!(with_tick(&snapshot, &mut ledger, 9, |tick| {
         with_step(tick, |cx| second.poll(cx))
