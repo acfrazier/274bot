@@ -331,6 +331,11 @@ fn campaign_cells(manifest_path: &std::path::Path) -> Result<Vec<CampaignEntry>,
                 observe_start: Some(Box::new(move |snapshot| Ok(serde_json::json!({
                     "seed_plan": plan,
                     "tick": snapshot.tick(),
+                    "quest_points_varp": plan["qp_varp_id"],
+                    "quest_points": plan["qp_varp_id"].as_i64()
+                        .and_then(|index| i32::try_from(index).ok())
+                        .and_then(|index| snapshot.varps().iter().find(|row| row.index == index))
+                        .map(|row| row.value),
                     "tile": snapshot.tile(),
                     "inventory": snapshot.inventory().iter().filter(|item| item.count > 0)
                         .map(|item| [item.def.id, item.count]).collect::<Vec<_>>(),
