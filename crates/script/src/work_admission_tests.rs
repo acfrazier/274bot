@@ -1564,8 +1564,9 @@ fn background_step_warns_at_exact_stall_limit_without_settling_the_job() {
     WorkService::wait_terminal(&shared, &ticket).unwrap();
     assert_eq!(shared.lock().consume(&ticket), Ok(Settlement::Completed(9)));
     wait_for_jobs(&shared, 0);
-    assert!(shared.lock().shared.active.lock().is_none());
     assert!(shared.lock().worker_available());
+    WorkService::shutdown(&shared).expect("returned worker can be joined");
+    assert!(shared.lock().shared.active.lock().is_none());
 }
 
 struct RetainedPanic;
