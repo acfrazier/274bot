@@ -196,6 +196,47 @@ pub type ObserveFamily = Box<
         ) -> Result<Option<Value>, String>
         + Send,
 >;
+/// Change and observe the profile's Cure poison setting during a live cell.
+pub type ObserveProfileControl = Box<
+    dyn FnMut(
+            &GameSnapshot,
+            Option<&ScriptStatus>,
+            Option<&host_play::SlotStatus>,
+        ) -> Option<vault::CurePoison>
+        + Send,
+>;
+
+/// Initial Cure poison policy and live profile control for one cell.
+pub struct LiveProfileControl {
+    initial_cure_poison: vault::CurePoison,
+    require_members_world: bool,
+    observe: ObserveProfileControl,
+}
+
+impl LiveProfileControl {
+    pub fn new(
+        initial_cure_poison: vault::CurePoison,
+        observe: impl FnMut(
+                &GameSnapshot,
+                Option<&ScriptStatus>,
+                Option<&host_play::SlotStatus>,
+            ) -> Option<vault::CurePoison>
+            + Send
+            + 'static,
+    ) -> Self {
+        Self {
+            initial_cure_poison,
+            require_members_world: false,
+            observe: Box::new(observe),
+        }
+    }
+
+    pub fn require_members_world(mut self) -> Self {
+        self.require_members_world = true;
+        self
+    }
+}
+
 /// A receipt emitted by a cell-specific observer during live polling.
 pub type ObserveTick = Box<dyn FnMut(&GameSnapshot, Option<&ScriptStatus>) -> Option<Value> + Send>;
 
@@ -386,6 +427,13 @@ fn mint_profile(account: &str, password: &str) -> Result<Profile, String> {
         uid,
         settings: ProfileSettings::default(),
     })
+}
+fn cure_poison_name(policy: vault::CurePoison) -> &'static str {
+    match policy {
+        vault::CurePoison::WhenNeeded => "when_needed",
+        vault::CurePoison::Always => "always",
+        vault::CurePoison::Never => "never",
+    }
 }
 
 pub fn status_json(status: &ScriptStatus) -> Value {
@@ -957,17 +1005,34 @@ fn append_status(path: &Path, status: &ScriptStatus) -> Result<Value, String> {
 }
 
 pub fn run(cell: Cell) -> Result<Value, String> {
-    run_inner(cell, None, None, None, false)
+    run_inner(cell, None, None, None, false, None)
 }
 
 /// Run the generic Path live cell with shared world-wide tick-speed controls.
 pub fn run_quester_path(cell: Cell) -> Result<Value, String> {
-    run_inner(cell, None, None, None, true)
+    run_inner(cell, None, None, None, true, None)
 }
 
 /// Run an inline native family fixture without a second launcher or capture driver.
 pub fn run_family(cell: Cell, start: StartFamily, observe: ObserveFamily) -> Result<Value, String> {
-    run_inner(cell, Some(start), Some(observe), None, false)
+    run_inner(cell, Some(start), Some(observe), None, false, None)
+}
+
+/// Run a family cell with an explicit initial cure policy and live profile control.
+pub fn run_family_with_profile_control(
+    cell: Cell,
+    start: StartFamily,
+    observe: ObserveFamily,
+    profile_control: LiveProfileControl,
+) -> Result<Value, String> {
+    run_inner(
+        cell,
+        Some(start),
+        Some(observe),
+        None,
+        false,
+        Some(profile_control),
+    )
 }
 
 /// Run the Path with a cell-specific success oracle and polling observations.
@@ -976,7 +1041,7 @@ pub fn run_observed(
     observe: ObserveFamily,
     observe_tick: ObserveTick,
 ) -> Result<Value, String> {
-    run_inner(cell, None, Some(observe), Some(observe_tick), false)
+    run_inner(cell, None, Some(observe), Some(observe_tick), false, None)
 }
 
 fn run_inner(
@@ -985,6 +1050,7 @@ fn run_inner(
     observe_family: Option<ObserveFamily>,
     observe_tick: Option<ObserveTick>,
     quester_path: bool,
+    profile_control: Option<LiveProfileControl>,
 ) -> Result<Value, String> {
     let Cell {
         quest,
@@ -1009,6 +1075,7 @@ fn run_inner(
         observe_family,
         observe_tick,
         quester_path,
+        profile_control,
     )
 }
 
@@ -1039,7 +1106,7 @@ pub fn run_pair(pair: PairCell) -> Result<Value, String> {
             }
         })
         .collect();
-    run_cells(cells, RunPlan::Pair(mode), None, None, None, false)
+    run_cells(cells, RunPlan::Pair(mode), None, None, None, false, None)
 }
 
 fn has_native_start(script: Option<&str>, family_override: bool) -> bool {
@@ -1053,6 +1120,7 @@ fn run_cells(
     mut observe_family: Option<ObserveFamily>,
     mut observe_tick: Option<ObserveTick>,
     quester_path: bool,
+    mut profile_control: Option<LiveProfileControl>,
 ) -> Result<Value, String> {
     #[cfg(feature = "js")]
     script_js::install_cards().map_err(|error| error.to_string())?;
@@ -1134,6 +1202,13 @@ fn run_cells(
     let deadline = Instant::now() + scenario_deadline + DEADLINE_GRACE;
     let temp = TempRoot::new(&run_label)?;
     let (profile, template) = selected_profile(&temp.0)?;
+    if profile_control
+        .as_ref()
+        .is_some_and(|control| control.require_members_world)
+        && !profile.map_members()
+    {
+        return Err("this live profile requires a members world".into());
+    }
     // A persistence cell (`QUESTER_LIVE_ACCOUNT` + `QUESTER_LIVE_PASSWORD`)
     // logs one fixed account in across processes so what the host saved
     // for it under `HOME` — the bank hint — is found again; everything else
@@ -1575,9 +1650,17 @@ fn run_cells(
     if mode.is_pair() {
         play.set_quest_accounts(names.iter().map(String::as_str));
     }
+    let mut live_profiles = Vec::with_capacity(entries.len());
     for (index, (account, password)) in entries.iter().enumerate() {
-        play.try_spawn_slot(mint_profile(account, password)?, None, None, None)
+        let mut profile = mint_profile(account, password)?;
+        if index == 0 {
+            if let Some(control) = profile_control.as_ref() {
+                profile.settings.survival.cure_poison = control.initial_cure_poison;
+            }
+        }
+        play.try_spawn_slot(profile.clone(), None, None, None)
             .map_err(|error| format!("spawn role {index} ({account}): {error}"))?;
+        live_profiles.push(profile);
     }
     {
         let mut state = shared.lock().map_err(|_| "live state poisoned")?;
@@ -2269,6 +2352,53 @@ fn run_cells(
         }
 
         let all_terminal = terminal.iter().all(|value| *value);
+        let live_status = profile_control.as_ref().and_then(|_| {
+            play.statuses()
+                .into_iter()
+                .find(|status| status.username.as_str() == names[0])
+        });
+        if let Some(control) = profile_control.as_mut() {
+            let state = match shared.lock() {
+                Ok(state) => state,
+                Err(_) => break 'run Err("live state poisoned".into()),
+            };
+            let requested = (control.observe)(
+                &state.actors[0].snapshot,
+                observations[0].status.as_deref(),
+                live_status.as_ref(),
+            );
+            if let Some(policy) = requested {
+                let profile = &mut live_profiles[0];
+                let previous = profile.settings.survival.cure_poison;
+                if previous != policy {
+                    profile.settings.survival.cure_poison = policy;
+                    let snapshot = &state.actors[0].snapshot;
+                    play.remember_profile(profile.clone());
+                    let slot_mirror_policy = play.arm(&profile.username).map(|arm| {
+                        match arm.cure_poison() {
+                            script::survival::CurePoison::WhenNeeded => "when_needed",
+                            script::survival::CurePoison::Always => "always",
+                            script::survival::CurePoison::Never => "never",
+                        }
+                    });
+                    let slot_mirror_updated =
+                        slot_mirror_policy == Some(cure_poison_name(policy));
+                    state.actors[0].transitions.push(json!({
+                        "event": "profile-command",
+                        "command": "SetSurvival",
+                        "setting": "cure_poison",
+                        "before": cure_poison_name(previous),
+                        "after": cure_poison_name(policy),
+                        "tick": snapshot.tick(),
+                        "chat_modal": snapshot.modals().chat,
+                        "chat_options": snapshot.chat_options().iter().map(|option| option.text.clone()).collect::<Vec<_>>(),
+                        "slot_mirror_policy": slot_mirror_policy,
+                        "slot_mirror_tick": snapshot.tick(),
+                        "slot_mirror_updated": slot_mirror_updated,
+                    }));
+                }
+            }
+        }
         if starts[0] > 0 {
             if let Some(observe) = observe_family.as_mut() {
                 let state = match shared.lock() {
