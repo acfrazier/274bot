@@ -1842,7 +1842,6 @@ impl CombatRun {
                 },
                 &mut cx.tick.cx,
             )?;
-            self.loot_index += 1;
             self.action = Some(Action::Loot(handle));
             return Ok(LootStart::Started);
         }
@@ -2027,18 +2026,6 @@ impl StepRun for CombatRun {
             self.action = None;
             return Poll::Ready(Err(ActionError::UserInput));
         }
-        if matches!(self.phase, Phase::Loot)
-            && matches!(self.action.as_ref(), Some(Action::Loot(_)))
-            && self
-                .loot_wait_deadline
-                .is_some_and(|deadline| cx.tick.cx.evidence().tick > deadline)
-        {
-            // The selected drop did not settle within this kill's one bounded
-            // death window; continue the same pass without starting another.
-            self.action = None;
-            self.loot_missing_this_kill = true;
-            return self.next_loot_or_reengage(cx);
-        }
         if matches!(self.phase, Phase::FinishWait | Phase::FinishDialogue)
             && !self.spend_finish_tick_budget(cx.tick.cx.evidence().tick)
         {
@@ -2123,6 +2110,7 @@ impl StepRun for CombatRun {
                 // An unrouteable loot row counts as missed when this step still
                 // needs loot; optional drops remain non-blocking.
                 self.action = None;
+                self.loot_index += 1;
                 self.loot_missing_this_kill = true;
                 self.next_loot_or_reengage(cx)
             }
@@ -2166,6 +2154,7 @@ impl StepRun for CombatRun {
             ActionPoll::Walk(receipt) => self.on_return_walk(receipt, cx),
             ActionPoll::Loot(taken) => {
                 self.action = None;
+                self.loot_index += 1;
                 if !taken {
                     // A stale or absent drop is not evidence for another click.
                     // The next combat run can produce a fresh ground row.

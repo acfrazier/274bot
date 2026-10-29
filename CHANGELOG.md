@@ -52,6 +52,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   configured loot radius. If a missing drop still leaves the step's `until`
   condition false, the attempt now counts as a step failure instead of
   restarting combat without limit.
+- Once a visible drop starts a Take, quest combat now waits for that pickup
+  to settle even if it finishes after the six-tick appearance window. The loot
+  row advances only after the pickup settles, so a slow successful pickup is
+  not reported as a missing drop.
 
 ### Navigation
 
