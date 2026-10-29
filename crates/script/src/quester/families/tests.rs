@@ -741,7 +741,9 @@ fn assert_retryable_walk_receipt(
     })
     .is_pending());
 
-    let event = run.take_trace_event().expect("each retry emits one trace event");
+    let event = run
+        .take_trace_event()
+        .expect("each retry emits one trace event");
     let rendered = format!("{event:?}");
     assert!(rendered.contains("attempt: 2"));
     assert!(rendered.contains("failure_detail: \"retryable failure\""));
@@ -840,8 +842,9 @@ fn quest_walk_aborted_receipt_stops_without_retry() {
 
 #[test]
 fn quest_walk_user_input_needs_evidence_and_cancelled_stop_without_retry() {
-    let gates: Arc<[api::selected::QuestGate]> =
-        Arc::from([api::selected::QuestGate::Complete(FactKey::new("walk-gate"))]);
+    let gates: Arc<[api::selected::QuestGate]> = Arc::from([api::selected::QuestGate::Complete(
+        FactKey::new("walk-gate"),
+    )]);
     let failures = [
         (WalkEnd::UserInput, ActionError::UserInput),
         (
@@ -859,10 +862,7 @@ fn quest_walk_user_input_needs_evidence_and_cancelled_stop_without_retry() {
             with_step(tick, |cx| plan.begin(cx).unwrap())
         });
         let first_request = latest_walk_request(&ledger).0;
-        assert_eq!(
-            post_walk_receipt(&mut ledger, 2, end, None),
-            first_request
-        );
+        assert_eq!(post_walk_receipt(&mut ledger, 2, end, None), first_request);
         let result = with_tick(&snapshot, &mut ledger, 2, |tick| {
             with_step(tick, |cx| run.poll(cx))
         });
@@ -885,12 +885,7 @@ fn quest_walk_retry_begin_defers_when_the_tick_budget_is_exhausted() {
         with_step(tick, |cx| plan.begin(cx).unwrap())
     });
     let first_request = latest_walk_request(&ledger).0;
-    post_walk_receipt(
-        &mut ledger,
-        2,
-        WalkEnd::NoPath,
-        Some("first route failure"),
-    );
+    post_walk_receipt(&mut ledger, 2, WalkEnd::NoPath, Some("first route failure"));
     assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
         with_step(tick, |cx| run.poll(cx))
     })

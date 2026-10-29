@@ -1106,10 +1106,7 @@ impl ReturnStallRecovery {
             && !has_blocked_zones
             && matches!(
                 &receipt.end,
-                WalkEnd::NoPath
-                    | WalkEnd::RouteEnded
-                    | WalkEnd::Stalled(_)
-                    | WalkEnd::Failed
+                WalkEnd::NoPath | WalkEnd::RouteEnded | WalkEnd::Stalled(_) | WalkEnd::Failed
             );
         self.observe_retryable(retryable)
     }

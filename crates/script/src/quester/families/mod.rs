@@ -1223,9 +1223,7 @@ impl StepPlan for WalkPlan {
         let mut run = WalkRun {
             plan: self.clone(),
             handle: None,
-            recovery: crate::native::ReturnStallRecovery::with_max_attempts(
-                WALK_STEP_MAX_ATTEMPTS,
-            ),
+            recovery: crate::native::ReturnStallRecovery::with_max_attempts(WALK_STEP_MAX_ATTEMPTS),
             retry_after_tick: None,
             warning: None,
             trace_event: None,
