@@ -27,6 +27,12 @@ const BASE40_STATS: [(u8, i32); 7] = [
     (5, 43),
     (6, BASE40_LEVEL),
 ];
+// R289 content checks Woodcutting 36 at `scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2:28-40`.
+// It checks Crafting 31 at the same file's lines 77-87.
+const ZANARIS_CONTENT_STATS: [(u8, i32); 2] = [
+    (8, 36),  // `Skill::names[8]` is Woodcutting.
+    (12, 31), // `Skill::names[12]` is Crafting.
+];
 const EXTRA_ITEMS: [(&str, i32); 1] = [("knife", 1)];
 const STAND: WorldTile = WorldTile {
     x: 3145,
@@ -35,7 +41,7 @@ const STAND: WorldTile = WorldTile {
 };
 
 fn base40_seed_steps() -> Vec<scenario::Step> {
-    let mut steps = Vec::with_capacity(BASE40_STATS.len() + 2);
+    let mut steps = Vec::with_capacity(BASE40_STATS.len() + ZANARIS_CONTENT_STATS.len() + 2);
     steps.push(scenario::Step {
         name: "reset stats before explicit Base40 seed",
         kind: scenario::StepKind::Perform {
@@ -56,10 +62,10 @@ fn base40_seed_steps() -> Vec<scenario::Step> {
             budget_ticks: 80,
         },
     });
-    for &(skill, level) in &BASE40_STATS {
+    for &(skill, level) in BASE40_STATS.iter().chain(ZANARIS_CONTENT_STATS.iter()) {
         let name = Skill::names[usize::from(skill)];
         steps.push(scenario::Step {
-            name: "seed explicit Base40 stat",
+            name: "seed explicit account stat",
             kind: scenario::StepKind::Perform {
                 send: Box::new(move |client, _| {
                     api::interact::cheat(client, &format!("setstat {name} {level}")).is_sent()
@@ -144,21 +150,23 @@ fn zanaris_navigation_cell() -> Result<Cell, String> {
     scenario.settings.script_settings_overrides = Some(start_settings.clone());
 
     // This cell proves one navigation leg, not Zanaris qualification.
-    // Keep Zanaris out of the qualified-quest profile table and seed Base40 here.
+    // Keep Zanaris out of the qualified-quest profile table.
+    // Seed Base40 combat and the required R289 path skills locally.
     let observe_start = Box::new(move |snapshot: &GameSnapshot| {
         if !snapshot.ingame() || snapshot.scene_state() != 2 {
-            return Err("Base40 seed was not observed in an active game".into());
+            return Err("account seed was not observed in an active game".into());
         }
-        let mut observed_stats = Vec::with_capacity(BASE40_STATS.len());
-        for (skill, level) in BASE40_STATS {
+        let mut observed_stats =
+            Vec::with_capacity(BASE40_STATS.len() + ZANARIS_CONTENT_STATS.len());
+        for &(skill, level) in BASE40_STATS.iter().chain(ZANARIS_CONTENT_STATS.iter()) {
             let stat = snapshot
                 .stats()
                 .iter()
                 .find(|stat| stat.index == i32::from(skill))
-                .ok_or_else(|| format!("Base40 stat {skill} is unobserved"))?;
+                .ok_or_else(|| format!("seeded stat {skill} is unobserved"))?;
             if stat.base != level || stat.effective != level {
                 return Err(format!(
-                    "Base40 stat {skill} expected {level}, observed base {} effective {}",
+                    "seeded stat {skill} expected {level}, observed base {} effective {}",
                     stat.base, stat.effective
                 ));
             }
@@ -189,7 +197,7 @@ fn zanaris_navigation_cell() -> Result<Cell, String> {
             ));
         }
         Ok(json!({
-            "profile": "Base40",
+            "profile": "Base40 combat + Zanaris content stats",
             "stats": observed_stats,
             "knife_id": knife_id,
             "knife_count": knife_count,
