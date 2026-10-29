@@ -573,6 +573,7 @@ fn accept_bank_walk(
             refusal: None,
             assessment: None,
             escape: None,
+            prereq_allow: None,
         },
     );
 }
@@ -11886,6 +11887,7 @@ export default class T extends LoopingBot {
                     refusal: None,
                     assessment: None,
                     escape: None,
+                    prereq_allow: None,
                 },
             );
         }
