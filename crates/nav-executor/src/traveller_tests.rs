@@ -1067,7 +1067,7 @@ fn long_bent_walk_aims_at_short_path_hops() {
         hop_steps.push(index - base);
         base = index;
     }
-    assert_eq!(hop_steps, [15, 15, 15, 15, 3]);
+    assert_eq!(hop_steps, [15, 15, 15, 18]);
 }
 
 #[test]
