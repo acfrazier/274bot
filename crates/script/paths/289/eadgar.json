@@ -8,7 +8,8 @@
     "troll-stronghold",
     "druidic-ritual",
     "herblore-31",
-    "thieving-30"
+    "thieving-30",
+    "agility-40"
   ],
   "tested_stats": null,
   "partner": null,
@@ -57,11 +58,18 @@
         "at": "start",
         "source": "content/scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2:38-49"
       }
+      ,
+      {
+        "id": "agility-40",
+        "kind": {"Skill": {"skill": "agility", "level": 40}},
+        "at": "start",
+        "source": "content/scripts/areas/area_yanille/scripts/agility_dungeon.rs2:30-34"
+      }
     ],
     "items": [],
     "acquire": {},
     "bank": "nearest",
-    "coin_float": 23,
+    "coin_float": 41631,
     "loadouts": {},
     "areas": {},
     "tools": [
@@ -899,10 +907,65 @@
           "order": "ordered",
           "steps": [
             {
-              "id": "GAP-deterministic-ranarr-source", "kind": "wait", "version": 1, "advances": true,
-              "args": {"until": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, "max_ticks": 120, "park_on_timeout": true},
-              "comment": "No fixed source established. content/scripts/areas/area_yanille/scripts/agility_dungeon.rs2:101-120 gives Ranarr from the sinister chest, but content/scripts/drop tables/scripts/salarin_the_twisted.rs2:45-46 makes the key a chance drop. Campaign tests cannot gate on chance drops.",
-              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}},
+              "id": "buy-salarin-food", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "baker_merchant", "anchor": {"tile": [2654,3311,0], "source": "content/maps/m41_51.jm2:10991"}}, "obj": "bread", "qty": 10, "est_gp": 126},
+              "comment": "content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-24; content/scripts/areas/area_ardougne_east/configs/ardougne_east.npc:383-413; content/scripts/skill_cooking/configs/cooking_inv/configs/dough/dough.obj:39-50; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}}]},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}}
+            },
+            {
+              "id": "buy-chest-antipoison", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "jiminua", "anchor": {"tile": [2767,3122,0], "source": "content/maps/m43_48.jm2:7119; content/pack/npc.pack:561"}}, "obj": "3doseantipoison", "qty": 1, "est_gp": 432},
+              "comment": "content/scripts/areas/area_karamja/configs/karamja.inv:29-50; content/scripts/areas/area_karamja/configs/karamja.npc:168-201; content/scripts/skill_herblore/configs/brewing/potions.obj:617-634; content/scripts/shop/scripts/shop.rs2:131-147,182-187.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "3doseantipoison"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "3doseantipoison"}}}
+            },
+            {
+              "id": "buy-wind-strike-air", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "betty", "anchor": {"tile": [3012,3259,0], "source": "content/maps/m47_50.jm2:10002; content/pack/npc.pack:584"}}, "obj": "airrune", "qty": 1000, "est_gp": 23500},
+              "comment": "Full-stock charge: content/scripts/areas/area_port_sarim/configs/port_sarim.inv:35-46; content/scripts/areas/area_port_sarim/configs/port_sarim.npc:187-222; content/scripts/skill_magic/configs/runes.obj:26-30; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "sinister_key"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "airrune", "qty": 1000}}}]},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "airrune", "qty": 1000}}}
+            },
+            {
+              "id": "buy-wind-strike-mind", "kind": "buy", "version": 1, "advances": false,
+              "args": {"shop": {"npc": "betty", "anchor": {"tile": [3012,3259,0], "source": "content/maps/m47_50.jm2:10002; content/pack/npc.pack:584"}}, "obj": "mindrune", "qty": 1000, "est_gp": 17490},
+              "comment": "Full-stock charge: content/scripts/areas/area_port_sarim/configs/port_sarim.inv:35-46; content/scripts/areas/area_port_sarim/configs/port_sarim.npc:187-222; content/scripts/skill_magic/configs/runes.obj:50-54; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "sinister_key"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "mindrune", "qty": 1000}}}]},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "mindrune", "qty": 1000}}}
+            },
+            {
+              "id": "salarin-sinister-key", "kind": "combat", "version": 1, "advances": false,
+              "args": {"target": {"npc": "salarin_the_twisted", "not_targeting_others": true, "pick": "nearest"}, "tactic": {"kind": "open", "style": "mage", "engage_radius": 8, "auto_retaliate": false}, "spells": ["wind_strike"], "fallback_spells": false, "stand": {"tile": [2613,9523,0], "source": "content/maps/m40_148.jm2:9083; content/pack/npc.pack:206"}, "lost_radius": 20, "kill_budget_ticks": 500, "until_drop": {"obj": "sinister_key", "max_kills": 114, "stop": "GAP-salarin-sinister-key-budget"}},
+              "comment": "content/scripts/drop tables/scripts/salarin_the_twisted.rs2:17,43-46 gives the key at 10/128. content/scripts/skill_combat/scripts/player/player_magic.rs2:203-220 sets successful Wind Strike damage to 9.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "sinister_key"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "sinister_key"}}}
+            },
+            {
+              "id": "approach-sinister-chest", "kind": "walk", "version": 1, "advances": false,
+              "args": {"tile": [2561,9508,0], "radius": 1, "source": "content/maps/m40_148.jm2:4888; content/scripts/areas/area_yanille/configs/agility_dungeon.loc:56-61"},
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}, {"Fact": {"kind": "near", "version": 1, "args": {"tile": [2561,9508,0], "radius": 1}}}]},
+              "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [2561,9508,0], "radius": 1}}}
+            },
+            {
+              "id": "drink-chest-antipoison", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"held": "3doseantipoison"}, "op": "Drink"},
+              "comment": "content/scripts/player/scripts/consumption/effects/scripts/anti_poison.rs2:1-8; content/scripts/areas/area_yanille/scripts/agility_dungeon.rs2:103-112.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "2doseantipoison"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "2doseantipoison"}}}
+            },
+            {
+              "id": "unlock-sinister-chest", "kind": "use_on", "version": 1, "advances": false,
+              "args": {"item": "sinister_key", "target": {"loc": "shuttwistedchest"}, "anchor": {"tile": [2561,9507,0], "source": "content/maps/m40_148.jm2:4888; content/pack/loc.pack:378"}, "radius": 3},
+              "comment": "content/scripts/areas/area_yanille/scripts/agility_dungeon.rs2:101-120 consumes the key, poisons the player and gives three unidentified Ranarr.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "unidentified_ranarr"}}}
+            },
+            {
+              "id": "identify-ranarr", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"held": "unidentified_ranarr"}, "op": "Identify"},
+              "comment": "content/scripts/skill_herblore/scripts/identifying/identify.rs2:13-14,58-73; content/scripts/skill_herblore/configs/herbs.obj:89-105 requires Herblore 25.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}]},
               "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}
             },
             {
