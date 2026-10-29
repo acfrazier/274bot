@@ -9443,6 +9443,8 @@ fn unavailable_quester_skip_shows_and_expires_the_tui_refusal() {
 
     let iso = IsolatedStores::enter("tui-quester-skip-refusal");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    // The process log sink is lazy; install it before exercising the refusal.
+    let _ = frontend_core::log::global();
     focus_member(&mut session, &mut app, "alice");
     assert_eq!(
         app.show_screen(crate::layout::Screen::Script),
