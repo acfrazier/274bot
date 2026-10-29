@@ -21,7 +21,7 @@ text = """Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk
   report `not impl`; moving existing banking into the native seat does not
   implement them."""
 first = "0.2.4"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "scripts-misc"
 
@@ -47,7 +47,7 @@ text = """The JiveKBD hunting script (King Black Dragon) does not yet bring back
   dragon dies and return to the bank without the bones. A fix is planned with
   the native hunting rewrite."""
 first = "0.2.4"
-target = "none"
+target = "0.3.0"
 severity = "medium"
 owner = "T2.rest hunt"
 
@@ -94,7 +94,7 @@ text = """on a desktop with two graphics chips (for example a Ryzen with built-i
   starts with "importing the supplied dmabufs failed". Start it with
   `WGPU_POWER_PREF=high ./panel-play` until this is fixed."""
 first = "0.2.0.2"
-target = "none"
+target = "0.2.9"
 severity = "high"
 owner = "dual-gpu"
 
@@ -111,7 +111,7 @@ text = """With the default Danger routing setting, **When survivable**, bots can
   monsters on the route."""
 first = "0.2.0"
 listed = "0.2.5"
-target = "none"
+target = "0.2.9"
 severity = "medium"
 owner = "S2c"
 
@@ -123,7 +123,7 @@ text = """The Quester has routes for 20 of the 68 quests. Routes for the other
   quests are planned in waves."""
 first = "0.2.0"
 listed = "0.2.5"
-target = "none"
+target = "0.2.9"
 severity = "medium"
 owner = "Quester waves"
 
@@ -135,7 +135,7 @@ text = """The Brimhaven Agility Arena script can stop at a plank or pillar it
   cannot use. The cause is under investigation."""
 first = "0.2.0"
 listed = "0.2.5"
-target = "none"
+target = "0.2.9"
 severity = "medium"
 owner = "T2.rest agility"
 
@@ -147,7 +147,7 @@ text = """`Bank.depositAllMatching` checks about one item per game tick, so larg
   deposits can be slow. A fix is planned for a later release."""
 first = "0.2.4"
 listed = "0.2.5"
-target = "none"
+target = "0.2.9"
 severity = "medium"
 owner = "event-driven runtime endpoint"
 
@@ -163,7 +163,7 @@ area = "Scripts"
 text = """When Grinch banks, it uses the shared bank trip, which still waits up to a
   fixed time for some bank steps. These waits are planned to become game-timed."""
 first = "0.2.5"
-target = "none"
+target = "0.2.9"
 severity = "low"
 owner = "shared bank trip (event-driven runtime endpoint)"
 
@@ -177,7 +177,7 @@ text = """A bot can't get through a door that another player closes again on eve
   another way around, changing worlds when allowed, and a clear "door held
   shut" result are planned for a later release."""
 first = "0.2.5"
-target = "none"
+target = "0.2.9"
 severity = "medium"
 owner = "nav"
 
@@ -199,7 +199,7 @@ text = """Sherlock was meant to be a native clue solver. In practice it runs on 
   native clue solver is planned."""
 first = "0.1.8"
 listed = "0.2.5"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "T2.rest clues"
 
@@ -212,7 +212,7 @@ text = """The rs2b0t Thiever script waits about three game ticks longer than the
   could. A fix is planned with the native thieving rework."""
 first = "0.2.4"
 listed = "0.2.5"
-target = "none"
+target = "0.3.0"
 severity = "medium"
 owner = "T2.rest thieving"
 
@@ -224,7 +224,7 @@ text = """The northern Desert Mining Camp mine stays hidden. Its minecart needs
   dialogue and a chance-gated crossing that the bot does not yet support.
   There are still 85 hidden gathering sites on revision 289 and 66 on 274."""
 first = "0.2.5"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "nav-gated-entrances"
 
@@ -236,7 +236,7 @@ text = """The lower Desert Mining Camp mine supports Power mode only and require
   The Tourist Trap complete. Bank mode refuses this site because the bot
   cannot remove the slave kit to leave the camp."""
 first = "0.2.5"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "nav-gated-entrances"
 
@@ -267,7 +267,7 @@ text = """With "Pause script on manual movement" off, a script that acts in plac
   fights. With the setting on, any running rs2b0t script pauses. A built-in
   script pauses while it walks or acts, but not between actions."""
 first = "0.2.6"
-target = "none"
+target = "0.3.0"
 severity = "medium"
 owner = "T2.rest native family rewrites"
 
@@ -329,7 +329,7 @@ text = """After a super antipoison the bot counts only the ordinary immunity
   needed. It is still immune for the real time. Counting the super immunity
   is planned for a later release."""
 first = "0.2.7"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "T2 survival"
 
@@ -340,7 +340,7 @@ area = "Scripts"
 text = """Cure poison does not interrupt Gatherer or Quester steps to drink a held
   antipoison when poison makes a cure necessary. This behavior is not included."""
 first = "0.2.7"
-target = "none"
+target = "0.2.9"
 severity = "low"
 owner = "T2 survival"
 
@@ -351,7 +351,7 @@ area = "Panel and terminal app"
 text = """The panel and terminal app do not show a status row for a poison-related
   cure need. A poison-need status row is not included."""
 first = "0.2.7"
-target = "none"
+target = "0.2.9"
 severity = "low"
 owner = "T2 survival"
 
@@ -379,7 +379,7 @@ text = """When a script walks from Karamja to the mainland without the 30 coins 
   fare is not paid and the bot does not cross."""
 first = "0.2.6"
 listed = "0.2.7"
-target = "none"
+target = "0.2.8"
 severity = "medium"
 owner = "T2.rest walking"
 
@@ -410,7 +410,7 @@ text = """The rs2b0t FireGiant script can keep fighting after it eats its last
   the script is fixed upstream."""
 first = "0.2.6"
 listed = "0.2.7"
-target = "none"
+target = "0.2.9"
 severity = "medium"
 owner = "upstream rs2b0t FireGiant / survival phase 3"
 
