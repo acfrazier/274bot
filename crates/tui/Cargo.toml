@@ -30,7 +30,6 @@ path = "src/main.rs"
 [features]
 default = ["js"]
 js = ["frontend-core/js"]
-test-support = ["frontend-core/test-support"]
 memory-profile = ["frontend-core/memory-profile"]
 
 # CPU diagnostic: use System directly, report allocator metrics unavailable.
