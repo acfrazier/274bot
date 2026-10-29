@@ -784,7 +784,11 @@ mod tests {
         let (walk, blocked) = nav_planner::collision::pack_walk(&[0; 4]);
         let world = Arc::new(NavWorld::from_parts(
             nav_planner::collision::WorldCollision {
-                origin: WorldTile { x: 0, z: 0, level: 0 },
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
                 width: 1,
                 height: 1,
                 walk,
@@ -813,7 +817,11 @@ mod tests {
         );
         assert!(play.handles.is_empty(), "no slot or frame has started");
         assert!(
-            !world.shop_keeper_facts().expect("startup bound shops").rows().is_empty(),
+            !world
+                .shop_keeper_facts()
+                .expect("startup bound shops")
+                .rows()
+                .is_empty(),
             "selected catalog is ready before the first native input"
         );
     }

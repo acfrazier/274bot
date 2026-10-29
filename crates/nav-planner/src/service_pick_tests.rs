@@ -361,7 +361,9 @@ fn bank_only_binding_does_not_initialize_shop_keeper_catalog() {
             TransportGraph::default(),
             Vec::new(),
         );
-        world.bind_named_bank_facts(&data).expect("bank-only binding");
+        world
+            .bind_named_bank_facts(&data)
+            .expect("bank-only binding");
         assert!(world.named_bank_facts().is_some());
         assert!(world.shop_keeper_facts().is_none());
     }
