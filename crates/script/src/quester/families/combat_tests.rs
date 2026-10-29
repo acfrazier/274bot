@@ -907,17 +907,15 @@ struct HasItem(i32);
 
 impl PredicatePlan for HasItem {
     fn evaluate(&self, context: &PredicateContext<'_, '_>) -> Truth {
-        context
-            .cx
-            .snapshot()
-            .inventory()
-            .is_some_and(|rows| {
-                rows.value
-                    .iter()
-                    .any(|row| row.def.id == self.0 && row.count > 0)
-            })
-            .then_some(Truth::True)
-            .unwrap_or(Truth::False)
+        if context.cx.snapshot().inventory().is_some_and(|rows| {
+            rows.value
+                .iter()
+                .any(|row| row.def.id == self.0 && row.count > 0)
+        }) {
+            Truth::True
+        } else {
+            Truth::False
+        }
     }
 }
 
@@ -957,6 +955,7 @@ fn combat_test_run_with_radius(
         phase: Phase::Combat,
         loot_index: 0,
         loot_wait_deadline: None,
+        loot_missing_this_kill: false,
         last_report: None,
         last_outcome: None,
         target_gone_restarts: 0,
@@ -4258,7 +4257,7 @@ fn killed_report_waits_for_a_late_drop_before_reengaging() {
 }
 
 #[test]
-fn missing_combat_loot_wait_is_bounded_before_reengaging() {
+fn missing_combat_loot_wait_is_one_window_for_all_configured_items() {
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let loot: Vec<_> = ["red_bead", "yellow_bead", "black_bead", "white_bead"]
         .into_iter()

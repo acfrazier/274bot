@@ -46,10 +46,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   starts only after the bot sees that the attacker is gone. If every route
   fails, the quest stops with the last route failure. This does not promise
   that an escape exists.
-- Quest combat now waits up to 20 observed game ticks for each configured
-  ground-loot item to appear after a kill. A delayed quest drop, such as
-  Elemental Workshop ore, is collected instead of being skipped; missing or
-  unreachable optional loot still does not block combat indefinitely.
+- Quest combat now waits up to six observed game ticks once per kill for
+  configured ground drops. The limit follows the engine's five-tick death
+  sequence plus one observation tick, and searches use each quest step's
+  configured loot radius. If a missing drop still leaves the step's `until`
+  condition false, the attempt now counts as a step failure instead of
+  restarting combat without limit.
 
 ### Navigation
 
