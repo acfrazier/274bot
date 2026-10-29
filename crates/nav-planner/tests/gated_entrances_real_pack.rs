@@ -366,7 +366,7 @@ impl EvidenceProvider for MorytaniaGateEvidence {
     }
 }
 
-fn prerequisite_windows() -> Arc<[StageWindow]> {
+fn prerequisite_catalog() -> Arc<api::prereq_steps::PrereqCatalog> {
     let selected = game_data::for_revision(ClientRevision::R289).expect("selected revision");
     let clock = SystemClock;
     let cancel = SharedCancellation::new();
@@ -380,7 +380,6 @@ fn prerequisite_windows() -> Arc<[StageWindow]> {
     );
     FamilyPreparation::within(&mut step, |worker| selected.prepare_prereq_steps(worker))
         .expect("verified prerequisite catalog")
-        .establishable_windows()
 }
 
 fn morytania_state(
@@ -482,11 +481,48 @@ fn morytania_sites_compare_proof_unknown_and_false_gate_routes() {
         .quest_identity_for_bake()
         .expect("verified quest family");
     let family = QuestFamilyId::new(identity.sha256, identity.schema);
-    let establishable = prerequisite_windows();
+    let catalog = prerequisite_catalog();
+    let establishable = catalog.establishable_windows();
+    for edge in std::iter::once(a1).chain(a2.iter().copied()) {
+        let crossing = edge.crossing_id().expect("representable directed crossing");
+        for gate in edge
+            .quest_gates
+            .as_ref()
+            .expect("typed crossing gates")
+            .gates()
+        {
+            assert!(
+                catalog.for_gate(gate, &crossing).is_some(),
+                "baked gate and complete CrossingId must select the real row: {crossing:?}, {gate:?}"
+            );
+        }
+    }
     let proof = morytania_state(&base, family, Truth::True, &establishable);
     let unknown = morytania_state(&base, family, Truth::Unknown, &establishable);
     let false_state = morytania_state(&base, family, Truth::False, &establishable);
     let world = world();
+    let east = tile(3422, 3485);
+    let underground = tile(3440, 9887);
+    assert!(
+        world
+            .graph
+            .edges
+            .iter()
+            .any(|edge| edge.at == east && edge.to == underground),
+        "the east trapdoor must enter the mausoleum"
+    );
+    for (start, target) in [(east, underground), (underground, east)] {
+        let route = find_with(
+            &world.collision,
+            &world.graph,
+            start,
+            target,
+            FindOptions::default(),
+            &proof,
+        )
+        .expect("both directions of Morytania-side mausoleum access");
+        println!("mausoleum access {start:?} -> {target:?}: {route:?}");
+    }
     let mut unknown_routes = Vec::with_capacity(SITES.len());
     let mut false_routes = Vec::with_capacity(SITES.len());
 

@@ -1766,7 +1766,7 @@ p_telejump($dest);
         ),
     ]);
     let mut graph = TransportGraph::default();
-    let gates = ObservableGates::from_content(fx.path());
+    let gates = ObservableGates::from_content(fx.path(), None);
     spirit_tree_edges(
         fx.path(),
         &ids,
@@ -1856,7 +1856,7 @@ p_telejump($dest);\n";
     let mut graph = TransportGraph::default();
     let mut skipped = HashMap::new();
     let mut audit = VarpGateAudit::default();
-    let gates = ObservableGates::from_content(fx.path());
+    let gates = ObservableGates::from_content(fx.path(), None);
     spirit_tree_edges(
         fx.path(),
         &ids,
@@ -8429,7 +8429,7 @@ fn producers_require_transmission_or_a_unique_completed_journal_proof() {
         edge(13, 500, 3),
         edge(14, 150, 161),
     ];
-    let gates = ObservableGates::from_content(fx.path());
+    let gates = ObservableGates::from_content(fx.path(), None);
     let mut graph = TransportGraph::default();
     let mut audit = VarpGateAudit::default();
     assert!(

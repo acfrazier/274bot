@@ -262,6 +262,109 @@ if (%heroquest >= ^hero_complete) {
     }
 }
 
+fn with_authoritative_hero(check: impl FnOnce(&QuestSource<'_>)) {
+    let selected =
+        api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
+    let (mut facts, identity) = selected.quest_identity_for_bake().expect("verified family");
+    let row = facts
+        .rows
+        .iter_mut()
+        .find(|row| row.varp == "heroquest")
+        .unwrap();
+    row.colour_authoritative = true;
+    row.stage_domain = Some(api::selected::InclusiveRange {
+        min: Some(0),
+        max: Some(20),
+    });
+    row.transmission = api::quest_facts::Transmission::NotTransmitted;
+    check(&QuestSource {
+        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+        facts: &facts,
+    });
+}
+
+#[test]
+fn nonzero_stage_door_keeps_started_window_in_both_directions() {
+    // Mort Myre's refusal-before-open shape. The progress-only write follows
+    // the crossing and does not narrow its pre-crossing requirement.
+    let fx = plain_opener_fixture(
+        "[oploc1,plain_door]\n\
+         if (%heroquest = 0) { mes(\"Not started.\"); return; }\n\
+         ~open_and_close_door(loc_1535, ~check_axis(coord, loc_coord, loc_angle), false);\n\
+         if (%heroquest = 5) { %heroquest = 10; }\n",
+    );
+    with_authoritative_hero(|quests| {
+        let (graph, _) = derive_stage_with_quests(&fx, &[900], quests);
+        let edges: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.loc_id == 900)
+            .collect();
+        assert_eq!(edges.len(), 2, "{edges:?}");
+        for edge in edges {
+            assert!(edge.quest_req.is_empty(), "{edge:?}");
+            assert!(edge.varp_req.is_empty(), "{edge:?}");
+            assert!(
+                matches!(
+                    edge.quest_gates.as_ref().unwrap().gates(),
+                    [api::selected::QuestGate::Window(window)]
+                        if window.signal.0.as_ref() == "heroquest"
+                            && window.values.min == Some(1)
+                            && window.values.max == Some(20)
+                ),
+                "{edge:?}"
+            );
+        }
+    });
+}
+
+#[test]
+fn post_completion_pass_through_keeps_exact_stage_and_current_player() {
+    // Holy barrier's exact-stage + protected-current-player shape, with a
+    // different quest, loc id and coordinates so extraction is generic.
+    let fx = plain_opener_fixture(
+        "[oploc1,plain_door]\n\
+         if (%heroquest = 16) {\n\
+           if (p_finduid(uid) = true) { p_telejump(0_44_53_10_47); }\n\
+         }\n\
+         [proc,grant_access]\n%heroquest = 16;\n",
+    );
+    write_open_square(&fx, "0 5 46: 900 10 0\n");
+    let defs = LocDefs::from_locs(&[LocType {
+        id: 900,
+        width: 1,
+        length: 1,
+        blockwalk: false,
+        op: vec![Some("Pass-through".to_owned())],
+        ..Default::default()
+    }]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    with_authoritative_hero(|quests| {
+        let graph =
+            derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(quests)).0;
+        let edges: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.loc_id == 900)
+            .collect();
+        assert!(!edges.is_empty(), "post-completion entrance was omitted");
+        for edge in edges {
+            assert_eq!(edge.kind, TransportKind::Door);
+            assert_eq!(edge.to, tile(2826, 3439));
+            assert!(
+                matches!(
+                    edge.quest_gates.as_ref().unwrap().gates(),
+                    [api::selected::QuestGate::Window(window)]
+                        if window.signal.0.as_ref() == "heroquest"
+                            && window.values.min == Some(16)
+                            && window.values.max == Some(16)
+                ),
+                "{edge:?}"
+            );
+        }
+    });
+}
+
 /// A gate the live client cannot observe never becomes an edge: the same
 /// opener gated on an untransmitted varp with no journal row
 /// (`%plain_flag`) is dropped, while a transmitted varp (`%tbwt_main`,
@@ -1582,7 +1685,7 @@ if(inv_total(worn, gown) > 0 & inv_total(worn, robe) > 0) {
         &mut graph,
         &collision,
         &mut HashMap::new(),
-        &ObservableGates::from_content(fx.path()),
+        &ObservableGates::from_content(fx.path(), None),
         &mut audit,
         None,
     );

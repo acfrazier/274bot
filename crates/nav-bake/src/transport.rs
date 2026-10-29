@@ -142,7 +142,7 @@ fn derive_transports_with_audit(
     };
     let mut skipped: HashMap<&'static str, usize> = HashMap::new();
     let mut audit = VarpGateAudit::default();
-    let gates = ObservableGates::from_content(content_root);
+    let gates = ObservableGates::from_content(content_root, quests);
 
     let ids = loc_ids_by_name(content_root);
     let positions = loc_positions(content_root);

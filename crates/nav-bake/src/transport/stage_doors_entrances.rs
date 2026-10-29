@@ -178,77 +178,6 @@ pub(super) fn preserves_completion(stmt: &Stmt, src: &Sources) -> bool {
         if names.as_slice() == [varp.clone()] && scalar(value).is_some_and(|after| after < *complete)))
 }
 
-fn authoritative_stage_domain(facts: QuestStageFacts, complete: i32) -> Option<(i32, i32)> {
-    if !facts.colour_authoritative
-        || facts.transmission != api::quest_facts::Transmission::NotTransmitted
-        || complete <= 0
-    {
-        return None;
-    }
-    let domain = facts.stage_domain?;
-    let (Some(min), Some(max)) = (domain.min, domain.max) else {
-        return None;
-    };
-    (min == 0 && max >= complete).then_some((min, max))
-}
-
-/// The exact interval on which a comparison has the selected branch value.
-/// A disjoint complement (for an interior `=`/`!`) has no single safe window.
-fn comparison_window(
-    op: CmpOp,
-    branch_value: bool,
-    threshold: i32,
-    domain_min: i32,
-    domain_max: i32,
-) -> Option<api::selected::InclusiveRange> {
-    let except_threshold = || {
-        if threshold < domain_min || threshold > domain_max {
-            Some((domain_min, domain_max))
-        } else if threshold == domain_min {
-            Some((domain_min.checked_add(1)?, domain_max))
-        } else if threshold == domain_max {
-            Some((domain_min, domain_max.checked_sub(1)?))
-        } else {
-            None
-        }
-    };
-    let interval = match (op, branch_value) {
-        (CmpOp::Eq, true) | (CmpOp::Ne, false) => Some((threshold, threshold)),
-        (CmpOp::Eq, false) | (CmpOp::Ne, true) => except_threshold(),
-        (CmpOp::Lt, true) => Some((domain_min, threshold.checked_sub(1)?)),
-        (CmpOp::Lt, false) => Some((threshold, domain_max)),
-        (CmpOp::Le, true) => Some((domain_min, threshold)),
-        (CmpOp::Le, false) => Some((threshold.checked_add(1)?, domain_max)),
-        (CmpOp::Gt, true) => Some((threshold.checked_add(1)?, domain_max)),
-        (CmpOp::Gt, false) => Some((domain_min, threshold)),
-        (CmpOp::Ge, true) => Some((threshold, domain_max)),
-        (CmpOp::Ge, false) => Some((domain_min, threshold.checked_sub(1)?)),
-    }?;
-    let (min, max) = (interval.0.max(domain_min), interval.1.min(domain_max));
-    (min <= max).then_some(api::selected::InclusiveRange {
-        min: Some(min),
-        max: Some(max),
-    })
-}
-
-fn comparison_value(op: CmpOp, min: i32, max: i32, threshold: i32) -> Option<bool> {
-    match op {
-        CmpOp::Eq if min == max => Some(min == threshold),
-        CmpOp::Eq if threshold < min || threshold > max => Some(false),
-        CmpOp::Ne if min == max => Some(min != threshold),
-        CmpOp::Ne if threshold < min || threshold > max => Some(true),
-        CmpOp::Lt if max < threshold => Some(true),
-        CmpOp::Lt if min >= threshold => Some(false),
-        CmpOp::Le if max <= threshold => Some(true),
-        CmpOp::Le if min > threshold => Some(false),
-        CmpOp::Gt if min > threshold => Some(true),
-        CmpOp::Gt if max <= threshold => Some(false),
-        CmpOp::Ge if min >= threshold => Some(true),
-        CmpOp::Ge if max < threshold => Some(false),
-        _ => None,
-    }
-}
-
 impl Motion<'_> {
     pub(super) fn entrance_value(&mut self, expr: &Expr, env: &Env) -> Option<Option<Val>> {
         let input = self.entrance?;
@@ -258,6 +187,11 @@ impl Motion<'_> {
             _ => return None,
         };
         match name {
+            // PlayerOps.P_FINDUID keeps protected access to the current
+            // active player for its own uid (PlayerOps.ts:82-85).
+            "p_finduid" => {
+                Some(matches!(args, [Expr::Word(uid)] if uid == "uid").then_some(Val::Bool(true)))
+            }
             "inv_getobj" => Some((|| {
                 let [Expr::Word(inv), slot] = args else {
                     return None;
@@ -643,6 +577,7 @@ struct TrajectoryInputs<'a> {
     npc: &'a [Expr],
     above: &'a [String],
     complete: bool,
+    above_mask: Option<usize>,
 }
 
 fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
@@ -661,6 +596,7 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
         npc,
         above,
         complete,
+        above_mask: selected_above,
     } = input;
     let at = WorldTile {
         x: placement.x,
@@ -669,11 +605,17 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
     };
     let mut result: Option<Trajectory> = None;
     let above = if complete { above } else { &[] };
-    // Above-completion values and NPC presence are independent unknowns.
-    // Every combination must prove the same landing.
-    for mask in 0..(1usize << (npc.len() + above.len())) {
+    // NPC presence is always universally quantified. A typed stage window
+    // can distinguish completion from a later stage; legacy completion
+    // evidence cannot, so it still proves every above-completion variant.
+    let above_bits = if selected_above.is_some() {
+        0
+    } else {
+        above.len()
+    };
+    for mask in 0..(1usize << (npc.len() + above_bits)) {
         let npc_mask = mask & ((1usize << npc.len()) - 1);
-        let above_mask = mask >> npc.len();
+        let above_mask = selected_above.unwrap_or(mask >> npc.len());
         let mut motion = Motion {
             base: Eval {
                 src,
@@ -846,6 +788,23 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                 );
                 continue;
             }
+            let stage_variants = (!above.is_empty()
+                && above.iter().all(|name| {
+                    src.quest_family.is_some()
+                        && src.quest_stage.get(&name[1..]).is_some_and(|facts| {
+                            authoritative_stage_domain(*facts, src.quest_complete[&name[1..]].1)
+                                .is_some()
+                        })
+                }))
+            .then_some(1usize << above.len());
+            let kind = if defs
+                .op_at(id, option)
+                .is_some_and(|operation| operation.eq_ignore_ascii_case("Pass-through"))
+            {
+                TransportKind::Door
+            } else {
+                TransportKind::Ladder
+            };
             for placement in &positions[&id] {
                 let at = WorldTile {
                     x: placement.x,
@@ -905,59 +864,62 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                                 (mask & (1usize << index) != 0).then_some(id)
                             })
                             .collect();
-                        let trajectory_inputs = TrajectoryInputs {
-                            src,
-                            facts,
-                            positions,
-                            proofs,
-                            supported,
-                            selectors,
-                            handler,
-                            id,
-                            placement,
-                            stand,
-                            absent: &absent,
-                            npc: &reads.npc,
-                            above: &above,
-                            complete: true,
-                        };
-                        let complete = trajectory(trajectory_inputs);
-                        let incomplete = (reads.quests.len() == 1)
-                            .then(|| {
-                                trajectory(TrajectoryInputs {
-                                    complete: false,
-                                    ..trajectory_inputs
+                        for above_mask in 0..stage_variants.unwrap_or(1) {
+                            let trajectory_inputs = TrajectoryInputs {
+                                src,
+                                facts,
+                                positions,
+                                proofs,
+                                supported,
+                                selectors,
+                                handler,
+                                id,
+                                placement,
+                                stand,
+                                absent: &absent,
+                                npc: &reads.npc,
+                                above: &above,
+                                complete: true,
+                                above_mask: stage_variants.map(|_| above_mask),
+                            };
+                            let complete = trajectory(trajectory_inputs);
+                            let incomplete = (reads.quests.len() == 1)
+                                .then(|| {
+                                    trajectory(TrajectoryInputs {
+                                        complete: false,
+                                        ..trajectory_inputs
+                                    })
                                 })
-                            })
-                            .flatten();
-                        let incomplete = incomplete.filter(|candidate| {
-                            complete.as_ref().is_some_and(|other| {
-                                other.to == candidate.to
-                                    && weaker_than(&other.needs, &candidate.needs)
-                            })
-                        });
-                        for result in [complete, incomplete].into_iter().flatten() {
-                            if result.needs.quests.is_empty()
-                                && result.needs.forbidden_held.is_empty()
-                                && result.needs.forbidden_worn.is_empty()
-                                && result.needs.items.is_empty()
-                                && result.needs.worn.is_empty()
-                            {
-                                continue;
-                            }
-                            if !collision.standable(result.to) {
-                                continue;
-                            }
-                            let mut edge =
-                                gated_edge(TransportKind::Ladder, id, at, result.to, result.needs);
-                            edge.takeoff = Some(stand);
-                            edge.option = option;
-                            edge.ticks = result.ticks;
-                            if observable.admit_edge(graph, edge, audit)
-                                && src.has_member_reads(handler)
-                            {
-                                audit
-                                    .record_member_path(graph.edges.last().expect("admitted edge"));
+                                .flatten();
+                            let incomplete = incomplete.filter(|candidate| {
+                                complete.as_ref().is_some_and(|other| {
+                                    other.to == candidate.to
+                                        && weaker_than(&other.needs, &candidate.needs)
+                                })
+                            });
+                            for result in [complete, incomplete].into_iter().flatten() {
+                                if result.needs.quests.is_empty()
+                                    && result.needs.forbidden_held.is_empty()
+                                    && result.needs.forbidden_worn.is_empty()
+                                    && result.needs.items.is_empty()
+                                    && result.needs.worn.is_empty()
+                                {
+                                    continue;
+                                }
+                                if !collision.standable(result.to) {
+                                    continue;
+                                }
+                                let mut edge = gated_edge(kind, id, at, result.to, result.needs);
+                                edge.takeoff = Some(stand);
+                                edge.option = option;
+                                edge.ticks = result.ticks;
+                                if observable.admit_edge(graph, edge, audit)
+                                    && src.has_member_reads(handler)
+                                {
+                                    audit.record_member_path(
+                                        graph.edges.last().expect("admitted edge"),
+                                    );
+                                }
                             }
                         }
                     }
