@@ -116,6 +116,7 @@ fn walk_budget_counts_batched_ticks_and_wrap_but_not_duplicate_polls() {
         let mut client = scene_client();
         let mut snapshot = snap_at(&mut client, 0, 0);
         client.gens.player_info = client.gens.player_info.wrapping_add(initial_ticks);
+        client.gens.player = client.gens.player.wrapping_add(1);
         snapshot.rebuild(&client);
         let mut driver = FollowRec {
             route: Some((0, 0)),
@@ -144,6 +145,7 @@ fn walk_budget_counts_batched_ticks_and_wrap_but_not_duplicate_polls() {
                 .is_none());
         }
         client.gens.player_info = client.gens.player_info.wrapping_add(4);
+        client.gens.player = client.gens.player.wrapping_add(1);
         snapshot.rebuild(&client);
         for _ in 0..100 {
             assert!(traveller

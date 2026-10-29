@@ -7189,9 +7189,9 @@ fn follow_cancelled_walk_idle_ignores_duplicate_snapshot_ticks() {
         1,
         "duplicate snapshot polls must not trigger recovery"
     );
-    // The send-tick polls already credited one distinct idle tick.
-    // Three fresh ticks → idle 4; still under the threshold of 5.
-    for _ in 0..3 {
+    // Send-tick polls credit no elapsed ticks.
+    // Four fresh ticks remain under the recovery threshold of five.
+    for _ in 0..4 {
         bump_rebuild(&mut c, &mut snap);
         assert!(t
             .follow(&mut rec, &snap, route.clone(), &mut options)
