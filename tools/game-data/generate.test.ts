@@ -1731,6 +1731,9 @@ refusedProcRow({ [itexamProcFile]: `[proc,itexam_progress]()(int)\nif (%itexamle
 // One return naming two varps is not one progress read.
 refusedProcRow({ [itexamProcFile]: `[proc,itexam_progress]()(int)\nreturn (add(%itexamlevel, %cogquest));\n` });
 
+// A bit range followed by more arithmetic is not only a bit range.
+refusedProcRow({ [itexamProcFile]: `[proc,itexam_progress]()(int)\nreturn (getbit_range(%itexamlevel, 0, 3) + (1));\n` });
+
 // Rule 2: a complete constant absent from quest.constant resolves in the quest's own .constant file.
 const questLocalConstantRoot = questFixture((files) => {
     files['scripts/general/scripts/quests.rs2'] += '~send_quest_progress_colour(questlist:mm, %mm_main, ^mm_complete);\n';

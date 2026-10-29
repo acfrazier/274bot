@@ -306,7 +306,9 @@ function procProgressVarp(block: Rs2Block): string | null {
     if (names.size !== 1) return null;
     const [varp] = [...names];
     if (value === `%${varp}`) return varp;
-    return new RegExp(`^getbit_range\\s*\\(\\s*%${varp}\\s*,.*\\)$`).test(value) ? varp : null;
+    // The call must be the whole value: its arguments (varp, start, end) hold no
+    // parentheses, so `getbit_range(%foo, 0, 3) + (1)` cannot match.
+    return new RegExp(`^getbit_range\\s*\\(\\s*%${varp}\\s*,[^()]*\\)$`).test(value) ? varp : null;
 }
 
 /** Resolve `~proc` to its backing varp; a missing, duplicated or ambiguous proc stays unresolved. */
