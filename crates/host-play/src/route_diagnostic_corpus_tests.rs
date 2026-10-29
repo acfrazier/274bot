@@ -779,7 +779,7 @@ fn real_cases(world: Arc<NavWorld>) -> Vec<DiagnosticCase> {
                 "R289 shantay_pass.rs2:76-97 requires and consumes one pass entering the desert",
             world_kind: "r289_navpack",
             world: Arc::clone(&world),
-            from: tile(3302, 3116),
+            from: tile(3304, 3123),
             to: tile(3304, 3115),
             radius: 0,
             arrival: ArrivalKind::Reach,
@@ -975,6 +975,11 @@ fn compares_bounded_and_unbounded_route_diagnostics_corpus() {
     let mut rows = Vec::with_capacity(CORPUS_CASE_COUNT);
     write_report(&output, &navpack, CORPUS_CASE_COUNT, &rows, &started);
     for (index, case) in cases.iter().enumerate() {
+        assert!(
+            case.world.collision.standable(case.from),
+            "{} must start on a real standable tile, not the gate's blocked loc anchor",
+            case.name,
+        );
         let request = case.request();
         let targets = request.targets();
         assert!(
