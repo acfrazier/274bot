@@ -5339,12 +5339,22 @@ fn close_needs_no_prompt_once_the_save_settled() {
 #[test]
 fn the_profiles_list_shows_the_saved_order_not_the_vaults() {
     let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("profiles-saved-order");
     let mut ui = ProfilesUi::new(
         "profiles-saved-order",
-        &[("zed", "zpass", 1), ("anna", "apass", 2), ("mike", "mpass", 3)],
+        &[
+            ("zed", "zpass", 1),
+            ("anna", "apass", 2),
+            ("mike", "mpass", 3),
+        ],
     );
     let shown = ui.frame();
-    let at = |name: &str| shown.text.find(name).unwrap_or_else(|| panic!("{name} in {}", shown.text));
+    let at = |name: &str| {
+        shown
+            .text
+            .find(name)
+            .unwrap_or_else(|| panic!("{name} in {}", shown.text))
+    };
     assert!(
         at("zed") < at("anna") && at("anna") < at("mike"),
         "saved order, not alphabetical:\n{}",
@@ -5362,12 +5372,20 @@ fn the_profiles_list_shows_the_saved_order_not_the_vaults() {
 #[test]
 fn dragging_a_profiles_row_reorders_the_saved_order_only() {
     let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("profiles-drag-order");
     let mut ui = ProfilesUi::new(
         "profiles-drag-order",
-        &[("alice", "apass", 1), ("bob", "bpass", 2), ("carol", "cpass", 3)],
+        &[
+            ("alice", "apass", 1),
+            ("bob", "bpass", 2),
+            ("carol", "cpass", 3),
+        ],
     );
     ui.frame();
-    assert_eq!(ui.session.core.profile_order().names(), ["alice", "bob", "carol"]);
+    assert_eq!(
+        ui.session.core.profile_order().names(),
+        ["alice", "bob", "carol"]
+    );
     let (carol, _) = ui.item_rect(At::List, "carol");
     let (alice, _) = ui.item_rect(At::List, "alice");
     let members = ui.session.core.members().to_vec();

@@ -150,7 +150,10 @@ impl<Io> OperatorSession<Io> {
     /// Why a Fleet-list reorder cannot run now, when it cannot: no lent
     /// fleet model, or the model shows a temporary Name/Status view sort
     /// instead of the saved Load order a drag would rewrite.
-    fn fleet_reorder_refusal<S: SlotSurface<Io = Io>>(&mut self, surface: &mut S) -> Option<Applied> {
+    fn fleet_reorder_refusal<S: SlotSurface<Io = Io>>(
+        &mut self,
+        surface: &mut S,
+    ) -> Option<Applied> {
         let mut models = surface.models();
         let Some(fleet) = models.fleet.as_deref_mut() else {
             return Some(no_model("fleet order"));

@@ -557,7 +557,13 @@ mod tests {
         assert!(saved.move_to("bob", "alice", false));
         assert!(sync(
             &mut saved,
-            &[(1, "alice"), (5, "anna"), (2, "bob"), (4, "mike"), (3, "zed")]
+            &[
+                (1, "alice"),
+                (5, "anna"),
+                (2, "bob"),
+                (4, "mike"),
+                (3, "zed")
+            ]
         ));
         assert_eq!(names(&saved), ["bob", "alice", "zed", "mike", "anna"]);
         keys_ok(&saved);
@@ -568,8 +574,8 @@ mod tests {
     /// on itself (or of a profile the order lacks) asks for nothing.
     #[test]
     fn entries_and_drop_op_follow_the_order() {
-        use crate::selection::ProfileIdentity;
         use super::{Placement, ReorderOp};
+        use crate::selection::ProfileIdentity;
         let saved = order(&["alice", "bob", "carol"]);
         let entries: Vec<(&str, ProfileIdentity)> = saved.entries().collect();
         assert_eq!(
