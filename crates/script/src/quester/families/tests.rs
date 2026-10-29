@@ -8321,3 +8321,6 @@ fn walk_arrival_in_a_new_scene_is_read_on_the_next_tick() {
         );
     }
 }
+
+#[path = "timed_ground_tests.rs"]
+mod timed_ground_tests;
