@@ -97,6 +97,7 @@ pub(crate) enum Applied {
     /// The effect holds.
     Done,
     /// The effect holds and supplies presentation detail for its command log.
+    #[cfg(feature = "test-support")]
     DoneWithDetail(String),
     /// Nothing was done, for this typed reason.
     Skipped(SkipReason),
@@ -2162,6 +2163,7 @@ impl<Io> OperatorSession<Io> {
             }
             Applied::Later => return,
             Applied::Done => (Settlement::Completed(Completion::Done), None),
+            #[cfg(feature = "test-support")]
             Applied::DoneWithDetail(detail) => {
                 (Settlement::Completed(Completion::Done), Some(detail))
             }
@@ -2241,6 +2243,7 @@ impl<Io> OperatorSession<Io> {
                 return;
             }
             Applied::Done => (Settlement::Completed(Completion::Done), None),
+            #[cfg(feature = "test-support")]
             Applied::DoneWithDetail(detail) => {
                 (Settlement::Completed(Completion::Done), Some(detail))
             }

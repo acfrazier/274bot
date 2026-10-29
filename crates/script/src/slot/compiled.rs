@@ -1528,6 +1528,7 @@ impl SlotScript {
     }
 
     /// Request an operator skip only for a live compiled Quester run.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn skip_quest_compiled(
         &mut self,
         target: Option<RunKey>,

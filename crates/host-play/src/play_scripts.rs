@@ -965,6 +965,7 @@ impl Play {
         Ok(())
     }
 
+    #[cfg(feature = "test-support")]
     /// Skip the active row of `name`'s running compiled Quester queue.
     ///
     /// `target` binds the request to the run identity shown by native status;

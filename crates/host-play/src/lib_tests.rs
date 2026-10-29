@@ -30808,7 +30808,7 @@ mod read_journal_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(feature = "test-support")]
 mod skip_quest_tests {
     use super::*;
     use script::native::{

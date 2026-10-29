@@ -46,16 +46,17 @@ The `quester_skip_active_cook_parks_then_sheep_completes` cell in
 `quester_queue_live` also needs `--features "live-harness test-support live-probe"`.
 `test-support` on `panel` or `tui` enables the Skip quest button or `X` key. Each
 feature forwards `frontend-core/test-support`, which enables the shared
-`SkipQuest` command. Build both control-enabled binaries with:
+`SkipQuest` command and, through `host-play/test-support`, the runner's skip
+handler (`script/test-support`) and the `quester_skip` row
+(`scenario/test-support`). Build both control-enabled binaries with:
 
 ```sh
 cargo build --locked -p panel --bin panel-play --features test-support
 cargo build --locked -p tui --bin tui-play --features test-support
 ```
 
-Release-profile builds that omit `test-support` omit the command, button and
-key.
-
+Release-profile builds that omit `test-support` contain none of it: no command,
+button, `X` key, footer hint, skip handler or `quester_skip` row.
 
 The expected-combat Quester cell seeds Tourist Trap (`desertrescue`) at stage
 3. The loc-dialogue cell seeds Priest in Peril (`priestperil`) at stage 1.

@@ -474,6 +474,7 @@ pub struct ScriptFailure {
 }
 
 /// The active queue row and step accepted by the operator's Skip quest command.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkippedQuest {
     pub quest_id: Arc<str>,
@@ -505,6 +506,7 @@ pub trait Script: Send {
         })
     }
     /// Park the active queued quest without stopping the script run.
+    #[cfg(any(test, feature = "test-support"))]
     fn skip_quest(&mut self) -> Result<SkippedQuest, ScriptFailure> {
         Err(ScriptFailure {
             code: "not-quester".into(),
