@@ -114,7 +114,7 @@ fn missing_login_quest_observation_times_out_with_recovery_instructions() {
     assert_eq!(output.0.last().unwrap().phase, NativePhase::Blocked);
     assert!(failure.message.contains("quest"));
     assert!(failure.message.contains("log in"));
-    assert!(failure.message.contains("Stop"));
+    assert!(failure.message.contains("start the Quester again"));
     assert!(ledger
         .as_ref()
         .is_none_or(|ledger| ledger.outbox.is_empty()));
