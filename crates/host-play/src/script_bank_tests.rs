@@ -120,6 +120,7 @@ export async function tick(api) {{
         let world = Some(world(false));
         let mut state = WorldState::empty();
         state.quests.extend(required_quests.map(String::from));
+        let state = Arc::new(state);
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_tick(1);
@@ -286,7 +287,9 @@ fn queued_bank_pick_keeps_the_state_of_the_frame_that_queued_it() {
                 state: Some(state),
                 bank: None,
                 name: "test",
-                compatibility_scope: Some(scope),
+                compatibility_scope: Some(api::identity::Scope::Slot(
+                    api::identity::SlotKey::from_incarnation(1).unwrap(),
+                )),
                 cache: &None,
                 obj_names_arc: &None,
             },
@@ -922,7 +925,7 @@ mod bank_pick_capture {
             facts,
             from,
             FindOptions::default(),
-            state,
+            Arc::new(state),
             order,
             target_count,
             (walking && target_count != 0).then_some(generation),
@@ -1508,7 +1511,7 @@ mod bank_pick_capture {
             facts,
             from,
             FindOptions::default(),
-            state,
+            Arc::new(state),
             order,
             target_count,
             None,
@@ -2044,7 +2047,7 @@ mod bank_pick_capture {
             facts,
             from,
             FindOptions::default(),
-            state,
+            Arc::new(state),
             order,
             target_count,
             Some(7),
@@ -2240,6 +2243,7 @@ mod bank_pick_capture {
             state
                 .varps
                 .reserve(BANK_PICK_JOB_BYTES / std::mem::size_of::<(i32, i32)>());
+            let state = Arc::new(state);
             assert!(!super::super::queue_bank(
                 &navs,
                 "test",

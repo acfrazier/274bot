@@ -9430,7 +9430,7 @@ fn t23_bank_observe(
             tick,
             here,
             inv,
-            state.clone(),
+            state.clone().map(Arc::new),
             snapshot,
             None,
             #[cfg(feature = "js")]
@@ -28932,7 +28932,7 @@ fn arm_route_outcome(
         world: Some(world),
         navs: Arc::clone(&navs),
         name: "alice".into(),
-        state,
+        state: state.map(Arc::new),
         bank,
     };
     let _completion = arm

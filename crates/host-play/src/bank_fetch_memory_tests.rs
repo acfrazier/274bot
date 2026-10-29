@@ -523,7 +523,7 @@ export default class T extends LoopingBot {
                 tick,
                 Some((0, 0, 0)),
                 None,
-                Some(WorldState::from_snapshot(&snapshot)),
+                Some(Arc::new(WorldState::from_snapshot(&snapshot))),
                 Some(&snapshot),
                 Some(&memory),
                 None,

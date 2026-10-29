@@ -479,12 +479,12 @@ fn qualifies_real_bank_route_adapter_search_latency() {
             1,
             crate::WalkGlobals::default(),
         );
-        request.state = Some(WorldState {
+        request.state = Some(Arc::new(WorldState {
             stats: (0..25).map(|skill| (skill, 99)).collect(),
             combat_level: Some(126),
             map_members: true,
             ..WorldState::empty()
-        });
+        }));
         request.bank_origin = Origin::Session;
         request.bank = vec![(item, 1)];
         let bot = NavBot {

@@ -4563,7 +4563,7 @@ impl ScriptWalkArm {
             request: Box::new(request),
             kind: RouteDemandKind::Advisory {
                 authority: authority.clone(),
-                evidence: request.evidence,
+                evidence,
             },
         };
         let (queued, displaced) = {
@@ -6004,7 +6004,7 @@ impl ScriptRouteRequest {
             return None;
         }
         let empty = WorldState::empty();
-        let state = self.state.as_ref().unwrap_or(&empty);
+        let state = self.state.as_deref().unwrap_or(&empty);
         let bank_targets = if self.radius <= 0 || self.arrival == ArrivalKind::Area {
             targets
         } else {
@@ -6282,7 +6282,7 @@ impl NavBot {
     #[cfg(test)]
     pub(crate) fn pending_route_state_for_test(&self) -> Option<&WorldState> {
         match self.pending_route.as_deref()? {
-            RouteDemand::Pending { request, .. } => request.state.as_ref(),
+            RouteDemand::Pending { request, .. } => request.state.as_deref(),
             RouteDemand::Preparing { .. } | RouteDemand::Prepared(_) => None,
         }
     }
@@ -7441,7 +7441,7 @@ mod diagnostic_tests {
         request.from = bank;
         request.to = tile(3085, 3230);
         request.arrival = ArrivalKind::Area;
-        request.state = Some(state);
+        request.state = Some(Arc::new(state));
         request.candidate_goals =
             Some(script::native::WalkGoals::with_preferred(vec![bank], &preferred).unwrap());
         let mut job = completed_search_stage(request);
@@ -7984,7 +7984,7 @@ mod diagnostic_tests {
                         1,
                         crate::WalkGlobals::default(),
                     );
-                    request.state = Some(state.clone());
+                    request.state = Some(Arc::new(state.clone()));
                     request.candidate_goals = candidate_goals;
                     request
                 };
@@ -8077,12 +8077,12 @@ mod diagnostic_tests {
                 1,
                 crate::WalkGlobals::default(),
             );
-            request.state = Some(WorldState {
+            request.state = Some(Arc::new(WorldState {
                 stats: (0..25).map(|skill| (skill, 99)).collect(),
                 combat_level: Some(126),
                 map_members: true,
                 ..WorldState::empty()
-            });
+            }));
             request.bank_origin = Origin::Session;
             request.bank = vec![(item, 1)];
             if case == "exact-worn-blade" {
