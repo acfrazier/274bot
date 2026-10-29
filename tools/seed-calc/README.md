@@ -121,6 +121,19 @@ The product risk input does not use Defence directly. Defence can affect plannin
 A product refusal remains a refusal. Unknown facts never become zero risk in the ungranted calculation.
 The crossing result is an admission result, not a statistical death probability.
 
+The optional `route_state` preserves required noncombat skills, quest completions, varps, and carried items.
+Use numeric skill, varp, and item ids. Use the product's quest display names for `completed_quests`.
+Combat levels still follow the calculator policy. Inventory items unlock only the product's normal route gates.
+They do not grant food, prayer, or additional danger consent.
+
+```json
+{"route_state":{"skills":{"13":15,"14":15},"varps":{"188":15,"347":10,"101":4},"completed_quests":["Hero's Quest","The Fremennik Trials"],"inventory":{"995":15,"1265":1,"1351":1}}}
+```
+
+Omitted route facts remain unknown or absent. Product quest-stage gates without progress evidence remain closed.
+`route_zones` lists active risk intervals at the candidate level.
+A natural combat-level exemption can therefore remove a declared zone from that list.
+
 ## Tests
 
 Run these commands on the designated build host:

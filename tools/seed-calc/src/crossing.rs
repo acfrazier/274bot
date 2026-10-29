@@ -1,4 +1,5 @@
 //! Product-backed route crossing thresholds for explicitly declared zones.
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -25,6 +26,18 @@ pub struct CrossQuery {
     pub from: [i32; 3],
     pub to: [i32; 3],
     pub zones: Vec<String>,
+    #[serde(default)]
+    pub route_state: RouteState,
+}
+
+/// Noncombat facts retained from the campaign seed, not extra survival supplies.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RouteState {
+    pub skills: BTreeMap<i32, u8>,
+    pub varps: BTreeMap<i32, i32>,
+    pub completed_quests: Vec<String>,
+    pub inventory: BTreeMap<i32, i32>,
 }
 
 /// Product risk verdict, preserved without reimplementing its decision rules.
@@ -143,6 +156,8 @@ pub enum CrossError {
     NoCandidateLevels,
     #[error("product admission returned no assessment for a routed candidate")]
     MissingAssessment,
+    #[error("invalid route state: {0}")]
+    InvalidState(String),
 }
 
 /// Consent admission and no-grant survivability are different product decisions.
@@ -196,17 +211,25 @@ fn calculate_in_world(
         zones,
         ..FindOptions::default()
     };
+    let free_slots = inventory_free_slots(&query.route_state)?;
+    let mut state = player_state(&query.route_state)?;
 
     let mut previous = None;
     for level in FIRST_LEVEL..=LAST_LEVEL {
         let hp = level.max(10);
         let combat_level = player_combat_level(level, hp);
-        let state = player_state(level, hp, combat_level);
+        state.combat_level = Some(i32::from(combat_level));
+        state
+            .stats
+            .insert(CombatStat::Defence.index() as i32, i32::from(level));
+        state
+            .stats
+            .insert(CombatStat::Hitpoints.index() as i32, i32::from(hp));
         let evaluated =
             match router::find_with(&world.collision, &world.graph, from, to, options, &state) {
                 Ok(route) => {
                     let admission = product_admission(
-                        risk_input(from, hp, combat_level),
+                        risk_input(from, hp, combat_level, free_slots),
                         if consent { zones } else { ZoneExempt::NONE },
                     );
                     let assessment = admission::assess(&route, world, &admission);
@@ -333,24 +356,66 @@ fn product_admission(input: RiskInput, grants: ZoneExempt) -> Admission {
     }
 }
 
-fn player_state(level: u8, hp: u8, combat_level: u8) -> WorldState {
+fn player_state(profile: &RouteState) -> Result<WorldState, CrossError> {
     let mut state = WorldState::empty();
     state.inventory_ready = true;
     state.equipment_ready = true;
     state.map_members = true;
-    state.combat_level = Some(i32::from(combat_level));
+    state
+        .inv
+        .extend(profile.inventory.iter().map(|(&id, &count)| (id, count)));
+    state
+        .varps
+        .extend(profile.varps.iter().map(|(&id, &value)| (id, value)));
+    state
+        .quests
+        .extend(profile.completed_quests.iter().cloned());
+    for (&skill, &level) in &profile.skills {
+        if !(7..=20).contains(&skill) || !(1..=99).contains(&level) {
+            return Err(CrossError::InvalidState(
+                "skills must be noncombat indices 7..20, levels 1..99".into(),
+            ));
+        }
+        state.stats.insert(skill, i32::from(level));
+    }
     for (stat, value) in [
         (CombatStat::Attack, 1),
-        (CombatStat::Defence, level),
+        (CombatStat::Defence, 1),
         (CombatStat::Strength, 1),
-        (CombatStat::Hitpoints, hp),
+        (CombatStat::Hitpoints, 10),
         (CombatStat::Ranged, 1),
         (CombatStat::Prayer, 1),
         (CombatStat::Magic, 1),
     ] {
         state.stats.insert(stat.index() as i32, i32::from(value));
     }
-    state
+    Ok(state)
+}
+
+fn inventory_free_slots(profile: &RouteState) -> Result<u8, CrossError> {
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .map_err(|error| CrossError::InvalidState(format!("{error:?}")))?;
+    let mut slots = 0;
+    for (&id, &count) in &profile.inventory {
+        if count <= 0 {
+            return Err(CrossError::InvalidState(
+                "inventory counts must be positive".into(),
+            ));
+        }
+        let item = selected
+            .items()
+            .iter()
+            .find(|item| item.id == id)
+            .ok_or_else(|| CrossError::InvalidState(format!("unknown inventory item {id}")))?;
+        let used = if item.stackable { 1 } else { count };
+        if used > 28 - slots {
+            return Err(CrossError::InvalidState(
+                "inventory exceeds 28 slots".into(),
+            ));
+        }
+        slots += used;
+    }
+    Ok(28 - slots as u8)
 }
 
 /// Match Player.getCombatLevel with fresh A/S/R/M/P=1 and D/HP at the query levels.
@@ -359,7 +424,7 @@ fn player_combat_level(defence: u8, hp: u8) -> u8 {
     ((5 * sum + 13) / 20) as u8
 }
 
-fn risk_input(from: WorldTile, hp: u8, combat_level: u8) -> RiskInput {
+fn risk_input(from: WorldTile, hp: u8, combat_level: u8, free_slots: u8) -> RiskInput {
     RiskInput {
         pos: from,
         poison: PoisonState::Clear,
@@ -368,7 +433,7 @@ fn risk_input(from: WorldTile, hp: u8, combat_level: u8) -> RiskInput {
         prayer: 0,
         prayer_base: 1,
         combat: Some(combat_level),
-        free_slots: 28,
+        free_slots,
         map_members: true,
         run: true,
         other_prayers_on: false,
@@ -504,6 +569,7 @@ mod tests {
             from: [0, 1, 0],
             to: [21, 1, 0],
             zones,
+            route_state: RouteState::default(),
         }
     }
 
@@ -543,6 +609,27 @@ mod tests {
     fn fresh_profile_combat_level_matches_engine_formula() {
         assert_eq!(player_combat_level(1, 10), 3);
         assert_eq!(player_combat_level(99, 99), 50);
+    }
+
+    #[test]
+    fn route_state_retains_required_skills_quests_and_tools() {
+        let mut profile = RouteState {
+            skills: BTreeMap::from([(13, 15), (14, 15)]),
+            varps: BTreeMap::from([(188, 15), (347, 10)]),
+            completed_quests: vec!["Hero's Quest".into(), "The Fremennik Trials".into()],
+            inventory: BTreeMap::from([(995, 15), (1265, 1), (1351, 1)]),
+        };
+        let state = player_state(&profile).unwrap();
+        assert_eq!(state.stats.get(&14), Some(&15));
+        assert_eq!(state.varps.get(&347), Some(&10));
+        assert!(state.quests.contains("Hero's Quest"));
+        assert_eq!(state.inv.get(&995), Some(&15));
+        assert!(state.quest_evidence.is_none());
+        assert_eq!(inventory_free_slots(&profile).unwrap(), 25);
+        profile.skills.insert(0, 99);
+        assert!(player_state(&profile).is_err());
+        profile.inventory.insert(1351, 29);
+        assert!(inventory_free_slots(&profile).is_err());
     }
 
     #[test]
@@ -607,6 +694,7 @@ mod tests {
                 from,
                 to,
                 zones: zones.into_iter().map(str::to_owned).collect(),
+                route_state: RouteState::default(),
             };
             let result = calculate(&query).expect("reference route must be calculable");
             for threshold in [
