@@ -777,6 +777,7 @@ pub struct ActionContext<'a> {
     pub(crate) condition: Option<api::condition::BotCondition>,
     pub(crate) poison_unknown_pulse: u8,
     pub(crate) cure_poison: crate::survival::CurePoison,
+    pub(crate) shop_keepers: Option<&'a Arc<api::service_pick::ShopKeeperFacts>>,
     pub(crate) retained: &'a mut RetainedMemory,
     pub(crate) action_id: u64,
     pub(crate) active_now: Duration,

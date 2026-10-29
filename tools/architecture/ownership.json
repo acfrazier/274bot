@@ -3207,7 +3207,23 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/acquire/shop_run.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/acquire/vendor.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/acquire/buy.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/acquire/buy_protocol_tests.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/acquire/buy_ordering_tests.rs",
       "owner": "T2"
     },
     {
@@ -4096,10 +4112,6 @@
     },
     {
       "path": "crates/script/src/native_production.rs",
-      "owner": "T2"
-    },
-    {
-      "path": "crates/script/src/native_shop.rs",
       "owner": "T2"
     },
     {

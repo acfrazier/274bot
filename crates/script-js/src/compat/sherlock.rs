@@ -1687,6 +1687,7 @@ mod tests {
                     reach: None,
                     reach_flood: self.reach_flood.as_ref(),
                     bank_memory: None,
+                    shop_keepers: None,
                     collision: None,
                     hold: self.hold,
                     world_members: api::selected::Truth::Unknown,

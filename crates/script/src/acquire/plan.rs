@@ -1,6 +1,7 @@
 //! Pure acquisition decisions over borrowed counts.
 
 use super::*;
+use api::shop_facts::{self, VendorFact};
 use api::stock::Stock;
 
 pub trait Counts {
@@ -56,8 +57,11 @@ pub struct Planner<'a> {
     first_withdrawal: Option<NeedObservation>,
     scan: Option<NeedObservation>,
     blocked: Option<NeedObservation>,
+    blocked_reason: Option<BlockReason>,
+    blocked_vendor_line: Option<Arc<str>>,
     child: Option<NeedObservation>,
     next_index: usize,
+    coin_reserve: i64,
 }
 
 impl<'a> Planner<'a> {
@@ -68,22 +72,35 @@ impl<'a> Planner<'a> {
             first_withdrawal: None,
             scan: None,
             blocked: None,
+            blocked_reason: None,
+            blocked_vendor_line: None,
             child: None,
             next_index: 0,
+            coin_reserve: 0,
         }
     }
 
     pub fn require(&mut self, need: &Need) -> Result<(), ActionError> {
+        self.require_with_purchase(
+            need,
+            &VendorChoice::None,
+            CoinPolicy::None,
+            WorldFacts::default(),
+        )
+    }
+
+    fn require_with_purchase(
+        &mut self,
+        need: &Need,
+        vendor: &VendorChoice,
+        coins: CoinPolicy,
+        world: WorldFacts<'_>,
+    ) -> Result<(), ActionError> {
         let index = u8::try_from(self.next_index)
             .map_err(|_| ActionError::Unavailable(Arc::from("acquisition has too many needs")))?;
         self.next_index += 1;
         if need.target <= 0 {
             return Ok(());
-        }
-        if need.sources.contains(SourceSet::SHOP) {
-            return Err(ActionError::Unavailable(Arc::from(
-                "shop acquisition is not available",
-            )));
         }
         let id = acceptable_ids(need)
             .find(|&id| present(self.counts, need, id) >= need.target)
@@ -99,12 +116,13 @@ impl<'a> Planner<'a> {
             .unwrap_or(need.item);
         let held = held(self.counts, need, id);
         let present = present(self.counts, need, id);
+        let worn = worn(self.counts, need, id);
         let banked = need
             .sources
             .contains(SourceSet::BANK)
             .then(|| self.counts.banked(id))
             .flatten();
-        if need.presence == Presence::Wielded && held > 0 && worn(self.counts, need, id) == 0 {
+        if need.presence == Presence::Wielded && held > 0 && worn == 0 {
             self.add_wear(id)?;
         }
         if present >= need.target {
@@ -140,7 +158,7 @@ impl<'a> Planner<'a> {
             if self.first_withdrawal.is_none() {
                 self.first_withdrawal = Some(detail.clone());
             }
-            if need.presence == Presence::Wielded && worn(self.counts, need, id) == 0 {
+            if need.presence == Presence::Wielded && worn == 0 {
                 self.add_wear(id)?;
             }
         }
@@ -160,14 +178,82 @@ impl<'a> Planner<'a> {
                 self.plan.child = Some(index);
                 self.child = Some(detail);
             }
-        } else if reach >= need.minimum || need.kind == NeedKind::Optional {
-            self.plan.looked.short_of_target = self.plan.looked.short_of_target.saturating_add(1);
+            return Ok(());
+        }
+        if need.sources.contains(SourceSet::SHOP) {
+            let units = need.target.saturating_sub(reach).max(0);
+            if let Some((_, reserve)) = shop_quote(world.data, vendor, id, world.members, units) {
+                let minimum_units = need
+                    .minimum
+                    .saturating_sub(present)
+                    .saturating_sub(take)
+                    .max(0);
+                let (held_coins, banked_coins, unknown_bank) = purchase_coins(self.counts, coins);
+                if i64::from(held_coins).saturating_add(i64::from(banked_coins))
+                    < i64::from(minimum_units)
+                {
+                    if unknown_bank {
+                        self.plan.scan = true;
+                        if self.scan.is_none() {
+                            self.scan = Some(detail.clone());
+                        }
+                    } else if need.kind == NeedKind::Required {
+                        let vendor_line = vendor_line_for_purchase(
+                            world.data,
+                            vendor,
+                            id,
+                            world.members,
+                            held_coins,
+                            banked_coins,
+                        );
+                        self.record_block(
+                            detail,
+                            need,
+                            id,
+                            BlockReason::TooFewCoins {
+                                needed: i64::from(minimum_units),
+                                held: i64::from(held_coins),
+                                banked: i64::from(banked_coins),
+                            },
+                            Some(Arc::from(vendor_line)),
+                        );
+                    } else {
+                        self.note_short_target();
+                    }
+                    return Ok(());
+                }
+                self.add_purchase(Purchase {
+                    need: index,
+                    item: id,
+                    target: need.target.saturating_sub(worn).max(0),
+                    minimum: need.minimum.saturating_sub(worn).max(0),
+                })?;
+                if need.presence == Presence::Wielded {
+                    self.add_wear(id)?;
+                }
+                self.coin_reserve = self.coin_reserve.saturating_add(reserve);
+                self.reserve_coins(coins)?;
+                return Ok(());
+            }
+            if need.kind == NeedKind::Required && reach < need.minimum {
+                let vendor_line =
+                    vendor_line_for_purchase(world.data, vendor, id, world.members, 0, 0);
+                self.record_block(
+                    detail,
+                    need,
+                    id,
+                    BlockReason::NoVendor,
+                    Some(Arc::from(vendor_line)),
+                );
+            } else {
+                self.note_short_target();
+            }
+            return Ok(());
+        }
+        if reach >= need.minimum || need.kind == NeedKind::Optional {
+            self.note_short_target();
         } else if self.blocked.is_none() {
-            self.blocked = Some(detail);
-            self.plan.looked = Looked {
-                short_of_target: self.plan.looked.short_of_target,
-                ..looked(self.counts, need, id)
-            };
+            self.record_block(detail, need, id, BlockReason::SupplyMissing, None);
         }
         Ok(())
     }
@@ -206,21 +292,31 @@ impl<'a> Planner<'a> {
     pub fn verdict(self, deposit: Option<&DepositSpec>) -> AcquireVerdict {
         if !self.plan.scan {
             if let Some(detail) = self.blocked {
-                let message = supply_message(
-                    &detail.item,
+                let reason = self.blocked_reason.unwrap_or(BlockReason::SupplyMissing);
+                let item = Arc::clone(&detail.item);
+                let vendor_line = self
+                    .blocked_vendor_line
+                    .as_deref()
+                    .unwrap_or("nobody sells it");
+                let message = block_message(
+                    &item,
+                    &reason,
                     &self.plan.looked,
+                    vendor_line,
                     std::time::SystemTime::now(),
+                    0,
                 );
                 return AcquireVerdict::Blocked(AcquireBlock {
-                    item: detail.item,
+                    item,
                     need: detail.index,
-                    reason: BlockReason::SupplyMissing,
+                    reason,
                     looked: self.plan.looked,
                     message,
                 });
             }
         }
         if self.plan.withdrawal_count == 0
+            && self.plan.purchase_count == 0
             && self.plan.wear_count == 0
             && !self.plan.scan
             && self.plan.child.is_none()
@@ -230,6 +326,64 @@ impl<'a> Planner<'a> {
         } else {
             AcquireVerdict::Plan(self.plan)
         }
+    }
+
+    fn record_block(
+        &mut self,
+        detail: NeedObservation,
+        need: &Need,
+        id: i32,
+        reason: BlockReason,
+        vendor_line: Option<Arc<str>>,
+    ) {
+        if self.blocked.is_none() {
+            self.plan.looked = Looked {
+                short_of_target: self.plan.looked.short_of_target,
+                ..looked(self.counts, need, id)
+            };
+            self.blocked = Some(detail);
+            self.blocked_reason = Some(reason);
+            self.blocked_vendor_line = vendor_line;
+        }
+    }
+
+    fn note_short_target(&mut self) {
+        self.plan.looked.short_of_target = self.plan.looked.short_of_target.saturating_add(1);
+    }
+
+    fn reserve_coins(&mut self, coins: CoinPolicy) -> Result<(), ActionError> {
+        let CoinPolicy::ForPurchase { sources } = coins else {
+            return Ok(());
+        };
+        if self.plan.purchase_count == 0 || !sources.contains(SourceSet::BANK) {
+            return Ok(());
+        }
+        let (held_coins, banked_coins, unknown_bank) = purchase_coins(self.counts, coins);
+        if unknown_bank {
+            if self.coin_reserve > i64::from(held_coins) {
+                self.plan.scan = true;
+            }
+            return Ok(());
+        }
+        let target = self
+            .coin_reserve
+            .min(i64::from(held_coins).saturating_add(i64::from(banked_coins)))
+            .min(i64::from(i32::MAX));
+        if target > i64::from(held_coins) {
+            self.add_withdrawal(995, &Arc::from("coins"), target as i32)?;
+        }
+        Ok(())
+    }
+
+    fn add_purchase(&mut self, purchase: Purchase) -> Result<(), ActionError> {
+        if self.plan.purchase_count == MAX_MEMO {
+            return Err(ActionError::Unavailable(Arc::from(
+                "acquisition purchase batch is too large",
+            )));
+        }
+        self.plan.purchases[self.plan.purchase_count] = Some(purchase);
+        self.plan.purchase_count += 1;
+        Ok(())
     }
 
     fn add_withdrawal(&mut self, id: i32, name: &Arc<str>, target: i32) -> Result<(), ActionError> {
@@ -289,7 +443,7 @@ pub fn plan(
     }
     let mut planner = Planner::new(counts, world);
     for need in request.needs.iter() {
-        planner.require(need)?;
+        planner.require_with_purchase(need, &request.vendor, request.coins, world)?;
     }
     Ok(planner.verdict(request.deposit.as_ref()))
 }
@@ -365,7 +519,7 @@ pub(crate) fn present(counts: &dyn Counts, need: &Need, id: i32) -> i32 {
     held(counts, need, id).saturating_add(worn(counts, need, id))
 }
 
-fn looked(counts: &dyn Counts, need: &Need, id: i32) -> Looked {
+pub(crate) fn looked(counts: &dyn Counts, need: &Need, id: i32) -> Looked {
     Looked {
         pack: held(counts, need, id),
         worn: worn(counts, need, id),
@@ -382,7 +536,151 @@ fn looked(counts: &dyn Counts, need: &Need, id: i32) -> Looked {
     }
 }
 
-fn supply_message(item: &str, looked: &Looked, now: std::time::SystemTime) -> Arc<str> {
+fn vendor_eligible(fact: &VendorFact<'_>, members: bool) -> bool {
+    members || !fact.item.members
+}
+
+fn two_chunk_quote(fact: &VendorFact<'_>, units: i32) -> i64 {
+    shop_facts::quote(fact.record, fact.item, units, fact.item.baseline).saturating_add(
+        shop_facts::quote(
+            fact.record,
+            fact.item,
+            units,
+            fact.item.baseline.saturating_sub(units),
+        ),
+    )
+}
+
+fn shop_quote<'a>(
+    data: Option<&'a api::game_data::SelectedGameData>,
+    choice: &VendorChoice,
+    item_id: i32,
+    members: bool,
+    units: i32,
+) -> Option<(VendorFact<'a>, i64)> {
+    let data = data?;
+    match choice {
+        VendorChoice::None => None,
+        VendorChoice::Explicit { keeper_config, .. } => {
+            let fact = shop_facts::vendor_by_keeper_config(data, keeper_config, item_id)?;
+            if !vendor_eligible(&fact, members) {
+                return None;
+            }
+            let reserve = two_chunk_quote(&fact, units);
+            Some((fact, reserve))
+        }
+        VendorChoice::Nearest => {
+            let mut best: Option<(VendorFact<'a>, i64)> = None;
+            for fact in shop_facts::vendors_for(data, item_id) {
+                if !vendor_eligible(&fact, members) {
+                    continue;
+                }
+                let quote = two_chunk_quote(&fact, units);
+                if match best.as_ref() {
+                    None => true,
+                    Some((_, current)) => quote > *current,
+                } {
+                    best = Some((fact, quote));
+                }
+            }
+            best
+        }
+    }
+}
+
+fn purchase_coins(counts: &dyn Counts, policy: CoinPolicy) -> (i32, i32, bool) {
+    let held = counts.held(995).unwrap_or(0).max(0);
+    let CoinPolicy::ForPurchase { sources } = policy else {
+        return (held, 0, false);
+    };
+    if !sources.contains(SourceSet::BANK) {
+        return (held, 0, false);
+    }
+    match counts.banked_origin() {
+        Origin::Session => match counts.banked(995) {
+            Some(banked) => (held, banked.max(0), false),
+            None => (held, 0, true),
+        },
+        Origin::Unknown | Origin::Hint => (held, 0, true),
+    }
+}
+
+fn vendor_line_for_purchase(
+    data: Option<&api::game_data::SelectedGameData>,
+    choice: &VendorChoice,
+    item_id: i32,
+    members: bool,
+    held: i32,
+    banked: i32,
+) -> String {
+    let Some(data) = data else {
+        return "vendor price unavailable".to_string();
+    };
+    match choice {
+        VendorChoice::None => "nobody sells it".to_string(),
+        VendorChoice::Explicit { keeper_config, .. } => {
+            let Some(fact) = shop_facts::vendor_by_keeper_config(data, keeper_config, item_id)
+                .filter(|fact| vendor_eligible(fact, members))
+            else {
+                return "nobody sells it".to_string();
+            };
+            let price = shop_facts::quote(fact.record, fact.item, 1, fact.item.baseline);
+            format!(
+                "{} sells one for {price} gp at baseline stock; you hold {held} gp and the bank holds {banked} gp",
+                fact.keeper_name
+            )
+        }
+        VendorChoice::Nearest => {
+            let mut names = String::with_capacity(128);
+            let mut count = 0usize;
+            let mut low = i64::MAX;
+            let mut high = 0i64;
+            for fact in shop_facts::vendors_for(data, item_id) {
+                if !vendor_eligible(&fact, members) {
+                    continue;
+                }
+                if count > 0 {
+                    names.push_str(" and ");
+                }
+                names.push_str(fact.keeper_name);
+                count += 1;
+                let price = shop_facts::quote(fact.record, fact.item, 1, fact.item.baseline);
+                low = low.min(price);
+                high = high.max(price);
+            }
+            if count == 0 {
+                return "nobody sells it".to_string();
+            }
+            let price_range = if low == high {
+                low.to_string()
+            } else {
+                format!("{low}-{high}")
+            };
+            let (vendor_noun, verb) = if count == 1 {
+                ("eligible vendor", "sells")
+            } else {
+                ("eligible vendors", "sell")
+            };
+            format!(
+                "{vendor_noun} {names} {verb} one for {price_range} gp at baseline stock; you hold {held} gp and the bank holds {banked} gp"
+            )
+        }
+    }
+}
+
+/// Format a generated block message from borrowed facts. Authored bank
+/// refusals keep their existing text and must not call this helper.
+pub(crate) fn block_message(
+    item: &str,
+    reason: &BlockReason,
+    looked: &Looked,
+    vendor_line: &str,
+    now: std::time::SystemTime,
+    now_tick: u64,
+) -> Arc<str> {
+    if *reason == BlockReason::AuthoredShortage {
+        unreachable!("authored refusals preserve their existing message");
+    }
     let bank = match looked.bank {
         Some(bank) => {
             let age = std::time::UNIX_EPOCH
@@ -398,7 +696,32 @@ fn supply_message(item: &str, looked: &Looked, now: std::time::SystemTime) -> Ar
         }
         None => "in the observed bank".to_string(),
     };
-    Arc::from(format!("no {item} in the pack, worn, or {bank}; nobody sells it; waiting: put a {item} in the pack"))
+    let waiting = match reason {
+        BlockReason::AuthoredShortage => unreachable!(),
+        BlockReason::SupplyMissing | BlockReason::NoVendor => {
+            format!("put a {item} in the pack")
+        }
+        BlockReason::TooFewCoins { .. } => format!("put a {item} or coins in the pack"),
+        BlockReason::VendorUnreachable => "Stop, move closer, then Start".to_string(),
+        BlockReason::VendorPickUndecided => {
+            "Stop, allow the route in the card, then Start".to_string()
+        }
+        BlockReason::NoStock {
+            restock_ticks,
+            revisit_due,
+            ..
+        } => format!(
+            "the shop restocks one every {restock_ticks} ticks, revisit in {} ticks",
+            revisit_due.saturating_sub(now_tick)
+        ),
+        BlockReason::NoSpace { slots_needed } => format!(
+            "free {slots_needed} pack {}",
+            if *slots_needed == 1 { "slot" } else { "slots" }
+        ),
+    };
+    Arc::from(format!(
+        "no {item} in the pack, worn, or {bank}; {vendor_line}; waiting: {waiting}"
+    ))
 }
 
 /// Preserve the authored refusal text and partial-withdraw rule exactly.

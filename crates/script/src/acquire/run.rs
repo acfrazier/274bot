@@ -25,6 +25,7 @@ enum Phase {
     Replan,
     Actions,
     Close,
+    Shop,
     Wear,
     Child,
     Resume,
@@ -57,6 +58,11 @@ pub struct AcquireRun {
     target: Option<WorldTile>,
     withdrawals: Option<Arc<[Withdrawal]>>,
     wears: Option<Arc<[i32]>>,
+    purchases: Option<Arc<[Purchase]>>,
+    purchase_index: usize,
+    shop: Option<Box<super::shop_run::ShopRun>>,
+    bought: u32,
+    short_of_target: u8,
     child: Option<u8>,
     index: usize,
     wear_index: usize,
@@ -124,6 +130,11 @@ impl AcquireRun {
             target: None,
             withdrawals: None,
             wears: None,
+            purchases: None,
+            purchase_index: 0,
+            shop: None,
+            bought: 0,
+            short_of_target: 0,
             child: None,
             index: 0,
             wear_index: 0,
@@ -337,8 +348,10 @@ impl AcquireRun {
                     self.active = Active::Machine(handle);
                 }
                 Phase::Close => {
-                    if self.request.close == CloseBank::LeaveOpen || !bank_open(&tick.cx) {
-                        self.phase = Phase::Wear;
+                    if (self.request.close == CloseBank::LeaveOpen && self.purchases.is_none())
+                        || !bank_open(&tick.cx)
+                    {
+                        self.phase = Phase::Shop;
                         continue;
                     }
                     if !tick.cx.may_continue_this_tick() {
@@ -352,6 +365,58 @@ impl AcquireRun {
                     let handle = tick.actions.begin::<bank::Close>((), &mut tick.cx)?;
                     self.close_attempts += 1;
                     self.active = Active::Close(handle);
+                }
+                Phase::Shop => {
+                    let Some(purchase) = self
+                        .purchases
+                        .as_deref()
+                        .and_then(|purchases| purchases.get(self.purchase_index))
+                        .copied()
+                    else {
+                        self.shop = None;
+                        self.phase = Phase::Wear;
+                        continue;
+                    };
+                    if self.shop.is_none() {
+                        if tick
+                            .cx
+                            .snapshot()
+                            .stock()
+                            .held(purchase.item)
+                            .is_some_and(|held| held >= purchase.target)
+                        {
+                            self.purchase_index += 1;
+                            continue;
+                        }
+                        self.shop = Some(Box::new(super::shop_run::ShopRun::new(
+                            &self.request,
+                            purchase,
+                            &tick.cx,
+                        )?));
+                    }
+                    match self.shop.as_mut().expect("active purchase").poll(
+                        &self.request,
+                        tick,
+                        gate,
+                    ) {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                        Poll::Ready(Ok(super::shop_run::Outcome::Complete { bought, short })) => {
+                            self.bought = self.bought.checked_add(bought).ok_or_else(|| {
+                                ActionError::Failed(Arc::from(
+                                    "observed purchase count exceeds u32",
+                                ))
+                            })?;
+                            self.complete &= !short;
+                            self.short_of_target += u8::from(short);
+                            self.shop = None;
+                            self.purchase_index += 1;
+                        }
+                        Poll::Ready(Ok(super::shop_run::Outcome::Blocked(mut block))) => {
+                            block.looked.short_of_target += self.short_of_target;
+                            return self.refuse(block);
+                        }
+                    }
                 }
                 Phase::Wear => {
                     let Some(id) = self
@@ -440,7 +505,7 @@ impl AcquireRun {
                         deposited: self.deposited,
                         kept_unbankable: self.kept_unbankable,
                         bank_open: bank_open(&tick.cx),
-                        bought: 0,
+                        bought: self.bought,
                         last_bank: self.last_bank.take(),
                     })));
                 }
@@ -472,6 +537,10 @@ impl AcquireRun {
             Active::Close(handle) => actions.cancel(handle),
             Active::Wear(handle) => actions.cancel(handle),
         }
+        if let Some(shop) = &mut self.shop {
+            shop.cancel(actions);
+        }
+        self.shop = None;
         self.phase = Phase::Done;
         self.cancelled = true;
     }
@@ -492,6 +561,14 @@ impl AcquireRun {
                 .collect::<Vec<_>>()
                 .into()
         });
+        self.purchases = (plan.purchase_count > 0).then(|| {
+            (0..plan.purchase_count)
+                .map(|index| plan.purchases[index].expect("counted purchase"))
+                .collect()
+        });
+        self.purchase_index = 0;
+        self.shop = None;
+        self.short_of_target = plan.looked.short_of_target;
         self.child = plan.child;
         self.index = 0;
         self.wear_index = 0;
@@ -504,6 +581,9 @@ impl AcquireRun {
     fn clear_work(&mut self) {
         self.withdrawals = None;
         self.wears = None;
+        self.purchases = None;
+        self.purchase_index = 0;
+        self.shop = None;
         self.child = None;
         self.index = 0;
         self.wear_index = 0;
@@ -656,7 +736,7 @@ impl AcquireRun {
             },
             Active::Close(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Close(handle),
-                Poll::Ready(Ok(())) => self.phase = Phase::Wear,
+                Poll::Ready(Ok(())) => self.phase = Phase::Shop,
                 Poll::Ready(Err(ActionError::Failed(message)))
                     if message.as_ref() == "bank did not close" =>
                 {

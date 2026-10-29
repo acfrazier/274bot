@@ -1260,6 +1260,7 @@ fn tick_sherlock_slot(slot: &mut script::slot::SlotScript, world: &World, tick: 
             reach: None,
             reach_flood: None,
             bank_memory: None,
+            shop_keepers: None,
             collision: None,
             hold: world.held,
             world_members: api::selected::Truth::Unknown,

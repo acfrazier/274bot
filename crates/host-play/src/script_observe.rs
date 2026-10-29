@@ -1054,6 +1054,7 @@ pub(crate) fn script_observe_cached_with_channels(
                         walk_danger: walk_danger
                             .as_ref()
                             .map(|query| query as &dyn script::native::WalkDangerQuery),
+                        shop_keepers: world.as_deref().and_then(|world| world.shop_keeper_facts()),
                         hold: hold || ours,
                         world_members,
                         ..Default::default()

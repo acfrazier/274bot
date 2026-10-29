@@ -55,6 +55,9 @@ pub struct CompiledTick<'a> {
     /// Lazy, read-only danger admission for compiled target selection.
     /// Missing navigation data is not permission to start a new walk.
     pub walk_danger: Option<&'a dyn crate::native::WalkDangerQuery>,
+    /// Revision-bound keeper placements and validated access, borrowed from
+    /// the shared navigation world. Only an active vendor pick clones its Arc.
+    pub shop_keepers: Option<&'a std::sync::Arc<api::service_pick::ShopKeeperFacts>>,
     /// The actual owner-held session gate. The host borrows it from
     /// `SlotArm.lifecycle` for a live compiled callback; bare contexts use
     /// `None`, and the isolate path does not read it.

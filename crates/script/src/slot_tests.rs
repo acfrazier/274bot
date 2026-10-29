@@ -1193,6 +1193,7 @@ fn compiled_ctx<'a>(
             reach: None,
             reach_flood: None,
             bank_memory: None,
+            shop_keepers: None,
             collision: None,
             hold: false,
             world_members: api::selected::Truth::Unknown,
