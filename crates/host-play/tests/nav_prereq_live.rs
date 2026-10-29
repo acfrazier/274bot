@@ -196,6 +196,10 @@ fn range(value: i32) -> InclusiveRange {
     }
 }
 
+fn run_receipt(run: RunKey) -> serde_json::Value {
+    json!({"slot": run.slot, "run": run.run, "session": run.session})
+}
+
 fn assert_holy_barrier_refusal_fact(fact: &Fact) {
     assert_eq!(fact.quest.0.as_ref(), "priestperil");
     assert_eq!(fact.signal.0.as_ref(), "priestperil");
@@ -436,6 +440,7 @@ fn make_fixture_with_seed_commands(
             .expect("session content scope"),
     ));
     let seed_run = play
+        .script_start_handle()
         .start_test_script_with_local_state(
             &seed_name,
             Box::new(CompleteOnce),
@@ -1097,7 +1102,7 @@ fn live_manual_prereq_holy_barrier_denied() {
         "server_stage": {"priestperil": 60, "druidspirit": 0},
         "global_allow_prereq_dialogue": false,
         "global_allow_quest_start": true,
-        "wrong_memory": {"priestperil": 61, "run": fixture.seed_run},
+        "wrong_memory": {"priestperil": 61, "run": run_receipt(fixture.seed_run)},
         "server_refusal_fact": format!("{fact:?}"),
         "manual_terminal_refusal": terminal,
         "route": route,
@@ -1168,7 +1173,7 @@ fn live_compat_prereq_mort_myre_denied() {
         "cell": "A2-compat-mort-myre-denied",
         "account": fixture.name,
         "server_stage": {"priestperil": 61, "druidspirit": 0},
-        "wrong_memory": {"druidspirit": 10, "run": expected_run},
+        "wrong_memory": {"druidspirit": 10, "run": run_receipt(expected_run)},
         "global_allow_quest_start": true,
         "request_allow_quest_start": false,
         "server_refusal_fact": format!("{fact:?}"),
@@ -1471,7 +1476,7 @@ fn live_manual_prereq_holy_barrier_wrong_memory_retries() {
         "cell": "A1-manual-holy-barrier-wrong-memory-retries",
         "account": fixture.name,
         "server_stage": {"priestperil": 60, "druidspirit": 0},
-        "wrong_memory": {"priestperil": 61, "run": fixture.seed_run},
+        "wrong_memory": {"priestperil": 61, "run": run_receipt(fixture.seed_run)},
         "manual_route": route,
         "server_refusal_fact": format!("{fact:?}"),
         "manual_terminal": terminal,
@@ -1527,7 +1532,7 @@ fn live_compat_prereq_holy_barrier_allowed() {
     let receipt = json!({
         "cell": "A1-compat-holy-barrier-allowed",
         "account": fixture.name,
-        "run": run,
+        "run": run_receipt(run),
         "server_stage": {"priestperil": 60, "druidspirit": 0},
         "request_allow_prereq_dialogue": true,
         "request_allow_quest_start": true,
@@ -1580,7 +1585,7 @@ fn live_compat_prereq_holy_barrier_global_on_script_inherit() {
     let receipt = json!({
         "cell": "A1-compat-global-on-script-inherit",
         "account": fixture.name,
-        "run": run,
+        "run": run_receipt(run),
         "server_stage": {"priestperil": 60, "druidspirit": 0},
         "global_allow_prereq_dialogue": true,
         "script_allow_prereq_dialogue": script_permission.allow_prereq_dialogue,
@@ -1654,7 +1659,7 @@ fn live_compat_prereq_holy_barrier_abort_approach() {
     let receipt = json!({
         "cell": "A1-compat-abort-approach",
         "account": fixture.name,
-        "run": run,
+        "run": run_receipt(run),
         "outer_request_id": request_id,
         "approach": approach,
         "server_refusal_fact": format!("{fact:?}"),
@@ -1735,7 +1740,7 @@ fn live_compat_prereq_holy_barrier_abort_advice_page() {
     let receipt = json!({
         "cell": "A1-compat-abort-advice-page",
         "account": fixture.name,
-        "run": run,
+        "run": run_receipt(run),
         "outer_request_id": request_id,
         "server_refusal_fact": format!("{fact:?}"),
         "advice_page": page,
@@ -1797,10 +1802,10 @@ fn live_compat_prereq_holy_barrier_denied_second_walk_same_run() {
     let receipt = json!({
         "cell": "A1-compat-denied-second-walk-same-run",
         "account": fixture.name,
-        "run": run,
+        "run": run_receipt(run),
         "server_stage": {"priestperil": 60, "druidspirit": 0},
         "global_allow_prereq_dialogue": false,
-        "wrong_memory": {"priestperil": 61, "run": fixture.seed_run},
+        "wrong_memory": {"priestperil": 61, "run": run_receipt(fixture.seed_run)},
         "server_refusal_fact": format!("{fact:?}"),
         "same_run_compat_result": result,
         "outer_terminal_logs": logs,
@@ -1868,7 +1873,7 @@ fn run_mort_myre_gift(full_bank: bool, run_gatherer: bool) {
     let receipt = json!({
         "cell": "A2-compat-mort-myre-started",
         "account": fixture.name,
-        "run": run,
+        "run": run_receipt(run),
         "server_start_stage": {"priestperil": 61, "druidspirit": 0},
         "script_allow_quest_start": script_allow_quest_start,
         "seeded_inventory_tick": seeded_inventory_tick,
