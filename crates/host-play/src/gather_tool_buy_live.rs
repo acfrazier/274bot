@@ -1522,7 +1522,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
     let frame_account = account.clone();
     let observer = Arc::new(Mutex::new(GameSnapshot::new()));
     let frame_observer = Arc::clone(&observer);
-    let mut play = run_with_template(
+    let play = run_with_template(
         template,
         true,
         vec![Profile {
@@ -1592,7 +1592,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
     };
     let primer_trace = Arc::clone(&trace);
     let prime_cell = Arc::clone(&cell);
-    let primer = move || BankPrimer {
+    let mut primer = Some(BankPrimer {
         facts: Arc::clone(&named_banks),
         bank_name: Arc::clone(&bank_name),
         expected_rows: expected_bank_rows.clone(),
@@ -1603,7 +1603,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
         open: None,
         close: None,
         access: None,
-    };
+    });
     let mut login_ready = false;
     let mut stage = RunStage::Prepare;
     let mut cell_failure = None::<String>;
@@ -1658,7 +1658,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                         ));
                         break;
                     }
-                    let script = primer();
+                    let script = primer.take().expect("bank primer starts once");
                     match play.script_start_handle().start_test_script(
                         &account,
                         Box::new(script),
@@ -2275,7 +2275,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
         &game_frames,
         fixture.tool.id,
     ));
-    let (driver_packets, max_driver_packets, driver_trace_complete) = frame_packets.lock().value();
+    let (_, max_driver_packets, driver_trace_complete) = frame_packets.lock().value();
     if !driver_trace_complete {
         failures.push("Driver packet trace was incomplete".into());
     }
