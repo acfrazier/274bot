@@ -446,7 +446,7 @@ impl TuiApp {
             | Command::ScriptPause
             | Command::ScriptStop
             | Command::ScriptParams => return self.script_run(command),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             Command::ScriptSkipQuest => return self.script_run(command),
             #[cfg(feature = "js")]
             Command::ScriptReload | Command::ScriptReloadCancel => {
