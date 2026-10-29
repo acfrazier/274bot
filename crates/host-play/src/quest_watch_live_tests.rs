@@ -332,6 +332,12 @@ struct HomeProfile {
     password: String,
     uid: i32,
     quest: String,
+    /// Partner quests only: the other account's username.
+    #[serde(default)]
+    partner_account: Option<String>,
+    /// Partner quests only: `phoenix` or `blackarm`.
+    #[serde(default)]
+    gang: Option<String>,
 }
 
 #[test]
@@ -363,6 +369,17 @@ fn build_quest_watch_home() {
         });
         let mut bag = Map::new();
         bag.insert("quests".into(), json!([row.quest]));
+        if let Some(partner) = &row.partner_account {
+            bag.insert("partner_account".into(), json!(partner));
+        }
+        if let Some(gang) = &row.gang {
+            assert!(
+                matches!(gang.as_str(), "phoenix" | "blackarm"),
+                "gang for {} must be phoenix or blackarm, got {gang:?}",
+                row.username
+            );
+            bag.insert("gang".into(), json!(gang));
+        }
         settings
             .script_settings
             .insert("compiled:Quester".into(), bag);
@@ -393,6 +410,12 @@ fn build_quest_watch_home() {
             "quests": profile.settings.script_settings
                 .get("compiled:Quester")
                 .and_then(|bag| bag.get("quests")),
+            "partner_account": profile.settings.script_settings
+                .get("compiled:Quester")
+                .and_then(|bag| bag.get("partner_account")),
+            "gang": profile.settings.script_settings
+                .get("compiled:Quester")
+                .and_then(|bag| bag.get("gang")),
         }));
     }
     let receipt = json!({
@@ -413,5 +436,17 @@ fn build_quest_watch_home() {
             .expect("receipt row");
         assert_eq!(found["quests"], json!([row.quest]), "{}", row.username);
         assert_eq!(found["uid"], json!(row.uid), "{}", row.username);
+        assert_eq!(
+            found["partner_account"],
+            serde_json::to_value(&row.partner_account).expect("partner encodes"),
+            "{}",
+            row.username
+        );
+        assert_eq!(
+            found["gang"],
+            serde_json::to_value(&row.gang).expect("gang encodes"),
+            "{}",
+            row.username
+        );
     }
 }

@@ -37,6 +37,10 @@ struct SeedPlan {
     quest: String,
     /// The quest's own content varp; the seed resets it to not started.
     quest_varp: String,
+    /// Further varps reset to 0 beside `quest_varp` (Shield of Arrav
+    /// tracks one varp per gang; a reseed must clear both).
+    #[serde(default)]
+    reset_varps: Vec<String>,
     /// The quest's quest-tab display name, for the colour proof.
     quest_display: String,
     /// Exact base levels by skill name. A skill the plan omits must sit
@@ -296,6 +300,23 @@ fn build_seed_scenario(plan: SeedPlan) -> Result<Scenario, String> {
         format!("setvar {} 0", plan.quest_varp),
         tab,
     ));
+    for varp in &plan.reset_varps {
+        if varp.is_empty()
+            || !varp
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            || *varp == plan.quest_varp
+        {
+            return Err(format!(
+                "field reset_varps: {varp:?} must be a content variable alias other than quest_varp"
+            ));
+        }
+        steps.push(command_step(
+            "reset one further quest varp to not started",
+            format!("setvar {varp} 0"),
+            tab,
+        ));
+    }
     for done in &plan.completed {
         steps.push(command_step(
             "seed one completed quest varp",
