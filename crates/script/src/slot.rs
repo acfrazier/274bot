@@ -441,7 +441,8 @@ pub struct SlotScript {
     pub want_run: bool,
     state: RunState,
     compiled: Option<Box<CompiledRun>>,
-    /// Diagnostic only: a blocked run has no instance or restart authority.
+    /// The last status of a blocked, failed, or completed run, for diagnostics only.
+    /// It grants no instance or restart authority.
     terminal_native_status: Option<Arc<crate::native::ScriptStatus>>,
     preparing: Option<Box<Preparation>>,
     /// A full admission queue retains one native Start without enlarging every slot.

@@ -2291,9 +2291,9 @@ fn sheep_complete_colour_publishes_complete_and_slot_keeps_completed_receipt() {
         }
     }
     assert_eq!(slot.state(), crate::RunState::Idle);
-    assert!(
-        slot.native_status().is_none(),
-        "teardown drops compiled status; observers must use the lifecycle receipt"
+    assert_eq!(
+        slot.native_status().expect("completed native status").phase,
+        NativePhase::Complete
     );
     assert_eq!(
         slot.lifecycle_receipt().expect("completed receipt").state,

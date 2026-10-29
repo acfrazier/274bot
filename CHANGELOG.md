@@ -71,6 +71,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - Ground-item Take steps can now use an observed game-tick budget. This
   lets a guide collect a temporary scripted drop such as the Jailer's key,
   without a wall-clock spawn wait.
+- The panel and TUI now keep a quest run's final status after it completes.
 - Quest guides can now opt in to answering a repeated menu question once and
   then moving on. `answer_once: true` skips a `prefer` entry that already
   answered an accepted page in the same conversation and falls through to the
