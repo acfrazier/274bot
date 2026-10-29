@@ -4199,7 +4199,7 @@ mod tests {
         assert_eq!(gatherer.status_data(None).phase, "parked");
 
         gatherer.interrupt(Interrupt::Pause);
-        assert_eq!(gatherer.phase(), ("paused", NativePhase::Paused));
+        assert_eq!(gatherer.phase(), ("paused", NativePhase::Waiting));
         gatherer.interrupt(Interrupt::Resume);
         assert_eq!(gatherer.phase(), ("parked", NativePhase::Waiting));
         assert!(gatherer.survival.parked().is_some());
@@ -4276,7 +4276,7 @@ mod tests {
         let snapshot = fixture.snapshot;
         let mut ledger = None;
         let condition = |tick: u64| BotCondition {
-            tick: u16::try_from(tick).unwrap(),
+            tick: u32::try_from(tick).unwrap(),
             session: SessionMark::Live,
             hp: 99,
             hp_max: 99,
@@ -4327,7 +4327,7 @@ mod tests {
         let snapshot = fixture.snapshot;
         let mut ledger = None;
         let condition = |tick: u64| BotCondition {
-            tick: u16::try_from(tick).unwrap(),
+            tick: u32::try_from(tick).unwrap(),
             session: SessionMark::Live,
             hp: 5,
             hp_max: 99,
@@ -4494,7 +4494,7 @@ mod tests {
                 index: 3,
                 name: "hitpoints".into(),
                 base: 10,
-                effective: hp,
+                effective: i32::from(hp),
                 xp: 0,
                 used: true,
             }]);

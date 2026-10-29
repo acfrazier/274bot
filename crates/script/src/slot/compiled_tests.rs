@@ -66,7 +66,7 @@ fn slot_keeps_parked_native_run_and_resumes_after_dose() {
 
     fn fact(tick: u64, poison: PoisonState, hp: u8, antipoison: u8) -> BotCondition {
         BotCondition {
-            tick: u16::try_from(tick).unwrap(),
+            tick: u32::try_from(tick).unwrap(),
             session: SessionMark::Live,
             hp,
             hp_max: 99,

@@ -7294,7 +7294,7 @@ mod tests {
             let (snapshot, mut ledger, handle) = fixture();
             assert!(matches!(
                 dispatch(&mut ledger, 1, true),
-                HostEffect::BankDeposit(_)
+                HostEffect::Interaction(InteractReq::InvButton { id: PRODUCT, .. })
             ));
             assert!(poll(&snapshot, &mut ledger, &handle, 9).is_pending());
             assert!(handle

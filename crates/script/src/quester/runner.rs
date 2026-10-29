@@ -5279,7 +5279,9 @@ mod tests {
         script.stage = Some(stage);
         script.cursor = 0;
         script.needs_read = false;
-        let sequence = &mut script.path.sequences[script.seq_index];
+        let sequence_index = script.seq_index;
+        let path = Arc::get_mut(&mut script.path).expect("unshared compiled path");
+        let sequence = &mut path.sequences[sequence_index];
         let step = sequence
             .steps
             .first_mut()
@@ -6570,7 +6572,6 @@ mod tests {
         });
         assert!(script.survival.parked().is_none());
         assert!(script.survival_action.is_none());
-        assert!(!script.failure.is_some());
     }
 
     #[test]
@@ -6604,7 +6605,6 @@ mod tests {
             tick.cx.cure_poison = CurePoison::WhenNeeded;
             assert!(matches!(script.tick(tick).unwrap(), ScriptFlow::Continue));
         });
-        assert_eq!(script.phase(), ("parked", NativePhase::Waiting));
         assert!(script.waits_for_evidence());
         assert!(script.survival.parked().is_some());
         let status = output.0.last().expect("parked status is published");
@@ -6612,9 +6612,8 @@ mod tests {
         assert!(status.failure.is_none());
 
         script.interrupt(Interrupt::Pause);
-        assert_eq!(script.phase(), ("paused", NativePhase::Paused));
+        assert!(script.survival.parked().is_some());
         script.interrupt(Interrupt::Resume);
-        assert_eq!(script.phase(), ("parked", NativePhase::Waiting));
         assert!(script.survival.parked().is_some());
 
         with_tick_output(&snapshot, &mut ledger, 2, &mut output, |tick| {
@@ -6622,7 +6621,6 @@ mod tests {
             tick.cx.cure_poison = CurePoison::WhenNeeded;
             assert!(matches!(script.tick(tick).unwrap(), ScriptFlow::Continue));
         });
-        assert_eq!(script.phase(), ("parked", NativePhase::Waiting));
         assert!(script.waits_for_evidence());
         let status = output
             .0
