@@ -3729,6 +3729,8 @@ fn pump_shots_marks_completion_only_after_the_png_and_snapshot_pair_write() {
             label: "gnome_chop".into(),
             snapshot_json: "{\"scene\":2}".into(),
             paint_sequence: 0,
+            actor_stamp: None,
+            readback_permit: None,
             width: 1,
             height: 1,
             rgba: vec![0, 0, 0, 255],

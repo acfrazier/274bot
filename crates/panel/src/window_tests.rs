@@ -333,7 +333,7 @@ fn fail_labels_drops_queued_actors_and_keeps_the_error() {
         .expect("actor shot is accepted");
     shots.promote_ready(Some("alice"), Some("alice"));
     shots.fail_labels(
-        &["air-alice".into(), "air-bob".into()],
+        &["air-alice", "air-bob"],
         "terminal shot was not written within 10s",
     );
     assert!(shots.requests.is_empty());

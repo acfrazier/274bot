@@ -160,14 +160,13 @@ fn discard_capture_for_failure(capture: ShotCapture) -> String {
         height: _,
         rgba,
         paint_sequence: _,
-        actor_stamp,
+        actor_stamp: _,
         #[cfg(feature = "render-diagnostics")]
         pixel_roi,
         readback_permit,
     } = capture;
     drop(snapshot_json);
     drop(rgba);
-    drop(actor_stamp);
     #[cfg(feature = "render-diagnostics")]
     drop(pixel_roi);
     drop(readback_permit);
