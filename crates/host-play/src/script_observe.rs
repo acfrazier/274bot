@@ -811,9 +811,9 @@ pub(crate) fn script_observe_cached_with_channels(
             let world_id = world.as_ref().map(|w| Arc::as_ptr(w) as usize);
             #[cfg(feature = "js")]
             let force_banks = world_id.is_some_and(|id| slot.last_world_id() != Some(id));
-            // Guardian hold freezes clocks/nav and cancels owned recovery.
-            // Recovery is host-owned and participates in the same hold
-            // semantics without being treated as a guardian hold.
+            // Guardian `hold` freezes clocks/nav and cancels owned recovery.
+            // Recovery hold is host-owned and must still reach the isolate so
+            // loop/pump freeze, without being treated as that external freeze.
             let recovery_hold = slot.watchdog().holds_script_actions();
             let isolate_hold = hold || recovery_hold || prayer_cleanup_hold;
             #[cfg(feature = "js")]

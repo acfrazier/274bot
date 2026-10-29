@@ -343,10 +343,14 @@ pub(super) struct CommandDesk {
     /// Preference commands whose write is still queued on the
     /// local-state writer thread.
     pref_writes: Vec<super::prefs::PrefWriteWatch>,
-    /// The walk view a queued Nav or danger write adopted when it
-    /// settled, for a front end that does not re-read it each frame (the
-    /// headless driver) to take into its lent model.
-    settled_walk_globals: Option<crate::walk_permissions::WalkGlobalsView>,
+    /// Saved-setting transitions recorded for a front end that asked to
+    /// watch them ([`OperatorSession::watch_setting_events`]). Empty, and
+    /// never pushed to, while no front end watches.
+    setting_events: Vec<super::prefs::SettingEvent>,
+    /// Set when the bounded event queue drops at least one transition.
+    setting_events_overflowed: bool,
+    /// Whether a front end drains `setting_events`.
+    watch_setting_events: bool,
     /// The Quester Paths settings (and whether to write them) the next
     /// SetQuesterPaths applies.
     quester_paths: Option<(crate::quester_paths::QuesterPathsView, bool)>,
@@ -445,14 +449,46 @@ impl CommandDesk {
         !self.pref_writes.is_empty()
     }
 
-    pub(super) fn settle_walk_globals(&mut self, view: crate::walk_permissions::WalkGlobalsView) {
-        self.settled_walk_globals = Some(view);
+    pub(super) fn set_watch_setting_events(&mut self, watch: bool) {
+        self.watch_setting_events = watch;
+        if !watch {
+            self.setting_events.clear();
+            self.setting_events_overflowed = false;
+        }
     }
 
-    pub(super) fn take_settled_walk_globals(
+    pub(super) fn watching_setting_events(&self) -> bool {
+        self.watch_setting_events
+    }
+
+    /// Record one saved-setting transition for a watching front end. With
+    /// no watcher this is one bool check: nothing is built or kept. When
+    /// the bounded queue fills, the returned batch marks itself incomplete.
+    pub(super) fn note_setting_event(
         &mut self,
-    ) -> Option<crate::walk_permissions::WalkGlobalsView> {
-        self.settled_walk_globals.take()
+        setting: &str,
+        state: super::prefs::SettingEventState,
+        error: Option<String>,
+    ) {
+        if !self.watch_setting_events {
+            return;
+        }
+        if self.setting_events.len() >= super::prefs::SETTING_EVENTS_CAP {
+            self.setting_events_overflowed = true;
+            return;
+        }
+        self.setting_events.push(super::prefs::SettingEvent::new(
+            setting.to_owned(),
+            state,
+            error,
+        ));
+    }
+
+    pub(super) fn take_setting_events(&mut self) -> (Vec<super::prefs::SettingEvent>, bool) {
+        (
+            std::mem::take(&mut self.setting_events),
+            std::mem::take(&mut self.setting_events_overflowed),
+        )
     }
 
     pub(super) fn stage_quester_paths(
@@ -2820,4 +2856,56 @@ pub(super) fn terminal_of(
         _ => FailureKind::WriteFailed,
     };
     Some(Settlement::Failed(CommandFailure::Failed(kind)))
+}
+#[cfg(test)]
+mod setting_event_tests {
+    use super::CommandDesk;
+    use crate::session::prefs::{SettingEventState, SETTING_EVENTS_CAP};
+
+    #[test]
+    fn queue_overflow_is_reported_with_the_drained_batch() {
+        let mut commands = CommandDesk::default();
+        commands.set_watch_setting_events(true);
+        for _ in 0..SETTING_EVENTS_CAP {
+            commands.note_setting_event("capture", SettingEventState::Pending, None);
+        }
+        commands.note_setting_event(
+            "capture",
+            SettingEventState::Failed,
+            Some("disk full".into()),
+        );
+
+        let (events, incomplete) = commands.take_setting_events();
+        assert_eq!(events.len(), SETTING_EVENTS_CAP);
+        assert!(
+            incomplete,
+            "a dropped terminal failure marks the batch incomplete"
+        );
+        assert!(
+            events
+                .iter()
+                .all(|event| event.state() == SettingEventState::Pending),
+            "the full queue retains its original bounded contents"
+        );
+        assert_eq!(commands.take_setting_events(), (Vec::new(), false));
+    }
+
+    #[test]
+    fn explicit_owner_clear_state_survives_the_event_queue() {
+        let mut commands = CommandDesk::default();
+        commands.set_watch_setting_events(true);
+        commands.note_setting_event(
+            "capture",
+            SettingEventState::Failed,
+            Some("disk full".into()),
+        );
+        commands.note_setting_event("capture", SettingEventState::Cleared, None);
+
+        let (events, incomplete) = commands.take_setting_events();
+        assert!(!incomplete);
+        assert_eq!(
+            events.iter().map(|event| event.state()).collect::<Vec<_>>(),
+            [SettingEventState::Failed, SettingEventState::Cleared]
+        );
+    }
 }

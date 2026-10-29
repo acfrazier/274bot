@@ -2535,6 +2535,28 @@ mod compact_final_route_tests {
         });
     }
 
+    /// FIX-BANK-FETCH-ORACLE: the live harness traces a bank session's
+    /// post-session route through the same shape-agnostic view the product
+    /// assesses it with. The harness used to read `legacy_route()` and
+    /// panicked on every compact plan the route service publishes.
+    #[test]
+    fn bank_fetch_trace_reads_a_compact_final_route() {
+        let world = Arc::new(empty_corridor());
+        let from = tile(0, 1);
+        let dest = tile(3, 1);
+        let final_route = compact_route_path(&world, from, dest);
+        assert!(
+            final_route.legacy_route().is_none(),
+            "the fixture is the compact shape the route service publishes"
+        );
+        let lines = crate::bank_fetch_closed_live::final_route_lines(&final_route, &world);
+        assert_eq!(lines.len(), 1, "one walk leg: {lines:?}");
+        assert_eq!(
+            lines[0],
+            format!("walk 4 tiles Some({from:?}) -> Some({dest:?})")
+        );
+    }
+
     fn wearable_item(id: i32) -> api::snapshot::ItemView {
         api::snapshot::ItemView {
             def: api::obj_names::ItemDefView {

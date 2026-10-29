@@ -336,7 +336,11 @@ the `from`/`to` commits, and a `detail`), and `summary.md` has one
 
 The self-check runs the candidate's full unit-test file with the updater's own
 tests skipped (guard `NIGHTLY_SELF_CHECK_ACTIVE`), so a check never re-tests
-the updater recursively.
+the updater recursively. It also runs it without the unit's `NIGHTLY_*`
+settings (latency bands, cells file, revision and the like): the tests judge
+the candidate's code under the runner defaults, not under one host's
+configuration. A failed check names the failing tests in its `detail`, not
+only the unittest count line.
 
 Manual refresh is only a fallback for a checkout without the opt-in:
 `git -C <runner> fetch origin && git -C <runner> checkout --force origin/dev`

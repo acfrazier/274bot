@@ -123,7 +123,16 @@ impl<'de> serde::Deserialize<'de> for MapBakeChoice {
 /// front-end start).
 pub fn load_map_bake_choice(preferences: &crate::prefs::UiPreferences) -> MapBakeChoice {
     preferences
-        .value(MAP_BAKE_KEY)
+        .document()
+        .map(|document| choice_in(&document))
+        .unwrap_or_default()
+}
+
+/// The remembered choice a preference document holds ([`MapBakeChoice::Ask`]
+/// when absent).
+pub(crate) fn choice_in(document: &serde_json::Map<String, serde_json::Value>) -> MapBakeChoice {
+    document
+        .get(MAP_BAKE_KEY)
         .and_then(|value| value.as_str().map(MapBakeChoice::parse))
         .unwrap_or_default()
 }

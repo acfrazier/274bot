@@ -639,6 +639,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/frontend-core/src/setting.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/frontend-core/src/surface.rs",
       "owner": "T3"
     },
@@ -700,6 +704,10 @@
     },
     {
       "path": "crates/frontend-core/tests/password_handshake.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/tests/setting_book_alloc.rs",
       "owner": "T3"
     },
     {
@@ -1471,6 +1479,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/tests/nav_busy_transport_live.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/tests/nav_origin_live.rs",
       "owner": "T1"
     },
@@ -1756,6 +1768,10 @@
     },
     {
       "path": "crates/nav-executor/src/traveller/npc_hop_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-executor/src/traveller/occupied_tests.rs",
       "owner": "T5"
     },
     {
@@ -4147,6 +4163,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/quester/families/combat_escape.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/quester/families/combat_tests.rs",
       "owner": "T2"
     },
@@ -6055,6 +6075,10 @@
       "owner": "T2"
     },
     {
+      "path": "tools/game-data/extractors/duel.ts",
+      "owner": "T2"
+    },
+    {
       "path": "tools/game-data/extractors/common.ts",
       "owner": "T2"
     },
@@ -6120,6 +6144,14 @@
     },
     {
       "path": "tools/game-data/generate.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/game-data/npc-stat-census.py",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/game-data/npc-stat-default.test.ts",
       "owner": "T2"
     },
     {

@@ -2780,7 +2780,7 @@ impl Scripts {
         core: &mut OperatorSession<Io>,
         profile: &str,
         sel: &script::ScriptSel,
-        _catalog_root: Option<&Path>,
+        catalog_root: Option<&Path>,
         kind: StartKind,
         tallied: bool,
     ) -> Result<Option<OperationId>, script::StartLoadError> {
@@ -2822,14 +2822,17 @@ impl Scripts {
                         "{profile}: blocked, {reason}"
                     )));
                 }
-                self.queue_loaded_start(core, profile, sel, _catalog_root, kind, tallied)
+                self.queue_loaded_start(core, profile, sel, catalog_root, kind, tallied)
                     .map(|()| None)
             }
             #[cfg(not(feature = "js"))]
-            script::ScriptSel::Loaded(..) => Err(script::surface::SurfaceError::NoFactory(
-                script::surface::SurfaceKind::Js,
-            )
-            .into()),
+            script::ScriptSel::Loaded(..) => {
+                let _ = catalog_root;
+                Err(
+                    script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
+                        .into(),
+                )
+            }
         }
     }
 

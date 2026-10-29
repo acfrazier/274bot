@@ -9,7 +9,7 @@ and failure exits in Rust so preservation projects can reuse the same
 behavior through `host-play`, the TUI or the panel. No engine assets or
 external catalog scripts are included in this repository.
 
-0.2.6 Beta 2 is the current release. Revision 289 is the production revision: the harness cells
+0.2.7 Beta 2 is the current release. Revision 289 is the production revision: the harness cells
 are written, run and claimed for it. Revision 274 cells run best-effort and
 are neither tested nor claimed.
 
@@ -41,6 +41,49 @@ Cells behind Cargo features do not build without them. `quester_dev_paths_live`,
 `--lib` cells (`walk_guard_live_tests`, `quester_journal_live_tests` and the
 other `*_live*` modules) run under `cargo test`. Each cell file's header lists
 its own environment.
+
+The expected-combat Quester cell seeds Tourist Trap (`desertrescue`) at stage
+3. The loc-dialogue cell seeds Priest in Peril (`priestperil`) at stage 1.
+These permanent server variables are not transmitted to the client. After
+relog, each cell sends `getvar` before Start. Its oracle requires the exact
+fresh system reply. The fixture receipt records that reply, its message
+sequence, and the client-cache value as a diagnostic. An absent, stale,
+incorrect, or player-authored reply cannot prove the seed.
+The combat fixture also carries full waterskins. The real desert heat timer
+can otherwise damage the player and interrupt dialogue before combat starts.
+
+The loc-dialogue result uses the content's final dialogue line after its
+stage assignment, not the untransmitted varp. Neither cell sends cheats after
+Start. Family Paths use the released Cook Path's empty text-rule list and
+journal-colour fallback. Every colour selects the fixture's one authored
+stage. The fixture builder receives an explicit Cook stage-zero seed because
+the empty text-rule list supplies no seed hint.
+The held-item result requires the retained Completed lifecycle receipt.
+Native completion removes the live status, so the result does not depend on
+observing a temporary Complete status.
+The ground-use-on fixture seeds `cogquest`, which backs the content's
+`get_cog_progress` procedure. It requires a fresh `getvar cogquest` reply
+before Start. A procedure name is not a variable name for `setvar`.
+Its empty-bucket result prevents the sequence from repeating the cooling
+action after that action consumes the water.
+Before Start, it also waits for the real ground spawn within its content
+respawn interval plus the query budget. It never creates a ground item.
+
+The staged Imp hand-in cell requires a retained `Completed` lifecycle receipt
+and the actual green Imp quest row. Its receipt stores both in `m1_completion`.
+The slot removes the native run during completion, so later status polling
+cannot require a transient `imp:2` status. The cell still requires both wizard
+talks, valid dialogue packets, four seeded beads, and removal of those beads.
+The dialogue packet check accepts only `CLOSE_MODAL` for `CloseModal`, and
+only when the action snapshot shows the selected quest completion scroll as the
+open main modal and the close follows the final hand-in talk. Unknown
+operations and extra packets fail.
+
+The Sheep bank-loop cell proves withdrawal from the loaded bank, matching
+bank generation, empty stock, and exact received items. It accepts `Ready`
+as well as `Withdrawing` because the provisioner can finish before observation.
+The cell still requires spinning, twenty balls of wool, hand-in, green progress,
+and the retained `Completed` lifecycle receipt.
 
 The Quester Path smoke runs one content quest id from the embedded release
 index (or from `QUESTER_PATH_DIR`) under a fixed 45-minute deadline:
@@ -430,14 +473,19 @@ proxy test selector; it does not run either headed command or validate its
 
 ### Headed recording
 
-Overnight `--live script_<name>` runs can record video of the panel window
-for next-morning review. Recording reuses the terminal shot's whole-window
-readback (no second screenshot path): the render pass stages one extra
-capture per interval and a background `ffmpeg` process encodes H.264:
+Any panel session can record video of the panel window: an overnight
+`--live script_<name>` run for next-morning review, or an interactive
+session a headed check drives by hand. Recording reuses the terminal
+shot's whole-window readback (no second screenshot path): the render pass
+stages one extra capture per interval and a background `ffmpeg` process
+encodes H.264:
 
 ```sh
 QUESTER_PATH=cook HEADED_RECORD=1 \
   cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --live script_quester_path
+# or, interactively (no --live), under a throwaway HOME:
+ISOHOME_INTERACTIVE=1 HEADED_RECORD=1 \
+  .superpowers/bin/isohome ./target/release/panel-play --profile local-289 --port 1
 ```
 
 It is off by default and costs nothing when off. `HEADED_RECORD=1`
@@ -450,12 +498,51 @@ The file lands next to the terminal shot in the session's shot dir as
 `record.mp4`, with a `record.txt` sidecar mapping each video timestamp to
 its scenario step and runner game tick (`t=<s> frame=<n> step=<i>/<total>
 tick=<ticks> name="<step>"`), so the video lines up with the step trace.
-The mp4 is finalized on PASS, FAIL and window close, so it is always
-playable. Resizing the window mid-run drops the mismatched frames
-(counted) because the encoder pipe has fixed geometry. `ffmpeg` is
-resolved from `HEADED_RECORD_FFMPEG`, then `/opt/homebrew/bin/ffmpeg`,
-then `PATH`; when it is missing the run logs one warning and continues
-without recording.
+An interactive session has no harness shot dir of its own, so the
+recorder creates one when it arms (`~/.274bot/smoke/<runId>/` in the
+session's HOME) and names the scenario `interactive`. The recorder start
+message in the host log names the shot dir. The mp4 is finalized on PASS,
+FAIL and window close, so it is always playable. Resizing the window
+mid-run drops the mismatched frames (counted) because the encoder pipe
+has fixed geometry. `ffmpeg` is resolved from `HEADED_RECORD_FFMPEG`,
+then `/opt/homebrew/bin/ffmpeg`, then `PATH`; when it is missing the run
+logs one warning and continues without recording.
+
+Next to `record.txt`, the recorder writes `settings.txt`: one line per
+saved-setting state change, appended and flushed as the change happens,
+so a headed check (for example the T5.3-S3 settings check) can verify
+save states by script instead of reading frames:
+
+```text
+t=3.120 setting="capture" state=pending error=""
+t=8.204 setting="capture" state=failed error="preferences is busy"
+t=9.120 setting="capture" state=pending error=""
+t=12.010 setting="capture" state=cleared error=""
+t=12.180 setting="capture" state=saved error=""
+```
+
+`t` is the seconds since the recording armed. `setting` is a stable
+identity from the setting owner. Draw preferences use their preference
+key, such as `capture` or `sidecar_50`. Navigation preferences use a
+separate `nav.*` key for each member. Other core rows keep their `what`
+name, such as `danger routing`, `session file setting`, `map bake choice`,
+`Quest Paths settings`, `background bots`, or `profile order`. Panel-owned
+members use their dotted path.
+
+The states are `pending` (an accepted write is in flight), `failed` (the
+write failed, with the reason in `error`), `cleared` (the owner removed a
+retained failure), and `saved` (the write became durable). A pending or
+saved event does not imply that the owner cleared a failure. Repeated
+reports of the same state write nothing.
+
+If a bounded event queue overflows, the recorder writes this marker:
+
+```text
+# incomplete: one or more setting transitions were dropped from a bounded event queue
+```
+
+A checker must reject a recording that contains this marker. Verify a
+check with, for example, `grep 'setting="capture"' settings.txt`.
 
 ### Catalog scenario notes
 

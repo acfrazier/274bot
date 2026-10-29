@@ -84,7 +84,20 @@ fn save_arrival_frame(label: &str, client: &mut client::client::Client) {
     fs::write(path, ppm).expect("write actual arrival framebuffer");
 }
 
+/// Engine B's tunnel ports by default. `WORLD_GAME_PORT` and `WORLD_HTTP_PORT`
+/// select another engine: Engine B's client cache no longer matches the pinned
+/// 289 identity (its `/crc` differs, so the client stops at "Cache identity
+/// mismatch"), and the cell runs against Engine A at 44594/1080 instead.
+fn port_from_env(name: &str, default: u16) -> u16 {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.parse().unwrap_or_else(|_| panic!("{name} is a port")))
+        .unwrap_or(default)
+}
+
 fn selected() -> (Arc<ServerProfile>, Arc<SharedClientTemplate>) {
+    let game_port = port_from_env("WORLD_GAME_PORT", 45594);
+    let http_port = port_from_env("WORLD_HTTP_PORT", 2080);
     let nav_pack = PathBuf::from(
         std::env::var("WORLD_NAV_PACK")
             .expect("WORLD_NAV_PACK must point at the local R289 navigation pack"),
@@ -93,9 +106,9 @@ fn selected() -> (Arc<ServerProfile>, Arc<SharedClientTemplate>) {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
-        port: Some(45594),
+        port: Some(game_port),
         asset_host: Some("127.0.0.1".into()),
-        http_port: Some(2080),
+        http_port: Some(http_port),
         nav_pack: Some(nav_pack),
         nav_flags: std::env::var_os("WORLD_NAV_FLAGS").map(PathBuf::from),
         engine_dir: std::env::var_os("WORLD_ENGINE_DIR").map(PathBuf::from),
@@ -109,8 +122,8 @@ fn selected() -> (Arc<ServerProfile>, Arc<SharedClientTemplate>) {
         .expect("R289 local profile bind");
     assert_eq!(profile.profile_class(), host_play::ProfileClass::Local);
     assert_eq!(profile.client().game_host(), "127.0.0.1");
-    assert_eq!(profile.client().game_port(), 45594);
-    assert_eq!(profile.client().asset_port(), 2080);
+    assert_eq!(profile.client().game_port(), game_port);
+    assert_eq!(profile.client().asset_port(), http_port);
     let template = SharedClientTemplate::load(Arc::clone(&profile))
         .expect("selected R289 template and nav pack load");
     assert!(template.world().is_some(), "selected nav pack must load");

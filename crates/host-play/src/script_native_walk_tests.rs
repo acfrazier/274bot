@@ -402,6 +402,7 @@ fn native_follow_failure_preserves_hop_detail_in_receipt() {
             },
             why,
             tries: 3,
+            last_refusal: None,
         };
         {
             let mut navs = rig.navs.lock().unwrap();
@@ -435,6 +436,58 @@ fn native_follow_failure_preserves_hop_detail_in_receipt() {
         assert!(detail.contains("aiming"), "{detail}");
     }
 }
+
+#[test]
+fn native_follow_failure_names_the_last_crossing_refusal_in_the_receipt() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    let at = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let aiming = WorldTile {
+        x: 4,
+        z: 0,
+        level: 0,
+    };
+    {
+        let mut navs = rig.navs.lock().unwrap();
+        super::apply_nav_follow_outcome(
+            navs.get_mut("alice").unwrap(),
+            Some(nav_executor::TravelOutcome::Stalled {
+                at,
+                aiming,
+                why: nav_executor::HopFailure::Dropped,
+                tries: 7,
+                last_refusal: Some(nav_executor::TransportRefusal::Busy(
+                    "The ledge is being used",
+                )),
+            }),
+            false,
+        );
+    }
+    rig.observe(2);
+    let shared = rig.shared.lock();
+    let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
+    assert_eq!(
+        receipt.end,
+        WalkEnd::Stalled(Arc::new(script::native::WalkStall {
+            at,
+            aiming,
+            why: script::native::WalkStallReason::Dropped,
+            tries: 7,
+        }))
+    );
+    let detail = receipt
+        .failure_detail()
+        .expect("the stall detail is owed to the caller");
+    assert!(detail.contains("Dropped"), "{detail}");
+    assert!(detail.contains("tries: 7"), "{detail}");
+    assert!(detail.contains("The ledge is being used"), "{detail}");
+}
+
 #[test]
 fn native_end_blocked_follow_preserves_typed_stall_in_receipt() {
     let mut rig = open_rig(false);
@@ -459,6 +512,7 @@ fn native_end_blocked_follow_preserves_typed_stall_in_receipt() {
                 aiming,
                 why: nav_executor::HopFailure::EndBlocked,
                 tries: 0,
+                last_refusal: None,
             }),
             false,
         );
@@ -492,6 +546,7 @@ fn stale_and_legacy_follow_failures_do_not_acquire_native_detail() {
         },
         why: nav_executor::HopFailure::Dropped,
         tries: 3,
+        last_refusal: None,
     };
 
     let mut rig = open_rig(false);
@@ -5805,6 +5860,9 @@ fn s2b_admission_per_bot_layouts() {
     // S0c moves the platform-specific isolate mutexes into the surface run.
     // The shared 64-bit slot layout no longer contains those mutexes.
     // S0d adds a 16 B per-slot generation cache for lock-free compiled-card reads.
+    // NAV-BUSY-TRANSPORT adds 32 B to Traveller (busy-refusal retry state and
+    // the distinct-tick transport clock): NavBot is 3816 B. Lab memory A/B on
+    // the branch head passed (NAV-BUSY-TRANSPORT/mem-ab-r3).
     #[cfg(all(
         target_os = "macos",
         target_arch = "aarch64",
@@ -5817,7 +5875,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3784, 1624, 512, 264)
+        (3816, 1624, 512, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -5832,7 +5890,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3784, 1624, 512, 264)
+        (3816, 1624, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);

@@ -46,6 +46,7 @@ pub(crate) fn with_tick_snapshots<R>(
         &mut Output,
         None,
         next_snapshot,
+        None,
         |native, later, _| f(native, later),
     )
 }
@@ -65,6 +66,7 @@ pub(crate) fn with_tick_output<R>(
         output,
         None,
         snapshot,
+        None,
         |native, _, _| f(native),
     )
 }
@@ -85,6 +87,7 @@ pub(crate) fn with_tick_reach<R>(
         &mut Output,
         None,
         snapshot,
+        None,
         |native, _, _| f(native),
     )
 }
@@ -106,6 +109,7 @@ pub(crate) fn with_tick_reach_snapshots<R>(
         &mut Output,
         None,
         next_snapshot,
+        None,
         |native, _, later| f(native, later),
     )
 }
@@ -127,6 +131,7 @@ pub(crate) fn with_tick_world<R>(
         &mut Output,
         None,
         snapshot,
+        None,
         |native, _, _| f(native),
     )
 }
@@ -147,6 +152,7 @@ pub(crate) fn with_tick_bank<R>(
         &mut Output,
         bank,
         snapshot,
+        None,
         |native, _, _| f(native),
     )
 }
@@ -168,6 +174,30 @@ pub(crate) fn with_tick_output_bank<R>(
         output,
         bank,
         snapshot,
+        None,
+        |native, _, _| f(native),
+    )
+}
+
+/// A tick whose frame carries a baked collision view, as the host's does
+/// when a nav pack is loaded. Planners read it from `frame.compiled`.
+pub(crate) fn with_tick_collision<R>(
+    snapshot: &GameSnapshot,
+    collision: nav_planner::contract::CollisionView<'_>,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    with_tick_output_reach(
+        snapshot,
+        None,
+        Truth::Unknown,
+        ledger,
+        tick,
+        &mut Output,
+        None,
+        snapshot,
+        Some(collision),
         |native, _, _| f(native),
     )
 }
@@ -183,6 +213,7 @@ fn with_tick_output_reach<R>(
     output: &mut dyn NativeOutput,
     bank: Option<&api::bank_memory::BankMemory>,
     next_snapshot: &GameSnapshot,
+    collision: Option<nav_planner::contract::CollisionView<'_>>,
     f: impl for<'a> FnOnce(&mut NativeTick<'a>, &'a GameSnapshot, SnapshotView<'a>) -> R,
 ) -> R {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
@@ -242,7 +273,7 @@ fn with_tick_output_reach<R>(
                 reach: None,
                 reach_flood: None,
                 bank_memory: bank,
-                collision: None,
+                collision,
                 hold: false,
                 world_members,
                 interacts: Some(Vec::new()),

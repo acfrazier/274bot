@@ -559,6 +559,24 @@ fn assert_len(batch: &DrainedBatch, want: usize) {
         0
     );
 }
+fn row_names(batch: &DrainedBatch) -> String {
+    let mut rows = Vec::new();
+    for index in 0..batch.len() {
+        rows.push(match batch.get(index) {
+            Some(HostEffect::Interaction(InteractReq::Wear { name })) => format!("wear {name}"),
+            Some(HostEffect::Interaction(InteractReq::Held { name, action, .. })) => {
+                format!("{action} {name}")
+            }
+            Some(HostEffect::Interaction(InteractReq::Npc { action, .. })) => {
+                format!("npc {action}")
+            }
+            Some(HostEffect::Interaction(other)) => format!("interaction {other:?}"),
+            None => "none".to_string(),
+            Some(_) => "non-interaction".to_string(),
+        });
+    }
+    rows.join(", ")
+}
 fn fight(scene: &mut Scene) -> Harness {
     let mut harness = Harness::new(scene, scene.request());
     attack(harness.pending(scene, 1));
@@ -2516,6 +2534,119 @@ fn case12_prep_boosts_once_each_then_respects_cycle_and_target_quarter() {
 }
 
 #[test]
+fn prep_wears_and_drinks_before_the_first_attack_when_the_target_starts_out_of_reach() {
+    let stand = tile(2600, 3200);
+    let in_reach = tile(2601, 3200);
+    let out_of_reach = tile(2600, 3207);
+    for out_of_range in [true, false] {
+        let mut scene = Scene::new("khazard_warlord");
+        scene.npcs[0].tile = if out_of_range { out_of_reach } else { in_reach };
+        scene.npcs[0].network = scene.npcs[0].tile;
+        let weapon = scene.held("rune_scimitar", 0);
+        let weapon_id = weapon.def.id;
+        let weapon_name = weapon.def.name.clone();
+        let potion = scene.held("4dose2attack", 1);
+        let potion_id = potion.def.id;
+        let potion_name = potion.def.name.clone();
+        let mut worn = weapon.clone();
+        worn.slot = 3;
+        worn.container = ItemContainer::Equipment;
+        scene.inventory.extend([weapon, potion]);
+        scene.refresh();
+        let mut request = scene.request();
+        request.stand = Some(stand);
+        request.engage_radius = 6;
+        let mut harness = Harness::new(&scene, request);
+        // The requested durable type earns the boost whether or not it is in
+        // range, so the opening batch wears the weapon and then drinks.
+        let prep = harness.pending_batch(&scene, 1);
+        assert!(
+            matches!(prep.get(0), Some(HostEffect::Interaction(InteractReq::Wear { name })) if Some(name.as_str()) == weapon_name.as_deref()),
+            "out_of_range={out_of_range}: the first prep row must wear the weapon, got {}",
+            row_names(&prep)
+        );
+        assert!(
+            matches!(prep.get(1), Some(HostEffect::Interaction(InteractReq::Held { action, name, .. })) if action == "Drink" && Some(name.as_str()) == potion_name.as_deref()),
+            "out_of_range={out_of_range}: the second prep row must drink the Super attack(4), got {}",
+            row_names(&prep)
+        );
+        assert_len(&prep, 2);
+        scene.equipment.push(worn);
+        scene
+            .inventory
+            .retain(|row| row.def.id != weapon_id && row.def.id != potion_id);
+        scene.stat(0, 51, 40);
+        scene.refresh();
+        // The drink locks input for three ticks: the first attack cannot land
+        // before the prep tick + 3, even with the target walking into range.
+        assert!(harness.pending(&scene, 2).is_none());
+        if out_of_range {
+            scene.npcs[0].tile = in_reach;
+            scene.npcs[0].network = in_reach;
+            scene.refresh();
+        }
+        assert!(harness.pending(&scene, 3).is_none());
+        attack(harness.pending(&scene, 4));
+        assert_eq!(harness.machine.counters.boost, 1);
+        assert_eq!(harness.machine.counters.locked, 2);
+    }
+}
+
+#[test]
+fn late_durable_target_reruns_prep_before_the_first_attack() {
+    let mut scene = Scene::new("khazard_warlord");
+    scene.stat(3, 99, 99);
+    let weapon = scene.held("rune_scimitar", 0);
+    let weapon_id = weapon.def.id;
+    let weapon_name = weapon.def.name.clone();
+    let potion = scene.held("4dose2attack", 1);
+    let potion_id = potion.def.id;
+    let potion_name = potion.def.name.clone();
+    let mut worn = weapon.clone();
+    worn.slot = 3;
+    worn.container = ItemContainer::Equipment;
+    scene.inventory.extend([weapon, potion]);
+    scene.refresh();
+    let mut request = scene.request();
+    request.target = Target::Attacker {
+        npcs: true,
+        players: false,
+    };
+    request.stand = Some(tile(2600, 3200));
+    let mut harness = Harness::new(&scene, request);
+    // No threat yet, so only the weapon is worth preparing.
+    let prep = harness.pending_batch(&scene, 1);
+    assert_len(&prep, 1);
+    assert!(
+        matches!(prep.get(0), Some(HostEffect::Interaction(InteractReq::Wear { name })) if Some(name.as_str()) == weapon_name.as_deref()),
+        "first prep row: {}",
+        row_names(&prep)
+    );
+    scene.equipment.push(worn);
+    scene.inventory.retain(|row| row.def.id != weapon_id);
+    scene.refresh();
+    assert!(harness.pending(&scene, 2).is_none());
+    assert_eq!(harness.machine.phase, Phase::Engage);
+    // The Warlord turns on the bot: the picked durable target makes the boost
+    // worth drinking, and Prep must run again before Engage attacks.
+    scene.face_us();
+    scene.refresh();
+    let replan = harness.pending_batch(&scene, 3);
+    assert!(
+        matches!(replan.get(0), Some(HostEffect::Interaction(InteractReq::Held { action, name, .. })) if action == "Drink" && Some(name.as_str()) == potion_name.as_deref()),
+        "the late target must drink before the first attack, got {}",
+        row_names(&replan)
+    );
+    scene.stat(0, 51, 40);
+    scene.inventory.retain(|row| row.def.id != potion_id);
+    scene.refresh();
+    assert!(harness.pending(&scene, 4).is_none());
+    assert!(harness.pending(&scene, 5).is_none());
+    attack(harness.pending(&scene, 6));
+    assert_eq!(harness.machine.counters.boost, 1);
+}
+
+#[test]
 fn case6_imp_skips_offensive_upkeep_unless_the_kit_carries_boosts() {
     for in_kit in [false, true] {
         let mut scene = Scene::new("imp");
@@ -3787,7 +3918,10 @@ fn policy_s2_sweep_preserves_user_prayers_and_never_restores_displaced_protect()
 
 #[test]
 fn policy_s2_incomplete_baseline_emits_no_toggle_before_delayed_user_row() {
-    let mut scene = Scene::new("imp");
+    // Imp's engine melee max hit is 0 (no `strength=` line, default 1,
+    // `strengthbonus=-37`: `npc_combat_melee.rs2:1-7`, `combat.rs2:4-12`,
+    // `DIVIDE` then `toInt32`). Cow is still 1 (`strengthbonus=-15`).
+    let mut scene = Scene::new("cow");
     scene.stat(5, 43, 43);
     let skin = scene.data.prayer_by_name("Thick Skin").unwrap().clone();
     let protect = scene
@@ -3930,7 +4064,8 @@ fn policy_s2_prayer_disallowed_preserves_user_overlays() {
 
 #[test]
 fn policy_s2_missing_raise_observation_does_not_relinquish_accepted_ownership() {
-    let mut scene = Scene::new("imp");
+    // Same as the incomplete-baseline fixture: imp max hit is 0, cow is 1.
+    let mut scene = Scene::new("cow");
     scene.stat(5, 43, 43);
     scene.face_us();
     scene.refresh();

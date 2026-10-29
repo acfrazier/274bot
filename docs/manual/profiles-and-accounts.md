@@ -151,8 +151,8 @@ second line of the game's message. The game screen of that bot shows both lines
 while it waits. After a refusal the bot tries again by itself, after 5 seconds
 unless the row says otherwise.
 
-The login error stays at the top of the bot's status for 15 seconds, also when the
-bot tries again, waits in the login queue or is logged out in that time. The bot's
+The login error stays at the top of the bot's status for 15 seconds. It stays
+there even when the bot tries again, waits in the login queue or is logged out. The bot's
 current state shows under it. A successful login clears it at once. A newer failed
 login replaces it and starts the 15 seconds again. After that, the status rows show
 the error as `last error` until the bot is in the game.
