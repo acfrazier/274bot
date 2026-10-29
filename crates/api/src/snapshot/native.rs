@@ -353,6 +353,15 @@ impl<'a> SnapshotView<'a> {
         })
     }
 
+    /// Product rows and item operations posted by a main-modal production menu.
+    pub fn main_make(&self) -> Option<Observed<&[ItemView]>> {
+        let snapshot = self.ingame()?;
+        Some(Observed {
+            value: snapshot.main_make(),
+            stamp: self.stamp,
+        })
+    }
+
     /// Whether the numeric count-entry dialog is currently open.
     pub fn count_dialog_open(&self) -> Option<Observed<bool>> {
         let snapshot = self.ingame()?;
@@ -705,6 +714,26 @@ mod tests {
     use super::*;
     use crate::selected::RunKey;
     use crate::snapshot::HitmarkView;
+
+    #[test]
+    fn main_make_borrows_posted_rows_with_current_evidence() {
+        let stamp = EvidenceStamp {
+            run: RunKey {
+                slot: 2,
+                run: 3,
+                session: 4,
+            },
+            tick: 7,
+            sequence: 8,
+        };
+        assert!(SnapshotView::new(None, stamp).main_make().is_none());
+        let mut snapshot = GameSnapshot::new();
+        assert!(SnapshotView::new(Some(&snapshot), stamp).main_make().is_none());
+        snapshot.seed_ingame(2);
+        let rows = SnapshotView::new(Some(&snapshot), stamp).main_make().unwrap();
+        assert!(std::ptr::eq(rows.value, snapshot.main_make()));
+        assert_eq!(rows.stamp, stamp);
+    }
 
     #[test]
     fn ground_collision_generations_follow_content_not_player_info_edges() {
