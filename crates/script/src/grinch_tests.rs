@@ -2200,11 +2200,7 @@ fn debug_state_tracks_actual_owner_and_failed_key_without_idle_churn() {
 fn return_prerequisite_handoff_reissues_once_and_cancel_keeps_anchor_state() {
     let (mut driver, mut script, mut snapshot, _, outer_id) = deposit_only_return_fixture();
     let data = api::game_data::for_revision(ClientRevision::R289).expect("R289 data");
-    let catalog = data
-        .try_prereq_steps()
-        .expect("R289 prerequisite catalog")
-        .catalog
-        .clone();
+    let catalog = data.try_prereq_steps().expect("R289 prerequisite catalog");
     let (_, row) = catalog
         .iter()
         .find(|(_, row)| row.crossings.iter().any(|entry| entry.crossing.option > 0))

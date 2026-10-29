@@ -151,7 +151,7 @@ fn npc_snapshot(row: &PrereqStep) -> GameSnapshot {
     let name = data.npc_name(row.target.npc).unwrap().display.clone();
     snapshot.seed_npcs(vec![NpcView {
         index: 7,
-        r#type: Some(row.target.npc),
+        r#type: Some(usize::try_from(row.target.npc).expect("nonnegative catalog NPC ID")),
         name,
         actions: vec![Some("Talk-to".into())],
         tile: at,
@@ -1529,7 +1529,7 @@ fn reach_handover_captures_inline_walk_grants_and_cancels_the_probe_owner() {
     let crossing = &row.crossings[0];
     let state = state();
     let mut snapshot = crossing_snapshot(crossing);
-    let mut door = snapshot.locs().unwrap().value[0].clone();
+    let mut door = snapshot.locs()[0].clone();
     door.name = Some("Door".into());
     snapshot.seed_locs(vec![door]);
     let args = reach::ReachArgs {

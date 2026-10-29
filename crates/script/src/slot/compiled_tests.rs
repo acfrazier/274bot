@@ -1403,6 +1403,7 @@ impl Script for Relog {
                     required_after: first,
                     evidence: None,
                     cross: Vec::new().into_boxed_slice(),
+                    avoid: Vec::new().into_boxed_slice(),
                     protect: false,
                     food_guard: false,
                     allow: Default::default(),
@@ -2566,6 +2567,8 @@ mod api_gather_seat {
                 allow_teleports: true,
                 allow_wilderness: true,
                 allow_danger_zones: true,
+                allow_prereq_dialogue: false,
+                allow_quest_start: false,
             })
         );
 

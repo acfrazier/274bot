@@ -1003,11 +1003,7 @@ fn bank_walk_prerequisite_handoff_reissues_once_and_cancel_keeps_run_state() {
     let (mut snapshot, bank, banks) = fixture();
     let data =
         api::game_data::for_revision(api::selected::ClientRevision::R289).expect("R289 data");
-    let catalog = data
-        .try_prereq_steps()
-        .expect("R289 prerequisite catalog")
-        .catalog
-        .clone();
+    let catalog = data.try_prereq_steps().expect("R289 prerequisite catalog");
     let (_, row) = catalog
         .iter()
         .find(|(_, row)| row.crossings.iter().any(|entry| entry.crossing.option > 0))
@@ -1083,7 +1079,7 @@ fn bank_walk_prerequisite_handoff_reissues_once_and_cancel_keeps_run_state() {
     run.target = Some(target);
     assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 1, OpenGate::Open).is_pending());
     let (outer_id, outer_run) = {
-        let action = ledger.as_ref().unwrap().outbox[0].clone();
+        let action = &ledger.as_ref().unwrap().outbox[0];
         (action.request_id.get(), action.run())
     };
     ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {

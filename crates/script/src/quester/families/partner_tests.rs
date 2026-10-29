@@ -370,8 +370,13 @@ fn trade_run_retains_args_for_each_transient_begin_error_then_starts() {
 fn trade_plan_registers_logical_pair_revoker_for_prerequisite_walk() {
     let snapshot = trade_snapshot();
     let mut ledger = None;
-    let port = Arc::new(Port::default());
-    *port.self_ref.lock().unwrap() = Some(Arc::downgrade(&port));
+    static PORT: std::sync::LazyLock<Arc<Port>> = std::sync::LazyLock::new(|| {
+        Arc::new_cyclic(|port| Port {
+            self_ref: std::sync::Mutex::new(Some(port.clone())),
+            ..Port::default()
+        })
+    });
+    let port = &*PORT;
     let plan = TradePlan {
         phase: FactKey::new("arrav:key"),
         tile: api::WorldTile {
@@ -769,6 +774,8 @@ fn gang_read_waits_for_foreign_main_and_keeps_identity_failures_terminal() {
         confirm: AtomicBool::new(false),
         cancelled: AtomicBool::new(false),
         not_ready: AtomicBool::new(false),
+        self_ref: std::sync::Mutex::new(None),
+        action_revoker: std::sync::Mutex::new(None),
     };
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);

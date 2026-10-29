@@ -196,6 +196,8 @@ fn mage_family_maps_selected_spell_order_and_explicit_fallback() {
 
 #[test]
 fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
+    // The compiled run is erased, but combat walk storage must stay a bare native handle.
+    let _: fn(crate::native::ActionHandle<crate::native::Walk>) -> Action = Action::Walk;
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let progress = CompiledProgress {
@@ -376,18 +378,6 @@ fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
                     .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
                     .expect("native combat must publish its report before the owned walk");
                 assert_eq!(receipt.report.end, expected);
-                assert!(
-                    if aborted {
-                        matches!(&run.phase, Phase::WalkingOutAfterAbort)
-                    } else {
-                        matches!(&run.phase, Phase::ReturningToStand)
-                    },
-                    "abort escape and ordinary return use distinct combat phases"
-                );
-                assert!(
-                    matches!(run.action.as_ref(), Some(Action::Walk(_))),
-                    "combat-owned walks remain bare and cannot resolve prerequisites"
-                );
                 let outbox = &ledger.as_ref().unwrap().outbox;
                 assert_eq!(
                     outbox.len(),

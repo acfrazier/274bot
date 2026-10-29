@@ -6,8 +6,8 @@ use api::gather_methods::{known_rows, TargetClass};
 use api::named_banks::{NamedBank, NamedBankFacts};
 use api::selected::{EntityId, FamilyPreparation};
 use api::snapshot::{
-    GameSnapshot, ItemActionFamily, ItemContainer, ItemView, NpcView, StatView, WorldStateView,
-    WorldTile,
+    GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView, NpcView, StatView,
+    WorldStateView, WorldTile,
 };
 
 fn fixture() -> (Gatherer, GameSnapshot) {
@@ -45,11 +45,7 @@ fn prerequisite_gate() -> (
 ) {
     let data =
         api::game_data::for_revision(api::selected::ClientRevision::R289).expect("R289 data");
-    let catalog = data
-        .try_prereq_steps()
-        .expect("R289 prerequisite catalog")
-        .catalog
-        .clone();
+    let catalog = data.try_prereq_steps().expect("R289 prerequisite catalog");
     let (_, row) = catalog
         .iter()
         .find(|(_, row)| row.crossings.iter().any(|entry| entry.crossing.option > 0))
@@ -129,7 +125,7 @@ fn prerequisite_handoff_reissues_original_walk_once_and_cancel_revokes_it() {
         assert!(gatherer.trip_walk(target, 2, ArrivalKind::Reach, None, tick));
     });
     let (outer_id, outer_run) = {
-        let action = ledger.as_ref().unwrap().outbox[0].clone();
+        let action = &ledger.as_ref().unwrap().outbox[0];
         (action.request_id.get(), action.run())
     };
     ledger.as_mut().unwrap().walk = Some(WalkReceipt {
@@ -436,6 +432,7 @@ fn stalled_return_receipt(
         detail: None,
         refusal: None,
         assessment: None,
+        escape: None,
         prereq_allow: None,
     }
 }

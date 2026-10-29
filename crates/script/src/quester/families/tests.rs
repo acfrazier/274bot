@@ -2056,9 +2056,7 @@ fn interact_false_is_failure_not_success() {
     let s = ready();
     let mut ledger = None;
     let handle = with_tick(&s, &mut ledger, 1, |t| {
-        t.actions
-            .begin::<reach::Reach>(egg(false), &mut t.cx)
-            .unwrap()
+        crate::quester::prereq::reach::PrereqReach::begin(egg(false), t.actions, &mut t.cx).unwrap()
     });
     // Reach's observed-missing result is Ok(false), not an action error.
     let mut run = InteractRun {
