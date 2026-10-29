@@ -143,6 +143,8 @@ fn a_parked_queue_row_publishes_its_stage_step_and_failure() {
         args: serde_json::json!({"until":{"All":[]},"max_ticks":100}),
         comment: None,
         advances: Some(false),
+        max_attempts: None,
+        stop: None,
         skip_if: PredicateDocument::Any(vec![]),
         settle: PredicateDocument::Any(vec![]),
     }];

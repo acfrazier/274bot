@@ -1551,7 +1551,7 @@ fn saw_cant_reach(cx: &ActionContext<'_>, since: i32) -> bool {
     saw_game_message(cx, since, CANT_REACH)
 }
 
-pub(super) fn saw_game_message(cx: &ActionContext<'_>, since: i32, message: &str) -> bool {
+pub(crate) fn saw_game_message(cx: &ActionContext<'_>, since: i32, message: &str) -> bool {
     cx.snapshot().chat_lines(since).is_some_and(|lines| {
         lines.value.iter().any(|line| {
             line.username.is_none()

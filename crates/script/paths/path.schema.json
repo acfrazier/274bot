@@ -1819,6 +1819,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -1834,6 +1844,14 @@
         "skip_if",
         "settle"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "TalkArgs": {
@@ -2009,6 +2027,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2025,6 +2053,14 @@
         "settle",
         "advances"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "InteractArgs": {
@@ -2313,6 +2349,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2329,6 +2375,14 @@
         "settle",
         "advances"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "UseOnArgs": {
@@ -2502,6 +2556,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2518,6 +2582,14 @@
         "settle",
         "advances"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "AcquireArgs": {
@@ -2568,6 +2640,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2583,6 +2665,14 @@
         "skip_if",
         "settle"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "WaitArgs": {
@@ -2634,6 +2724,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2649,6 +2749,14 @@
         "skip_if",
         "settle"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "BankArgs": {
@@ -2753,6 +2861,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2768,6 +2886,14 @@
         "skip_if",
         "settle"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "BuyArgs": {
@@ -2851,6 +2977,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2866,6 +3002,14 @@
         "skip_if",
         "settle"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "MakeArgs": {
@@ -2985,6 +3129,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3001,6 +3155,14 @@
         "settle",
         "advances"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "EquipArgs": {
@@ -3047,6 +3209,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3062,6 +3234,14 @@
         "skip_if",
         "settle"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "step.unequip.v1": {
@@ -3089,6 +3269,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3104,6 +3294,14 @@
         "skip_if",
         "settle"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "step.loadout.v1": {
@@ -3131,6 +3329,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3146,6 +3354,14 @@
         "skip_if",
         "settle"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "step.setting.v1": {
@@ -3173,6 +3389,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3188,6 +3414,14 @@
         "skip_if",
         "settle"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "CombatArgs": {
@@ -3702,6 +3936,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3718,6 +3962,14 @@
         "settle",
         "advances"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "Args": {
@@ -3831,6 +4083,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3846,6 +4108,14 @@
         "skip_if",
         "settle"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "Args2": {
@@ -3970,6 +4240,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3986,6 +4266,14 @@
         "settle",
         "advances"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "Args3": {
@@ -4078,6 +4366,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -4094,6 +4392,14 @@
         "settle",
         "advances"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "Args4": {
@@ -4168,6 +4474,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -4184,6 +4500,14 @@
         "settle",
         "advances"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "QuestBankDocument": {

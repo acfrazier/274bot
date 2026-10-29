@@ -24,9 +24,20 @@ fn selected_and_quests() -> (std::sync::Arc<SelectedGameData>, QuestCatalog) {
 
 fn nested_step_parts(value: &Value) -> Option<(&str, &Value)> {
     let object = value.as_object()?;
+    let max_attempts = object.get("max_attempts").filter(|value| !value.is_null());
+    let stop = object.get("stop").filter(|value| !value.is_null());
     if object.keys().any(|key| {
         ![
-            "id", "kind", "version", "args", "comment", "advances", "skip_if", "settle",
+            "id",
+            "kind",
+            "version",
+            "args",
+            "comment",
+            "advances",
+            "max_attempts",
+            "stop",
+            "skip_if",
+            "settle",
         ]
         .contains(&key.as_str())
     }) || object.get("id").and_then(Value::as_str).is_none()
@@ -42,6 +53,15 @@ fn nested_step_parts(value: &Value) -> Option<(&str, &Value)> {
         || object
             .get("advances")
             .is_some_and(|advances| !advances.is_null() && !advances.is_boolean())
+        || max_attempts.is_some_and(|attempts| {
+            attempts
+                .as_u64()
+                .is_none_or(|attempts| {
+                    attempts == 0 || attempts > u64::from(script::quester::path::MAX_STEP_ATTEMPTS)
+                })
+        })
+        || stop.is_some_and(|stop| stop.as_str().is_none_or(|stop| stop.trim().is_empty()))
+        || max_attempts.is_some() != stop.is_some()
     {
         return None;
     }
@@ -423,6 +443,15 @@ fn generated_schema_uses_numeric_bounds_without_rust_formats() {
     assert_eq!(radius["minimum"], json!(0));
     assert_eq!(radius["maximum"], json!(65535));
     assert!(radius.get("format").is_none());
+    let step = &schema["$defs"]["step.walk.v1"];
+    assert_eq!(step["properties"]["max_attempts"]["minimum"], json!(1));
+    assert_eq!(
+        step["properties"]["max_attempts"]["maximum"],
+        json!(script::quester::path::MAX_STEP_ATTEMPTS)
+    );
+    assert_eq!(step["properties"]["stop"]["pattern"], json!("\\S"));
+    assert_eq!(step["dependentRequired"]["max_attempts"], json!(["stop"]));
+    assert_eq!(step["dependentRequired"]["stop"], json!(["max_attempts"]));
 }
 #[test]
 #[ignore]

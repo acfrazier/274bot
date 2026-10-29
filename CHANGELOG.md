@@ -76,14 +76,21 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   statuses without weakening death checks. Solo receipts preserve cross-run
   death totals. Campaign runs now avoid danger zones by default.
 
+- Quest guides now respond to an NPC's "I can't reach that!" message at once:
+  they recover from the NPC's current location when possible, or report the
+  refusal.
 - Quest guides can now kill until a required item drops, with a total kill
   budget and a named stop. The final allowed kill still gets its loot wait.
   The receipt records confirmed kills across re-engagements.
+- After an advancing step's settle timeout, the Quester rereads quest progress
+  before it retries. Steps can also set their own attempt limit and a named
+  stop.
 - Quest guides can select a product and quantity from a production menu
   opened by using an item on another item or on a location.
 - Ground-item Take steps can now use an observed game-tick budget. This
   lets a guide collect a temporary scripted drop such as the Jailer's key,
   without a wall-clock spawn wait.
+- The panel and TUI now keep a quest run's final status after it completes.
 - Quest guides can now opt in to answering a repeated menu question once and
   then moving on. `answer_once: true` skips a `prefer` entry that already
   answered an accepted page in the same conversation and falls through to the

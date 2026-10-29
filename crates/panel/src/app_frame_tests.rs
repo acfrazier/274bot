@@ -1722,16 +1722,21 @@ fn a_preview_fold_shows_its_saving_and_failure_in_its_own_tile() {
 fn panel_driver_shows_quester_zone_disclosure_before_start() {
     let (mut session, _dir) = session_with_play("frame-quester-zone-disclosure", &["alice"]);
     session.script_sel = Some(ScriptChoice::compiled(CompiledCardId::QUESTER));
-    session
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        return;
+    };
+    rig.frames_until("the panel preferences", |rig| {
+        rig.session().panel_preferences_ready()
+    });
+    rig.session()
         .ui
         .collapsed
         .entry("alice".into())
         .or_default()
         .insert("script".into(), false);
-    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
-        return;
-    };
-    rig.frame(Pointer::Away);
+    rig.frames_until("the expanded Script section", |rig| {
+        rig.text.contains("Start zone scope")
+    });
     assert!(rig.text.contains("Start zone scope"), "{}", rig.text);
     assert!(
         rig.text.contains("Start accepts only these zones."),
