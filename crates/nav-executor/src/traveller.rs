@@ -969,6 +969,7 @@ impl FollowRun {
                         match teleport_send(snapshot, d, edge) {
                             TeleportSend::Sent => {
                                 let to = edge.to;
+                                let pass_watch = gate_pass_watch(snapshot, edge, options);
                                 self.loc_wait = 0;
                                 self.transport = Some(TransportHop {
                                     leg,
@@ -985,7 +986,7 @@ impl FollowRun {
                                     occupied: OccupiedRetry::default(),
                                     chat_seq: chat_seq(snapshot),
                                     refusal_watch: None,
-                                    pass_watch: gate_pass_watch(snapshot, edge, options),
+                                    pass_watch,
                                     dialog_page: None,
                                     approach: None,
                                 });
@@ -1030,6 +1031,7 @@ impl FollowRun {
                         let mut ix = Interactions::new(snapshot, d);
                         match ix.walk(to) {
                             SendResult::Sent { .. } => {
+                                let pass_watch = gate_pass_watch(snapshot, edge, options);
                                 self.loc_wait = 0;
                                 self.transport = Some(TransportHop {
                                     leg,
@@ -1046,7 +1048,7 @@ impl FollowRun {
                                     occupied: OccupiedRetry::default(),
                                     chat_seq: chat_seq(snapshot),
                                     refusal_watch: None,
-                                    pass_watch: gate_pass_watch(snapshot, edge, options),
+                                    pass_watch,
                                     dialog_page: None,
                                     approach: None,
                                 });
@@ -1275,6 +1277,8 @@ impl FollowRun {
                                         last_tick: Some(snapshot.tick()),
                                         ..Default::default()
                                     };
+                                    let refusal_watch = gate_refusal_watch(snapshot, edge, options);
+                                    let pass_watch = gate_pass_watch(snapshot, edge, options);
                                     self.loc_wait = 0;
                                     self.transport = Some(TransportHop {
                                         leg,
@@ -1290,8 +1294,8 @@ impl FollowRun {
                                         door_retry: DoorRetry::opened_at(open_sent_tick),
                                         occupied: OccupiedRetry::default(),
                                         chat_seq: chat_seq_at_send,
-                                        refusal_watch: gate_refusal_watch(snapshot, edge, options),
-                                        pass_watch: gate_pass_watch(snapshot, edge, options),
+                                        refusal_watch,
+                                        pass_watch,
                                         dialog_page: None,
                                         approach: None,
                                     });
