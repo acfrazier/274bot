@@ -94,19 +94,19 @@ jobs:
         run: python3 -B tools/architecture/nav_clippy.py --check
       - name: Clippy
         run: |
-          cargo clippy --workspace --all-targets --no-deps -- -D warnings
+          cargo clippy --workspace --all-targets --no-deps -- -D warnings -D clippy::todo -D clippy::unimplemented
           cargo clippy --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --all-targets --no-deps -- -D warnings
-          cargo clippy -p host --all-targets --no-deps --features performance-profile -- -D warnings
-          cargo clippy -p host --all-targets --no-deps --features render-diagnostics -- -D warnings
-          cargo clippy -p panel --all-targets --no-deps --features memory-profile -- -D warnings
-          cargo clippy -p panel --all-targets --no-deps --features render-diagnostics -- -D warnings
-          cargo clippy -p host-play --all-targets --no-deps --features memory-profile -- -D warnings
-          cargo clippy -p host-play --all-targets --no-deps --features memory-profile-no-alloc -- -D warnings
-          cargo clippy -p tui --all-targets --no-deps --features memory-profile -- -D warnings
-          cargo clippy -p script --no-default-features --all-targets --no-deps -- -D warnings
-          cargo clippy -p host-play --no-default-features --all-targets --no-deps -- -D warnings
+          cargo clippy -p host --all-targets --no-deps --features performance-profile -- -D warnings -D clippy::todo -D clippy::unimplemented
+          cargo clippy -p host --all-targets --no-deps --features render-diagnostics -- -D warnings -D clippy::todo -D clippy::unimplemented
+          cargo clippy -p panel --all-targets --no-deps --features memory-profile -- -D warnings -D clippy::todo -D clippy::unimplemented
+          cargo clippy -p panel --all-targets --no-deps --features render-diagnostics -- -D warnings -D clippy::todo -D clippy::unimplemented
+          cargo clippy -p host-play --all-targets --no-deps --features memory-profile -- -D warnings -D clippy::todo -D clippy::unimplemented
+          cargo clippy -p host-play --all-targets --no-deps --features memory-profile-no-alloc -- -D warnings -D clippy::todo -D clippy::unimplemented
+          cargo clippy -p tui --all-targets --no-deps --features memory-profile -- -D warnings -D clippy::todo -D clippy::unimplemented
+          cargo clippy -p script --no-default-features --all-targets --no-deps -- -D warnings -D clippy::todo -D clippy::unimplemented
+          cargo clippy -p host-play --no-default-features --all-targets --no-deps -- -D warnings -D clippy::todo -D clippy::unimplemented
           cargo clippy --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --all-targets --no-deps --features render-test-hooks -- -D warnings
-          cargo clippy -p host --all-targets --no-deps --features render-test-hooks -- -D warnings
+          cargo clippy -p host --all-targets --no-deps --features render-test-hooks -- -D warnings -D clippy::todo -D clippy::unimplemented
 
   architecture:
     name: architecture
