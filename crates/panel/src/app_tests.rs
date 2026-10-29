@@ -7687,6 +7687,10 @@ fn fleet_frame(
     layout
 }
 
+/// Accent-coloured vertices of one rendered frame, each with the clip
+/// rect of its draw command.
+type AccentVertices = Vec<([f32; 2], [f32; 4])>;
+
 /// One Fleet frame as in [`fleet_frame`], plus every accent-coloured
 /// vertex the rendered draw data holds, each with the clip rect of the
 /// draw command that carries it: a vertex renders only inside that rect.
@@ -7696,7 +7700,7 @@ fn fleet_frame_accent_vertices(
     size: [f32; 2],
     point: [f32; 2],
     pressed: bool,
-) -> (crate::fleet::FleetLayout, Vec<([f32; 2], [f32; 4])>) {
+) -> (crate::fleet::FleetLayout, AccentVertices) {
     let io = ctx.io_mut();
     io.add_mouse_pos_event(point);
     io.add_mouse_button_event(dear_imgui_rs::MouseButton::Left, pressed);
@@ -7719,9 +7723,7 @@ fn fleet_frame_accent_vertices(
         let indices = list.idx_buffer();
         for command in list.commands() {
             let dear_imgui_rs::DrawCmd::Elements {
-                count,
-                cmd_params,
-                ..
+                count, cmd_params, ..
             } = command
             else {
                 continue;
@@ -8026,7 +8028,10 @@ fn the_fleet_insertion_line_renders_across_the_target_row() {
         fleet_reorder_frame(
             &mut ctx,
             &mut session,
-            [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t],
+            [
+                from[0] + (to[0] - from[0]) * t,
+                from[1] + (to[1] - from[1]) * t,
+            ],
             true,
         );
     }
