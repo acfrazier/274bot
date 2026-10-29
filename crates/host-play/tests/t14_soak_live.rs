@@ -300,8 +300,8 @@ impl RandomRouteAttribution {
 
         match route_escape {
             Some(true) => {
-                let event_is_attributed = random_event == self.attributed_kind
-                    && random_event.is_some();
+                let event_is_attributed =
+                    random_event == self.attributed_kind && random_event.is_some();
                 let native_evade_return =
                     self.return_pending && self.attributed_kind == Some(host::RandomKind::Evade);
                 if !self.excursion && (event_is_attributed || native_evade_return) {
@@ -371,8 +371,7 @@ fn route_oracle_failure(
     route_escape: Option<bool>,
     update: &RandomRouteUpdate,
 ) -> bool {
-    script_started
-        && route_escape.is_some_and(|escaped| escaped && !update.route_escape_exempt)
+    script_started && route_escape.is_some_and(|escaped| escaped && !update.route_escape_exempt)
 }
 
 fn status_progress(trips: u64, yielded: u64) -> StatusSample {
@@ -511,11 +510,8 @@ fn resumed_work_progress_clears_evade_attribution_at_safe_work_tile() {
 
     let mut attribution = RandomRouteAttribution::default();
     attribution.observe(Some(host::RandomKind::Evade), Some(origin), Some(false));
-    let excursion = attribution.observe(
-        Some(host::RandomKind::Evade),
-        Some(unsafe_tile),
-        Some(true),
-    );
+    let excursion =
+        attribution.observe(Some(host::RandomKind::Evade), Some(unsafe_tile), Some(true));
     assert!(excursion.route_escape_exempt);
     let ended = attribution.observe(None, Some(unsafe_tile), Some(true));
     assert_eq!(ended.status_ended, Some(host::RandomKind::Evade));
@@ -1722,8 +1718,7 @@ fn drive_frame(
     record_scene2(actor, writer, run_started);
 
     let tile = actor.snapshot.tile();
-    let route_escape =
-        tile.map(|tile| work_route_escape(actor.site.outer_bounds, tile));
+    let route_escape = tile.map(|tile| work_route_escape(actor.site.outer_bounds, tile));
     let route_update = actor
         .random_route
         .observe(frame.random_event, tile, route_escape);
@@ -1752,7 +1747,11 @@ fn drive_frame(
             }
         }
         actor.last_tile = Some(tile);
-        if route_oracle_failure(actor.script_started_at.is_some(), route_escape, &route_update) {
+        if route_oracle_failure(
+            actor.script_started_at.is_some(),
+            route_escape,
+            &route_update,
+        ) {
             fail_actor(
                 actor,
                 writer,
@@ -2388,10 +2387,11 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
                                 .get_or_insert(now_monotonic_ns);
                             let sample = status_sample(status);
                             let tile = actor.snapshot.tile();
-                            let route_escape = tile
-                                .map(|tile| work_route_escape(actor.site.outer_bounds, tile));
-                            let route_update =
-                                actor.random_route.observe_work_progress(&sample, route_escape);
+                            let route_escape =
+                                tile.map(|tile| work_route_escape(actor.site.outer_bounds, tile));
+                            let route_update = actor
+                                .random_route
+                                .observe_work_progress(&sample, route_escape);
                             for observation in route_update.log_events().into_iter().flatten() {
                                 record_random_route_observation(
                                     &mut actor,
