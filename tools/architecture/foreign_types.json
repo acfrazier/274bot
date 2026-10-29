@@ -2,6 +2,16 @@
   "schema_version": 1,
   "foreign_types": [
     {
+      "path": "client::render::diagnostics::PixelRoiShotBind",
+      "classification": "owning",
+      "reason": "By-value capture diagnostics. PixelRoiMeta.upload may own PixelRoiUpload.slot: String (client/src/render/diagnostics.rs:231-249,271-275); no additional allocation is introduced at the frontend seam."
+    },
+    {
+      "path": "client::render::backend::ReadbackPermit",
+      "classification": "owning",
+      "reason": "Non-Clone RAII owner of the process's admitted readback reservation; moving it transfers the obligation to release its occupied flag on Drop (client/src/render/backend/readback.rs)."
+    },
+    {
       "path": "std::num::NonZeroU64",
       "classification": "scalar",
       "reason": "Copy non-zero u64 with no payload (Rust standard library, pinned by rust-toolchain.toml); private field of the F0 identities ProcessIncarnation, SlotKey, ExecutionId and RequestId (crates/api/src/identity.rs:157,193,311,359)"

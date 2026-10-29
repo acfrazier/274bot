@@ -2937,11 +2937,51 @@ fn terminal_shot_drain_accepts_a_write_from_an_earlier_core_pending_frame() {
     assert!(live.drain_started.is_none());
 }
 
+#[cfg(feature = "render-test-hooks")]
 #[test]
 fn typed_capture_refusals_fail_terminal_pair_and_soak_drains_without_waiting() {
+    const CHILD: &str = "PANEL_CAPTURE_FIXTURE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(
+            std::env::current_exe().expect("current panel test executable"),
+        )
+        .args([
+            "--exact",
+            "app::tests::typed_capture_refusals_fail_terminal_pair_and_soak_drains_without_waiting",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .output()
+        .expect("run isolated typed capture refusal test");
+        assert!(
+            output.status.success(),
+            "typed capture fixture child failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout)
+                .contains("typed capture fixture child completed"),
+            "the exact filter must execute the typed refusal proof",
+        );
+        return;
+    }
+    frontend_core::surface::configure_render_fixture(
+        frontend_core::surface::ProcessFixture {
+            grant_ttl: std::time::Duration::from_millis(20),
+            quantum: std::time::Duration::from_millis(40),
+        },
+    )
+    .expect("configure this isolated process before host initialization");
     let label = "typed-refusal";
     let refusal = crate::window::CaptureError::Expired;
     let mut shots = crate::window::ShotState::default();
+    shots
+        .configure_capture_policy(
+            std::num::NonZeroUsize::new(4096).unwrap(),
+            std::time::Duration::from_secs(30),
+        )
+        .expect("the explicit fixture enables bounded capture status");
     shots
         .mark_failed_capture(label, refusal)
         .expect("typed refusal has a bounded terminal status");
@@ -2989,6 +3029,7 @@ fn typed_capture_refusals_fail_terminal_pair_and_soak_drains_without_waiting() {
             SoakCapture::PostPass { started: None, .. } | SoakCapture::Final { started: None, .. }
         ));
     }
+    println!("typed capture fixture child completed");
 }
 
 #[test]

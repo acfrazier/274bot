@@ -467,6 +467,9 @@ const CORE: &[(&str, Decision)] = &[
     ("live/mod.rs::budget_s_from_env", Excluded(HARNESS)),
     ("live/mod.rs::shot_stamp_utc", Excluded(HARNESS)),
     ("live/mod.rs::create_shot_run_dir", Excluded(HARNESS)),
+    ("live/mod.rs::shot_run_dir_path", Excluded(PATH_READ)),
+    ("live/mod.rs::shot_output_paths", Excluded(PATH_READ)),
+    ("live/mod.rs::record_output_path", Excluded(PATH_READ)),
     ("live/mod.rs::write_shot", Excluded(HARNESS)),
     ("live/mod.rs::external_loader_scenario_name", Excluded(HARNESS)),
     ("live/mod.rs::external_loader_live_name", Excluded(HARNESS)),
@@ -804,6 +807,7 @@ const SURFACE: &[(&str, Decision)] = &[
         Excluded("the frame driver; its exits are the `--memory` observation harness's PASS/FAIL"),
     ),
     ("panel/headed_record.rs::HeadedRecord::finish", Excluded(HARNESS)),
+    ("panel/headed_record.rs::HeadedRecord::finish_legacy", Excluded(HARNESS)),
     ("panel/session.rs::Session::live_prepare_stress", Excluded(HARNESS)),
     ("panel/session.rs::Session::with_instance", Excluded(STARTUP)),
     (

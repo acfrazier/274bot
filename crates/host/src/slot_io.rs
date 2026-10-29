@@ -3498,7 +3498,7 @@ mod tests {
         let mut renderer = client::render::Renderer::new(false);
         let valid_output = renderer.game_draw(&mut client);
         assert!(renderer.has_valid_scene(), "the live CPU paint completed");
-        assert_eq!(renderer.retained_storage_allocations(), 1);
+        assert_eq!(renderer.retained_storage_allocations(), 0);
 
         let buf = FrameBuf::new();
         buf.attach_head(old_head);
@@ -3518,9 +3518,9 @@ mod tests {
         let title_output = renderer.title_screen_draw(&mut client);
         assert!(
             !renderer.has_valid_scene(),
-            "CPU Title invalidates scene authority while storage remains allocated"
+            "CPU Title invalidates scene authority without activating gated retention"
         );
-        assert_eq!(renderer.retained_storage_allocations(), 1);
+        assert_eq!(renderer.retained_storage_allocations(), 0);
         assert!(buf.publish_with_status(
             old_head,
             title_output,

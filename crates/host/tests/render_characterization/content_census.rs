@@ -2001,14 +2001,14 @@ fn resource_rows(
             "capacity_bytes": layout.model_index_capacity_bytes,
             "orphan_bytes_per_dead_arc": layout.model_orphan_bytes_per_dead_arc,
         })),
-        "transformed_model_families": ["loc_models", "npc_models", "obj_models", "idk_models", "spot_models"]
+        "transformed_model_families": (["loc_models", "npc_models", "obj_models", "idk_models", "spot_models"]
             .into_iter()
             .filter_map(|name| families.get(name).map(|family| (name, family)))
             .map(|(name, family)| (name, json!({
                 "variants": family.variants,
                 "sum_retained_bytes": family.total_bytes,
             })))
-            .collect::<BTreeMap<_, _>>(),
+            .collect::<BTreeMap<_, _>>()),
         "source_derived_owner_bound": owner_bounds.map(|bounds| json!({
             "content_upper_bytes": bounds.shared_models.bytes,
             "known_measurements": bounds.shared_models.details,

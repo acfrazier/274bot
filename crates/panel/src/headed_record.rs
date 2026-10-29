@@ -2994,7 +2994,7 @@ mod tests {
                         <= 4096
                 );
 
-                let too_long_name = "\u{1f4a1}".repeat(65);
+                let too_long_name = "é".repeat(129);
                 assert!(matches!(
                     bounded_sidecar_header(&too_long_name, DEFAULT_FPS),
                     Err(RecordError::MetadataTooLarge)

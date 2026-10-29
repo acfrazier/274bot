@@ -201,15 +201,63 @@ pub struct WriterStats {
     pub written: u64,
 }
 
+#[cfg(test)]
+#[derive(Default)]
+struct WriteGate {
+    entered: std::sync::Mutex<std::collections::HashSet<u64>>,
+    entered_cv: std::sync::Condvar,
+    released: std::sync::Mutex<std::collections::HashSet<u64>>,
+    released_cv: std::sync::Condvar,
+}
+
+#[cfg(test)]
+impl WriteGate {
+    fn wait_before_write(&self, id: u64) {
+        {
+            let mut entered = self.entered.lock().expect("entered");
+            entered.insert(id);
+            self.entered_cv.notify_all();
+        }
+        let mut released = self.released.lock().expect("released");
+        while !released.contains(&id) {
+            released = self.released_cv.wait(released).expect("wait release");
+        }
+    }
+
+    /// Drop the guard before asserting so a timeout does not poison the worker.
+    fn wait_entered(&self, id: u64, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        let mut entered = self.entered.lock().expect("entered");
+        while !entered.contains(&id) {
+            let now = Instant::now();
+            if now >= deadline {
+                break;
+            }
+            let (guard, _) = self
+                .entered_cv
+                .wait_timeout(entered, deadline - now)
+                .expect("wait entered");
+            entered = guard;
+        }
+        let seen = entered.contains(&id);
+        drop(entered);
+        assert!(seen, "job {id} never entered write gate");
+    }
+
+    fn release(&self, id: u64) {
+        self.released.lock().expect("released").insert(id);
+        self.released_cv.notify_all();
+    }
+}
+
 /// Writer tuning. `bound == 0` drops every submit after `submit_wait`.
-#[derive(Clone)]
 pub struct WriterConfig {
     bound: usize,
     submit_wait: Duration,
     /// Test-only gate the worker calls with the job id just before
     /// `write_capture`. Absent in non-test builds, so it costs nothing there.
     #[cfg(test)]
-    before_write: Option<Arc<dyn Fn(u64) + Send + Sync>>,
+    before_write: Option<Arc<WriteGate>>,
 }
 
 impl WriterConfig {
@@ -233,10 +281,7 @@ impl WriterConfig {
 
     /// Install a unit-test gate before the worker writes a capture.
     #[cfg(test)]
-    pub(crate) fn with_before_write(
-        mut self,
-        before_write: Arc<dyn Fn(u64) + Send + Sync>,
-    ) -> Self {
+    fn with_before_write(mut self, before_write: Arc<WriteGate>) -> Self {
         self.before_write = Some(before_write);
         self
     }
@@ -543,8 +588,8 @@ fn worker_loop(inner: Arc<WriterInner>) {
         inner.changed.notify_all();
         let QueuedJob { job, request } = queued;
         #[cfg(test)]
-        if let Some(hook) = inner.config.before_write.clone() {
-            hook(job.id);
+        if let Some(gate) = inner.config.before_write.as_ref() {
+            gate.wait_before_write(job.id);
         }
         let (outcome, png_path, readback_permit) = match request {
             QueuedRequest::Native(request) => {
@@ -1288,20 +1333,9 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("274bot-evidence-rgba-gate-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("scratch");
-        let (entered_sender, entered_receiver) = std::sync::mpsc::channel();
-        let (release_sender, release_receiver) = std::sync::mpsc::channel();
-        let release_receiver = Arc::new(std::sync::Mutex::new(release_receiver));
-        let hook_receiver = Arc::clone(&release_receiver);
-        let hook: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |_| {
-            entered_sender.send(()).expect("signal writer entry");
-            hook_receiver
-                .lock()
-                .expect("release gate")
-                .recv()
-                .expect("release writer");
-        });
+        let gate = Arc::new(WriteGate::default());
         let writer = EvidenceWriter::with_config(
-            WriterConfig::new(1, Duration::ZERO).with_before_write(hook),
+            WriterConfig::new(1, Duration::ZERO).with_before_write(Arc::clone(&gate)),
         );
         let request = RgbaEvidenceRequest::new(
             dir.join("gated.png"),
@@ -1315,9 +1349,7 @@ mod tests {
         #[cfg(feature = "render-diagnostics")]
         let request = request.with_diagnostics("gated".to_owned(), None);
         let job = writer.submit_rgba(request);
-        entered_receiver
-            .recv_timeout(Duration::from_secs(60))
-            .expect("worker reaches gate");
+        gate.wait_entered(job.id(), Duration::from_secs(60));
         assert!(matches!(
             ReadbackBudget::process().try_acquire(
                 CaptureGeometry::new(2, 2),
@@ -1325,7 +1357,7 @@ mod tests {
             ),
             Err(client::render::backend::ReadbackError::Busy)
         ));
-        release_sender.send(()).expect("release worker");
+        gate.release(job.id());
         let outcome = writer
             .wait(&job, Duration::from_secs(60))
             .expect("capture completes");
@@ -1419,69 +1451,13 @@ mod tests {
 
     #[test]
     fn full_queue_submit_wakes_when_worker_pops() {
-        use std::collections::HashSet;
-
-        struct WriteGate {
-            entered: std::sync::Mutex<HashSet<u64>>,
-            entered_cv: std::sync::Condvar,
-            released: std::sync::Mutex<HashSet<u64>>,
-            released_cv: std::sync::Condvar,
-        }
-
-        impl WriteGate {
-            fn hook(&self, id: u64) {
-                {
-                    let mut entered = self.entered.lock().expect("entered");
-                    entered.insert(id);
-                    self.entered_cv.notify_all();
-                }
-                let mut released = self.released.lock().expect("released");
-                while !released.contains(&id) {
-                    released = self.released_cv.wait(released).expect("wait release");
-                }
-            }
-
-            /// Wait until the worker reaches the write gate for `id`.
-            /// The guard is dropped before asserting, so a timeout fails
-            /// this test without poisoning the gate for the worker thread.
-            fn wait_entered(&self, id: u64, timeout: Duration) {
-                let deadline = Instant::now() + timeout;
-                let mut entered = self.entered.lock().expect("entered");
-                while !entered.contains(&id) {
-                    let now = Instant::now();
-                    if now >= deadline {
-                        break;
-                    }
-                    let (guard, _) = self
-                        .entered_cv
-                        .wait_timeout(entered, deadline - now)
-                        .expect("wait entered");
-                    entered = guard;
-                }
-                let seen = entered.contains(&id);
-                drop(entered);
-                assert!(seen, "job {id} never entered write gate");
-            }
-
-            fn release(&self, id: u64) {
-                self.released.lock().expect("released").insert(id);
-                self.released_cv.notify_all();
-            }
-        }
-
         let dir =
             std::env::temp_dir().join(format!("274bot-evidence-wakeup-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("scratch");
-        let gate = Arc::new(WriteGate {
-            entered: std::sync::Mutex::new(HashSet::new()),
-            entered_cv: std::sync::Condvar::new(),
-            released: std::sync::Mutex::new(HashSet::new()),
-            released_cv: std::sync::Condvar::new(),
-        });
-        let hook_gate = Arc::clone(&gate);
-        let hook: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |id| hook_gate.hook(id));
+        let gate = Arc::new(WriteGate::default());
         let writer = Arc::new(EvidenceWriter::with_config(
-            WriterConfig::new(1, Duration::from_secs(60)).with_before_write(hook),
+            WriterConfig::new(1, Duration::from_secs(60))
+                .with_before_write(Arc::clone(&gate)),
         ));
         let request = |name: &str| EvidenceRequest {
             png_path: dir.join(name),
