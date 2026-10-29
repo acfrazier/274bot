@@ -27,9 +27,11 @@
     "items": [],
     "acquire": {},
     "bank": "nearest",
-    "coin_float": 268,
+    "coin_float": 394,
     "loadouts": {},
     "areas": {
+      "velrak_cell": { "boxes": [[2928, 9683, 2935, 9689, 0]], "source": "C:maps/m45_151.jm2:6711-6715,6741-6743,6766-6771,6793-6798" },
+      "deep_gate_landing": { "boxes": [[2923, 9803, 2923, 9803, 0]], "source": "C:maps/m45_153.jm2:6707; C:scripts/areas/area_taverly/dungeon/scripts/jail_doors.rs2:8-12,21-35; C:scripts/doors/scripts/door_procs.rs2:68-74" },
       "outpost": {
         "boxes": [
           [
@@ -49,6 +51,10 @@
       "obj:scorpioncageab",
       "obj:scorpioncagefull",
       "obj:barcrawl_card",
+      "obj:jail_key",
+      "obj:dusty_key",
+      "obj:bread",
+      "obj:mithril_scimitar",
       "obj:coins"
     ],
     "owns_inventory": true
@@ -191,6 +197,41 @@
           "terminal": false,
           "recovery_entry": null,
           "steps": [
+            {
+              "id": "buy-jailer-food", "kind": "buy", "version": 1, "advances": false,
+              "args": { "shop": { "npc": "baker_merchant", "anchor": { "tile": [2654, 3311, 0], "source": "C:maps/m41_51.jm2:10991; C:pack/npc.pack:572" } }, "obj": "bread", "qty": 10, "est_gp": 126 },
+              "comment": "C:scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-25; C:scripts/areas/area_ardougne_east/configs/ardougne_east.npc:410-414; C:scripts/shop/scripts/shop.rs2:58-68,131-147,182-187; C:scripts/skill_cooking/configs/cooking_inv/configs/dough/dough.obj:39-51. Ten bread costs 126 at full stock.",
+              "skip_if": { "Any": [{ "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bread", "qty": 10 } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "dusty_key" } } }] },
+              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bread", "qty": 10 } } }
+            },
+            {
+              "id": "get-jail-key", "kind": "combat", "version": 1, "advances": false,
+              "args": { "target": { "npc": "jailer", "not_targeting_others": true, "pick": "nearest" }, "stand": { "tile": [2933, 9693, 0], "source": "C:maps/m45_151.jm2:8528; C:pack/npc.pack:202" }, "lost_radius": 20, "kill_budget_ticks": 500, "tactic": { "kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true }, "loot": ["jail_key"], "until": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "jail_key" } } } },
+              "comment": "C:scripts/drop tables/scripts/jailer.rs2:1-10: the Jailer drops the key for 100 ticks. C:scripts/areas/area_taverly/dungeon/configs/taverly_dungeon.npc:30-60 defines the fight.",
+              "skip_if": { "Any": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "jail_key" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "dusty_key" } } }] },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "jail_key" } } }
+            },
+            {
+              "id": "unlock-velrak-cell", "kind": "use_on", "version": 1, "advances": false,
+              "args": { "item": "jail_key", "target": { "loc": "dungeonjail" }, "anchor": { "tile": [2931, 9690, 0], "source": "C:maps/m45_151.jm2:6770; C:pack/loc.pack:2632" }, "radius": 2 },
+              "comment": "C:scripts/areas/area_taverly/dungeon/scripts/jail_doors.rs2:1-5,21-35 uses the key to cross into the cell.",
+              "skip_if": { "Any": [{ "Fact": { "kind": "in_area", "version": 1, "args": { "area": "velrak_cell" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "dusty_key" } } }] },
+              "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "velrak_cell" } } }
+            },
+            {
+              "id": "get-dusty-key", "kind": "talk", "version": 1, "advances": false,
+              "args": { "npc": "velrak_the_explorer", "anchor": { "tile": [2931, 9685, 0], "source": "C:maps/m45_151.jm2:8523; C:pack/npc.pack:799" }, "leash": 8, "prefer": ["So... do you know anywhere good to explore?", "Yes please!"], "strict": true },
+              "comment": "C:scripts/areas/area_taverly/dungeon/scripts/velrak_the_explorer.rs2:1-17 gives the dusty key after both choices.",
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "dusty_key" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "dusty_key" } } }
+            },
+            {
+              "id": "unlock-deep-dungeon", "kind": "use_on", "version": 1, "advances": false,
+              "args": { "item": "dusty_key", "target": { "loc": "deepdungeondoor" }, "anchor": { "tile": [2924, 9803, 0], "source": "C:maps/m45_153.jm2:6707; C:pack/loc.pack:2624" }, "radius": 2 },
+              "comment": "C:scripts/areas/area_taverly/dungeon/scripts/jail_doors.rs2:8-12,21-35 opens the gate with the dusty key.",
+              "skip_if": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "deep_gate_landing" } } },
+              "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "deep_gate_landing" } } }
+            },
             {
               "id": "search-secret-wall",
               "kind": "interact",
