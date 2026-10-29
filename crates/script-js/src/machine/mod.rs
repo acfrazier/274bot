@@ -4505,7 +4505,7 @@ pub(crate) mod tests {
             std::mem::size_of::<ReleasedRows>(),
             8 * (MAX_LIVE + MAX_PENDING_STARTS) + 8
         );
-        assert_eq!(std::mem::size_of::<SteppingRow>(), 112);
+        assert_eq!(std::mem::size_of::<SteppingRow>(), 72);
         let mut list = SteppedRows::default();
         for handle in 0..MAX_LIVE as u64 {
             assert!(list.push(handle + 1));
