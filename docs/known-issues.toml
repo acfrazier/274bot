@@ -128,6 +128,19 @@ severity = "medium"
 owner = "Quester waves"
 
 [[item]]
+id = "quester-walk-step-first-failure"
+kind = "known-issue"
+area = "Quester"
+text = """When the Quester cannot start a walk between quest steps, it can stop
+  the quest at once instead of trying again, and asks you to resolve the
+  condition and restart the Quester."""
+first = "0.2.0"
+listed = "0.2.8"
+target = "0.2.9"
+severity = "medium"
+owner = "Quester walk step"
+
+[[item]]
 id = "brimhaven-agility-obstacles"
 kind = "known-issue"
 area = "Scripts"
