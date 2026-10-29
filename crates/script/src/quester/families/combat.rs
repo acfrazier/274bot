@@ -798,6 +798,7 @@ impl StepPlan for CombatPlan {
             last_outcome: None,
             target_gone_restarts: 0,
             return_walk_failures: 0,
+            stand_walk_failures: 0,
             raised_prayers: RaisedPrayers::empty(),
             manual_takeover_watch: crate::native::ManualTakeoverWatch::default(),
             finish_target_index: None,
@@ -1137,6 +1138,11 @@ struct CombatRun {
     last_outcome: Option<StepOutcome>,
     target_gone_restarts: u8,
     return_walk_failures: u8,
+    /// Stand-approach walk failures every fight attempt of this step spent. A
+    /// kill-budget end rebegins the fight inside the same step, so the bound
+    /// of three spans attempts; the field starts at zero and only the step's
+    /// end discards it.
+    stand_walk_failures: u8,
     raised_prayers: RaisedPrayers,
     manual_takeover_watch: crate::native::ManualTakeoverWatch,
     finish: Option<FinishConfig>,
@@ -1149,6 +1155,18 @@ struct CombatRun {
 }
 
 impl CombatRun {
+    /// Mirror the live attempt's stand-approach count. The run outlives one
+    /// fight attempt: a kill-budget end starts the next attempt from this
+    /// count, so the three-failure bound is the step's, not the attempt's.
+    fn observe_stand_walks(&mut self) {
+        let Some(Action::Combat(handle)) = self.action.as_ref() else {
+            return;
+        };
+        if let Some(failures) = handle.inspect(|machine| machine.stand_walk_failures()) {
+            self.stand_walk_failures = failures;
+        }
+    }
+
     fn capture_prayer_cleanup(&mut self) {
         match self.action.as_ref() {
             Some(Action::Combat(handle)) => {
@@ -1229,6 +1247,7 @@ impl CombatRun {
             (Arc::clone(&self.request), Arc::clone(&self.tables)),
             &mut cx.tick.cx,
         )?;
+        handle.seed_stand_walk_failures(self.stand_walk_failures);
         self.phase = Phase::Combat;
         self.action = Some(Action::Combat(handle));
         Ok(())
@@ -1996,6 +2015,7 @@ impl CombatRun {
 impl StepRun for CombatRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         self.capture_prayer_cleanup();
+        self.observe_stand_walks();
         if self.manual_takeover_watch.interrupted(&cx.tick.cx) {
             self.action = None;
             return Poll::Ready(Err(ActionError::UserInput));

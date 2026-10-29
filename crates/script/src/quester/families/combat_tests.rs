@@ -933,6 +933,7 @@ fn combat_test_run(
         last_outcome: None,
         target_gone_restarts: 0,
         return_walk_failures: 0,
+        stand_walk_failures: 0,
         manual_takeover_watch: crate::native::ManualTakeoverWatch::default(),
         raised_prayers: crate::combat::RaisedPrayers::empty(),
         finish: None,
@@ -4116,11 +4117,11 @@ fn stand_walk_bound_spans_the_kill_budget_attempt_boundary() {
     let in_flight = last_walk(&ledger);
     assert_eq!(in_flight.target, stand);
 
-    // The budget end rebegins the fight. Drive polls to the new attempt's
-    // first walk, which is a fresh request; the step must still count the two
-    // walks the previous attempt spent.
+    // The budget end rebegins the fight, and the new attempt revokes the old
+    // outbox, so drive polls until a new walk request appears; the step must
+    // still count the two walks the previous attempt spent.
     let mut tick = 4;
-    while pending_walk(&ledger).is_some_and(|walk| walk.request_id == in_flight.request_id) {
+    while pending_walk(&ledger).is_none_or(|walk| walk.request_id == in_flight.request_id) {
         tick += 1;
         assert!(
             tick < 60,

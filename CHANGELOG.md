@@ -26,12 +26,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   stops for lack of food at 2. Imps cannot damage the bot at all (max hit
   0), so the bot does not raise Protect from Melee against them.
 - When a quest fight cannot attack its attacker, the bot now asks the route
-  planner for a safe place to walk to. It offers the quest's own stand first,
-  then places beyond the attacker's chase range, then places that are only
-  farther away. The planner picks the nearest place it can reach. Before, the
-  bot could pick a spot it could not reach, stand still, eat all its food and
-  die. The static hostile tree near Draynor Manor is one such attacker. If a
-  route fails, the bot plans again from where it stands and prefers the next
+  planner for a safe place to walk to. It offers the quest's own fight spot
+  first, then places beyond the attacker's chase range, then places that are
+  only farther away. The planner picks the nearest place it can reach. Before,
+  the bot could pick a spot it could not reach, stand still, eat all its food
+  and die. The static hostile tree near Draynor Manor is one such attacker. If
+  a route fails, the bot plans again from where it stands and prefers the next
   kind of place. A route that neither arrives nor fails also ends: the bot
   counts game ticks, and when the walk takes longer than the measured walk
   distance plus a margin of 12 ticks, it gives up on that route and starts
@@ -39,10 +39,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   planner's own limit on route length, and the walk machine's ten-minute
   deadline ends the walk first. A pass makes one request for each kind of
   place that has candidates, so up to three requests (two when the quest
-  names no stand). The places of different kinds can overlap. A second pass
-  can follow the first when the food runs out, so the bot makes at most six
-  requests. While food remains, the first pass keeps eating as it walks; the
-  second pass, after the food is gone, does not eat. The quest's own walk
+  names no fight spot). The places of different kinds can overlap. A second
+  pass can follow the first when the food runs out, so the bot makes at most
+  six requests. While food remains, the first pass keeps eating as it walks;
+  the second pass, after the food is gone, does not eat. The quest's own walk
   starts only after the bot sees that the attacker is gone. If every route
   fails, the quest stops with the last route failure. This does not promise
   that an escape exists.
@@ -53,10 +53,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   its fence both failed this way. Melee target choice also skips a monster
   the bot cannot walk up to, and picks a reachable one instead. A failed walk
   to the fight spot is planned again from the observed tile, up to three
-  failed walks. If all three fail, the quest step stops with the last route
-  failure. The walk back to the stand also retries blocked walks, up to three
-  failures. If all three return walks fail, the quest step stops with the last
-  route failure.
+  failed walks. The count spans the fight attempts a kill budget ends, so a
+  short budget cannot buy a fresh three walks. If all three fail, the quest
+  step stops with the last route failure. The walk back to the fight spot
+  also retries blocked walks, up to three failures. If all three return walks
+  fail, the quest step stops with the last route failure.
 
 ### Navigation
 

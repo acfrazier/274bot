@@ -663,6 +663,17 @@ impl Combat {
     pub fn engaged(&self) -> Option<ActorRef> {
         self.engaged
     }
+    /// Stand-approach walk failures this attempt inherited and spent. The quest
+    /// step mirrors this into the run that outlives one attempt.
+    pub(crate) fn stand_walk_failures(&self) -> u8 {
+        self.stand_walk_failures
+    }
+    /// Continue a quest step's spent stand approaches: the step owns the count,
+    /// so the attempt it starts keeps counting toward the same bound. Every
+    /// other caller begins at zero.
+    pub(crate) fn seed_stand_walk_failures(&mut self, failures: u8) {
+        self.stand_walk_failures = failures;
+    }
     /// Observed resource consumption counts splashes as casts, never as hits.
     pub fn casts(&self) -> u16 {
         self.counters.casts
@@ -3051,7 +3062,11 @@ impl Combat {
     }
     fn leash_cancel_tile(&self, frame: &Frame<'_>) -> Option<api::WorldTile> {
         let stand = self.request.stand?;
-        if distance(frame.here, stand) > 1 {
+        // The fight spot is read from the network tile, as every other
+        // arrival check is: a rendered tile that lags behind it would send a
+        // walk to a spot the player already reached, and that walk gives no
+        // driver movement to cancel the chase.
+        if !select::stand_reached(stand, frame.local) {
             return Some(stand);
         }
         let actor = self.engaged?;
