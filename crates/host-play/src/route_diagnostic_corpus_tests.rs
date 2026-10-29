@@ -369,12 +369,8 @@ fn run_diagnostics(
         case.name
     );
     let mut job = Box::new(
-        RouteJob::prepare(
-            case.name,
-            request,
-            RouteDemandKind::Walk { authority },
-        )
-        .unwrap_or_else(|error| panic!("{} job preparation failed: {error}", case.name)),
+        RouteJob::prepare(case.name, request, RouteDemandKind::Walk { authority })
+            .unwrap_or_else(|error| panic!("{} job preparation failed: {error}", case.name)),
     );
     job.identity = Some(stage_identity(identity_index));
     job.targets = targets;
@@ -757,7 +753,8 @@ fn real_cases(world: Arc<NavWorld>) -> Vec<DiagnosticCase> {
         },
         DiagnosticCase {
             name: "karamja_exit_without_coins",
-            provenance: "R289 sailors.rs2:13-30 charges 30 coins before sailing from Karamja to Port Sarim",
+            provenance:
+                "R289 sailors.rs2:13-30 charges 30 coins before sailing from Karamja to Port Sarim",
             world_kind: "r289_navpack",
             world: Arc::clone(&world),
             from: tile(2954, 3147),
@@ -778,7 +775,8 @@ fn real_cases(world: Arc<NavWorld>) -> Vec<DiagnosticCase> {
         },
         DiagnosticCase {
             name: "desert_walk_without_shantay_pass",
-            provenance: "R289 shantay_pass.rs2:76-97 requires and consumes one pass entering the desert",
+            provenance:
+                "R289 shantay_pass.rs2:76-97 requires and consumes one pass entering the desert",
             world_kind: "r289_navpack",
             world: Arc::clone(&world),
             from: tile(3302, 3116),
@@ -992,12 +990,7 @@ fn compares_bounded_and_unbounded_route_diagnostics_corpus() {
         .then(|| live_native_walk(case, index as u64));
         let authority = native.as_ref().map(|native| native.authority.clone());
 
-        let bounded = run_diagnostics(
-            case,
-            authority.clone(),
-            FIRST_TARGET_BUDGET,
-            index as u64,
-        );
+        let bounded = run_diagnostics(case, authority.clone(), FIRST_TARGET_BUDGET, index as u64);
         rows.last_mut().expect("case row was appended")["bounded"] = bounded.to_json();
         match case.name {
             "scorpion_no_key_radius5" => assert!(

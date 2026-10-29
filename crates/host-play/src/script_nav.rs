@@ -2033,7 +2033,10 @@ impl RouteJob {
                     // and compat recovery. Broader searches add no useful cause.
                     self.stage = RouteJobStage::Diagnostics;
                 } else {
-                    self.prepare_goal_copy(RouteGoalCopy::Diagnostics, RouteSearchPurpose::Entrance)?;
+                    self.prepare_goal_copy(
+                        RouteGoalCopy::Diagnostics,
+                        RouteSearchPurpose::Entrance,
+                    )?;
                 }
             }
             (RouteSearchPurpose::Entrance, SearchOutcome::EntranceRequirements(requirement)) => {
@@ -2042,7 +2045,10 @@ impl RouteJob {
                     self.detail = Some(requirement.to_string());
                     self.stage = RouteJobStage::Diagnostics;
                 } else {
-                    self.prepare_goal_copy(RouteGoalCopy::Diagnostics, RouteSearchPurpose::Blocking)?;
+                    self.prepare_goal_copy(
+                        RouteGoalCopy::Diagnostics,
+                        RouteSearchPurpose::Blocking,
+                    )?;
                 }
             }
             _ => return Err(RouteJobError::ResultShape),
