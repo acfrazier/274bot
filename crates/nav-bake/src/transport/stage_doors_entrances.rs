@@ -346,17 +346,15 @@ pub(super) fn scenery_tail(stmts: &[Stmt], src: &Sources) -> bool {
     {
         return false;
     }
-    let [Stmt::Def(central, Some(Expr::Call(loc_coord, no_args))), Stmt::Def(angle, Some(Expr::Call(loc_angle, angle_args))), Stmt::Def(kind, Some(Expr::Word(loc_type))), Stmt::Call(change, change_args), Stmt::If(type_arms, None)] =
+    let [Stmt::Def(central, Some(loc_coord)), Stmt::Def(angle, Some(loc_angle)), Stmt::Def(kind, Some(Expr::Word(loc_type))), Stmt::Call(change, change_args), Stmt::If(type_arms, None)] =
         category_body.as_slice()
     else {
         return false;
     };
     if central != "$central_coord"
-        || loc_coord != "loc_coord"
-        || !no_args.is_empty()
+        || !scenery_query(loc_coord, "loc_coord")
         || angle != "$orig_angle"
-        || loc_angle != "loc_angle"
-        || !angle_args.is_empty()
+        || !scenery_query(loc_angle, "loc_angle")
         || kind != "$type"
         || loc_type != "loc_type"
         || change != "loc_change"
@@ -401,6 +399,11 @@ pub(super) fn scenery_tail(stmts: &[Stmt], src: &Sources) -> bool {
         }
         _ => false,
     }
+}
+
+fn scenery_query(expr: &Expr, query: &str) -> bool {
+    matches!(expr, Expr::Word(name) if name == query)
+        || matches!(expr, Expr::Call(name, args) if name == query && args.is_empty())
 }
 
 fn contains_scenery_tail(body: &[Stmt], src: &Sources) -> bool {
