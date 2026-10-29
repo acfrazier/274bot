@@ -1283,6 +1283,12 @@ impl ShotState {
         Ok(())
     }
 
+    fn screenshot_done_depth(&self) -> usize {
+        self.done
+            .len()
+            .saturating_add(usize::from(self.write_pending_label.is_some()))
+    }
+
     pub(crate) fn take_done_for_write(&mut self) -> Option<ShotCapture> {
         if self.write_pending_label.is_some() || self.done.is_empty() {
             return None;
@@ -2495,7 +2501,7 @@ impl AppWindow {
         match result {
             Ok(None) => false,
             Ok(Some(completed)) => {
-                let Some(capture) = self.pending_capture.take() else {
+                let Some(_capture) = self.pending_capture.take() else {
                     return false;
                 };
                 let (rgba, geometry, permit) = completed.into_parts();
@@ -3170,6 +3176,9 @@ fn map_readbacks(
                 width: rb.width,
                 height: rb.height,
                 rgba: to_rgba(&rgba, format),
+                paint_sequence: 0,
+                actor_stamp: None,
+                readback_permit: None,
                 #[cfg(feature = "render-diagnostics")]
                 pixel_roi: rb.pixel_roi,
             })

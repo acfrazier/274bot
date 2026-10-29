@@ -375,6 +375,20 @@ pub enum RecordError {
     InvalidPolicy,
 }
 
+impl std::fmt::Display for RecordError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::MetadataTooLarge => "recording metadata exceeds its byte limit",
+            Self::Geometry => "recording frame dimensions exceed the supported limit",
+            Self::RecorderBusy => "another recording is still active",
+            Self::EncoderUnavailable => "the recording encoder is unavailable",
+            Self::WorkerStart => "a recording worker could not start",
+            Self::PolicyMissing => "the recording fixture policy is missing",
+            Self::InvalidPolicy => "the recording fixture duration is invalid",
+        })
+    }
+}
+
 fn write_escaped_name<const N: usize>(output: &mut BoundedText<N>, name: &str) -> std::fmt::Result {
     for character in name.chars() {
         match character {
@@ -1092,6 +1106,7 @@ impl HeadedRecord {
 
     fn arm_inner(&mut self, shot_dir: &Path, scenario: &str) -> Result<(), RecordError> {
         self.config.validate_fixture_policy(Instant::now())?;
+        let fps = self.config.fps;
         let header = bounded_sidecar_header(scenario, self.config.fps)?;
         let settings_header = bounded_settings_header(scenario)?;
         let mp4_path = Arc::new(checked_child_path(shot_dir, RECORD_MP4_NAME)?);
@@ -1103,6 +1118,7 @@ impl HeadedRecord {
         let (frame_sender, frame_receiver) = sync_channel::<EncoderMessage>(RECORD_QUEUE);
         let (control_sender, control_receiver) = sync_channel::<EncoderControl>(1);
         let sender = Arc::new(Mutex::new(Some(frame_sender)));
+        let supervisor_sender = Arc::clone(&sender);
         let outcome = Arc::new(Mutex::new(RecordFinish::Idle));
         let supervisor_outcome = Arc::clone(&outcome);
         let settings_incomplete = Arc::new(AtomicBool::new(false));
@@ -2023,7 +2039,7 @@ fn run_supervisor(
                         },
                     );
                 }
-                if let Some(Ok(encoder)) = writer_result {
+                if let Ok(encoder) = writer_result {
                     log_diagnostic(
                         api::hostlog::Level::Info,
                         format_args!(
