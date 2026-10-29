@@ -317,6 +317,7 @@ fn allows_requires_every_req_kind() {
         quests: HashSet::from(["Rune Mysteries".to_string()]),
         map_members: false,
         quest_evidence: None,
+        establishable: None,
         combat_level: None,
     };
     assert!(s.allows(&e), "all facts present");
