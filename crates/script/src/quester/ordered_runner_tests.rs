@@ -782,7 +782,10 @@ fn budgeted_hard_poll_failure_does_not_report_an_unspent_stop() {
     harness.run_until_parked();
 
     assert_eq!(harness.script.step_attempts, 1);
-    assert_eq!(harness.script.blocked_failure().message.as_ref(), "action blocked");
+    assert_eq!(
+        harness.script.blocked_failure().message.as_ref(),
+        "action blocked"
+    );
     let receipt = harness
         .script
         .last_attempt_receipt
@@ -838,7 +841,11 @@ fn user_input_cancel_does_not_spend_budget_or_release_queued_quest() {
         "manual-movement",
         "QueuedQuester holds a queue row when the active quest reports manual movement"
     );
-    let status = harness.logs.1.last().expect("manual-movement status is published");
+    let status = harness
+        .logs
+        .1
+        .last()
+        .expect("manual-movement status is published");
     assert!(
         !status.fields.iter().any(|field| field.key == "step_stop"),
         "user input did not spend the step budget"

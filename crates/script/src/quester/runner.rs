@@ -2464,9 +2464,7 @@ impl Quester {
             if let Some(budget) = &budget {
                 self.record_budgeted_attempt(budget, include_outcome);
                 self.park_at_attempt_budget(budget);
-                if !self.parked
-                    && u32::from(self.fail_streak) >= super::path::MAX_STEP_ATTEMPTS
-                {
+                if !self.parked && u32::from(self.fail_streak) >= super::path::MAX_STEP_ATTEMPTS {
                     self.park_at_run_retry_limit();
                 }
             } else if self.fail_streak >= 5 {
@@ -4427,10 +4425,7 @@ mod tests {
         assert_eq!(script.fail_streak, 0);
         assert!(script.parked);
         assert!(script.last_attempt_receipt.is_none());
-        assert_eq!(
-            script.blocked_failure().code.as_ref(),
-            "manual-movement"
-        );
+        assert_eq!(script.blocked_failure().code.as_ref(), "manual-movement");
     }
 
     #[test]
@@ -4524,7 +4519,10 @@ mod tests {
             }
         }
 
-        assert!(script.parked, "the no-progress watchdog still parks the run");
+        assert!(
+            script.parked,
+            "the no-progress watchdog still parks the run"
+        );
         assert_eq!(script.watchdog.unchanged(), 8);
         assert_eq!(script.step_attempts, 9);
     }

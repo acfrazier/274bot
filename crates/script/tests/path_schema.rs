@@ -54,11 +54,9 @@ fn nested_step_parts(value: &Value) -> Option<(&str, &Value)> {
             .get("advances")
             .is_some_and(|advances| !advances.is_null() && !advances.is_boolean())
         || max_attempts.is_some_and(|attempts| {
-            attempts
-                .as_u64()
-                .is_none_or(|attempts| {
-                    attempts == 0 || attempts > u64::from(script::quester::path::MAX_STEP_ATTEMPTS)
-                })
+            attempts.as_u64().is_none_or(|attempts| {
+                attempts == 0 || attempts > u64::from(script::quester::path::MAX_STEP_ATTEMPTS)
+            })
         })
         || stop.is_some_and(|stop| stop.as_str().is_none_or(|stop| stop.trim().is_empty()))
         || max_attempts.is_some() != stop.is_some()
