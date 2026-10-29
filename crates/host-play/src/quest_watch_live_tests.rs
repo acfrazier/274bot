@@ -217,7 +217,9 @@ fn run_seed_cell() -> Value {
         "quest_watch_speed" => {
             scenario::quest_watch::quest_watch_speed_scenario_from_env().expect("speed scenario")
         }
-        other => panic!("QUEST_WATCH_SCENARIO must be quest_watch_seed or quest_watch_speed, got {other:?}"),
+        other => panic!(
+            "QUEST_WATCH_SCENARIO must be quest_watch_seed or quest_watch_speed, got {other:?}"
+        ),
     };
     let deadline_seconds = scenario.settings.deadline;
     let evidence_dir = PathBuf::from(required_env("LIVE_EVIDENCE_DIR"));

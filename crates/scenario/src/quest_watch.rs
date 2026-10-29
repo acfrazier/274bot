@@ -218,18 +218,16 @@ fn build_seed_scenario(plan: SeedPlan) -> Result<Scenario, String> {
     let mut expected_inventory: BTreeMap<i32, (String, i32)> = BTreeMap::new();
     let mut expected_bank: BTreeMap<i32, (String, i32)> = BTreeMap::new();
     let mut worn: Vec<(i32, String)> = Vec::new();
-    let merge = |map: &mut BTreeMap<i32, (String, i32)>,
-                     alias: &str,
-                     count: i32|
-     -> Result<(), String> {
-        let (id, canonical) = resolve(alias)?;
-        let entry = map.entry(id).or_insert((canonical, 0));
-        entry.1 = entry
-            .1
-            .checked_add(count)
-            .ok_or("field items: quantity overflow")?;
-        Ok(())
-    };
+    let merge =
+        |map: &mut BTreeMap<i32, (String, i32)>, alias: &str, count: i32| -> Result<(), String> {
+            let (id, canonical) = resolve(alias)?;
+            let entry = map.entry(id).or_insert((canonical, 0));
+            entry.1 = entry
+                .1
+                .checked_add(count)
+                .ok_or("field items: quantity overflow")?;
+            Ok(())
+        };
     if plan.coins > 0 {
         merge(&mut expected_inventory, "coins", plan.coins)?;
     }
@@ -290,7 +288,11 @@ fn build_seed_scenario(plan: SeedPlan) -> Result<Scenario, String> {
         "minme".into(),
         Proof::StatAtMost { id: 1, max: 1 },
     ));
-    steps.push(command_step("clear worn items", "~clearinv worn".into(), tab));
+    steps.push(command_step(
+        "clear worn items",
+        "~clearinv worn".into(),
+        tab,
+    ));
     steps.push(command_step("clear inventory", "~clearinv".into(), tab));
     steps.push(command_step("clear bank", "~clearbank".into(), tab));
     for (index, level) in &listed_stats {
