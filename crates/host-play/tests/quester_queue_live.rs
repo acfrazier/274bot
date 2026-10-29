@@ -488,7 +488,9 @@ impl SkipQueueEvidence {
         {
             return Ok(None);
         }
-        let Some(step_id) = text_field(status, "step_id")?.filter(|step| !step.is_empty()) else {
+        let Some(step_id) = text_field(status, "step_id")?
+            .filter(|step| step == "cook-bank")
+        else {
             return Ok(None);
         };
         let Some(action_state) = text_field(status, "action_state")? else {
