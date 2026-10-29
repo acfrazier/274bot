@@ -5830,7 +5830,7 @@ impl Session {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     /// Request that the focused Quester skip its active queue row. The core
     /// owns acceptance, refusal logging and the one-command report.
     pub fn script_skip_quest(&mut self, target: Option<api::selected::RunKey>) {
