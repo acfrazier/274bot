@@ -487,6 +487,11 @@ const CORE: &[(&str, Decision)] = &[
     ("slot_view.rs::StatusBuf::refresh", Excluded(PROJECTION)),
     ("surface.rs::map_image_to_applet", Excluded(FORMAT)),
     ("surface.rs::pump_render", Excluded(PUMP)),
+    ("surface.rs::render_workspace_stats", Excluded(PROJECTION)),
+    (
+        "surface.rs::acknowledge_render_fault",
+        Excluded("presentation acknowledgement of one render-fault banner; changes no scene ownership, counters, work admission or durable state"),
+    ),
     // scripts/loadouts.rs: the loadout form's staged inputs; the loadout rows commit them.
     ("scripts/loadouts.rs::LoadoutForm::stage_selection", Staged(C::SelectLoadout)),
     (
