@@ -241,11 +241,12 @@ mod tests {
     }
 
     // Pinned content gives Tribesman poison severity 55
-    // (`all.npc:4598-4634`); the poison timer queues
+    // (`content/scripts/_unpack/225/all.npc:4598-4634`); the poison timer queues
     // `calc((%poison + 4) / 5)` then decrements by one
-    // (`poison.rs2:20-30`), so this source is pulse 11 and Rq(11) is
-    // 330. Lobster heals 12 (`consume_normal.dbrow:172-180`), so ten
-    // held lobsters credit 120 below the line, not their nominal total
+    // (`content/scripts/skill_combat/scripts/poison.rs2:20-30`), so this source
+    // is pulse 11 and Rq(11) is 330. Lobster heals 12
+    // (`content/scripts/player/configs/consumption/consume_normal.dbrow:172-180`),
+    // so ten held lobsters credit 120 below the line, not their nominal total
     // heals at arbitrary HP.
     #[test]
     fn need_lethal_at_line_unknown_source() {
@@ -356,9 +357,9 @@ mod tests {
     }
 
     // The content's Lobster row sets a 12-HP heal
-    // (`consume_normal.dbrow:172-180`). At HP max 10 and eat line 8,
-    // each held Lobster credits only the 2 HP that can fit below the
-    // line (`food_credit` is a lower bound, not delivered healing).
+    // (`content/scripts/player/configs/consumption/consume_normal.dbrow:172-180`).
+    // At HP max 10 and eat line 8, each held Lobster credits only the 2 HP
+    // that can fit below the line (`food_credit` is a lower bound, not delivered healing).
     #[test]
     fn need_food_credit_caps_at_eating_line() {
         let food = FoodSummary {
