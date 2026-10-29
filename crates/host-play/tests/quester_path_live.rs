@@ -213,7 +213,7 @@ fn campaign_catalog() -> Result<&'static api::quest_facts::QuestCatalog, String>
             let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)?;
             selected
                 .prepare_quests(worker)
-                .map_err(|error| error.to_string())
+                .map_err(|error| format!("{error:?}"))
         })
         .map_err(|error| format!("{error:?}"))?
         .join()
@@ -249,7 +249,7 @@ fn campaign_cells(manifest_path: &std::path::Path) -> Result<Vec<Cell>, String> 
     }
     let row = campaign_catalog()?
         .quest(quest)
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| format!("{error:?}"))?;
     let (path, _) = scenario::quester::load_quester_path_document(quest)?;
     if path.partner.is_some() != (manifest.accounts.len() == 2) {
         return Err("campaign account count does not match the guide's partner declaration".into());
