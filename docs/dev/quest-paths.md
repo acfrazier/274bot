@@ -50,6 +50,7 @@ Only a confirmed `Killed` result spends the budget.
 Disappearance, a missing target, or an attempt timeout does not count as a kill.
 
 The final permitted kill still receives the normal loot wait and pickup.
+The appearance deadline does not cancel a pickup that already started.
 If the item remains absent, the runner parks with the authored `stop`.
 The combat receipt and the `combat_kills` status field retain the total kill count.
 The policy cannot share a step with `finish`, `until`, or `win`.
@@ -65,9 +66,11 @@ Lost City and Eadgar can use this policy for their chance-only axe and key sourc
 ### Select a production menu opened by item use
 
 Use the existing `use_on` family to open the menu.
-Set its settlement predicate to `modal_open`.
-The item-use step leaves the posted production menu for `make`.
-It does not adopt the menu as dialogue or answer its buttons.
+Set its `settle` predicate to `{"All": []}`.
+The item-use step confirms accepted dispatch and leaves the production menu for `make`.
+The next `make` step observes the posted chat or main menu.
+`modal_open` covers main interfaces only and does not detect chat production menus.
+The item-use step does not adopt the menu as dialogue or answer its buttons.
 Then use `make` with neither `loc` nor `anchor`:
 
 ```json
@@ -75,7 +78,7 @@ Then use `make` with neither `loc` nor `anchor`:
   "product": "unstrung_shortbow",
   "menu": {
     "obj": "shortbow",
-    "source": "skill_fletching/scripts/cut_logs.rs2:18-41"
+    "source": "skill_fletching/scripts/cut_logs.rs2:18-47"
   },
   "qty": 1,
   "make_x": false

@@ -992,6 +992,21 @@ impl PredicatePlan for NeverStop {
         Truth::False
     }
 }
+struct HasItem(i32);
+
+impl PredicatePlan for HasItem {
+    fn evaluate(&self, context: &PredicateContext<'_, '_>) -> Truth {
+        if context.cx.snapshot().inventory().is_some_and(|rows| {
+            rows.value
+                .iter()
+                .any(|row| row.def.id == self.0 && row.count > 0)
+        }) {
+            Truth::True
+        } else {
+            Truth::False
+        }
+    }
+}
 
 fn combat_test_run(
     target: Target,
@@ -999,12 +1014,22 @@ fn combat_test_run(
     until: Option<Arc<dyn PredicatePlan>>,
     loot: Vec<LootItem>,
 ) -> CombatRun {
+    combat_test_run_with_radius(target, stand, until, loot, 12)
+}
+
+fn combat_test_run_with_radius(
+    target: Target,
+    stand: Option<api::WorldTile>,
+    until: Option<Arc<dyn PredicatePlan>>,
+    loot: Vec<LootItem>,
+    lost_radius: u8,
+) -> CombatRun {
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let tables = CombatTables::build(selected).unwrap();
     let request = CombatRequest {
         target,
         stand,
-        lost_radius: 12,
+        lost_radius,
         ..CombatRequest::default()
     };
     CombatRun {
@@ -1019,6 +1044,8 @@ fn combat_test_run(
         action: None,
         phase: Phase::Combat,
         loot_index: 0,
+        loot_wait_deadline: None,
+        loot_missing_this_kill: false,
         last_report: None,
         kills: 0,
         last_outcome: None,
@@ -1033,6 +1060,22 @@ fn combat_test_run(
         abort_escape: AbortEscape::new(),
     }
 }
+
+#[test]
+fn combat_run_size_stays_within_retained_budget() {
+    let size = std::mem::size_of::<CombatRun>();
+    println!(
+        "combat state sizes: CombatRun={size} Action={} UntilDropConfig={} CombatReceipt={} bytes",
+        std::mem::size_of::<Action>(),
+        std::mem::size_of::<UntilDropConfig>(),
+        std::mem::size_of::<CombatReceipt>(),
+    );
+    assert!(
+        size <= 1_280,
+        "CombatRun is {size} bytes. The source Elemental R1 head measured 1,192 bytes, including the 16-byte Option<u64> loot deadline. This integration also retains the bounded UntilDropConfig and confirmed-kill count. The one-byte miss flag records a missing drop until the until predicate check. The nested Action stayed 680 bytes in the source measurements. The integrated retained-state limit is 1,280 bytes."
+    );
+}
+
 pub(crate) fn policy_s2_run_for_runner(cx: &mut StepContext<'_, '_>) -> Box<dyn StepRun> {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let mut run = combat_test_run(imp_target(&data), None, None, Vec::new());
@@ -4138,6 +4181,7 @@ fn manual_takeover_watch_covers_return_and_loot_sublegs() {
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_inventory(Vec::new(), 28);
+    snapshot.seed_ground_items(vec![ground_item(1, "First drop", stand, 0)]);
     let mut ledger = None;
     with_step_context_at_walk_outcome(&snapshot, &mut ledger, 11, outcome, |cx| {
         run.manual_takeover_watch = crate::native::ManualTakeoverWatch::begin(&cx.tick.cx);
@@ -4183,24 +4227,40 @@ fn manual_takeover_watch_covers_return_and_loot_sublegs() {
         })
         .is_pending()
     );
-    assert_eq!(run.loot_index, 1);
+    assert_eq!(run.loot_index, 0);
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+    let interactions_before_takeover = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .filter(|action| matches!(&action.effect, crate::native::HostEffect::Interaction(_)))
+        .count();
+    assert_eq!(
+        interactions_before_takeover, 1,
+        "the visible drop should start one take before manual input"
+    );
 
     let outcome = publish_walk_outcome(42, WalkCancelReason::UserInput);
     let result =
         with_step_context_at_walk_outcome(&snapshot, &mut ledger, 16, outcome, |cx| run.poll(cx));
     assert!(matches!(result, Poll::Ready(Err(ActionError::UserInput))));
     assert_eq!(
-        run.loot_index, 1,
-        "manual movement must not start the next loot leg"
+        run.loot_index, 0,
+        "manual movement must not advance the active loot row"
     );
     assert!(run.action.is_none());
-    assert!(ledger
+    let interactions_after_takeover = ledger
         .as_ref()
         .unwrap()
         .outbox
         .iter()
-        .all(|action| { !matches!(&action.effect, crate::native::HostEffect::Interaction(_)) }));
+        .filter(|action| matches!(&action.effect, crate::native::HostEffect::Interaction(_)))
+        .count();
+    assert_eq!(
+        interactions_after_takeover, interactions_before_takeover,
+        "manual movement must not emit another interaction"
+    );
 }
 
 #[test]
@@ -4268,6 +4328,317 @@ fn killed_report_enters_loot_and_takes_the_observed_drop() {
             action,
             ..
         }) if *x == stand.x && *z == stand.z && *id == item_id && action == "Take"
+    ));
+}
+
+#[test]
+fn killed_report_waits_for_a_late_drop_before_reengaging() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("elemental_workshop_ore").unwrap();
+    let item_id = item.id;
+    let item_name = item.name.as_deref().unwrap();
+    let stand = api::WorldTile {
+        x: 2693,
+        z: 9906,
+        level: 0,
+    };
+    let mut absent = GameSnapshot::new();
+    absent.seed_ingame(2);
+    absent.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut absent, false);
+    absent.seed_ground_items(Vec::new());
+    let mut appeared = GameSnapshot::new();
+    appeared.seed_ingame(2);
+    appeared.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut appeared, false);
+    appeared.seed_ground_items(vec![ground_item(item_id, item_name, stand, 0)]);
+    let mut run = combat_test_run(
+        imp_target(&selected),
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        vec![LootItem {
+            id: item_id,
+            name: Arc::from(item_name),
+            qty: 1,
+        }],
+    );
+    let mut ledger = None;
+    assert!(with_step_context(&absent, &mut ledger, 12, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    let deadline = 12 + LOOT_ITEM_WAIT_TICKS;
+    assert!(with_step_context(&absent, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
+    assert!(run.action.is_none());
+    assert_eq!(run.loot_wait_deadline, Some(deadline));
+    assert!(with_step_context(&absent, &mut ledger, 14, |cx| run.poll(cx)).is_pending());
+    assert!(run.action.is_none());
+    assert!(with_step_context(&appeared, &mut ledger, 15, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+    assert!(
+        ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
+            &entry.effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+                id: Some(id),
+                action,
+                ..
+            }) if *id == item_id && action == "Take"
+        )),
+        "the delayed ore should be taken before the combat step re-engages"
+    );
+}
+
+#[test]
+fn combat_loot_take_settles_after_the_appearance_deadline() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("elemental_workshop_ore").unwrap();
+    let stand = api::WorldTile {
+        x: 2693,
+        z: 9906,
+        level: 0,
+    };
+    let mut absent = GameSnapshot::new();
+    absent.seed_ingame(2);
+    absent.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut absent, false);
+    absent.seed_ground_items(Vec::new());
+    let mut appeared = GameSnapshot::new();
+    appeared.seed_ingame(2);
+    appeared.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut appeared, false);
+    appeared.seed_ground_items(vec![ground_item(
+        item.id,
+        item.name.as_deref().unwrap(),
+        stand,
+        0,
+    )]);
+    let mut collected = GameSnapshot::new();
+    collected.seed_ingame(2);
+    collected.seed_inventory(
+        vec![inventory_item(item.id, item.name.as_deref().unwrap(), 1)],
+        28,
+    );
+    super::super::tests::seed_dialogue_combat(&mut collected, false);
+    collected.seed_ground_items(Vec::new());
+    let mut run = combat_test_run(
+        imp_target(&selected),
+        Some(stand),
+        Some(Arc::new(HasItem(item.id))),
+        vec![LootItem {
+            id: item.id,
+            name: Arc::from(item.name.as_deref().unwrap()),
+            qty: 1,
+        }],
+    );
+    let mut ledger = None;
+    assert!(with_step_context(&absent, &mut ledger, 12, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    let deadline = 12 + LOOT_ITEM_WAIT_TICKS;
+    for tick in 13..deadline {
+        assert!(with_step_context(&absent, &mut ledger, tick, |cx| run.poll(cx)).is_pending());
+        assert!(run.action.is_none());
+    }
+    assert!(with_step_context(&appeared, &mut ledger, deadline, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+    assert!(
+        with_step_context(&appeared, &mut ledger, deadline + 1, |cx| run.poll(cx)).is_pending(),
+        "an in-flight Take must remain pending after the appearance deadline"
+    );
+    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+    assert_eq!(run.loot_index, 0, "do not advance before the Take settles");
+    assert!(matches!(
+        with_step_context(&collected, &mut ledger, deadline + 2, |cx| run.poll(cx)),
+        Poll::Ready(Ok(_))
+    ));
+    assert_eq!(run.loot_index, 1);
+}
+
+#[test]
+fn missing_combat_loot_wait_is_one_window_for_all_configured_items() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let loot: Vec<_> = ["red_bead", "yellow_bead", "black_bead", "white_bead"]
+        .into_iter()
+        .map(|alias| {
+            let item = selected.item_by_alias(alias).unwrap();
+            LootItem {
+                id: item.id,
+                name: Arc::from(item.name.as_deref().unwrap()),
+                qty: 1,
+            }
+        })
+        .collect();
+    let stand = api::WorldTile {
+        x: 3253,
+        z: 3401,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    snapshot.seed_ground_items(Vec::new());
+    let mut run = combat_test_run(imp_target(&selected), Some(stand), None, loot);
+    let mut ledger = None;
+
+    assert_eq!(LOOT_ITEM_WAIT_TICKS, 5 + 1);
+    assert!(with_step_context(&snapshot, &mut ledger, 1, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+
+    let deadline = 1 + LOOT_ITEM_WAIT_TICKS;
+    for tick in 2..=deadline {
+        assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending());
+        assert!(matches!(&run.phase, Phase::Loot));
+        assert!(run.action.is_none(), "no item means no per-item Reach wait");
+        assert_eq!(run.loot_wait_deadline, Some(deadline));
+    }
+    assert!(matches!(
+        with_step_context(&snapshot, &mut ledger, deadline + 1, |cx| run.poll(cx)),
+        Poll::Ready(Ok(_))
+    ));
+    assert_eq!(run.loot_index, 4);
+}
+
+#[test]
+fn combat_loot_uses_the_steps_lost_radius() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("goblin_armour").unwrap();
+    let stand = api::WorldTile {
+        x: 3253,
+        z: 3401,
+        level: 0,
+    };
+    let drop = api::WorldTile {
+        x: stand.x + 18,
+        z: stand.z,
+        level: stand.level,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    snapshot.seed_ground_items(vec![ground_item(
+        item.id,
+        item.name.as_deref().unwrap(),
+        drop,
+        18,
+    )]);
+    let mut run = combat_test_run_with_radius(
+        imp_target(&selected),
+        Some(stand),
+        None,
+        vec![LootItem {
+            id: item.id,
+            name: Arc::from(item.name.as_deref().unwrap()),
+            qty: 1,
+        }],
+        18,
+    );
+    let mut ledger = None;
+
+    assert!(with_step_context(&snapshot, &mut ledger, 1, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    assert!(with_step_context(&snapshot, &mut ledger, 2, |cx| run.poll(cx)).is_pending());
+    assert!(
+        ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
+            &entry.effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+                x,
+                z,
+                id: Some(id),
+                action,
+                ..
+            }) if *x == drop.x && *z == drop.z && *id == item.id && action == "Take"
+        )),
+        "a drop at the step's radius must be selected"
+    );
+}
+
+#[test]
+fn missing_required_combat_loot_counts_as_failure_and_a_later_drop_settles() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("elemental_workshop_ore").unwrap();
+    let stand = api::WorldTile {
+        x: 3253,
+        z: 3401,
+        level: 0,
+    };
+    let loot = vec![LootItem {
+        id: item.id,
+        name: Arc::from(item.name.as_deref().unwrap()),
+        qty: 1,
+    }];
+    let mut absent = GameSnapshot::new();
+    absent.seed_ingame(2);
+    absent.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut absent, false);
+    absent.seed_ground_items(Vec::new());
+    let mut missing_run = combat_test_run(
+        imp_target(&selected),
+        Some(stand),
+        Some(Arc::new(HasItem(item.id))),
+        loot.clone(),
+    );
+    let mut ledger = None;
+
+    assert!(with_step_context(&absent, &mut ledger, 1, |cx| {
+        missing_run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    let deadline = 1 + LOOT_ITEM_WAIT_TICKS;
+    for tick in 2..=deadline {
+        assert!(
+            with_step_context(&absent, &mut ledger, tick, |cx| missing_run.poll(cx)).is_pending()
+        );
+    }
+    let failure = with_step_context(&absent, &mut ledger, deadline + 1, |cx| {
+        missing_run.poll(cx)
+    });
+    assert!(
+        matches!(failure, Poll::Ready(Err(ActionError::Failed(_)))),
+        "a missing required drop must use the retryable step-failure path"
+    );
+
+    let mut appeared = GameSnapshot::new();
+    appeared.seed_ingame(2);
+    appeared.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut appeared, false);
+    appeared.seed_ground_items(vec![ground_item(
+        item.id,
+        item.name.as_deref().unwrap(),
+        stand,
+        0,
+    )]);
+    let mut successful_run = combat_test_run(
+        imp_target(&selected),
+        Some(stand),
+        Some(Arc::new(HasItem(item.id))),
+        loot,
+    );
+    assert!(with_step_context(&appeared, &mut ledger, 20, |cx| {
+        successful_run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    assert!(
+        with_step_context(&appeared, &mut ledger, 21, |cx| successful_run.poll(cx)).is_pending()
+    );
+
+    let mut collected = GameSnapshot::new();
+    collected.seed_ingame(2);
+    collected.seed_inventory(
+        vec![inventory_item(item.id, item.name.as_deref().unwrap(), 1)],
+        28,
+    );
+    super::super::tests::seed_dialogue_combat(&mut collected, false);
+    collected.seed_ground_items(Vec::new());
+    assert!(matches!(
+        with_step_context(&collected, &mut ledger, 22, |cx| successful_run.poll(cx)),
+        Poll::Ready(Ok(_))
     ));
 }
 
@@ -4356,8 +4727,10 @@ fn until_drop_missing_loot_waits_without_failing_or_resetting_total_kills() {
         })
         .is_pending());
         for _ in 0..100 {
-            assert!(with_step_context(&snapshot, &mut ledger, kill_tick, |cx| run.poll(cx))
-                .is_pending());
+            assert!(
+                with_step_context(&snapshot, &mut ledger, kill_tick, |cx| run.poll(cx))
+                    .is_pending()
+            );
             assert!(matches!(run.phase, Phase::Loot));
             assert_eq!(run.kills, kills);
         }
@@ -4422,7 +4795,8 @@ fn until_drop_takes_a_late_drop_on_the_final_permitted_kill() {
         run.on_combat_report(report(CombatEnd::Killed), cx)
     })
     .is_pending());
-    for tick in 13..16 {
+    let deadline = 12 + LOOT_ITEM_WAIT_TICKS;
+    for tick in 13..deadline {
         assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending());
         assert!(matches!(run.phase, Phase::Loot));
         assert_eq!(run.kills, 1);
@@ -4435,7 +4809,9 @@ fn until_drop_takes_a_late_drop_on_the_final_permitted_kill() {
         distance: 0,
     }]);
     for _ in 0..2 {
-        assert!(with_step_context(&snapshot, &mut ledger, 16, |cx| run.poll(cx)).is_pending());
+        assert!(
+            with_step_context(&snapshot, &mut ledger, deadline, |cx| run.poll(cx)).is_pending()
+        );
     }
     assert!(ledger.as_ref().unwrap().outbox.iter().any(|action| {
         matches!(
@@ -4447,10 +4823,19 @@ fn until_drop_takes_a_late_drop_on_the_final_permitted_kill() {
             }) if *id == item.id && action == "Take"
         )
     }));
+    assert!(
+        with_step_context(&snapshot, &mut ledger, deadline + 1, |cx| run.poll(cx)).is_pending()
+    );
+    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+    assert_eq!(
+        run.loot_index, 0,
+        "the final permitted kill must wait for its Take"
+    );
+    assert_eq!(run.kills, 1);
     snapshot.seed_inventory(vec![inventory_item(item.id, &item_name, 1)], 28);
     snapshot.seed_ground_items(Vec::new());
     let mut completed = None;
-    for tick in 17..=20 {
+    for tick in deadline + 2..=deadline + 5 {
         match with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)) {
             Poll::Pending => {}
             Poll::Ready(Ok(outcome)) => {
@@ -4491,10 +4876,12 @@ fn until_drop_no_kill_outcomes_do_not_spend_the_kill_budget() {
     .into_iter()
     .enumerate()
     {
-        assert!(with_step_context(&snapshot, &mut ledger, 12 + offset as u64, |cx| {
-            run.on_combat_report(report(end), cx)
-        })
-        .is_pending());
+        assert!(
+            with_step_context(&snapshot, &mut ledger, 12 + offset as u64, |cx| {
+                run.on_combat_report(report(end), cx)
+            })
+            .is_pending()
+        );
         assert_eq!(run.kills, 0);
         assert_eq!(last_test_combat_receipt(&run).kills, 0);
     }
@@ -4583,7 +4970,10 @@ fn same_tick_loot_settle_defers_next_item_without_skipping_it() {
             choices: &choices,
         };
         assert!(run.poll(&mut cx).is_pending());
-        assert_eq!(run.loot_index, 1);
+        assert_eq!(
+            run.loot_index, 0,
+            "the active Take keeps its row until settlement"
+        );
         assert_eq!(cx.tick.cx.ledger.as_ref().unwrap().outbox.len(), 1);
         cx.tick.cx.snapshot = api::snapshot::SnapshotView::new(Some(later), required_after);
         for _ in 0..3 {
@@ -4596,7 +4986,7 @@ fn same_tick_loot_settle_defers_next_item_without_skipping_it() {
         assert!(cx.tick.cx.ledger.as_ref().unwrap().outbox.is_empty());
     });
     assert!(with_step_context(&later, &mut ledger, 2, |cx| run.poll(cx)).is_pending());
-    assert_eq!(run.loot_index, 2);
+    assert_eq!(run.loot_index, 1);
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
         crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
@@ -4626,7 +5016,7 @@ fn combat_loot_reaches_below_quantity_and_skips_at_the_requested_count() {
     };
 
     for (held_bones, expected_index, expected_tile, expected_id) in
-        [(1, 1, bones_tile, bones.id), (25, 2, bead_tile, bead.id)]
+        [(1, 0, bones_tile, bones.id), (25, 1, bead_tile, bead.id)]
     {
         let mut run = combat_test_run(
             imp_target(&data),
@@ -4820,7 +5210,10 @@ fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
     });
 
     assert!(with_step_context(&snapshot, &mut ledger, 15, |cx| run.poll(cx)).is_pending());
-    assert_eq!(run.loot_index, 2, "the unreachable item is skipped");
+    assert_eq!(
+        run.loot_index, 1,
+        "the second Take is active while its loot row remains current"
+    );
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
