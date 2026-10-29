@@ -150,6 +150,10 @@ struct SceneProof {
 #[derive(Default)]
 struct LiveState {
     teleport_sent: bool,
+    prime_seed_sent: bool,
+    prime_open_sent: bool,
+    prime_complete: bool,
+    first_sample_at: Option<Instant>,
     ready: bool,
     setup_error: Option<String>,
     target: Option<WalkSpec>,
@@ -290,6 +294,7 @@ fn frame_hook(
     account: String,
     scenario: Scenario,
 ) -> impl Fn(&mut client::client::Client, &str, crate::SlotFrameInput) + Send + Sync + 'static {
+    let prime_tower_door = std::env::var("NAV_ARRIVAL_PRIME_TOWER_DOOR").as_deref() == Ok("1");
     move |client, username, _hold| {
         if username != account {
             return;
@@ -338,8 +343,14 @@ fn frame_hook(
             != Some(u64::from(snapshot.tick()))
         {
             let walking = state.walk_started;
+            let elapsed_ms = state
+                .first_sample_at
+                .get_or_insert_with(Instant::now)
+                .elapsed()
+                .as_millis();
             state.samples.push(json!({
                 "tick": snapshot.tick(),
+                "elapsed_ms": elapsed_ms,
                 "tile": tile,
                 "scene": client.scene_state,
                 "walking": walking,
@@ -348,9 +359,48 @@ fn frame_hook(
                 "last_movement": snapshot.last_server_movement_tick(),
                 // content/pack/obj.pack:554 selects ghostskull.
                 "ghostskull": snapshot.inv().iter().filter(|(id, _)| *id == 553).map(|(_, qty)| qty).sum::<i32>(),
+                "tower_door": snapshot.locs().iter()
+                    .filter(|loc| matches!(loc.id, 1536 | 1537)
+                        && loc.tile.level == 0
+                        && loc.tile.x.abs_diff(3107) <= 1
+                        && loc.tile.z.abs_diff(3162) <= 1)
+                    .collect::<Vec<_>>(),
             }));
         }
         if !(client.ingame && client.scene_state == 2) || state.setup_error.is_some() {
+            return;
+        }
+        if prime_tower_door
+            && matches!(scenario, Scenario::TowerTop | Scenario::TowerBasement)
+            && !state.prime_complete
+        {
+            if !state.prime_seed_sent {
+                api::interact::seed_at(client, 0, 3106, 3161);
+                state.prime_seed_sent = true;
+                return;
+            }
+            if snapshot.locs().iter().any(|loc| {
+                loc.id == 1537
+                    && loc.tile == (WorldTile { x: 3106, z: 3162, level: 0 })
+            }) {
+                // Preserve the prior tower-entry door state, as in the quest.
+                // Never Close or reset a shared-engine door.
+                state.prime_complete = true;
+            } else if !state.prime_open_sent
+                && tile == Some(WorldTile { x: 3106, z: 3161, level: 0 })
+            {
+                if let Some(door) = snapshot.locs().iter().find(|loc| {
+                    loc.id == 1536
+                        && loc.tile == (WorldTile { x: 3107, z: 3162, level: 0 })
+                }) {
+                    state.prime_open_sent = api::interact::Interactions::new(&snapshot, client)
+                        .interact(
+                            api::interact::OpTarget::Loc(door),
+                            api::interact::ActionSpec::Label("Open".into()),
+                        )
+                        .is_sent();
+                }
+            }
             return;
         }
         if !state.teleport_sent {
