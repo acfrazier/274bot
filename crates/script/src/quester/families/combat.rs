@@ -237,7 +237,8 @@ struct FinishArgs {
     strict: bool,
     /// Skip a `prefer` entry that already answered a page in this
     /// conversation, so a repeated menu can be answered once and left.
-    /// `line_rules` and `choose` are unaffected.
+    /// `line_rules` and `choose` are unaffected. With this option on,
+    /// `prefer` holds at most 32 entries; a longer list fails compilation.
     #[serde(default)]
     answer_once: bool,
     /// Positive game-tick budget for the complete transformation and dialogue.

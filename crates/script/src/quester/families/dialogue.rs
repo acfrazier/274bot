@@ -134,8 +134,9 @@ impl DialogueOptions {
     }
 
     /// Select the answer for one page. `used` is the conversation's mask of
-    /// `prefer` entries that already answered a page; a selection names the
-    /// entry it used so the caller marks it only after the answer is sent.
+    /// `prefer` entries that already answered an accepted page; a selection
+    /// names the entry it used so the caller marks it only once the answer's
+    /// receipt is accepted and the page advances.
     fn select(&self, obs: &ChatObs<'_>, used: u32) -> Option<Selection> {
         if let Some(rule) = self.line_rules.iter().find(|rule| {
             obs.texts
@@ -265,10 +266,17 @@ pub struct Dialogue {
     surface: Surface,
     main_ui: Option<api::game_data::DialogueUiIds>,
     steps: u32,
-    /// `prefer` entries that answered a page in this conversation, one bit
-    /// each. Only read when `answer_once` is set; marked after the answer
-    /// interaction is accepted for sending.
+    /// `prefer` entries whose answer was accepted in this conversation, one
+    /// bit each. Only read when `answer_once` is set; marked by
+    /// [`Self::mark_answer_once`] once the answer's receipt is accepted and
+    /// the page acknowledgement shows the page advanced.
     answers_used: u32,
+    /// The `prefer` entry that chose the answer awaiting acknowledgement and
+    /// the request id of that answer. Queueing the interaction does not
+    /// accept it, so the entry stays unmarked until both the receipt is
+    /// accepted and the page advances; a refused answer, a lost receipt or a
+    /// page that did not advance leaves it unused.
+    pending_prefer: Option<(usize, u64)>,
     due_tick: u64,
     gap_inventory: Option<u64>,
     gap_position: Option<api::WorldTile>,
@@ -298,6 +306,7 @@ impl NativeMachine for Dialogue {
             main_ui: selected_dialogue_ui(cx),
             steps: 0,
             answers_used: 0,
+            pending_prefer: None,
             due_tick: 0,
             gap_inventory: None,
             gap_position: None,
@@ -495,6 +504,12 @@ impl NativeMachine for Dialogue {
                     .ack_page
                     .acknowledged(obs.modal, obs.r#continue, obs.page_fingerprint())
                 {
+                    // The page advanced. Mark the `prefer` entry that chose
+                    // this answer only when the answer's own receipt says it
+                    // was accepted, before the follow-up `drive` can select
+                    // the next page; a refused or lost receipt leaves the
+                    // entry unused so the next menu picks it again.
+                    self.mark_answer_once(cx);
                     // The choice resumes the same paused script in the ack
                     // packet's cycle (`IfButtonHandler.ts:26-29`). A new chat
                     // root means the page's `if_openchat` has been applied, and
@@ -629,6 +644,29 @@ impl Dialogue {
         } else {
             ChatTransitionAck::Accepted
         }
+    }
+
+    /// Mark the pending `prefer` entry now that the page has advanced, but
+    /// only when the answer's own receipt is accepted. Queueing the answer is
+    /// not acceptance: a refused answer and a lost receipt both leave the
+    /// entry unused, so the next menu selects it again instead of falling
+    /// through to a later entry.
+    fn mark_answer_once(&mut self, cx: &ActionContext<'_>) {
+        let Some((index, request_id)) = self.pending_prefer.take() else {
+            return;
+        };
+        let accepted = cx
+            .interaction_receipt(request_id)
+            .is_some_and(|receipt| receipt.accepted);
+        if accepted {
+            self.answers_used |= 1u32.checked_shl(index as u32).unwrap_or(0);
+        }
+    }
+
+    /// The conversation's used-`prefer` mask, for the acceptance tests.
+    #[cfg(test)]
+    pub(super) fn answers_used(&self) -> u32 {
+        self.answers_used
     }
 
     fn open(&mut self, cx: &mut ActionContext<'_>) -> Result<(), ActionError> {
@@ -928,11 +966,7 @@ impl Dialogue {
                 std::task::ready!(crate::native::defer_budget(cx.emit(InteractReq::Answer {
                     option: selection.option
                 })))?;
-            if let Some(index) = selection.prefer {
-                if let Some(bit) = 1u32.checked_shl(index as u32) {
-                    self.answers_used |= bit;
-                }
-            }
+            self.pending_prefer = selection.prefer.map(|index| (index, request_id));
             self.steps += 1;
             self.ack_page = ack_page;
             self.phase = Phase::WaitChoiceAck;

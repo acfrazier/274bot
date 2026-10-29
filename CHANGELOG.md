@@ -63,7 +63,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Quester
 
-- Quest guides can now answer a question on a repeated menu once and then leave. `answer_once: true` skips a preference that already answered a page in the same conversation, so a guide such as Nature Spirit's Filliman Tarlock conversation no longer repeats the question until it gives up.
+- Quest guides can now opt in to answering a repeated menu question once and
+  then moving on. `answer_once: true` skips a `prefer` entry that already
+  answered an accepted page in the same conversation and falls through to the
+  next entry in order, so a guide can answer a repeated menu such as Nature
+  Spirit's Filliman Tarlock conversation once and leave. It defaults to false
+  and no bundled guide sets it, so every shipped guide keeps its answers.
+  With the option on, `prefer` holds at most 32 entries.
 
 ### Scripting
 
