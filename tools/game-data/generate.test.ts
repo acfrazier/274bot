@@ -1676,6 +1676,52 @@ for (const revision of [274, 289]) {
 }
 fs.rmSync(procOperandRoot, { recursive: true, force: true });
 
+// A bare `%varp` return resolves the same way.
+const procBareRoot = questFixture((files) => {
+    files['scripts/player/interfaces/questlist.if'] += '[itexam]\ny=7\ntext=Digsite Quest\n';
+    files['pack/varp.pack'] += '131=itexamlevel\n';
+    files['scripts/general/configs/quest.constant'] += '^itexam_complete = 9\n';
+    files['scripts/quests/quest_itexam/scripts/quest_itexam.rs2'] = `[proc,itexam_progress]()(int)
+return (%itexamlevel);
+`;
+});
+const bareProcRow = extractQuestIdentityFacts(procBareRoot, 289).rows.find((entry) => entry.id === 'itexam');
+assert.deepEqual([bareProcRow?.varp, bareProcRow?.varp_id, bareProcRow?.complete], ['itexamlevel', 131, 9], 'a bare-varp return resolves');
+fs.rmSync(procBareRoot, { recursive: true, force: true });
+
+// Rule 1 refusal: anything that is not a bare `%varp` or a `getbit_range` of
+// one varp stays unresolved and prints exactly one warning.
+function refusedProcRow(extra: Record<string, string>) {
+    const root = questFixture((files) => {
+        files['scripts/player/interfaces/questlist.if'] += '[itexam]\ny=7\ntext=Digsite Quest\n';
+        files['pack/varp.pack'] += '131=itexamlevel\n';
+        files['scripts/general/configs/quest.constant'] += '^itexam_complete = 9\n';
+        Object.assign(files, extra);
+    });
+    const lines: string[] = [];
+    const consoleWarn = console.warn;
+    console.warn = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+    try {
+        const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'itexam');
+        assert.deepEqual([row?.varp, row?.varp_id, row?.complete], ['~itexam_progress', -1, 9], 'a refused proc keeps the operand text and the resolved complete');
+        assert.equal(lines.length, 1, `one warning for the refused proc: ${lines.join(' | ')}`);
+        assert.match(lines[0], /^quest_identity: itexam /);
+        assert.match(lines[0], /progress operand ~itexam_progress/);
+    } finally {
+        console.warn = consoleWarn;
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+const itexamProcFile = 'scripts/quests/quest_itexam/scripts/quest_itexam.rs2';
+// A computed return (`add(%foo, 1)`) is not a progress read.
+refusedProcRow({ [itexamProcFile]: `[proc,itexam_progress]()(int)\nreturn (add(%itexamlevel, 1));\n` });
+// Two `[proc,itexam_progress]` definitions are ambiguous.
+refusedProcRow({ [itexamProcFile]: `[proc,itexam_progress]()(int)\nreturn (%itexamlevel);\n`, 'scripts/quests/quest_itexam/scripts/itexam_shadow.rs2': `[proc,itexam_progress]()(int)\nreturn (getbit_range(%itexamlevel, 0, 3));\n` });
+// Two returns are not one progress read.
+refusedProcRow({ [itexamProcFile]: `[proc,itexam_progress]()(int)\nif (%itexamlevel = 0) {\n    return (0);\n}\nreturn (getbit_range(%itexamlevel, 0, 3));\n` });
+// One return naming two varps is not one progress read.
+refusedProcRow({ [itexamProcFile]: `[proc,itexam_progress]()(int)\nreturn (add(%itexamlevel, %cogquest));\n` });
+
 // Rule 2: a complete constant absent from quest.constant resolves in the quest's own .constant file.
 const questLocalConstantRoot = questFixture((files) => {
     files['scripts/general/scripts/quests.rs2'] += '~send_quest_progress_colour(questlist:mm, %mm_main, ^mm_complete);\n';
@@ -1690,6 +1736,28 @@ for (const revision of [274, 289]) {
     assert.deepEqual([row?.varp, row?.varp_id, row?.complete], ['mm_main', 365, 9]);
 }
 fs.rmSync(questLocalConstantRoot, { recursive: true, force: true });
+
+// Rule 2 refusal: two different quest-local values for the same constant stay unresolved.
+const contradictoryConstantRoot = questFixture((files) => {
+    files['scripts/general/scripts/quests.rs2'] += '~send_quest_progress_colour(questlist:mm, %mm_main, ^mm_complete);\n';
+    files['scripts/player/interfaces/questlist.if'] += '[mm]\ny=8\ntext=Monkey Madness\n';
+    files['pack/varp.pack'] += '365=mm_main\n';
+    files['scripts/quests/quest_mm/configs/quest_mm.constant'] = '^mm_complete = 9\n';
+    files['scripts/quests/quest_mm/configs/quest_mm_reward.constant'] = '^mm_complete = 10\n';
+});
+const constantLines: string[] = [];
+const constantWarn = console.warn;
+console.warn = (...args: unknown[]) => { constantLines.push(args.map(String).join(' ')); };
+try {
+    const row = extractQuestIdentityFacts(contradictoryConstantRoot, 289).rows.find((entry) => entry.id === 'mm');
+    assert.deepEqual([row?.varp, row?.varp_id, row?.complete], ['mm_main', 365, 0], 'a contradictory local constant keeps 0');
+    assert.equal(constantLines.length, 1, `one warning for the contradictory constant: ${constantLines.join(' | ')}`);
+    assert.match(constantLines[0], /^quest_identity: mm /);
+    assert.match(constantLines[0], /complete constant \^mm_complete is not in quest\.constant or the quest's own \.constant/);
+} finally {
+    console.warn = constantWarn;
+    fs.rmSync(contradictoryConstantRoot, { recursive: true, force: true });
+}
 
 // Rule 3: an operand that still cannot be resolved keeps today's row values and prints one warning naming the quest.
 const unresolvedRoot = questFixture((files) => {

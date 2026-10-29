@@ -46,6 +46,17 @@ digest **and** schema; sources are rechecked before publication. A refused build
 removes staging and leaves the previous assets intact. The final manifest's
 digest is computed externally, never embedded in its own bytes.
 
+## Revision-gated PvP V0 facts
+
+Revision 274 predates PvP V0, so its core omits `duel.rule_buttons`,
+`special_weapons`, `item_combat_bonus`, `melee_weapon_tiers`, `duel_zones`,
+the PvP V0 `style_spotanims` rows, and the per-item `destroy_death` flag.
+`DuelControls::rule_button` reports `None` on 274, which
+`crates/api/src/game_data_tests.rs` pins (`rule_button_is_none_on_revision_274`).
+Revision 289 carries every V0 fact. One `generate.ts` pass publishes a
+revision's core, families and manifest row together; regenerate 274 with a
+whole-file pass rather than splicing rows into an older core.
+
 ## Server-ordered content contracts
 
 The revision 289 core includes a generated `server_ordered` catalog.

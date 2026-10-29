@@ -289,8 +289,10 @@ function procDefinitions(content: string) {
 }
 
 /**
- * The one varp a progress proc returns, or null when the body has no single
- * `return` naming one varp. A proc call is progress, never a varp itself.
+ * The one varp a progress proc returns when its single `return` is exactly a
+ * bare `%varp` or `getbit_range(%varp, ...)`. Any other expression (a computed
+ * value, two returns, or two varps) stays unresolved: a proc call is progress,
+ * never a varp itself.
  */
 function procProgressVarp(block: Rs2Block): string | null {
     const returns: string[] = [];
@@ -298,8 +300,13 @@ function procProgressVarp(block: Rs2Block): string | null {
         if (/^return(?![A-Za-z0-9_$])/.test(stmt.text)) returns.push(stmt.text);
     });
     if (returns.length !== 1) return null;
-    const names = new Set([...returns[0].replace(/"[^"]*"/g, '""').matchAll(/%([A-Za-z0-9_]+)/g)].map((match) => match[1]));
-    return names.size === 1 ? [...names][0] : null;
+    const value = /^return\s*\((.*)\)$/.exec(returns[0])?.[1] ?? /^return\s+(%[A-Za-z0-9_]+)$/.exec(returns[0])?.[1];
+    if (value === undefined) return null;
+    const names = new Set([...value.replace(/"[^"]*"/g, '""').matchAll(/%([A-Za-z0-9_]+)/g)].map((match) => match[1]));
+    if (names.size !== 1) return null;
+    const [varp] = [...names];
+    if (value === `%${varp}`) return varp;
+    return new RegExp(`^getbit_range\\s*\\(\\s*%${varp}\\s*,.*\\)$`).test(value) ? varp : null;
 }
 
 /** Resolve `~proc` to its backing varp; a missing, duplicated or ambiguous proc stays unresolved. */
