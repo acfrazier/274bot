@@ -69,6 +69,9 @@ static ABORT_ESCAPE_UNSAFE: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from(ABORT_ESCAPE_UNSAFE_REASON));
 static ABORT_ESCAPE_STALLED: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from(ABORT_ESCAPE_STALLED_REASON));
+/// Death handlers may add loot after the `Killed` report; bound the wait so
+/// missing optional drops cannot stall a combat step indefinitely.
+const LOOT_ITEM_WAIT_TICKS: u64 = 20;
 
 fn tile_distance(a: api::WorldTile, b: api::WorldTile) -> i32 {
     if a.level != b.level {
@@ -790,6 +793,7 @@ impl StepPlan for CombatPlan {
             action: None,
             phase: Phase::Combat,
             loot_index: 0,
+            loot_wait_deadline: None,
             last_report: None,
             last_outcome: None,
             target_gone_restarts: 0,
@@ -1128,6 +1132,7 @@ struct CombatRun {
     action: Option<Action>,
     phase: Phase,
     loot_index: usize,
+    loot_wait_deadline: Option<u64>,
     last_report: Option<CombatReport>,
     last_outcome: Option<StepOutcome>,
     target_gone_restarts: u8,
@@ -1691,6 +1696,7 @@ impl CombatRun {
             CombatEnd::Killed => {
                 self.phase = Phase::Loot;
                 self.loot_index = 0;
+                self.loot_wait_deadline = None;
                 Poll::Pending
             }
             CombatEnd::TargetGone => {
@@ -1782,8 +1788,10 @@ impl CombatRun {
                 .sum::<i64>();
             if held >= i64::from(item.qty) {
                 self.loot_index += 1;
+                self.loot_wait_deadline = None;
                 continue;
             }
+            // A death callback may publish the configured item on a later tick.
             let handle = cx.tick.actions.begin::<Reach>(
                 ReachArgs {
                     kind: ReachKind::Ground {
@@ -1792,13 +1800,18 @@ impl CombatRun {
                     },
                     op: Arc::from("Take"),
                     anchor: self.request.stand,
-                    radius: i32::from(self.request.lost_radius),
-                    wait_if_missing: false,
-                    target_tile: None,
+                    wait_if_missing: true,
                     reachable_only: false,
                 },
                 &mut cx.tick.cx,
             )?;
+            self.loot_wait_deadline.get_or_insert_with(|| {
+                cx.tick
+                    .cx
+                    .evidence()
+                    .tick
+                    .saturating_add(LOOT_ITEM_WAIT_TICKS)
+            });
             self.loot_index += 1;
             self.action = Some(Action::Loot(handle));
             return Ok(LootStart::Started);
@@ -1898,6 +1911,7 @@ impl CombatRun {
         &mut self,
         cx: &mut StepContext<'_, '_>,
     ) -> Poll<Result<StepOutcome, ActionError>> {
+        self.loot_wait_deadline = None;
         match std::task::ready!(crate::native::defer_budget(self.begin_loot(cx))) {
             Ok(LootStart::Waiting | LootStart::Started) => Poll::Pending,
             Ok(LootStart::Complete) => {
@@ -1958,6 +1972,18 @@ impl StepRun for CombatRun {
         if self.manual_takeover_watch.interrupted(&cx.tick.cx) {
             self.action = None;
             return Poll::Ready(Err(ActionError::UserInput));
+        }
+        if matches!(self.phase, Phase::Loot)
+            && matches!(self.action.as_ref(), Some(Action::Loot(_)))
+            && self
+                .loot_wait_deadline
+                .is_some_and(|deadline| cx.tick.cx.evidence().tick > deadline)
+        {
+            // Reach can wait for a delayed drop, but an absent or unrouteable
+            // optional item must not hold the combat step forever.
+            self.action = None;
+            self.loot_wait_deadline = None;
+            return self.next_loot_or_reengage(cx);
         }
         if matches!(self.phase, Phase::FinishWait | Phase::FinishDialogue)
             && !self.spend_finish_tick_budget(cx.tick.cx.evidence().tick)

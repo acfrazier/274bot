@@ -929,6 +929,7 @@ fn combat_test_run(
         action: None,
         phase: Phase::Combat,
         loot_index: 0,
+        loot_wait_deadline: None,
         last_report: None,
         last_outcome: None,
         target_gone_restarts: 0,
@@ -4234,6 +4235,54 @@ fn killed_report_waits_for_a_late_drop_before_reengaging() {
             )),
         "the delayed ore should be taken before the combat step re-engages"
     );
+}
+
+#[test]
+fn missing_combat_loot_wait_is_bounded_before_reengaging() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("elemental_workshop_ore").unwrap();
+    let stand = api::WorldTile {
+        x: 2693,
+        z: 9906,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    snapshot.seed_ground_items(Vec::new());
+    let mut run = combat_test_run(
+        imp_target(&selected),
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        vec![LootItem {
+            id: item.id,
+            name: Arc::from(item.name.as_deref().unwrap()),
+            qty: 1,
+        }],
+    );
+    run.phase = Phase::Loot;
+    let mut ledger = None;
+
+    let deadline = 1_u64.saturating_add(LOOT_ITEM_WAIT_TICKS);
+    for tick in 1..=deadline {
+        assert!(
+            with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending()
+        );
+        assert!(matches!(&run.phase, Phase::Loot));
+        assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+        assert_eq!(run.loot_wait_deadline, Some(deadline));
+    }
+    assert!(
+        with_step_context(&snapshot, &mut ledger, deadline.saturating_add(1), |cx| {
+            run.poll(cx)
+        })
+        .is_pending()
+    );
+    assert!(matches!(&run.phase, Phase::Combat));
+    assert!(matches!(run.action.as_ref(), Some(Action::Combat(_))));
+    assert_eq!(run.loot_index, 1);
+    assert!(run.loot_wait_deadline.is_none());
 }
 
 #[test]
