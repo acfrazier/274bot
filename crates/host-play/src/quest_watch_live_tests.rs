@@ -233,7 +233,7 @@ fn run_seed_cell() -> Value {
         .prepare_template()
         .expect("prepare cold live template");
     let mut runner = ScenarioRunner::with_world(scenario, template.world());
-    runner.set_live_names(&[account.clone()]);
+    runner.set_live_names(std::slice::from_ref(&account));
     runner.set_shot_sink(Box::new(|_, _| {}));
     let state = Arc::new(Mutex::new(SeedState {
         runner,
@@ -360,15 +360,17 @@ fn build_quest_watch_home() {
             "username {:?} exceeds 12 chars",
             row.username
         );
-        let mut settings = ProfileSettings::default();
-        settings.auto_login = true;
-        settings.tutorial_skipped = Some(true);
-        settings.script_assignment = Some(ScriptAssignment {
-            source_kind: "compiled".into(),
-            identity: "Quester".into(),
-            display_name: "Quester".into(),
-            unavailable: None,
-        });
+        let mut settings = ProfileSettings {
+            auto_login: true,
+            tutorial_skipped: Some(true),
+            script_assignment: Some(ScriptAssignment {
+                source_kind: "compiled".into(),
+                identity: "Quester".into(),
+                display_name: "Quester".into(),
+                unavailable: None,
+            }),
+            ..ProfileSettings::default()
+        };
         let mut bag = Map::new();
         bag.insert("quests".into(), json!([row.quest]));
         // Watch-fixture walk permissions: a staged Path may route
