@@ -4452,16 +4452,14 @@ fn missing_required_combat_loot_counts_as_failure_and_a_later_drop_settles() {
         successful_run.on_combat_report(report(CombatEnd::Killed), cx)
     })
     .is_pending());
-    assert!(with_step_context(&appeared, &mut ledger, 21, |cx| successful_run.poll(cx)).is_pending());
+    assert!(
+        with_step_context(&appeared, &mut ledger, 21, |cx| successful_run.poll(cx)).is_pending()
+    );
 
     let mut collected = GameSnapshot::new();
     collected.seed_ingame(2);
     collected.seed_inventory(
-        vec![inventory_item(
-            item.id,
-            item.name.as_deref().unwrap(),
-            1,
-        )],
+        vec![inventory_item(item.id, item.name.as_deref().unwrap(), 1)],
         28,
     );
     super::super::tests::seed_dialogue_combat(&mut collected, false);

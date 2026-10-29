@@ -1852,10 +1852,7 @@ impl CombatRun {
     fn ground_loot_visible(&self, cx: &StepContext<'_, '_>, item: &LootItem) -> Option<bool> {
         let snapshot = cx.tick.cx.snapshot();
         let items = snapshot.ground_items()?;
-        let area = reach::ground_area(
-            self.request.stand,
-            i32::from(self.request.lost_radius),
-        );
+        let area = reach::ground_area(self.request.stand, i32::from(self.request.lost_radius));
         Some(
             items
                 .value
