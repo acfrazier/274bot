@@ -71,9 +71,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   using the shortest route and the closest tile as a tie-breaker.
   If Luthas is not in view, the bot first walks to where he works, then chooses
   a free tile next to him.
-  Failed walks, "I can't reach that!" replies and dialogue timeouts share a
-  limit of three attempts. The bot logs each failed attempt and the final
-  failure.
+  The bot makes up to three attempts each time the bot goes to talk to Luthas.
+  The bot logs each failed attempt and the final failure.
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 

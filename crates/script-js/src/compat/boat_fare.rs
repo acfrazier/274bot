@@ -3,9 +3,10 @@
 //!
 //! Frozen `Traversal.walkTo` (`Traversal.ts:80–95`): one `WalkExecutor`
 //! walk; on a `failed`/`unreachable` outcome `recoverBoatFare`
-//! (`karamjaRecovery.ts`), then one more walk. The baked leg of
-//! `walkResilient` is the same `Traversal.walkTo` (`Traversal.ts:160–170`),
-//! so [`crate::walk::Resilient`] embeds [`Recover`] too.
+//! (`karamjaRecovery.ts`), then one more walk. If fare recovery does not apply,
+//! a failed first walk gets one fresh plan. The baked leg of `walkResilient`
+//! is the same `Traversal.walkTo` (`Traversal.ts:160–170`), so
+//! [`crate::walk::Resilient`] embeds [`Recover`] too.
 //!
 //! `WalkOptions` (`WalkExecutor.ts:113–139, 226–245`): `radius` defaults to
 //! 2 and `timeoutMs` to 300 s; teleports are `resolveWalkUseTeleports` (an
@@ -1259,6 +1260,11 @@ enum Stage {
         staging_tile: WorldTile,
         walk: Walk,
     },
+    WaitLuthas {
+        second: bool,
+        attempt: u32,
+        tried_stands: TriedStands,
+    },
     TalkWalk {
         second: bool,
         attempt: u32,
@@ -1363,7 +1369,23 @@ impl Recover {
                     });
                 }
                 Err(true) => {
-                    return Self::talk_posted(facts, second, attempt, tried_stands, cx, logs);
+                    if talk_row(&facts.luthas_name).is_some() {
+                        return Self::talk_posted(
+                            facts,
+                            second,
+                            attempt,
+                            tried_stands,
+                            cx,
+                            logs,
+                        );
+                    }
+                    let detail = "the staging walk ended without Luthas in view";
+                    log_staging_failure(logs, attempt, staging_tile, detail);
+                    return Ok(Stage::WaitLuthas {
+                        second,
+                        attempt,
+                        tried_stands,
+                    });
                 }
                 Err(false) => {
                     let detail = "the host could not start the walk to Luthas's spawn tile";
@@ -1455,6 +1477,7 @@ impl Recover {
     pub(crate) fn release(&self) -> Option<InteractReq> {
         match &self.stage {
             Stage::TalkWalk { walk, .. } | Stage::LocateLuthas { walk, .. } => Some(walk.release()),
+            Stage::WaitLuthas { .. } => None,
             Stage::Fill(fill) => match &fill.phase {
                 FillPhase::Search(SearchCrate::Walk(walk))
                 | FillPhase::Final(SearchCrate::Walk(walk))
@@ -1497,13 +1520,61 @@ impl Recover {
                         Ok(stage) => stage,
                         Err(done) => return Some(done),
                     }
-                } else {
-                    let detail = if settled {
-                        "the staging walk ended without Luthas in view"
-                    } else {
-                        "the host walk did not reach Luthas's spawn tile"
-                    };
+                } else if settled {
+                    let detail = "the staging walk ended without Luthas in view";
                     log_staging_failure(logs, *attempt, *staging_tile, detail);
+                    Stage::WaitLuthas {
+                        second: *second,
+                        attempt: *attempt,
+                        tried_stands: *tried_stands,
+                    }
+                } else {
+                    let detail = "the host walk did not reach Luthas's spawn tile";
+                    log_staging_failure(logs, *attempt, *staging_tile, detail);
+                    if *attempt >= TALK_ATTEMPTS {
+                        log_terminal_failure(logs, *attempt, detail);
+                        return Some(false);
+                    }
+                    match Self::locate_luthas(
+                        &self.facts,
+                        *second,
+                        *attempt + 1,
+                        *tried_stands,
+                        cx,
+                        logs,
+                    ) {
+                        Ok(stage) => stage,
+                        Err(done) => return Some(done),
+                    }
+                }
+            }
+            Stage::WaitLuthas {
+                second,
+                attempt,
+                tried_stands,
+            } => {
+                if talk_row(&self.facts.luthas_name).is_some() {
+                    if *attempt >= TALK_ATTEMPTS {
+                        log_terminal_failure(
+                            logs,
+                            *attempt,
+                            "the staging walk ended without Luthas in view",
+                        );
+                        return Some(false);
+                    }
+                    match Self::talk_posted(
+                        &self.facts,
+                        *second,
+                        *attempt + 1,
+                        *tried_stands,
+                        cx,
+                        logs,
+                    ) {
+                        Ok(stage) => stage,
+                        Err(done) => return Some(done),
+                    }
+                } else {
+                    let detail = "the staging walk ended without Luthas in view";
                     if *attempt >= TALK_ATTEMPTS {
                         log_terminal_failure(logs, *attempt, detail);
                         return Some(false);
@@ -1895,9 +1966,26 @@ impl WalkTo {
                     self.result = Some(value);
                     return;
                 }
+                // If fare recovery does not start, give the failed walk one fresh plan.
                 match Recover::start(self.dest, cx, &mut self.logs) {
                     Ok(recover) => self.phase = WalkToPhase::Recover(Box::new(recover)),
-                    Err(_) => self.result = Some(false),
+                    Err(_) => match Walk::begin_compat_avoiding(
+                        self.dest,
+                        self.radius,
+                        self.timeout_ms,
+                        self.allow_teleports,
+                        self.avoid.clone(),
+                        self.cross.clone(),
+                        cx,
+                    ) {
+                        Ok(walk) => {
+                            self.phase = WalkToPhase::Walking {
+                                walk,
+                                retried: true,
+                            }
+                        }
+                        Err(arrived) => self.result = Some(arrived),
+                    },
                 }
             }
             WalkToPhase::Recover(recover) => match recover.step(cx, &mut self.logs) {
