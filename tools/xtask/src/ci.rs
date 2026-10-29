@@ -457,13 +457,13 @@ fn run_test_step(step: &Step, command: &str, root: &Path, log: &mut File) -> Res
         Some(temp_home)
     };
     let result = run_logged(process, log);
-    if let Some(home) = temp_home {
-        if let Err(error) = fs::remove_dir_all(&home) {
-            return Err(format!(
-                "cannot remove test HOME {}: {error}",
-                home.display()
-            ));
-        }
+    if let Some(home) = temp_home
+        && let Err(error) = fs::remove_dir_all(&home)
+    {
+        return Err(format!(
+            "cannot remove test HOME {}: {error}",
+            home.display()
+        ));
     }
     result
 }
