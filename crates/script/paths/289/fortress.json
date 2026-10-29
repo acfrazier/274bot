@@ -29,7 +29,7 @@
       ]
     },
     "bank": "nearest",
-    "coin_float": 0,
+    "coin_float": 234,
     "loadouts": {},
     "areas": {},
     "tools": ["obj:bronze_med_helm", "obj:iron_chainbody", "obj:cabbage"],
@@ -62,6 +62,20 @@
       {
         "stage": "fortress:1", "required": [], "terminal": false, "recovery_entry": null, "order": "ordered",
         "steps": [
+          {
+            "id": "buy-helm", "kind": "buy", "version": 1,
+            "args": {"shop": {"npc": "peksa", "anchor": {"tile": [3076, 3429, 0], "source": "content/maps/m48_53.jm2:8100"}}, "obj": "bronze_med_helm", "qty": 1, "est_gp": 24},
+            "comment": "content/scripts/areas/area_barbarian_village/configs/barbarian_village.inv:9; content/scripts/areas/area_barbarian_village/configs/barbarian_village.npc:29-34; content/scripts/skill_combat/configs/melee/medhelms.obj:31-34; content/scripts/shop/scripts/shop.rs2:131-147,182-187. Price assumes base stock.",
+            "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_med_helm"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_med_helm"}}}]},
+            "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_med_helm"}}}
+          },
+          {
+            "id": "buy-chainbody", "kind": "buy", "version": 1,
+            "args": {"shop": {"npc": "wayne", "anchor": {"tile": [2973, 3312, 0], "source": "content/maps/m46_51.jm2:6353"}}, "obj": "iron_chainbody", "qty": 1, "est_gp": 210},
+            "comment": "content/scripts/areas/area_falador/configs/falador.inv:44-49; content/scripts/areas/area_falador/configs/falador.npc:238-243; content/scripts/skill_combat/configs/melee/chainbodies.obj:1-4; content/scripts/shop/scripts/shop.rs2:131-147,182-187. Price assumes base stock.",
+            "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_chainbody"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "iron_chainbody"}}}]},
+            "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_chainbody"}}}
+          },
           {
             "id": "get-cabbage-before-entry", "kind": "acquire", "version": 1,
             "args": { "recipe": "acquire:cabbage" },

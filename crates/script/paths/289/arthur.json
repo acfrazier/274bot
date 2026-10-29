@@ -13,7 +13,7 @@
     "items": [],
     "acquire": {},
     "bank": "nearest",
-    "coin_float": 0,
+    "coin_float": 12,
     "loadouts": {},
     "areas": {
       "keep": { "boxes": [[2764, 3392, 2785, 3418, 0], [2764, 3392, 2785, 3418, 1], [2764, 3392, 2785, 3418, 2]], "source": "289 maps/m43_53.jm2:5050-5051,7281; scripts/quests/quest_arthur/configs/quest_arthur.constant:15-17" }
@@ -86,6 +86,20 @@
           "args": { "target": { "loc": "lefayeunopenabledoorl" }, "op": "Open", "anchor": { "tile": [2763, 3402, 0], "source": "289 maps/m43_53.jm2:5051; pack/loc.pack:72" }, "radius": 8 },
           "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "keep" } } } },
           "settle": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "keep" } } } }
+        },
+        {
+          "id": "buy-bread", "kind": "buy", "version": 1,
+          "args": {"shop": {"npc": "baker_merchant", "anchor": {"tile": [2654, 3311, 0], "source": "content/maps/m41_51.jm2:10991"}}, "obj": "bread", "qty": 1, "est_gp": 12},
+          "comment": "content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:24; content/scripts/areas/area_ardougne_east/configs/ardougne_east.npc:410-414; content/scripts/skill_cooking/configs/cooking_inv/configs/dough/dough.obj:38-44; content/scripts/shop/scripts/shop.rs2:131-147,182-187. Price assumes base stock.",
+          "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bread"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "excalibur"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bread"}}}
+        },
+        {
+          "id": "collect-bat-bones", "kind": "combat", "version": 1, "advances": false,
+          "args": {"target": {"npc": "bat", "not_targeting_others": true, "pick": "nearest"}, "stand": {"tile": [2752, 3409, 0], "source": "content/maps/m43_53.jm2:7262; content/pack/npc.pack:79"}, "lost_radius": 20, "kill_budget_ticks": 500, "tactic": {"kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true}, "loot": ["bat_bones"], "until": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bat_bones"}}}},
+          "comment": "content/scripts/_unpack/225/all.npc:1934-1964 gives giant bats the bat_bones death drop.",
+          "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bat_bones"}}},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bat_bones"}}}
         },
         {
           "id": "walk-to-repellent", "kind": "walk", "version": 1,

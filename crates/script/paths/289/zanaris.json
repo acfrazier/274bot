@@ -5,8 +5,7 @@
   "display_name": "Lost City",
   "required": [
     "crafting:31",
-    "woodcutting:36",
-    "magic:35"
+    "woodcutting:36"
   ],
   "tested_stats": null,
   "partner": null,
@@ -35,23 +34,12 @@
         },
         "at": "start",
         "source": "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2:28-40"
-      },
-      {
-        "id": "magic:35",
-        "kind": {
-          "Skill": {
-            "skill": "magic",
-            "level": 35
-          }
-        },
-        "at": "start",
-        "source": "scripts/skill_combat/configs/magic/magic_combat_spells.dbrow:134-143; authored Fire Bolt tactic, not a quest prerequisite"
       }
     ],
     "items": [],
     "acquire": {},
     "bank": "nearest",
-    "coin_float": 0,
+    "coin_float": 16,
     "loadouts": {
       "entrana": {
         "worn": {},
@@ -202,7 +190,15 @@
           "required": [],
           "terminal": false,
           "recovery_entry": null,
+          "order": "ordered",
           "steps": [
+            {
+              "id": "buy-axe-for-shamus", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "bob", "anchor": {"tile": [3232, 3203, 0], "source": "content/maps/m50_50.jm2:9693"}}, "obj": "bronze_axe", "qty": 1, "est_gp": 16},
+              "comment": "content/scripts/areas/area_lumbridge/configs/lumbridge.inv:1-10; content/scripts/areas/area_lumbridge/configs/lumbridge.npc:129-132; content/scripts/skill_woodcutting/configs/axes/axes.obj:35-38; content/scripts/shop/scripts/shop.rs2:131-147,182-187. Price assumes base stock.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_axe"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_axe"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_axe"}}}
+            },
             {
               "id": "find-shamus",
               "kind": "interact",
@@ -667,14 +663,10 @@
                 },
                 "tactic": {
                   "kind": "open",
-                  "style": "mage",
+                  "style": "melee",
                   "engage_radius": 12,
                   "auto_retaliate": false
                 },
-                "spells": [
-                  "fire_bolt"
-                ],
-                "fallback_spells": false,
                 "stand": {
                   "tile": [
                     2842,
@@ -771,14 +763,10 @@
                 },
                 "tactic": {
                   "kind": "open",
-                  "style": "mage",
+                  "style": "melee",
                   "engage_radius": 10,
                   "auto_retaliate": false
                 },
-                "spells": [
-                  "fire_bolt"
-                ],
-                "fallback_spells": false,
                 "stand": {
                   "tile": [
                     2860,

@@ -51,7 +51,7 @@
     "items": [],
     "acquire": {},
     "bank": "nearest",
-    "coin_float": 0,
+    "coin_float": 1,
     "loadouts": {},
     "areas": {
       "workshop": {
@@ -164,8 +164,22 @@
           "required": [],
           "terminal": false,
           "recovery_entry": null,
-          "order": "authored",
+          "order": "ordered",
           "steps": [
+            {
+              "id": "buy-thread", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "tailorp", "anchor": {"tile": [3281, 3398, 0], "source": "content/maps/m51_53.jm2:6739"}}, "obj": "thread", "qty": 1, "est_gp": 1},
+              "comment": "content/scripts/areas/area_varrock/configs/varrock.inv:114-115; content/scripts/areas/area_varrock/configs/varrock.npc:392-397; content/scripts/skill_crafting/configs/crafting.obj:131-141; content/scripts/shop/scripts/shop.rs2:138-147,182-187. Default cost is 1 and the purchase floor is 1.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "thread"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "thread"}}}
+            },
+            {
+              "id": "collect-four-coal", "kind": "combat", "version": 1, "advances": false,
+              "args": {"target": {"npc": "dwarf_normal", "not_targeting_others": true, "pick": "nearest"}, "stand": {"tile": [2998, 3445, 0], "source": "content/maps/m46_53.jm2:5949; content/pack/npc.pack:119"}, "lost_radius": 20, "kill_budget_ticks": 5000, "tactic": {"kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true}, "loot": ["coal"], "until": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "coal", "qty": 4}}}},
+              "comment": "content/scripts/drop tables/scripts/dwarf.rs2:1-13,43-50 gives coal with random result 102 or 103 of 128. This route does not require Mining 30 (content/scripts/skill_mining/configs/mine.dbrow:62-73).",
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "coal", "qty": 4}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "coal", "qty": 4}}}
+            },
             {
               "id": "find-book",
               "kind": "interact",
@@ -672,6 +686,13 @@
                 }
               },
               "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:36-41"
+            },
+            {
+              "id": "search-leather-box", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"loc": "elemental_workshop_box_4"}, "op": "Search", "anchor": {"tile": [2724, 9894, 0], "source": "content/maps/m42_154.jm2:6702; content/pack/loc.pack:3398"}, "radius": 4},
+              "comment": "content/scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:62-68 gives one leather from this box. content/scripts/_unpack/244/all.loc:70-73 names the Search operation.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "leather"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "leather"}}}
             },
             {
               "id": "fix-bellows",
