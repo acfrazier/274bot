@@ -4176,6 +4176,12 @@ fn script_section_discloses_only_the_selected_quester_queue() {
     session.script_sel = Some(ScriptChoice::compiled(
         frontend_core::scripts::CompiledCardId::QUESTER,
     ));
+    session
+        .ui
+        .collapsed
+        .entry("alice".into())
+        .or_default()
+        .insert("script".into(), false);
 
     let mut ctx = dock_host_context();
     let drawn = DrawnText::default();

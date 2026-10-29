@@ -1946,6 +1946,23 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             EXIT_UPPER,
         ),
     ];
+    fn script_text(rows: &[String], area: ratatui::layout::Rect) -> String {
+        let inner = ratatui::widgets::Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .inner(area);
+        rows.iter()
+            .skip(usize::from(inner.y))
+            .take(usize::from(inner.height))
+            .map(|row| {
+                row.chars()
+                    .skip(usize::from(inner.x))
+                    .take(usize::from(inner.width))
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     let evidence_root =
         std::env::var_os("QUESTER_DANGER_CONSENT_TUI_EVIDENCE").map(std::path::PathBuf::from);
     for (width, height) in [(120, 40), (80, 24)] {
@@ -1959,7 +1976,8 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
 
         let mut combined = String::new();
         let mut page_index = 0;
-        let mut shown = text(&draw(&mut app, width, height));
+        let mut rows = draw(&mut app, width, height);
+        let mut shown = text(&rows);
         assert!(
             shown.contains("Start zone scope"),
             "{width}x{height}: {shown}"
@@ -1973,7 +1991,8 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             !shown.contains("Prince Ali Rescue"),
             "only the selected Arthur queue is disclosed: {shown}"
         );
-        combined.push_str(&shown);
+        combined.push_str(&script_text(&rows, app.script_area));
+        combined.push('\n');
 
         if let Some(root) = &evidence_root {
             let directory = root.join("QUEST-DANGER-CONSENT");
@@ -1998,12 +2017,14 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
                 "{width}x{height}: PageDown must advance the scope"
             );
             page_index += 1;
-            shown = text(&draw(&mut app, width, height));
+            rows = draw(&mut app, width, height);
+            shown = text(&rows);
             assert!(
                 shown.contains("Start zone scope") && shown.contains("[Start t]"),
                 "{width}x{height}: controls stay visible while scrolling: {shown}"
             );
-            combined.push_str(&shown);
+            combined.push_str(&script_text(&rows, app.script_area));
+            combined.push('\n');
             if let Some(root) = &evidence_root {
                 std::fs::write(
                     root.join("QUEST-DANGER-CONSENT")
