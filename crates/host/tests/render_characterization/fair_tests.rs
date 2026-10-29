@@ -21,6 +21,7 @@ struct Completed {
     stats: Option<HeadFairStats>,
     generation: u64,
     scene_state: i32,
+    tick: u64,
 }
 
 struct Gate {
@@ -168,6 +169,7 @@ impl Slot {
                     health_bar_npc(&mut client, x, z);
                 }
                 client.last_response = Some(Instant::now());
+                let mut completed_ticks = 0u64;
                 Host::run_client(
                     &mut client,
                     "t4fair",
@@ -192,10 +194,12 @@ impl Slot {
                         false
                     },
                     |client| {
+                        completed_ticks = completed_ticks.wrapping_add(1);
                         let _ = completed_tx.send(Completed {
                             stats: output.fair_stats(),
                             generation: output.generation(),
                             scene_state: client.scene_state,
+                            tick: completed_ticks,
                         });
                         control.stop.load(Ordering::SeqCst)
                     },
@@ -392,6 +396,51 @@ fn busy_paint_returns_before_peer_release() {
     );
     assert_eq!(painted.stats.unwrap().scene_consumes(), 1);
     assert_eq!(painted.stats.unwrap().due_skips(), 0);
+}
+
+#[test]
+fn peer_slot_release_wakes_parked_watch_head_within_one_tick() {
+    let Some(_serial) = gpu_fixture() else {
+        return;
+    };
+    let now = Instant::now();
+    let mut owner = Slot::start(now, Some(RenderTestPoint::BeforeLeaseRelease));
+    owner.event(RenderTestPoint::BeforeLeaseRelease);
+    let peer = Slot::start(now, None);
+    let busy = peer.painted(0);
+    assert_eq!(busy.stats.unwrap().scene_consumes(), 0);
+    assert_eq!(busy.stats.unwrap().busy_paints(), 1);
+    assert!(
+        !peer.control.park.wait_readable(Duration::from_millis(20)),
+        "the watch slot has no pending control wake before its peer releases"
+    );
+    assert!(
+        matches!(peer.completed.try_recv(), Err(mpsc::TryRecvError::Empty)),
+        "the watch slot remains parked rather than taking an eager tick"
+    );
+
+    owner.release();
+    let consumed = peer.event(RenderTestPoint::AfterConsume);
+    let painted = peer.painted(busy.generation);
+    assert_eq!(
+        painted.tick,
+        busy.tick + 1,
+        "the next production slot tick consumes"
+    );
+    assert_eq!(
+        consumed.at, now,
+        "the controlled watch deadline never advances"
+    );
+    let stats = painted.stats.unwrap();
+    assert_eq!(stats.scene_consumes(), 1);
+    assert_eq!(stats.due_skips(), 0);
+    let wake = stats
+        .last_grant_latency()
+        .expect("the production control wake reaches the target slot");
+    assert_eq!(wake.reservation(), consumed.event.reservation.unwrap());
+    assert_eq!(wake.published_at(), now);
+    assert!(wake.woke_at() >= wake.notified_at());
+    assert!(wake.consumed_at() >= wake.woke_at());
 }
 
 #[test]
