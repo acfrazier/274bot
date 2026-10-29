@@ -24,8 +24,8 @@ use api::snapshot::WorldTile;
 use client::client::Client;
 use client::render::budget::{BudgetCharge, RenderLimit};
 use client::render::nav_debug::{
-    NavDebugCell, NavDebugHull, NavDebugPaint, NavDebugPaintBuilder, CORNER_NE, CORNER_NW,
-    CORNER_SE, CORNER_SW, FACE_E, FACE_N, FACE_S, FACE_W,
+    NavDebugCell, NavDebugColors, NavDebugHull, NavDebugPaint, NavDebugPaintBuilder, CORNER_NE,
+    CORNER_NW, CORNER_SE, CORNER_SW, FACE_E, FACE_N, FACE_S, FACE_W,
 };
 use client::sound::output::AudioOut;
 use frontend_core::command::{DrawSwitch, RasterMode};
