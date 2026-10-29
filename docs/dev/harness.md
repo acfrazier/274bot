@@ -9,7 +9,7 @@ and failure exits in Rust so preservation projects can reuse the same
 behavior through `host-play`, the TUI or the panel. No engine assets or
 external catalog scripts are included in this repository.
 
-0.2.7 Beta 2 is the current release. Revision 289 is the production revision: the harness cells
+0.2.8 Beta 2 is the current release. Revision 289 is the production revision: the harness cells
 are written, run and claimed for it. Revision 274 cells run best-effort and
 are neither tested nor claimed.
 
