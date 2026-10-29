@@ -16,8 +16,8 @@
     "coin_float": 0,
     "loadouts": {},
     "areas": {
-      "house": {"boxes": [[2902,3468,2903,3476,0]], "source":"content/maps/m45_54.jm2:5145-5157,5183-5193,5225-5241"},
-      "garden_entry": {"boxes": [[2900,3463,2902,3464,0]], "source":"content/maps/m45_54.jm2:5145; south side of back door"}
+      "house": {"boxes": [[2901,3468,2907,3476,0]], "source":"content/maps/m45_54.jm2:5146-5157,5185,5193,5232,5241,5264,5274,5301,5309,5330,5336,5361-5369; outer walls"},
+      "garden_entry": {"boxes": [[2901,3465,2901,3465,0]], "source":"content/maps/m45_54.jm2:5145; content/scripts/quests/quest_ball/scripts/quest_ball.rs2:125; back-door enter force-move landing"}
     },
     "tools": ["obj:witches_doorkey","obj:magnet"],
     "owns_inventory": true
