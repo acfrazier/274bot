@@ -802,8 +802,12 @@ fn route_output_detail_bound(
         &mut context,
         "native walk route failed: {:?} arrival from ({}, {}, {}) to ({}, {}, {}) within radius {}",
         request.arrival,
-        request.from.x, request.from.z, request.from.level,
-        request.to.x, request.to.z, request.to.level,
+        request.from.x,
+        request.from.z,
+        request.from.level,
+        request.to.x,
+        request.to.z,
+        request.to.level,
         request.radius
     )
     .ok()?;
@@ -2297,8 +2301,12 @@ impl RouteJob {
                 let context = format!(
                     "native walk route failed: {:?} arrival from ({}, {}, {}) to ({}, {}, {}) within radius {}",
                     self.request.arrival,
-                    self.request.from.x, self.request.from.z, self.request.from.level,
-                    self.request.to.x, self.request.to.z, self.request.to.level,
+                    self.request.from.x,
+                    self.request.from.z,
+                    self.request.from.level,
+                    self.request.to.x,
+                    self.request.to.z,
+                    self.request.to.level,
                     self.request.radius
                 );
                 route_detail = Some(match route_detail {
@@ -2331,8 +2339,12 @@ impl RouteJob {
         if matches!(&outcome, RouteJobOutcome::NoPath) && detail.is_none() {
             detail = Some(format!(
                 "no route found from ({}, {}, {}) to ({}, {}, {}) within radius {}",
-                self.request.from.x, self.request.from.z, self.request.from.level,
-                self.request.to.x, self.request.to.z, self.request.to.level,
+                self.request.from.x,
+                self.request.from.z,
+                self.request.from.level,
+                self.request.to.x,
+                self.request.to.z,
+                self.request.to.level,
                 self.request.radius
             ));
         }
@@ -6231,8 +6243,9 @@ impl ScriptRouteRequest {
             // parity driver. Its finite 4M-settlement queries need more slices.
             for _ in 0..25_000_000 {
                 let budget = SliceBudget::new(
-                    std::num::NonZeroU32::new(64).expect("slice budget is nonzero"),
-                    Deadline::after(clock.now(), std::time::Duration::from_millis(10)),
+                    std::num::NonZeroU32::new(script::work_admission::WORK_UNITS_PER_SLICE)
+                        .expect("slice budget is nonzero"),
+                    Deadline::after(clock.now(), script::work_admission::WORK_SLICE),
                 );
                 let mut context = StepContext::new(&clock, budget, &cancellation);
                 match worker.step(&mut context) {

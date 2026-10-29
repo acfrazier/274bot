@@ -760,7 +760,7 @@ fn real_cases(world: Arc<NavWorld>) -> Vec<DiagnosticCase> {
             provenance: "R289 sailors.rs2:13-30 charges 30 coins before sailing from Karamja to Port Sarim",
             world_kind: "r289_navpack",
             world: Arc::clone(&world),
-            from: tile(2663, 3302),
+            from: tile(2954, 3147),
             to: tile(3028, 3217),
             radius: 0,
             arrival: ArrivalKind::Reach,
@@ -1005,10 +1005,10 @@ fn compares_bounded_and_unbounded_route_diagnostics_corpus() {
                 "real Scorpion route must diagnose the exact missing key row: {:?}",
                 bounded.missing_carry,
             ),
-            "karamja_exit_without_coins" => assert!(
-                bounded.missing_carry.contains(&(995, 30)),
-                "Karamja exit must diagnose its exact 30-coin fare row: {:?}",
+            "karamja_exit_without_coins" => assert_eq!(
                 bounded.missing_carry,
+                vec![(995, 30)],
+                "Karamja exit must preserve the single full-fare row required by boat recovery",
             ),
             "desert_walk_without_shantay_pass" => assert!(
                 bounded.missing_carry.contains(&(1854, 1)),

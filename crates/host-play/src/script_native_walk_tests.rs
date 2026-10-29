@@ -215,6 +215,7 @@ fn real_scorpcatcher_no_key_route_job_publishes_no_path_before_native_deadline()
         walker.options.allow_wilderness = script::native::WalkBit::Allow;
         walker.options.allow_danger_zones = script::native::WalkBit::Allow;
     }
+    let started = std::time::Instant::now();
     rig.observe_at(1, from);
     assert!(
         rig.navs.lock().unwrap()["alice"].route_work_pending(),
@@ -225,6 +226,7 @@ fn real_scorpcatcher_no_key_route_job_publishes_no_path_before_native_deadline()
             .route_work_pending()),
         "the admitted unreachable route job did not publish its terminal"
     );
+    println!("no-route-publication-ms={}", started.elapsed().as_millis());
     {
         let navs = rig.navs.lock().unwrap();
         let bot = &navs["alice"];
