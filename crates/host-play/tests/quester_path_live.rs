@@ -61,7 +61,7 @@ mod quester_live;
 
 use api::snapshot::WorldTile;
 use quester_live::{Cell, Mode, PathCell};
-use scenario::quester::{FixtureLoadout, QuestFixtureProfile, QuesterPathSeeds};
+use scenario::quester::{FixtureLoadout, QuestFixtureProfile, QuesterPathSeeds, TestProfile};
 use script::quester::registry;
 use std::path::PathBuf;
 use std::time::Duration;
