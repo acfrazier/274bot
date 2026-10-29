@@ -691,7 +691,7 @@ function rangedObjectFacts(
     return { rangedWeapons, rangedAmmo };
 }
 
-export function extractCombatStyleFacts(content: string, objects: readonly CombatObject[], npcs: readonly CombatNpcSource[], scripts: CombatScripts) {
+export function extractCombatStyleFacts(content: string, objects: readonly CombatObject[], npcs: readonly CombatNpcSource[], scripts: CombatScripts, includePvpV0 = true) {
     const seqPack = parsePack(requireGatherText(content, 'pack/seq.pack'));
     const spotanimPack = parsePack(requireGatherText(content, 'pack/spotanim.pack'));
     const categoryPack = parsePack(requireGatherText(content, 'pack/category.pack'));
@@ -765,7 +765,7 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
     // `quest_regicide.npc:57-58`) merge with the same style and location.
     // The halberd's `spotanim_282..285` are map spotanims, not attributed;
     // the halberd attack is attributed by its animation through `style_seq`.
-    for (const [name, style, where] of [
+    const pvpSpecialSpotanims = [
         // C`skill_combat/scripts/pvp/specs/scripts/pvp_rune_thrownaxe.rs2:86`.
         ['sp_attack_chainhit_travel_spotanim', STYLE.RANGED, 'projectile'],
         // C`pvp_dragon_dagger.rs2:4`.
@@ -786,8 +786,12 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
         ['sp_attack_chainhit_launch_spotanim', STYLE.RANGED, 'attacker'],
         // C`pvp_magic_shortbow.rs2:24-25`; C`pvp_magic_longbow.rs2:17`.
         ['sp_attack_glow_arrow_travel', STYLE.RANGED, 'projectile'],
-    ] as const) {
-        addSpot(spotId(name, `pvp special ${name}`), style, where, name);
+    ] as const;
+    // A pre-V0 revision omits these rows from `style_spotanims`.
+    if (includePvpV0) {
+        for (const [name, style, where] of pvpSpecialSpotanims) {
+            addSpot(spotId(name, `pvp special ${name}`), style, where, name);
+        }
     }
     for (const [name, where] of [
         ['failedspell_impact', 'on_us'],
