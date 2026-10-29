@@ -49,6 +49,7 @@ use api::lifecycle::{
 use api::process_condition::{
     ConditionId, ProcessCapability, ProcessConditions, ProcessServiceCondition, UnavailableTerminal,
 };
+#[cfg(feature = "test-support")]
 use api::selected::RunKey;
 
 use crate::map_bake::MapBakeChoice;
@@ -720,7 +721,7 @@ const ROUTED_MOVEMENT: &[ProcessCapability] = &[
 impl OperatorCommand {
     /// Every row once (parameterized rows with a representative value), for
     /// exhaustive checks.
-    pub const ALL: [OperatorCommand; 98] = [
+    pub const ALL: [OperatorCommand; 97 + cfg!(feature = "test-support") as usize] = [
         Self::Load,
         Self::Remove,
         Self::Login,
