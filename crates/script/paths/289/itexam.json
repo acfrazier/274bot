@@ -138,6 +138,12 @@
           "advances": false
         }
       ]
+      ,
+      "acquire:opal": [
+        {"id":"fill-tray-for-opal","kind":"interact","version":1,"advances":false,"args":{"target":{"loc":"panning_point"},"op":"Look","anchor":{"tile":[3376,3372,0],"source":"content/maps/m52_52.jm2:6072"},"radius":12},"skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tray_mud"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"uncut_opal"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"opal"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tray_mud"}}},"comment":"content/scripts/quests/quest_itexam/scripts/area_digsite.rs2:5-29"},
+        {"id":"search-tray-for-opal","kind":"interact","version":1,"advances":false,"args":{"target":{"held":"tray_mud"},"op":"Search"},"skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tray_mud"}}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tray_empty"}}},"comment":"content/scripts/quests/quest_itexam/scripts/area_digsite.rs2:34-68"},
+        {"id":"cut-panned-opal","kind":"use_on","version":1,"advances":false,"args":{"item":"chisel","target":{"item":"uncut_opal"}},"skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"uncut_opal"}}}},"settle":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"opal"}}},{"Fact":{"kind":"message","version":1,"args":{"any":["smash the Opal"]}}}]},"comment":"content/scripts/skill_crafting/scripts/gem/uncut_gem.rs2:1-5,28-63; content/scripts/skill_crafting/configs/gem/gem.dbrow:34-39"}
+      ]
     },
     "bank": "nearest",
     "coin_float": 0,
@@ -700,6 +706,8 @@
               "comment": "content/scripts/quests/quest_itexam/scripts/student2.rs2:30-47",
               "advances": false
             },
+            {"id":"buy-panning-tea","kind":"buy","version":1,"advances":false,"args":{"shop":{"npc":"tea_seller","anchor":{"tile":[3271,3411,0],"source":"content/maps/m51_53.jm2:6733; content/pack/npc.pack:596"}},"obj":"cup_of_tea","qty":1,"est_gp":10},"skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"cup_of_tea"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"rock_sample2"}}},{"Fact":{"kind":"flag","version":1,"args":{"quest":"itexam","flag":"orange-first"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"cup_of_tea"}}},"comment":"content/scripts/areas/area_varrock/configs/varrock.inv:179-186; varrock.npc:907-912; content/scripts/skill_cooking/configs/cooking_generic/cooking.obj:328-331; content/scripts/shop/scripts/shop.rs2:131-147,182-187. At base stock 10 × 1000 / 1000 = 10 coins."},
+            {"id":"take-panning-tray","kind":"interact","version":1,"advances":false,"args":{"target":{"ground":"tray_empty"},"op":"Take","anchor":{"tile":[3369,3378,0],"source":"content/maps/m52_52.jm2:6734-6735; content/pack/obj.pack:678"},"radius":2,"wait_if_missing":true},"skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tray_empty"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tray_mud"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"rock_sample2"}}},{"Fact":{"kind":"flag","version":1,"args":{"quest":"itexam","flag":"orange-first"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tray_empty"}}},"comment":"content/maps/m52_52.jm2:6734-6735; content/pack/obj.pack:678."},
             {
               "id": "give-panning-guide-tea",
               "kind": "talk",
@@ -1159,6 +1167,7 @@
               "comment": "content/scripts/quests/quest_itexam/scripts/student3.rs2:77-91",
               "advances": true
             },
+            {"id":"pan-and-cut-opal","kind":"acquire","version":1,"args":{"recipe":"acquire:opal","max_restarts":128},"skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"opal"}}},{"Fact":{"kind":"flag","version":1,"args":{"quest":"itexam","flag":"ready-third"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"opal"}}},"comment":"content/scripts/quests/quest_itexam/scripts/area_digsite.rs2:40-54; content/scripts/skill_crafting/scripts/gem/uncut_gem.rs2:28-63."},
             {
               "id": "give-opal",
               "kind": "talk",
