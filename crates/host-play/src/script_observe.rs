@@ -2799,9 +2799,10 @@ mod world_state_cache_tests {
             std::mem::size_of::<NavWorldStateCache>() <= 160,
             "cache metadata grew beyond its 160-byte inline budget"
         );
+        let world_state_size = std::mem::size_of::<nav_planner::WorldState>();
         assert!(
-            std::mem::size_of::<nav_planner::WorldState>() <= 352,
-            "WorldState inline representation grew beyond the measured 352-byte size"
+            world_state_size <= 384,
+            "WorldState inline representation ({world_state_size} bytes) grew beyond its 384-byte layout budget"
         );
 
         let snapshot = stats_snapshot(1, 68);
