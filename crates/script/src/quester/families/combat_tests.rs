@@ -4282,6 +4282,82 @@ fn killed_report_waits_for_a_late_drop_before_reengaging() {
         "the delayed ore should be taken before the combat step re-engages"
     );
 }
+#[test]
+fn combat_loot_take_settles_after_the_appearance_deadline() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("elemental_workshop_ore").unwrap();
+    let stand = api::WorldTile {
+        x: 2693,
+        z: 9906,
+        level: 0,
+    };
+    let mut absent = GameSnapshot::new();
+    absent.seed_ingame(2);
+    absent.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut absent, false);
+    absent.seed_ground_items(Vec::new());
+    let mut appeared = GameSnapshot::new();
+    appeared.seed_ingame(2);
+    appeared.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut appeared, false);
+    appeared.seed_ground_items(vec![ground_item(
+        item.id,
+        item.name.as_deref().unwrap(),
+        stand,
+        0,
+    )]);
+    let mut collected = GameSnapshot::new();
+    collected.seed_ingame(2);
+    collected.seed_inventory(
+        vec![inventory_item(item.id, item.name.as_deref().unwrap(), 1)],
+        28,
+    );
+    super::super::tests::seed_dialogue_combat(&mut collected, false);
+    collected.seed_ground_items(Vec::new());
+    let mut run = combat_test_run(
+        imp_target(&selected),
+        Some(stand),
+        Some(Arc::new(HasItem(item.id))),
+        vec![LootItem {
+            id: item.id,
+            name: Arc::from(item.name.as_deref().unwrap()),
+            qty: 1,
+        }],
+    );
+    let mut ledger = None;
+    assert!(with_step_context(&absent, &mut ledger, 12, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    let deadline = 12 + LOOT_ITEM_WAIT_TICKS;
+    for tick in 13..deadline {
+        assert!(with_step_context(&absent, &mut ledger, tick, |cx| {
+            run.poll(cx)
+        })
+        .is_pending());
+        assert!(run.action.is_none());
+    }
+    assert!(with_step_context(&appeared, &mut ledger, deadline, |cx| {
+        run.poll(cx)
+    })
+    .is_pending());
+    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+    assert!(
+        with_step_context(&appeared, &mut ledger, deadline + 1, |cx| {
+            run.poll(cx)
+        })
+        .is_pending(),
+        "an in-flight Take must remain pending after the appearance deadline"
+    );
+    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+    assert_eq!(run.loot_index, 0, "do not advance before the Take settles");
+    assert!(matches!(
+        with_step_context(&collected, &mut ledger, deadline + 2, |cx| run.poll(cx)),
+        Poll::Ready(Ok(_))
+    ));
+    assert_eq!(run.loot_index, 1);
+}
+
 
 #[test]
 fn missing_combat_loot_wait_is_one_window_for_all_configured_items() {
