@@ -66,6 +66,8 @@ Lost City and Eadgar can use this policy for their chance-only axe and key sourc
 
 Use the existing `use_on` family to open the menu.
 Set its settlement predicate to `modal_open`.
+The item-use step leaves the posted production menu for `make`.
+It does not adopt the menu as dialogue or answer its buttons.
 Then use `make` with neither `loc` nor `anchor`:
 
 ```json

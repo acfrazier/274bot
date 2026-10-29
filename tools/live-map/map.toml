@@ -430,6 +430,7 @@ cells = [
 [[cover]]
 globs = [
   "crates/api/src/snapshot/native.rs",
+  "crates/script/src/quester/families/dialogue.rs",
   "crates/script/src/native_production.rs",
   "crates/script/src/production.rs",
   "crates/script/src/quester/families/combat.rs",

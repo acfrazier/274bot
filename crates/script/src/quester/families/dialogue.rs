@@ -1118,11 +1118,16 @@ pub(super) fn chat_page_open(root: i32, continue_component_id: i32) -> bool {
     root != -1 || continue_component_id >= 0
 }
 
-/// Operation adoption covers chat and selected documents, not unrelated interfaces.
+/// Operation adoption covers dialogue chat and selected documents, not production menus.
 pub(super) fn page_open(cx: &ActionContext<'_>) -> bool {
-    cx.snapshot()
-        .chat_modal()
-        .is_some_and(|chat| chat_page_open(chat.value.root, chat.value.continue_component_id))
+    let snapshot = cx.snapshot();
+    let production_menu = snapshot
+        .make_products()
+        .is_some_and(|products| !products.value.is_empty());
+    (!production_menu
+        && snapshot.chat_modal().is_some_and(|chat| {
+            chat_page_open(chat.value.root, chat.value.continue_component_id)
+        }))
         || observe_main(cx, selected_dialogue_ui(cx))
             .is_some_and(|main| matches!(main.kind, MainKind::Scroll | MainKind::Book))
 }
