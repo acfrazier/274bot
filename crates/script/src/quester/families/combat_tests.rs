@@ -903,6 +903,23 @@ impl PredicatePlan for NeverStop {
         Truth::False
     }
 }
+struct HasItem(i32);
+
+impl PredicatePlan for HasItem {
+    fn evaluate(&self, context: &PredicateContext<'_, '_>) -> Truth {
+        context
+            .cx
+            .snapshot()
+            .inventory()
+            .is_some_and(|rows| {
+                rows.value
+                    .iter()
+                    .any(|row| row.def.id == self.0 && row.count > 0)
+            })
+            .then_some(Truth::True)
+            .unwrap_or(Truth::False)
+    }
+}
 
 fn combat_test_run(
     target: Target,
@@ -910,12 +927,22 @@ fn combat_test_run(
     until: Option<Arc<dyn PredicatePlan>>,
     loot: Vec<LootItem>,
 ) -> CombatRun {
+    combat_test_run_with_radius(target, stand, until, loot, 12)
+}
+
+fn combat_test_run_with_radius(
+    target: Target,
+    stand: Option<api::WorldTile>,
+    until: Option<Arc<dyn PredicatePlan>>,
+    loot: Vec<LootItem>,
+    lost_radius: u8,
+) -> CombatRun {
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let tables = CombatTables::build(selected).unwrap();
     let request = CombatRequest {
         target,
         stand,
-        lost_radius: 12,
+        lost_radius,
         ..CombatRequest::default()
     };
     CombatRun {
@@ -4209,12 +4236,12 @@ fn killed_report_waits_for_a_late_drop_before_reengaging() {
         run.on_combat_report(report(CombatEnd::Killed), cx)
     })
     .is_pending());
+    let deadline = 12 + LOOT_ITEM_WAIT_TICKS;
     assert!(with_step_context(&absent, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
-    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+    assert!(run.action.is_none());
+    assert_eq!(run.loot_wait_deadline, Some(deadline));
     assert!(with_step_context(&absent, &mut ledger, 14, |cx| run.poll(cx)).is_pending());
-    assert!(matches!(&run.phase, Phase::Loot));
-    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
-
+    assert!(run.action.is_none());
     assert!(with_step_context(&appeared, &mut ledger, 15, |cx| run.poll(cx)).is_pending());
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
     assert!(
@@ -4233,10 +4260,20 @@ fn killed_report_waits_for_a_late_drop_before_reengaging() {
 #[test]
 fn missing_combat_loot_wait_is_bounded_before_reengaging() {
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
-    let item = selected.item_by_alias("elemental_workshop_ore").unwrap();
+    let loot: Vec<_> = ["red_bead", "yellow_bead", "black_bead", "white_bead"]
+        .into_iter()
+        .map(|alias| {
+            let item = selected.item_by_alias(alias).unwrap();
+            LootItem {
+                id: item.id,
+                name: Arc::from(item.name.as_deref().unwrap()),
+                qty: 1,
+            }
+        })
+        .collect();
     let stand = api::WorldTile {
-        x: 2693,
-        z: 9906,
+        x: 3253,
+        z: 3401,
         level: 0,
     };
     let mut snapshot = GameSnapshot::new();
@@ -4244,36 +4281,169 @@ fn missing_combat_loot_wait_is_bounded_before_reengaging() {
     snapshot.seed_inventory(Vec::new(), 28);
     super::super::tests::seed_dialogue_combat(&mut snapshot, false);
     snapshot.seed_ground_items(Vec::new());
-    let mut run = combat_test_run(
+    let mut run = combat_test_run(imp_target(&selected), Some(stand), None, loot);
+    let mut ledger = None;
+
+    assert_eq!(LOOT_ITEM_WAIT_TICKS, 5 + 1);
+    assert!(with_step_context(&snapshot, &mut ledger, 1, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+
+    let deadline = 1 + LOOT_ITEM_WAIT_TICKS;
+    for tick in 2..=deadline {
+        assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending());
+        assert!(matches!(&run.phase, Phase::Loot));
+        assert!(run.action.is_none(), "no item means no per-item Reach wait");
+        assert_eq!(run.loot_wait_deadline, Some(deadline));
+    }
+    assert!(matches!(
+        with_step_context(&snapshot, &mut ledger, deadline + 1, |cx| run.poll(cx)),
+        Poll::Ready(Ok(_))
+    ));
+    assert_eq!(run.loot_index, 4);
+}
+
+#[test]
+fn combat_loot_uses_the_steps_lost_radius() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("goblin_armour").unwrap();
+    let stand = api::WorldTile {
+        x: 3253,
+        z: 3401,
+        level: 0,
+    };
+    let drop = api::WorldTile {
+        x: stand.x + 18,
+        z: stand.z,
+        level: stand.level,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    snapshot.seed_ground_items(vec![ground_item(
+        item.id,
+        item.name.as_deref().unwrap(),
+        drop,
+        18,
+    )]);
+    let mut run = combat_test_run_with_radius(
         imp_target(&selected),
         Some(stand),
-        Some(Arc::new(NeverStop)),
+        None,
         vec![LootItem {
             id: item.id,
             name: Arc::from(item.name.as_deref().unwrap()),
             qty: 1,
         }],
+        18,
     );
-    run.phase = Phase::Loot;
     let mut ledger = None;
 
-    let deadline = 1_u64.saturating_add(LOOT_ITEM_WAIT_TICKS);
-    for tick in 1..=deadline {
-        assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending());
-        assert!(matches!(&run.phase, Phase::Loot));
-        assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
-        assert_eq!(run.loot_wait_deadline, Some(deadline));
-    }
+    assert!(with_step_context(&snapshot, &mut ledger, 1, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    assert!(with_step_context(&snapshot, &mut ledger, 2, |cx| run.poll(cx)).is_pending());
     assert!(
-        with_step_context(&snapshot, &mut ledger, deadline.saturating_add(1), |cx| {
-            run.poll(cx)
-        })
-        .is_pending()
+        ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
+            &entry.effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+                x,
+                z,
+                id: Some(id),
+                action,
+                ..
+            }) if *x == drop.x && *z == drop.z && *id == item.id && action == "Take"
+        )),
+        "a drop at the step's radius must be selected"
     );
-    assert!(matches!(&run.phase, Phase::Combat));
-    assert!(matches!(run.action.as_ref(), Some(Action::Combat(_))));
-    assert_eq!(run.loot_index, 1);
-    assert!(run.loot_wait_deadline.is_none());
+}
+
+#[test]
+fn missing_required_combat_loot_counts_as_failure_and_a_later_drop_settles() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("elemental_workshop_ore").unwrap();
+    let stand = api::WorldTile {
+        x: 3253,
+        z: 3401,
+        level: 0,
+    };
+    let loot = vec![LootItem {
+        id: item.id,
+        name: Arc::from(item.name.as_deref().unwrap()),
+        qty: 1,
+    }];
+    let mut absent = GameSnapshot::new();
+    absent.seed_ingame(2);
+    absent.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut absent, false);
+    absent.seed_ground_items(Vec::new());
+    let mut missing_run = combat_test_run(
+        imp_target(&selected),
+        Some(stand),
+        Some(Arc::new(HasItem(item.id))),
+        loot.clone(),
+    );
+    let mut ledger = None;
+
+    assert!(with_step_context(&absent, &mut ledger, 1, |cx| {
+        missing_run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    let deadline = 1 + LOOT_ITEM_WAIT_TICKS;
+    for tick in 2..=deadline {
+        assert!(
+            with_step_context(&absent, &mut ledger, tick, |cx| missing_run.poll(cx)).is_pending()
+        );
+    }
+    let failure = with_step_context(&absent, &mut ledger, deadline + 1, |cx| {
+        missing_run.poll(cx)
+    });
+    assert!(
+        matches!(failure, Poll::Ready(Err(ActionError::Failed(_)))),
+        "a missing required drop must use the retryable step-failure path"
+    );
+
+    let mut appeared = GameSnapshot::new();
+    appeared.seed_ingame(2);
+    appeared.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut appeared, false);
+    appeared.seed_ground_items(vec![ground_item(
+        item.id,
+        item.name.as_deref().unwrap(),
+        stand,
+        0,
+    )]);
+    let mut successful_run = combat_test_run(
+        imp_target(&selected),
+        Some(stand),
+        Some(Arc::new(HasItem(item.id))),
+        loot,
+    );
+    assert!(with_step_context(&appeared, &mut ledger, 20, |cx| {
+        successful_run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    assert!(with_step_context(&appeared, &mut ledger, 21, |cx| successful_run.poll(cx)).is_pending());
+
+    let mut collected = GameSnapshot::new();
+    collected.seed_ingame(2);
+    collected.seed_inventory(
+        vec![inventory_item(
+            item.id,
+            item.name.as_deref().unwrap(),
+            1,
+        )],
+        28,
+    );
+    super::super::tests::seed_dialogue_combat(&mut collected, false);
+    collected.seed_ground_items(Vec::new());
+    assert!(matches!(
+        with_step_context(&collected, &mut ledger, 22, |cx| successful_run.poll(cx)),
+        Poll::Ready(Ok(_))
+    ));
 }
 
 #[test]
