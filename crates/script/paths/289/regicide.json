@@ -28,8 +28,8 @@
       {"stage":"regicide:2","required":[],"terminal":false,"recovery_entry":null,"steps":[
         {"id":"open-west-ardougne-wall-gate","kind":"interact","version":1,"advances":false,
          "args":{"target":{"loc":"ardougnewalldoor_right","tile":[2558,3300,0],"source":"C:maps/m39_51.jm2:7029; C:pack/loc.pack:2050"},"op":"Open","anchor":{"tile":[2558,3300,0],"source":"C:maps/m39_51.jm2:7029; C:pack/loc.pack:2050"},"radius":1},
-         "comment":"C:scripts/areas/area_ardougne_west/scripts/doors.rs2:15-16,24-54 opens the gate only when Biohazard equals complete and force-moves the player two tiles west from the east side.",
-         "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[2494,9716,0],"radius":60}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2556,3300,0],"radius":2}}}},
+         "comment":"C:scripts/areas/area_ardougne_west/scripts/doors.rs2:15-16,24-54 opens the gate only when Biohazard equals complete and force-moves the player two tiles west from the east side. The second skip fact covers x 2434..2556 and z 3239..3361 at level 0 on the west side. It excludes every east-side approach tile with x >= 2559. Review: QUEST-CAMPAIGN/triage/review-regicide-gap-2.md.",
+         "skip_if":{"Any":[{"Fact":{"kind":"near","version":1,"args":{"tile":[2494,9716,0],"radius":60}}},{"Fact":{"kind":"near","version":1,"args":{"tile":[2495,3300,0],"radius":61}}}]},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2556,3300,0],"radius":2}}}},
         {"id":"enter-underground-pass","kind":"interact","version":1,"advances":false,
          "args":{"target":{"loc":"upass_caveentrance2"},"op":"Enter","anchor":{"tile":[2433,3313,0],"source":"C:maps/m38_51.jm2:4669; C:pack/loc.pack:3214"},"radius":5},
          "comment":"C:scripts/quests/quest_upass/scripts/quest_upass.rs2:80-97 sends completed Underground Pass players to 2494,9716,0.",
