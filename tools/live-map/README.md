@@ -53,7 +53,7 @@ All cells not listed below normally run on merlot. Engine A uses game port
 |---|---|
 | `host.npc-hop-engine-b` | Run on chardonnay. The command sets `WORLD_CACHE_DIR` and `LIVE_EVIDENCE_DIR`. Engine B is reached through the loopback tunnel at game port `45594` and HTTP port `2080`. |
 | `host.sherlock-search-live` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. The cell uses loopback ports and has no host-specific code. Use chardonnay when merlot is measured or reserved. It needs `LIVE=1`, `BOT_CPU=1`, `BOT_LIVE_NAME_PREFIX`, `WORLD_NAV_PACK`, `WORLD_ENGINE_DIR`, `BOT_CACHE_DIR`, `RS2B0T`, `WORLD_GAME_PORT`, `WORLD_HTTP_PORT`, and `LIVE_EVIDENCE_DIR`. The command also uses `ISOHOME`. Leave `QUESTER_TICK_MS` unset. |
-| `host.quester-path-engine-q`, `scenario.quester-engine-q` | Run on the Engine Q host. This setup uses merlot at `127.0.0.1:44694` and `127.0.0.1:1180`. Set `QUESTER_TICK_MS=300` only for these cells. |
+| `host.quester-path-engine-q`, `scenario.quester-engine-q` | Run on the Engine Q host. This setup uses merlot at `127.0.0.1:44694` and `127.0.0.1:1180`. Engine Q stays at 300 ms permanently. The quest campaign keeps that rate. `::speed` changes the world tick rate for every bot. Never set `QUESTER_TICK_MS`. The runner refuses any cell whose command sets it. |
 | `nav.essence-follow` | The orchestrator must start a 274 engine on the cell host at `127.0.0.1:43594`. The orchestrator supplies `ENGINE_274_DIR` and `NAV_PACK_274`. Do not run this cell until the orchestrator provides both inputs and starts the engine. |
 | `nav.essence-289-engine-a` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. Use chardonnay when merlot is measured or reserved. |
 | `panel.headed-render` | Run on merlot with its interactive GPU and display. The command removes `BOT_CPU` so the client uses the GPU renderer. |
@@ -301,16 +301,29 @@ cells one at a time and never stops on a failure. It creates one `BOT_CACHE_DIR`
 cell, one `LIVE_EVIDENCE_DIR` per cell and pass, plus per-cell unpack dirs and a kept
 panel home. It sets `BOT_LIVE_NAME_PREFIX`, `BOT_NAV_BUILD=skip`,
 `WORLD_GAME_PORT`/`WORLD_HTTP_PORT` from the engine ports, and the v17 `NAV_PACK` and
-flags from the reference pack. Quest cells use the quest ports, set
-`QUESTER_SPEED_RESTORE=0`, and run with `QUESTER_TICK_MS` unset in the base env
-(their `QUESTER_TICK_MS=300` stays inline in the map command). It rewrites inline
+flags from the reference pack. Quest cells use the quest ports and set
+`QUESTER_SPEED_RESTORE=0`. The runner never sets `QUESTER_TICK_MS`, so it sends
+no speed command: `crates/scenario/src/quester.rs:78-82` changes the world speed
+only when `QUESTER_TICK_MS` is present. The product reads `QUESTER_SPEED_RESTORE`
+only after the quest-paths branch merges (`4bc7da035`, `4e449b1a1`). Until then
+the runner stores the flag but the flag has no reader. The runner refuses any
+cell whose command sets `QUESTER_TICK_MS`. It rewrites inline
 `_GAME_PORT`, `_HTTP_PORT`, `--port`, and `--http-port` values to the selected ports.
 `ISOHOME` comes from the host wrapper where the map command names it. Each cell runs
 by `bash -lc` from the repo root.
+Some cells still open 44594/1080 instead of reading `WORLD_GAME_PORT` and
+`WORLD_HTTP_PORT`: `host.nav-quest-doors`, `host.nav-gated-entrances`,
+`host.nav-busy-transport-two-bots`, `host.nav-busy-transport-rope-swing`,
+`host.survivable-compat-v1-crossing`, `panel.manual-start-live`, and
+`panel.state-gap-stop-live`. Branch `live-port-env` (`0676124f9`) fixes them
+through the shared `live_ports` helper. The runner does not rewrite those cells.
+It depends on that branch for the port move.
 Non-quest lab cells use Engine L. On aubaine the 44594/1080 defaults reach Engine L
-through the relay. On chardonnay pass `--engine-game-port 47594 --engine-http-port 3080`
+through the relay. On chardonnay pass `--engine-game-port 47594 --http-port 3080`
 (the forwarded Engine L) and never use 44594/1080 there. Quest cells use Engine Q.
 
 Each cell and pass writes `passN/cell.log` and `passN/receipt.txt` with `cell`, `pass`,
-repo `head`, `command`, `start`, `end`, `exit_code`, and `log`. The runner prints a
-summary table and writes `summary.txt`. A non-zero exit means at least one cell failed.
+repo `head`, `command`, `start_utc`, `end_utc`, `exit_code`, and `log`. The runner prints a
+summary table and writes `summary.txt`. The table lists `cell`, `pass`, `exit`, `seconds`,
+`start_utc`, `end_utc`, and `log`, followed by one `command`, `start_utc`, and `end_utc`
+line per cell and pass. A non-zero exit means at least one cell failed.

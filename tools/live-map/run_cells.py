@@ -54,6 +54,8 @@ class RunResult:
     log_path: Path
     receipt_path: Path
     command: str
+    start_utc: str
+    end_utc: str
 
 
 def _port(value: str, label: str) -> int:
@@ -117,6 +119,23 @@ def is_quest_cell(cell_name: str, cell_command: str) -> bool:
         or "QUESTER_TICK_MS" in cell_command
         or "ENGINE_Q_DIR" in cell_command
     )
+
+
+def reject_tick_override(cell_name: str, cell_command: str) -> None:
+    if "QUESTER_TICK_MS=" not in cell_command:
+        return
+    raise live_map.MapError(
+        f"run-cells: refusing cell {cell_name!r}: its command sets QUESTER_TICK_MS. "
+        "Engine Q stays at 300 ms permanently. "
+        "The quest campaign keeps that rate. "
+        "::speed changes the world tick rate for every bot. "
+        "Remove QUESTER_TICK_MS from the map command."
+    )
+
+
+def ensure_no_tick_override(cells: list[live_map.Cell]) -> None:
+    for cell in cells:
+        reject_tick_override(cell.name, cell.command)
 
 
 _PORT_ENV_RE = re.compile(r"([A-Z][A-Z0-9_]*_GAME_PORT=)\d+")
@@ -282,6 +301,7 @@ def build_cell_env(
     quest_http_port: int,
     defaults: dict[str, str] | None = None,
 ) -> tuple[dict[str, str], str]:
+    reject_tick_override(cell_name, cell_command)
     quest = is_quest_cell(cell_name, cell_command)
     game_port = quest_game_port if quest else engine_game_port
     http_port = quest_http_port if quest else engine_http_port
@@ -407,14 +427,20 @@ def format_summary(
         "Live-cell run summary",
         f"repo={repo} head={head} prefix={prefix} evidence={evidence}",
         "",
-        "| cell | pass | exit | seconds | log |",
-        "| --- | --- | --- | --- | --- |",
+        "| cell | pass | exit | seconds | start_utc | end_utc | log |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for item in results:
         lines.append(
             f"| {item.cell} | {item.passed_pass} | {item.exit_code} | "
-            f"{item.duration_seconds} | {item.log_path} |"
+            f"{item.duration_seconds} | {item.start_utc} | {item.end_utc} | "
+            f"{item.log_path} |"
         )
+    for item in results:
+        lines.append("")
+        lines.append(f"{item.cell} pass {item.passed_pass} command={item.command}")
+        lines.append(f"{item.cell} pass {item.passed_pass} start_utc={item.start_utc}")
+        lines.append(f"{item.cell} pass {item.passed_pass} end_utc={item.end_utc}")
     passed = sum(1 for item in results if item.exit_code == 0)
     lines.append("")
     lines.append(f"passed {passed}/{len(results)}")
@@ -525,6 +551,8 @@ def run_all(
                     log_path=log_path,
                     receipt_path=receipt_path,
                     command=command,
+                    start_utc=start,
+                    end_utc=end,
                 )
             )
     return results
@@ -566,6 +594,7 @@ def main(argv: list[str] | None = None) -> int:
             if not cells:
                 print("run-cells: diff selects no cells", file=sys.stderr)
                 return 1
+        ensure_no_tick_override(cells)
         evidence_root.mkdir(parents=True, exist_ok=True)
         defaults = host_defaults()
         results = run_all(
@@ -700,7 +729,7 @@ class RunCellsTests(unittest.TestCase):
         env, command = build_cell_env(
             cell_name="host.quester-path-engine-q",
             cell_command=(
-                "LIVE=1 QUESTER_TICK_MS=300 WORLD_GAME_PORT=44694 "
+                "LIVE=1 WORLD_GAME_PORT=44694 "
                 "WORLD_HTTP_PORT=1180 ${ISOHOME:?} cargo test -- --port 44694 --http-port 1180"
             ),
             prefix="abc",
@@ -784,6 +813,62 @@ class RunCellsTests(unittest.TestCase):
         )
         with self.assertRaises(live_map.MapError):
             resolve_cells(config, ["missing"])
+
+    def test_tick_override_in_command_is_refused(self) -> None:
+        with self.assertRaises(live_map.MapError) as context:
+            build_cell_env(
+                cell_name="host.quester-path-engine-q",
+                cell_command=(
+                    "LIVE=1 QUESTER_TICK_MS=300 WORLD_GAME_PORT=44694 "
+                    "WORLD_HTTP_PORT=1180 ${ISOHOME:?} cargo test"
+                ),
+                prefix="abc",
+                live_evidence_dir="/e/cell/pass1/evidence",
+                bot_cache_dir="/e/cell/cache-289",
+                client_unpack_dir="/e/cell/client-unpack",
+                bot_unpack_dir="/e/cell/client-unpack",
+                panel_home="/e/cell/pass1/panel-home",
+                repo="/tmp/repo",
+                engine_game_port=47594,
+                engine_http_port=3080,
+                quest_game_port=47694,
+                quest_http_port=3180,
+                defaults={},
+            )
+        self.assertIn("QUESTER_TICK_MS", str(context.exception))
+        self.assertIn("host.quester-path-engine-q", str(context.exception))
+
+    def test_ensure_no_tick_override_rejects_a_list(self) -> None:
+        bad = [live_map.Cell("quest", "LIVE=1 QUESTER_TICK_MS=300 cargo test", "")]
+        with self.assertRaises(live_map.MapError):
+            ensure_no_tick_override(bad)
+        good = [live_map.Cell("quest", "LIVE=1 cargo test", "")]
+        ensure_no_tick_override(good)
+
+    def test_map_sets_no_tick_override(self) -> None:
+        text = (RUNNER_DIR / "map.toml").read_text(encoding="utf-8")
+        self.assertNotIn("QUESTER_TICK_MS=", text)
+
+    def test_summary_lists_command_and_times(self) -> None:
+        results = [
+            RunResult(
+                cell="host.example-live",
+                passed_pass=1,
+                exit_code=0,
+                duration_seconds=7,
+                log_path=Path("/e/host.example-live/pass1/cell.log"),
+                receipt_path=Path("/e/host.example-live/pass1/receipt.txt"),
+                command="LIVE=1 ${ISOHOME:?} cargo test",
+                start_utc="2026-10-29T10:00:00Z",
+                end_utc="2026-10-29T10:00:07Z",
+            )
+        ]
+        summary = format_summary(
+            results, repo="/repo", head="abc123", prefix="t", evidence="/e"
+        )
+        self.assertIn("LIVE=1 ${ISOHOME:?} cargo test", summary)
+        self.assertIn("2026-10-29T10:00:00Z", summary)
+        self.assertIn("2026-10-29T10:00:07Z", summary)
 
 
 def self_test() -> int:
