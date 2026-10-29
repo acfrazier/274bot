@@ -26,6 +26,12 @@ use super::{
     ScriptWalkArm, SlotStatus,
 };
 
+#[cfg(test)]
+thread_local! {
+    // Count the actual pump lock sites without adding release-path state.
+    static STEP_NAV_LOCK_COUNT: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 /// Pumps a non-Walk BankBudget step may wait before a truthful abort.
 const BANK_STEP_ATTEMPTS: u32 = 32;
 
@@ -1041,8 +1047,15 @@ pub(crate) fn step_nav_bot<D: Driver>(
     bank: Option<&RwLock<BankMemory>>,
     reach: impl FnOnce() -> Arc<api::query::ReachQueryView>,
 ) {
+    macro_rules! lock_navs {
+        () => {{
+            #[cfg(test)]
+            STEP_NAV_LOCK_COUNT.with(|count| count.set(count.get() + 1));
+            navs.lock().unwrap()
+        }};
+    }
     {
-        let mut all = navs.lock().unwrap();
+        let mut all = lock_navs!();
         if let Some(bot) = all.get_mut(name) {
             if let Some(world) = world {
                 crate::admission::publish(bot, world, snapshot, map_members, Some(name));
@@ -1113,7 +1126,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
         return;
     }
     if here.is_none() {
-        let mut all = navs.lock().unwrap();
+        let mut all = lock_navs!();
         if let Some(bot) = all.get_mut(name) {
             record_walk_no_progress(name, bot, here, snapshot.tick(), None);
             // A missing player cannot open/withdraw/wear; abort the latched
@@ -1126,7 +1139,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
     }
     let borrowed_world = world.map(Arc::as_ref);
     {
-        let mut all = navs.lock().unwrap();
+        let mut all = lock_navs!();
         if let Some(bot) = all.get_mut(name) {
             if bot.native_walk.as_ref().is_some_and(|owner| !owner.live()) {
                 abort_walk_on_bot(bot);
@@ -1153,7 +1166,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
     // Resolve arrival before the follow lock: the reach view lives behind
     // the script slot, and the slot locks before navs, never after.
     let (armed, endpoint, loc_id, estimated_geometry, arrival) = {
-        let all = navs.lock().unwrap();
+        let all = lock_navs!();
         all.get(name)
             .filter(|bot| bot.has_route() && bot.bank_fetch.is_none())
             .map(|bot| {
@@ -1205,7 +1218,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
             || (live_geometry.1 && !estimated_geometry.1)
             || (target_gone && estimated_geometry.1));
     let (refresh, suppress_follow) = if invalid_endpoint {
-        let mut all = navs.lock().unwrap();
+        let mut all = lock_navs!();
         let Some(bot) = all.get_mut(name) else {
             return;
         };
@@ -1280,7 +1293,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
     }
     let defer_estimated_end = estimated_endpoint;
     {
-        let mut all = navs.lock().unwrap();
+        let mut all = lock_navs!();
         let Some(bot) = all.get_mut(name) else {
             return;
         };

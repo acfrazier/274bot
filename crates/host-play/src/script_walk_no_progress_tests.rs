@@ -78,6 +78,73 @@ fn no_progress_counts_batched_observed_ticks_and_clock_wrap() {
 }
 
 #[test]
+fn held_tick_tracking_has_no_allocations_or_additional_nav_lock() {
+    use super::super::script_nav::WalkNoProgress;
+
+    assert_eq!(std::mem::size_of::<WalkNoProgress>(), 32);
+    let at = tile(10, 20);
+    let navs = Arc::new(Mutex::new(HashMap::from([(
+        "held-cost-test".to_owned(),
+        pending_bot(7, tile(20, 20)),
+    )])));
+    let statuses = Arc::new(Mutex::new(Vec::new()));
+    let mut snapshot = GameSnapshot::new();
+    let mut driver = client::client::Client::new(client::client::ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 1,
+        cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
+        members: true,
+        lowmem: false,
+    });
+    let mut tick = |observed_tick| {
+        snapshot.seed_tick(observed_tick);
+        step_nav_bot(
+            &mut driver,
+            "held-cost-test",
+            Some((at.x, at.z, at.level)),
+            &snapshot,
+            &navs,
+            &statuses,
+            None,
+            true,
+            false,
+            None,
+            || panic!("a held tick must not request the reach view"),
+        );
+    };
+    tick(0);
+    STEP_NAV_LOCK_COUNT.with(|count| count.set(0));
+    let before_log = allocation_counter::measure(|| {
+        for observed_tick in 1..10 {
+            tick(observed_tick);
+        }
+    });
+    let before_locks = STEP_NAV_LOCK_COUNT.with(|count| count.replace(0));
+    assert_eq!(before_log.count_total, 0, "{before_log:?}");
+    assert_eq!(before_log.bytes_current, 0, "{before_log:?}");
+    assert_eq!(before_locks, 9, "one existing nav lock per held tick");
+
+    // The single info line is not a per-tick allocation. Measure the
+    // sustained wait after that line separately, over observed game ticks.
+    tick(10);
+    STEP_NAV_LOCK_COUNT.with(|count| count.set(0));
+    let after_log = allocation_counter::measure(|| {
+        for observed_tick in 11..=1010 {
+            tick(observed_tick);
+        }
+    });
+    let after_locks = STEP_NAV_LOCK_COUNT.with(|count| count.replace(0));
+    assert_eq!(after_log.count_total, 0, "{after_log:?}");
+    assert_eq!(after_log.bytes_current, 0, "{after_log:?}");
+    assert_eq!(after_locks, 1000, "no added lock on sustained held ticks");
+    eprintln!(
+        "walk-cost before_log_ticks=9 allocations={} nav_locks={before_locks} \
+         after_log_ticks=1000 allocations={} nav_locks={after_locks} state_bytes=32",
+        before_log.count_total, after_log.count_total,
+    );
+}
+
+#[test]
 fn no_progress_info_logs_once_for_each_observed_episode() {
     const CHILD: &str = "WALK_NO_PROGRESS_LOG_TEST_CHILD";
     if std::env::var(CHILD).as_deref() != Ok("1") {
