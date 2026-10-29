@@ -341,6 +341,87 @@
               "comment": "scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-50"
             },
             {
+              "id": "bank-protected-gather-tools",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "deposit",
+                "at": "nearest",
+                "items": [
+                  { "obj": "rune_axe" },
+                  { "obj": "adamant_axe" },
+                  { "obj": "mithril_axe" },
+                  { "obj": "black_axe" },
+                  { "obj": "steel_axe" },
+                  { "obj": "iron_axe" },
+                  { "obj": "bronze_axe" },
+                  { "obj": "rune_pickaxe" },
+                  { "obj": "adamant_pickaxe" },
+                  { "obj": "mithril_pickaxe" },
+                  { "obj": "steel_pickaxe" },
+                  { "obj": "iron_pickaxe" },
+                  { "obj": "bronze_pickaxe" }
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": { "area": "entrana" }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": { "area": "dungeon" }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Any": [
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "black_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_pickaxe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_pickaxe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_pickaxe" } } }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Not": {
+                  "Any": [
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_axe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_axe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_axe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "black_axe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_axe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_axe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_axe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_pickaxe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_pickaxe" } } },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_pickaxe" } } }
+                  ]
+                }
+              },
+              "comment": "Bank protected gather tools explicitly; deposit_all keeps them, while the Entrana monk rejects weapon_axe and weapon_pickaxe. crates/api/src/gather_tools.rs:47-66; crates/script/src/quester/compile.rs:1139-1175; scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:39-50"
+            },
+            {
               "id": "clear-restricted-pack",
               "kind": "bank",
               "version": 1,
@@ -376,6 +457,48 @@
                     }
                   },
                   {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "pack_only",
+                          "version": 1,
+                          "args": {
+                            "objs": [
+                              "knife",
+                              "chaosrune",
+                              "airrune",
+                              "firerune",
+                              "lobster"
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Any": [
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_axe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_axe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_axe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "black_axe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_axe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_axe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_axe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_pickaxe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_pickaxe" } } },
+                            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_pickaxe" } } }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": [
+                  {
                     "Fact": {
                       "kind": "pack_only",
                       "version": 1,
@@ -389,25 +512,29 @@
                         ]
                       }
                     }
+                  },
+                  {
+                    "Not": {
+                      "Any": [
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "black_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_axe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rune_pickaxe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "adamant_pickaxe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "mithril_pickaxe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "steel_pickaxe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "iron_pickaxe" } } },
+                        { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_pickaxe" } } }
+                      ]
+                    }
                   }
                 ]
               },
-              "settle": {
-                "Fact": {
-                  "kind": "pack_only",
-                  "version": 1,
-                  "args": {
-                    "objs": [
-                      "knife",
-                      "chaosrune",
-                      "airrune",
-                      "firerune",
-                      "lobster"
-                    ]
-                  }
-                }
-              },
-              "comment": "scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-50"
+              "comment": "Deposit_all clears every other unlisted weapon/armour category; pack_only admits protected gather tools, so the explicit item exclusions are required. scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-50; crates/script/src/quester/families/s2.rs:1613-1657"
             },
             {
               "id": "sail-entrana",

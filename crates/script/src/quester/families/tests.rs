@@ -7426,6 +7426,48 @@ fn members_world_rejects_arguments() {
     });
 }
 
+#[test]
+fn unseen_anchored_loc_prewalk_uses_area_arrival() {
+    compile_context_test(|cx| {
+        let anchor = tile(2642, 3441);
+        let plan = compile_interact(
+            test_args::<InteractArgs>(serde_json::json!({
+                "target": {"loc": "fishinggateclosedr"},
+                "op": "Open",
+                "anchor": {
+                    "tile": [2642, 3441, 0],
+                    "source": "content/maps/m41_53.jm2:5083"
+                },
+                "radius": 4
+            })),
+            cx,
+        )
+        .unwrap();
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(2820, 3487)));
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |step| plan.begin(step).unwrap())
+        });
+
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        let HostEffect::Walk(request) = &ledger.as_ref().unwrap().outbox[0].effect else {
+            panic!("the unseen loc needs an anchor prewalk");
+        };
+        assert_eq!(request.target, anchor);
+        assert_eq!(request.radius, 4);
+        assert_eq!(request.loc_id, None);
+        assert_eq!(
+            request.arrival,
+            nav_planner::contract::ArrivalKind::Area,
+            "the prewalk must reach any standable tile in the loc's anchor area"
+        );
+    });
+}
+
 /// Tenzing's door (`death_sherpa_door`, shape 0 angle 2): a straight wall on
 /// the east edge of its own tile. The anchored pre-walk goes to the doorstep
 /// east of it at radius 0, not to the door tile across the wall, then opens

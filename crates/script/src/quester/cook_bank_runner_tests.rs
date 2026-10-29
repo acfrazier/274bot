@@ -1095,99 +1095,119 @@ fn r1_bundled_non_inventory_paths_reach_first_root_from_empty_pack() {
         let Some(bytes) = super::super::registry::bundled_path(&entry.id) else {
             continue;
         };
-        let mut fixture = CookFixture::new(false, false);
         let document: super::super::path::PathDocument = serde_json::from_slice(bytes).unwrap();
-        fixture.script.path = super::super::compile::compile_uncached_for_test(
-            &document,
-            &fixture.script.selected,
-            &fixture.script.quests,
-        )
-        .unwrap();
-        if fixture.script.path.provisioning.owns_inventory {
-            continue;
-        }
-        fixture.snapshot.seed_quest_statuses(
-            vec![QuestStatusView {
-                name: fixture
-                    .script
-                    .selected
-                    .quest_identity()
-                    .unwrap()
-                    .rows
-                    .iter()
-                    .find(|row| row.id == entry.id)
-                    .unwrap()
-                    .display
-                    .clone(),
-                component_id: 43,
-                colour: 0xf80000,
-            }],
-            true,
-        );
-        // Required supplies are available in the bank, not preloaded in the
-        // pack. This sweep tests inventory capacity, not a supply shortfall.
-        // An empty pack still observes empty equipment: loadout-first Paths
-        // (e.g. fluffs) need worn evidence to evaluate their first skip.
-        fixture.snapshot.seed_equipment(Vec::new());
-        fixture.stock = fixture
-            .script
-            .path
-            .provisioning
-            .items
-            .iter()
-            .enumerate()
-            .map(|(slot, item)| {
-                let mut definition = def(item.id, &item.name);
-                definition.stackable = item.stackable;
-                ItemView {
-                    def: definition,
-                    container: ItemContainer::Bank,
-                    action_family: ItemActionFamily::Component,
-                    slot: slot as i32,
-                    count: item.qty as i32,
-                    actions: vec![Some("Withdraw-X".into()), Some("Withdraw-1".into())],
-                    component_id: 7,
+        // A partner Path compiles only as a gang member, so compile it once
+        // for each declared gang. A solo Path compiles once.
+        let mut compiled = Vec::new();
+        match &document.partner {
+            Some(declaration) => {
+                for role in declaration.roles.iter() {
+                    let mut fixture = CookFixture::new(false, false);
+                    fixture.script.path = super::super::compile::compile_uncached_for_test_as(
+                        &document,
+                        &fixture.script.selected,
+                        &fixture.script.quests,
+                        role.gang,
+                    )
+                    .unwrap();
+                    compiled.push((format!("{} {:?}", entry.id, role.gang), fixture));
                 }
-            })
-            .collect();
-        for carry in fixture
-            .script
-            .path
-            .provisioning
-            .loadout_carry
-            .values()
-            .flat_map(|rows| rows.iter())
-        {
-            if let Some(stock) = fixture
-                .stock
-                .iter_mut()
-                .find(|row| row.def.id == carry.item.id)
-            {
-                stock.count = stock.count.max(carry.qty);
-            } else {
-                let mut definition = def(carry.item.id, &carry.item.name);
-                definition.stackable = carry.stackable;
-                fixture.stock.push(ItemView {
-                    def: definition,
-                    container: ItemContainer::Bank,
-                    action_family: ItemActionFamily::Component,
-                    slot: fixture.stock.len() as i32,
-                    count: carry.qty,
-                    actions: vec![Some("Withdraw-X".into()), Some("Withdraw-1".into())],
-                    component_id: 7,
-                });
+            }
+            None => {
+                let mut fixture = CookFixture::new(false, false);
+                fixture.script.path = super::super::compile::compile_uncached_for_test(
+                    &document,
+                    &fixture.script.selected,
+                    &fixture.script.quests,
+                )
+                .unwrap();
+                compiled.push((entry.id.clone(), fixture));
             }
         }
-        fixture.until_root_begin();
-        assert!(
-            !fixture.script.parked,
-            "{}: {:?}",
-            entry.id, fixture.output.logs
-        );
-        assert_eq!(
-            fixture.deposits, 0,
-            "empty {} pack needs no deposits",
-            entry.id
-        );
+        for (label, mut fixture) in compiled {
+            if fixture.script.path.provisioning.owns_inventory {
+                continue;
+            }
+            fixture.snapshot.seed_quest_statuses(
+                vec![QuestStatusView {
+                    name: fixture
+                        .script
+                        .selected
+                        .quest_identity()
+                        .unwrap()
+                        .rows
+                        .iter()
+                        .find(|row| row.id == entry.id)
+                        .unwrap()
+                        .display
+                        .clone(),
+                    component_id: 43,
+                    colour: 0xf80000,
+                }],
+                true,
+            );
+            // Required supplies are available in the bank, not preloaded in
+            // the pack. This sweep tests inventory capacity, not a supply
+            // shortfall. An empty pack still observes empty equipment:
+            // loadout-first Paths (e.g. fluffs) need worn evidence to
+            // evaluate their first skip.
+            fixture.snapshot.seed_equipment(Vec::new());
+            fixture.stock = fixture
+                .script
+                .path
+                .provisioning
+                .items
+                .iter()
+                .enumerate()
+                .map(|(slot, item)| {
+                    let mut definition = def(item.id, &item.name);
+                    definition.stackable = item.stackable;
+                    ItemView {
+                        def: definition,
+                        container: ItemContainer::Bank,
+                        action_family: ItemActionFamily::Component,
+                        slot: slot as i32,
+                        count: item.qty as i32,
+                        actions: vec![Some("Withdraw-X".into()), Some("Withdraw-1".into())],
+                        component_id: 7,
+                    }
+                })
+                .collect();
+            for carry in fixture
+                .script
+                .path
+                .provisioning
+                .loadout_carry
+                .values()
+                .flat_map(|rows| rows.iter())
+            {
+                if let Some(stock) = fixture
+                    .stock
+                    .iter_mut()
+                    .find(|row| row.def.id == carry.item.id)
+                {
+                    stock.count = stock.count.max(carry.qty);
+                } else {
+                    let mut definition = def(carry.item.id, &carry.item.name);
+                    definition.stackable = carry.stackable;
+                    fixture.stock.push(ItemView {
+                        def: definition,
+                        container: ItemContainer::Bank,
+                        action_family: ItemActionFamily::Component,
+                        slot: fixture.stock.len() as i32,
+                        count: carry.qty,
+                        actions: vec![Some("Withdraw-X".into()), Some("Withdraw-1".into())],
+                        component_id: 7,
+                    });
+                }
+            }
+            fixture.until_root_begin();
+            assert!(
+                !fixture.script.parked,
+                "{}: {:?}",
+                label, fixture.output.logs
+            );
+            assert_eq!(fixture.deposits, 0, "empty {label} pack needs no deposits");
+        }
     }
 }

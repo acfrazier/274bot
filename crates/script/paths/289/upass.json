@@ -49,6 +49,8 @@
       ], "flags": [], "monotonic": false },
     "prelude": [], "sequences": [
       { "stage": "upass:0", "required": [], "terminal": false, "recovery_entry": null, "steps": [
+        { "id": "buy-shortbow", "kind": "buy", "version": 1, "args": { "shop": { "npc": "lowe", "anchor": { "tile": [3232,3423,0], "source": "C:maps/m50_53.jm2:12911; C:pack/npc.pack:551" } }, "obj": "shortbow", "qty": 1, "est_gp": 50 }, "comment": "C:scripts/areas/area_varrock/configs/varrock.inv:82-95; C:scripts/areas/area_varrock/configs/varrock.npc:332-360; C:scripts/skill_combat/configs/ranged/bows.obj:30-31.", "skip_if": { "Any": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "shortbow" } } }, { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "shortbow" } } }] }, "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "shortbow" } } } },
+        { "id": "buy-bridge-arrows", "kind": "buy", "version": 1, "args": { "shop": { "npc": "aemad", "anchor": { "tile": [2613,3294,0], "source": "C:maps/m40_51.jm2:10809; C:pack/npc.pack:591" } }, "obj": "bronze_arrow", "qty": 9, "est_gp": 9 }, "comment": "C:scripts/areas/area_ardougne_east/configs/ardougne_east.inv:55-71; C:scripts/areas/area_ardougne_east/configs/ardougne_east.npc:622-657; C:scripts/skill_combat/configs/ranged/arrows.obj:1-4. Nine arrows fund the initial attempt and eight recipe restarts.", "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bronze_arrow", "qty": 9 } } }, "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bronze_arrow", "qty": 9 } } } },
         { "id": "start-lathas", "kind": "talk", "version": 1, "advances": true,
           "args": { "npc": "kinglathas", "anchor": { "tile": [2578, 3293, 1], "source": "C:maps/m40_51.jm2:10832; C:pack/npc.pack:365" }, "leash": 8, "prefer": [] },
           "comment": "C:scripts/areas/area_ardougne_east/scripts/king_lathas.rs2:73-107 checks Biohazard and Ranged 25, then sets the started bit and generates the grid.",
@@ -66,7 +68,7 @@
           "comment": "C:scripts/quests/quest_upass/scripts/quest_upass.rs2:80-97 sends eligible players to the cave.",
           "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2494, 9716, 0], "radius": 64 } } }, "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2494, 9716, 0], "radius": 3 } } } },
         { "id": "cross-fire-bridge", "kind": "acquire", "version": 1,
-          "args": { "recipe": "bridge-attempts" },
+          "args": { "recipe": "bridge-attempts", "max_restarts": 8 },
           "comment": "C:scripts/quests/quest_upass/scripts/upass_bridge.rs2:63-87 may miss and consume the arrow. The recipe repeats while the landing is not observed. Its advancing child reads the stage.",
           "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2442, 9716, 0], "radius": 2 } } }, "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2442, 9716, 0], "radius": 2 } } } }
       ] },

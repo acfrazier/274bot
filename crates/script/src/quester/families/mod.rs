@@ -2346,16 +2346,19 @@ impl InteractRun {
                     .local_player()
                     .map(|player| player.value.player.network);
                 if !here.is_some_and(|here| reach::within(here, tile, self.radius)) {
+                    let mut request = reach::walk_request(
+                        tile,
+                        self.radius.max(1) as u16,
+                        None,
+                        cx.required_after,
+                    );
+                    if self.loc_selector().is_some() {
+                        // The unseen loc has no interaction geometry yet, so accept any
+                        // standable tile in its anchor area before the live approach.
+                        request.arrival = nav_planner::contract::ArrivalKind::Area;
+                    }
                     self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                        cx.tick.actions.begin::<Walk>(
-                            reach::walk_request(
-                                tile,
-                                self.radius.max(1) as u16,
-                                None,
-                                cx.required_after,
-                            ),
-                            &mut cx.tick.cx,
-                        ),
+                        cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
                     ))?);
                     return Poll::Pending;
                 }
