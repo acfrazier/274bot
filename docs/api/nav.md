@@ -1027,12 +1027,13 @@ radius 2 and glider landings radius 1 whatever the runner passes.
   nothing, batched ticks add each elapsed tick, and a backward clock
   credits one tick. Recovery keeps the original allowance, so a stopped
   walk still ends after a finite wait.
-- **Movement has a finite extension:** observed tile changes can keep a hop
-  active for at most 25% beyond its original planned allowance, rounded
-  up to a whole tick. The measured maximum was 149/145 of the allowance
-  across nine completed maze/Priest walks. The 5/4 cap leaves 21.64% above
-  that maximum (`WALK-STALL-1029/r1/budget-ratios.json`). Server-path turns
-  can continue even when their Chebyshev distance stays unchanged.
+- **Movement has a finite extension:** its cap is the larger of the old
+  fixed 60-tick bound and 125% of the original planned allowance, rounded
+  up to a whole tick. A custom short hop cannot expire before that old
+  bound. The measured maximum was 149/145 of the allowance across nine
+  completed maze/Priest walks. The 5/4 factor leaves 21.64% above that
+  maximum (`WALK-STALL-1029/r1/budget-ratios.json`). Server-path turns can
+  continue even when their Chebyshev distance stays unchanged.
   Pacing between two tiles or drifting away cannot extend this cap.
   An idle hop still expires on the first observed tick past its original
   allowance. Recovery does not reset either limit.

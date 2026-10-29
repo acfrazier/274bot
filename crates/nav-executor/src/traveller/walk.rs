@@ -185,7 +185,8 @@ impl FollowRun {
                 let moved = hop.stall_idle_at.is_some_and(|last| last != here);
                 let moving_budget = hop
                     .budget_ticks
-                    .saturating_add(hop.budget_ticks.div_ceil(WALK_MOVEMENT_MARGIN_DIVISOR));
+                    .saturating_add(hop.budget_ticks.div_ceil(WALK_MOVEMENT_MARGIN_DIVISOR))
+                    .max(DEFAULT_HOP_BUDGET_TICKS);
                 if spent != counted && spent > hop.budget_ticks && (!moved || spent > moving_budget)
                 {
                     let why = if hop.sent_tile == Some(here) {

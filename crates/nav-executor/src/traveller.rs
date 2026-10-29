@@ -476,12 +476,16 @@ pub struct TravelOptions<'a> {
     pub on_leg: Option<TravelLegCallback<'a>>,
 }
 
+// Preserve dev's fixed default walk bound when a custom short hop scales
+// below it. WALK-STALL-1029-R1's moving cap must not end such a walk sooner.
+const DEFAULT_HOP_BUDGET_TICKS: u32 = 60;
+
 impl Default for TravelOptions<'_> {
     fn default() -> Self {
         TravelOptions {
             close_enough: 2,
             on_event: None,
-            budget_ticks_per_hop: 60,
+            budget_ticks_per_hop: DEFAULT_HOP_BUDGET_TICKS,
             max_hops: 60,
             teleports: None,
             edges: None,

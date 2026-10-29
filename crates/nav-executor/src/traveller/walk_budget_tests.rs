@@ -57,7 +57,7 @@ fn winding_walk_budget_uses_planned_steps_not_endpoint_distance() {
 }
 
 #[test]
-fn server_path_turn_keeps_a_moving_walk_alive_within_the_cap() {
+fn short_server_path_turn_can_finish_after_scaled_budget_before_dev_bound() {
     let mut client = scene_client();
     let mut snapshot = snap_at(&mut client, 0, 0);
     let mut driver = FollowRec {
@@ -81,9 +81,20 @@ fn server_path_turn_keeps_a_moving_walk_alive_within_the_cap() {
     assert!(traveller
         .follow(&mut driver, &snapshot, route.clone(), &mut options)
         .is_none());
-    // The server can choose tiles outside the packed route. Its turn at
-    // ticks 6..=8 holds Chebyshev distance at two. Tick 8 is already beyond
-    // the seven-tick allowance, but remains inside the nine-tick cap.
+    let budget = traveller
+        .follow
+        .as_ref()
+        .unwrap()
+        .walk
+        .as_ref()
+        .unwrap()
+        .budget_ticks;
+    assert_eq!(budget, 7);
+    assert_eq!(budget + budget.div_ceil(4), 9);
+    assert!(budget + budget.div_ceil(4) < TravelOptions::default().budget_ticks_per_hop);
+    // The server turn holds Chebyshev distance at two after tick 5.
+    // Its scaled allowance is nine ticks, but the old fixed bound is 60.
+    // The walk must remain active long enough to arrive on tick 12.
     let observed = [
         (0, 1),
         (0, 2),
@@ -93,6 +104,9 @@ fn server_path_turn_keeps_a_moving_walk_alive_within_the_cap() {
         (1, 5),
         (2, 5),
         (1, 5),
+        (2, 5),
+        (1, 5),
+        (0, 6),
         (0, 7),
     ];
     for (index, (x, z)) in observed.into_iter().enumerate() {
@@ -250,8 +264,10 @@ fn non_progressing_movement_expires(position: impl Fn(u32) -> (i32, i32)) {
         .unwrap()
         .budget_ticks;
     assert_eq!(budget, 7);
-    let moving_budget = budget + budget.div_ceil(4);
-    assert_eq!(moving_budget, 9);
+    let scaled_budget = budget + budget.div_ceil(4);
+    assert_eq!(scaled_budget, 9);
+    let moving_budget = scaled_budget.max(TravelOptions::default().budget_ticks_per_hop);
+    assert_eq!(moving_budget, 60);
     for tick in 1..=2000 {
         let (x, z) = position(tick);
         plant_player(&mut client, x, z);
