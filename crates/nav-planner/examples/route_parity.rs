@@ -152,7 +152,7 @@ fn main() -> Result<(), String> {
     let mut carried_axe = observed_item_state();
     carried_axe.inv.insert(bronze_axe_id, 1);
     let mut worn_axe = observed_item_state();
-    worn_axe.worn.insert(bronze_axe_id, 1);
+    worn_axe.worn.insert(bronze_axe_id);
     let entrana_approach = [tile(2818, 3352, 0)];
     let port_sarim = [tile(3092, 3242, 0)];
     let legacy = FindOptions {
