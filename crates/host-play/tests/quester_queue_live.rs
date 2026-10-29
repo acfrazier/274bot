@@ -1360,11 +1360,9 @@ fn skip_probe_waits_for_cook_bank_action() {
     };
     for action_state in ["talking", "walking"] {
         let early = status("start", action_state);
-        assert!(
-            SkipQueueEvidence::active_cook_action(&early)
-                .unwrap()
-                .is_none()
-        );
+        assert!(SkipQueueEvidence::active_cook_action(&early)
+            .unwrap()
+            .is_none());
     }
     let bank = status("start", "banking");
     let action = SkipQueueEvidence::active_cook_action(&bank)
