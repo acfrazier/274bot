@@ -471,8 +471,8 @@ impl NativeMachine for Dialogue {
                     self.walk_request_id = 0;
                     return Poll::Pending;
                 }
-                let route_finished = self.walk_request_id != 0
-                    && cx.walk_receipt(self.walk_request_id).is_some();
+                let route_finished =
+                    self.walk_request_id != 0 && cx.walk_receipt(self.walk_request_id).is_some();
                 if now >= self.deadline_ms || (route_finished && self.approach_replans_left == 0) {
                     cx.cancel_request(self.walk_request_id);
                     self.walk_request_id = 0;
@@ -729,8 +729,8 @@ impl Dialogue {
                 // A nearby NPC across a closed wall/door is not ready to
                 // talk. Route to its side instead of accepting a blocked
                 // adjacent tile and cancelling before the door traversal.
-                self.approach_replans_left = npc_id
-                    .map_or(0, |id| dialogue_approach_replan_budget(cx, id));
+                self.approach_replans_left =
+                    npc_id.map_or(0, |id| dialogue_approach_replan_budget(cx, id));
                 self.walk_request_id = cx.walk(reach::walk_request(
                     target.tile,
                     if reachable { 1 } else { 0 },

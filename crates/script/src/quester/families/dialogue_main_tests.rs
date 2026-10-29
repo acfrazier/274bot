@@ -1327,9 +1327,12 @@ fn dialogue_approach_fails_when_npc_keeps_moving_after_content_bound() {
         }),
         Poll::Ready(Ok(DialogueOutcome::Failed))
     ));
-    assert!(!ledger.as_ref().unwrap().outbox.iter().any(|entry| {
-        matches!(&entry.effect, HostEffect::Walk(_)) && entry.live()
-    }));
+    assert!(!ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .any(|entry| { matches!(&entry.effect, HostEffect::Walk(_)) && entry.live() }));
 }
 
 #[test]
@@ -1364,9 +1367,12 @@ fn dialogue_approach_fails_immediately_when_npc_disappears() {
         }),
         Poll::Ready(Ok(DialogueOutcome::Failed))
     ));
-    assert!(!ledger.as_ref().unwrap().outbox.iter().any(|entry| {
-        matches!(&entry.effect, HostEffect::Walk(_)) && entry.live()
-    }));
+    assert!(!ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .any(|entry| { matches!(&entry.effect, HostEffect::Walk(_)) && entry.live() }));
 }
 
 #[test]
