@@ -466,6 +466,19 @@ cells = [
 ]
 
 [[cover]]
+globs = ["crates/host-play/src/script_bank.rs"]
+cells = [
+  "host.gatherer-bank-cost-fallback|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_bank_cost_air_fallback --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/host-play/src/route_inspect.rs"]
+cells = [
+  "host.survivable-compat-v1-crossing|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_UNPACK_DIR=${BOT_UNPACK_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test survivable_admission_live -- --ignored --exact real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp --nocapture --test-threads=1",
+]
+
+
+[[cover]]
 globs = ["crates/host-play/tests/survivable_admission_live.rs"]
 cells = [
   "host.survivable-admission|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_UNPACK_DIR=${BOT_UNPACK_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test survivable_admission_live -- --ignored --exact real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape --nocapture --test-threads=1",

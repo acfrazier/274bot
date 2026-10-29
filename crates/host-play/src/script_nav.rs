@@ -4471,7 +4471,7 @@ impl ScriptWalkArm {
             .unwrap()
             .get(&self.name)
             .and_then(|bot| bot.quest_context.clone());
-        let evidence = world.graph.quest_family.and_then(|family| {
+        let quest_evidence = world.graph.quest_family.and_then(|family| {
             captured_route_quests(
                 family,
                 context.as_ref(),
@@ -4480,7 +4480,7 @@ impl ScriptWalkArm {
                 request.required_after,
             )
         });
-        self.state = Some(patch_route_quest_evidence(state, evidence));
+        self.state = Some(patch_route_quest_evidence(state, quest_evidence));
         let from = WorldTile { x, z, level };
         let radius = i32::from(request.radius);
         let (options, policy, enforce) = super::walk_permissions::native_admission(
@@ -4490,7 +4490,7 @@ impl ScriptWalkArm {
             session_permissions,
         );
         let empty = WorldState::empty();
-        let state = self.state.as_ref().unwrap_or(&empty);
+        let state = self.state.as_deref().unwrap_or(&empty);
         let (options, exclusions) = match resolve_route_exclusions(
             options,
             world,
@@ -4563,7 +4563,7 @@ impl ScriptWalkArm {
             request: Box::new(request),
             kind: RouteDemandKind::Advisory {
                 authority: authority.clone(),
-                evidence,
+                evidence: request.evidence,
             },
         };
         let (queued, displaced) = {
