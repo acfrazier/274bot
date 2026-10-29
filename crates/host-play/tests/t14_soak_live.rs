@@ -37,13 +37,13 @@ const GATHERER_TREE_PROOF_STEP: &str = "confirm the selected-289 normal tree is 
 const GATHERER_RELOG_STEP: &str = "relog successfully so the inventory tab binds before Start";
 
 // Ten radius-five normal-tree Start patches in the western Falador content site.
-// The offline audit checks sampled production routes and initial Guardian
-// travel. It does not prove the worst-case scene-box flee bound.
+// The offline audit covers workload routes and ordinary recovery only.
+// Random-event movement is outside this proof.
 const NORMAL_STARTS: [(i32, i32); 10] = [
     (2946, 3399),
     (2946, 3412),
     (2946, 3417),
-    (2947, 3404),
+    (2947, 3402),
     (2951, 3399),
     (2952, 3417),
     (2958, 3399),

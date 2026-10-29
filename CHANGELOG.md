@@ -74,6 +74,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   Each account needs two eligible, reachable trees. Host-router reachability
   must admit ten distinct normal trees as a capacity witness, not a product
   assignment. Both arms use the same region, tree tiers, bank, and outer bound.
+  The Start at `(2947,3402)` replaces a blocked tile inside a tree footprint.
+  This shared two-tile correction preserves every resource membership.
   Shared tree selection and contention remain possible. No Gatherer policy changes.
   The route proof covers workload bank travel, Gatherer retreats and
   re-approaches, and ordinary recovery during faults. It checks actual

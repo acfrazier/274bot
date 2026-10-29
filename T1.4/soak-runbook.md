@@ -72,6 +72,9 @@ Do not search additional regions for this correction.
 
 Ten accounts gather normal logs from the configured real content site.
 Each account retains one radius-five Start anchor from `NORMAL_STARTS`.
+The normal Start `(2947,3402)` replaces the blocked `(2947,3404)` tile inside a tree footprint.
+Both arms receive this two-tile correction.
+Resource memberships, radii, route bounds, faults, and thresholds do not change.
 The checker requires at least two eligible normal trees for each account.
 The host router must reach at least two trees from each normal Start.
 Reachable resources must admit ten distinct trees as a capacity witness, not a product assignment.
@@ -87,7 +90,6 @@ It is not a movement stop condition.
 The guard records a `worksite-exit` event when a bot leaves these rectangles.
 That event does not fail the arm.
 For workload movement, danger-envelope entry or movement beyond `OUTER_WALK_BOUNDS` fails the route guard.
-The product-classified Maze and Mime interiors retain their separate travel rules.
 
 The checker uses each hunter's `wanderrange + huntrange + size`.
 It checks all selected-content hunter placements, independently of combat-level immunity and collision shielding.
