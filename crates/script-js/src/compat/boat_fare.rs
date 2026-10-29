@@ -3,10 +3,9 @@
 //!
 //! Frozen `Traversal.walkTo` (`Traversal.ts:80–95`): one `WalkExecutor`
 //! walk; on a `failed`/`unreachable` outcome `recoverBoatFare`
-//! (`karamjaRecovery.ts`), then one more walk. If fare recovery does not apply,
-//! a failed first walk gets one fresh plan. The baked leg of `walkResilient`
-//! is the same `Traversal.walkTo` (`Traversal.ts:160–170`), so
-//! [`crate::walk::Resilient`] embeds [`Recover`] too.
+//! (`karamjaRecovery.ts`), then one more walk. The baked leg of
+//! `walkResilient` is the same `Traversal.walkTo` (`Traversal.ts:160–170`),
+//! so [`crate::walk::Resilient`] embeds [`Recover`] too.
 //!
 //! `WalkOptions` (`WalkExecutor.ts:113–139, 226–245`): `radius` defaults to
 //! 2 and `timeoutMs` to 300 s; teleports are `resolveWalkUseTeleports` (an
@@ -1899,18 +1898,10 @@ impl Family for WalkTo {
                 self.pumped = false;
                 return Step::Wait;
             }
-            // The host freezes follow while it handles an owned random event.
-            // Keep this walk pending in every phase.
+            // Frozen follow pass: `EventSignal.pending()` ends the walk
+            // before `Sustain.run()` (`WalkExecutor.ts:844–853, 359–362`),
+            // the re-walk and the recovery included; the host route stops.
             if interrupted(cx) {
-                let owned_random =
-                    observed::with(|scene| scene.since_login().ours().unwrap_or(false));
-                if owned_random
-                    && !crate::event_signal::pending()
-                    && !cx.user_move_intent_interrupted()
-                {
-                    self.pumped = false;
-                    return Step::Wait;
-                }
                 self.interrupt(cx);
                 continue;
             }
@@ -1952,7 +1943,7 @@ impl WalkTo {
         }
         if matches!(self.phase, WalkToPhase::Walking { .. }) {
             self.logs
-                .push_back("walk interrupted — a random event is being handled".into());
+                .push_back(format!("walk interrupted — {}", interrupt_cause(cx)));
         }
         self.result = Some(false);
     }
@@ -1967,26 +1958,9 @@ impl WalkTo {
                     self.result = Some(value);
                     return;
                 }
-                // If fare recovery does not start, give the failed walk one fresh plan.
                 match Recover::start(self.dest, cx, &mut self.logs) {
                     Ok(recover) => self.phase = WalkToPhase::Recover(Box::new(recover)),
-                    Err(_) => match Walk::begin_compat_avoiding(
-                        self.dest,
-                        self.radius,
-                        self.timeout_ms,
-                        self.allow_teleports,
-                        self.avoid.clone(),
-                        self.cross.clone(),
-                        cx,
-                    ) {
-                        Ok(walk) => {
-                            self.phase = WalkToPhase::Walking {
-                                walk,
-                                retried: true,
-                            }
-                        }
-                        Err(arrived) => self.result = Some(arrived),
-                    },
+                    Err(_) => self.result = Some(false),
                 }
             }
             WalkToPhase::Recover(recover) => match recover.step(cx, &mut self.logs) {
@@ -2011,6 +1985,19 @@ impl WalkTo {
                 },
             },
         }
+    }
+}
+
+/// Why frozen `'interrupted'` ended the walk, in the terms this machine can
+/// see: the player's own move, an owned random event, or the script's
+/// `EventSignal.pending()` / `setInterrupt` callback.
+fn interrupt_cause(cx: &Cx<'_>) -> &'static str {
+    if observed::with(|scene| scene.since_login().ours().unwrap_or(false)) {
+        "a random event is being handled"
+    } else if cx.user_move_intent_interrupted() {
+        "the player moved"
+    } else {
+        "the script's interrupt callback"
     }
 }
 

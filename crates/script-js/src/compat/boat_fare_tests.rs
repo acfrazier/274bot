@@ -24,12 +24,6 @@ const PORT_SARIM: WorldTile = WorldTile {
     z: 3217,
     level: 0,
 };
-const BRIMHAVEN_CART: WorldTile = WorldTile {
-    x: 2776,
-    z: 3214,
-    level: 0,
-};
-
 #[test]
 fn grove_anchor_uses_nearest_content_tree_to_frozen_center_deterministically() {
     use api::game_data::KaramjaSpawn;
@@ -1494,20 +1488,17 @@ fn a_failed_talk_walk_retries_and_logs_the_terminal_failure() {
 }
 
 #[test]
-fn a_script_interrupt_during_the_re_walk_stops_it_and_ends_false() {
-    crate::event_signal::clear();
+fn an_interrupt_during_the_re_walk_stops_it_and_ends_false() {
+    // Frozen follow pass: EventSignal.pending ends the walk (WalkExecutor.ts:844-853).
     let (h, mut world, _, again) = earn_the_fare(None);
-    world.ours = false;
+    world.ours = true;
     world.post();
-    crate::event_signal::set(true);
-    let stopped = tick();
-    crate::event_signal::clear();
     assert_eq!(
-        stopped,
+        tick(),
         vec![InteractReq::AbortWalk {
             request_id: token(&again)
         }],
-        "a script interrupt still stops its host follow"
+        "the interrupted re-walk stops its host follow"
     );
     assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
 }
@@ -1539,113 +1530,16 @@ fn walk_to_does_not_recover_a_short_that_is_not_the_boat_fare() {
             2,
             (coins_id, count),
         );
-        let retry = tick();
         assert!(
-            matches!(retry.as_slice(), [op] if walk_near(PORT_SARIM, 2)(op)),
-            "{count} coins from {from:?}: no fare recovery, but a fresh walk: {retry:?}"
+            tick().is_empty(),
+            "{count} coins from {from:?}: no recovery walk"
         );
-
-        world.tick += 1;
-        post_walk_outcome(
-            world.tick,
-            token(&retry[0]),
-            world.here,
-            PORT_SARIM,
-            2,
-            true,
-        );
-        assert!(tick().is_empty());
         assert_eq!(
             machine::take(h),
             Take::Settled(Outcome::Done(json!(false))),
-            "the bounded retry returns the second failed walk"
+            "frozen walkTo returns the failed walk as is"
         );
     }
-}
-
-#[test]
-fn walk_to_waits_for_owned_random_event_before_fare_recovery() {
-    reset();
-    let mut world = World::new(MUSA, 5);
-    install_luthas_reach_view(world.facts.luthas_anchor, None);
-    let luthas = world.facts.luthas_anchor;
-    let coins = world.facts.coins;
-    let fare = world.facts.coin_payout;
-    let h = start_walk_to(&mut world);
-    let first = machine::merge_ops(Vec::new());
-    assert!(matches!(first.as_slice(), [op] if walk_near(PORT_SARIM, 2)(op)));
-    let first_token = token(&first[0]);
-
-    world.ours = true;
-    world.post();
-    assert!(
-        tick().is_empty(),
-        "an owned random event must not abort the initial walk"
-    );
-    assert_eq!(machine::take(h), Take::Pending);
-
-    world.ours = false;
-    world.post();
-    fail_short(&mut world, first_token, PORT_SARIM, 2, (coins, fare));
-    let luthas_walk = until(&mut world, "walk to Luthas after the event", is_walk);
-    let luthas_npc = WorldTile {
-        x: luthas.x,
-        z: luthas.z + 1,
-        level: luthas.level,
-    };
-    assert_ne!(token(&luthas_walk), first_token);
-    assert!(orthogonally_adjacent(walk_tile(&luthas_walk), luthas_npc));
-    assert_eq!(machine::take(h), Take::Pending);
-}
-
-#[test]
-fn walk_to_waits_for_owned_random_event_during_re_walk() {
-    crate::event_signal::clear();
-    let (h, mut world, _, again) = earn_the_fare(None);
-    assert!(walk_near(PORT_SARIM, 2)(&again));
-
-    world.ours = true;
-    world.post();
-    assert!(
-        tick().is_empty(),
-        "an owned random event must not abort the fare re-walk"
-    );
-    assert_eq!(machine::take(h), Take::Pending);
-
-    world.ours = false;
-    world.here = PORT_SARIM;
-    world.post();
-    assert!(tick().is_empty());
-    assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(true))));
-}
-
-#[test]
-fn walk_to_retries_a_failed_initial_walk_without_missing_fare_evidence() {
-    reset();
-    let mut world = World::new(BRIMHAVEN_CART, 5);
-    let h = start_walk_to(&mut world);
-    let first = machine::merge_ops(Vec::new());
-    let first_token = token(&first[0]);
-    world.tick += 1;
-    post_walk_outcome(world.tick, first_token, world.here, PORT_SARIM, 2, true);
-
-    let retry = tick();
-    assert!(
-        matches!(retry.as_slice(), [op] if walk_near(PORT_SARIM, 2)(op)),
-        "a failed walk without the exact fare signal gets a fresh route: {retry:?}"
-    );
-    let retry_token = token(&retry[0]);
-    assert_ne!(retry_token, first_token, "the retry uses a fresh request");
-    assert_eq!(machine::take(h), Take::Pending);
-
-    world.tick += 1;
-    post_walk_outcome(world.tick, retry_token, world.here, PORT_SARIM, 2, true);
-    assert!(tick().is_empty());
-    assert_eq!(
-        machine::take(h),
-        Take::Settled(Outcome::Done(json!(false))),
-        "the second failed route spends the retry budget"
-    );
 }
 
 #[test]
@@ -1664,22 +1558,7 @@ fn walk_to_with_a_full_pack_and_no_banana_does_not_recover() {
         2,
         (coins_id, fare),
     );
-    let retry = tick();
-    assert!(
-        matches!(retry.as_slice(), [op] if walk_near(PORT_SARIM, 2)(op)),
-        "no free slot prevents fare recovery but not the fresh route: {retry:?}"
-    );
-
-    world.tick += 1;
-    post_walk_outcome(
-        world.tick,
-        token(&retry[0]),
-        world.here,
-        PORT_SARIM,
-        2,
-        true,
-    );
-    assert!(tick().is_empty());
+    assert!(tick().is_empty(), "no free slot: no walk to Luthas");
     assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
 }
 
@@ -1751,30 +1630,12 @@ fn walk_to_waits_out_the_frozen_300_second_default() {
     assert_eq!(machine::take(h), Take::Pending);
     machine::age(h, 240_000);
     world.post();
-    let retry = tick();
-    assert!(
-        matches!(
-            retry.as_slice(),
-            [InteractReq::AbortWalk { request_id }, op]
-                if *request_id == token(&first[0]) && walk_near(PORT_SARIM, 2)(op)
-        ),
-        "the failed first walk aborts and starts one fresh host walk: {retry:?}"
-    );
-    let retry_token = token(&retry[1]);
-    assert_eq!(
-        machine::take(h),
-        Take::Pending,
-        "the first failed walk does not end walkTo"
-    );
-
-    machine::age(h, 300_000);
-    world.post();
     assert_eq!(
         tick(),
         vec![InteractReq::AbortWalk {
-            request_id: retry_token
+            request_id: token(&first[0])
         }],
-        "the one fresh host walk keeps the frozen 300-second bound"
+        "the bound stops the host follow"
     );
     assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
 }
