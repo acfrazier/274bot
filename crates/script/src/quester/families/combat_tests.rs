@@ -4335,7 +4335,7 @@ fn until_drop_stops_after_held_item_on_last_permitted_kill() {
 }
 
 #[test]
-fn until_drop_blocks_at_budget_after_loot_pass_and_preserves_kill_receipt() {
+fn until_drop_missing_loot_waits_without_failing_or_resetting_total_kills() {
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let item = selected.item_by_alias("bones").unwrap();
     let item_name: Arc<str> = Arc::from(item.name.as_deref().unwrap_or("Bones"));
@@ -4343,36 +4343,131 @@ fn until_drop_blocks_at_budget_after_loot_pass_and_preserves_kill_receipt() {
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_inventory(Vec::new(), 28);
+    snapshot.seed_ground_items(Vec::new());
     super::super::tests::seed_dialogue_combat(&mut snapshot, false);
     let mut ledger = None;
+    let mut kill_tick = 12;
 
+    for kills in 1..=2 {
+        let mut killed = report(CombatEnd::Killed);
+        killed.evidence.tick = kill_tick;
+        assert!(with_step_context(&snapshot, &mut ledger, kill_tick, |cx| {
+            run.on_combat_report(killed, cx)
+        })
+        .is_pending());
+        for _ in 0..100 {
+            assert!(with_step_context(&snapshot, &mut ledger, kill_tick, |cx| run.poll(cx))
+                .is_pending());
+            assert!(matches!(run.phase, Phase::Loot));
+            assert_eq!(run.kills, kills);
+        }
+
+        let mut finished_tick = None;
+        for tick in kill_tick + 1..=kill_tick + 20 {
+            match with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)) {
+                Poll::Pending if matches!(run.action.as_ref(), Some(Action::Combat(_))) => {
+                    assert_eq!(kills, 1, "the final kill must not re-engage");
+                    finished_tick = Some(tick);
+                    break;
+                }
+                Poll::Pending => {
+                    assert!(matches!(run.phase, Phase::Loot));
+                }
+                Poll::Ready(Err(ActionError::Blocked(reason))) => {
+                    assert_eq!(kills, 2, "missing loot must not fail the first kill");
+                    assert_eq!(reason.as_ref(), "bones_not_found");
+                    assert!(run.action.is_none());
+                    finished_tick = Some(tick);
+                    break;
+                }
+                _ => panic!("missing loot must be owned only by the total-kill budget"),
+            }
+            assert_eq!(run.kills, kills);
+        }
+        let finished_tick = finished_tick.expect("the absent-drop wait must be bounded");
+        assert!(
+            finished_tick >= kill_tick + 5,
+            "the full five-tick drop-appearance window precedes re-engagement or stop"
+        );
+        assert_eq!(run.kills, kills);
+        assert_eq!(last_test_combat_receipt(&run).kills, kills);
+        kill_tick = finished_tick + 1;
+    }
+}
+
+#[test]
+fn until_drop_takes_a_late_drop_on_the_final_permitted_kill() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("bones").unwrap();
+    let item_name: Arc<str> = Arc::from(item.name.as_deref().unwrap_or("Bones"));
+    let stand = api::WorldTile {
+        x: 3253,
+        z: 3401,
+        level: 0,
+    };
+    let mut run = until_drop_test_run(
+        imp_target(&selected),
+        Some(stand),
+        item.id,
+        Arc::clone(&item_name),
+        1,
+    );
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    snapshot.seed_ground_items(Vec::new());
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    let mut ledger = None;
     assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
         run.on_combat_report(report(CombatEnd::Killed), cx)
     })
     .is_pending());
-    run.loot_index = run.loot.len();
-    assert!(with_step_context(&snapshot, &mut ledger, 13, |cx| {
-        run.next_loot_or_reengage(cx)
-    })
-    .is_pending());
-    assert_eq!(run.kills, 1);
-    assert!(matches!(run.action.as_ref(), Some(Action::Combat(_))));
-
-    assert!(with_step_context(&snapshot, &mut ledger, 14, |cx| {
-        run.on_combat_report(report(CombatEnd::Killed), cx)
-    })
-    .is_pending());
-    assert_eq!(run.kills, 2);
-    run.loot_index = run.loot.len();
-    match with_step_context(&snapshot, &mut ledger, 15, |cx| {
-        run.next_loot_or_reengage(cx)
-    }) {
-        Poll::Ready(Err(ActionError::Blocked(reason))) => {
-            assert_eq!(reason.as_ref(), "bones_not_found");
-        }
-        _ => panic!("expected the authored stop reason at the kill budget"),
+    for tick in 13..16 {
+        assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending());
+        assert!(matches!(run.phase, Phase::Loot));
+        assert_eq!(run.kills, 1);
     }
-    assert_eq!(last_test_combat_receipt(&run).kills, 2);
+    snapshot.seed_ground_items(vec![GroundItemView {
+        def: inventory_item(item.id, &item_name, 1).def,
+        count: 1,
+        actions: vec![Some("Take".into())],
+        tile: stand,
+        distance: 0,
+    }]);
+    for _ in 0..2 {
+        assert!(with_step_context(&snapshot, &mut ledger, 16, |cx| run.poll(cx)).is_pending());
+    }
+    assert!(ledger.as_ref().unwrap().outbox.iter().any(|action| {
+        matches!(
+            &action.effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+                id: Some(id),
+                action,
+                ..
+            }) if *id == item.id && action == "Take"
+        )
+    }));
+    snapshot.seed_inventory(vec![inventory_item(item.id, &item_name, 1)], 28);
+    snapshot.seed_ground_items(Vec::new());
+    let mut completed = None;
+    for tick in 17..=20 {
+        match with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)) {
+            Poll::Pending => {}
+            Poll::Ready(Ok(outcome)) => {
+                completed = Some(outcome);
+                break;
+            }
+            Poll::Ready(Err(_)) => panic!("the final late drop must beat the named stop"),
+        }
+    }
+    let completed = completed.expect("the observed inventory pickup completes the step");
+    let receipt = completed
+        .receipt
+        .as_ref()
+        .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
+        .expect("the final permitted kill remains in the receipt");
+    assert_eq!(receipt.kills, 1);
+    assert!(matches!(receipt.report.end, CombatEnd::Killed));
     assert!(run.action.is_none());
 }
 
