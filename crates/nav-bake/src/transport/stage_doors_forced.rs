@@ -339,6 +339,17 @@ impl Motion<'_> {
             if self.entrance.is_some()
                 && self.moved
                 && !self.value_query
+                && entrances::scenery_tail(&body[index..], self.base.src)
+            {
+                return if self.price(1).is_some() {
+                    End::Continue
+                } else {
+                    End::Refused
+                };
+            }
+            if self.entrance.is_some()
+                && self.moved
+                && !self.value_query
                 && matches!(stmt, Stmt::If(..) | Stmt::Assign(..))
                 && body[index..]
                     .iter()

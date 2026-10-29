@@ -3,8 +3,7 @@
 //! a possible refusal or different landing rejects that state alternative.
 use super::*;
 
-// The real camp gate reads 11 items, four independent NPC queries, and one
-// completion interval. Bound that complete Cartesian product at 2^16.
+// Bound the full item, NPC, quest-completion, and quest-stage product.
 const MAX_ALTERNATIVES: usize = 65_536;
 const MAX_READ_BLOCKS: usize = 64;
 
@@ -18,6 +17,18 @@ pub(super) struct Inputs<'a> {
     complete: bool,
     above_queries: &'a [String],
     above_mask: usize,
+    stages: &'a [StageChoice<'a>],
+}
+
+#[derive(Clone, Copy)]
+struct StageChoice<'a> {
+    varp: &'a str,
+    values: api::selected::InclusiveRange,
+}
+
+struct StageRanges {
+    varp: String,
+    values: Vec<api::selected::InclusiveRange>,
 }
 
 #[derive(Default)]
@@ -25,6 +36,8 @@ struct Reads {
     items: Vec<i32>,
     npc: Vec<Expr>,
     quests: HashSet<String>,
+    /// Comparison boundaries that partition every recognized stage predicate.
+    stage_boundaries: HashMap<String, Vec<i32>>,
     seen: HashSet<String>,
     valid: bool,
 }
@@ -33,7 +46,9 @@ impl Reads {
     fn expression(&mut self, expr: &Expr, src: &Sources) {
         match expr {
             Expr::Word(name) if name.starts_with('%') => {
-                if src.quest_complete.contains_key(&name[1..]) {
+                if src.quest_complete.contains_key(&name[1..])
+                    || src.quest_signals.contains_key(&name[1..])
+                {
                     self.quests.insert(name.clone());
                 }
             }
@@ -58,7 +73,27 @@ impl Reads {
                     self.expression(arg, src);
                 }
             }
-            Expr::Cmp(_, a, b) | Expr::And(a, b) | Expr::Or(a, b) | Expr::Arithmetic(_, a, b) => {
+            Expr::Cmp(op, lhs, rhs) => {
+                if let (Expr::Word(varp), Some(value)) = (lhs.as_ref(), stage_literal(rhs, src)) {
+                    if let Some(varp) = varp.strip_prefix('%') {
+                        if src.quest_complete.contains_key(varp)
+                            || src.quest_signals.contains_key(varp)
+                        {
+                            let boundaries =
+                                self.stage_boundaries.entry(varp.to_owned()).or_default();
+                            boundaries.push(value);
+                            if matches!(op, CmpOp::Le | CmpOp::Gt | CmpOp::Eq | CmpOp::Ne) {
+                                if let Some(next) = value.checked_add(1) {
+                                    boundaries.push(next);
+                                }
+                            }
+                        }
+                    }
+                }
+                self.expression(lhs, src);
+                self.expression(rhs, src);
+            }
+            Expr::And(a, b) | Expr::Or(a, b) | Expr::Arithmetic(_, a, b) => {
                 self.expression(a, src);
                 self.expression(b, src);
             }
@@ -145,6 +180,104 @@ impl Reads {
     }
 }
 
+fn stage_literal(expr: &Expr, src: &Sources) -> Option<i32> {
+    match expr {
+        Expr::Num(value) => Some(*value),
+        Expr::Word(name) => name
+            .strip_prefix('^')
+            .and_then(|name| src.constants.get(name))
+            .copied(),
+        _ => None,
+    }
+}
+
+fn compare_interval(op: CmpOp, min: i32, max: i32, value: i32) -> Option<bool> {
+    match op {
+        CmpOp::Eq if min == max => Some(min == value),
+        CmpOp::Eq if value < min || value > max => Some(false),
+        CmpOp::Ne if min == max => Some(min != value),
+        CmpOp::Ne if value < min || value > max => Some(true),
+        CmpOp::Lt if max < value => Some(true),
+        CmpOp::Lt if min >= value => Some(false),
+        CmpOp::Le if max <= value => Some(true),
+        CmpOp::Le if min > value => Some(false),
+        CmpOp::Gt if min > value => Some(true),
+        CmpOp::Gt if max <= value => Some(false),
+        CmpOp::Ge if min >= value => Some(true),
+        CmpOp::Ge if max < value => Some(false),
+        _ => None,
+    }
+}
+
+fn quest_stage_ranges(reads: &Reads, src: &Sources) -> Option<Vec<StageRanges>> {
+    let mut varps: Vec<_> = reads.stage_boundaries.keys().collect();
+    varps.sort_unstable();
+    let mut out = Vec::new();
+    for varp in varps {
+        let starts = &reads.stage_boundaries[varp];
+        let complete = src.quest_complete.get(varp).map(|(_, value)| *value);
+        if complete.is_some_and(|complete| starts.iter().all(|start| *start == complete)) {
+            continue;
+        }
+        if !src.quest_signals.contains_key(varp) {
+            return None;
+        }
+        let mut boundaries = Vec::with_capacity(starts.len() + usize::from(complete.is_some()));
+        boundaries.extend(starts.iter().copied());
+        if let Some(complete) = complete {
+            boundaries.push(complete);
+        }
+        boundaries.sort_unstable();
+        boundaries.dedup();
+        let mut values = Vec::with_capacity(boundaries.len() + 1);
+        if let Some(max) = boundaries[0].checked_sub(1) {
+            values.push(api::selected::InclusiveRange {
+                min: None,
+                max: Some(max),
+            });
+        }
+        for (index, min) in boundaries.iter().copied().enumerate() {
+            let max = boundaries
+                .get(index + 1)
+                .and_then(|next| next.checked_sub(1));
+            if max.is_none_or(|max| min <= max) {
+                values.push(api::selected::InclusiveRange {
+                    min: Some(min),
+                    max,
+                });
+            }
+        }
+        out.push(StageRanges {
+            varp: varp.clone(),
+            values,
+        });
+    }
+    Some(out)
+}
+
+fn stage_combinations(queries: &[StageRanges]) -> Option<Vec<Vec<StageChoice<'_>>>> {
+    let mut combinations = vec![Vec::new()];
+    for query in queries {
+        let count = combinations.len().checked_mul(query.values.len())?;
+        if count > MAX_ALTERNATIVES {
+            return None;
+        }
+        let mut expanded = Vec::with_capacity(count);
+        for combination in &combinations {
+            for &values in &query.values {
+                let mut candidate = combination.clone();
+                candidate.push(StageChoice {
+                    varp: &query.varp,
+                    values,
+                });
+                expanded.push(candidate);
+            }
+        }
+        combinations = expanded;
+    }
+    Some(combinations)
+}
+
 /// A progress-only write below completion preserves every supported quest
 /// predicate. Other stage predicates are deliberately not interpreted here.
 pub(super) fn preserves_completion(stmt: &Stmt, src: &Sources) -> bool {
@@ -176,6 +309,170 @@ pub(super) fn preserves_completion(stmt: &Stmt, src: &Sources) -> bool {
     }
     !body.is_empty() && body.iter().all(|stmt| matches!(stmt, Stmt::Assign(names, value)
         if names.as_slice() == [varp.clone()] && scalar(value).is_some_and(|after| after < *complete)))
+}
+/// Prove the complete bounded scenery update used after scripted gate motion.
+/// This accepts only the two observed zone-search origins and the full
+/// loc-change/loc-add loop; it does not certify arbitrary loc lookups or loops.
+pub(super) fn scenery_tail(stmts: &[Stmt], src: &Sources) -> bool {
+    if !matches!(stmts.len(), 3 | 4) {
+        return false;
+    }
+    let [Stmt::Call(search, origin), Stmt::While(test, loop_body), ..] = stmts else {
+        return false;
+    };
+    if search != "loc_findallzone"
+        || !(matches!(origin.as_slice(), [Expr::Word(coord)] if coord == "coord")
+            || matches!(
+                origin.as_slice(),
+                [Expr::Call(name, args)]
+                    if name == "movecoord"
+                        && matches!(args.as_slice(), [Expr::Word(coord), Expr::Num(1), Expr::Num(0), Expr::Num(0)] if coord == "coord")
+            ))
+        || !matches!(test, Expr::Cmp(CmpOp::Eq, lhs, rhs)
+            if matches!(lhs.as_ref(), Expr::Word(name) if name == "loc_findnext")
+                && matches!(rhs.as_ref(), Expr::Word(value) if value == "true"))
+    {
+        return false;
+    }
+    let [Stmt::If(arms, None)] = loop_body.as_slice() else {
+        return false;
+    };
+    let [(category_test, category_body)] = arms.as_slice() else {
+        return false;
+    };
+    if !matches!(category_test, Expr::Cmp(CmpOp::Eq, lhs, rhs)
+        if matches!(lhs.as_ref(), Expr::Word(name) if name == "loc_category")
+            && matches!(rhs.as_ref(), Expr::Word(name) if !name.is_empty()))
+    {
+        return false;
+    }
+    let [Stmt::Def(central, Some(Expr::Call(loc_coord, no_args))), Stmt::Def(angle, Some(Expr::Call(loc_angle, angle_args))), Stmt::Def(kind, Some(Expr::Word(loc_type))), Stmt::Call(change, change_args), Stmt::If(type_arms, None)] =
+        category_body.as_slice()
+    else {
+        return false;
+    };
+    if central != "$central_coord"
+        || loc_coord != "loc_coord"
+        || !no_args.is_empty()
+        || angle != "$orig_angle"
+        || loc_angle != "loc_angle"
+        || !angle_args.is_empty()
+        || kind != "$type"
+        || loc_type != "loc_type"
+        || change != "loc_change"
+        || !matches!(
+            change_args.as_slice(),
+            [Expr::Word(name), Expr::Num(3)] if name == "inviswall" && src.ids.contains_key(name)
+        )
+    {
+        return false;
+    }
+    let [(type_test, additions)] = type_arms.as_slice() else {
+        return false;
+    };
+    if !matches!(type_test, Expr::Cmp(CmpOp::Eq, lhs, rhs)
+        if matches!(lhs.as_ref(), Expr::Word(name) if name == "$type")
+            && matches!(rhs.as_ref(), Expr::Word(name) if src.ids.contains_key(name)))
+    {
+        return false;
+    }
+    let [Stmt::Call(left_add, left_args), Stmt::Call(right_add, right_args)] = additions.as_slice()
+    else {
+        return false;
+    };
+    if left_add != "loc_add"
+        || right_add != "loc_add"
+        || !scenery_loc_add(left_args, "$central_coord", -1, src)
+        || !scenery_loc_add(right_args, "$central_coord", -2, src)
+    {
+        return false;
+    }
+    let finalizers = &stmts[2..];
+    match finalizers {
+        [Stmt::Call(delay, args)] => delay == "p_delay" && args.as_slice() == [Expr::Num(0)],
+        [Stmt::Call(sound, sound_args), Stmt::Call(delay, delay_args)] => {
+            sound == "sound_synth"
+                && matches!(
+                    sound_args.as_slice(),
+                    [Expr::Word(_), Expr::Num(1), Expr::Num(0)]
+                )
+                && delay == "p_delay"
+                && delay_args.as_slice() == [Expr::Num(0)]
+        }
+        _ => false,
+    }
+}
+
+fn contains_scenery_tail(body: &[Stmt], src: &Sources) -> bool {
+    (0..body.len()).any(|start| scenery_tail(&body[start..], src))
+}
+
+fn contains_teleport(body: &[Stmt]) -> bool {
+    let mut calls = Vec::new();
+    body.iter().for_each(|stmt| stmt.calls(&mut calls));
+    calls.iter().any(|call| call == "p_teleport")
+}
+
+fn has_paired_teleport(stmt: &Stmt) -> bool {
+    let Stmt::If(arms, Some(otherwise)) = stmt else {
+        return false;
+    };
+    let [(_, entering)] = arms.as_slice() else {
+        return false;
+    };
+    contains_teleport(entering) && contains_teleport(otherwise)
+}
+
+fn calls_scenery_tail(body: &[Stmt], src: &Sources) -> bool {
+    let mut calls = Vec::new();
+    body.iter().for_each(|stmt| stmt.calls(&mut calls));
+    calls
+        .iter()
+        .filter_map(|call| call.strip_prefix('@'))
+        .any(|name| {
+            if let Lookup::Found(block) = Sources::one(&src.labels, name) {
+                contains_scenery_tail(&block.body, src)
+            } else {
+                false
+            }
+        })
+}
+
+fn has_paired_gate_tail(block: &Block, src: &Sources) -> bool {
+    block.body.iter().enumerate().any(|(index, stmt)| {
+        if !has_paired_teleport(stmt) {
+            return false;
+        }
+        let suffix = &block.body[index + 1..];
+        contains_scenery_tail(suffix, src) || calls_scenery_tail(suffix, src)
+    })
+}
+
+// Stage windows require the paired teleport and scenery-tail structure
+// evidenced by the shipyard and Varrock gate handlers.
+fn has_certified_paired_gate(handler: &Block, src: &Sources) -> bool {
+    let calls = reachable_calls(handler, src);
+    let mut blocks = vec![handler];
+    for call in &calls {
+        let Some(name) = call.strip_prefix('@') else {
+            continue;
+        };
+        if let Lookup::Found(block) = Sources::one(&src.labels, name) {
+            blocks.push(block);
+        }
+    }
+    blocks.iter().any(|block| has_paired_gate_tail(block, src))
+}
+
+fn scenery_loc_add(args: &[Expr], origin: &str, dx: i32, src: &Sources) -> bool {
+    matches!(
+        args,
+        [Expr::Call(name, coord_args), Expr::Word(loc), Expr::Num(3), Expr::Word(shape), Expr::Num(3)]
+            if name == "movecoord"
+                && matches!(coord_args.as_slice(), [Expr::Word(base), Expr::Num(offset), Expr::Num(0), Expr::Num(0)] if base == origin && *offset == dx)
+                && src.ids.contains_key(loc)
+                && shape == "loc_shape"
+    )
 }
 
 impl Motion<'_> {
@@ -279,9 +576,46 @@ impl Motion<'_> {
         let input = self.entrance?;
         if let Expr::Word(varp) = lhs {
             if let Some(quest_varp) = varp.strip_prefix('%') {
+                if let Some(stage) = input.stages.iter().find(|stage| stage.varp == quest_varp) {
+                    let Some(Val::Int(value)) = self.value(rhs, env) else {
+                        return Some(Cond::unknown());
+                    };
+                    let min = stage.values.min.unwrap_or(i32::MIN);
+                    let max = stage.values.max.unwrap_or(i32::MAX);
+                    let Some(value) = compare_interval(op, min, max, value) else {
+                        return Some(Cond::unknown());
+                    };
+                    let Some(quest) = self.base.src.quest_signals.get(quest_varp) else {
+                        return Some(Cond::unknown());
+                    };
+                    let gate = if self.base.src.quest_complete.get(quest_varp).is_some_and(
+                        |(_, complete)| {
+                            stage.values.min == Some(*complete) && stage.values.max.is_none()
+                        },
+                    ) {
+                        api::selected::QuestGate::Complete(quest.clone())
+                    } else {
+                        api::selected::QuestGate::Window(api::selected::StageWindow {
+                            quest: quest.clone(),
+                            signal: api::selected::FactKey::new(quest_varp),
+                            values: stage.values,
+                        })
+                    };
+                    return Some(Cond {
+                        value: Some(value),
+                        needs: Needs {
+                            quests: vec![gate],
+                            quest_family: self.base.src.quest_family,
+                            ..Needs::default()
+                        },
+                    });
+                }
                 let Some((quest, complete)) = self.base.src.quest_complete.get(quest_varp) else {
                     return Some(Cond::unknown());
                 };
+                if self.base.src.quest_signals.get(quest_varp) != Some(quest) {
+                    return Some(Cond::unknown());
+                }
                 let Some(Val::Int(value)) = self.value(rhs, env) else {
                     return Some(Cond::unknown());
                 };
@@ -297,23 +631,8 @@ impl Motion<'_> {
                 } else {
                     (*complete, *complete)
                 };
-                let value = match op {
-                    CmpOp::Eq if min == max => Some(min == value),
-                    CmpOp::Eq if value < min || value > max => Some(false),
-                    CmpOp::Ne if min == max => Some(min != value),
-                    CmpOp::Ne if value < min || value > max => Some(true),
-                    CmpOp::Lt if max < value => Some(true),
-                    CmpOp::Lt if min >= value => Some(false),
-                    CmpOp::Le if max <= value => Some(true),
-                    CmpOp::Le if min > value => Some(false),
-                    CmpOp::Gt if min > value => Some(true),
-                    CmpOp::Gt if max <= value => Some(false),
-                    CmpOp::Ge if min >= value => Some(true),
-                    CmpOp::Ge if max < value => Some(false),
-                    _ => None,
-                };
                 return Some(Cond {
-                    value,
+                    value: compare_interval(op, min, max, value),
                     needs: if input.complete {
                         Needs {
                             quests: vec![api::selected::QuestGate::Complete(quest.clone())],
@@ -536,6 +855,7 @@ struct TrajectoryInputs<'a> {
     npc: &'a [Expr],
     above: &'a [String],
     complete: bool,
+    stages: &'a [StageChoice<'a>],
 }
 
 fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
@@ -554,6 +874,7 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
         npc,
         above,
         complete,
+        stages,
     } = input;
     let at = WorldTile {
         x: placement.x,
@@ -598,6 +919,7 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
                 complete,
                 above_queries: above,
                 above_mask,
+                stages,
             }),
             returned: None,
             value_query: false,
@@ -713,14 +1035,40 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
             reads.body(&handler.body, src);
             reads.items.sort_unstable();
             reads.items.dedup();
+            let stages =
+                if reads.stage_boundaries.is_empty() || !has_certified_paired_gate(handler, src) {
+                    Vec::new()
+                } else {
+                    let Some(stages) = quest_stage_ranges(&reads, src) else {
+                        continue;
+                    };
+                    stages
+                };
+            let Some(stage_combinations) = stage_combinations(&stages) else {
+                bump(
+                    skipped,
+                    "loc entrance exceeds bounded content alternatives",
+                    1,
+                );
+                continue;
+            };
+            let stage_varps: HashSet<_> = stages.iter().map(|stage| stage.varp.as_str()).collect();
+            let unpartitioned_quests = reads
+                .quests
+                .iter()
+                .filter(|name| !stage_varps.contains(&name[1..]))
+                .count();
             let mut above: Vec<_> = reads
                 .quests
                 .iter()
-                .filter(|name| {
-                    !src.quest_exact.contains(&name[1..])
-                        && src.quest_complete[&name[1..]].1 < i32::MAX
+                .filter_map(|name| {
+                    let varp = &name[1..];
+                    if stage_varps.contains(varp) || src.quest_exact.contains(varp) {
+                        return None;
+                    }
+                    let (_, complete) = src.quest_complete.get(varp)?;
+                    (*complete < i32::MAX).then(|| name.clone())
                 })
-                .cloned()
                 .collect();
             above.sort_unstable();
             let Some(bits) = reads
@@ -731,7 +1079,12 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
             else {
                 continue;
             };
-            if !reads.valid || bits >= usize::BITS as usize || (1usize << bits) > MAX_ALTERNATIVES {
+            if !reads.valid
+                || bits >= usize::BITS as usize
+                || (1usize << bits)
+                    .checked_mul(stage_combinations.len())
+                    .is_none_or(|count| count > MAX_ALTERNATIVES)
+            {
                 bump(
                     skipped,
                     "loc entrance exceeds bounded content alternatives",
@@ -789,68 +1142,77 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                     .into_iter()
                     .filter(|stand| collision.standable(*stand))
                 {
-                    for mask in 0..(1usize << reads.items.len()) {
-                        let absent: Vec<_> = reads
-                            .items
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(index, &id)| {
-                                (mask & (1usize << index) != 0).then_some(id)
-                            })
-                            .collect();
-                        let trajectory_inputs = TrajectoryInputs {
-                            src,
-                            facts,
-                            positions,
-                            proofs,
-                            supported,
-                            selectors,
-                            handler,
-                            id,
-                            placement,
-                            stand,
-                            absent: &absent,
-                            npc: &reads.npc,
-                            above: &above,
-                            complete: true,
-                        };
-                        let complete = trajectory(trajectory_inputs);
-                        let incomplete = (reads.quests.len() == 1)
-                            .then(|| {
-                                trajectory(TrajectoryInputs {
-                                    complete: false,
-                                    ..trajectory_inputs
+                    for stages in &stage_combinations {
+                        for mask in 0..(1usize << reads.items.len()) {
+                            let absent: Vec<_> = reads
+                                .items
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(index, &id)| {
+                                    (mask & (1usize << index) != 0).then_some(id)
                                 })
-                            })
-                            .flatten();
-                        let incomplete = incomplete.filter(|candidate| {
-                            complete.as_ref().is_some_and(|other| {
-                                other.to == candidate.to
-                                    && weaker_than(&other.needs, &candidate.needs)
-                            })
-                        });
-                        for result in [complete, incomplete].into_iter().flatten() {
-                            if result.needs.quests.is_empty()
-                                && result.needs.forbidden_held.is_empty()
-                                && result.needs.forbidden_worn.is_empty()
-                                && result.needs.items.is_empty()
-                                && result.needs.worn.is_empty()
-                            {
-                                continue;
-                            }
-                            if !collision.standable(result.to) {
-                                continue;
-                            }
-                            let mut edge =
-                                gated_edge(TransportKind::Ladder, id, at, result.to, result.needs);
-                            edge.takeoff = Some(stand);
-                            edge.option = option;
-                            edge.ticks = result.ticks;
-                            if observable.admit_edge(graph, edge, audit)
-                                && src.has_member_reads(handler)
-                            {
-                                audit
-                                    .record_member_path(graph.edges.last().expect("admitted edge"));
+                                .collect();
+                            let trajectory_inputs = TrajectoryInputs {
+                                src,
+                                facts,
+                                positions,
+                                proofs,
+                                supported,
+                                selectors,
+                                handler,
+                                id,
+                                placement,
+                                stand,
+                                absent: &absent,
+                                npc: &reads.npc,
+                                above: &above,
+                                complete: true,
+                                stages,
+                            };
+                            let complete = trajectory(trajectory_inputs);
+                            let incomplete = (unpartitioned_quests == 1)
+                                .then(|| {
+                                    trajectory(TrajectoryInputs {
+                                        complete: false,
+                                        ..trajectory_inputs
+                                    })
+                                })
+                                .flatten();
+                            let incomplete = incomplete.filter(|candidate| {
+                                complete.as_ref().is_some_and(|other| {
+                                    other.to == candidate.to
+                                        && weaker_than(&other.needs, &candidate.needs)
+                                })
+                            });
+                            for result in [complete, incomplete].into_iter().flatten() {
+                                if result.needs.quests.is_empty()
+                                    && result.needs.forbidden_held.is_empty()
+                                    && result.needs.forbidden_worn.is_empty()
+                                    && result.needs.items.is_empty()
+                                    && result.needs.worn.is_empty()
+                                {
+                                    continue;
+                                }
+                                if !collision.standable(result.to) {
+                                    continue;
+                                }
+                                let mut edge = gated_edge(
+                                    TransportKind::Ladder,
+                                    id,
+                                    at,
+                                    result.to,
+                                    result.needs,
+                                );
+                                edge.takeoff = Some(stand);
+                                edge.option = option;
+                                edge.ticks = result.ticks;
+                                if observable.admit_edge(graph, edge, audit)
+                                    && src.has_member_reads(handler)
+                                {
+                                    audit.record_member_path(
+                                        graph.edges.last().expect("admitted edge"),
+                                    );
+                                }
                             }
                         }
                     }
