@@ -2868,6 +2868,7 @@ fn run_cells(
             "stages_seen": actor["stages_seen"],
             "tick_observations": actor["tick_observations"],
             "deaths": actor["deaths"],
+            "death_count_total_across_runs": actor["death_count_total_across_runs"],
             "death_sent": actor["death_sent"],
             "death_observed": actor["death_observed"],
             "death_injections": actor["death_injections"],

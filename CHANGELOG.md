@@ -72,6 +72,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   Partial guides can declare an exact boundary and record a distinct
   `gap-reached` result only when the boundary and prior settlements match.
   Matching native park traces are retained in the boundary proof.
+  Boundary checks accept advancing journal stages and queue-only Blocked
+  statuses without weakening death checks. Solo receipts preserve cross-run
+  death totals. Campaign runs now avoid danger zones by default.
 
 - Quest guides can now kill until a required item drops, with a total kill
   budget and a named stop. The final allowed kill still gets its loot wait.

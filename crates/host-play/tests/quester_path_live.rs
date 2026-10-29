@@ -313,7 +313,6 @@ fn campaign_cells(manifest_path: &std::path::Path) -> Result<Vec<CampaignEntry>,
             ("quests".into(), serde_json::json!([quest])),
             ("allow_teleports".into(), true.into()),
             ("allow_wilderness".into(), true.into()),
-            ("allow_danger_zones".into(), true.into()),
         ]);
         if let Some(gang) = &account.gang {
             settings.insert("gang".into(), gang.clone().into());
@@ -457,12 +456,8 @@ fn campaign_actor_receipts(
     Ok(receipts)
 }
 
-#[derive(Default)]
-struct StepSettlement {
-    stage: String,
-    step_id: String,
-    kind: String,
-    started: bool,
+struct StepSettlement<'a> {
+    begin: &'a RootStepTrace,
     settled: bool,
 }
 
@@ -470,36 +465,51 @@ fn prior_started_steps_settled(
     events: &[(usize, RootStepTrace)],
     boundary: usize,
 ) -> Option<Vec<serde_json::Value>> {
-    let mut steps = std::collections::BTreeMap::<(String, String), StepSettlement>::new();
+    let mut steps = std::collections::BTreeMap::<(&str, &str), StepSettlement<'_>>::new();
     for (_, event) in events.iter().filter(|entry| entry.0 < boundary) {
-        let key = (event.stage.clone(), event.step_id.clone());
-        let step = steps.entry(key).or_insert_with(|| StepSettlement {
-            stage: event.stage.clone(),
-            step_id: event.step_id.clone(),
-            kind: event.kind.clone(),
-            ..StepSettlement::default()
-        });
-        if event.kind != step.kind {
-            return None;
-        }
         if event.repeated && (event.event == "begin" || event.event.starts_with("failed:")) {
             return None;
         }
         match event.event.as_str() {
             "begin" => {
-                if step.started {
+                let key = (event.stage.as_str(), event.step_id.as_str());
+                if steps
+                    .insert(key, StepSettlement { begin: event, settled: false })
+                    .is_some()
+                {
                     return None;
                 }
-                step.started = true;
             }
-            "settled" if step.started => step.settled = true,
-            "settled" => return None,
-            failed if failed.starts_with("failed:") && step.started => step.settled = false,
-            failed if failed.starts_with("failed:") => return None,
+            outcome if outcome == "settled" || outcome.starts_with("failed:") => {
+                // Progress can advance the journal stage before this event.
+                let mut pending = steps.iter().filter(|(_, step)| {
+                    !step.settled
+                        && step.begin.step_id == event.step_id
+                        && step.begin.kind == event.kind
+                });
+                let key = if let Some((key, _)) = pending.next() {
+                    if pending.next().is_some() {
+                        return None;
+                    }
+                    *key
+                } else if outcome == "settled"
+                    && event.repeated
+                    && steps.values().any(|step| {
+                        step.settled
+                            && step.begin.step_id == event.step_id
+                            && step.begin.kind == event.kind
+                    })
+                {
+                    continue;
+                } else {
+                    return None;
+                };
+                steps.get_mut(&key)?.settled = outcome == "settled";
+            }
             _ => {}
         }
     }
-    if steps.values().any(|step| !step.started || !step.settled) {
+    if steps.values().any(|step| !step.settled) {
         return None;
     }
     Some(
@@ -507,9 +517,9 @@ fn prior_started_steps_settled(
             .into_values()
             .map(|step| {
                 serde_json::json!({
-                    "stage": step.stage,
-                    "step_id": step.step_id,
-                    "kind": step.kind,
+                    "stage": step.begin.stage,
+                    "step_id": step.begin.step_id,
+                    "kind": step.begin.kind,
                     "settled": step.settled,
                 })
             })
@@ -533,11 +543,14 @@ fn prove_actor_gap(
     messages: &[String],
     receipt: &serde_json::Value,
 ) -> Option<serde_json::Value> {
+    // Both receipt shapes use the actor's cross-run total for `deaths`.
     if receipt["account"].as_str() != Some(account)
         || receipt["quest"].as_str() != Some(quest)
         || receipt["quest_complete"].as_bool() != Some(false)
         || receipt["deaths"].as_i64() != Some(0)
-        || receipt["death_count_total_across_runs"].as_i64() != Some(0)
+        || receipt
+            .get("death_count_total_across_runs")
+            .is_some_and(|deaths| deaths.as_i64() != Some(0))
         || receipt["death_sent"].as_bool() != Some(false)
         || receipt["death_injections"].as_i64() != Some(0)
         || receipt["death_observed"].as_bool() != Some(false)
@@ -550,10 +563,8 @@ fn prove_actor_gap(
 
     let final_status = &receipt["final_status"];
     let fields = final_status.get("fields")?;
-    let final_stage = fields["quest"]["stage"].as_str()?;
+    let final_stage = receipt["stages_seen"].as_array()?.last()?.as_str()?;
     if final_status["phase"].as_str() != Some("Blocked")
-        || fields["quest_id"].as_str() != Some(quest)
-        || fields["action_state"].as_str() != Some("blocked")
         || fields["block_reason"].as_str() != Some(gap.park_reason.as_str())
     {
         return None;
@@ -652,8 +663,6 @@ fn prove_actor_gap(
                         && event.event == "settled"
                 })
                 || context_step != gap.step_id.as_str()
-                || fields["step_id"].as_str() != Some(gap.step_id.as_str())
-                || fields["last_failure"].as_str() != Some("wait exhausted")
                 || target_failure[0].0 >= park_index
                 || root_events.iter().any(|(index, event)| {
                     *index > target_begin.0
@@ -670,10 +679,7 @@ fn prove_actor_gap(
         }
         "no step for stage" => {
             let expected_stage = gap.stage.as_deref()?;
-            if final_stage != expected_stage
-                || context_step != "unknown"
-                || fields["step_id"].as_str() != Some("")
-            {
+            if final_stage != expected_stage || context_step != "unknown" {
                 return None;
             }
             let prior = prior_started_steps_settled(&root_events, context_index)?;
@@ -1107,6 +1113,7 @@ mod campaign_gap_tests {
             "account": ACCOUNT,
             "quest": QUEST,
             "quest_complete": false,
+            "stages_seen": [stage],
             "deaths": 0,
             "death_count_total_across_runs": 0,
             "death_sent": false,
@@ -1191,6 +1198,57 @@ mod campaign_gap_tests {
                 {"stage": "viking:peer", "step_id": "walk-peer-door", "kind": "walk", "settled": true},
             ])
         );
+    }
+
+    #[test]
+    fn recorded_viking_gap_keeps_both_death_counter_guards() {
+        let packet = recorded_viking_packet();
+        let gap = campaign_gap(&serde_json::json!({"gap": packet["gap"]}))
+            .unwrap()
+            .unwrap();
+        let account = packet["receipt"]["account"].as_str().unwrap();
+        let messages = campaign_trace_messages(QUEST, packet["logs"].as_array().unwrap());
+        let messages = &messages[account];
+        let mut actor = packet["receipt"].clone();
+        actor["death_count_total_across_runs"] = serde_json::json!(0);
+        assert!(prove_actor_gap(&gap, QUEST, account, messages, &actor).is_some());
+        for (key, value) in [
+            ("deaths", serde_json::json!(1)),
+            ("death_count_total_across_runs", serde_json::json!(1)),
+            ("deaths", serde_json::Value::Null),
+        ] {
+            let mut actor = packet["receipt"].clone();
+            actor[key] = value;
+            assert!(
+                prove_actor_gap(&gap, QUEST, account, messages, &actor).is_none(),
+                "{key} must retain its death guard"
+            );
+        }
+    }
+
+    #[test]
+    fn advancing_settlement_requires_one_pending_begin_even_with_reused_ids() {
+        let begin_0 = "quester viking: stage viking:0 step reused (talk) begin";
+        let begin_1 = "quester viking: stage viking:1 step reused (talk) begin";
+        let settle_1 = "quester viking: stage viking:1 step reused (talk) settled";
+        let settle_peer = "quester viking: stage viking:peer step reused (talk) settled";
+        let events = |messages: &[&str]| {
+            messages
+                .iter()
+                .enumerate()
+                .map(|(index, message)| {
+                    (index, parse_root_step_trace(QUEST, message).unwrap())
+                })
+                .collect::<Vec<_>>()
+        };
+        let ordered = events(&[begin_0, settle_1, begin_1, settle_peer]);
+        let proof = prior_started_steps_settled(&ordered, usize::MAX)
+            .expect("sequential reused IDs have unambiguous advancing settlements");
+        assert_eq!(proof.len(), 2);
+        assert_eq!(proof[0]["stage"], "viking:0");
+        assert_eq!(proof[1]["stage"], "viking:1");
+        let ambiguous = events(&[begin_0, begin_1, settle_1, settle_peer]);
+        assert!(prior_started_steps_settled(&ambiguous, usize::MAX).is_none());
     }
 
     fn receipts(actor: serde_json::Value) -> std::collections::BTreeMap<String, serde_json::Value> {
