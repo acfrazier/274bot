@@ -96,7 +96,9 @@ fn draw_and_capture(app: &mut TuiApp, width: u16, height: u16, stamp: &str) -> S
 #[cfg(not(feature = "test-support"))]
 fn expected_footer(app: &TuiApp, hints: &str, width: u16) -> String {
     let tail = footer_tail(app, width);
-    let room = usize::from(width) - SCOPE.len() - tail.len();
+    // Cells, not bytes: the scope's arrow and the tail's bullets and bar
+    // are multi-byte and one column wide.
+    let room = usize::from(width) - SCOPE.chars().count() - tail.chars().count();
     let shown: String = hints.chars().take(room).collect();
     format!("{SCOPE}{shown:<room$}{tail}")
 }
