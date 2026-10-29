@@ -643,14 +643,14 @@ pub use script_runtime::measures_captured_native_bank_pick_cpu;
 pub use script_runtime::resolve_script_cross_zones_for_live_test;
 #[cfg(all(test, feature = "live-harness", feature = "test-support"))]
 mod buy_reply_probe_live;
-#[cfg(all(test, feature = "live-harness", feature = "test-support"))]
-mod gather_tool_buy_live;
 #[cfg(test)]
 mod gather_bait_live;
 #[cfg(test)]
 mod gather_held_live;
 #[cfg(test)]
 mod gather_return_live;
+#[cfg(all(test, feature = "live-harness", feature = "test-support"))]
+mod gather_tool_buy_live;
 #[cfg(test)]
 #[path = "quester_journal_live_tests.rs"]
 mod quester_journal_live_tests;

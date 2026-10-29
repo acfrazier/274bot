@@ -795,9 +795,7 @@ fn debug_field<'a>(debug: &'a str, field: &str) -> Option<&'a str> {
     let marker = format!("{field}: ");
     let start = debug.find(&marker)?.checked_add(marker.len())?;
     let rest = &debug[start..];
-    let end = rest
-        .find([',', '}'])
-        .unwrap_or(rest.len());
+    let end = rest.find([',', '}']).unwrap_or(rest.len());
     Some(rest[..end].trim())
 }
 

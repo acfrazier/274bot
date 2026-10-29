@@ -33,8 +33,8 @@ use script::native::{
     ScriptFlow, WalkEnd,
 };
 use script::quester::families::reach::walk_request;
-use script::shop_open::{self, Decision, Facts, Keeper, OpenCore, Session};
 use script::shim::InteractReq;
+use script::shop_open::{self, Decision, Facts, Keeper, OpenCore, Session};
 use serde_json::{json, Value};
 use vault::{Profile, ProfileSettings};
 
@@ -387,11 +387,11 @@ impl DriverPacketCounts {
         }).collect::<Vec<_>>();
         let maximum = self.packets_by_tick.values().copied().max().unwrap_or(0);
         let maximum = usize::try_from(maximum);
-        let complete = self.complete && maximum.is_ok() && maximum.as_ref().is_ok_and(|count| *count > 0);
+        let complete =
+            self.complete && maximum.is_ok() && maximum.as_ref().is_ok_and(|count| *count > 0);
         (json!(rows), maximum.unwrap_or(usize::MAX), complete)
     }
 }
-
 
 fn item_fact(data: &SelectedGameData, alias: &str) -> Result<ItemFact, String> {
     let row = data
@@ -589,7 +589,6 @@ struct PendingOpenTrade {
     request_tick: u64,
 }
 
-
 struct BuyReplyProbeScript {
     account: String,
     fixture: Fixture,
@@ -750,15 +749,16 @@ impl BuyReplyProbeScript {
     fn keeper(&self, cx: &ActionContext<'_>) -> Option<Keeper> {
         let snapshot = cx.snapshot();
         let rows = snapshot.npcs()?;
-        let here = snapshot
-            .local_player()
-            .map(|row| row.value.player.network);
+        let here = snapshot.local_player().map(|row| row.value.player.network);
         let view = script::reach_route::live(snapshot.reach().map(|row| row.value), here);
         let candidates = rows
             .value
             .iter()
             .filter(|npc| npc.r#type == usize::try_from(self.fixture.keeper.id).ok())
-            .filter(|npc| self.keeper_index.is_none_or(|index| i32::try_from(npc.index) == Ok(index)))
+            .filter(|npc| {
+                self.keeper_index
+                    .is_none_or(|index| i32::try_from(npc.index) == Ok(index))
+            })
             .filter(|npc| {
                 npc.name.as_deref().is_some_and(|name| {
                     name.eq_ignore_ascii_case(self.fixture.keeper.name.as_ref())
@@ -766,7 +766,9 @@ impl BuyReplyProbeScript {
             })
             .map(|npc| {
                 shop_open::Candidate::new(
-                    npc.name.as_deref().unwrap_or(self.fixture.keeper.name.as_ref()),
+                    npc.name
+                        .as_deref()
+                        .unwrap_or(self.fixture.keeper.name.as_ref()),
                     npc.actions
                         .iter()
                         .flatten()
@@ -793,7 +795,9 @@ impl BuyReplyProbeScript {
         if let Some(pending) = &self.open_trade {
             let Some(receipt) = cx.interaction_receipt(pending.request_id).copied() else {
                 if now.saturating_sub(pending.request_tick) >= SAMPLE_REPLY_LIMIT_TICKS {
-                    return Err("no actual Gerrant Trade dispatch receipt within the tick bound".into());
+                    return Err(
+                        "no actual Gerrant Trade dispatch receipt within the tick bound".into(),
+                    );
                 }
                 return Ok(false);
             };
@@ -842,7 +846,9 @@ impl BuyReplyProbeScript {
         let decision = if let Some(walk) = self.open_walk.as_mut() {
             match walk.poll(cx) {
                 Poll::Pending => return Ok(false),
-                Poll::Ready(Err(error)) => return Err(format!("shared shop approach failed: {error:?}")),
+                Poll::Ready(Err(error)) => {
+                    return Err(format!("shared shop approach failed: {error:?}"))
+                }
                 Poll::Ready(Ok(receipt)) => {
                     self.open_walk = None;
                     let keeper = self.keeper(cx);
@@ -874,8 +880,9 @@ impl BuyReplyProbeScript {
             }
             Decision::Walk(tile) => {
                 self.open_walk = Some(
-                    Walk::begin(walk_request(tile, 1, None, cx.evidence()), cx)
-                        .map_err(|error| format!("shared shop approach was not admitted: {error:?}"))?,
+                    Walk::begin(walk_request(tile, 1, None, cx.evidence()), cx).map_err(
+                        |error| format!("shared shop approach was not admitted: {error:?}"),
+                    )?,
                 );
                 Ok(false)
             }
@@ -1031,7 +1038,10 @@ impl BuyReplyProbeScript {
                     && self.open_trade.is_none()
                     && cx.snapshot().shop().is_some_and(|shop| shop.value.open)
                 {
-                    self.fail("shop page was already open before the probe's own Trade", None)
+                    self.fail(
+                        "shop page was already open before the probe's own Trade",
+                        None,
+                    )
                 } else {
                     match self.poll_open(cx) {
                         Ok(true) => {
@@ -1566,7 +1576,10 @@ impl BuyReplyProbeScript {
                     && shop.is_some_and(|shop| shop.value.open)
                 {
                     if now.saturating_sub(close_tick) >= SAMPLE_REPLY_LIMIT_TICKS {
-                        self.fail("shop page did not become locally absent before the next Trade", None)
+                        self.fail(
+                            "shop page did not become locally absent before the next Trade",
+                            None,
+                        )
                     } else {
                         ScriptFlow::Continue
                     }
@@ -1840,9 +1853,7 @@ fn debug_field<'a>(debug: &'a str, field: &str) -> Option<&'a str> {
     let marker = format!("{field}: ");
     let start = debug.find(&marker)?.checked_add(marker.len())?;
     let rest = &debug[start..];
-    let end = rest
-        .find([',', '}'])
-        .unwrap_or(rest.len());
+    let end = rest.find([',', '}']).unwrap_or(rest.len());
     Some(rest[..end].trim())
 }
 

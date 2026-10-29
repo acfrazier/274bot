@@ -10415,7 +10415,7 @@ mod named_site_fixture_tests {
             "Oak",
         ));
     }
- 
+
     #[test]
     fn initial_fishing_approach_rejects_a_radius_one_arrival() {
         let mut nav = initial_site_nav();
