@@ -1100,7 +1100,7 @@ radius 2 and glider landings radius 1 whatever the runner passes.
   refuses the walk leg's final endpoint as unreachable, the end tile is
   adjacent on the same level, the next leg is a door with no exact
   takeoff, the matching live open leaf stands on that end tile, and the
-  scene can reach the door's far side from the refused end, the walker
+  scene can reach the door's far side from the current player tile, the walker
   completes the walk leg and starts the door leg. It never clicks the
   open leaf's Close operation. The door leg then runs its normal
   crossing rules inside the original hop budget.
