@@ -74,6 +74,18 @@ pub struct Planner<'a> {
     coin_reserve: i64,
 }
 
+enum TierDecision {
+    Selected { id: i32, reserve: i64 },
+    Scan { id: i32 },
+    TooFewCoins {
+        id: i32,
+        needed: i64,
+        held: i32,
+        banked: i32,
+    },
+    NoVendor { id: i32, reason: Arc<str> },
+}
+
 impl<'a> Planner<'a> {
     pub fn new(counts: &'a dyn Counts, world: WorldFacts<'a>) -> Self {
         Self {
@@ -113,7 +125,7 @@ impl<'a> Planner<'a> {
         if need.target <= 0 {
             return Ok(());
         }
-        let id = acceptable_ids(need)
+        let existing = acceptable_ids(need)
             .find(|&id| present(self.counts, need, id) >= need.target)
             .or_else(|| acceptable_ids(need).find(|&id| present(self.counts, need, id) > 0))
             .or_else(|| {
@@ -123,8 +135,9 @@ impl<'a> Planner<'a> {
                         acceptable_ids(need).find(|&id| self.counts.banked(id).unwrap_or(0) > 0)
                     })
                     .flatten()
-            })
-            .unwrap_or(need.item);
+            });
+        let tiered_purchase = existing.is_none() && tiered_shop_need(need);
+        let id = existing.unwrap_or(need.item);
         let held = held(self.counts, need, id);
         let present = present(self.counts, need, id);
         let worn = worn(self.counts, need, id);
@@ -133,20 +146,13 @@ impl<'a> Planner<'a> {
             .contains(SourceSet::BANK)
             .then(|| self.counts.banked(id))
             .flatten();
-        if need.presence == Presence::Wielded && held > 0 && worn == 0 {
+        if should_wear(world.data, need, id) && held > 0 && worn == 0 {
             self.add_wear(id)?;
         }
         if present >= need.target {
             return Ok(());
         }
-        let detail = NeedObservation {
-            id,
-            item: Arc::clone(&need.name),
-            need: need.target,
-            pack: present,
-            bank: banked,
-            index,
-        };
+        let detail = observation(self.counts, world.data, need, index, id);
         if need.sources.contains(SourceSet::BANK) && banked.is_none() {
             self.plan.scan = true;
             if self.scan.is_none() {
@@ -169,7 +175,7 @@ impl<'a> Planner<'a> {
             if self.first_withdrawal.is_none() {
                 self.first_withdrawal = Some(detail.clone());
             }
-            if need.presence == Presence::Wielded && worn == 0 {
+            if should_wear(world.data, need, id) && worn == 0 {
                 self.add_wear(id)?;
             }
         }
@@ -193,12 +199,84 @@ impl<'a> Planner<'a> {
         }
         if need.sources.contains(SourceSet::SHOP) {
             let units = need.target.saturating_sub(reach).max(0);
+            let minimum_units = need
+                .minimum
+                .saturating_sub(present)
+                .saturating_sub(take)
+                .max(0);
+            if tiered_purchase {
+                match self.select_shop_tier(
+                    need,
+                    vendor,
+                    world,
+                    coins,
+                    units,
+                    minimum_units,
+                ) {
+                    TierDecision::Selected { id, reserve } => {
+                        let worn = worn(self.counts, need, id);
+                        self.add_purchase(Purchase {
+                            need: index,
+                            item: id,
+                            target: need.target.saturating_sub(worn).max(0),
+                            minimum: need.minimum.saturating_sub(worn).max(0),
+                        })?;
+                        self.coin_reserve = self.coin_reserve.saturating_add(reserve);
+                        self.reserve_coins(coins)?;
+                    }
+                    TierDecision::Scan { id } => {
+                        self.plan.scan = true;
+                        if self.scan.is_none() {
+                            self.scan = Some(observation(self.counts, world.data, need, index, id));
+                        }
+                    }
+                    TierDecision::TooFewCoins {
+                        id,
+                        needed,
+                        held,
+                        banked,
+                    } => {
+                        if need.kind == NeedKind::Required {
+                            let vendor_line = vendor_line_for_purchase(
+                                world.data,
+                                vendor,
+                                id,
+                                world.members,
+                                held,
+                                banked,
+                            );
+                            self.record_block(
+                                observation(self.counts, world.data, need, index, id),
+                                need,
+                                id,
+                                BlockReason::TooFewCoins {
+                                    needed,
+                                    held: i64::from(held),
+                                    banked: i64::from(banked),
+                                },
+                                Some(Arc::from(vendor_line)),
+                            );
+                        } else {
+                            self.note_short_target();
+                        }
+                    }
+                    TierDecision::NoVendor { id, reason } => {
+                        if need.kind == NeedKind::Required && reach < need.minimum {
+                            self.record_block(
+                                observation(self.counts, world.data, need, index, id),
+                                need,
+                                id,
+                                BlockReason::NoVendor,
+                                Some(reason),
+                            );
+                        } else {
+                            self.note_short_target();
+                        }
+                    }
+                }
+                return Ok(());
+            }
             if let Some((_, reserve)) = shop_quote(world.data, vendor, id, world.members, units) {
-                let minimum_units = need
-                    .minimum
-                    .saturating_sub(present)
-                    .saturating_sub(take)
-                    .max(0);
                 let (held_coins, banked_coins, unknown_bank) = purchase_coins(self.counts, coins);
                 if i64::from(held_coins).saturating_add(i64::from(banked_coins))
                     < i64::from(minimum_units)
@@ -239,7 +317,7 @@ impl<'a> Planner<'a> {
                     target: need.target.saturating_sub(worn).max(0),
                     minimum: need.minimum.saturating_sub(worn).max(0),
                 })?;
-                if need.presence == Presence::Wielded {
+                if should_wear(world.data, need, id) {
                     self.add_wear(id)?;
                 }
                 self.coin_reserve = self.coin_reserve.saturating_add(reserve);
@@ -268,6 +346,78 @@ impl<'a> Planner<'a> {
         }
         Ok(())
     }
+
+    fn select_shop_tier(
+        &self,
+        need: &Need,
+        vendor: &VendorChoice,
+        world: WorldFacts<'_>,
+        coins: CoinPolicy,
+        units: i32,
+        minimum_units: i32,
+    ) -> TierDecision {
+        let (held_coins, banked_coins, unknown_bank) = purchase_coins(self.counts, coins);
+        let budget = i64::from(held_coins).saturating_add(i64::from(banked_coins));
+        let best = acceptable_ids(need)
+            .find(|&id| {
+                world
+                    .data
+                    .is_none_or(|data| wieldable_for_need(data, need, id))
+            })
+            .unwrap_or(need.item);
+        let mut wearable_tier = false;
+        let mut stocked_tier = false;
+        let mut first_unaffordable = None;
+        for id in acceptable_ids(need) {
+            if !world
+                .data
+                .is_none_or(|data| wieldable_for_need(data, need, id))
+            {
+                continue;
+            }
+            wearable_tier = true;
+            let Some(price) =
+                minimum_shop_quote(world.data, vendor, id, world.members, minimum_units)
+            else {
+                stocked_tier |= eligible_shop_stock(world.data, vendor, id, world.members);
+                continue;
+            };
+            stocked_tier = true;
+            if budget < price {
+                if unknown_bank && i64::from(held_coins) < price {
+                    return TierDecision::Scan { id };
+                }
+                first_unaffordable.get_or_insert((id, price));
+                continue;
+            }
+            if let Some((_, reserve)) = shop_quote(world.data, vendor, id, world.members, units) {
+                return TierDecision::Selected { id, reserve };
+            }
+        }
+        if let Some((id, needed)) = first_unaffordable {
+            return TierDecision::TooFewCoins {
+                id,
+                needed,
+                held: held_coins,
+                banked: banked_coins,
+            };
+        }
+        let name = item_name(world.data, need, best);
+        let reason = if world.data.is_none() {
+            format!("best tier {name} fails condition: pinned vendor price facts are unavailable")
+        } else if !wearable_tier {
+            format!("best tier {name} fails condition: no tier meets the selected wield requirement")
+        } else if !stocked_tier {
+            format!("best tier {name} fails condition: no eligible vendor stocks it")
+        } else {
+            format!("best tier {name} fails condition: no pinned purchase quote is available")
+        };
+        TierDecision::NoVendor {
+            id: best,
+            reason: Arc::from(reason),
+        }
+    }
+
 
     pub fn withdrawal_count(&self) -> usize {
         self.plan.withdrawal_count
@@ -539,7 +689,7 @@ fn held(counts: &dyn Counts, need: &Need, id: i32) -> i32 {
     }
 }
 
-fn worn(counts: &dyn Counts, need: &Need, id: i32) -> i32 {
+pub(super) fn worn(counts: &dyn Counts, need: &Need, id: i32) -> i32 {
     if need.presence != Presence::Held && need.sources.contains(SourceSet::WORN) {
         counts.worn(id).unwrap_or(0).max(0)
     } else {
@@ -565,6 +715,147 @@ pub(crate) fn looked(counts: &dyn Counts, need: &Need, id: i32) -> Looked {
                 bank
             }),
         ..Looked::default()
+    }
+}
+
+
+pub(super) fn tiered_shop_need(need: &Need) -> bool {
+    need.sources.contains(SourceSet::SHOP) && !need.alternatives.is_empty()
+}
+
+fn static_wield_attack(data: &api::game_data::SelectedGameData, id: i32) -> Option<Option<i32>> {
+    api::gather_tools::AXES
+        .iter()
+        .chain(api::gather_tools::PICKAXES)
+        .find_map(|tool| {
+            data.item_by_alias(tool.alias)
+                .filter(|item| item.id == id)
+                .map(|_| tool.wield_attack)
+        })
+}
+
+pub(super) fn wieldable_for_need(
+    data: &api::game_data::SelectedGameData,
+    need: &Need,
+    id: i32,
+) -> bool {
+    if need.presence != Presence::Wielded {
+        return true;
+    }
+    match (
+        static_wield_attack(data, id),
+        static_wield_attack(data, need.item),
+    ) {
+        (Some(candidate), Some(selected)) => candidate
+            .is_none_or(|candidate| selected.is_some_and(|selected| candidate <= selected)),
+        _ => true,
+    }
+}
+
+fn should_wear(
+    data: Option<&api::game_data::SelectedGameData>,
+    need: &Need,
+    id: i32,
+) -> bool {
+    need.presence == Presence::Wielded
+        && data.is_none_or(|data| wieldable_for_need(data, need, id))
+}
+
+
+fn minimum_fact_quote(fact: &VendorFact<'_>, units: i32) -> Option<i64> {
+    (fact.item.baseline > 0).then(|| {
+        shop_facts::quote(fact.record, fact.item, units, fact.item.baseline)
+    })
+}
+
+pub(super) fn minimum_shop_quote(
+    data: Option<&api::game_data::SelectedGameData>,
+    choice: &VendorChoice,
+    item_id: i32,
+    members: bool,
+    units: i32,
+) -> Option<i64> {
+    let data = data?;
+    match choice {
+        VendorChoice::None => None,
+        VendorChoice::Explicit { keeper_config, .. } => {
+            let fact = shop_facts::vendor_by_keeper_config(data, keeper_config, item_id)?;
+            vendor_eligible(&fact, members)
+                .then(|| minimum_fact_quote(&fact, units))
+                .flatten()
+        }
+        VendorChoice::Nearest => shop_facts::vendors_for(data, item_id)
+            .filter(|fact| vendor_eligible(fact, members))
+            .filter_map(|fact| minimum_fact_quote(&fact, units))
+            .min(),
+    }
+}
+
+pub(super) fn keeper_minimum_shop_quote(
+    data: &api::game_data::SelectedGameData,
+    keeper_config: &str,
+    item_id: i32,
+    members: bool,
+    units: i32,
+) -> Option<i64> {
+    let fact = shop_facts::vendor_by_keeper_config(data, keeper_config, item_id)?;
+    vendor_eligible(&fact, members)
+        .then(|| minimum_fact_quote(&fact, units))
+        .flatten()
+}
+
+fn eligible_shop_stock(
+    data: Option<&api::game_data::SelectedGameData>,
+    choice: &VendorChoice,
+    item_id: i32,
+    members: bool,
+) -> bool {
+    let Some(data) = data else {
+        return false;
+    };
+    match choice {
+        VendorChoice::None => false,
+        VendorChoice::Explicit { keeper_config, .. } => {
+            shop_facts::vendor_by_keeper_config(data, keeper_config, item_id)
+                .is_some_and(|fact| vendor_eligible(&fact, members))
+        }
+        VendorChoice::Nearest => shop_facts::vendors_for(data, item_id)
+            .any(|fact| vendor_eligible(fact, members)),
+    }
+}
+
+pub(super) fn item_name(
+    data: Option<&api::game_data::SelectedGameData>,
+    need: &Need,
+    id: i32,
+) -> Arc<str> {
+    if id == need.item {
+        return Arc::clone(&need.name);
+    }
+    data.and_then(|data| data.item_by_id(id))
+        .and_then(|item| item.name.as_deref())
+        .map(Arc::from)
+        .unwrap_or_else(|| Arc::clone(&need.name))
+}
+
+fn observation(
+    counts: &dyn Counts,
+    data: Option<&api::game_data::SelectedGameData>,
+    need: &Need,
+    index: u8,
+    id: i32,
+) -> NeedObservation {
+    NeedObservation {
+        id,
+        item: item_name(data, need, id),
+        need: need.target,
+        pack: present(counts, need, id),
+        bank: need
+            .sources
+            .contains(SourceSet::BANK)
+            .then(|| counts.banked(id))
+            .flatten(),
+        index,
     }
 }
 
@@ -620,7 +911,7 @@ fn shop_quote<'a>(
     }
 }
 
-fn purchase_coins(counts: &dyn Counts, policy: CoinPolicy) -> (i32, i32, bool) {
+pub(super) fn purchase_coins(counts: &dyn Counts, policy: CoinPolicy) -> (i32, i32, bool) {
     let held = counts.held(995).unwrap_or(0).max(0);
     let CoinPolicy::ForPurchase { sources } = policy else {
         return (held, 0, false);

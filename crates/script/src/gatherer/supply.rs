@@ -682,9 +682,14 @@ fn tool_need(
     stock: Stock<'_>,
 ) -> Result<Option<Need>, ActionError> {
     let alternatives = usable_tool_ids(prepared, stats);
-    let Some(&fallback) = alternatives.first() else {
+    let Some(&first) = alternatives.first() else {
         return Ok(None);
     };
+    let fallback = alternatives
+        .iter()
+        .copied()
+        .find(|&id| wield_gate_met(prepared, id, stats))
+        .unwrap_or(first);
     let carried = match (stock.pack, stock.worn) {
         (Some(inventory), Some(equipment)) => best_tool(prepared, stats, inventory, equipment),
         _ => None,
@@ -1178,6 +1183,35 @@ mod tests {
     }
 
     #[test]
+    fn shop_tool_tiers_exclude_items_beyond_the_mining_use_level() {
+        let mut settings = crate::native::SettingsBag::new();
+        settings.insert("skill".into(), json!("Mining"));
+        settings.insert("buyTools".into(), json!(true));
+        let prepared = prepare(settings);
+        let mut stats = stats(&prepared);
+        let mining = stats.iter_mut().find(|stat| stat.index == 14).unwrap();
+        mining.base = 1;
+        mining.effective = 1;
+        let needs = SupplyPlan::build(&prepared, &stats, pages(&[], &[])).unwrap();
+        let tool = tool_need(&needs);
+        let rune = prepared.selected.item_by_alias("rune_pickaxe").unwrap().id;
+        let steel = prepared.selected.item_by_alias("steel_pickaxe").unwrap().id;
+        let iron = prepared.selected.item_by_alias("iron_pickaxe").unwrap().id;
+        let bronze = prepared
+            .selected
+            .item_by_alias("bronze_pickaxe")
+            .unwrap()
+            .id;
+
+        assert_eq!(tool.item, iron);
+        assert_eq!(tool.presence, Presence::Wielded);
+        assert!(!tool.alternatives.contains(&rune));
+        assert!(!tool.alternatives.contains(&steel));
+        assert!(tool.alternatives.contains(&iron));
+        assert!(tool.alternatives.contains(&bronze));
+    }
+
+    #[test]
     fn the_best_held_usable_tier_stays_selected_when_it_cannot_be_worn() {
         let prepared = prepare(crate::native::SettingsBag::new());
         let mut stats = stats(&prepared);
@@ -1262,16 +1296,18 @@ mod tests {
     }
 
     #[test]
-    fn absent_tool_uses_the_best_usable_tier_as_primary_need() {
+    fn absent_tool_uses_the_best_usable_wieldable_tier_as_primary_need() {
         let prepared = prepare(crate::native::SettingsBag::new());
         let mut stats = stats(&prepared);
         stats.iter_mut().find(|stat| stat.index == 0).unwrap().base = 1;
         let needs = SupplyPlan::build(&prepared, &stats, pages(&[], &[])).unwrap();
         let tool = tool_need(&needs);
-        let best = *tool
+        let best = tool
             .alternatives
-            .first()
-            .expect("the selected skill has a usable tool tier");
+            .iter()
+            .copied()
+            .find(|&id| wield_gate_met(&prepared, id, &stats))
+            .expect("at least one usable tier meets the wield gate");
         let expected_name = prepared
             .selected
             .item_by_id(best)
@@ -1280,6 +1316,28 @@ mod tests {
 
         assert_eq!(tool.item, best);
         assert_eq!(tool.name.as_ref(), expected_name);
+        assert!(tool.alternatives.contains(&1359), "Rune remains a usable tier");
+        assert_eq!(tool.presence, Presence::Wielded);
+    }
+
+    #[test]
+    fn skill_use_gate_removes_higher_pickaxe_tiers_before_purchase_selection() {
+        let mut settings = crate::native::SettingsBag::new();
+        settings.insert("skill".into(), json!("Mining"));
+        let prepared = prepare(settings);
+        let mut stats = stats(&prepared);
+        stats.iter_mut().find(|stat| stat.index == 0).unwrap().base = 1;
+        let mining = stats.iter_mut().find(|stat| stat.index == 14).unwrap();
+        mining.base = 1;
+        mining.effective = 1;
+        let needs = SupplyPlan::build(&prepared, &stats, pages(&[], &[])).unwrap();
+        let tool = tool_need(&needs);
+        let iron = prepared.selected.item_by_alias("iron_pickaxe").unwrap().id;
+        let rune = prepared.selected.item_by_alias("rune_pickaxe").unwrap().id;
+
+        assert_eq!(tool.item, iron);
+        assert!(!tool.alternatives.contains(&rune));
+        assert!(tool.alternatives.contains(&iron));
     }
 
     #[test]

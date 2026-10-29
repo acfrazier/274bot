@@ -19,6 +19,13 @@ enum Phase {
     Buy,
 }
 
+#[derive(Clone, Copy)]
+enum TierAdvance {
+    Advanced,
+    Exhausted,
+    Undecided,
+}
+
 #[derive(Default)]
 enum Active {
     #[default]
@@ -29,12 +36,21 @@ enum Active {
 }
 
 pub(super) enum Outcome {
-    Complete { bought: u32, short: bool },
+    Complete {
+        bought: u32,
+        short: bool,
+        wear: Option<i32>,
+    },
     Blocked(AcquireBlock),
 }
 
 pub(super) struct ShopRun {
     purchase: Purchase,
+    best_item: i32,
+    item_name: Arc<str>,
+    candidate_index: usize,
+    tiered: bool,
+    data: Option<Arc<api::game_data::SelectedGameData>>,
     phase: Phase,
     active: Active,
     facts: Option<Arc<ShopKeeperFacts>>,
@@ -57,9 +73,19 @@ impl ShopRun {
             .map_err(|error| ActionError::Unavailable(Arc::from(error)))?;
         let snapshot = cx.snapshot();
         let need = &request.needs[usize::from(purchase.need)];
+        let tiered = plan::tiered_shop_need(need);
+        let candidate_index =
+            plan::acceptable_ids(need).position(|id| id == purchase.item).unwrap_or(0);
+        let item_name = plan::item_name(Some(&data), need, purchase.item);
+        let best_item = purchase.item;
         let looked = plan::looked(&snapshot.stock(), need, purchase.item);
         let mut run = Self {
             purchase,
+            best_item,
+            item_name,
+            candidate_index,
+            tiered,
+            data: tiered.then(|| Arc::clone(&data)),
             phase: Phase::Buy,
             active: Active::None,
             facts: None,
@@ -97,15 +123,34 @@ impl ShopRun {
                     })?
                     .value;
                 let members = snapshot.world().is_some_and(|world| world.value.members);
-                // Entry gates belong to the complete nav search. No area or
-                // keeper-config gate table is maintained by acquisition.
+                let stock = snapshot.stock();
+                let (held_coins, banked_coins, _) =
+                    plan::purchase_coins(&stock, request.coins);
+                let budget = i64::from(held_coins).saturating_add(i64::from(banked_coins));
+                let units = need
+                    .minimum
+                    .saturating_sub(plan::present(&stock, need, purchase.item))
+                    .max(0);
+                let tiered = run.tiered;
+                let item_id = run.purchase.item;
                 run.eligible = Some(vendor::eligible_indices(
                     facts,
                     &data,
-                    purchase.item,
+                    item_id,
                     members,
                     from,
-                    |_| true,
+                    |candidate| {
+                        !tiered
+                            || (plan::wieldable_for_need(&data, need, item_id)
+                                && plan::keeper_minimum_shop_quote(
+                                    &data,
+                                    candidate.keeper.keeper_config,
+                                    item_id,
+                                    members,
+                                    units,
+                                )
+                                .is_some_and(|price| price <= budget))
+                    },
                 ));
                 run.facts = Some(Arc::clone(facts));
                 run.nearest = true;
@@ -131,6 +176,17 @@ impl ShopRun {
         gate: OpenGate,
     ) -> Poll<Result<Outcome, ActionError>> {
         loop {
+            if self.tiered && matches!(&self.active, Active::None) {
+                let need = &request.needs[usize::from(self.purchase.need)];
+                let stock = tick.cx.snapshot().stock();
+                if let Some(id) = self.owned_tier(need, &stock) {
+                    return Poll::Ready(Ok(Outcome::Complete {
+                        bought: self.bought,
+                        short: false,
+                        wear: self.wear_after_shop(need, id),
+                    }));
+                }
+            }
             match std::mem::take(&mut self.active) {
                 Active::None => {}
                 Active::Select(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
@@ -158,7 +214,30 @@ impl ShopRun {
                             }
                             VendorDecision::Retry => self.phase = Phase::Select,
                             VendorDecision::Blocked(reason) => {
-                                return Poll::Ready(Ok(self.block(request, reason, tick)));
+                                if self.tiered
+                                    && matches!(
+                                        &reason,
+                                        BlockReason::NoVendor | BlockReason::VendorUnreachable
+                                    )
+                                {
+                                    match self.advance_tier(request, tick) {
+                                        TierAdvance::Advanced => {}
+                                        TierAdvance::Exhausted => {
+                                            return Poll::Ready(Ok(self.block(
+                                                request, reason, tick,
+                                            )));
+                                        }
+                                        TierAdvance::Undecided => {
+                                            return Poll::Ready(Ok(self.block(
+                                                request,
+                                                BlockReason::VendorPickUndecided,
+                                                tick,
+                                            )));
+                                        }
+                                    }
+                                } else {
+                                    return Poll::Ready(Ok(self.block(request, reason, tick)));
+                                }
                             }
                         }
                     }
@@ -192,11 +271,32 @@ impl ShopRun {
             }
             match self.phase {
                 Phase::Select => {
+                    if self
+                        .eligible
+                        .as_ref()
+                        .expect("nearest indices retained")
+                        .is_empty()
+                    {
+                        match self.advance_tier(request, tick) {
+                            TierAdvance::Advanced => continue,
+                            TierAdvance::Undecided => {
+                                return Poll::Ready(Ok(self.block(
+                                    request,
+                                    BlockReason::VendorPickUndecided,
+                                    tick,
+                                )));
+                            }
+                            TierAdvance::Exhausted => {
+                                return Poll::Ready(Ok(self.block(
+                                    request,
+                                    BlockReason::NoVendor,
+                                    tick,
+                                )));
+                            }
+                        }
+                    }
                     let facts = self.facts.as_ref().expect("nearest facts retained");
                     let eligible = self.eligible.as_ref().expect("nearest indices retained");
-                    if eligible.is_empty() {
-                        return Poll::Ready(Ok(self.block(request, BlockReason::NoVendor, tick)));
-                    }
                     let Some(from) = tick.cx.snapshot().here().map(|here| here.value) else {
                         return Poll::Pending;
                     };
@@ -247,9 +347,7 @@ impl ShopRun {
                             npc_id: keeper.keeper_id,
                             npc_name: Arc::from(keeper.keeper_name),
                             item_id: self.purchase.item,
-                            item_name: Arc::clone(
-                                &request.needs[usize::from(self.purchase.need)].name,
-                            ),
+                            item_name: Arc::clone(&self.item_name),
                             qty: self.purchase.target,
                         },
                         &mut tick.cx,
@@ -257,6 +355,103 @@ impl ShopRun {
                 }
             }
         }
+    }
+
+    fn owned_tier(&self, need: &Need, stock: &Stock<'_>) -> Option<i32> {
+        plan::acceptable_ids(need)
+            .find(|&id| plan::present(stock, need, id) >= need.target)
+    }
+
+    fn wear_after_shop(&self, need: &Need, id: i32) -> Option<i32> {
+        (self.tiered
+            && need.presence == Presence::Wielded
+            && self
+                .data
+                .as_deref()
+                .is_some_and(|data| plan::wieldable_for_need(data, need, id)))
+        .then_some(id)
+    }
+
+    fn advance_tier(
+        &mut self,
+        request: &AcquireRequest,
+        tick: &NativeTick<'_>,
+    ) -> TierAdvance {
+        if !self.tiered || !self.nearest || !matches!(&request.vendor, VendorChoice::Nearest) {
+            return TierAdvance::Exhausted;
+        }
+        let Some(data) = self.data.as_ref().map(Arc::clone) else {
+            return TierAdvance::Undecided;
+        };
+        let Some(facts) = self.facts.as_ref().map(Arc::clone) else {
+            return TierAdvance::Undecided;
+        };
+        let snapshot = tick.cx.snapshot();
+        let stock = snapshot.stock();
+        let Some(from) = snapshot.here().map(|here| here.value) else {
+            return TierAdvance::Undecided;
+        };
+        let members = snapshot.world().is_some_and(|world| world.value.members);
+        let (held_coins, banked_coins, unknown_bank) =
+            plan::purchase_coins(&stock, request.coins);
+        let budget = i64::from(held_coins).saturating_add(i64::from(banked_coins));
+        let need = &request.needs[usize::from(self.purchase.need)];
+        for (index, id) in plan::acceptable_ids(need)
+            .enumerate()
+            .skip(self.candidate_index.saturating_add(1))
+        {
+            if !plan::wieldable_for_need(&data, need, id) {
+                continue;
+            }
+            let units = need
+                .minimum
+                .saturating_sub(plan::present(&stock, need, id))
+                .max(0);
+            let Some(price) =
+                plan::minimum_shop_quote(Some(&data), &request.vendor, id, members, units)
+            else {
+                continue;
+            };
+            if price > budget {
+                if unknown_bank && i64::from(held_coins) < price {
+                    return TierAdvance::Undecided;
+                }
+                continue;
+            }
+            let eligible = vendor::eligible_indices(
+                &facts,
+                &data,
+                id,
+                members,
+                from,
+                |candidate| {
+                    plan::keeper_minimum_shop_quote(
+                        &data,
+                        candidate.keeper.keeper_config,
+                        id,
+                        members,
+                        units,
+                    )
+                    .is_some_and(|price| price <= budget)
+                },
+            );
+            if eligible.is_empty() {
+                continue;
+            }
+            let worn = plan::worn(&stock, need, id);
+            self.purchase.item = id;
+            self.purchase.target = need.target.saturating_sub(worn).max(0);
+            self.purchase.minimum = need.minimum.saturating_sub(worn).max(0);
+            self.item_name = plan::item_name(Some(&data), need, id);
+            self.candidate_index = index;
+            self.eligible = Some(eligible);
+            self.keeper = None;
+            self.target = None;
+            self.retry_used = false;
+            self.phase = Phase::Select;
+            return TierAdvance::Advanced;
+        }
+        TierAdvance::Exhausted
     }
 
     fn bought(
@@ -274,6 +469,7 @@ impl ShopRun {
             return Ok(Some(Outcome::Complete {
                 bought: self.bought,
                 short: receipt.held < self.purchase.target,
+                wear: self.wear_after_shop(need, self.purchase.item),
             }));
         }
         let keeper = self.keeper.expect("buyer retained exact keeper");
@@ -382,25 +578,42 @@ impl ShopRun {
             return Outcome::Complete {
                 bought: self.bought,
                 short: held < self.purchase.target,
+                wear: self.wear_after_shop(need, self.purchase.item),
             };
         }
         let mut looked = plan::looked(&stock, need, self.purchase.item);
         looked.vendors = self.looked.vendors;
         looked.more_vendors = self.looked.more_vendors;
         let line = match &reason {
+            BlockReason::NoVendor if self.tiered => format!(
+                "best tier {} fails condition: no eligible vendor placement is in the pinned accessible set",
+                plan::item_name(self.data.as_deref(), need, self.best_item)
+            ),
             BlockReason::NoVendor => "nobody sells it in the pinned eligible set".to_string(),
             BlockReason::TooFewCoins { needed, held, banked } => format!(
                 "{} asks {needed} gp for the usable remainder at live stock; you hold {held} gp and the bank holds {banked} gp",
                 self.keeper.expect("live buyer keeper").keeper_name,
             ),
-            BlockReason::NoSpace { .. } => format!("{} could not add the usable minimum to the pack", self.keeper.expect("live buyer keeper").keeper_name),
-            BlockReason::NoStock { .. } => format!("{} had none (seen now)", self.keeper.expect("live buyer keeper").keeper_name),
+            BlockReason::NoSpace { .. } => format!(
+                "{} could not add the usable minimum to the pack",
+                self.keeper.expect("live buyer keeper").keeper_name
+            ),
+            BlockReason::NoStock { .. } => format!(
+                "{} had none (seen now)",
+                self.keeper.expect("live buyer keeper").keeper_name
+            ),
             BlockReason::VendorUnreachable | BlockReason::VendorPickUndecided => {
                 let mut names = String::new();
                 if let Some(facts) = &self.facts {
                     for (position, tried) in looked.vendors.iter().flatten().enumerate() {
-                        if let Some(row) = facts.rows().iter().find(|row| row.keeper.keeper_id == tried.keeper_id) {
-                            if position > 0 { names.push_str(", "); }
+                        if let Some(row) = facts
+                            .rows()
+                            .iter()
+                            .find(|row| row.keeper.keeper_id == tried.keeper_id)
+                        {
+                            if position > 0 {
+                                names.push_str(", ");
+                            }
                             names.push_str(row.keeper.keeper_name);
                         }
                     }
@@ -414,10 +627,17 @@ impl ShopRun {
                     format!("the route to {names} is undecided")
                 }
             }
-            BlockReason::AuthoredShortage | BlockReason::SupplyMissing => unreachable!("shop refusal reason"),
+            BlockReason::AuthoredShortage | BlockReason::SupplyMissing => {
+                unreachable!("shop refusal reason")
+            }
+        };
+        let item = if self.tiered && matches!(&reason, BlockReason::NoVendor) {
+            plan::item_name(self.data.as_deref(), need, self.best_item)
+        } else {
+            Arc::clone(&need.name)
         };
         let message = plan::block_message(
-            &need.name,
+            &item,
             &reason,
             &looked,
             &line,
@@ -425,7 +645,7 @@ impl ShopRun {
             tick.cx.evidence().tick,
         );
         Outcome::Blocked(AcquireBlock {
-            item: Arc::clone(&need.name),
+            item,
             need: self.purchase.need,
             reason,
             looked,
@@ -555,6 +775,34 @@ mod tests {
         }
     }
 
+    fn complete_service_pick(
+        ledger: &mut Option<Box<Ledger>>,
+        selection: usize,
+        tick: u64,
+        outcome: crate::native_bank::ServicePickOutcome,
+    ) {
+        let ledger = ledger.as_mut().expect("service pick queued");
+        let authority = ledger
+            .outbox
+            .iter()
+            .filter(|action| matches!(&action.effect, HostEffect::ServicePick(_)))
+            .nth(selection)
+            .expect("service pick request exists")
+            .authority();
+        ledger.complete_service_pick(
+            &authority,
+            crate::native_bank::ServicePickReceipt {
+                request_id: authority.request_id().get(),
+                evidence: api::quest_progress::EvidenceStamp {
+                    run: authority.run(),
+                    tick,
+                    sequence: tick,
+                },
+                outcome,
+            },
+        );
+    }
+
     #[test]
     fn explicit_anchor_queues_only_the_authored_walk_without_a_vendor_pick() {
         let (mut request, purchase, snapshot, facts) = fixture();
@@ -616,6 +864,152 @@ mod tests {
     }
 
     #[test]
+    fn no_path_on_best_tool_routes_the_complete_lower_tier_domain_and_wears_its_item() {
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let rune = data.item_by_alias("rune_pickaxe").unwrap().id;
+        let bronze = data.item_by_alias("bronze_pickaxe").unwrap().id;
+        let nurmof = shop_facts::keepers(&data)
+            .find(|row| row.keeper_config == "nurmof")
+            .unwrap();
+        let bob = shop_facts::keepers(&data)
+            .find(|row| row.keeper_config == "bob")
+            .unwrap();
+        let facts = Arc::new(ShopKeeperFacts::from_rows(
+            vec![
+                ResolvedShopKeeper::new(0, nurmof, tile(3204), [tile(3203)]),
+                ResolvedShopKeeper::new(1, bob, tile(3210), [tile(3209)]),
+            ]
+            .into_boxed_slice(),
+        ));
+        let request = AcquireRequest {
+            needs: Arc::from([Need {
+                item: rune,
+                name: Arc::from("Rune pickaxe"),
+                target: 1,
+                minimum: 1,
+                presence: Presence::Wielded,
+                kind: NeedKind::Required,
+                sources: SourceSet::PACK | SourceSet::WORN | SourceSet::SHOP,
+                alternatives: Arc::from([rune, bronze]),
+            }]),
+            deposit: None,
+            bank: BankChoice {
+                bank: None,
+                explicit: None,
+                required: false,
+                preferences: Default::default(),
+            },
+            stage: BankStage::Planned,
+            partial_ok: false,
+            close: CloseBank::Close,
+            vendor: VendorChoice::Nearest,
+            coins: CoinPolicy::ForPurchase {
+                sources: SourceSet::PACK,
+            },
+            walk: WalkOptions::default(),
+            required_after: api::quest_progress::EvidenceStamp {
+                run: api::selected::RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                tick: 0,
+                sequence: 0,
+            },
+        };
+        let purchase = Purchase {
+            need: 0,
+            item: rune,
+            target: 1,
+            minimum: 1,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(crate::quester::families::tests::local_player(tile(3200)));
+        snapshot.seed_inventory(vec![row(995, 10_000)], 27);
+        snapshot.seed_equipment(Vec::new());
+        let mut ledger = None;
+        let mut run = start(&request, purchase, &snapshot, &facts, &mut ledger);
+
+        with_tick_shop(&snapshot, &facts, None, &mut ledger, 2, |tick| {
+            assert!(run.poll(&request, tick, OpenGate::Open).is_pending());
+        });
+        let first = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .find_map(|action| match &action.effect {
+                HostEffect::ServicePick(pick) => Some(pick),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(&*first.eligible, &[0], "Rune is sold only by Nurmof");
+        complete_service_pick(
+            &mut ledger,
+            0,
+            2,
+            crate::native_bank::ServicePickOutcome::NoPath { unresolved: None },
+        );
+
+        with_tick_shop(&snapshot, &facts, None, &mut ledger, 3, |tick| {
+            assert!(run.poll(&request, tick, OpenGate::Open).is_pending());
+        });
+        with_tick_shop(&snapshot, &facts, None, &mut ledger, 4, |tick| {
+            assert!(run.poll(&request, tick, OpenGate::Open).is_pending());
+        });
+        let picks: Vec<_> = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter_map(|action| match &action.effect {
+                HostEffect::ServicePick(pick) => Some(pick),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(picks.len(), 2);
+        assert_eq!(
+            &*picks[1].eligible,
+            &[0, 1],
+            "the lower tier keeps every stocked eligible placement"
+        );
+        complete_service_pick(
+            &mut ledger,
+            1,
+            4,
+            crate::native_bank::ServicePickOutcome::Routed {
+                index: 1,
+                access_tile: tile(3209),
+                cost: 9,
+            },
+        );
+        with_tick_shop(&snapshot, &facts, None, &mut ledger, 5, |tick| {
+            assert!(run.poll(&request, tick, OpenGate::Open).is_pending());
+        });
+        with_tick_shop(&snapshot, &facts, None, &mut ledger, 6, |tick| {
+            assert!(run.poll(&request, tick, OpenGate::Open).is_pending());
+        });
+        assert_eq!(run.purchase.item, bronze);
+        assert_eq!(run.item_name.as_ref(), "Bronze pickaxe");
+        let outcome = with_tick_shop(&snapshot, &facts, None, &mut ledger, 7, |tick| {
+            run.bought(&request, receipt(1, 1, PurchaseRefusal::Coins), tick)
+                .unwrap()
+                .unwrap()
+        });
+        assert!(matches!(
+            outcome,
+            Outcome::Complete {
+                wear: Some(id),
+                ..
+            } if id == bronze
+        ));
+        with_tick_bank(&snapshot, None, &mut ledger, 8, |tick| {
+            run.cancel(tick.actions)
+        });
+    }
+
+    #[test]
     fn held_minimum_and_optional_shortage_continue_with_exact_observed_units() {
         let (mut request, purchase, mut snapshot, facts) = fixture();
         let mut ledger = None;
@@ -630,7 +1024,8 @@ mod tests {
             outcome,
             Outcome::Complete {
                 bought: 300,
-                short: true
+                short: true,
+                ..
             }
         ));
 
@@ -645,7 +1040,8 @@ mod tests {
             outcome,
             Outcome::Complete {
                 bought: 1,
-                short: true
+                short: true,
+                ..
             }
         ));
     }

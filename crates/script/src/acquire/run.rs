@@ -59,6 +59,10 @@ pub struct AcquireRun {
     target: Option<WorldTile>,
     withdrawals: Option<Arc<[Withdrawal]>>,
     wears: Option<Arc<[i32]>>,
+    // Lazily stores at most one post-purchase wear per bounded purchase.
+    shop_wears: Option<Vec<i32>>,
+    shop_wear_index: u8,
+    wear_shop_active: bool,
     purchases: Option<Arc<[Purchase]>>,
     // One purchase per need, bounded by MAX_MEMO (64).
     purchase_index: u8,
@@ -133,6 +137,9 @@ impl AcquireRun {
             target: None,
             withdrawals: None,
             wears: None,
+            shop_wears: None,
+            shop_wear_index: 0,
+            wear_shop_active: false,
             purchases: None,
             purchase_index: 0,
             shop: None,
@@ -381,7 +388,9 @@ impl AcquireRun {
                         continue;
                     };
                     if self.shop.is_none() {
-                        if tick
+                        if !plan::tiered_shop_need(
+                            &self.request.needs[usize::from(purchase.need)],
+                        ) && tick
                             .cx
                             .snapshot()
                             .stock()
@@ -404,7 +413,11 @@ impl AcquireRun {
                     ) {
                         Poll::Pending => return Poll::Pending,
                         Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                        Poll::Ready(Ok(super::shop_run::Outcome::Complete { bought, short })) => {
+                        Poll::Ready(Ok(super::shop_run::Outcome::Complete {
+                            bought,
+                            short,
+                            wear,
+                        })) => {
                             self.bought = self.bought.checked_add(bought).ok_or_else(|| {
                                 ActionError::Failed(Arc::from(
                                     "observed purchase count exceeds u32",
@@ -412,6 +425,13 @@ impl AcquireRun {
                             })?;
                             self.complete &= !short;
                             self.short_of_target += u8::from(short);
+                            if let Some(id) = wear {
+                                let capacity =
+                                    self.purchases.as_deref().map_or(0, |items| items.len());
+                                self.shop_wears
+                                    .get_or_insert_with(|| Vec::with_capacity(capacity))
+                                    .push(id);
+                            }
                             self.shop = None;
                             self.purchase_index += 1;
                         }
@@ -422,12 +442,21 @@ impl AcquireRun {
                     }
                 }
                 Phase::Wear => {
-                    let Some(id) = self
+                    let planned_id = self
                         .wears
                         .as_deref()
                         .and_then(|ids| ids.get(usize::from(self.wear_index)))
+                        .copied();
+                    let (id, from_shop) = if let Some(id) = planned_id {
+                        (id, false)
+                    } else if let Some(id) = self
+                        .shop_wears
+                        .as_deref()
+                        .and_then(|ids| ids.get(usize::from(self.shop_wear_index)))
                         .copied()
-                    else {
+                    {
+                        (id, true)
+                    } else {
                         self.phase = Phase::Child;
                         continue;
                     };
@@ -438,7 +467,11 @@ impl AcquireRun {
                         .worn(id)
                         .is_some_and(|count| count > 0)
                     {
-                        self.wear_index += 1;
+                        if from_shop {
+                            self.shop_wear_index += 1;
+                        } else {
+                            self.wear_index += 1;
+                        }
                         continue;
                     }
                     if !tick.cx.may_continue_this_tick() {
@@ -479,6 +512,7 @@ impl AcquireRun {
                         OneOpArgs::wear(Arc::from(name), id, row.slot, action),
                         &mut tick.cx,
                     )?;
+                    self.wear_shop_active = from_shop;
                     self.active = Active::Wear(handle);
                 }
                 Phase::Child => {
@@ -610,6 +644,9 @@ impl AcquireRun {
         self.child = plan.child;
         self.index = 0;
         self.wear_index = 0;
+        self.shop_wears = None;
+        self.shop_wear_index = 0;
+        self.wear_shop_active = false;
         plan.authored
             || plan.scan
             || self.withdrawals.is_some()
@@ -625,6 +662,9 @@ impl AcquireRun {
         self.child = None;
         self.index = 0;
         self.wear_index = 0;
+        self.shop_wears = None;
+        self.shop_wear_index = 0;
+        self.wear_shop_active = false;
     }
 
     fn start_stage(&mut self, bank_work: bool, cx: &ActionContext<'_>) {
@@ -774,7 +814,14 @@ impl AcquireRun {
                         "the selected item was not equipped",
                     ))))
                 }
-                Poll::Ready(Ok(true)) => self.wear_index += 1,
+                Poll::Ready(Ok(true)) => {
+                    if self.wear_shop_active {
+                        self.shop_wear_index += 1;
+                    } else {
+                        self.wear_index += 1;
+                    }
+                    self.wear_shop_active = false;
+                }
             },
         }
         if matches!(self.active, Active::None) {

@@ -1184,6 +1184,36 @@ fn shop_session_shortage_with_stocked_eligible_vendor_plans_purchase() {
 }
 
 #[test]
+fn exact_harpoon_coin_shortage_keeps_the_typed_park() {
+    let data = pinned_shop_data();
+    let harpoon = shop_item_id(&data, "harpoon");
+    let request = shop_request(
+        vec![need(
+            harpoon,
+            1,
+            1,
+            Presence::Held,
+            NeedKind::Required,
+            SourceSet::PACK | SourceSet::SHOP,
+        )],
+        VendorChoice::Nearest,
+        SourceSet::PACK,
+    );
+    let counts = fixture(&[], &[], Origin::Session);
+
+    let block = shop_block(&request, &counts, &data, false);
+
+    assert_eq!(
+        block.reason,
+        BlockReason::TooFewCoins {
+            needed: 1,
+            held: 0,
+            banked: 0,
+        }
+    );
+}
+
+#[test]
 fn shop_missing_vendor_blocks_and_retains_session_bank_metadata() {
     let data = pinned_shop_data();
     let mithril_axe = shop_item_id(&data, "mithril_axe");
@@ -1296,6 +1326,185 @@ fn shop_selected_alternative_is_the_banked_and_purchased_item() {
         }
     );
     assert_eq!(withdrawal_target(&plan, bronze_axe), Some(1));
+}
+
+#[test]
+fn shop_tier_falls_back_from_unstocked_best_item_to_stocked_lower_tier() {
+    let data = pinned_shop_data();
+    let mithril_axe = shop_item_id(&data, "mithril_axe");
+    let iron_axe = shop_item_id(&data, "iron_axe");
+    assert!(shop_facts::vendors_for(&data, mithril_axe).next().is_none());
+    assert!(shop_facts::vendors_for(&data, iron_axe).next().is_some());
+    let request = shop_request(
+        vec![tier_need(
+            mithril_axe,
+            &[mithril_axe, iron_axe],
+            1,
+            Presence::Carried,
+            SourceSet::PACK | SourceSet::SHOP,
+        )],
+        VendorChoice::Nearest,
+        SourceSet::PACK,
+    );
+    let counts = fixture(&[(COINS, 1_000)], &[], Origin::Unknown);
+
+    let plan = shop_plan(&request, &counts, &data, false);
+    assert_eq!(purchase_at(&plan, 0).item, iron_axe);
+}
+
+#[test]
+fn shop_tier_skips_an_unaffordable_best_price_for_a_wearable_lower_tier() {
+    let data = pinned_shop_data();
+    let steel_axe = shop_item_id(&data, "steel_axe");
+    let iron_axe = shop_item_id(&data, "iron_axe");
+    let steel = shop_facts::vendor_by_keeper_config(&data, "bob", steel_axe).unwrap();
+    let iron = shop_facts::vendor_by_keeper_config(&data, "bob", iron_axe).unwrap();
+    let steel_price = shop_facts::quote(steel.record, steel.item, 1, steel.item.baseline);
+    let iron_price = shop_facts::quote(iron.record, iron.item, 1, iron.item.baseline);
+    assert!(iron_price < 100 && steel_price > 100);
+    let request = shop_request(
+        vec![tier_need(
+            steel_axe,
+            &[steel_axe, iron_axe],
+            1,
+            Presence::Wielded,
+            SourceSet::PACK | SourceSet::SHOP,
+        )],
+        VendorChoice::Nearest,
+        SourceSet::PACK,
+    );
+    let counts = fixture(&[(COINS, 100)], &[], Origin::Unknown);
+
+    let plan = shop_plan(&request, &counts, &data, false);
+    assert_eq!(purchase_at(&plan, 0).item, iron_axe);
+    assert_eq!(plan.wear_count, 0, "the selected purchased tier is worn after routing");
+}
+
+#[test]
+fn shop_tier_filters_unwieldable_items_and_existing_tiers_still_win() {
+    let data = pinned_shop_data();
+    let rune_axe = shop_item_id(&data, "rune_axe");
+    let iron_axe = shop_item_id(&data, "iron_axe");
+    let bronze_axe = shop_item_id(&data, "bronze_axe");
+    let request = shop_request(
+        vec![tier_need(
+            iron_axe,
+            &[rune_axe, iron_axe, bronze_axe],
+            1,
+            Presence::Wielded,
+            SourceSet::PACK | SourceSet::WORN | SourceSet::BANK | SourceSet::SHOP,
+        )],
+        VendorChoice::Nearest,
+        SourceSet::PACK | SourceSet::BANK,
+    );
+    let coins = [(COINS, 1_000)];
+    let no_tools = fixture(&coins, &[], Origin::Session);
+    let purchase_plan = shop_plan(&request, &no_tools, &data, false);
+    assert_eq!(purchase_at(&purchase_plan, 0).item, iron_axe);
+    assert_eq!(purchase_plan.wear_count, 0);
+
+    let held_rune = fixture(&[(rune_axe, 1), (COINS, 1_000)], &[], Origin::Unknown);
+    assert!(matches!(
+        plan(
+            &request,
+            &held_rune,
+            WorldFacts {
+                data: Some(&data),
+                members: false,
+            }
+        )
+        .unwrap(),
+        AcquireVerdict::Satisfied
+    ));
+
+    let worn_rune = CountsFixture {
+        held: &coins,
+        worn: &[(rune_axe, 1)],
+        banked: &[],
+        unknown_bank_ids: &[],
+        origin: Origin::Unknown,
+        free_slots: Some(28),
+    };
+    assert!(matches!(
+        plan(
+            &request,
+            &worn_rune,
+            WorldFacts {
+                data: Some(&data),
+                members: false,
+            }
+        )
+        .unwrap(),
+        AcquireVerdict::Satisfied
+    ));
+
+    let banked_rune = fixture(&coins, &[(rune_axe, 1)], Origin::Session);
+    let plan = shop_plan(&request, &banked_rune, &data, false);
+    assert_eq!(plan.purchase_count, 0);
+    assert_eq!(plan.wear_count, 0);
+    assert_eq!(withdrawal_target(&plan, rune_axe), Some(1));
+}
+
+#[test]
+fn shop_tier_unknown_coin_bank_scans_before_skipping_the_best_price() {
+    let data = pinned_shop_data();
+    let steel_axe = shop_item_id(&data, "steel_axe");
+    let iron_axe = shop_item_id(&data, "iron_axe");
+    let request = shop_request(
+        vec![tier_need(
+            steel_axe,
+            &[steel_axe, iron_axe],
+            1,
+            Presence::Wielded,
+            SourceSet::PACK | SourceSet::SHOP,
+        )],
+        VendorChoice::Nearest,
+        SourceSet::PACK | SourceSet::BANK,
+    );
+    let counts = fixture(&[(COINS, 1)], &[], Origin::Unknown);
+
+    let world = WorldFacts {
+        data: Some(&data),
+        members: false,
+    };
+    let mut planner = Planner::new(&counts, world);
+    planner
+        .require_with_purchase(
+            &request.needs[0],
+            &request.vendor,
+            request.coins,
+            world,
+        )
+        .unwrap();
+    assert_eq!(planner.scan().map(|detail| detail.id), Some(steel_axe));
+    let acquire_plan = planned(planner.verdict(None));
+    assert!(acquire_plan.scan);
+    assert_eq!(acquire_plan.purchase_count, 0);
+}
+
+#[test]
+fn tiered_no_vendor_detail_names_the_best_tier_and_failed_condition() {
+    let data = pinned_shop_data();
+    let mithril_axe = shop_item_id(&data, "mithril_axe");
+    let mut need = tier_need(
+        mithril_axe,
+        &[mithril_axe],
+        1,
+        Presence::Carried,
+        SourceSet::PACK | SourceSet::SHOP,
+    );
+    need.name = Arc::from("Mithril axe");
+    let request = shop_request(
+        vec![need],
+        VendorChoice::Nearest,
+        SourceSet::PACK,
+    );
+    let counts = fixture(&[(COINS, 1_000)], &[], Origin::Unknown);
+
+    let block = shop_block(&request, &counts, &data, false);
+    assert_eq!(block.reason, BlockReason::NoVendor);
+    assert!(block.message.contains("best tier Mithril axe"));
+    assert!(block.message.contains("no eligible vendor stocks it"));
 }
 
 #[test]
