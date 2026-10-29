@@ -1282,7 +1282,10 @@ const DRIVER_SUBMIT: &str = "driver.rs::HeadlessDriver::submit";
 fn row_named(name: &str) -> Option<OperatorCommand> {
     OperatorCommand::ALL.into_iter().find(|row| {
         let debug = format!("{row:?}");
-        debug.split('(').next() == Some(name)
+        debug
+            .split(['(', '{'])
+            .next()
+            .is_some_and(|variant| variant.trim() == name)
     })
 }
 

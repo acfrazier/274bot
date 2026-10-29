@@ -57,6 +57,10 @@ required-features = ["js"]
 name = "external_watch"
 required-features = ["js"]
 
+[[example]]
+name = "quester_skip"
+required-features = ["js", "test-support"]
+
 # Winit requires the OS main thread on macOS, unlike libtest's worker threads.
 [[test]]
 name = "ime_frame"
@@ -66,6 +70,7 @@ harness = false
 [features]
 default = ["js"]
 js = ["frontend-core/js"]
+test-support = ["frontend-core/test-support"]
 render-diagnostics = ["client/render-diagnostics", "frontend-core/render-diagnostics"]
 memory-profile = ["frontend-core/memory-profile"]
 # CPU diagnostic: use System directly, report allocator metrics unavailable.

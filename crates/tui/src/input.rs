@@ -219,9 +219,17 @@ impl TuiApp {
                 "i log in · u log out · r Relog now · x remove · o settings · l loadouts · w manual walk",
             "Overview" => "i log in · u log out · x remove · o settings · l loadouts · w manual walk",
             "Map" => "arrows pan · +/- zoom · Enter select/walk · / search · g group · t teleport · Esc back",
-            #[cfg(feature = "js")]
+            // A release build shows the hint row from before Skip quest
+            // existed: the `·` separators and `T/E all` included. Only a
+            // `test-support` build names `X`, and it drops the separators so
+            // the longer row still fits beside the footer tail.
+            #[cfg(all(feature = "js", any(test, feature = "test-support")))]
+            "Script" => "b browse t start P pause e stop X skip f load v params R reload",
+            #[cfg(all(feature = "js", not(any(test, feature = "test-support"))))]
             "Script" => "b browse · t start · P pause · e stop · f load · v params · R reload · T/E all",
-            #[cfg(not(feature = "js"))]
+            #[cfg(all(not(feature = "js"), any(test, feature = "test-support")))]
+            "Script" => "b browse t start P pause e stop X skip v params T/E all",
+            #[cfg(all(not(feature = "js"), not(any(test, feature = "test-support"))))]
             "Script" => "b browse · t start · P pause · e stop · v params · T/E all",
             "Chat" if self.chat_data.is_modal_open() => "Up/Down choose · Space/Enter answer · p paint/chat",
             "Chat" => "p paint/chat · 1-9 paint buttons · Up/Down/Enter paint button",
@@ -446,6 +454,8 @@ impl TuiApp {
             | Command::ScriptPause
             | Command::ScriptStop
             | Command::ScriptParams => return self.script_run(command),
+            #[cfg(any(test, feature = "test-support"))]
+            Command::ScriptSkipQuest => return self.script_run(command),
             #[cfg(feature = "js")]
             Command::ScriptReload | Command::ScriptReloadCancel => {
                 return self.script_run(command);

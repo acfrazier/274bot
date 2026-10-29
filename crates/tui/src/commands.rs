@@ -69,6 +69,8 @@ pub enum Command {
     ScriptStart,
     ScriptPause,
     ScriptStop,
+    #[cfg(any(test, feature = "test-support"))]
+    ScriptSkipQuest,
     #[cfg(feature = "js")]
     ScriptLoad,
     ScriptParams,
@@ -158,6 +160,8 @@ pub fn script_command(name: &str) -> Option<Command> {
         "Start" => Command::ScriptStart,
         "Pause" | "Resume" => Command::ScriptPause,
         "Stop" => Command::ScriptStop,
+        #[cfg(any(test, feature = "test-support"))]
+        "Skip quest" => Command::ScriptSkipQuest,
         #[cfg(feature = "js")]
         "Load" => Command::ScriptLoad,
         "Params" => Command::ScriptParams,
@@ -249,6 +253,8 @@ impl Command {
         Command::ScriptStart,
         Command::ScriptPause,
         Command::ScriptStop,
+        #[cfg(any(test, feature = "test-support"))]
+        Command::ScriptSkipQuest,
         #[cfg(feature = "js")]
         Command::ScriptLoad,
         Command::ScriptParams,
@@ -316,6 +322,8 @@ impl Command {
             | Command::Loadouts
             | Command::ManualWalk
             | Command::DismissNotice => Group::Bot,
+            #[cfg(any(test, feature = "test-support"))]
+            Command::ScriptSkipQuest => Group::Script,
             Command::ScriptBrowse
             | Command::ScriptStart
             | Command::ScriptPause
@@ -394,6 +402,8 @@ impl Command {
             Command::ScriptPause if app.script_state == ScriptRunState::Paused => "Resume script",
             Command::ScriptPause => "Pause script",
             Command::ScriptStop => "Stop script",
+            #[cfg(any(test, feature = "test-support"))]
+            Command::ScriptSkipQuest => "Skip quest",
             #[cfg(feature = "js")]
             Command::ScriptLoad => "Load script file",
             Command::ScriptParams => "Script parameters",
@@ -533,6 +543,8 @@ impl Command {
             Command::DismissNotice => &[NoNotice],
             Command::ScriptStart => &[NoFocusedBot, NoScriptPicked],
             Command::ScriptPause => &[NoFocusedBot, NoScriptToPause],
+            #[cfg(any(test, feature = "test-support"))]
+            Command::ScriptSkipQuest => &[NoFocusedBot, NoQuesterQueue],
             Command::ScriptStop => &[NoFocusedBot, NoScriptToStop],
             Command::ScriptParams => &[NoParamsCard, ParamsUnavailable, NoParams],
             #[cfg(feature = "js")]
@@ -582,6 +594,13 @@ impl Command {
             }
             Command::ScriptPause => OperatorCommand::PauseScript,
             Command::ScriptStop => OperatorCommand::StopScript,
+            #[cfg(any(test, feature = "test-support"))]
+            Command::ScriptSkipQuest => OperatorCommand::SkipQuest {
+                target: app
+                    .focused_detail()
+                    .and_then(|detail| detail.native_status())
+                    .map(|native| native.run()),
+            },
             #[cfg(feature = "js")]
             Command::ScriptReload if app.reload_confirm => OperatorCommand::ConfirmReload,
             #[cfg(feature = "js")]
@@ -630,6 +649,8 @@ impl Command {
     /// for a command on the selected bot, none for a fleet or app command.
     fn refused_bot(self, app: &TuiApp) -> Option<String> {
         match self {
+            #[cfg(any(test, feature = "test-support"))]
+            Command::ScriptSkipQuest => app.focused_name(),
             Command::Login
             | Command::Logout
             | Command::Remove
@@ -689,6 +710,7 @@ pub enum Unavailable {
     NoScriptPicked,
     NoScriptToPause,
     NoScriptToStop,
+    NoQuesterQueue,
     NoParamsCard,
     ParamsUnavailable,
     NoParams,
@@ -725,6 +747,7 @@ impl Unavailable {
             Unavailable::NoScriptPicked => "browse to pick a script first",
             Unavailable::NoScriptToPause => "no running script",
             Unavailable::NoScriptToStop => "no script running",
+            Unavailable::NoQuesterQueue => "no active Quester queue",
             Unavailable::NoParamsCard => "pick a script first",
             #[cfg(feature = "js")]
             Unavailable::NoReloadCard => "pick a script first",
@@ -767,6 +790,17 @@ impl Unavailable {
                 app.script_state,
                 ScriptRunState::Running | ScriptRunState::Paused
             ),
+            Unavailable::NoQuesterQueue => {
+                !matches!(
+                    app.script_state,
+                    ScriptRunState::Running | ScriptRunState::Paused
+                ) || app
+                    .focused_detail()
+                    .and_then(|detail| detail.native_status())
+                    .is_none_or(|status| {
+                        status.card() != frontend_core::scripts::CompiledCardId::QUESTER
+                    })
+            }
             Unavailable::NoScriptToStop => {
                 app.script_state == ScriptRunState::Idle && !app.script_queued
             }

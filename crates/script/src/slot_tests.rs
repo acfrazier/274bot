@@ -222,6 +222,13 @@ fn non_kept_stop_releases_the_seat_before_idle_and_rearms_on_next_start() {
     slot.bind_incarnation(39);
     slot.start_test_script(Box::new(Noop), None).unwrap();
     assert!(slot.seat.is_some(), "compiled card owns a native seat");
+    let root = slot.seat_probe().unwrap();
+    assert!(root.compiled_owner_live);
+    assert_eq!(
+        root.live, 1,
+        "an idle compiled step retains only its run owner"
+    );
+    assert_eq!(root.reserved_releases, 0);
 
     slot.stop();
     assert_eq!(slot.state(), RunState::Idle);
@@ -229,6 +236,9 @@ fn non_kept_stop_releases_the_seat_before_idle_and_rearms_on_next_start() {
 
     slot.start_test_script(Box::new(Noop), None).unwrap();
     assert!(slot.seat.is_some(), "a new run arms a new seat");
+    let root = slot.seat_probe().unwrap();
+    assert!(root.compiled_owner_live);
+    assert_eq!(root.live, 1);
     slot.stop_removed();
     assert!(slot.seat.is_none(), "removal is also a non-kept boundary");
 }
