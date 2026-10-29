@@ -1945,7 +1945,9 @@
               "version": 1,
               "args": {
                 "target": {
-                  "npc": "ikov_firewarrior"
+                  "npc": "ikov_firewarrior",
+                  "pick": "nearest",
+                  "not_targeting_others": true
                 },
                 "stand": {
                   "tile": [
