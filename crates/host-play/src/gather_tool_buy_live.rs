@@ -9,13 +9,19 @@
 //! roll is never an oracle.
 //!
 //! The Harpoon cells use Catherby's real Harpoon spot and Harry's stocked
-//! shop. The axe cell uses the existing real Oak bank-trip origin and Bob's
-//! stocked axe shop. `buyTools` is omitted to exercise its default-on value.
+//! shop. The axe cell uses the existing Draynor bank-trip origin, Bob's
+//! stocked axe shop and nearby real normal trees. `buyTools` is omitted to
+//! exercise its default-on value.
 //! The two G2 cells first park a no-coins Gatherer, then exercise account-only
 //! supply arrival plus Resume, or an explicit relog with no wake and no trip.
 //!
 //! `LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=gsh GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_NAV_PACK=<pack> GATHERER_ENGINE_DIR=<engine> GATHERER_CATALOG_ROOT=<catalog> BOT_CACHE_DIR=<unpack-root>/<version> CLIENT_UNPACK_DIR=<unpack-root> LIVE_EVIDENCE_DIR=/Volumes/dev-scratch/274bot-evidence/GATHERER-SHOP isohome cargo test -p host-play --features live-harness,test-support --lib gather_tool_buy_live:: -- --ignored --nocapture --test-threads=1`
 
+//! Bob's 5 Iron axes at baseline stock (lumbridge.inv stock3) cost 56 gp each
+//! (axes.obj [iron_axe]); Bob sells at 1000 with delta 20 (lumbridge.npc).
+//! With Attack 1, steel is not wieldable (tier5.rs2) while Iron is (tier1.rs2);
+//! Woodcutting has no axe-use level gate. At stock 5, Iron axe quote is 56 gp;
+//! after one unit, stock 4 quotes 57 gp, so the two-chunk reserve is 113 gp.
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::task::Poll;
@@ -50,7 +56,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const TICK_SAMPLES: usize = 11;
 const COIN_ID: i32 = 995;
 const HARPOON_ID: i32 = 311;
-const BRONZE_AXE_ID: i32 = 1351;
+const IRON_AXE_ID: i32 = 1349;
 const HARPOON_SEED: &[&str] = &[
     "setstat fishing 35",
     "setstat defence 99",
@@ -63,7 +69,7 @@ const NO_COINS_SEED: &[&str] = &[
     "setstat hitpoints 99",
 ];
 const AXE_SEED: &[&str] = &[
-    "setstat woodcutting 15",
+    "setstat woodcutting 1",
     "setstat attack 1",
     "setstat defence 99",
     "setstat hitpoints 99",
@@ -74,8 +80,8 @@ const HARRY_CATHERBY: WorldTile = WorldTile {
     z: 3_445,
     level: 0,
 };
-/// Existing live Gatherer oak-bank fixture; this cell never seeds a loc here.
-const OAK_START: WorldTile = WorldTile {
+/// Existing live Gatherer bank-trip origin; no tree is seeded at this site.
+const TREE_START: WorldTile = WorldTile {
     x: 3_017,
     z: 3_170,
     level: 0,
@@ -109,7 +115,7 @@ impl Case {
     const fn start(self) -> WorldTile {
         match self {
             Self::Harpoon | Self::NoCoins => CATHERBY_HARPOON_START,
-            Self::AxeWear => OAK_START,
+            Self::AxeWear => TREE_START,
         }
     }
 
@@ -133,14 +139,14 @@ impl Case {
         match self {
             // rarefish.rs2:123-138 sets action_delay to map_clock + 5.
             Self::Harpoon | Self::NoCoins => 5,
-            // woodcut.rs2:55-61 sets the first Oak chop delay to +3.
+            // woodcut.rs2:55-61 sets the first tree chop delay to +3.
             Self::AxeWear => 3,
         }
     }
 
     const fn method(self) -> &'static str {
         if self.is_axe() {
-            "woodcutting.oak"
+            "woodcutting.normal"
         } else {
             "fishing.rarefish.op3"
         }
@@ -148,7 +154,7 @@ impl Case {
 
     const fn item_alias(self) -> &'static str {
         if self.is_axe() {
-            "bronze_axe"
+            "iron_axe"
         } else {
             "harpoon"
         }
@@ -172,7 +178,7 @@ impl Case {
 
     const fn gather_object(self) -> &'static str {
         if self.is_axe() {
-            "Oak"
+            "Tree"
         } else {
             "Fishing spot"
         }
@@ -205,6 +211,7 @@ struct Fixture {
     sell: i32,
     delta: i32,
     quote: i64,
+    reserve: i64,
 }
 
 fn item_fact(data: &SelectedGameData, alias: &str) -> Result<ItemFact, String> {
@@ -266,6 +273,12 @@ fn fixture(
         ));
     }
     let quote = api::shop_facts::quote(vendor.record, vendor.item, 1, vendor.item.baseline);
+    let reserve = quote.saturating_add(api::shop_facts::quote(
+        vendor.record,
+        vendor.item,
+        1,
+        vendor.item.baseline.saturating_sub(1),
+    ));
     Ok(Fixture {
         coins,
         tool,
@@ -275,13 +288,14 @@ fn fixture(
         sell: vendor.record.sell,
         delta: vendor.record.delta,
         quote,
+        reserve,
     })
 }
 
 fn settings(case: Case) -> serde_json::Map<String, Value> {
     let Value::Object(mut bag) = json!({
         "skill": if case.is_axe() { "Woodcutting" } else { "Fishing" },
-        "woodcuttingResources": if case.is_axe() { vec!["oak"] } else { Vec::<&str>::new() },
+        "woodcuttingResources": if case.is_axe() { vec!["normal"] } else { Vec::<&str>::new() },
         "fishingMethod": case.method(),
         "targetPreference": "Nearest",
         "location": "Start",
@@ -1008,12 +1022,12 @@ fn wear_action(actions: &[Value], item_id: i32) -> (Option<Value>, Vec<String>) 
             action["request"]["op"] == "wear"
                 && action["request"]["name"]
                     .as_str()
-                    .is_some_and(|name| name.eq_ignore_ascii_case("Bronze axe"))
+                    .is_some_and(|name| name.eq_ignore_ascii_case("Iron axe"))
         })
         .collect::<Vec<_>>();
     if rows.len() != 1 {
         failures.push(format!(
-            "expected one Bronze axe Wear action, observed {}",
+            "expected one Iron axe Wear action, observed {}",
             rows.len()
         ));
     }
@@ -1059,7 +1073,7 @@ fn gather_action(
                 return false;
             }
             if case.is_axe() {
-                if request["name"].as_str() != Some("Oak") {
+                if request["name"].as_str() != Some(case.gather_object()) {
                     return false;
                 }
                 let id = request["id"].as_i64();
@@ -1067,7 +1081,7 @@ fn gather_action(
                 let z = request["z"].as_i64();
                 let level = request["level"].as_i64();
                 let tick = action["snapshot_tick"].as_u64().unwrap_or(0);
-                let observed_oak = frames.iter().any(|frame| {
+                let observed_tree = frames.iter().any(|frame| {
                     frame["snapshot_tick"]
                         .as_u64()
                         .is_some_and(|frame_tick| frame_tick.abs_diff(tick) <= 2)
@@ -1077,7 +1091,7 @@ fn gather_action(
                             .flatten()
                             .any(|loc| {
                                 loc["id"].as_i64() == id
-                                    && loc["name"].as_str() == Some("Oak")
+                                    && loc["name"].as_str() == Some(case.gather_object())
                                     && loc["tile"][0].as_i64() == x
                                     && loc["tile"][1].as_i64() == z
                                     && loc["tile"][2].as_i64() == level
@@ -1088,7 +1102,7 @@ fn gather_action(
                                     })
                             })
                 });
-                if !observed_oak {
+                if !observed_tree {
                     return false;
                 }
             } else {
@@ -1404,7 +1418,15 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
     assert_eq!(fixture.coins.id, COIN_ID, "pinned coins id");
     match case {
         Case::Harpoon | Case::NoCoins => assert_eq!(fixture.tool.id, HARPOON_ID),
-        Case::AxeWear => assert_eq!(fixture.tool.id, BRONZE_AXE_ID),
+        Case::AxeWear => assert_eq!(fixture.tool.id, IRON_AXE_ID),
+    }
+    if case == Case::AxeWear {
+        assert_eq!(fixture.baseline, 5, "Bob's pinned Iron axe stock");
+        assert_eq!(fixture.cost, 56, "selected R289 Iron axe cost");
+        assert_eq!(fixture.sell, 1_000, "Bob's sell multiplier");
+        assert_eq!(fixture.delta, 20, "Bob's shop delta");
+        assert_eq!(fixture.quote, 56, "Iron axe quote at Bob's baseline stock");
+        assert_eq!(fixture.reserve, 113, "two-chunk Iron axe purchase reserve");
     }
     assert!(
         fixture.quote > 0,
@@ -1427,7 +1449,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
         CELL_BOUND,
         case.seed(),
         |_| true,
-        &[COIN_ID, HARPOON_ID, BRONZE_AXE_ID],
+        &[COIN_ID, HARPOON_ID, IRON_AXE_ID],
         json!({
             "scenario": scenario_name,
             "transition": transition,
@@ -2498,6 +2520,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                 "sell_multiplier": fixture.sell,
                 "delta": fixture.delta,
                 "quote_at_baseline": fixture.quote,
+                "two_chunk_reserve": fixture.reserve,
             },
         },
         "bank_prime": trace.lock().prime,
