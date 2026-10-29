@@ -863,10 +863,7 @@ impl BuyReplyProbeScript {
 
         let flow = match self.phase {
             Phase::OpenShop => {
-                let shop_open = cx
-                    .snapshot()
-                    .shop()
-                    .is_some_and(|shop| shop.value.open);
+                let shop_open = cx.snapshot().shop().is_some_and(|shop| shop.value.open);
                 if shop_open {
                     self.fail(
                         "shop page was already open before the probe's own Trade",
@@ -920,11 +917,7 @@ impl BuyReplyProbeScript {
                     ScriptFlow::Continue
                 }
                 Ok(true) => {
-                    if cx
-                        .snapshot()
-                        .shop()
-                        .is_some_and(|shop| shop.value.open)
-                    {
+                    if cx.snapshot().shop().is_some_and(|shop| shop.value.open) {
                         self.phase = Phase::Held { next: 0 };
                     } else if self
                         .fail_on_tick_limit(now, dispatch_tick.unwrap_or(request_tick), "shop page")
@@ -946,10 +939,7 @@ impl BuyReplyProbeScript {
                     self.phase = Phase::DropCoins;
                     ScriptFlow::Continue
                 } else {
-                    let shop_open = cx
-                        .snapshot()
-                        .shop()
-                        .is_some_and(|shop| shop.value.open);
+                    let shop_open = cx.snapshot().shop().is_some_and(|shop| shop.value.open);
                     let held = held_count(cx, self.fixture.feather.id);
                     let coins = held_count(cx, self.fixture.coins.id);
                     let Some((slot, component, stock)) = self.stock_row(cx) else {
@@ -1034,8 +1024,7 @@ impl BuyReplyProbeScript {
                                 let mut trace = self.trace.lock();
                                 let row = &mut trace.samples[sample];
                                 row.held_after = Some(held_after);
-                                row.stock_after =
-                                    self.stock_row(cx).map(|(_, _, stock)| stock);
+                                row.stock_after = self.stock_row(cx).map(|(_, _, stock)| stock);
                                 if let Err(error) = row.mark_reply(now) {
                                     drop(trace);
                                     self.sample_error_flow(sample, error)
@@ -1068,11 +1057,7 @@ impl BuyReplyProbeScript {
                 if coins == 0 {
                     self.phase = Phase::Refusal { next: 0 };
                     ScriptFlow::Continue
-                } else if !cx
-                    .snapshot()
-                    .shop()
-                    .is_some_and(|shop| shop.value.open)
-                {
+                } else if !cx.snapshot().shop().is_some_and(|shop| shop.value.open) {
                     self.fail("shop closed before the account-only coin drop", None)
                 } else if self.stock_row(cx).is_none() {
                     self.fail(
@@ -1177,10 +1162,7 @@ impl BuyReplyProbeScript {
                     self.phase = Phase::Close { next: 0 };
                     ScriptFlow::Continue
                 } else {
-                    let shop_open = cx
-                        .snapshot()
-                        .shop()
-                        .is_some_and(|shop| shop.value.open);
+                    let shop_open = cx.snapshot().shop().is_some_and(|shop| shop.value.open);
                     let held = held_count(cx, self.fixture.feather.id);
                     let coins = held_count(cx, self.fixture.coins.id);
                     let Some((slot, component, stock)) = self.stock_row(cx) else {
@@ -1399,10 +1381,7 @@ impl BuyReplyProbeScript {
                     }
                     Ok(Some(dispatch_tick)) => {
                         let before = pending.server_closes_before.unwrap_or(u64::MAX);
-                        let current = cx
-                            .snapshot()
-                            .shop()
-                            .map(|shop| shop.value.server_closes);
+                        let current = cx.snapshot().shop().map(|shop| shop.value.server_closes);
                         if current.is_some_and(|count| count > before) {
                             let after = current.unwrap_or(before);
                             let mut trace = self.trace.lock();
@@ -1621,10 +1600,10 @@ impl Script for OwnedProbeScript {
                     .map_err(|error| self.failure(error))?,
             );
         }
-        match tick
-            .actions
-            .poll(self.action.as_ref().expect("probe action began"), &mut tick.cx)
-        {
+        match tick.actions.poll(
+            self.action.as_ref().expect("probe action began"),
+            &mut tick.cx,
+        ) {
             Poll::Pending => Ok(ScriptFlow::Continue),
             Poll::Ready(result) => {
                 self.action = None;

@@ -2129,7 +2129,8 @@ impl GatherSlot {
         if latest
             .normal_trees
             .iter()
-            .any(|&tree| tile_distance(tree, self.target).is_some_and(|distance| distance <= 32)) {
+            .any(|&tree| tile_distance(tree, self.target).is_some_and(|distance| distance <= 32))
+        {
             return Err(format!(
                 "Auto start {:?} has a real normal tree inside radius 32",
                 tile_key(self.target)
