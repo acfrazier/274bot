@@ -914,7 +914,8 @@ mod tests {
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_local_player(crate::quester::families::tests::local_player(tile(3200)));
-        snapshot.seed_inventory(vec![row(995, 10_000)], 27);
+        let rune_quote = plan::keeper_minimum_shop_quote(&data, "nurmof", rune, false, 1).unwrap();
+        snapshot.seed_inventory(vec![row(995, i32::try_from(rune_quote).unwrap())], 27);
         snapshot.seed_equipment(Vec::new());
         let mut ledger = None;
         let mut run = start(&request, purchase, &snapshot, &facts, &mut ledger);
