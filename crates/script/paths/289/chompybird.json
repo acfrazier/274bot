@@ -3,7 +3,7 @@
   "schema":3,
   "id":"chompybird",
   "display_name":"Big Chompy Bird Hunting",
-  "required":["fletching-5","cooking-30","ranged-30"],
+  "required":["fletching-5","cooking-30","ranged-30","crafting-5"],
   "tested_stats":null,
   "partner":null,
   "quest":{
@@ -12,10 +12,11 @@
     "requirements":[
       {"id":"fletching-5","kind":{"Skill":{"skill":"fletching","level":5}},"at":"start","source":"content/scripts/quests/quest_chompybird/scripts/chompybird_journal.rs2:8-14"},
       {"id":"cooking-30","kind":{"Skill":{"skill":"cooking","level":30}},"at":"start","source":"content/scripts/quests/quest_chompybird/scripts/chompybird_journal.rs2:16-20"},
-      {"id":"ranged-30","kind":{"Skill":{"skill":"ranged","level":30}},"at":"start","source":"content/scripts/quests/quest_chompybird/scripts/chompybird_journal.rs2:22-26"}
+      {"id":"ranged-30","kind":{"Skill":{"skill":"ranged","level":30}},"at":"start","source":"content/scripts/quests/quest_chompybird/scripts/chompybird_journal.rs2:22-26"},
+      {"id":"crafting-5","kind":{"Skill":{"skill":"crafting","level":5}},"at":"start","source":"content/scripts/skill_fletching/scripts/ogre_arrows.rs2:43-67"}
     ],
     "items":[],
-    "acquire":{},"bank":"nearest","coin_float":0,"loadouts":{},"areas":{},"tools":["obj:ogre_headless_arrow","obj:wolfbone_arrowheads","obj:ogre_arrow"],"owns_inventory":true
+    "acquire":{},"bank":"nearest","coin_float":50,"loadouts":{},"areas":{},"tools":["obj:bronze_axe","obj:knife","obj:chisel","obj:wolf_bones","obj:achey_tree_logs","obj:feather","obj:ogre_arrow_shaft","obj:ogre_headless_arrow","obj:wolfbone_arrowheads","obj:ogre_arrow"],"owns_inventory":true
   },
   "roles":[{
     "role":null,"progress_binding":"journal:chompybird",
@@ -34,7 +35,39 @@
          "args":{"target":{"npc":"rantz"},"op":"Talk","anchor":{"tile":[2630,2981,0],"source":"content/maps/m41_46.jm2:4492"},"radius":8,"dialogue":{"prefer":["Ok, I'll make you some 'stabbers'."]}},
          "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"chompybird","is":"in_progress"}}}}
       ]},
-      {"stage":"chompybird:5","required":[],"terminal":false,"recovery_entry":null,"steps":[
+      {"stage":"chompybird:5","required":[],"terminal":false,"recovery_entry":null,"order":"ordered","steps":[
+        {"id":"enter-cave-for-feathers","kind":"interact","version":1,"advances":false,
+         "comment":"content/scripts/quests/quest_chompybird/scripts/quest_chompybird.rs2:1-3; content/maps/m41_46.jm2:4198.",
+         "args":{"target":{"loc":"rantzogrecaveentrance"},"op":"Enter","anchor":{"tile":[2629,2998,0],"source":"content/maps/m41_46.jm2:4198"},"radius":5},
+         "skip_if":{"Any":[{"Fact":{"kind":"near","version":1,"args":{"tile":[2650,9393,0],"radius":22}}},{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"feather","qty":24}}}]},
+         "settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2650,9393,0],"radius":22}}}},
+        {"id":"buy-fycie-feathers","kind":"interact","version":1,"advances":false,
+         "comment":"content/scripts/quests/quest_chompybird/scripts/fycie.rs2:11-40. Fycie sells 25 feathers for 50 coins.",
+         "args":{"target":{"npc":"fycie"},"op":"Talk","anchor":{"tile":[2650,9393,0],"source":"content/maps/m41_146.jm2:6419; content/pack/npc.pack:1012"},"radius":8,"dialogue":{"prefer":["Ok, I'll give you 50 bright pretties."],"strict":true}},
+         "skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"feather","qty":24}}},
+         "settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"feather","qty":24}}}},
+        {"id":"leave-cave-with-feathers","kind":"interact","version":1,"advances":false,
+         "comment":"content/scripts/quests/quest_chompybird/scripts/quest_chompybird.rs2:5-10; content/maps/m41_146.jm2:5229.",
+         "args":{"target":{"loc":"rantzogrecaveexitl"},"op":"Walk through","anchor":{"tile":[2647,9377,0],"source":"content/maps/m41_146.jm2:5229"},"radius":5},
+         "skip_if":{"Not":{"Fact":{"kind":"near","version":1,"args":{"tile":[2650,9393,0],"radius":22}}}},
+         "settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2630,2997,0],"radius":3}}}},
+        {"id":"cut-three-achey-logs","kind":"gather","version":1,"advances":false,
+         "comment":"content/scripts/skill_woodcutting/configs/trees.dbrow:70-83; content/scripts/skill_fletching/scripts/ogre_arrows.rs2:19-40. Three logs yield at least six shafts.",
+         "args":{"skill":"woodcutting","resource":"achey","until":{"obj":"achey_tree_logs","qty":3},"anchor":{"tile":[2624,2948,0],"source":"content/maps/m41_46.jm2:4101; content/pack/loc.pack:2024"},"radius":12},
+         "skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"achey_tree_logs","qty":3}}},
+         "settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"achey_tree_logs","qty":3}}}},
+        {"id":"collect-three-wolf-bones","kind":"combat","version":1,"advances":false,
+         "comment":"content/scripts/_unpack/225/all.npc:2405-2433 gives the level-25 white wolf a guaranteed wolf-bones death drop. Three bones yield at least six tips: content/scripts/skill_fletching/scripts/ogre_arrows.rs2:43-67.",
+         "args":{"target":{"npc":"whitewolf_sentry","not_targeting_others":true,"pick":"nearest"},"stand":{"tile":[2846,3477,0],"source":"content/maps/m44_54.jm2:5707; content/pack/npc.pack:97"},"lost_radius":20,"kill_budget_ticks":500,"tactic":{"kind":"open","style":"melee","engage_radius":12,"auto_retaliate":true},"loot":[{"obj":"wolf_bones","qty":3}],"until":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"wolf_bones","qty":3}}}},
+         "skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"wolf_bones","qty":3}}},
+         "settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"wolf_bones","qty":3}}}},
+        {"id":"cut-shafts-1","kind":"use_on","version":1,"args":{"item":"knife","target":{"item":"achey_tree_logs"},"product":"ogre_arrow_shaft"},"comment":"content/scripts/skill_fletching/scripts/ogre_arrows.rs2:19-40.","skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_arrow_shaft","qty":2}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_arrow_shaft","qty":2}}}},
+        {"id":"cut-shafts-2","kind":"use_on","version":1,"args":{"item":"knife","target":{"item":"achey_tree_logs"},"product":"ogre_arrow_shaft"},"comment":"content/scripts/skill_fletching/scripts/ogre_arrows.rs2:19-40.","skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_arrow_shaft","qty":4}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_arrow_shaft","qty":4}}}},
+        {"id":"cut-shafts-3","kind":"use_on","version":1,"args":{"item":"knife","target":{"item":"achey_tree_logs"},"product":"ogre_arrow_shaft"},"comment":"content/scripts/skill_fletching/scripts/ogre_arrows.rs2:19-40.","skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_arrow_shaft","qty":6}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_arrow_shaft","qty":6}}}},
+        {"id":"chisel-tips-1","kind":"use_on","version":1,"args":{"item":"chisel","target":{"item":"wolf_bones"},"product":"wolfbone_arrowheads"},"comment":"content/scripts/skill_fletching/scripts/ogre_arrows.rs2:43-67.","skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"wolfbone_arrowheads","qty":2}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"wolfbone_arrowheads","qty":2}}}},
+        {"id":"chisel-tips-2","kind":"use_on","version":1,"args":{"item":"chisel","target":{"item":"wolf_bones"},"product":"wolfbone_arrowheads"},"comment":"content/scripts/skill_fletching/scripts/ogre_arrows.rs2:43-67.","skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"wolfbone_arrowheads","qty":4}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"wolfbone_arrowheads","qty":4}}}},
+        {"id":"chisel-tips-3","kind":"use_on","version":1,"args":{"item":"chisel","target":{"item":"wolf_bones"},"product":"wolfbone_arrowheads"},"comment":"content/scripts/skill_fletching/scripts/ogre_arrows.rs2:43-67.","skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"wolfbone_arrowheads","qty":6}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"wolfbone_arrowheads","qty":6}}}},
+        {"id":"feather-shafts","kind":"use_on","version":1,"args":{"item":"feather","target":{"item":"ogre_arrow_shaft"},"product":"ogre_headless_arrow"},"comment":"content/scripts/skill_fletching/scripts/ogre_arrows.rs2:70-105. Six shafts consume 24 feathers.","skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_headless_arrow","qty":6}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_headless_arrow","qty":6}}}},
         {"id":"fletch-ogre-arrows","kind":"use_on","version":1,"advances":false,
          "comment":"content/scripts/skill_fletching/scripts/ogre_arrows.rs2:13-15,110-142. This action sets the made-arrows bit required by Rantz.",
          "args":{"item":"wolfbone_arrowheads","target":{"item":"ogre_headless_arrow"},"product":"ogre_arrow"},

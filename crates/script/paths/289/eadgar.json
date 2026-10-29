@@ -7,7 +7,8 @@
     "death-plateau",
     "troll-stronghold",
     "druidic-ritual",
-    "herblore-31"
+    "herblore-31",
+    "thieving-30"
   ],
   "tested_stats": null,
   "partner": null,
@@ -49,12 +50,18 @@
         },
         "at": "start",
         "source": "content/scripts/areas/area_taverly/scripts/sanfew.rs2:96-111,130-136; content/maps/m45_53.jm2:7657; content/pack/npc.pack:455"
+      },
+      {
+        "id": "thieving-30",
+        "kind": {"Skill": {"skill": "thieving", "level": 30}},
+        "at": "start",
+        "source": "content/scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2:38-49"
       }
     ],
     "items": [],
     "acquire": {},
     "bank": "nearest",
-    "coin_float": 0,
+    "coin_float": 23,
     "loadouts": {},
     "areas": {},
     "tools": [
@@ -218,7 +225,88 @@
           "required": [],
           "terminal": false,
           "recovery_entry": null,
+          "order": "ordered",
           "steps": [
+            {
+              "id": "buy-climbing-boots", "kind": "talk", "version": 1, "advances": false,
+              "args": {"npc": "death_sherpa", "anchor": {"tile": [2820,3556,0], "source": "content/maps/m44_55.jm2:6372; content/pack/npc.pack:1072"}, "leash": 8, "prefer": ["Can I buy some Climbing boots?", "OK, sounds good.", "Nothing, thanks!"], "strict": true},
+              "comment": "content/scripts/quests/quest_death/scripts/death_sherpa.rs2:2-24 charges 12 coins.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "death_climbingboots"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "death_climbingboots"}}}]},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "death_climbingboots"}}}
+            },
+            {
+              "id": "wear-climbing-boots", "kind": "equip", "version": 1,
+              "args": {"obj": "death_climbingboots"},
+              "comment": "content/scripts/quests/quest_troll/scripts/quest_troll.rs2:1-14 requires worn boots and Agility 15.",
+              "skip_if": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "death_climbingboots"}}},
+              "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "death_climbingboots"}}}
+            },
+            {
+              "id": "pickpocket-eadgar-key", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"npc": "troll_prison_guard2"}, "op": "Pickpocket", "anchor": {"tile": [2832,10083,0], "source": "content/maps/m44_157.jm2:15956; content/pack/npc.pack:1130"}, "radius": 5},
+              "comment": "content/scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2:38-75. A failed attempt wakes the guard; success gives the key.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "troll_key_eadgar"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "troll_key_eadgar"}}}
+            },
+            {
+              "id": "free-eadgar", "kind": "use_on", "version": 1, "advances": false,
+              "args": {"item": "troll_key_eadgar", "target": {"loc": "troll_celldoor_eadgar"}, "anchor": {"tile": [2832,10082,0], "source": "content/maps/m44_157.jm2:11116; content/pack/loc.pack:3766"}, "radius": 3},
+              "comment": "content/scripts/quests/quest_troll/scripts/quest_troll.rs2:251-256,282-301,332-338 consumes the key and sets the rescue bit.",
+              "skip_if": {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "troll_key_eadgar"}}}},
+              "settle": {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "troll_key_eadgar"}}}}
+            },
+            {
+              "id": "buy-vodka", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "gnome_heckelfunch", "anchor": {"tile": [2493,3488,1], "source": "content/maps/m38_54.jm2:8892; content/pack/npc.pack:604"}}, "obj": "vodka", "qty": 1, "est_gp": 5},
+              "comment": "content/scripts/areas/area_gnome/configs/gnome.inv:82-94; gnome.npc:735-739; content/scripts/skill_cooking/configs/gnome_cooking/cocktails.obj:1-4; content/scripts/shop/scripts/shop.rs2:131-147,183-192. Five coins at full stock.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "vodka"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "vodka"}}}
+            },
+            {
+              "id": "buy-pineapple", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "gnome_heckelfunch", "anchor": {"tile": [2493,3488,1], "source": "content/maps/m38_54.jm2:8892; content/pack/npc.pack:604"}}, "obj": "pineapple", "qty": 1, "est_gp": 1},
+              "comment": "content/scripts/areas/area_gnome/configs/gnome.inv:82-94; gnome.npc:735-739; content/scripts/skill_cooking/configs/gnome_cooking/cocktails.obj:868-871; content/scripts/shop/scripts/shop.rs2:131-147,183-192. One coin at full stock.",
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pineapple"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pineapple_chunks"}}}]},
+              "settle": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pineapple"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pineapple_chunks"}}}]}
+            },
+            {
+              "id": "dice-pineapple", "kind": "use_on", "version": 1,
+              "args": {"item": "knife", "target": {"item": "pineapple"}, "product": "pineapple_chunks"},
+              "comment": "content/scripts/skill_cooking/scripts/gnome_cooking/cutting_fruit.rs2:38-85 selects diced pineapple.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pineapple_chunks"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "pineapple_chunks"}}}
+            },
+            {
+              "id": "buy-five-chickens", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "werewolfshopkeeper1", "anchor": {"tile": [3507,3496,0], "source": "content/maps/m54_54.jm2:7628; content/pack/npc.pack:1039"}}, "obj": "raw_chicken", "qty": 5, "est_gp": 5},
+              "comment": "content/scripts/areas/area_canifis/configs/canifis.inv:2-10; canifis.npc:519-525; content/scripts/skill_cooking/configs/cooking_generic/food_uncooked.obj:54-65; content/scripts/shop/scripts/shop.rs2:58-68,131-147,183-192. Five coins at full stock.",
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "raw_chicken", "qty": 5}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "raw_chicken", "qty": 5}}}
+            },
+            {
+              "id": "chop-two-logs", "kind": "gather", "version": 1, "advances": false,
+              "args": {"skill": "woodcutting", "resource": "normal", "until": {"obj": "logs", "qty": 2}, "anchor": {"tile": [2613,3252,0], "source": "content/maps/m40_50.jm2:5891; content/scripts/skill_woodcutting/configs/trees.dbrow:1-16"}},
+              "comment": "content/scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2:78-88,221-250 and content/scripts/skill_firemaking/scripts/firemaking.rs2:79-128 need two logs.",
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "logs", "qty": 2}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "logs", "qty": 2}}}
+            },
+            {"id":"pick-grain-1","kind":"interact","version":1,"args":{"target":{"loc":"wheat"},"op":"Pick","anchor":{"tile":[2642,3341,0],"source":"content/maps/m41_52.jm2:5120-5134; content/pack/loc.pack:314"},"radius":12},"comment":"content/scripts/general_use/scripts/pickables.rs2:13-22; content/scripts/player/scripts/pickup.rs2:28-40.","skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":1}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":1}}}},
+            {"id":"pick-grain-2","kind":"interact","version":1,"args":{"target":{"loc":"wheat"},"op":"Pick","anchor":{"tile":[2642,3341,0],"source":"content/maps/m41_52.jm2:5120-5134"},"radius":12},"skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":2}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":2}}}},
+            {"id":"pick-grain-3","kind":"interact","version":1,"args":{"target":{"loc":"wheat"},"op":"Pick","anchor":{"tile":[2642,3341,0],"source":"content/maps/m41_52.jm2:5120-5134"},"radius":12},"skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":3}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":3}}}},
+            {"id":"pick-grain-4","kind":"interact","version":1,"args":{"target":{"loc":"wheat"},"op":"Pick","anchor":{"tile":[2642,3341,0],"source":"content/maps/m41_52.jm2:5120-5134"},"radius":12},"skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":4}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":4}}}},
+            {"id":"pick-grain-5","kind":"interact","version":1,"args":{"target":{"loc":"wheat"},"op":"Pick","anchor":{"tile":[2642,3341,0],"source":"content/maps/m41_52.jm2:5120-5134"},"radius":12},"skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":5}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":5}}}},
+            {"id":"pick-grain-6","kind":"interact","version":1,"args":{"target":{"loc":"wheat"},"op":"Pick","anchor":{"tile":[2642,3341,0],"source":"content/maps/m41_52.jm2:5120-5134"},"radius":12},"skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":6}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":6}}}},
+            {"id":"pick-grain-7","kind":"interact","version":1,"args":{"target":{"loc":"wheat"},"op":"Pick","anchor":{"tile":[2642,3341,0],"source":"content/maps/m41_52.jm2:5120-5134"},"radius":12},"skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":7}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":7}}}},
+            {"id":"pick-grain-8","kind":"interact","version":1,"args":{"target":{"loc":"wheat"},"op":"Pick","anchor":{"tile":[2642,3341,0],"source":"content/maps/m41_52.jm2:5120-5134"},"radius":12},"skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":8}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":8}}}},
+            {"id":"pick-grain-9","kind":"interact","version":1,"args":{"target":{"loc":"wheat"},"op":"Pick","anchor":{"tile":[2642,3341,0],"source":"content/maps/m41_52.jm2:5120-5134"},"radius":12},"skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":9}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":9}}}},
+            {"id":"pick-grain-10","kind":"interact","version":1,"args":{"target":{"loc":"wheat"},"op":"Pick","anchor":{"tile":[2642,3341,0],"source":"content/maps/m41_52.jm2:5120-5134"},"radius":12},"skip_if":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":10}}},"settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"grain","qty":10}}}},
+            {
+              "id": "fill-vial", "kind": "use_on", "version": 1,
+              "args": {"item": "vial_empty", "target": {"loc": "fountain"}, "anchor": {"tile": [2891,3438,0], "source": "content/maps/m45_53.jm2:5390; content/pack/loc.pack:880"}, "radius": 3, "product": "vial_water"},
+              "comment": "content/scripts/general_use/scripts/water_sources.rs2:63-65,75-82 fills a vial at a water source.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "vial_water"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "vial_water"}}}
+            },
             {
               "id": "start",
               "kind": "talk",
@@ -808,7 +896,22 @@
           "required": [],
           "terminal": false,
           "recovery_entry": null,
+          "order": "ordered",
           "steps": [
+            {
+              "id": "GAP-deterministic-ranarr-source", "kind": "wait", "version": 1, "advances": true,
+              "args": {"until": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}, "max_ticks": 120, "park_on_timeout": true},
+              "comment": "No fixed source established. content/scripts/areas/area_yanille/scripts/agility_dungeon.rs2:101-120 gives Ranarr from the sinister chest, but content/scripts/drop tables/scripts/salarin_the_twisted.rs2:45-46 makes the key a chance drop. Campaign tests cannot gate on chance drops.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarr_weed"}}}
+            },
+            {
+              "id": "brew-ranarr-potion", "kind": "use_on", "version": 1,
+              "args": {"item": "ranarr_weed", "target": {"item": "vial_water"}, "product": "ranarrvial"},
+              "comment": "content/scripts/skill_herblore/configs/brewing/brew_potion.struct:28-33 requires Herblore 30.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ranarrvial"}}}
+            },
             {
               "id": "pick-thistle",
               "kind": "interact",
