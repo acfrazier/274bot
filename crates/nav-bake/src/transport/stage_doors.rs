@@ -356,12 +356,22 @@ fn retain_quest_upper_bounds(
     }
 }
 
+/// Canonical identity fields needed to translate a journal colour into a
+/// bounded stage-window gate.
+#[derive(Debug, Clone, Copy)]
+struct QuestStageFacts {
+    colour_authoritative: bool,
+    stage_domain: Option<api::selected::InclusiveRange>,
+    transmission: api::quest_facts::Transmission,
+}
+
 /// The script facts an opener evaluation reads.
 struct Sources {
     oplocs: [HashMap<String, Vec<Option<Block>>>; 5],
     oplocu: HashMap<String, Vec<Option<Block>>>,
     quest_family: Option<nav_planner::quest_gates::QuestFamilyId>,
     quest_complete: HashMap<String, (api::selected::FactKey, i32)>,
+    quest_stage: HashMap<String, QuestStageFacts>,
     /// Varp names whose every possible source write is bounded by completion.
     quest_exact: HashSet<String>,
     labels: HashMap<String, Vec<Option<Block>>>,
@@ -400,6 +410,21 @@ impl Sources {
                 (
                     row.varp.clone(),
                     (api::selected::FactKey::new(&row.id), row.complete),
+                )
+            })
+            .collect();
+        let quest_stage: HashMap<_, _> = quests
+            .into_iter()
+            .flat_map(|quests| &quests.facts.rows)
+            .filter(|row| !row.varp.is_empty() && row.varp_id >= 0 && row.complete > 0)
+            .map(|row| {
+                (
+                    row.varp.clone(),
+                    QuestStageFacts {
+                        colour_authoritative: row.colour_authoritative,
+                        stage_domain: row.stage_domain,
+                        transmission: row.transmission,
+                    },
                 )
             })
             .collect();
@@ -471,6 +496,7 @@ impl Sources {
             oplocs,
             quest_family: quests.map(|quests| quests.family),
             quest_complete,
+            quest_stage,
             quest_exact,
             oplocu,
             labels,

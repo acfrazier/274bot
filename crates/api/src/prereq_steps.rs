@@ -175,10 +175,7 @@ pub enum BranchExit {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OpenerRequirement {
-    FreeSlots {
-        count: u8,
-        otherwise: BranchExit,
-    },
+    FreeSlots { count: u8, otherwise: BranchExit },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -381,7 +378,7 @@ fn valid_range(range: &InclusiveRange) -> bool {
     !matches!((range.min, range.max), (Some(min), Some(max)) if min > max)
 }
 
-/// True only when the row establishes every value allowed by this gate.
+/// True only when every stage established by the row satisfies this gate.
 pub fn proves(established: &StageWindow, gate: &QuestGate) -> bool {
     let QuestGate::Window(required) = gate else {
         return false;
@@ -414,8 +411,16 @@ mod tests {
             &established,
             &QuestGate::Window(window("druidspirit", "druidspirit", 1, i32::MAX))
         ));
+        assert!(proves(
+            &established,
+            &QuestGate::Window(window("druidspirit", "druidspirit", 5, 5))
+        ));
         assert!(!proves(
             &established,
+            &QuestGate::Window(window("druidspirit", "druidspirit", 6, i32::MAX))
+        ));
+        assert!(!proves(
+            &window("druidspirit", "druidspirit", 1, 5),
             &QuestGate::Window(window("druidspirit", "druidspirit", 5, 5))
         ));
         assert!(!proves(

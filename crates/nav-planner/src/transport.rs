@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use api::prereq_steps::{CrossingId, CrossingKind};
 use api::snapshot::WorldTile;
 
 use crate::collision::WorldCollision;
@@ -179,6 +180,31 @@ impl TransportEdge {
             }),
             None => Some(self.to),
         }
+    }
+
+    /// Stable API identity of this directed edge.
+    ///
+    /// An option that cannot be represented by the shared `u8` identity is
+    /// unavailable rather than truncated.
+    pub fn crossing_id(&self) -> Option<CrossingId> {
+        Some(CrossingId {
+            loc_id: self.loc_id,
+            option: u8::try_from(self.option).ok()?,
+            at: self.at,
+            to: self.to,
+            kind: match self.kind {
+                TransportKind::Door => CrossingKind::Door,
+                TransportKind::Ladder => CrossingKind::Ladder,
+                TransportKind::Stairs => CrossingKind::Stairs,
+                TransportKind::Boat => CrossingKind::Boat,
+                TransportKind::Teleport => CrossingKind::Teleport,
+                TransportKind::AgilityShortcut => CrossingKind::AgilityShortcut,
+                TransportKind::Glider => CrossingKind::Glider,
+                TransportKind::SpiritTree => CrossingKind::SpiritTree,
+                TransportKind::Npc => CrossingKind::Npc,
+                TransportKind::EssenceExit => CrossingKind::EssenceExit,
+            },
+        })
     }
 
     /// Whether this is one of the packed `bigweb_slashable` crossings.

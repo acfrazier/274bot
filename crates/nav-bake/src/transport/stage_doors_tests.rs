@@ -83,6 +83,18 @@ fn derive_stage(fx: &Fixture, locs: &[i32]) -> (TransportGraph, WorldCollision) 
     (graph, wc)
 }
 
+fn derive_stage_with_quests(
+    fx: &Fixture,
+    locs: &[i32],
+    quests: &QuestSource<'_>,
+) -> (TransportGraph, WorldCollision) {
+    let entries: Vec<(i32, i32, i32)> = locs.iter().map(|&id| (id, 1, 1)).collect();
+    let defs = loc_defs(&entries);
+    let wc = bake_collision(fx, &defs, &locs.iter().copied().collect());
+    let graph = derive_transports_with_audit(fx.path(), &defs, &wc, None, Some(quests)).0;
+    (graph, wc)
+}
+
 fn tile(x: i32, z: i32) -> WorldTile {
     WorldTile { x, z, level: 0 }
 }
@@ -173,6 +185,79 @@ fn quest_stage_double_doors_cross_only_with_the_completed_quest() {
             crosses(&graph, &wc, from, to, &WorldState::empty(), 2624).err(),
             Some(RouteError::NoPath),
             "{from:?} -> {to:?} without the quest"
+        );
+    }
+}
+
+#[test]
+fn authoritative_stage_comparison_emits_an_exact_window_gate() {
+    const OPENER: &str = "\
+[oploc1,plain_door]
+if (%heroquest >= ^hero_complete) {
+    ~open_and_close_door(loc_1535, ~check_axis(coord, loc_coord, loc_angle), false);
+}
+";
+    let fx = plain_opener_fixture(OPENER);
+    let selected =
+        api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
+    let (mut facts, identity) = selected.quest_identity_for_bake().expect("verified family");
+    let row = facts
+        .rows
+        .iter_mut()
+        .find(|row| row.varp == "heroquest")
+        .expect("Hero's Quest progress row");
+    row.colour_authoritative = true;
+    row.stage_domain = Some(api::selected::InclusiveRange {
+        min: Some(0),
+        max: Some(20),
+    });
+    row.transmission = api::quest_facts::Transmission::NotTransmitted;
+    let quests = QuestSource {
+        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+        facts: &facts,
+    };
+
+    let (graph, _) = derive_stage_with_quests(&fx, &[900], &quests);
+    let edges: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.loc_id == 900)
+        .collect();
+    assert_eq!(edges.len(), 2);
+    for edge in edges {
+        assert!(edge.quest_req.is_empty(), "{edge:?}");
+        assert!(edge.varp_req.is_empty(), "{edge:?}");
+        let gates = edge.quest_gates.as_ref().expect("typed quest gate");
+        let [api::selected::QuestGate::Window(window)] = gates.gates() else {
+            panic!("stage comparison must retain its exact window: {gates:?}");
+        };
+        assert_eq!(window.quest, api::selected::FactKey::new("hero"));
+        assert_eq!(window.signal, api::selected::FactKey::new("heroquest"));
+        assert_eq!(
+            window.values,
+            api::selected::InclusiveRange {
+                min: Some(15),
+                max: Some(20),
+            }
+        );
+    }
+    let exact_opener = OPENER.replace(">=", "=");
+    let exact_fx = plain_opener_fixture(&exact_opener);
+    let (exact_graph, _) = derive_stage_with_quests(&exact_fx, &[900], &quests);
+    let exact_edges: Vec<_> = exact_graph
+        .edges
+        .iter()
+        .filter(|edge| edge.loc_id == 900)
+        .collect();
+    assert_eq!(exact_edges.len(), 2);
+    for edge in exact_edges {
+        let gates = edge.quest_gates.as_ref().expect("typed quest gate");
+        assert!(
+            matches!(
+                gates.gates(),
+                [api::selected::QuestGate::Complete(quest)] if quest.0.as_ref() == "hero"
+            ),
+            "completion equality remains exact: {gates:?}"
         );
     }
 }

@@ -134,14 +134,11 @@ impl std::error::Error for QuestGateError {}
 
 /// An edge's quest-stage gates: a non-empty, canonical (sorted, duplicate
 /// free) list bound to the quest family its keys come from. The edge is
-/// usable only while every gate is `True`. Cloning shares one allocation.
+/// usable only while every gate is `True`. Cloning shares the canonical gates.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QuestGates(Arc<GateSet>);
-
-#[derive(Debug, PartialEq, Eq)]
-struct GateSet {
+pub struct QuestGates {
     family: QuestFamilyId,
-    gates: Box<[QuestGate]>,
+    gates: Arc<[QuestGate]>,
 }
 
 impl QuestGates {
@@ -159,20 +156,25 @@ impl QuestGates {
         if gates.is_empty() {
             return Err(QuestGateError::Empty);
         }
-        Ok(Self(Arc::new(GateSet {
+        Ok(Self {
             family,
-            gates: gates.into_boxed_slice(),
-        })))
+            gates: Arc::from(gates),
+        })
     }
 
     /// The quest family whose keys the gates name.
     pub fn family(&self) -> &QuestFamilyId {
-        &self.0.family
+        &self.family
     }
 
     /// The gates, in canonical order.
     pub fn gates(&self) -> &[QuestGate] {
-        &self.0.gates
+        &self.gates
+    }
+
+    /// Share the canonical gate list without copying its members.
+    pub fn shared_gates(&self) -> Arc<[QuestGate]> {
+        Arc::clone(&self.gates)
     }
 
     /// `True` only when evidence prepared from the same quest family proves
@@ -180,8 +182,8 @@ impl QuestGates {
     /// evidence, or evidence from another family, is `Unknown`.
     pub fn test(&self, evidence: Option<&QuestEvidence>) -> Truth {
         match evidence {
-            Some(evidence) if evidence.family == self.0.family => {
-                Truth::all(self.0.gates.iter().map(|gate| evidence.test(gate)))
+            Some(evidence) if evidence.family == self.family => {
+                Truth::all(self.gates.iter().map(|gate| evidence.test(gate)))
             }
             _ => Truth::Unknown,
         }
@@ -197,12 +199,11 @@ impl PartialOrd for QuestGates {
 /// Canonical pack order: family, then the gates key by key.
 impl Ord for QuestGates {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.0.family.cmp(&other.0.family).then_with(|| {
-            self.0
-                .gates
+        self.family.cmp(&other.family).then_with(|| {
+            self.gates
                 .iter()
                 .map(gate_key)
-                .cmp(other.0.gates.iter().map(gate_key))
+                .cmp(other.gates.iter().map(gate_key))
         })
     }
 }

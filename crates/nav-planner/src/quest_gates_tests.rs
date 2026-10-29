@@ -11,6 +11,15 @@ fn gates(list: Vec<QuestGate>) -> QuestGates {
 }
 
 #[test]
+fn shared_gates_keeps_the_canonical_gate_allocation() {
+    let gates = gates(vec![QuestGate::Complete(FactKey::new("arrav"))]);
+    let first = gates.shared_gates();
+    let second = gates.shared_gates();
+    assert!(Arc::ptr_eq(&first, &second));
+    assert_eq!(first.as_ref(), gates.gates());
+}
+
+#[test]
 fn equality_window_holds_only_when_every_possible_value_is_its_value() {
     let exact = gates(vec![window("tbwt", "tbwt_main", Some(3), Some(3))]);
     let truth = |min, max| exact.test(Some(&tbwt_evidence(range(min, max))));

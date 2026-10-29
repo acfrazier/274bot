@@ -178,6 +178,77 @@ pub(super) fn preserves_completion(stmt: &Stmt, src: &Sources) -> bool {
         if names.as_slice() == [varp.clone()] && scalar(value).is_some_and(|after| after < *complete)))
 }
 
+fn authoritative_stage_domain(facts: QuestStageFacts, complete: i32) -> Option<(i32, i32)> {
+    if !facts.colour_authoritative
+        || facts.transmission != api::quest_facts::Transmission::NotTransmitted
+        || complete <= 0
+    {
+        return None;
+    }
+    let domain = facts.stage_domain?;
+    let (Some(min), Some(max)) = (domain.min, domain.max) else {
+        return None;
+    };
+    (min == 0 && max >= complete).then_some((min, max))
+}
+
+/// The exact interval on which a comparison has the selected branch value.
+/// A disjoint complement (for an interior `=`/`!`) has no single safe window.
+fn comparison_window(
+    op: CmpOp,
+    branch_value: bool,
+    threshold: i32,
+    domain_min: i32,
+    domain_max: i32,
+) -> Option<api::selected::InclusiveRange> {
+    let except_threshold = || {
+        if threshold < domain_min || threshold > domain_max {
+            Some((domain_min, domain_max))
+        } else if threshold == domain_min {
+            Some((domain_min.checked_add(1)?, domain_max))
+        } else if threshold == domain_max {
+            Some((domain_min, domain_max.checked_sub(1)?))
+        } else {
+            None
+        }
+    };
+    let interval = match (op, branch_value) {
+        (CmpOp::Eq, true) | (CmpOp::Ne, false) => Some((threshold, threshold)),
+        (CmpOp::Eq, false) | (CmpOp::Ne, true) => except_threshold(),
+        (CmpOp::Lt, true) => Some((domain_min, threshold.checked_sub(1)?)),
+        (CmpOp::Lt, false) => Some((threshold, domain_max)),
+        (CmpOp::Le, true) => Some((domain_min, threshold)),
+        (CmpOp::Le, false) => Some((threshold.checked_add(1)?, domain_max)),
+        (CmpOp::Gt, true) => Some((threshold.checked_add(1)?, domain_max)),
+        (CmpOp::Gt, false) => Some((domain_min, threshold)),
+        (CmpOp::Ge, true) => Some((threshold, domain_max)),
+        (CmpOp::Ge, false) => Some((domain_min, threshold.checked_sub(1)?)),
+    }?;
+    let (min, max) = (interval.0.max(domain_min), interval.1.min(domain_max));
+    (min <= max).then_some(api::selected::InclusiveRange {
+        min: Some(min),
+        max: Some(max),
+    })
+}
+
+fn comparison_value(op: CmpOp, min: i32, max: i32, threshold: i32) -> Option<bool> {
+    match op {
+        CmpOp::Eq if min == max => Some(min == threshold),
+        CmpOp::Eq if threshold < min || threshold > max => Some(false),
+        CmpOp::Ne if min == max => Some(min != threshold),
+        CmpOp::Ne if threshold < min || threshold > max => Some(true),
+        CmpOp::Lt if max < threshold => Some(true),
+        CmpOp::Lt if min >= threshold => Some(false),
+        CmpOp::Le if max <= threshold => Some(true),
+        CmpOp::Le if min > threshold => Some(false),
+        CmpOp::Gt if min > threshold => Some(true),
+        CmpOp::Gt if max <= threshold => Some(false),
+        CmpOp::Ge if min >= threshold => Some(true),
+        CmpOp::Ge if max < threshold => Some(false),
+        _ => None,
+    }
+}
+
 impl Motion<'_> {
     pub(super) fn entrance_value(&mut self, expr: &Expr, env: &Env) -> Option<Option<Val>> {
         let input = self.entrance?;
@@ -282,48 +353,84 @@ impl Motion<'_> {
                 let Some((quest, complete)) = self.base.src.quest_complete.get(quest_varp) else {
                     return Some(Cond::unknown());
                 };
-                let Some(Val::Int(value)) = self.value(rhs, env) else {
+                let Some(Val::Int(threshold)) = self.value(rhs, env) else {
                     return Some(Cond::unknown());
                 };
-                let (min, max) = if !input.complete {
-                    (i32::MIN, complete.checked_sub(1)?)
-                } else if input
+                let stage_domain = self
+                    .base
+                    .src
+                    .quest_family
+                    .and_then(|_| self.base.src.quest_stage.get(quest_varp).copied())
+                    .and_then(|facts| authoritative_stage_domain(facts, *complete));
+                let above = input
                     .above_queries
                     .iter()
                     .position(|name| name == varp)
-                    .is_some_and(|index| input.above_mask & (1usize << index) != 0)
-                {
+                    .is_some_and(|index| input.above_mask & (1usize << index) != 0);
+                let (min, max) = if let Some((domain_min, domain_max)) = stage_domain {
+                    if !input.complete {
+                        (domain_min, complete.checked_sub(1)?)
+                    } else if above {
+                        (complete.checked_add(1)?, domain_max)
+                    } else {
+                        (*complete, *complete)
+                    }
+                } else if !input.complete {
+                    (i32::MIN, complete.checked_sub(1)?)
+                } else if above {
                     (complete.checked_add(1)?, i32::MAX)
                 } else {
                     (*complete, *complete)
                 };
-                let value = match op {
-                    CmpOp::Eq if min == max => Some(min == value),
-                    CmpOp::Eq if value < min || value > max => Some(false),
-                    CmpOp::Ne if min == max => Some(min != value),
-                    CmpOp::Ne if value < min || value > max => Some(true),
-                    CmpOp::Lt if max < value => Some(true),
-                    CmpOp::Lt if min >= value => Some(false),
-                    CmpOp::Le if max <= value => Some(true),
-                    CmpOp::Le if min > value => Some(false),
-                    CmpOp::Gt if min > value => Some(true),
-                    CmpOp::Gt if max <= value => Some(false),
-                    CmpOp::Ge if min >= value => Some(true),
-                    CmpOp::Ge if max < value => Some(false),
-                    _ => None,
-                };
-                return Some(Cond {
-                    value,
-                    needs: if input.complete {
-                        Needs {
-                            quests: vec![api::selected::QuestGate::Complete(quest.clone())],
-                            quest_family: self.base.src.quest_family,
-                            ..Needs::default()
+                if min > max {
+                    return Some(Cond::unknown());
+                }
+                let value = comparison_value(op, min, max, threshold);
+                let needs = if let Some((domain_min, domain_max)) = stage_domain {
+                    if op == CmpOp::Eq && threshold == *complete {
+                        if input.complete {
+                            Needs {
+                                quests: vec![api::selected::QuestGate::Complete(quest.clone())],
+                                quest_family: self.base.src.quest_family,
+                                ..Needs::default()
+                            }
+                        } else {
+                            Needs::default()
                         }
                     } else {
-                        Needs::default()
-                    },
-                });
+                        let Some(branch_value) = value else {
+                            return Some(Cond::unknown());
+                        };
+                        let Some(values) =
+                            comparison_window(op, branch_value, threshold, domain_min, domain_max)
+                        else {
+                            return Some(Cond::unknown());
+                        };
+                        let Some(quest_family) = self.base.src.quest_family else {
+                            return Some(Cond::unknown());
+                        };
+                        Needs {
+                            quests: vec![api::selected::QuestGate::Window(
+                                api::selected::StageWindow {
+                                    quest: quest.clone(),
+                                    signal: api::selected::FactKey::new(quest_varp),
+                                    values,
+                                },
+                            )],
+                            quest_family: Some(quest_family),
+                            ..Needs::default()
+                        }
+                    }
+                } else if input.complete {
+                    Needs {
+                        quests: vec![api::selected::QuestGate::Complete(quest.clone())],
+                        quest_family: self.base.src.quest_family,
+                        ..Needs::default()
+                    }
+                } else {
+                    Needs::default()
+                };
+                return Some(Cond { value, needs });
             }
         }
         if let Expr::Call(name, args) = lhs {
@@ -915,4 +1022,120 @@ fn real_camp_gate_read_set_stays_within_the_entrance_bound() {
         reads.npc.len(),
         reads.quests.len()
     );
+}
+
+#[cfg(test)]
+mod stage_window_tests {
+    use super::*;
+
+    fn range(min: i32, max: i32) -> api::selected::InclusiveRange {
+        api::selected::InclusiveRange {
+            min: Some(min),
+            max: Some(max),
+        }
+    }
+
+    #[test]
+    fn stage_comparisons_keep_exact_inclusive_truth_intervals() {
+        assert_eq!(
+            comparison_window(CmpOp::Eq, true, 7, 0, 20),
+            Some(range(7, 7))
+        );
+        assert_eq!(
+            comparison_window(CmpOp::Eq, false, 0, 0, 20),
+            Some(range(1, 20))
+        );
+        assert_eq!(comparison_window(CmpOp::Eq, false, 7, 0, 20), None);
+        assert_eq!(
+            comparison_window(CmpOp::Ne, true, 0, 0, 20),
+            Some(range(1, 20))
+        );
+        assert_eq!(
+            comparison_window(CmpOp::Ne, false, 7, 0, 20),
+            Some(range(7, 7))
+        );
+        assert_eq!(comparison_window(CmpOp::Ne, true, 7, 0, 20), None);
+        assert_eq!(
+            comparison_window(CmpOp::Lt, true, 10, 0, 20),
+            Some(range(0, 9))
+        );
+        assert_eq!(
+            comparison_window(CmpOp::Lt, false, 10, 0, 20),
+            Some(range(10, 20))
+        );
+        assert_eq!(
+            comparison_window(CmpOp::Le, true, 10, 0, 20),
+            Some(range(0, 10))
+        );
+        assert_eq!(
+            comparison_window(CmpOp::Le, false, 10, 0, 20),
+            Some(range(11, 20))
+        );
+        assert_eq!(
+            comparison_window(CmpOp::Gt, true, 10, 0, 20),
+            Some(range(11, 20))
+        );
+        assert_eq!(
+            comparison_window(CmpOp::Gt, false, 10, 0, 20),
+            Some(range(0, 10))
+        );
+        assert_eq!(
+            comparison_window(CmpOp::Ge, true, 10, 0, 20),
+            Some(range(10, 20))
+        );
+        assert_eq!(
+            comparison_window(CmpOp::Ge, false, 10, 0, 20),
+            Some(range(0, 9))
+        );
+    }
+
+    #[test]
+    fn only_authoritative_untransmitted_bounded_domains_are_used() {
+        let facts = QuestStageFacts {
+            colour_authoritative: true,
+            stage_domain: Some(range(0, 20)),
+            transmission: api::quest_facts::Transmission::NotTransmitted,
+        };
+        assert_eq!(authoritative_stage_domain(facts, 15), Some((0, 20)));
+        assert_eq!(
+            authoritative_stage_domain(
+                QuestStageFacts {
+                    transmission: api::quest_facts::Transmission::PostedByContent,
+                    ..facts
+                },
+                15,
+            ),
+            None
+        );
+        assert_eq!(
+            authoritative_stage_domain(
+                QuestStageFacts {
+                    colour_authoritative: false,
+                    ..facts
+                },
+                15,
+            ),
+            None
+        );
+        assert_eq!(
+            authoritative_stage_domain(
+                QuestStageFacts {
+                    stage_domain: Some(range(-1, 20)),
+                    ..facts
+                },
+                15,
+            ),
+            None
+        );
+        assert_eq!(
+            authoritative_stage_domain(
+                QuestStageFacts {
+                    stage_domain: Some(range(0, 14)),
+                    ..facts
+                },
+                15,
+            ),
+            None
+        );
+    }
 }

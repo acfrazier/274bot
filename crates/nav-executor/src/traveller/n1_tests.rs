@@ -8,10 +8,9 @@ static STALL_LOGS: StallLogSink = StallLogSink(std::sync::Mutex::new(Vec::new())
 
 impl api::hostlog::Sink for StallLogSink {
     fn record(&self, record: &api::hostlog::Record<'_>) {
-        if let Some(slot) = record
-            .slot
-            .filter(|slot| slot.starts_with("walk-stall-test-"))
-        {
+        if let Some(slot) = record.slot.filter(|slot| {
+            slot.starts_with("walk-stall-test-") || slot.starts_with("prereq-hop-test-")
+        }) {
             self.0.lock().unwrap().push((
                 slot.to_owned(),
                 record.source,
@@ -33,9 +32,20 @@ fn stall_logs(slot: &str) -> Vec<StallLog> {
         .collect()
 }
 
+pub(super) fn install_log_capture() {
+    let _ = api::hostlog::install_sink(&STALL_LOGS);
+}
+
+pub(super) fn captured_messages(slot: &str) -> Vec<String> {
+    stall_logs(slot)
+        .into_iter()
+        .map(|record| record.3)
+        .collect()
+}
+
 #[test]
 fn walk_stall_writes_one_info_nav_line_with_hop_facts() {
-    assert!(api::hostlog::install_sink(&STALL_LOGS));
+    let _ = api::hostlog::install_sink(&STALL_LOGS);
     std::thread::spawn(|| {
         for moved in [false, true] {
             for disconnected in [false, true] {
