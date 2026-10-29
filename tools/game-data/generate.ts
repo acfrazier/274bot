@@ -203,7 +203,7 @@ export function familyBytes(upstream: FamilyInputs, draft: FamilyDraft, name = '
 }
 /** Quests extractor schema, shared by the normal generator, the selected pipeline provider, and verification. Bump only with the Rust decoder. */
 export const QUESTS_SCHEMA = 1;
-/** The real quests family: the existing identity extract, unchanged, in the shared family envelope. No stage fields. */
+/** Static quest identity and observation metadata in the shared family envelope. No per-account progress. */
 export function extractQuestsFamily(content: string, revision: number): FamilyDraft {
     return { schema: QUESTS_SCHEMA, payload: extractQuestIdentityFacts(content, revision) };
 }
