@@ -1494,17 +1494,20 @@ fn a_failed_talk_walk_retries_and_logs_the_terminal_failure() {
 }
 
 #[test]
-fn an_interrupt_during_the_re_walk_stops_it_and_ends_false() {
-    // Frozen follow pass: EventSignal.pending ends the walk (WalkExecutor.ts:844-853).
+fn a_script_interrupt_during_the_re_walk_stops_it_and_ends_false() {
+    crate::event_signal::clear();
     let (h, mut world, _, again) = earn_the_fare(None);
-    world.ours = true;
+    world.ours = false;
     world.post();
+    crate::event_signal::set(true);
+    let stopped = tick();
+    crate::event_signal::clear();
     assert_eq!(
-        tick(),
+        stopped,
         vec![InteractReq::AbortWalk {
             request_id: token(&again)
         }],
-        "the interrupted re-walk stops its host follow"
+        "a script interrupt still stops its host follow"
     );
     assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
 }
@@ -1593,6 +1596,27 @@ fn walk_to_waits_for_owned_random_event_before_fare_recovery() {
     assert_ne!(token(&luthas_walk), first_token);
     assert!(orthogonally_adjacent(walk_tile(&luthas_walk), luthas_npc));
     assert_eq!(machine::take(h), Take::Pending);
+}
+
+#[test]
+fn walk_to_waits_for_owned_random_event_during_re_walk() {
+    crate::event_signal::clear();
+    let (h, mut world, _, again) = earn_the_fare(None);
+    assert!(is_walk(&again));
+
+    world.ours = true;
+    world.post();
+    assert!(
+        tick().is_empty(),
+        "an owned random event must not abort the fare re-walk"
+    );
+    assert_eq!(machine::take(h), Take::Pending);
+
+    world.ours = false;
+    world.here = PORT_SARIM;
+    world.post();
+    assert!(tick().is_empty());
+    assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(true))));
 }
 
 #[test]
