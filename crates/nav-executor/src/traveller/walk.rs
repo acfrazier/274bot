@@ -51,21 +51,28 @@ pub(super) fn report_walk(
     }
 }
 
-/// The next walk-hop target: the leg's last tile when it is within ~20
-/// tiles, otherwise a tile ~15 steps ahead of the player (or the last
-/// uncleared tile when the leg is shorter), so each hop re-routes a fresh
-/// short path and never aims back toward the leg start.
+/// The next walk-hop target: the leg's last tile when 20 or fewer path
+/// steps remain, otherwise a tile ~15 steps ahead of the player (or the
+/// last uncleared tile when the leg is shorter), so each hop re-routes a
+/// fresh short path and never aims back toward the leg start.
 pub(super) fn pick_aim(tiles: &[WorldTile], here: WorldTile, cursor: usize) -> (WorldTile, usize) {
     let last = *tiles.last().expect("walk legs are non-empty");
-    if cheb(here, last) <= 20 {
-        (last, tiles.len() - 1)
+    let last_index = tiles.len() - 1;
+    let base = tiles
+        .iter()
+        .enumerate()
+        .skip(cursor)
+        .find_map(|(i, tile)| (*tile == here).then_some(i))
+        .unwrap_or(cursor);
+    let steps_left = if tiles.get(base) == Some(&here) {
+        last_index - base
     } else {
-        let base = tiles
-            .iter()
-            .position(|t| *t == here)
-            .filter(|&i| i >= cursor)
-            .unwrap_or(cursor);
-        let idx = (base + 15).min(tiles.len() - 1).max(base + 1);
+        tiles.len() - base
+    };
+    if steps_left <= 20 {
+        (last, last_index)
+    } else {
+        let idx = (base + 15).min(last_index).max(base + 1);
         (tiles[idx], idx)
     }
 }

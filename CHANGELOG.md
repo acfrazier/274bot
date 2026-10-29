@@ -73,6 +73,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Navigation
 
+- Long walks that bend around walls no longer stall when running is off.
+
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
   used") stays held for at most 9 game ticks after a refusal, so the bot
