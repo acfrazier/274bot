@@ -5855,6 +5855,9 @@ fn s2b_admission_per_bot_layouts() {
     // across resends): NavBot measures 3776 B, with no new heap payload and
     // no SlotScript growth.
     // SURVIVAL-1.4 adds one byte of cure_poison, padded to 8 by alignment: NavBot is 3784 B.
+    // SURVIVAL-NATIVE-CURE keeps SurvivalStep (bounded by 192 B) and interrupt
+    // state in the existing boxed Gatherer/Quester scripts, not inline SlotScript.
+    // The 64-bit SlotScript pin remains 1624 B (+0 B).
     // Rust 1.98.1 is pinned for the workspace and CI. These are lib-test
     // layouts: test-only inspection budgets and bank fixtures are included.
     // S0c moves the platform-specific isolate mutexes into the surface run.

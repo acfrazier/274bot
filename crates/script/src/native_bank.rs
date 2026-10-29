@@ -527,6 +527,8 @@ pub struct BankMachine {
     /// MAX_DEPOSITS plus MAX_BANK_REOPENS plus this one
     /// recovery caps deposit sends at 35 per request.
     deposit_recovered: bool,
+    /// Stop after the current transfer reaches an observed boundary.
+    interrupted: bool,
 }
 
 const BANK_OBJECT_RADIUS: i32 = 4;
@@ -667,11 +669,15 @@ impl NativeMachine for BankMachine {
             reopen_pending: false,
             in_flight: None,
             deposit_recovered: false,
+            interrupted: false,
         })
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
         loop {
+            if self.interrupted && !self.transfer_in_flight() {
+                return Poll::Ready(Err(ActionError::Cancelled));
+            }
             let snapshot = cx.snapshot();
             let bank_open = snapshot
                 .bank_session()
@@ -1527,6 +1533,9 @@ impl NativeMachine for BankMachine {
                     reason,
                 } => {
                     if !self.same_session(cx) {
+                        if self.interrupted {
+                            return Poll::Ready(Err(ActionError::Cancelled));
+                        }
                         self.session_lost(cx, "bank closed before the transfer settled")?;
                         continue;
                     }
@@ -1572,9 +1581,12 @@ impl NativeMachine for BankMachine {
                         cx.active_now().saturating_sub(started_at),
                         ops::TRANSFER_OBSERVED_TICK_LIMIT,
                     ) {
-                        return Poll::Ready(Err(ActionError::BankDeposit(reason)));
+                        return Poll::Ready(Err(if self.interrupted {
+                            ActionError::Cancelled
+                        } else {
+                            ActionError::BankDeposit(reason)
+                        }));
                     }
-                    return Poll::Pending;
                 }
                 Phase::AwaitTransfer {
                     before,
@@ -1635,11 +1647,13 @@ impl NativeMachine for BankMachine {
                                     before_slots,
                                     item_id,
                                 });
+                                if self.interrupted {
+                                    return Poll::Ready(Err(ActionError::Cancelled));
+                                }
                                 self.session_lost(cx, "bank closed before the transfer settled")?;
                                 continue;
                             }
                             Err(error) => return Poll::Ready(Err(error)),
-                        }
                     }
                     let snapshot = cx.snapshot();
                     let pack = snapshot.inventory().map(|rows| rows.value);
@@ -1663,6 +1677,9 @@ impl NativeMachine for BankMachine {
                                 item_id,
                             });
                         }
+                        if self.interrupted {
+                            return Poll::Ready(Err(ActionError::Cancelled));
+                        }
                         self.session_lost(cx, "bank closed before the transfer settled")?;
                         continue;
                     }
@@ -1672,6 +1689,9 @@ impl NativeMachine for BankMachine {
                     ) {
                         match self.protected_unchanged(pack) {
                             Some(true) => {}
+                            Some(false) if self.interrupted => {
+                                return Poll::Ready(Err(ActionError::Cancelled));
+                            }
                             Some(false) => {
                                 return Poll::Ready(Err(ActionError::Blocked(Arc::from(
                                     "protected inventory changed during bank deposit",
@@ -1708,9 +1728,11 @@ impl NativeMachine for BankMachine {
                         cx.active_now().saturating_sub(started_at),
                         ops::TRANSFER_OBSERVED_TICK_LIMIT,
                     ) {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                            "bank transfer did not settle",
-                        ))));
+                        return Poll::Ready(Err(if self.interrupted {
+                            ActionError::Cancelled
+                        } else {
+                            ActionError::Failed(Arc::from("bank transfer did not settle"))
+                        }));
                     }
                     return Poll::Pending;
                 }
@@ -1748,6 +1770,9 @@ impl NativeMachine for BankMachine {
     }
 
     fn cancel(&mut self) {}
+    fn interrupt(&mut self) {
+        BankMachine::interrupt(self);
+    }
 }
 
 struct NativeNpcContext<'a, 'frame> {
@@ -2441,6 +2466,17 @@ impl BankMachine {
         )
     }
 
+    pub(crate) fn interrupt(&mut self) {
+        self.interrupted = true;
+    }
+
+    pub(crate) fn transfer_in_flight(&self) -> bool {
+        matches!(
+            self.phase,
+            Phase::AwaitTransfer { .. } | Phase::ReconcileDeposit { .. }
+        )
+    }
+
     fn receipt(&self, complete: bool) -> BankReceipt {
         BankReceipt {
             complete,
@@ -2630,6 +2666,16 @@ impl NativeMachine for Deposit {
     fn cancel(&mut self) {
         self.core.cancel();
     }
+    fn interrupt(&mut self) {
+        self.core.interrupt();
+    }
+
+}
+
+impl Deposit {
+    pub(crate) fn transfer_in_flight(&self) -> bool {
+        self.core.transfer_in_flight()
+    }
 }
 
 pub struct Withdraw {
@@ -2663,8 +2709,18 @@ impl NativeMachine for Withdraw {
         }
     }
 
+    fn interrupt(&mut self) {
+        self.core.interrupt();
+    }
+
     fn cancel(&mut self) {
         self.core.cancel();
+    }
+}
+
+impl Withdraw {
+    pub(crate) fn transfer_in_flight(&self) -> bool {
+        self.core.transfer_in_flight()
     }
 }
 
@@ -3951,7 +4007,7 @@ mod tests {
     }
 
     #[test]
-    fn deposit_products_waits_for_matching_loaded_side_row() {
+    fn bank_machine_without_interrupt_unchanged() {
         let item_id = 314;
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -4860,6 +4916,67 @@ mod tests {
             settled_at_boundary,
             Poll::Ready(Ok(BankReceipt { complete: true, .. }))
         ));
+    }
+
+    #[test]
+    fn transfer_boundary_burst_reaches_eight_ticks_before_time_floor() {
+        let id = 333;
+        let side = vec![row_with(
+            item(id, "Trout", 2, ItemContainer::BankSide),
+            &["Deposit-1", "Deposit-5", "Deposit-All"],
+            0,
+        )];
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(vec![item(id, "Trout", 2, ItemContainer::Inventory)], 28);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), side);
+        let mut ledger = None;
+        let (handle, started) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            bank_request(
+                BankAction::Deposit {
+                    item: BankItem {
+                        id,
+                        name: Arc::from("Trout"),
+                    },
+                },
+                false,
+            ),
+        );
+        assert!(started.is_pending());
+        let _ = acknowledge(&mut ledger, 1);
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.active_now = Duration::from_millis(1_000);
+            tick.actions.interrupt(&handle);
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        });
+
+        for tick_number in 3..=9 {
+            let active_millis = if tick_number == 9 {
+                4_799
+            } else {
+                1_000 + u64::from(tick_number - 2) * 100
+            };
+            let poll = with_tick(&snapshot, &mut ledger, tick_number, |tick| {
+                tick.cx.active_now = Duration::from_millis(active_millis);
+                tick.actions.poll(&handle, &mut tick.cx)
+            });
+            assert!(
+                poll.is_pending(),
+                "tick {tick_number} with only {active_millis} active ms must remain in flight"
+            );
+        }
+
+        let cancelled = with_tick(&snapshot, &mut ledger, 10, |tick| {
+            tick.cx.active_now = Duration::from_millis(4_800);
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(
+            cancelled,
+            Poll::Ready(Err(ActionError::Cancelled))
+        ));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
     }
 
     #[test]
@@ -7173,6 +7290,30 @@ mod tests {
         }
 
         #[test]
+        fn transfer_boundary_recovered_noop_returns_at_reconcile_end() {
+            let (snapshot, mut ledger, handle) = fixture();
+            assert!(matches!(
+                dispatch(&mut ledger, 1, true),
+                HostEffect::BankDeposit(_)
+            ));
+            assert!(poll(&snapshot, &mut ledger, &handle, 9).is_pending());
+            assert!(handle
+                .inspect(|machine| machine.transfer_in_flight())
+                .unwrap_or(false));
+            with_tick(&snapshot, &mut ledger, 10, |tick| {
+                tick.actions.interrupt(&handle);
+            });
+            assert!(matches!(
+                poll(&snapshot, &mut ledger, &handle, 10),
+                Poll::Ready(Err(ActionError::Cancelled))
+            ));
+            assert!(
+                ledger.as_ref().unwrap().outbox.is_empty(),
+                "the interrupted reconcile must not dispatch a recovered retry"
+            );
+        }
+
+        #[test]
         fn accepted_noop_rescans_once_then_blocks_with_its_typed_reason() {
             let (snapshot, mut ledger, handle) = fixture();
             dispatch(&mut ledger, 1, true);
@@ -7478,4 +7619,374 @@ mod tests {
             ));
         }
     }
+    #[test]
+    fn deposit_and_withdraw_wrappers_forward_interrupt_and_transfer_in_flight() {
+        let shrimp = 317;
+        let net = 303;
+        let mut deposit_snapshot = GameSnapshot::new();
+        deposit_snapshot.seed_ingame(2);
+        deposit_snapshot.seed_inventory(fish_pack(shrimp, 2, net), 28);
+        deposit_snapshot.seed_bank_observation(10, 1, Some(Vec::new()), fish_side(shrimp, 2));
+        let mut deposit_ledger = None;
+        let (deposit, started) = begin_deposit(
+            &deposit_snapshot,
+            &mut deposit_ledger,
+            DepositArgs {
+                products: Arc::from([shrimp]),
+                keep: Arc::from([net]),
+                access: None,
+            },
+        );
+        assert!(started.is_pending());
+        assert!(matches!(
+            acknowledge(&mut deposit_ledger, 1),
+            HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == shrimp
+        ));
+        assert!(deposit
+            .inspect(|machine| machine.transfer_in_flight())
+            .unwrap_or(false));
+        with_tick(&deposit_snapshot, &mut deposit_ledger, 2, |tick| {
+            tick.actions.interrupt(&deposit);
+        });
+        assert!(deposit
+            .inspect(|machine| machine.transfer_in_flight())
+            .unwrap_or(false));
+        assert!(with_tick(&deposit_snapshot, &mut deposit_ledger, 3, |tick| {
+            tick.actions.poll(&deposit, &mut tick.cx)
+        })
+        .is_pending());
+        deposit_snapshot.seed_inventory(fish_pack(shrimp, 0, net), 28);
+        deposit_snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(vec![item(shrimp, "Raw shrimps", 2, ItemContainer::Bank)]),
+            Vec::new(),
+        );
+        assert!(matches!(
+            with_tick(&deposit_snapshot, &mut deposit_ledger, 4, |tick| {
+                tick.actions.poll(&deposit, &mut tick.cx)
+            }),
+            Poll::Ready(Err(ActionError::Cancelled))
+        ));
+        assert!(deposit_ledger.as_ref().unwrap().outbox.is_empty());
+
+        let bait = 314;
+        let mut withdraw_snapshot = GameSnapshot::new();
+        withdraw_snapshot.seed_ingame(2);
+        withdraw_snapshot.seed_inventory(Vec::new(), 28);
+        withdraw_snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(vec![item(bait, "Bait", 5, ItemContainer::Bank)]),
+            Vec::new(),
+        );
+        let mut withdraw_ledger = None;
+        let withdraw = with_tick(&withdraw_snapshot, &mut withdraw_ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<Withdraw>(
+                    WithdrawArgs {
+                        withdrawals: Arc::from([Withdrawal {
+                            id: bait,
+                            name: Arc::from("Bait"),
+                            target: 2,
+                        }]),
+                        access: None,
+                    },
+                    &mut tick.cx,
+                )
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
+        assert!(matches!(
+            acknowledge(&mut withdraw_ledger, 1),
+            HostEffect::Interaction(InteractReq::SetNoteMode { on: false })
+        ));
+        with_tick(&withdraw_snapshot, &mut withdraw_ledger, 1, |tick| {
+            assert!(tick.actions.poll(&withdraw, &mut tick.cx).is_pending());
+        });
+        assert!(with_tick(&withdraw_snapshot, &mut withdraw_ledger, 2, |tick| {
+            tick.actions.poll(&withdraw, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(matches!(
+            acknowledge(&mut withdraw_ledger, 2),
+            HostEffect::Interaction(InteractReq::WithdrawX {
+                bank_item_id,
+                count: 2,
+                ..
+            }) if bank_item_id == bait
+        ));
+        assert!(withdraw
+            .inspect(|machine| machine.transfer_in_flight())
+            .unwrap_or(false));
+        with_tick(&withdraw_snapshot, &mut withdraw_ledger, 3, |tick| {
+            tick.actions.interrupt(&withdraw);
+        });
+        assert!(withdraw
+            .inspect(|machine| machine.transfer_in_flight())
+            .unwrap_or(false));
+        assert!(with_tick(&withdraw_snapshot, &mut withdraw_ledger, 4, |tick| {
+            tick.actions.poll(&withdraw, &mut tick.cx)
+        })
+        .is_pending());
+        withdraw_snapshot.seed_inventory(
+            vec![item(bait, "Bait", 2, ItemContainer::Inventory)],
+            28,
+        );
+        withdraw_snapshot.seed_bank_observation(
+            10,
+            2,
+            Some(vec![item(bait, "Bait", 3, ItemContainer::Bank)]),
+            Vec::new(),
+        );
+        assert!(matches!(
+            with_tick(&withdraw_snapshot, &mut withdraw_ledger, 5, |tick| {
+                tick.actions.poll(&withdraw, &mut tick.cx)
+            }),
+            Poll::Ready(Err(ActionError::Cancelled))
+        ));
+        assert!(withdraw_ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    #[test]
+    fn transfer_boundary_deposit_capacity() {
+        let shrimp = 317;
+        let anchovy = 321;
+        let net = 303;
+        let net_row = || {
+            slotted(
+                item(net, "Small fishing net", 1, ItemContainer::Inventory),
+                0,
+            )
+        };
+        let shrimp_row = || slotted(item(shrimp, "Raw shrimps", 1, ItemContainer::Inventory), 1);
+        let anchovy_row = || {
+            slotted(
+                item(anchovy, "Raw anchovies", 1, ItemContainer::Inventory),
+                2,
+            )
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(vec![net_row(), shrimp_row(), anchovy_row()], 28);
+        snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(Vec::new()),
+            vec![
+                deposit_side_row(shrimp, "Raw shrimps", 1, 1),
+                deposit_side_row(anchovy, "Raw anchovies", 1, 2),
+            ],
+        );
+        let mut ledger = None;
+        let (handle, started) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            BankRequest {
+                bank: None,
+                action: BankAction::DepositCapacity {
+                    keep: Arc::from([net]),
+                    slots: 1,
+                },
+                partial_ok: false,
+                access: None,
+            },
+        );
+        assert!(started.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::InvButton { id, .. }) if id == shrimp
+        ));
+        assert!(handle
+            .inspect(|machine| machine.transfer_in_flight())
+            .unwrap_or(false));
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.interrupt(&handle);
+        });
+        assert!(handle
+            .inspect(|machine| machine.transfer_in_flight())
+            .unwrap_or(false));
+
+        snapshot.seed_inventory(vec![net_row(), anchovy_row()], 28);
+        snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(vec![item(shrimp, "Raw shrimps", 1, ItemContainer::Bank)]),
+            vec![deposit_side_row(anchovy, "Raw anchovies", 1, 2)],
+        );
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 3, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            }),
+            Poll::Ready(Err(ActionError::Cancelled))
+        ));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    #[test]
+    fn transfer_boundary_withdraw_list() {
+        let bait = 314;
+        let coin = 995;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(vec![
+                item(bait, "Bait", 5, ItemContainer::Bank),
+                item(coin, "Coins", 10, ItemContainer::Bank),
+            ]),
+            Vec::new(),
+        );
+        let mut ledger = None;
+        let (handle, started) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            bank_request(
+                BankAction::WithdrawTo {
+                    withdrawals: Arc::from([
+                        Withdrawal {
+                            id: bait,
+                            name: Arc::from("Bait"),
+                            target: 2,
+                        },
+                        Withdrawal {
+                            id: coin,
+                            name: Arc::from("Coins"),
+                            target: 5,
+                        },
+                    ]),
+                },
+                false,
+            ),
+        );
+        assert!(started.is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::SetNoteMode { on: false })
+        ));
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 2),
+            HostEffect::Interaction(InteractReq::WithdrawX {
+                bank_item_id,
+                count: 2,
+                ..
+            }) if bank_item_id == bait
+        ));
+        assert!(handle
+            .inspect(|machine| machine.transfer_in_flight())
+            .unwrap_or(false));
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.interrupt(&handle);
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+
+        snapshot.seed_inventory(
+            vec![item(bait, "Bait", 2, ItemContainer::Inventory)],
+            28,
+        );
+        snapshot.seed_bank_observation(
+            10,
+            2,
+            Some(vec![
+                item(bait, "Bait", 3, ItemContainer::Bank),
+                item(coin, "Coins", 10, ItemContainer::Bank),
+            ]),
+            Vec::new(),
+        );
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 5, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            }),
+            Poll::Ready(Err(ActionError::Cancelled))
+        ));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    #[test]
+    fn transfer_boundary_starts_no_bank_action_in_same_poll() {
+        let bait = 314;
+        let coin = 995;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(vec![
+                item(bait, "Bait", 5, ItemContainer::Bank),
+                item(coin, "Coins", 10, ItemContainer::Bank),
+            ]),
+            Vec::new(),
+        );
+        let mut ledger = None;
+        let (handle, started) = begin_bank(
+            &snapshot,
+            &mut ledger,
+            bank_request(
+                BankAction::WithdrawTo {
+                    withdrawals: Arc::from([
+                        Withdrawal {
+                            id: bait,
+                            name: Arc::from("Bait"),
+                            target: 2,
+                        },
+                        Withdrawal {
+                            id: coin,
+                            name: Arc::from("Coins"),
+                            target: 5,
+                        },
+                    ]),
+                },
+                false,
+            ),
+        );
+        assert!(started.is_pending());
+        let _ = acknowledge(&mut ledger, 1);
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        let _ = acknowledge(&mut ledger, 2);
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.interrupt(&handle);
+        });
+        snapshot.seed_inventory(
+            vec![item(bait, "Bait", 2, ItemContainer::Inventory)],
+            28,
+        );
+        snapshot.seed_bank_observation(
+            10,
+            2,
+            Some(vec![
+                item(bait, "Bait", 3, ItemContainer::Bank),
+                item(coin, "Coins", 10, ItemContainer::Bank),
+            ]),
+            Vec::new(),
+        );
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 4, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            }),
+            Poll::Ready(Err(ActionError::Cancelled))
+        ));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
 }

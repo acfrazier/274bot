@@ -372,6 +372,41 @@ mod tests {
     }
 
     #[test]
+    fn food_credit_is_conservative() {
+        for hp_max in 10_u8..=99 {
+            for eat_line in 1_u8..=20.min(hp_max) {
+                for heal in 1_u8..=22 {
+                    let food = FoodSummary {
+                        ordinary_count: 3,
+                        best_heal: heal,
+                        smallest_heal: heal,
+                        ..FoodSummary::default()
+                    };
+                    let credit = food_credit(&food, hp_max, i32::from(eat_line));
+                    let hp_before = i32::from(eat_line - 1);
+                    let room = i32::from(hp_max) - hp_before;
+                    let actual_bite = u16::try_from(i32::from(heal).min(room)).unwrap();
+                    let delivered = u16::from(food.ordinary_count) * actual_bite;
+                    assert!(
+                        delivered >= credit,
+                        "hp_max={hp_max} eat_line={eat_line} heal={heal} credit={credit} delivered={delivered}"
+                    );
+                }
+            }
+        }
+
+        let food = FoodSummary {
+            ordinary_count: 5,
+            best_heal: 7,
+            smallest_heal: 5,
+            ..FoodSummary::default()
+        };
+        let credit = food_credit(&food, 30, 20);
+        let delivered = u16::from(food.ordinary_count) * 7;
+        assert!(delivered > credit);
+    }
+
+    #[test]
     fn need_food_uses_the_effective_eat_floor() {
         let condition = fact(45, PoisonState::Clear, FoodSummary::default());
         assert_eq!(

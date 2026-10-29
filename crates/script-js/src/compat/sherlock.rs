@@ -619,6 +619,7 @@ impl Sherlock {
                     value: StatusValue::Integer(i64::from(self.solved)),
                 },
             ]),
+            survival: script::survival::SurvivalReport::default(),
             failure: None,
         });
         output.paint(Arc::new(ScriptPaint {

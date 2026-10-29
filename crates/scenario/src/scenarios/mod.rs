@@ -24,6 +24,7 @@ pub(crate) mod render;
 pub(crate) mod retreat_spot;
 pub(crate) mod route_inspect;
 pub(crate) mod script_basics;
+pub(crate) mod survival_need;
 pub(crate) mod shop;
 pub(crate) mod walk_spot;
 
@@ -36,6 +37,7 @@ pub(crate) use clue::{
     sherlock_search_scenario, sherlock_talk_scenario,
 };
 pub(crate) use gatherer::gatherer_scenario;
+pub(crate) use survival_need::survival_need_scenario;
 pub(crate) use guardian_events::{
     guardian_event_drunken_dwarf_scenario, guardian_event_genie_scenario,
     guardian_event_maze_scenario, guardian_event_mime_scenario, guardian_event_old_man_scenario,

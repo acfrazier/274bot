@@ -243,6 +243,7 @@ impl CombatSessionCard {
                     value: StatusValue::Integer(index),
                 },
             ]),
+            survival: crate::survival::SurvivalReport::default(),
             failure: None,
         });
     }

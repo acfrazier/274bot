@@ -273,6 +273,7 @@ fn status() -> Arc<ScriptStatus> {
             text("last_event", "Last event", "mined copper"),
         ]
         .into(),
+        survival: script::survival::SurvivalReport::default(),
         failure: None,
     })
 }

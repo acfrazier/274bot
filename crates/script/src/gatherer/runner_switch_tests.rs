@@ -1831,3 +1831,147 @@ fn power_gatherer_rejects_bank_edit_at_lower_mine() {
     assert_eq!(gatherer.settings().disposition, "Power");
     assert!(gatherer.pending.is_none());
 }
+
+#[test]
+fn gatherer_interrupts_gather_step_for_drink_at_line() {
+    use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+
+    let (mut gatherer, mut snapshot) = fixture();
+    let dose_id = crate::combat::guard::shared_tables()
+        .unwrap()
+        .potion(crate::combat::tables::PotionKind::Antipoison)
+        .unwrap()
+        .doses[0]
+        .unwrap()
+        .id;
+    let dose = ItemView {
+        def: def(dose_id, "Antipoison"),
+        container: ItemContainer::Inventory,
+        action_family: ItemActionFamily::Held,
+        slot: 0,
+        count: 1,
+        actions: Vec::new(),
+        component_id: 0,
+    };
+    let lobster_id = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .unwrap()
+        .item_by_alias("lobster")
+        .unwrap()
+        .id;
+    let food = ItemView {
+        def: def(lobster_id, "Lobster"),
+        container: ItemContainer::Inventory,
+        action_family: ItemActionFamily::Held,
+        slot: 1,
+        count: 1,
+        actions: vec![Some("Eat".into())],
+        component_id: 0,
+    };
+    snapshot.seed_inventory(vec![dose, food], 28);
+    snapshot.seed_tick(20);
+
+    let condition = |poison, hp| BotCondition {
+        tick: 20,
+        session: SessionMark::Live,
+        hp,
+        hp_max: 99,
+        hp_known: true,
+        poison,
+        food: FoodSummary::default(),
+        cures: CureDoses::default(),
+    };
+    let mut ledger = None;
+
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.cx.condition = Some(condition(PoisonState::Clear, 60));
+        tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+        gatherer.tick(tick).unwrap();
+    });
+    assert!(matches!(gatherer.active, Active::Gather(_)));
+
+    with_tick(&snapshot, &mut ledger, 2, |tick| {
+        tick.cx.condition = Some(condition(
+            PoisonState::Onset {
+                since: 20,
+                q: Some(11),
+                hit_since_line: false,
+            },
+            5,
+        ));
+        tick.cx.poison_unknown_pulse = 11;
+        tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+        gatherer.tick(tick).unwrap();
+    });
+    assert!(matches!(gatherer.active, Active::Tend(_)));
+    assert_eq!(
+        gatherer.survival.report().decision,
+        crate::survival::Decision::Drinking
+    );
+    assert!(matches!(
+        ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+        Some(crate::native::HostEffect::Interaction(
+            crate::shim::InteractReq::Held { action, .. }
+        )) if action == "Drink"
+    ));
+
+    snapshot.seed_tick(21);
+    snapshot.seed_inventory(vec![], 28);
+    with_tick(&snapshot, &mut ledger, 3, |tick| {
+        tick.cx.condition = Some(BotCondition {
+            tick: 21,
+            session: SessionMark::Live,
+            hp: 5,
+            hp_max: 99,
+            hp_known: true,
+            poison: PoisonState::Immune { until_lower: 80 },
+            food: FoodSummary::default(),
+            cures: CureDoses::default(),
+        });
+        tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+        gatherer.tick(tick).unwrap();
+    });
+    assert!(
+        matches!(gatherer.active, Active::Gather(_)),
+        "gathering resumes once the cure is observed to settle"
+    );
+    assert_eq!(
+        gatherer.survival.report().decision,
+        crate::survival::Decision::None
+    );
+    assert!(!gatherer.survival_deferred);
+    assert!(!gatherer.needs_validate);
+}
+
+#[test]
+fn gatherer_boundary_drinks_before_bite() {
+    gatherer_interrupts_gather_step_for_drink_at_line();
+}
+
+#[test]
+fn gatherer_walk_requests_food_guard() {
+    let (mut gatherer, mut snapshot) = fixture();
+    let here = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    snapshot.seed_local_player(crate::quester::families::tests::local_player(here));
+    let target = WorldTile {
+        x: 3210,
+        z: 3200,
+        level: 0,
+    };
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        assert!(gatherer.trip_walk(target, 0, ArrivalKind::Area, None, tick));
+    });
+    let Some(crate::native::HostEffect::Walk(request)) = ledger
+        .as_ref()
+        .and_then(|ledger| ledger.outbox.last())
+        .map(|action| &action.effect)
+    else {
+        panic!("the trip must begin a walk");
+    };
+    assert!(request.food_guard);
+    assert!(request.allow.food);
+}

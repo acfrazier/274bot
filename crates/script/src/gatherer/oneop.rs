@@ -13,6 +13,10 @@ pub enum OneOpKind {
         before_count: i32,
         before_hp: i32,
     },
+    Drink {
+        item_id: i32,
+        before_doses: i32,
+    },
     CloseModal,
     ContinueDialog,
 }
@@ -49,6 +53,17 @@ impl OneOpArgs {
         }
     }
 
+    /// Close a page that blocks a survival held click.
+    pub fn close_modal_if_open(snapshot: api::snapshot::SnapshotView<'_>) -> Option<Self> {
+        let main = snapshot
+            .main_modal()
+            .is_some_and(|modal| modal.value.root >= 0);
+        let chat = snapshot
+            .chat_modal()
+            .is_some_and(|modal| modal.value.root >= 0);
+        (main || chat).then(Self::close_modal)
+    }
+
     pub fn wear(name: Arc<str>, item_id: i32, action: &str) -> Self {
         Self {
             request: InteractReq::Held {
@@ -74,6 +89,22 @@ impl OneOpArgs {
                 item_id,
                 before_count,
                 before_hp,
+            },
+            bound_ticks: 8,
+        }
+    }
+
+    pub fn drink(name: &str, item_id: i32, before_doses: i32) -> Self {
+        Self {
+            request: InteractReq::Held {
+                name: name.into(),
+                action: "Drink".into(),
+                slot: None,
+                target_item_id: None,
+            },
+            kind: OneOpKind::Drink {
+                item_id,
+                before_doses,
             },
             bound_ticks: 8,
         }
@@ -146,10 +177,26 @@ impl NativeMachine for OneOp {
                         .any(|stat| stat.index == 3 && stat.effective > before_hp)
                 })
             }
-            OneOpKind::CloseModal => cx
-                .snapshot()
-                .main_modal()
-                .is_some_and(|modal| modal.value.root < 0),
+            OneOpKind::Drink {
+                item_id,
+                before_doses,
+            } => cx.snapshot().inventory().is_some_and(|rows| {
+                rows.value
+                    .iter()
+                    .filter(|row| row.def.id == item_id)
+                    .map(|row| row.count)
+                    .sum::<i32>()
+                    < before_doses
+            }),
+            OneOpKind::CloseModal => {
+                let snapshot = cx.snapshot();
+                snapshot
+                    .main_modal()
+                    .is_some_and(|modal| modal.value.root < 0)
+                    && snapshot
+                        .chat_modal()
+                        .is_none_or(|modal| modal.value.root < 0)
+            }
             OneOpKind::ContinueDialog => cx.snapshot().chat_modal().is_some_and(|modal| {
                 // A chained unlock page acknowledges this page; the runner must
                 // issue a separate continue for the new modal.

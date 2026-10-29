@@ -233,6 +233,28 @@ impl Provisioner {
     pub(super) fn run_live(&self) -> bool {
         self.bank_run.is_some() || (self.acquire_run.is_some() && !self.acquire_finished)
     }
+    pub(super) fn has_run(&self) -> bool {
+        self.bank_run.is_some() || self.acquire_run.is_some()
+    }
+
+    pub(super) fn transfer_in_flight(&self) -> bool {
+        self.bank_run
+            .as_ref()
+            .is_some_and(AcquireRun::transfer_in_flight)
+            || self
+                .acquire_run
+                .as_ref()
+                .is_some_and(|run| run.transfer_in_flight())
+    }
+
+    pub(super) fn interrupt_transfer(&mut self, actions: &mut NativeActions) {
+        if let Some(run) = &mut self.bank_run {
+            run.interrupt_transfer(actions);
+        } else if let Some(run) = &mut self.acquire_run {
+            run.interrupt_transfer(actions);
+        }
+    }
+
 
     pub fn needs_progress_read(&self) -> bool {
         self.acquire_run

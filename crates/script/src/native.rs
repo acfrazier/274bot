@@ -755,6 +755,8 @@ pub struct ScriptStatus {
     pub active_settings: u64,
     pub pending_settings: Option<u64>,
     pub fields: Arc<[StatusField]>,
+    /// Typed survival outcome from this runner's most recent poll.
+    pub survival: crate::survival::SurvivalReport,
     pub failure: Option<ScriptFailure>,
 }
 
@@ -1336,6 +1338,7 @@ pub trait NativeMachine: Send + 'static {
         Self: Sized;
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>>;
     fn cancel(&mut self) {}
+    fn interrupt(&mut self) {}
     fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
         crate::combat::RaisedPrayers::empty()
     }

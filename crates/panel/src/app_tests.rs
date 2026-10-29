@@ -266,6 +266,35 @@ fn a_parked_quester_shows_its_phase_and_reason_on_the_status_card() {
     );
 }
 
+#[test]
+fn status_card_shows_poison_survival_need() {
+    use script::survival::{
+        cure::CureWhy,
+        math::{NeedWhy, SurvivalNeed},
+        Decision, Owner, SurvivalReport,
+    };
+
+    let mut detail = frontend_core::SlotDetail::default();
+    detail.set_survival(SurvivalReport {
+        decision: Decision::Needed,
+        why: Some(CureWhy::Lethal),
+        need: Some(SurvivalNeed::Cure {
+            or_food: 0,
+            ref_heal: 12,
+            why: NeedWhy::Lethal,
+        }),
+        tried: 0,
+        owner: Owner::Step,
+    });
+
+    let shown = draw_status_detail(&detail, "—", "lowmem");
+    assert!(
+        shown.contains("survival")
+            && shown.contains("Needed: poisoned: would die; needs antipoison"),
+        "{shown}"
+    );
+}
+
 /// On a 1024×768 desktop the app's client area is about 1008×580 and the
 /// docked Profiles window runs past its right edge. The last row's Edit and
 /// ✕, and the form's Save, Cancel and Close, all lie wholly on screen and in

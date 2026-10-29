@@ -135,6 +135,7 @@ fn script_status() -> Arc<ScriptStatus> {
             },
         ]
         .into(),
+        survival: script::survival::SurvivalReport::default(),
         failure: None,
     })
 }

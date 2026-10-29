@@ -3,6 +3,7 @@ use super::compile::{
     AcquisitionTraceOutcome, CompiledPath, CompiledStep, PredicateContext, StepContext,
     StepOutcome, StepRun, StepTraceEvent,
 };
+use crate::gatherer::oneop::{OneOp, OneOpArgs};
 use super::families::combat::CombatReceipt;
 use super::families::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget};
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
@@ -319,6 +320,10 @@ pub struct Quester {
     /// held on a failed one, zero after a restart or a sequence change.
     cursor: usize,
     step: Option<Box<dyn StepRun>>,
+    survival: crate::survival::SurvivalStep,
+    survival_action: Option<ActionHandle<OneOp>>,
+    survival_deferred: bool,
+    survival_interrupting: bool,
     /// Freshness boundary for the active step; overwritten at each successful begin.
     step_after: EvidenceStamp,
     failed_acquisition_child: Option<(Arc<str>, Arc<str>)>,
@@ -648,6 +653,10 @@ impl Quester {
             step_index: 0,
             cursor: 0,
             step: None,
+            survival: crate::survival::SurvivalStep::default(),
+            survival_action: None,
+            survival_deferred: false,
+            survival_interrupting: false,
             step_after: api::quest_progress::EvidenceStamp {
                 run,
                 tick: 0,
@@ -818,7 +827,11 @@ impl Quester {
     /// bank trip or recipe now.
     fn poll_provision(&mut self, tick: &mut NativeTick<'_>) -> bool {
         for _ in 0..PROVISION_REPLANS {
-            match self.poll_provision_once(tick) {
+            let provisioned = self.poll_provision_once(tick);
+            if self.survival_interrupting {
+                return false;
+            }
+            match provisioned {
                 Provisioned::Ready => return true,
                 Provisioned::Wait => return false,
                 Provisioned::Landed => {
@@ -1120,6 +1133,8 @@ impl Quester {
             output,
             if self.parked {
                 NativePhase::Blocked
+            } else if self.survival.parked().is_some() {
+                NativePhase::Waiting
             } else {
                 NativePhase::Working
             },
@@ -1178,6 +1193,11 @@ impl Quester {
                 } else {
                     Truth::False
                 }),
+            },
+            StatusField {
+                key: "survival",
+                label: "Survival",
+                value: StatusValue::Text(format!("{}", self.survival.report()).into()),
             },
         ];
         let parked_step = if self.parked {
@@ -1488,6 +1508,7 @@ impl Quester {
             active_settings: 1,
             pending_settings: None,
             fields: fields.into(),
+            survival: self.survival.report(),
             failure: (phase == NativePhase::Blocked).then(|| self.blocked_failure()),
         });
     }
@@ -1500,6 +1521,220 @@ impl Quester {
         self.prayer_cleanup_owned.merge(raised);
         self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
     }
+    fn guarded_survival_step(&self) -> bool {
+        self.step.is_some()
+            && self.current_step().is_some_and(|step| {
+                matches!(step.kind.as_ref(), "walk" | "combat")
+            })
+    }
+
+    fn survival_transfer_in_flight(&self) -> bool {
+        self.step
+            .as_ref()
+            .is_some_and(|step| step.transfer_in_flight())
+            || self.provisioner.transfer_in_flight()
+    }
+
+    fn interrupt_survival_transfer(&mut self, tick: &mut NativeTick<'_>) {
+        if self.survival_interrupting {
+            return;
+        }
+        if let Some(step) = &mut self.step {
+            if step.transfer_in_flight() {
+                step.interrupt_transfer(tick.actions);
+                self.survival_interrupting = true;
+                return;
+            }
+        }
+        if self.provisioner.transfer_in_flight() {
+            self.provisioner.interrupt_transfer(tick.actions);
+            self.survival_interrupting = true;
+        }
+    }
+
+    fn cancel_detached_work_for_survival(&mut self, tick: &mut NativeTick<'_>) {
+        let mut cancelled_read = self.journal.take().is_some();
+        cancelled_read |= self.journal_drain.take().is_some();
+        if let Some(mut reader) = self.custom_reader.take() {
+            reader.cancel(tick.actions);
+            cancelled_read = true;
+        }
+        self.custom_read_after = None;
+        if cancelled_read {
+            self.needs_read = true;
+            self.read_after_kill = None;
+        }
+        if let Some(mut admission) = self.pair_admission.take() {
+            admission.cancel(tick.actions);
+            self.pair_admitted = false;
+        }
+        self.pair_admission_since = None;
+        self.pair_begin_since = None;
+        self.gang_reader.cancel();
+    }
+
+    fn cancel_step_for_survival(&mut self, tick: &mut NativeTick<'_>) {
+        self.capture_prayer_cleanup();
+        if let Some(mut step) = self.step.take() {
+            step.cancel(tick.actions);
+        }
+        self.provisioner.cancel();
+        self.last_outcome = None;
+        self.cancel_detached_work_for_survival(tick);
+        self.advances = false;
+        self.attempts = 0;
+        self.settling = false;
+        self.settle_deadline = Duration::ZERO;
+        self.needs_read = true;
+        self.progress = None;
+        self.parked_step = None;
+        if self.waiting.take().is_some() {
+            self.dirty = true;
+        }
+        self.clear_last_error();
+        self.dirty = true;
+    }
+
+    fn cancel_prayer_clear_for_survival(&mut self, tick: &mut NativeTick<'_>) {
+        if let Some(handle) = self.clear_prayers.take() {
+            tick.actions.cancel(handle);
+        }
+        self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
+    }
+
+    fn begin_survival_click(&mut self, mut args: OneOpArgs, tick: &mut NativeTick<'_>) {
+        if !tick.cx.may_continue_this_tick() {
+            self.survival_deferred = true;
+            return;
+        }
+        if let Some(close) = OneOpArgs::close_modal_if_open(tick.cx.snapshot()) {
+            args = close;
+        }
+        match tick.actions.begin::<OneOp>(args, &mut tick.cx) {
+            Ok(handle) => {
+                self.survival_action = Some(handle);
+                self.survival_deferred = false;
+                self.dirty = true;
+            }
+            Err(
+                ActionError::Busy
+                | ActionError::Held
+                | ActionError::Stale
+                | ActionError::Cancelled
+                | ActionError::BudgetExhausted,
+            ) => self.survival_deferred = true,
+            Err(error) => {
+                self.parked = true;
+                self.record_failure(error);
+                self.dirty = true;
+            }
+        }
+    }
+
+    fn poll_survival(&mut self, tick: &mut NativeTick<'_>) {
+        let before = self.survival.report();
+        let want = self.survival.want(&tick.cx, 0);
+        if self.survival.report() != before {
+            self.dirty = true;
+        }
+        if self.survival_action.is_some() {
+            return;
+        }
+        match want {
+            crate::survival::step::SurvivalWant::Nothing => {
+                if !self.survival_interrupting {
+                    self.survival_deferred = false;
+                }
+            }
+            crate::survival::step::SurvivalWant::Click(args) => {
+                self.cancel_prayer_clear_for_survival(tick);
+                if self.guarded_survival_step() {
+                    self.survival_deferred = true;
+                } else if self.survival_transfer_in_flight() {
+                    self.interrupt_survival_transfer(tick);
+                    self.survival_deferred = true;
+                } else {
+                    if self.step.is_some() {
+                        self.cancel_step_for_survival(tick);
+                    } else if self.provisioner.has_run() {
+                        self.provisioner.cancel();
+                        self.cancel_detached_work_for_survival(tick);
+                    } else {
+                        self.cancel_detached_work_for_survival(tick);
+                    }
+                    self.begin_survival_click(args, tick);
+                }
+            }
+            crate::survival::step::SurvivalWant::Need(need) => {
+                if self.guarded_survival_step() {
+                    self.survival_deferred = true;
+                } else if self.survival_transfer_in_flight() {
+                    self.interrupt_survival_transfer(tick);
+                    self.survival_deferred = true;
+                } else {
+                    if self.step.is_some() {
+                        self.cancel_step_for_survival(tick);
+                    } else if self.provisioner.has_run() {
+                        self.provisioner.cancel();
+                        self.cancel_detached_work_for_survival(tick);
+                    } else {
+                        self.cancel_detached_work_for_survival(tick);
+                    }
+                    self.survival.park(need, &tick.cx);
+                    self.dirty = true;
+                }
+            }
+        }
+    }
+
+    fn poll_survival_action(&mut self, tick: &mut NativeTick<'_>) -> bool {
+        let Some(handle) = self.survival_action.as_ref() else {
+            return false;
+        };
+        match tick.actions.poll(handle, &mut tick.cx) {
+            Poll::Pending => {}
+            Poll::Ready(Ok(_)) => {
+                self.survival_action = None;
+                self.survival_deferred = true;
+                self.dirty = true;
+            }
+            Poll::Ready(Err(
+                ActionError::Busy
+                | ActionError::Held
+                | ActionError::Stale
+                | ActionError::Cancelled
+                | ActionError::BudgetExhausted,
+            )) => {
+                self.survival_action = None;
+                self.survival_deferred = true;
+                self.dirty = true;
+            }
+            Poll::Ready(Err(error)) => {
+                self.survival_action = None;
+                self.parked = true;
+                self.record_failure(error);
+                self.dirty = true;
+            }
+        }
+        self.publish(tick.output);
+        true
+    }
+
+    fn finish_survival_transfer(&mut self, tick: &mut NativeTick<'_>) -> bool {
+        if !self.survival_interrupting || self.survival_transfer_in_flight() {
+            return false;
+        }
+        self.survival_interrupting = false;
+        if self.step.is_some() {
+            self.cancel_step_for_survival(tick);
+        } else if self.provisioner.has_run() {
+            self.provisioner.cancel();
+            self.cancel_detached_work_for_survival(tick);
+        }
+        self.survival_deferred = true;
+        true
+    }
+
 
     fn cancel_step(&mut self, tick: &mut NativeTick<'_>) {
         self.capture_prayer_cleanup();
@@ -2476,7 +2711,7 @@ impl Quester {
                 }
             }
             if !select_now {
-                if reread_now && pass < SAME_TICK_PASSES {
+                if reread_now && pass < SAME_TICK_PASSES && !self.survival_deferred {
                     return self.advance(tick, pass + 1);
                 }
                 self.publish(tick.output);
@@ -2816,8 +3051,10 @@ impl Quester {
                     self.dirty = true;
                     // An advancing acquire child reads on its completion
                     // tick, like an advancing root step (TICK-FIX #6).
-                    if pass < SAME_TICK_PASSES && tick.cx.may_continue_this_tick() {
-                        self.update_wait();
+                    if pass < SAME_TICK_PASSES
+                        && tick.cx.may_continue_this_tick()
+                        && !self.survival_deferred
+                    {
                         return self.advance(tick, pass + 1);
                     }
                 }
@@ -2864,8 +3101,10 @@ impl Quester {
                         .unwrap_or_default();
                 // Settle, reread and select on the snapshot that proved the
                 // completion instead of a tick later (TICK-FIX #5/#6, E-Q1/E-Q3).
-                if pass < SAME_TICK_PASSES && tick.cx.may_continue_this_tick() {
-                    self.update_wait();
+                if pass < SAME_TICK_PASSES
+                    && tick.cx.may_continue_this_tick()
+                    && !self.survival_deferred
+                {
                     return self.advance(tick, pass + 1);
                 }
             }
@@ -2978,6 +3217,10 @@ impl Script for Quester {
             self.trace = RunTrace::default();
             self.watchdog = Watchdog::default();
             self.cancel_step(tick);
+            self.survival = crate::survival::SurvivalStep::default();
+            self.survival_action = None;
+            self.survival_deferred = false;
+            self.survival_interrupting = false;
             self.pair_admission = None;
             self.pair_admission_since = None;
             self.waiting = None;
@@ -2992,10 +3235,6 @@ impl Script for Quester {
             self.watchdog = Watchdog::default();
             self.publish(tick.output);
             return Ok(ScriptFlow::Continue);
-        }
-        if self.prayer_cleanup_pending && self.step.is_some() {
-            self.cancel_step(tick);
-            self.dirty = true;
         }
         if self.anchor.is_none() {
             self.anchor = tick.cx.snapshot().here().map(|here| here.value);
@@ -3013,6 +3252,10 @@ impl Script for Quester {
             );
             self.watchdog = Watchdog::default();
             self.cancel_step(tick);
+            self.survival = crate::survival::SurvivalStep::default();
+            self.survival_action = None;
+            self.survival_deferred = false;
+            self.survival_interrupting = false;
             self.prayer_cleanup_owned = RaisedPrayers::empty();
             self.prayer_cleanup_pending = false;
             self.last_combat = None;
@@ -3045,16 +3288,29 @@ impl Script for Quester {
             self.publish(tick.output);
             return Ok(ScriptFlow::Continue);
         }
+        self.poll_survival(tick);
+        if self.poll_survival_action(tick) {
+            return Ok(ScriptFlow::Continue);
+        }
+        if self.prayer_cleanup_pending
+            && self.step.is_some()
+            && !self.survival_deferred
+            && !self.survival_interrupting
+        {
+            self.cancel_step(tick);
+            self.dirty = true;
+        }
         if let Some(result) = self
             .clear_prayers
             .as_ref()
             .map(|handle| tick.actions.poll(handle, &mut tick.cx))
         {
             match result {
-                Poll::Pending => {
+                Poll::Pending if !self.survival_interrupting => {
                     self.publish(tick.output);
                     return Ok(ScriptFlow::Continue);
                 }
+                Poll::Pending => {}
                 Poll::Ready(Ok(report)) => {
                     self.clear_prayers = None;
                     if report.timed_out != 0 {
@@ -3090,7 +3346,13 @@ impl Script for Quester {
                 }
             }
         }
-        if self.prayer_cleanup_pending && self.step.is_none() && !self.settling {
+        if self.prayer_cleanup_pending
+            && self.step.is_none()
+            && !self.settling
+            && self.survival.parked().is_none()
+            && !self.survival_deferred
+            && !self.survival_interrupting
+        {
             match begin_clear_owned_prayers(&self.selected, self.prayer_cleanup_owned, tick) {
                 Hygiene::Clean => {
                     self.prayer_cleanup_owned = RaisedPrayers::empty();
@@ -3117,7 +3379,34 @@ impl Script for Quester {
             self.publish(tick.output);
             return Ok(ScriptFlow::Blocked(self.blocked_failure()));
         }
-        self.advance(tick, 0)
+        if self.survival.parked().is_some() {
+            self.publish(tick.output);
+            return Ok(ScriptFlow::Continue);
+        }
+        if self.survival_deferred
+            && self.step.is_none()
+            && !self.provisioner.has_run()
+            && !self.survival_interrupting
+        {
+            self.publish(tick.output);
+            return Ok(ScriptFlow::Continue);
+        }
+        let guarded_survival_step = self.survival_deferred && self.guarded_survival_step();
+        let flow = self.advance(tick, 0)?;
+        let transfer_boundary = self.finish_survival_transfer(tick);
+        let guarded_step_finished = guarded_survival_step && self.step.is_none();
+        if transfer_boundary || guarded_step_finished {
+            self.survival_deferred = false;
+            self.poll_survival(tick);
+            if self.poll_survival_action(tick) {
+                return Ok(ScriptFlow::Continue);
+            }
+            if self.survival.parked().is_some() || self.survival_deferred {
+                self.publish(tick.output);
+                return Ok(ScriptFlow::Continue);
+            }
+        }
+        Ok(flow)
     }
 
     fn interrupt(&mut self, event: Interrupt) {
@@ -3139,11 +3428,19 @@ impl Script for Quester {
                 self.waiting = None;
             }
         }
+        let preserve_survival_park =
+            matches!(event, Interrupt::Resume) && self.survival.parked().is_some();
         self.gang_reader.cancel();
         self.watchdog = Watchdog::default();
         self.dirty = true;
         match event {
             Interrupt::Resume | Interrupt::SessionReady => {
+                if !preserve_survival_park {
+                    self.survival = crate::survival::SurvivalStep::default();
+                }
+                self.survival_action = None;
+                self.survival_deferred = false;
+                self.survival_interrupting = false;
                 self.capture_prayer_cleanup();
                 self.needs_read = true;
                 self.step = None;
@@ -3166,6 +3463,10 @@ impl Script for Quester {
                 self.waiting = None;
             }
             Interrupt::SessionEnded => {
+                self.survival = crate::survival::SurvivalStep::default();
+                self.survival_action = None;
+                self.survival_deferred = false;
+                self.survival_interrupting = false;
                 self.capture_prayer_cleanup();
                 self.step = None;
                 self.provisioner.cancel();
@@ -3248,6 +3549,9 @@ impl Script for Quester {
         self.prayer_cleanup_pending = false;
         self.last_outcome = None;
         self.last_combat = None;
+        self.survival_action = None;
+        self.survival_deferred = false;
+        self.survival_interrupting = false;
     }
     fn on_stop_with_output(&mut self, reason: StopReason, output: &mut dyn NativeOutput) {
         self.trace.flush_repeats(output);
@@ -3261,6 +3565,20 @@ impl Script for Quester {
 
     fn recovery_anchor(&self) -> Option<api::WorldTile> {
         self.anchor
+    }
+
+    fn waits_for_evidence(&self) -> bool {
+        self.survival.parked().is_some()
+            && !self.parked
+            && self.survival_action.is_none()
+            && self.step.is_none()
+            && !self.provisioner.has_run()
+            && self.clear_prayers.is_none()
+            && self.journal.is_none()
+            && self.journal_drain.is_none()
+            && self.custom_reader.is_none()
+            && self.pair_admission.is_none()
+            && !self.survival_interrupting
     }
 
     fn read_journal(&mut self) -> Result<(), ScriptFailure> {
@@ -3489,6 +3807,12 @@ impl QueuedQuester {
             active_settings: 1,
             pending_settings: None,
             fields: fields.into(),
+            survival: self
+                .active
+                .as_ref()
+                .map_or_else(crate::survival::SurvivalReport::default, |active| {
+                    active.survival.report()
+                }),
             failure,
         });
     }
@@ -3944,6 +4268,11 @@ impl Script for QueuedQuester {
             .as_ref()
             .and_then(|active| active.recovery_anchor())
             .or(self.anchor)
+    }
+    fn waits_for_evidence(&self) -> bool {
+        self.active
+            .as_ref()
+            .is_some_and(|active| active.waits_for_evidence())
     }
     fn prayer_cleanup(&self) -> RaisedPrayers {
         self.active
@@ -4885,6 +5214,480 @@ mod tests {
         });
     }
 
+    fn quester_survival_cancels_step_and_restarts(kind: &str) {
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+        use api::selected::Truth;
+        use api::snapshot::{
+            GameSnapshot, HitmarkView, HitmarksView, ItemActionFamily, ItemContainer, ItemView,
+            StatView, WorldStateView,
+        };
+        use crate::survival::CurePoison;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct NeverSkip;
+        impl PredicatePlan for NeverSkip {
+            fn evaluate(&self, _: &PredicateContext<'_, '_>) -> Truth {
+                Truth::False
+            }
+        }
+
+        struct Counts {
+            began: AtomicUsize,
+            cancelled: AtomicUsize,
+        }
+
+        struct PendingPlan(Arc<Counts>);
+        impl super::super::compile::StepPlan for PendingPlan {
+            fn begin(
+                &self,
+                _: &mut StepContext<'_, '_>,
+            ) -> Result<Box<dyn StepRun>, ActionError> {
+                self.0.began.fetch_add(1, Ordering::Relaxed);
+                Ok(Box::new(PendingRun(Arc::clone(&self.0))))
+            }
+        }
+
+        struct PendingRun(Arc<Counts>);
+        impl StepRun for PendingRun {
+            fn poll(
+                &mut self,
+                _: &mut StepContext<'_, '_>,
+            ) -> Poll<Result<StepOutcome, ActionError>> {
+                Poll::Pending
+            }
+
+            fn cancel(&mut self, _: &mut crate::native::NativeActions) {
+                self.0.cancelled.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        fn condition(poison: PoisonState, hp: u8) -> BotCondition {
+            BotCondition {
+                tick: 20,
+                session: SessionMark::Live,
+                hp,
+                hp_max: 99,
+                hp_known: true,
+                poison,
+                food: FoodSummary::default(),
+                cures: CureDoses::default(),
+            }
+        }
+
+        let (mut script, mut snapshot) =
+            status_fixture(super::super::compile::decode_cook().unwrap());
+        let stage = script.path.colour_not_started.clone();
+        script.seq_index =
+            sequence_for_stage(&script.path, stage.0.as_ref()).expect("not-started sequence");
+        script.stage = Some(stage);
+        script.cursor = 0;
+        script.needs_read = false;
+        let sequence = &mut script.path.sequences[script.seq_index];
+        let step = sequence.steps.first_mut().expect("the Cook path has a step");
+        step.kind = Arc::from(kind);
+        let counts = Arc::new(Counts {
+            began: AtomicUsize::new(0),
+            cancelled: AtomicUsize::new(0),
+        });
+        step.plan = Arc::new(PendingPlan(Arc::clone(&counts)));
+        step.skip_if = Arc::new(NeverSkip);
+        step.settle = Arc::new(NeverSkip);
+        step.skip_if_summary = Arc::from("test step");
+
+        let at = api::WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        snapshot.seed_tick(20);
+        snapshot.seed_ingame(2);
+        snapshot.seed_world(WorldStateView {
+            map_base_x: 3200,
+            map_base_z: 3200,
+            members: true,
+            ..WorldStateView::default()
+        });
+        snapshot.seed_local_player(super::super::families::tests::local_player(at));
+        snapshot.seed_stats(vec![StatView {
+            index: 3,
+            name: "hitpoints".into(),
+            base: 99,
+            effective: 5,
+            xp: 0,
+            used: true,
+        }]);
+        snapshot.seed_equipment(vec![]);
+        snapshot.seed_npcs(vec![]);
+        snapshot.seed_hitmarks(HitmarksView {
+            marks: [HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            }; 4],
+            loop_cycle: 0,
+        });
+
+        let dose_id = crate::combat::guard::shared_tables()
+            .unwrap()
+            .potion(crate::combat::tables::PotionKind::Antipoison)
+            .unwrap()
+            .doses[0]
+            .unwrap()
+            .id;
+        let dose = ItemView {
+            def: super::super::families::tests::def(dose_id, "Antipoison"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 1,
+            actions: Vec::new(),
+            component_id: 0,
+        };
+        snapshot.seed_inventory(vec![dose], 28);
+
+        let mut ledger = None;
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.cx.condition = Some(condition(PoisonState::Clear, 60));
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            script.tick(tick).unwrap();
+        });
+        assert_eq!(counts.began.load(Ordering::Relaxed), 1);
+        assert!(script.step.is_some());
+
+        if kind == "talk" {
+            snapshot.seed_main_modal(42, Vec::new());
+        }
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.condition = Some(condition(
+                PoisonState::Onset {
+                    since: 20,
+                    q: Some(11),
+                    hit_since_line: false,
+                },
+                5,
+            ));
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            script.tick(tick).unwrap();
+        });
+        if matches!(kind, "walk" | "combat") {
+            assert_eq!(counts.cancelled.load(Ordering::Relaxed), 0);
+            assert!(script.step.is_some());
+            assert!(script.survival_action.is_none());
+            assert!(script.survival_deferred);
+            assert_eq!(
+                script.survival.report().decision,
+                crate::survival::Decision::Drinking
+            );
+            return;
+        }
+        if kind == "talk" {
+            assert_eq!(counts.cancelled.load(Ordering::Relaxed), 1);
+            assert!(script.step.is_none());
+            assert!(matches!(
+                ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+                Some(crate::native::HostEffect::Interaction(
+                    crate::shim::InteractReq::CloseModal
+                ))
+            ));
+            snapshot.seed_main_modal(-1, Vec::new());
+            snapshot.seed_tick(21);
+            super::super::families::tests::with_tick(&snapshot, &mut ledger, 3, |tick| {
+                tick.cx.condition = Some(condition(
+                    PoisonState::Onset {
+                        since: 20,
+                        q: Some(11),
+                        hit_since_line: false,
+                    },
+                    5,
+                ));
+                tick.cx.poison_unknown_pulse = 11;
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                let evidence = tick.cx.evidence();
+                let authority = tick.cx.ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+                tick.cx.ledger.as_mut().unwrap().complete_interaction(
+                    &authority,
+                    crate::native::InteractionReceipt {
+                        request_id: authority.request_id().get(),
+                        evidence,
+                        accepted: true,
+                        chat_since: 0,
+                    },
+                );
+                script.tick(tick).unwrap();
+            });
+            super::super::families::tests::with_tick(&snapshot, &mut ledger, 4, |tick| {
+                tick.cx.condition = Some(condition(
+                    PoisonState::Onset {
+                        since: 20,
+                        q: Some(11),
+                        hit_since_line: false,
+                    },
+                    5,
+                ));
+                tick.cx.poison_unknown_pulse = 11;
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                script.tick(tick).unwrap();
+            });
+            assert!(matches!(
+                ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+                Some(crate::native::HostEffect::Interaction(
+                    crate::shim::InteractReq::Held { action, .. }
+                )) if action == "Drink"
+            ));
+            return;
+        }
+
+        assert_eq!(counts.cancelled.load(Ordering::Relaxed), 1);
+        assert!(script.step.is_none());
+        assert_eq!(
+            script.survival.report().decision,
+            crate::survival::Decision::Drinking
+        );
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+            Some(crate::native::HostEffect::Interaction(
+                crate::shim::InteractReq::Held { action, .. }
+            )) if action == "Drink"
+        ));
+
+        snapshot.seed_tick(21);
+        snapshot.seed_inventory(vec![], 28);
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.cx.condition = Some(condition(
+                PoisonState::Immune { until_lower: 80 },
+                5,
+            ));
+            script.tick(tick).unwrap();
+        });
+        assert!(script.step.is_none());
+        assert!(script.survival_action.is_none());
+
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.cx.condition = Some(condition(
+                PoisonState::Immune { until_lower: 80 },
+                5,
+            ));
+            script.tick(tick).unwrap();
+        });
+        assert_eq!(counts.began.load(Ordering::Relaxed), 2);
+        assert!(script.step.is_some(), "the step resumes after the cure settles");
+        assert!(!script.parked);
+    }
+
+    #[test]
+    fn quester_polls_survival_inside_gather_step() {
+        quester_survival_cancels_step_and_restarts("gather");
+    }
+
+    #[test]
+    fn quester_cancel_through_resume_path_restarts_step() {
+        quester_survival_cancels_step_and_restarts("gather");
+    }
+
+    #[test]
+    fn quester_closes_dialogue_page_before_drink() {
+        quester_survival_cancels_step_and_restarts("talk");
+    }
+
+    #[test]
+    fn quester_never_cancels_walk_or_combat_step() {
+        quester_survival_cancels_step_and_restarts("walk");
+        quester_survival_cancels_step_and_restarts("combat");
+    }
+
+
+    #[test]
+    fn quester_drinks_while_clear_prayers_pending() {
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+        use api::snapshot::{
+            HitmarkView, HitmarksView, ItemActionFamily, ItemContainer, ItemView, StatView,
+            VarpView, WorldStateView,
+        };
+        use crate::combat::{ClearPrayers, ClearPrayersArgs, RaisedPrayers};
+        use crate::survival::CurePoison;
+
+        let (mut script, mut snapshot) = status_fixture(super::super::compile::decode_cook().unwrap());
+        let at = api::WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        snapshot.seed_tick(20);
+        snapshot.seed_ingame(2);
+        snapshot.seed_world(WorldStateView {
+            map_base_x: 3200,
+            map_base_z: 3200,
+            members: true,
+            ..WorldStateView::default()
+        });
+        snapshot.seed_local_player(super::super::families::tests::local_player(at));
+        snapshot.seed_stats(vec![StatView {
+            index: 3,
+            name: "hitpoints".into(),
+            base: 99,
+            effective: 5,
+            xp: 0,
+            used: true,
+        }]);
+        snapshot.seed_equipment(vec![]);
+        snapshot.seed_npcs(vec![]);
+        snapshot.seed_hitmarks(HitmarksView {
+            marks: [HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            }; 4],
+            loop_cycle: 0,
+        });
+        let dose_id = crate::combat::guard::shared_tables()
+            .unwrap()
+            .potion(crate::combat::tables::PotionKind::Antipoison)
+            .unwrap()
+            .doses[0]
+            .unwrap()
+            .id;
+        snapshot.seed_inventory(
+            vec![ItemView {
+                def: super::super::families::tests::def(dose_id, "Antipoison"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: Vec::new(),
+                component_id: 0,
+            }],
+            28,
+        );
+
+        let prayer = script
+            .selected
+            .prayers()
+            .first()
+            .expect("selected prayer data is available");
+        let varp = prayer.varp;
+        snapshot.seed_varps(
+            script
+                .selected
+                .prayers()
+                .iter()
+                .enumerate()
+                .map(|(index, row)| VarpView {
+                    index: row.varp,
+                    value: i32::from(index == 0),
+                })
+                .collect(),
+        );
+        let mut owned = RaisedPrayers::empty();
+        owned.accepted(varp, true, 0);
+        script.prayer_cleanup_owned = owned;
+        script.prayer_cleanup_pending = true;
+
+        let mut ledger = None;
+        let handle = super::super::families::tests::with_tick(
+            &snapshot,
+            &mut ledger,
+            1,
+            |tick| {
+                let handle = tick
+                    .actions
+                    .begin::<ClearPrayers>(
+                        ClearPrayersArgs::owned(Arc::clone(&script.selected), owned),
+                        &mut tick.cx,
+                    )
+                    .unwrap();
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+                handle
+            },
+        );
+        script.clear_prayers = Some(handle);
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let evidence = tick.cx.evidence();
+            let authority = tick.cx.ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+            tick.cx.ledger.as_mut().unwrap().complete_interaction(
+                &authority,
+                crate::native::InteractionReceipt {
+                    request_id: authority.request_id().get(),
+                    evidence,
+                    accepted: true,
+                    chat_since: 0,
+                },
+            );
+        });
+
+        let condition = |poison| BotCondition {
+            tick: 20,
+            session: SessionMark::Live,
+            hp: 5,
+            hp_max: 99,
+            hp_known: true,
+            poison,
+            food: FoodSummary::default(),
+            cures: CureDoses::default(),
+        };
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.condition = Some(condition(PoisonState::Clear));
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            script.tick(tick).unwrap();
+        });
+        assert!(script.clear_prayers.is_some());
+
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.cx.condition = Some(condition(PoisonState::Onset {
+                since: 20,
+                q: Some(11),
+                hit_since_line: false,
+            }));
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            script.tick(tick).unwrap();
+        });
+        assert!(script.clear_prayers.is_none());
+        assert!(script.prayer_cleanup_pending);
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+            Some(crate::native::HostEffect::Interaction(
+                crate::shim::InteractReq::Held { action, .. }
+            )) if action == "Drink"
+        ));
+
+        snapshot.seed_tick(21);
+        snapshot.seed_inventory(Vec::new(), 28);
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.cx.condition = Some(condition(PoisonState::Immune { until_lower: 80 }));
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            let evidence = tick.cx.evidence();
+            let authority = tick.cx.ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+            tick.cx.ledger.as_mut().unwrap().complete_interaction(
+                &authority,
+                crate::native::InteractionReceipt {
+                    request_id: authority.request_id().get(),
+                    evidence,
+                    accepted: true,
+                    chat_since: 0,
+                },
+            );
+            script.tick(tick).unwrap();
+        });
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 5, |tick| {
+            tick.cx.condition = Some(condition(PoisonState::Immune { until_lower: 80 }));
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            script.tick(tick).unwrap();
+        });
+        assert!(script.clear_prayers.is_some(), "cleanup restarts after the drink");
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 6, |tick| {
+            tick.cx.condition = Some(condition(PoisonState::Immune { until_lower: 80 }));
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            script.tick(tick).unwrap();
+        });
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+            Some(crate::native::HostEffect::Interaction(
+                crate::shim::InteractReq::IfButton { .. }
+            ))
+        ));
+    }
+
     pub(super) fn fixture() -> (Quester, api::snapshot::GameSnapshot) {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
@@ -4947,6 +5750,826 @@ mod tests {
             true,
         );
         (script, snapshot)
+    }
+
+    fn accept_last_interaction(tick: &mut crate::native::NativeTick<'_>) {
+        let evidence = tick.cx.evidence();
+        let authority = tick
+            .cx
+            .ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .unwrap()
+            .authority();
+        tick.cx.ledger.as_mut().unwrap().complete_interaction(
+            &authority,
+            crate::native::InteractionReceipt {
+                request_id: authority.request_id().get(),
+                evidence,
+                accepted: true,
+                chat_since: 0,
+            },
+        );
+    }
+
+    #[test]
+    fn quester_resume_drops_step_and_cancels_provisioner_unchanged() {
+        use crate::native::Interrupt;
+
+        struct PendingStep;
+        impl StepRun for PendingStep {
+            fn poll(
+                &mut self,
+                _: &mut StepContext<'_, '_>,
+            ) -> Poll<Result<StepOutcome, ActionError>> {
+                Poll::Pending
+            }
+
+            fn cancel(&mut self, _: &mut crate::native::NativeActions) {}
+        }
+
+        let (mut step_script, _) = fixture();
+        step_script.step = Some(Box::new(PendingStep));
+        step_script.interrupt(Interrupt::Resume);
+        assert!(step_script.step.is_none(), "Resume drops the active step");
+
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+        use crate::survival::CurePoison;
+        let (mut provision_script, snapshot, memory, _) = provisioning_survival_fixture();
+        let mut ledger = None;
+        let condition = BotCondition {
+            tick: 20,
+            session: SessionMark::Live,
+            hp: 60,
+            hp_max: 99,
+            hp_known: true,
+            poison: PoisonState::Clear,
+            food: FoodSummary::default(),
+            cures: CureDoses::default(),
+        };
+        super::super::families::tests::with_tick_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger,
+            1,
+            |tick| {
+                tick.cx.condition = Some(condition.clone());
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                provision_script.tick(tick).unwrap();
+                assert!(matches!(
+                    tick.cx.ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+                    Some(crate::native::HostEffect::Interaction(
+                        crate::shim::InteractReq::SetNoteMode { on: false, .. }
+                    ))
+                ));
+                accept_last_interaction(tick);
+            },
+        );
+        assert!(provision_script.provisioner.has_run());
+        provision_script.interrupt(Interrupt::Resume);
+        assert!(!provision_script.provisioner.has_run());
+    }
+
+    #[test]
+    fn quester_prayer_cleanup_park_still_blocks() {
+        use super::super::families::tests::with_tick;
+
+        let (mut script, snapshot) = fixture();
+        script.parked = true;
+        script.prayer_cleanup_pending = true;
+        let mut ledger = None;
+        let flow = with_tick(&snapshot, &mut ledger, 1, |tick| script.tick(tick).unwrap());
+
+        assert!(matches!(flow, ScriptFlow::Blocked(_)));
+        assert!(script.parked);
+        assert!(script.begun.is_empty());
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+    }
+
+    fn provisioning_survival_fixture() -> (
+        Quester,
+        api::snapshot::GameSnapshot,
+        api::bank_memory::BankMemory,
+        api::snapshot::ItemView,
+    ) {
+        use api::bank_memory::{BankMemory, ObservedAt};
+        use api::snapshot::{
+            GameSnapshot, HitmarkView, HitmarksView, ItemActionFamily, ItemContainer, ItemView,
+            StatView, VarpView, WorldStateView,
+        };
+        use api::named_banks::{NamedBank, NamedBankFacts};
+        use api::snapshot::QuestStatusView;
+        use super::super::path::{QuestBankDocument, QuestItemKindDocument};
+
+        let stand = api::WorldTile {
+            x: 3210,
+            z: 3210,
+            level: 0,
+        };
+        let bank = NamedBank::new("Test bank", stand);
+        let banks = Arc::new(NamedBankFacts::from_banks(vec![bank]));
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+        let mut document = super::super::compile::decode_cook().unwrap();
+        let quest = document.quest.as_mut().unwrap();
+        quest.owns_inventory = false;
+        quest.bank = QuestBankDocument::Tile {
+            tile: [stand.x, stand.z, stand.level],
+            source: "test fixture".into(),
+            required: true,
+        };
+        let item = quest.items.first_mut().expect("Cook path has a quest item");
+        item.kind = QuestItemKindDocument::MustHave;
+        item.acquire = None;
+        item.from_stage = None;
+        let path =
+            super::super::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let provision_item = path
+            .provisioning
+            .items
+            .first()
+            .expect("the item is due at the not-started stage");
+        let bank_item = ItemView {
+            def: super::super::families::tests::def(provision_item.id, &provision_item.name),
+            container: ItemContainer::Bank,
+            action_family: ItemActionFamily::Component,
+            slot: 0,
+            count: i32::try_from(provision_item.qty).unwrap(),
+            actions: vec![Some("Withdraw-1".into()), Some("Withdraw-X".into())],
+            component_id: 7,
+        };
+        let mut memory = BankMemory::default();
+        memory.observe(
+            std::slice::from_ref(&bank_item),
+            1,
+            ObservedAt {
+                unix_secs: 1,
+                tick: 1,
+                bank_session: 1,
+            },
+        );
+
+        let mut script = Quester::new(
+            RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            path,
+            Arc::clone(&data),
+            quests,
+            banks,
+        );
+        let stage = script.path.colour_not_started.clone();
+        script.seq_index =
+            sequence_for_stage(&script.path, stage.0.as_ref()).expect("not-started sequence");
+        script.stage = Some(stage);
+        script.needs_read = false;
+
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_tick(20);
+        snapshot.seed_ingame(2);
+        snapshot.seed_world(WorldStateView {
+            map_base_x: 3200,
+            map_base_z: 3200,
+            members: true,
+            ..WorldStateView::default()
+        });
+        snapshot.seed_local_player(super::super::families::tests::local_player(stand));
+        snapshot.seed_stats(vec![StatView {
+            index: 3,
+            name: "hitpoints".into(),
+            base: 99,
+            effective: 60,
+            xp: 0,
+            used: true,
+        }]);
+        snapshot.seed_equipment(vec![]);
+        snapshot.seed_npcs(vec![]);
+        snapshot.seed_varps(
+            data.prayers()
+                .iter()
+                .map(|prayer| VarpView {
+                    index: prayer.varp,
+                    value: 0,
+                })
+                .collect(),
+        );
+        snapshot.seed_hitmarks(HitmarksView {
+            marks: [HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            }; 4],
+            loop_cycle: 0,
+        });
+        let dose_id = crate::combat::guard::shared_tables()
+            .unwrap()
+            .potion(crate::combat::tables::PotionKind::Antipoison)
+            .unwrap()
+            .doses[0]
+            .unwrap()
+            .id;
+        snapshot.seed_inventory(
+            vec![ItemView {
+                def: super::super::families::tests::def(dose_id, "Antipoison"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: Vec::new(),
+                component_id: 0,
+            }],
+            28,
+        );
+        snapshot.seed_bank_observation(10, 1, Some(vec![bank_item.clone()]), Vec::new());
+        snapshot.seed_main_modal(10, Vec::new());
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 42,
+                colour: 0xf80000,
+            }],
+            true,
+        );
+        (script, snapshot, memory, bank_item)
+    }
+
+    #[test]
+    fn quester_survival_cancels_provisioner_acquire_run() {
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+        use crate::survival::CurePoison;
+
+        let (mut script, mut snapshot, memory, _) = provisioning_survival_fixture();
+        let mut ledger = None;
+        let condition = |poison, hp| BotCondition {
+            tick: 20,
+            session: SessionMark::Live,
+            hp,
+            hp_max: 99,
+            hp_known: true,
+            poison,
+            food: FoodSummary::default(),
+            cures: CureDoses::default(),
+        };
+        super::super::families::tests::with_tick_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger,
+            1,
+            |tick| {
+                tick.cx.condition = Some(condition(PoisonState::Clear, 60));
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                script.tick(tick).unwrap();
+                assert!(matches!(
+                    tick.cx.ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+                    Some(crate::native::HostEffect::Interaction(
+                        crate::shim::InteractReq::SetNoteMode { on: false, .. }
+                    ))
+                ));
+                accept_last_interaction(tick);
+            },
+        );
+        assert!(script.provisioner.has_run());
+        assert!(!script.provisioner.transfer_in_flight());
+
+        snapshot.seed_main_modal(-1, Vec::new());
+        super::super::families::tests::with_tick_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger,
+            2,
+            |tick| {
+                tick.cx.condition = Some(condition(
+                    PoisonState::Onset {
+                        since: 20,
+                        q: Some(11),
+                        hit_since_line: false,
+                    },
+                    5,
+                ));
+                tick.cx.poison_unknown_pulse = 11;
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                script.tick(tick).unwrap();
+            },
+        );
+        assert!(!script.provisioner.has_run());
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+            Some(crate::native::HostEffect::Interaction(
+                crate::shim::InteractReq::Held { action, .. }
+            )) if action == "Drink"
+        ));
+    }
+
+    #[test]
+    fn quester_parks_during_provisioning_and_restarts_trip_after_unpark() {
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+        use api::snapshot::{ItemActionFamily, ItemContainer};
+        use crate::survival::CurePoison;
+
+        let (mut script, mut snapshot, mut memory, bank_item) = provisioning_survival_fixture();
+        snapshot.seed_inventory(Vec::new(), 28);
+        let mut ledger = None;
+        let condition = |poison, hp| BotCondition {
+            tick: 20,
+            session: SessionMark::Live,
+            hp,
+            hp_max: 99,
+            hp_known: true,
+            poison,
+            food: FoodSummary::default(),
+            cures: CureDoses::default(),
+        };
+        super::super::families::tests::with_tick_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger,
+            1,
+            |tick| {
+                tick.cx.condition = Some(condition(PoisonState::Clear, 60));
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                script.tick(tick).unwrap();
+                accept_last_interaction(tick);
+            },
+        );
+        assert!(script.provisioner.has_run());
+
+        super::super::families::tests::with_tick_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger,
+            2,
+            |tick| {
+                tick.cx.condition = Some(condition(
+                    PoisonState::Onset {
+                        since: 20,
+                        q: Some(11),
+                        hit_since_line: false,
+                    },
+                    5,
+                ));
+                tick.cx.poison_unknown_pulse = 11;
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                script.tick(tick).unwrap();
+            },
+        );
+        assert!(!script.provisioner.has_run());
+        assert!(script.survival.parked().is_some());
+        assert_eq!(
+            script.survival.report().decision,
+            crate::survival::Decision::Parked
+        );
+        assert!(!script.parked);
+        let parked_revision = script.provisioner.status_revision();
+        let parked_outbox_len = ledger.as_ref().unwrap().outbox.len();
+        snapshot.seed_tick(21);
+        super::super::families::tests::with_tick_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger,
+            3,
+            |tick| {
+                tick.cx.condition = Some(condition(
+                    PoisonState::Onset {
+                        since: 20,
+                        q: Some(11),
+                        hit_since_line: false,
+                    },
+                    5,
+                ));
+                tick.cx.poison_unknown_pulse = 11;
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                script.tick(tick).unwrap();
+            },
+        );
+        assert_eq!(script.provisioner.status_revision(), parked_revision);
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), parked_outbox_len);
+        assert!(script.survival.parked().is_some());
+
+        snapshot.seed_tick(22);
+        let mut held_item = bank_item;
+        held_item.container = ItemContainer::Inventory;
+        held_item.action_family = ItemActionFamily::Held;
+        held_item.actions = vec![Some("Use".into())];
+        snapshot.seed_main_modal(-1, Vec::new());
+        snapshot.seed_bank_observation(-1, 2, None, Vec::new());
+        snapshot.seed_inventory(vec![held_item], 28);
+        memory.observe(
+            &[],
+            1,
+            api::bank_memory::ObservedAt {
+                unix_secs: 1,
+                tick: 22,
+                bank_session: 1,
+            },
+        );
+        super::super::families::tests::with_tick_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger,
+            4,
+            |tick| {
+                tick.cx.condition = Some(condition(PoisonState::Immune { until_lower: 80 }, 5));
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                script.tick(tick).unwrap();
+            },
+        );
+        assert!(script.survival.parked().is_none());
+        assert!(!script.parked);
+        assert_eq!(
+            script.provisioner.status().phase,
+            ProvisionPhase::Ready,
+            "the trip is re-planned after the need clears"
+        );
+    }
+
+
+    #[test]
+    fn quester_survival_during_provisioning_with_transfer_in_flight() {
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+        use api::snapshot::{ItemActionFamily, ItemContainer};
+        use crate::survival::CurePoison;
+
+        let (mut script, mut snapshot, mut memory, bank_item) = provisioning_survival_fixture();
+        let mut ledger = None;
+        let condition = |poison, hp| BotCondition {
+            tick: 20,
+            session: SessionMark::Live,
+            hp,
+            hp_max: 99,
+            hp_known: true,
+            poison,
+            food: FoodSummary::default(),
+            cures: CureDoses::default(),
+        };
+
+        super::super::families::tests::with_tick_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger,
+            1,
+            |tick| {
+                tick.cx.condition = Some(condition(PoisonState::Clear, 60));
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                script.tick(tick).unwrap();
+                assert!(matches!(
+                    tick.cx.ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+                    Some(crate::native::HostEffect::Interaction(
+                        crate::shim::InteractReq::SetNoteMode { on: false, .. }
+                    ))
+                ));
+                accept_last_interaction(tick);
+            },
+        );
+        assert!(script.provisioner.has_run());
+
+        super::super::families::tests::with_tick_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger,
+            2,
+            |tick| {
+                tick.cx.condition = Some(condition(PoisonState::Clear, 60));
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                script.tick(tick).unwrap();
+                assert!(matches!(
+                    tick.cx.ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+                    Some(crate::native::HostEffect::Interaction(
+                        crate::shim::InteractReq::WithdrawX { .. }
+                    ))
+                ));
+                accept_last_interaction(tick);
+            },
+        );
+        assert!(script.provisioner.transfer_in_flight());
+        assert!(script.step.is_none());
+
+        super::super::families::tests::with_tick_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger,
+            3,
+            |tick| {
+                tick.cx.condition = Some(condition(
+                    PoisonState::Onset {
+                        since: 20,
+                        q: Some(11),
+                        hit_since_line: false,
+                    },
+                    5,
+                ));
+                tick.cx.poison_unknown_pulse = 11;
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                script.tick(tick).unwrap();
+            },
+        );
+        assert!(script.survival_interrupting);
+        assert!(script.provisioner.transfer_in_flight());
+        assert!(script.provisioner.has_run());
+        assert!(script.step.is_none());
+        assert!(!matches!(
+            ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+            Some(crate::native::HostEffect::Interaction(
+                crate::shim::InteractReq::Held { action, .. }
+            )) if action == "Drink"
+        ));
+
+        let mut held_item = bank_item;
+        held_item.container = ItemContainer::Inventory;
+        held_item.action_family = ItemActionFamily::Held;
+        held_item.slot = 1;
+        held_item.actions = vec![Some("Use".into())];
+        let dose_id = crate::combat::guard::shared_tables()
+            .unwrap()
+            .potion(crate::combat::tables::PotionKind::Antipoison)
+            .unwrap()
+            .doses[0]
+            .unwrap()
+            .id;
+        let dose_item = api::snapshot::ItemView {
+            def: super::super::families::tests::def(dose_id, "Antipoison"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 1,
+            actions: Vec::new(),
+            component_id: 0,
+        };
+        snapshot.seed_tick(21);
+        snapshot.seed_inventory(vec![dose_item.clone(), held_item.clone()], 28);
+        snapshot.seed_bank_observation(10, 2, Some(Vec::new()), Vec::new());
+        memory.observe(
+            &[],
+            1,
+            api::bank_memory::ObservedAt {
+                unix_secs: 1,
+                tick: 21,
+                bank_session: 1,
+            },
+        );
+        super::super::families::tests::with_tick_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger,
+            4,
+            |tick| {
+                tick.cx.condition = Some(condition(
+                    PoisonState::Onset {
+                        since: 20,
+                        q: Some(11),
+                        hit_since_line: false,
+                    },
+                    5,
+                ));
+                tick.cx.poison_unknown_pulse = 11;
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                script.tick(tick).unwrap();
+            },
+        );
+        assert!(!script.provisioner.has_run());
+        assert!(!script.survival_interrupting);
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+            Some(crate::native::HostEffect::Interaction(
+                crate::shim::InteractReq::CloseModal
+            ))
+        ));
+
+        snapshot.seed_tick(21);
+        snapshot.seed_main_modal(-1, Vec::new());
+        snapshot.seed_bank_observation(-1, 2, None, Vec::new());
+        super::super::families::tests::with_tick_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger,
+            5,
+            |tick| {
+                tick.cx.condition = Some(condition(
+                    PoisonState::Onset {
+                        since: 20,
+                        q: Some(11),
+                        hit_since_line: false,
+                    },
+                    5,
+                ));
+                tick.cx.poison_unknown_pulse = 11;
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                accept_last_interaction(tick);
+                script.tick(tick).unwrap();
+            },
+        );
+        super::super::families::tests::with_tick_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger,
+            6,
+            |tick| {
+                tick.cx.condition = Some(condition(
+                    PoisonState::Onset {
+                        since: 20,
+                        q: Some(11),
+                        hit_since_line: false,
+                    },
+                    5,
+                ));
+                tick.cx.poison_unknown_pulse = 11;
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                script.tick(tick).unwrap();
+            },
+        );
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+            Some(crate::native::HostEffect::Interaction(
+                crate::shim::InteractReq::Held { action, .. }
+            )) if action == "Drink"
+        ));
+
+        snapshot.seed_tick(22);
+        snapshot.seed_inventory(vec![held_item], 28);
+        super::super::families::tests::with_tick_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger,
+            7,
+            |tick| {
+                tick.cx.condition = Some(condition(PoisonState::Immune { until_lower: 80 }, 5));
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                accept_last_interaction(tick);
+                script.tick(tick).unwrap();
+            },
+        );
+        super::super::families::tests::with_tick_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger,
+            8,
+            |tick| {
+                tick.cx.condition = Some(condition(PoisonState::Immune { until_lower: 80 }, 5));
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                script.tick(tick).unwrap();
+            },
+        );
+        assert!(!script.provisioner.has_run());
+        assert_eq!(script.provisioner.status().phase, ProvisionPhase::Ready);
+    }
+
+    #[test]
+    fn parked_runner_keeps_eating_and_unparks_when_need_clears() {
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+        use api::snapshot::{ItemActionFamily, ItemContainer, ItemView};
+        use crate::native::{HostEffect, ScriptFlow};
+        use crate::survival::CurePoison;
+        use super::super::families::tests::with_tick;
+
+        let (mut script, mut snapshot, _, _) = provisioning_survival_fixture();
+        snapshot.seed_main_modal(-1, Vec::new());
+        snapshot.seed_inventory(Vec::new(), 28);
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let lobster_id = data.item_by_alias("lobster").unwrap().id;
+        let condition = |poison, hp, food| BotCondition {
+            tick: 20,
+            session: SessionMark::Live,
+            hp,
+            hp_max: 99,
+            hp_known: true,
+            poison,
+            food,
+            cures: CureDoses::default(),
+        };
+        let mut ledger = None;
+
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.cx.condition = Some(condition(
+                PoisonState::Onset {
+                    since: 20,
+                    q: Some(11),
+                    hit_since_line: false,
+                },
+                5,
+                FoodSummary::default(),
+            ));
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            assert!(matches!(script.tick(tick).unwrap(), ScriptFlow::Continue));
+        });
+        assert!(script.survival.parked().is_some());
+
+        snapshot.seed_inventory(
+            vec![ItemView {
+                def: super::super::families::tests::def(lobster_id, "Lobster"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: vec![Some("Eat".into())],
+                component_id: 3214,
+            }],
+            28,
+        );
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.condition = Some(condition(
+                PoisonState::Onset {
+                    since: 20,
+                    q: Some(11),
+                    hit_since_line: false,
+                },
+                5,
+                FoodSummary {
+                    ordinary_count: 1,
+                    ordinary_heal_total: 12,
+                    best_heal: 12,
+                    smallest_heal: 12,
+                    combo_count: 0,
+                    more_kinds: false,
+                },
+            ));
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            assert!(matches!(script.tick(tick).unwrap(), ScriptFlow::Continue));
+            assert!(matches!(
+                tick.cx.ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+                Some(HostEffect::Interaction(
+                    crate::shim::InteractReq::Held { action, .. }
+                )) if action == "Eat"
+            ));
+            accept_last_interaction(tick);
+        });
+        assert!(script.survival.parked().is_some());
+
+        snapshot.seed_inventory(Vec::new(), 28);
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.cx.condition = Some(condition(
+                PoisonState::Immune { until_lower: 80 },
+                17,
+                FoodSummary::default(),
+            ));
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            assert!(matches!(script.tick(tick).unwrap(), ScriptFlow::Continue));
+        });
+        assert!(script.survival.parked().is_none());
+        assert!(script.survival_action.is_none());
+        assert!(!script.failure.is_some());
+    }
+
+    #[test]
+    fn parked_quester_publishes_waiting_continue_status_and_resumes_parked() {
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+        use crate::native::{Interrupt, NativePhase, ScriptFlow};
+        use crate::survival::CurePoison;
+        use super::super::families::tests::with_tick_output;
+
+        let (mut script, mut snapshot, _, _) = provisioning_survival_fixture();
+        snapshot.seed_inventory(Vec::new(), 28);
+        let condition = BotCondition {
+            tick: 20,
+            session: SessionMark::Live,
+            hp: 5,
+            hp_max: 99,
+            hp_known: true,
+            poison: PoisonState::Onset {
+                since: 20,
+                q: Some(11),
+                hit_since_line: false,
+            },
+            food: FoodSummary::default(),
+            cures: CureDoses::default(),
+        };
+        let mut ledger = None;
+        let mut output = StatusCapture::default();
+
+        with_tick_output(&snapshot, &mut ledger, 1, &mut output, |tick| {
+            tick.cx.condition = Some(condition.clone());
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            assert!(matches!(script.tick(tick).unwrap(), ScriptFlow::Continue));
+        });
+        assert_eq!(script.phase(), ("parked", NativePhase::Waiting));
+        assert!(script.waits_for_evidence());
+        assert!(script.survival.parked().is_some());
+        let status = output.0.last().expect("parked status is published");
+        assert_eq!(status.phase, NativePhase::Waiting);
+        assert!(status.failure.is_none());
+
+        script.interrupt(Interrupt::Pause);
+        assert_eq!(script.phase(), ("paused", NativePhase::Paused));
+        script.interrupt(Interrupt::Resume);
+        assert_eq!(script.phase(), ("parked", NativePhase::Waiting));
+        assert!(script.survival.parked().is_some());
+
+        with_tick_output(&snapshot, &mut ledger, 2, &mut output, |tick| {
+            tick.cx.condition = Some(condition);
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            assert!(matches!(script.tick(tick).unwrap(), ScriptFlow::Continue));
+        });
+        assert_eq!(script.phase(), ("parked", NativePhase::Waiting));
+        assert!(script.waits_for_evidence());
+        let status = output.0.last().expect("continued parked status is published");
+        assert_eq!(status.phase, NativePhase::Waiting);
+        assert!(status.failure.is_none());
     }
 
     #[derive(Default)]

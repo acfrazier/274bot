@@ -272,6 +272,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   would heal nothing.
 - A new profile setting group, **Survival and supplies**, holds **Cure poison**:
   **When needed** (the default), **Always** or **Never**.
+- Gatherer and Quester now use the shared poison checks while they work.
+  When a held cure is needed, they complete or cancel the current step. They
+  wait for an active bank transfer to settle, then drink and resume work.
+- The panel and terminal now show the same status row when poison means the bot
+  needs a cure or food, and clear it when that need passes.
 
 ### Documentation
 
@@ -312,8 +317,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - When you save Survival or script settings, the session log shows each
   setting's value before and after the saved change. A failed save adds no line.
   An edit replaced before it is saved also adds no line.
-- The Cure poison labels now limit **When needed** to combat and protected walks
-  and do not claim a poison status row.
 
 ### Not in this release
 
@@ -351,10 +354,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   game ticks instead of 570), so it may drink again sooner than needed. It is
   still immune for the real time. Counting the super immunity is planned for a
   later release.
-- Cure poison does not interrupt Gatherer or Quester steps to drink a held
-  antipoison when poison makes a cure necessary. This behavior is not included.
-- The panel and terminal app do not show a status row for a poison-related cure
-  need. A poison-need status row is not included.
 
 ### Known issues
 

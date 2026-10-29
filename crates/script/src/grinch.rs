@@ -428,6 +428,7 @@ impl Grinch {
                     value: StatusValue::Text(Arc::clone(&self.exclusions)),
                 },
             ]),
+            survival: crate::survival::SurvivalReport::default(),
             failure: self.failure.clone(),
         });
         self.dirty = false;
