@@ -71,6 +71,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   world-speed restoration without changing the default for isolated runs.
   Partial guides can declare an exact boundary and record a distinct
   `gap-reached` result only when the boundary and prior settlements match.
+  Matching native park traces are retained in the boundary proof.
 
 - Quest guides can now opt in to answering a repeated menu question once and
   then moving on. `answer_once: true` skips a `prefer` entry that already

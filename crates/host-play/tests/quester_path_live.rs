@@ -716,7 +716,7 @@ fn prove_actor_gap(
         "step_id": gap.step_id,
         "park_reason": gap.park_reason,
         "park_context_step": context_step,
-        "park_trace": messages[*park_index],
+        "park_trace": messages[park_index],
         "prior_steps_settled": true,
         "prior_steps": prior_steps,
         "step_observations": receipt["step_observations"],
