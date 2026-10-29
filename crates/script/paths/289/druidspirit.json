@@ -23,7 +23,23 @@
   "roles":[{
     "role":null,"progress_binding":"journal:druidspirit",
     "progress":{"colour":{"not_started":"druidspirit:0","in_progress":"druidspirit:5","complete":"druidspirit:complete"},
-      "rules":[{"stage":"druidspirit:5","all":["i need to look for", "filliman tarlock"],"any":[],"not":[],"varp":5}],"flags":[],"monotonic":false},
+      "rules":[
+        {"stage":"druidspirit:75","all":["filliman has blessed the silver sickle for me"],"any":[],"not":[],"varp":75},
+        {"stage":"druidspirit:70","all":["filliman has turned into a nature spirit"],"any":[],"not":["filliman has blessed the silver sickle for me"],"varp":70},
+        {"stage":"druidspirit:60","all":["he says that he can cast the spell now"],"any":[],"not":["filliman has turned into a nature spirit"],"varp":60},
+        {"stage":"druidspirit:50","all":["i collected a mort myre fungi"],"any":[],"not":["i managed to get all the required items"],"varp":50},
+        {"stage":"druidspirit:45","all":["i've cast the bloom spell in the swamp"],"any":[],"not":["i collected a mort myre fungi"],"varp":45},
+        {"stage":"druidspirit:40","all":["i've been blessed at the temple by drezel"],"any":[],"not":["i've cast the bloom spell in the swamp"],"varp":40},
+        {"stage":"druidspirit:35","all":["bloom", "before i can cast it"],"any":[],"not":[],"varp":35},
+        {"stage":"druidspirit:30","all":["filliman might need", "my help"],"any":[],"not":[],"varp":30},
+        {"stage":"druidspirit:25","all":["perhaps i should try to help", "find his journal"],"any":[],"not":[],"varp":25},
+        {"stage":"druidspirit:20","all":["i think i need to convince"],"any":[],"not":[],"varp":20},
+        {"stage":"druidspirit:5","all":["i need to look for", "filliman tarlock"],"any":[],"not":[],"varp":5},
+        {"stage":"druidspirit:5","all":["i can't really communicate with this"],"any":[],"not":[],"varp":15}
+      ],"flags":[
+        {"flag":"druidspirit:nature-stone","all":["fungi was absorbed into the nature stone"],"any":[]},
+        {"flag":"druidspirit:spirit-stone","all":["spell scroll was absorbed into the spirit stone"],"any":[]}
+      ],"monotonic":false},
     "prelude":[],"sequences":[
       {"stage":"druidspirit:0","required":[],"terminal":false,"recovery_entry":null,"steps":[
         {"id":"ask-drezel","kind":"talk","version":1,"advances":true,
@@ -32,6 +48,7 @@
          "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"druidspirit","is":"in_progress"}}}}
       ]},
       {"stage":"druidspirit:5","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"wear-ghostspeak","kind":"equip","version":1,"args":{"obj":"amulet_of_ghostspeak"},"skip_if":{"Fact":{"kind":"worn","version":1,"args":{"obj":"amulet_of_ghostspeak"}}},"settle":{"Fact":{"kind":"worn","version":1,"args":{"obj":"amulet_of_ghostspeak"}}}},
         {"id":"enter-mort-myre","kind":"interact","version":1,"advances":true,
          "comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:1-16; content/maps/m53_54.jm2:5096; content/pack/loc.pack:3507.",
          "args":{"target":{"loc":"mortmyre_metalgateclosed_l"},"op":"Open","anchor":{"tile":[3444,3458,0],"source":"content/maps/m53_54.jm2:5096"},"radius":4},
@@ -41,9 +58,74 @@
          "args":{"target":{"loc":"druidjump_loc"},"op":"Jump","anchor":{"tile":[3440,3330,0],"source":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:26-34"},"radius":4},
          "skip_if":{"Fact":{"kind":"in_area","version":1,"args":{"area":"grotto_island"}}},"settle":{"Fact":{"kind":"in_area","version":1,"args":{"area":"grotto_island"}}}},
         {"id":"approach-grotto","kind":"walk","version":1,
-         "comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:92-100; content/maps/m53_52.jm2:5135. The next operation opens Filliman's repeated menu and is intentionally not authored.",
+         "comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:92-100; content/maps/m53_52.jm2:5135.",
          "args":{"tile":[3440,3336,0],"source":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:95-100","radius":1},
-         "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[3440,3336,0],"radius":1}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[3440,3336,0],"radius":1}}}}
+         "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[3440,3336,0],"radius":1}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[3440,3336,0],"radius":1}}}},
+        {"id":"meet-filliman","kind":"interact","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:92-100; filliman.rs2:14,255-261,233-234.",
+         "args":{"target":{"loc":"grotto_door_druidicspirit"},"op":"Enter","anchor":{"tile":[3440,3337,0],"source":"content/maps/m53_52.jm2:5135"},"radius":4,"dialogue":{"prefer":["How long have you been a ghost?","Ok, thanks."],"answer_once":true,"strict":true}},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"druidspirit","any":["druidspirit:20"]}}}}
+      ]},
+      {"stage":"druidspirit:20","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"show-mirror","kind":"use_on","version":1,"advances":true,"comment":"content/scripts/quests/quest_druidspirit/scripts/filliman.rs2:271-291.",
+         "args":{"item":"mirror","target":{"npc":"filliman_tarlock_spirit"},"anchor":{"tile":[3440,3336,0],"source":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:95-96"},"radius":8},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"druidspirit","any":["druidspirit:25"]}}}}
+      ]},
+      {"stage":"druidspirit:25","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"find-journal","kind":"interact","version":1,"advances":false,"comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:84-90; content/maps/m53_52.jm2:5096.",
+         "args":{"target":{"loc":"grotto_druidicspirit"},"op":"Search","anchor":{"tile":[3439,3338,0],"source":"content/maps/m53_52.jm2:5096"},"radius":5},
+         "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"filliman_journal"}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"filliman_journal"}}}},
+        {"id":"give-journal","kind":"use_on","version":1,"advances":true,"comment":"content/scripts/quests/quest_druidspirit/scripts/filliman.rs2:294-315,336-348. The help answer gives the Bloom spell in the same conversation.",
+         "args":{"item":"filliman_journal","target":{"npc":"filliman_tarlock_spirit"},"anchor":{"tile":[3440,3336,0],"source":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:95-96"},"radius":8,"dialogue":{"prefer":["How can I help?"],"strict":true}},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"druidspirit","any":["druidspirit:35"]}}}}
+      ]},
+      {"stage":"druidspirit:30","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"offer-help","kind":"talk","version":1,"advances":true,"comment":"content/scripts/quests/quest_druidspirit/scripts/filliman.rs2:99-101,336-348.",
+         "args":{"npc":"filliman_tarlock_spirit","anchor":{"tile":[3440,3336,0],"source":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:95-96"},"leash":8,"prefer":["How can I help?"],"strict":true},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"druidspirit","any":["druidspirit:35"]}}}}
+      ]},
+      {"stage":"druidspirit:35","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"get-blessing","kind":"talk","version":1,"advances":true,"comment":"content/scripts/areas/area_mausoleum/scripts/drezel.rs2:228-245.",
+         "args":{"npc":"priestperiltrappedmonk2","anchor":{"tile":[3440,9895,0],"source":"content/maps/m53_154.jm2:6139"},"leash":8,"gap_ticks":4},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"druidspirit","any":["druidspirit:40"]}}}}
+      ]},
+      {"stage":"druidspirit:40","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"stand-by-log","kind":"walk","version":1,"args":{"tile":[3443,3352,0],"radius":0,"source":"content/maps/m53_52.jm2:5281"},"skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[3443,3352,0],"radius":0}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[3443,3352,0],"radius":0}}}},
+        {"id":"cast-bloom","kind":"interact","version":1,"advances":true,"comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:196-233; the log is adjacent to the authored tile.",
+         "args":{"target":{"held":"bloom_spell"},"op":"Cast"},"skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"druidspirit","any":["druidspirit:45"]}}}}
+      ]},
+      {"stage":"druidspirit:45","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"pick-fungus","kind":"interact","version":1,"advances":true,"comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:383-394; the bloomed log returns after 25 ticks.",
+         "args":{"target":{"loc":"log_druidicspirit2"},"op":"Pick","anchor":{"tile":[3443,3352,0],"source":"content/maps/m53_52.jm2:5281"},"radius":3},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"druidspirit","any":["druidspirit:50"]}}}}
+      ]},
+      {"stage":"druidspirit:50","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"place-fungus","kind":"use_on","version":1,"advances":true,"comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:135-158; the journal exposes the nature stone bit.",
+         "args":{"item":"mortmyremushroom","target":{"loc":"stonedisc_ds_nature"},"anchor":{"tile":[3439,3336,0],"source":"content/maps/m53_52.jm2:5094"},"radius":4},
+         "skip_if":{"Fact":{"kind":"flag","version":1,"args":{"quest":"druidspirit","flag":"druidspirit:nature-stone"}}},"settle":{"Fact":{"kind":"flag","version":1,"args":{"quest":"druidspirit","flag":"druidspirit:nature-stone"}}}},
+        {"id":"place-scroll","kind":"use_on","version":1,"advances":true,"comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:171-191; casting turns the scroll into used_bloom_spell.",
+         "args":{"item":"used_bloom_spell","target":{"loc":"stonedisc_ds_spirit"},"anchor":{"tile":[3441,3336,0],"source":"content/maps/m53_52.jm2:5167"},"radius":4},
+         "skip_if":{"Fact":{"kind":"flag","version":1,"args":{"quest":"druidspirit","flag":"druidspirit:spirit-stone"}}},"settle":{"Fact":{"kind":"flag","version":1,"args":{"quest":"druidspirit","flag":"druidspirit:spirit-stone"}}}},
+        {"id":"stand-on-faith-stone","kind":"walk","version":1,"args":{"tile":[3440,3335,0],"radius":0,"source":"content/maps/m53_52.jm2:5134"},"skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[3440,3335,0],"radius":0}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[3440,3335,0],"radius":0}}}},
+        {"id":"perform-ritual","kind":"talk","version":1,"advances":true,"comment":"content/scripts/quests/quest_druidspirit/scripts/filliman.rs2:63-77,384-402.",
+         "args":{"npc":"filliman_tarlock_spirit","anchor":{"tile":[3440,3336,0],"source":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:95-96"},"leash":8,"prefer":["I think I've solved the puzzle!"],"strict":true,"gap_ticks":2},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"druidspirit","any":["druidspirit:60"]}}}}
+      ]},
+      {"stage":"druidspirit:60","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"enter-grotto","kind":"interact","version":1,"advances":true,"comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:92-105.",
+         "args":{"target":{"loc":"grotto_door_druidicspirit"},"op":"Enter","anchor":{"tile":[3440,3337,0],"source":"content/maps/m53_52.jm2:5135"},"radius":4},
+         "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[3442,9734,0],"radius":12}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[3442,9734,0],"radius":12}}}},
+        {"id":"transform-filliman","kind":"interact","version":1,"advances":true,"comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:334-343; filliman.rs2:25-58.",
+         "args":{"target":{"loc":"druidic_spirit_grotto"},"op":"Search","anchor":{"tile":[3441,9740,0],"source":"content/maps/m53_152.jm2:4903"},"radius":5,"dialogue":{"prefer":["Ok, thanks."],"strict":true,"gap_ticks":4}},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"druidspirit","any":["druidspirit:70"]}}}}
+      ]},
+      {"stage":"druidspirit:70","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"bless-sickle","kind":"interact","version":1,"advances":true,"comment":"content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:334-343; filliman.rs2:165-195.",
+         "args":{"target":{"loc":"druidic_spirit_grotto"},"op":"Search","anchor":{"tile":[3441,9740,0],"source":"content/maps/m53_152.jm2:4903"},"radius":5,"dialogue":{"gap_ticks":5}},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"druidspirit","any":["druidspirit:75"]}}}}
+      ]},
+      {"stage":"druidspirit:75","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"GAP-ghast-harvest","kind":"wait","version":1,"args":{"until":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"druidspirit","is":"complete"}}},"max_ticks":20,"park_on_timeout":true},"comment":"GAP REPEATED HARVEST AND OWNED GHAST: content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:235-268,290-331,383-394 needs three bloom items and prayer. ghast.rs2:1-26,86-88,131-141 requires three owned kills after a pouch reveals an attacker. This guide does not yet coordinate the repeated harvest and owned targets.","skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"druidspirit","is":"complete"}}}}
       ]},
       {"stage":"druidspirit:complete","required":[],"terminal":true,"recovery_entry":null,"steps":[]}
     ]

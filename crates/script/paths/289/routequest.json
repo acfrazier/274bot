@@ -19,6 +19,9 @@
     "progress":{
       "colour":{"not_started":"routequest:0","in_progress":"routequest:5","complete":"routequest:complete"},
       "rules":[
+        {"stage":"routequest:100","all":["i climbed out of the", "double crossing"],"any":[],"not":[],"varp":100},
+        {"stage":"routequest:95","all":["i should try to find a way up to the"],"any":[],"not":[],"varp":95},
+        {"stage":"routequest:90","all":["i talked to", "through a", "secret wall"],"any":[],"not":[],"varp":90},
         {"stage":"routequest:80","all":["hell hound"],"any":["i have to try and kill the","i killed the hell hound"],"not":[],"varp":80},
         {"stage":"routequest:70","all":["i tried talking to veliaf"],"any":[],"not":["a mist cloud appeared"],"varp":70},
         {"stage":"routequest:65","all":["i met veliaf"],"any":[],"not":["i tried talking to veliaf"],"varp":65},
@@ -111,7 +114,7 @@
          "args":{"npc":"route_veliaf_hurtz","anchor":{"tile":[3506,9838,3],"source":"content/maps/m54_153.jm2:9246"},"leash":8,"prefer":["Ok, thanks."],"strict":true},
          "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:65"]}}}}
       ]},
-      {"stage":"routequest:65","required":[],"terminal":false,"recovery_entry":null,"steps":[
+      {"stage":"routequest:65","required":[],"terminal":false,"recovery_entry":null,"order":"ordered","steps":[
         {"id":"meet-sani","kind":"talk","version":1,"advances":false,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:160-183,205-207; content/maps/m54_153.jm2:9247.",
          "args":{"npc":"route_sani_piliu","anchor":{"tile":[3508,9837,3],"source":"content/maps/m54_153.jm2:9247"},"leash":8,"prefer":["Ok, thanks."],"strict":true},"skip_if":{"Any":[]},"settle":{"All":[]}},
         {"id":"meet-harold","kind":"talk","version":1,"advances":false,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:212-233,253-255; content/maps/m54_153.jm2:9245.",
@@ -134,7 +137,28 @@
       {"stage":"routequest:80","required":[],"terminal":false,"recovery_entry":null,"steps":[
         {"id":"fight-hellhound","kind":"combat","version":1,"advances":true,"comment":"content/scripts/quests/quest_routequest/scripts/route_cutscene.rs2:179-188; content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:584-615.",
          "args":{"target":{"npc":"skeleton_hellhound","not_targeting_others":true,"pick":"nearest"},"stand":{"tile":[3506,9834,0],"source":"content/scripts/quests/quest_routequest/scripts/route_cutscene.rs2:183-184"},"lost_radius":15,"kill_budget_ticks":500,"tactic":{"kind":"open","style":"melee","engage_radius":8,"auto_retaliate":true}},
-         "skip_if":{"Fact":{"kind":"flag","version":1,"args":{"quest":"routequest","flag":"routequest:hellhound-defeated"}}},"settle":{"Fact":{"kind":"flag","version":1,"args":{"quest":"routequest","flag":"routequest:hellhound-defeated"}}}}
+         "skip_if":{"Fact":{"kind":"flag","version":1,"args":{"quest":"routequest","flag":"routequest:hellhound-defeated"}}},"settle":{"Fact":{"kind":"flag","version":1,"args":{"quest":"routequest","flag":"routequest:hellhound-defeated"}}}},
+        {"id":"ask-veliaf-for-exit","kind":"talk","version":1,"advances":true,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:467-473,502-525. The same menu returns after the exit question.",
+         "args":{"npc":"route_veliaf_hurtz","anchor":{"tile":[3506,9838,0],"source":"content/scripts/quests/quest_routequest/scripts/route_cutscene.rs2:179-184"},"leash":8,"prefer":["How do I get out of here?","Ok, thanks."],"answer_once":true,"strict":true},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:90"]}}}}
+      ]},
+      {"stage":"routequest:90","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"leave-hideout","kind":"interact","version":1,"advances":false,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:1-3,29-34; content/maps/m54_153.jm2:6344.",
+         "args":{"target":{"loc":"route_cavewalltunnel","tile":[3505,9831,0],"source":"content/maps/m54_153.jm2:6344"},"op":"Enter","radius":4},
+         "skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[3491,9824,0],"radius":3}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[3491,9824,0],"radius":3}}}},
+        {"id":"find-inn-wall","kind":"interact","version":1,"advances":true,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:43-53; content/maps/m54_153.jm2:5636.",
+         "args":{"target":{"loc":"thrttavernbasementfalsewall"},"op":"Search","anchor":{"tile":[3480,9837,0],"source":"content/maps/m54_153.jm2:5636"},"radius":4},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:95"]}}}}
+      ]},
+      {"stage":"routequest:95","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"climb-inn-ladder","kind":"interact","version":1,"advances":true,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_myreque.rs2:100-112; content/maps/m54_153.jm2:5517.",
+         "args":{"target":{"loc":"thrttavernbasementladder"},"op":"Climb-up","anchor":{"tile":[3477,9846,0],"source":"content/maps/m54_153.jm2:5517"},"radius":4},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"routequest","any":["routequest:100"]}}}}
+      ]},
+      {"stage":"routequest:100","required":[],"terminal":false,"recovery_entry":null,"steps":[
+        {"id":"confront-stranger","kind":"talk","version":1,"advances":true,"comment":"content/scripts/quests/quest_routequest/scripts/routequest_vanstorm.rs2:1-36; content/maps/m54_54.jm2:7623. Vanstrom changes into the stranger on interaction.",
+         "args":{"npc":"route_vanstrom_klause_sitting","anchor":{"tile":[3503,3477,0],"source":"content/maps/m54_54.jm2:7623"},"leash":8},
+         "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"routequest","is":"complete"}}}}
       ]},
       {"stage":"routequest:complete","required":[],"terminal":true,"recovery_entry":null,"steps":[]}
     ]
