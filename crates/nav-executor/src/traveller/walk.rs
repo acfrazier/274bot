@@ -123,7 +123,7 @@ impl FollowRun {
         if api::hostlog::debug_enabled() {
             api::host_log!(Category::NavTrace, Level::Debug,
                 "walk tick={} here={here:?} aim={:?} radius={radius} ticks_waited={} budget_ticks={} sent_tile={:?} actor={:?} map_flag={:?}",
-                snapshot.tick(), hop.aim, hop.ticks_waited, hop.budget_ticks, hop.sent_tile,
+                snapshot.tick(), hop.aim, hop.ticks_waited.get(), hop.budget_ticks, hop.sent_tile,
                 snapshot.local_player().map(|p| (p.player.actor.moving, p.player.actor.running, p.player.actor.in_combat, &p.player.actor.target)),
                 snapshot.map_flag()
             );
@@ -173,15 +173,10 @@ impl FollowRun {
                 Poll::Watching
             }
             None => {
-                let tick = snapshot.tick();
-                let elapsed = tick.wrapping_sub(hop.stall_idle_last_tick.unwrap_or(hop.sent_tick));
-                let elapsed = if elapsed < (1u32 << 31) { elapsed } else { 1 };
-                hop.ticks_waited = hop.ticks_waited.saturating_add(elapsed);
-                let progressed = hop.stall_idle_at.or(hop.sent_tile) != Some(here)
-                    || snapshot
-                        .last_server_movement_tick()
-                        .is_some_and(|movement| tick.wrapping_sub(movement) < elapsed);
-                if elapsed != 0 && hop.ticks_waited > hop.budget_ticks && !progressed {
+                let counted = hop.ticks_waited.get();
+                let spent = hop.ticks_waited.observe(snapshot.tick());
+                let progressed = hop.note_progress(here);
+                if spent != counted && spent > hop.budget_ticks && !progressed {
                     let why = if hop.sent_tile == Some(here) {
                         HopFailure::Dropped
                     } else {
@@ -225,7 +220,7 @@ impl FollowRun {
             hop.first_sent_tick,
             hop.sent_tick,
             hop.tries.max(1),
-            hop.ticks_waited,
+            hop.ticks_waited.get(),
             hop.budget_ticks,
             hop.stall_idle_ticks,
             snapshot.last_scene_rebuild_tick(),
@@ -395,6 +390,8 @@ impl FollowRun {
                 && edge.takeoff.is_none()
                 && find_door_loc(snapshot, edge)
                     .is_some_and(|loc| loc.id != edge.loc_id && loc.tile == end)
+                && SceneQuery::new(snapshot.scene(), Some(here))
+                    .can_reach(edge.to, &api::query::SceneReachOptions::default())
         };
         let plan_matches = |plan: &RoutePlanLease, index| match plan_retained_leg(plan, index) {
             Some(nav_planner::router::CompactRouteLeg::Transport(step)) => {
@@ -461,6 +458,8 @@ impl FollowRun {
             report_walk(options, snapshot, here, aim, &result);
             match result {
                 SendResult::Sent { .. } => {
+                    // Walk speed consumes one route step per game tick:
+                    // engine/src/engine/entity/PathingEntity.ts:144-149.
                     let planned_steps = idx.saturating_sub(here_on_route.unwrap_or(here_i));
                     hop.budget_ticks = self
                         .budget
@@ -473,7 +472,9 @@ impl FollowRun {
                     hop.sent_tick = snapshot.tick();
                     hop.start_tile = here;
                     hop.first_sent_tick = snapshot.tick();
-                    hop.ticks_waited = 0;
+                    hop.ticks_waited = TickCount::sent_at(snapshot.tick());
+                    hop.best_route_index = here_on_route.unwrap_or(here_i);
+                    hop.best_distance = cheb(here, aim);
                     hop.sent_tile = Some(here);
                     hop.stall_idle_ticks = 0;
                     hop.stall_idle_last_tick = Some(snapshot.tick());

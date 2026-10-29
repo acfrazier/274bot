@@ -4085,11 +4085,7 @@ impl WalkNoProgress {
             return None;
         }
 
-        let elapsed = tick.wrapping_sub(self.last_tick);
-        if elapsed == 0 || elapsed >= (1 << 31) {
-            return None;
-        }
-
+        let elapsed = nav_executor::TickCount::credit_since(self.last_tick, tick);
         self.last_tick = tick;
         self.ticks = self.ticks.saturating_add(elapsed);
         if !self.reported && self.ticks >= WALK_NO_PROGRESS_INFO_TICKS {

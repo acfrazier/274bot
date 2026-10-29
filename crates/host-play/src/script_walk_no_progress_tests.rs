@@ -70,6 +70,11 @@ fn no_progress_counts_batched_observed_ticks_and_clock_wrap() {
     wait.reset();
     assert_eq!(wait.observe(1, at, u32::MAX - 4), None);
     assert_eq!(wait.observe(1, at, 5), Some(10));
+    wait.reset();
+    assert_eq!(wait.observe(1, at, 100), None);
+    assert_eq!(wait.observe(1, at, 2), None);
+    assert_eq!(wait.observe(1, at, 2), None);
+    assert_eq!(wait.observe(1, at, 11), Some(10));
 }
 
 #[test]
@@ -204,7 +209,7 @@ fn no_progress_info_logs_once_for_each_observed_episode() {
     assert_eq!(lines().len(), 5);
 
     let route_wait = walk_wait_details(&bot, None, None);
-    assert_eq!(route_wait.reason, "route");
+    assert_eq!(route_wait.reason, WalkWaitReason::Route);
     assert_eq!(route_wait.target, Some(second_target));
 
     bot.route = Some(Arc::new(nav_planner::router::Route {
@@ -215,10 +220,20 @@ fn no_progress_info_logs_once_for_each_observed_episode() {
     bot.pending_route = None;
     bot.route_request_id = bot.walk_request_id;
     let door_at = tile(12, 20);
-    let door_wait = walk_wait_details(&bot, None, Some(("door", Some(door_at), Some(1530))));
-    assert_eq!(door_wait.reason, "door");
+    let door_reason =
+        nav_executor::TravelWaitReason::Transport(nav_planner::transport::TransportKind::Door);
+    let door_wait = walk_wait_details(
+        &bot,
+        None,
+        Some((
+            door_reason,
+            Some(door_at),
+            Some(nav_executor::LocId::new(1530)),
+        )),
+    );
+    assert_eq!(door_wait.reason, WalkWaitReason::Traveller(door_reason));
     assert_eq!(door_wait.target, Some(door_at));
-    assert_eq!(door_wait.target_id, Some(1530));
+    assert_eq!(door_wait.target_id, Some(nav_executor::LocId::new(1530)));
     log_walk_no_progress("walk-wait-test", 8, moved, 10, door_wait);
 
     let captured = CAPTURE.0.lock().unwrap();

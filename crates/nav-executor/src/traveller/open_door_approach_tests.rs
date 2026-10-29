@@ -136,3 +136,28 @@ fn an_open_leaf_does_not_skip_the_remaining_walk_distance() {
     );
     assert_eq!(driver.loc_ops, 0);
 }
+
+#[test]
+fn open_leaf_with_unreachable_far_side_keeps_the_approach_until_it_clears() {
+    let (mut client, mut snapshot, mut driver, route) = fixture(true);
+    client.collision[0].flags[3][2] |= client::dash3d::CollisionFlag::SQ_BLOCKED;
+    bump_rebuild(&mut client, &mut snapshot);
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions::default();
+    for _ in 0..3 {
+        bump_rebuild(&mut client, &mut snapshot);
+        assert!(traveller
+            .follow(&mut driver, &snapshot, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(traveller.follow.as_ref().unwrap().leg_index, 0);
+    }
+    assert!(driver.walked.is_empty(), "do not commit the next door leg");
+    assert_eq!(driver.loc_ops, 0, "never Close the leaf to clear a path");
+
+    client.collision[0].flags[3][2] &= !client::dash3d::CollisionFlag::SQ_BLOCKED;
+    bump_rebuild(&mut client, &mut snapshot);
+    assert!(traveller
+        .follow(&mut driver, &snapshot, route, &mut options)
+        .is_none());
+    assert_eq!(driver.walked, vec![(3, 2)]);
+}

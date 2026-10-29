@@ -91,7 +91,20 @@ fn observed_progress_keeps_a_walk_alive_past_its_planned_allowance() {
     assert!(traveller
         .follow(&mut driver, &snapshot, route.clone(), &mut options)
         .is_none());
-    let observed = detour(20, 20, 7);
+    // Consume the planned allowance first. New route maxima still extend
+    // the hop, but a change of tile alone is not evidence of progress.
+    client.minimap_flag_x = 12;
+    client.minimap_flag_z = 34;
+    client.local_player.as_mut().unwrap().entity.route_length = 3;
+    for _ in 0..7 {
+        bump_rebuild(&mut client, &mut snapshot);
+        assert!(traveller
+            .follow(&mut driver, &snapshot, route.clone(), &mut options)
+            .is_none());
+    }
+    let Leg::Walk { tiles: observed } = &route.legs[0] else {
+        unreachable!()
+    };
     for (index, tile) in observed.iter().enumerate().skip(1) {
         plant_player(&mut client, tile.x - 3200, tile.z - 3200);
         bump_rebuild(&mut client, &mut snapshot);
@@ -153,7 +166,7 @@ fn walk_budget_counts_batched_ticks_and_wrap_but_not_duplicate_polls() {
                 .is_none());
         }
         let hop = traveller.follow.as_ref().unwrap().walk.as_ref().unwrap();
-        assert_eq!(hop.ticks_waited, 4);
+        assert_eq!(hop.ticks_waited.get(), 4);
         bump_rebuild(&mut client, &mut snapshot);
         assert!(matches!(
             traveller.follow(&mut driver, &snapshot, route, &mut options),
@@ -202,4 +215,73 @@ fn winding_idle_walk_expires_only_after_its_planned_tick_budget() {
         })
     ));
     assert_eq!(driver.walked.len(), 1, "a stale live actor is not progress");
+}
+
+#[test]
+fn two_tile_oscillation_ends_within_the_original_budget_not_2000_ticks() {
+    non_progressing_movement_expires(|tick| (0, if tick % 2 == 0 { 1 } else { 2 }));
+}
+
+#[test]
+fn movement_away_from_the_aim_ends_within_the_original_budget() {
+    non_progressing_movement_expires(|tick| (tick as i32, 0));
+}
+
+fn non_progressing_movement_expires(position: impl Fn(u32) -> (i32, i32)) {
+    let mut client = scene_client();
+    let mut snapshot = snap_at(&mut client, 0, 0);
+    let mut driver = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let route = walk_route(
+        (0..=7)
+            .map(|z| WorldTile {
+                x: 3200,
+                z: 3200 + z,
+                level: 0,
+            })
+            .collect(),
+    );
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions {
+        budget_ticks_per_hop: 3,
+        ..TravelOptions::default()
+    };
+    assert!(traveller
+        .follow(&mut driver, &snapshot, route.clone(), &mut options)
+        .is_none());
+    let budget = traveller
+        .follow
+        .as_ref()
+        .unwrap()
+        .walk
+        .as_ref()
+        .unwrap()
+        .budget_ticks;
+    assert_eq!(budget, 7);
+    for tick in 1..=2000 {
+        let (x, z) = position(tick);
+        plant_player(&mut client, x, z);
+        bump_rebuild(&mut client, &mut snapshot);
+        let outcome = traveller.follow(&mut driver, &snapshot, route.clone(), &mut options);
+        if tick <= budget {
+            assert!(outcome.is_none(), "tick {tick}: {outcome:?}");
+        } else {
+            assert!(
+                matches!(
+                    outcome,
+                    Some(TravelOutcome::Stalled {
+                        why: HopFailure::Expired,
+                        ..
+                    })
+                ),
+                "tick {tick}: {outcome:?}"
+            );
+            assert_eq!(tick, budget + 1);
+            assert_eq!(driver.walked.len(), 1);
+            return;
+        }
+    }
+    panic!("the reviewer's 2000-tick probe must terminate");
 }
