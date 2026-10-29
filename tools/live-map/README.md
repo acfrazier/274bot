@@ -56,7 +56,8 @@ All cells not listed below normally run on merlot. Engine A uses game port
 | `host.quester-path-engine-q`, `scenario.quester-engine-q` | Run on the Engine Q host. This setup uses merlot at `127.0.0.1:44694` and `127.0.0.1:1180`. Set `QUESTER_TICK_MS=300` only for these cells. |
 | `nav.essence-follow` | The orchestrator must start a 274 engine on the cell host at `127.0.0.1:43594`. The orchestrator supplies `ENGINE_274_DIR` and `NAV_PACK_274`. Do not run this cell until the orchestrator provides both inputs and starts the engine. |
 | `nav.essence-289-engine-a` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. Use chardonnay when merlot is measured or reserved. |
-| `host.nav-zanaris-entrana` | Run on aubaine with Engine L at `127.0.0.1:47594` and `127.0.0.1:3080`; the cell uses the task's new 289 navigation pack and Lost City path source. |
+| `host.nav-zanaris-entrana` | Run on aubaine with Engine L at `127.0.0.1:47594` and `127.0.0.1:3080`. Set `ENGINE_L_DIR`, `BOT_CACHE_DIR`, `NAV_PACK_289`, `LIVE_EVIDENCE_DIR`, `CATALOG_ROOT`, and `QUESTER_PATH_DIR`. Use the task's head pack and the Zanaris Path source from the quest-paths branch. |
+| `host.sherlock-entrana-walk-arrive`, `host.sherlock-entrana-content-categories` | Run on aubaine through Engine L's relay at `127.0.0.1:44594` and `127.0.0.1:1080`. Set the standard Engine A, pack, cache, catalog, and evidence variables. |
 | `panel.headed-render` | Run on merlot with its interactive GPU and display. The command removes `BOT_CPU` so the client uses the GPU renderer. |
 
 
@@ -216,7 +217,7 @@ does not replace or gate the 289 cell.
 
 ## Input values
 
-These are the 19 names reviewed in round 2. Three inputs are fixed in the map.
+These are the 21 names reviewed in round 2. Three inputs are fixed in the map.
 The caller must not replace the gather tile, Path, or seeds file.
 
 | Name | Value or owner |
@@ -228,7 +229,8 @@ The caller must not replace the gather tile, Path, or seeds file.
 | `ENGINE_B_DIR` | For the chardonnay tunnel cell, use the local R289 client tree at `/home/acfrazier/experiments/lostcity-289/engine`. This optional client path is not the Engine B service. The service is the tunnel at `45594/2080`. |
 | `ENGINE_Q_DIR` | Use the Engine Q tree on its host. Merlot: `/Users/acfrazier/experiments/lostcity-289-q/engine`. Chardonnay: `/home/acfrazier/experiments/lostcity-289-q/engine`. |
 | `ENGINE_274_DIR` | The orchestrator supplies the 274 engine directory when it starts the 274 service. This value is not set in this map round. |
-| `NAV_PACK_289` | Use the CI reference v17 pack. Merlot: `/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack`. Chardonnay: `/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack`. See `STANDING-RULINGS.md:16`. |
+| `ENGINE_L_DIR` | On aubaine, use `/Volumes/dev-scratch/engines/lostcity-289-l/engine`. Keep the Engine L directory read-only. |
+| `NAV_PACK_289` | Use the CI reference v17 pack for standard cells. The Zanaris and Sherlock Entrana cells use the task's head pack. Merlot: `/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack`. Chardonnay: `/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack`. See `STANDING-RULINGS.md:16`. |
 | `NAV_FLAGS_289` | Use the matching `274bot-289-v17.navflags` in the same reference-v17 directory as `NAV_PACK_289`. |
 | `NAV_SNAPSHOT_ROOT_289` | Use the read-only decoded snapshot that `isohome` exposes as `BOT_NAV_SNAPSHOT_ROOT`. The default paths are `/Users/acfrazier/.274bot/unpack-289` on merlot and `/home/acfrazier/.274bot/unpack-289` on chardonnay. See `AGENTS.md:149`. |
 | `BOT_CACHE_DIR` | Make a fresh copy of the selected engine's `data/pack/client` at `<LIVE_EVIDENCE_DIR>/cache-289`. The Quester helper copies this source into its isolated run cache. |
@@ -238,6 +240,7 @@ The caller must not replace the gather tile, Path, or seeds file.
 | `GATHERER_WC_TILE` | The map fixes `3197,3209,0`, backed by the R289 normal-tree placement `maps/m49_50.jm2:5342` (`crates/api/data/game-data/289/gathering.json:17173-17190,38398`). It is outside LocationAuto's `AUTO_NEXT_TILES` (`crates/host-play/tests/gatherer_live.rs:107`) and stump fixture (`:197-243,5791-5812`). The caller does not choose it. |
 | `QUESTER_PATH` | The map fixes `cook`, which selects the committed Cook Path. The map owner selected this path. The caller does not choose it. |
 | `QUESTER_SEEDS` | The map points to `${PWD}/crates/host-play/tests/fixtures/quester-path/cook.json`. This file copies the `COOK_SEEDS` value at `quester_path_live.rs:186-195`. Run the command from the repository root. Do not use a caller-written seeds file. |
+| `QUESTER_PATH_DIR` | For the Zanaris live cell on aubaine, use `/Volumes/dev-scratch/274bot-worktrees/quest-paths-aub-zanaris-entrana/crates/script/paths/289`. This is the 289 Path source from the quest-paths branch. The source must merge before the cell can run from the merged tree. |
 | `NAV_PACK_274` | Use `274bot-274-v17.navpack` in the same reference-v17 directory as `NAV_PACK_289`. The orchestrator supplies this path to `nav.essence-follow` when it starts the 274 service. |
 | `BOT_UNPACK_DIR` | Use a fresh writable unpack directory at `<LIVE_EVIDENCE_DIR>/client-unpack`. This can be the same path as `CLIENT_UNPACK_DIR`. |
 
