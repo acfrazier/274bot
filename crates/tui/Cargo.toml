@@ -22,7 +22,6 @@ frontend-core = { path = "../frontend-core", default-features = false, features 
 host = { path = "../host" }
 host-play = { path = "../host-play", default-features = false, features = ["test-support", "live-probe"] }
 nav-bake = { path = "../nav-bake" }
-script = { path = "../script", default-features = false }
 
 [[bin]]
 name = "tui-play"

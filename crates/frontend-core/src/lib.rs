@@ -109,6 +109,12 @@ pub use quester_paths::{
 };
 pub use resources::{Metric, ResourceView};
 pub use scripts::{Notice, Scripts};
+pub use script::survival::{
+    cure::CureWhy as SurvivalCureWhy,
+    math::{NeedWhy as SurvivalNeedWhy, SurvivalNeed},
+    Decision as SurvivalDecision, Owner as SurvivalOwner, SurvivalReport,
+};
+
 pub use selection::{
     marked_startable, profile_id_at, profile_id_for_name, stop_marked, BulkSkip, MarkedSelection,
     ProfileIdentity, StopReport, EMPTY_MARKS_HINT,

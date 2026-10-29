@@ -268,10 +268,9 @@ mod tests {
 
     #[test]
     fn survival_need_is_visible_in_wide_and_compact_status_captures() {
-        use script::survival::{
-            cure::CureWhy,
-            math::{NeedWhy, SurvivalNeed},
-            Decision, Owner, SurvivalReport,
+        use frontend_core::{
+            SurvivalCureWhy as CureWhy, SurvivalDecision as Decision, SurvivalNeed,
+            SurvivalNeedWhy as NeedWhy, SurvivalOwner as Owner, SurvivalReport,
         };
         use std::{fs, path::PathBuf};
 
