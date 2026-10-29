@@ -3498,7 +3498,7 @@ impl QueuedQuester {
             return ScriptFailure {
                 code: Arc::from("quest-status-unobserved"),
                 message: Arc::from(
-                    "quest list was not observed within 30 seconds: log out and log in normally outside the tutorial (finish it if needed), then Stop/Start Quester",
+                    "quest list was not observed within 30 seconds: log out and log in normally outside the tutorial (finish it if needed), then start the Quester again",
                 ),
             };
         }
@@ -3511,7 +3511,7 @@ impl QueuedQuester {
             return ScriptFailure {
                 code: Arc::from("empty-queue"),
                 message: Arc::from(
-                    "no quests selected: review Quests and Skip in Script prefs; empty Quests selects all released quests, then Stop/Start Quester",
+                    "no quests selected: review Quests and Skip in Script prefs; empty Quests selects all released quests, then start the Quester again",
                 ),
             };
         }
