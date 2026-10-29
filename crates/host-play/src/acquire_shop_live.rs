@@ -1668,13 +1668,13 @@ fn run_cell(kind: CellKind) {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, Engine A, the R289 reference pack, a per-run cache clone, and LIVE_EVIDENCE_DIR"]
+#[ignore = "requires LIVE=1, Engine L, the R289 reference pack, a per-run cache clone, and LIVE_EVIDENCE_DIR"]
 fn acquire_shop_explicit_live() {
     run_cell(CellKind::Explicit);
 }
 
 #[test]
-#[ignore = "requires LIVE=1, Engine A, the R289 reference pack, a per-run cache clone, and LIVE_EVIDENCE_DIR"]
+#[ignore = "requires LIVE=1, Engine L, the R289 reference pack, a per-run cache clone, and LIVE_EVIDENCE_DIR"]
 fn acquire_shop_nearest_live() {
     run_cell(CellKind::Nearest);
 }

@@ -154,7 +154,7 @@ fn capture(
 }
 
 #[test]
-#[ignore = "requires LIVE=1, throwaway HOME, BLOCKED_* paths and local 289 engine"]
+#[ignore = "requires LIVE=1, throwaway HOME, BLOCKED_* paths and Engine L at 47594/3080"]
 fn gatherer_parked_status_is_shared_and_controllable() {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return;
@@ -187,8 +187,8 @@ fn gatherer_parked_status_is_shared_and_controllable() {
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(44594),
-        http_port: Some(1080),
+        port: Some(47594),
+        http_port: Some(3080),
         cache_dir: Some(required_path("BOT_CACHE_DIR")),
         nav_pack: Some(required_path("BLOCKED_NAV_PACK")),
         engine_dir: Some(required_path("BLOCKED_ENGINE_DIR")),

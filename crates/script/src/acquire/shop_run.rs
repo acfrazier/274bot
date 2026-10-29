@@ -220,6 +220,7 @@ impl ShopRun {
                     self.active = Active::Walk(tick.actions.begin::<Walk>(
                         WalkRequest {
                             target,
+                            candidate_goals: None,
                             loc_id: None,
                             radius: if self.nearest { 0 } else { 6 },
                             arrival: nav_planner::contract::ArrivalKind::Reach,

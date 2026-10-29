@@ -299,7 +299,6 @@ enum State {
     /// The modal was up at the start without a usable page. The page is
     /// flushed with the modal (`World.ts:1096-1120`), so it is posted by the
     /// next tick; after `until` this falls back to a Trade.
-    #[cfg(feature = "load")]
     Page {
         until: u64,
         session: Session,
@@ -342,7 +341,6 @@ impl Default for OpenCore {
 }
 
 impl OpenCore {
-    #[cfg(feature = "load")]
     /// Start with the modal already open but its page not usable.
     pub fn awaiting_page(facts: &Facts) -> Self {
         Self {
@@ -388,7 +386,6 @@ impl OpenCore {
         match self.state {
             State::Idle => {}
             State::Walking => return Decision::Wait,
-            #[cfg(feature = "load")]
             State::Page { until, session } => {
                 if session == facts.session && tick <= until {
                     return Decision::Wait;

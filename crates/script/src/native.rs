@@ -695,6 +695,7 @@ pub fn with_test_tick<R>(
             observed_walk_cancel_reason: WalkCancelReason::None,
             pin,
             snapshot,
+            shop_keepers: frame.compiled().shop_keepers,
             retained: &mut retained,
             action_id: 0,
             active_now: clock.0,
