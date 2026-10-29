@@ -25,9 +25,9 @@
       ],"flags":[],"monotonic":false},
     "prelude":[],"sequences":[
       {"stage":"chompybird:0","required":[],"terminal":false,"recovery_entry":null,"steps":[
-        {"id":"start-rantz","kind":"talk","version":1,"advances":true,
-         "comment":"content/scripts/quests/quest_chompybird/scripts/rantz.rs2:24-49; content/maps/m41_46.jm2:4491-4492",
-         "args":{"npc":"rantz","anchor":{"tile":[2630,2981,0],"source":"content/maps/m41_46.jm2:4492"},"leash":8,"prefer":["Ok, I'll make you some 'stabbers'."]},
+        {"id":"start-rantz","kind":"interact","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_chompybird/scripts/rantz.rs2:24-49; content/maps/m41_46.jm2:4491-4492; content/scripts/quests/quest_chompybird/configs/quest_chompybird.npc:1-8",
+         "args":{"target":{"npc":"rantz"},"op":"Talk","anchor":{"tile":[2630,2981,0],"source":"content/maps/m41_46.jm2:4492"},"radius":8,"dialogue":{"prefer":["Ok, I'll make you some 'stabbers'."]}},
          "skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"chompybird","is":"in_progress"}}}}
       ]},
       {"stage":"chompybird:5","required":[],"terminal":false,"recovery_entry":null,"steps":[
@@ -36,9 +36,9 @@
          "args":{"item":"wolfbone_arrowheads","target":{"item":"ogre_headless_arrow"},"product":"ogre_arrow"},
          "skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"ogre_headless_arrow"}}}},
          "settle":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_arrow","qty":6}}}},
-        {"id":"give-arrows","kind":"talk","version":1,"advances":true,
-         "comment":"content/scripts/quests/quest_chompybird/scripts/rantz.rs2:238-245,263-285,287-315",
-         "args":{"npc":"rantz","anchor":{"tile":[2630,2981,0],"source":"content/maps/m41_46.jm2:4492"},"leash":8,"prefer":["Ok, thanks."]},
+        {"id":"give-arrows","kind":"interact","version":1,"advances":true,
+         "comment":"content/scripts/quests/quest_chompybird/scripts/rantz.rs2:238-245,263-285,287-315; content/scripts/quests/quest_chompybird/configs/quest_chompybird.npc:1-8",
+         "args":{"target":{"npc":"rantz"},"op":"Talk","anchor":{"tile":[2630,2981,0],"source":"content/maps/m41_46.jm2:4492"},"radius":8,"dialogue":{"prefer":["Ok, thanks."]}},
          "skip_if":{"Any":[]},"settle":{"Not":{"Fact":{"kind":"item_count_at_least","version":1,"args":{"obj":"ogre_arrow","qty":6}}}}}
       ]},
       {"stage":"chompybird:65","required":[],"terminal":true,"recovery_entry":null,"steps":[]}
