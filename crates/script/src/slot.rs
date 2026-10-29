@@ -3528,13 +3528,9 @@ impl SlotScript {
         }
         let frozen = frozen
             || self.compiled.as_ref().is_some_and(|run| {
-                run.output
-                    .status
-                    .as_ref()
-                    .is_some_and(|status| {
-                        status.phase == crate::native::NativePhase::Blocked
-                            && status.failure.is_some()
-                    })
+                run.output.status.as_ref().is_some_and(|status| {
+                    status.phase == crate::native::NativePhase::Blocked && status.failure.is_some()
+                })
             });
         let freeze_action = self.watchdog.set_frozen(frozen, now);
         if frozen
@@ -3691,13 +3687,9 @@ impl SlotScript {
             return Err("watchdog restart cancelled: frozen".into());
         }
         if self.compiled.as_ref().is_some_and(|run| {
-            run.output
-                .status
-                .as_ref()
-                .is_some_and(|status| {
-                    status.phase == crate::native::NativePhase::Blocked
-                        && status.failure.is_some()
-                })
+            run.output.status.as_ref().is_some_and(|status| {
+                status.phase == crate::native::NativePhase::Blocked && status.failure.is_some()
+            })
         }) {
             return Err("watchdog restart cancelled: blocked".into());
         }
