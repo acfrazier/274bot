@@ -109,6 +109,7 @@ impl Slot {
         let control = Arc::new(Control {
             now: Mutex::new(now),
             loading: AtomicBool::new(false),
+            title: AtomicBool::new(false),
             scene_state: Mutex::new(2),
             draw: AtomicBool::new(true),
             stop: AtomicBool::new(false),
