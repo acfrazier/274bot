@@ -113,14 +113,23 @@ p_delay(0);
 fn content_gate_graph(script: &str, shipyard: bool) -> TransportGraph {
     let fx = Fixture::new();
     write_stage_engine(&fx);
-    fx.write("scripts/agility.rs2", include_str!("engine_forced_procs.rs2"));
+    fx.write(
+        "scripts/agility.rs2",
+        include_str!("engine_forced_procs.rs2"),
+    );
     fx.write("scripts/gates.rs2", script);
     fx.write(
         "pack/loc.pack",
         "49=inacfishinggateclosedl\n50=inacfishinggateclosedr\n83=inviswall\n2050=guidorgatelclosed\n2051=guidorgaterclosed\n2052=guidorgatelopen\n2053=guidorgateropen\n2438=grandtree_fencegate_l\n2439=grandtree_fencegate_r\n",
     );
-    fx.write("pack/obj.pack", "415=ethenea\n416=liquid_honey\n417=sulphuric_broline\n");
-    fx.write("pack/varp.pack", "68=biohazard\n150=grandtree\n365=mm_main\n");
+    fx.write(
+        "pack/obj.pack",
+        "415=ethenea\n416=liquid_honey\n417=sulphuric_broline\n",
+    );
+    fx.write(
+        "pack/varp.pack",
+        "68=biohazard\n150=grandtree\n365=mm_main\n",
+    );
     fx.write(
         "scripts/gates.constant",
         "^grandtree_released_prison = 80\n^mm_started = 1\n^biohazard_given_distillator = 10\n^biohazard_found_secret = 14\n",
@@ -145,22 +154,41 @@ fn content_gate_graph(script: &str, shipyard: bool) -> TransportGraph {
 struct ExactSignals(Vec<(&'static str, &'static str, i32)>);
 impl EvidenceProvider for ExactSignals {
     fn test_gate(&self, gate: &QuestGate, _: EvidenceStamp) -> Truth {
-        let QuestGate::Window(window) = gate else { return Truth::Unknown; };
-        self.0.iter().find(|(quest, signal, _)| {
-            window.quest.0.as_ref() == *quest && window.signal.0.as_ref() == *signal
-        }).map_or(Truth::Unknown, |(_, _, value)| window.values.test(&InclusiveRange {
-            min: Some(*value), max: Some(*value),
-        }))
+        let QuestGate::Window(window) = gate else {
+            return Truth::Unknown;
+        };
+        self.0
+            .iter()
+            .find(|(quest, signal, _)| {
+                window.quest.0.as_ref() == *quest && window.signal.0.as_ref() == *signal
+            })
+            .map_or(Truth::Unknown, |(_, _, value)| {
+                window.values.test(&InclusiveRange {
+                    min: Some(*value),
+                    max: Some(*value),
+                })
+            })
     }
 }
 
 fn content_state(graph: &TransportGraph, grandtree: i32, mm: i32, biohazard: i32) -> WorldState {
     let stamp = EvidenceStamp {
-        run: RunKey { slot: 1, run: 1, session: 1 }, tick: 1, sequence: 1,
+        run: RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: 1,
+        sequence: 1,
     };
     let mut state = WorldState::empty().with_quest_evidence(QuestEvidence::new(
-        Arc::new(ExactSignals(vec![("grandtree", "grandtree", grandtree), ("mm", "mm_main", mm), ("biohazard", "biohazard", biohazard)])),
-        graph.quest_family.unwrap(), stamp,
+        Arc::new(ExactSignals(vec![
+            ("grandtree", "grandtree", grandtree),
+            ("mm", "mm_main", mm),
+            ("biohazard", "biohazard", biohazard),
+        ])),
+        graph.quest_family.unwrap(),
+        stamp,
     ));
     state.map_members = true;
     state.inventory_ready = true;
@@ -168,10 +196,20 @@ fn content_state(graph: &TransportGraph, grandtree: i32, mm: i32, biohazard: i32
     state
 }
 
-fn content_crossing(graph: &TransportGraph, state: &WorldState, id: i32, z: i32, east: bool) -> bool {
+fn content_crossing(
+    graph: &TransportGraph,
+    state: &WorldState,
+    id: i32,
+    z: i32,
+    east: bool,
+) -> bool {
     let (from_x, to_x) = if east { (2820, 2821) } else { (2821, 2820) };
-    graph.edges.iter().any(|edge| edge.loc_id == id
-        && edge.takeoff == Some(tile(from_x, z)) && edge.to == tile(to_x, z) && state.allows(edge))
+    graph.edges.iter().any(|edge| {
+        edge.loc_id == id
+            && edge.takeoff == Some(tile(from_x, z))
+            && edge.to == tile(to_x, z)
+            && state.allows(edge)
+    })
 }
 
 #[test]
@@ -188,7 +226,10 @@ fn actual_shipyard_handlers_preserve_direct_windows_and_refuse_the_password_arm(
         assert!(!content_crossing(&graph, &unreleased, id, z, true));
         assert!(!content_crossing(&graph, &unreleased, id, z, false));
     }
-    assert!(graph.edges.iter().all(|edge| edge.quest_req.is_empty() && edge.varp_req.is_empty()));
+    assert!(graph
+        .edges
+        .iter()
+        .all(|edge| edge.quest_req.is_empty() && edge.varp_req.is_empty()));
 }
 
 #[test]
@@ -210,11 +251,18 @@ fn actual_varrock_handlers_keep_membership_and_refuse_the_guard_search_arm() {
 
 #[test]
 fn shipyard_interface_close_proof_is_lost_after_a_command_or_yield() {
-    for prefix in ["p_delay(0);", "if_openchat(chat);", "if (map_members = true) { if_openchat(chat); }"] {
+    for prefix in [
+        "p_delay(0);",
+        "if_openchat(chat);",
+        "if (map_members = true) { if_openchat(chat); }",
+    ] {
         let script = SHIPYARD.replace("if_close;", &format!("{prefix} if_close;"));
         let graph = content_gate_graph(&script, true);
         let direct = content_state(&graph, 80, 2, 14);
-        assert!(!content_crossing(&graph, &direct, 2438, 3438, true), "{prefix}");
+        assert!(
+            !content_crossing(&graph, &direct, 2438, 3438, true),
+            "{prefix}"
+        );
         assert!(content_crossing(&graph, &direct, 2438, 3438, false));
     }
 }

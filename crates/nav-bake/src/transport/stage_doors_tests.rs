@@ -2060,10 +2060,10 @@ return(false);
     );
 }
 
-#[path = "stage_doors_gates_tests.rs"]
-mod gates;
 #[path = "stage_doors_content_gates_tests.rs"]
 mod content_gates;
+#[path = "stage_doors_gates_tests.rs"]
+mod gates;
 
 const BLACK_KNIGHTS_AGGRO: &str = r#"
 [proc,black_knights_aggro](coord $first_search_coord, coord $all_search_coord)
@@ -2081,7 +2081,10 @@ while (npc_findnext = true) {
 fn fortress_door_fixture(proc: &str, call: &str) -> Fixture {
     let fx = Fixture::new();
     write_stage_engine(&fx);
-    fx.write("pack/loc.pack", "2339=bkfortressdoor3\n2340=inacbkfortressdoor\n");
+    fx.write(
+        "pack/loc.pack",
+        "2339=bkfortressdoor3\n2340=inacbkfortressdoor\n",
+    );
     fx.write(
         "scripts/quests/quest_blackknight/configs/blackknight.loc",
         "[bkfortressdoor3]\nop1=Open\nparam=next_loc_stage,inacbkfortressdoor\n",

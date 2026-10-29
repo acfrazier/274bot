@@ -80,7 +80,9 @@ fn quest_state(
     data: &api::game_data::SelectedGameData,
     signals: &[(&'static str, &'static str, i32)],
 ) -> Result<WorldState, String> {
-    let (facts, identity) = data.quest_identity_for_bake().map_err(|error| error.to_string())?;
+    let (facts, identity) = data
+        .quest_identity_for_bake()
+        .map_err(|error| error.to_string())?;
     let catalog = QuestCatalog::from_identity(Some(&facts)).map_err(|error| error.to_string())?;
     let stamp = EvidenceStamp {
         run: RunKey {
@@ -429,7 +431,11 @@ fn main() -> Result<(), String> {
     let complete = quest_state(&data, &[])?;
     let direct = quest_state(
         &data,
-        &[("grandtree", "grandtree", 80), ("mm", "mm_main", 2), ("biohazard", "biohazard", 14)],
+        &[
+            ("grandtree", "grandtree", 80),
+            ("mm", "mm_main", 2),
+            ("biohazard", "biohazard", 14),
+        ],
     )?;
     let password = quest_state(
         &data,
