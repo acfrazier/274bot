@@ -676,7 +676,10 @@ fn select_sites(root: &Value) -> Result<[BankSite; 2], String> {
 
 fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite, String> {
     if !site_has_key(site, resource) {
-        return Err(format!("selected content site {} lacks {resource}", site.id));
+        return Err(format!(
+            "selected content site {} lacks {resource}",
+            site.id
+        ));
     }
     let (anchor, product_id, level) = if resource == "normal" {
         (NORMAL_STARTS[0], NORMAL_LOG_ID, 1)
