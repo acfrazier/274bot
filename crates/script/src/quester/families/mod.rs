@@ -1562,11 +1562,11 @@ impl StepRun for TalkRun {
                 let near =
                     here.is_some_and(|here| reach::within(here, tile, i32::from(self.leash)));
                 if !near {
+                    let mut request =
+                        reach::walk_request(tile, self.leash, None, cx.required_after);
+                    request.arrival = nav_planner::contract::ArrivalKind::Area;
                     self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                        cx.tick.actions.begin::<Walk>(
-                            reach::walk_request(tile, self.leash, None, cx.required_after),
-                            &mut cx.tick.cx,
-                        ),
+                        cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
                     ))?);
                     return Poll::Pending;
                 }

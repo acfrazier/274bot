@@ -5955,7 +5955,9 @@ mod tests {
 
     #[test]
     fn combat_interrupted_talk_parks_without_advancing_or_reading() {
-        use super::super::families::tests::{seed_dialogue_combat, with_tick, with_tick_output};
+        use super::super::families::tests::{
+            seed_dialogue_attacker, seed_dialogue_combat, with_tick, with_tick_output,
+        };
         use api::snapshot::{GameSnapshot, QuestStatusView};
         #[derive(Default)]
         struct Capture(Vec<ScriptStatus>);
@@ -6012,6 +6014,10 @@ mod tests {
         let progress_evidence = script.progress.as_ref().unwrap().evidence;
         snapshot.seed_chat_modal(-1, vec![]);
         seed_dialogue_combat(&mut snapshot, true);
+        seed_dialogue_attacker(
+            &mut snapshot,
+            api::snapshot::ActorKind::Npc,
+        );
         let mut output = Capture::default();
         for tick in 4..=9 {
             if tick > 4 {

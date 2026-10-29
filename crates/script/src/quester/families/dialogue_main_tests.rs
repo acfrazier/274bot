@@ -739,6 +739,10 @@ fn visible_continue_without_chat_root_is_not_a_combat_close() {
     // A genuinely closed page in combat must still interrupt immediately.
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
+    super::tests::seed_dialogue_attacker(
+        &mut snapshot,
+        api::snapshot::ActorKind::Npc,
+    );
     assert!(matches!(
         with_tick(&snapshot, &mut ledger, 3, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)

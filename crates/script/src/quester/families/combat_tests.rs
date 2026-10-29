@@ -4796,6 +4796,10 @@ fn combat_finish_tick_budget_covers_the_dialogue_and_interruption_blocks() {
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_chat_options(vec![], -1);
     super::super::tests::seed_dialogue_combat(&mut snapshot, true);
+    super::super::tests::seed_dialogue_attacker(
+        &mut snapshot,
+        api::snapshot::ActorKind::Npc,
+    );
     let result = with_step_context(&snapshot, &mut interrupted_ledger, 2, |cx| {
         interrupted.poll(cx)
     });

@@ -442,10 +442,14 @@ impl NativeMachine for Dialogue {
                 }
             }
         }
-        // NPC melee closes interfaces even when it deals zero damage. A
-        // witnessed combat close is not the quiet end of a conversation.
+        // The local hit window also covers self-damage. Require visible or
+        // slot-owned attacker evidence before treating a closed chat as combat.
         // A visible Continue component is an active page even without a root.
-        if DialogueOutcome::combat_interrupted(obs.ready, obs.in_combat) {
+        if DialogueOutcome::combat_interrupted(
+            obs.ready,
+            obs.in_combat,
+            obs.attacker_evidence,
+        ) {
             return Poll::Ready(Err(ActionError::CombatInterrupted));
         }
         match self.phase {
@@ -778,7 +782,11 @@ impl Dialogue {
         obs: &MainObs<'_>,
         now: u64,
     ) -> Poll<Result<DialogueOutcome, ActionError>> {
-        if DialogueOutcome::combat_interrupted(obs.open(), obs.in_combat) {
+        if DialogueOutcome::combat_interrupted(
+            obs.open(),
+            obs.in_combat,
+            obs.attacker_evidence,
+        ) {
             return Poll::Ready(Err(ActionError::CombatInterrupted));
         }
         match self.phase {
@@ -1014,6 +1022,7 @@ struct ChatObs<'a> {
     options: &'a [api::snapshot::ChatOptionView],
     texts: &'a [String],
     in_combat: bool,
+    attacker_evidence: bool,
 }
 
 impl ChatObs<'_> {
@@ -1046,6 +1055,7 @@ struct MainObs<'a> {
     texts: &'a [String],
     tick: u64,
     in_combat: bool,
+    attacker_evidence: bool,
 }
 
 impl MainObs<'_> {
@@ -1119,6 +1129,38 @@ pub(super) fn page_open(cx: &ActionContext<'_>) -> bool {
             .is_some_and(|main| matches!(main.kind, MainKind::Scroll | MainKind::Book))
 }
 
+fn combat_attacker_evidence(cx: &ActionContext<'_>) -> bool {
+    let snapshot = cx.snapshot();
+    // The local combat target is slot-owned state, but only a face entity, not
+    // a hit source, and it may be stale. An attacker outside the rebuilt scene
+    // is not seen; visible actors targeting this local player are separate
+    // evidence.
+    let slot_target = snapshot
+        .in_combat()
+        .is_some_and(|combat| combat.value.target.is_some());
+    let Some(local_index) = snapshot
+        .local_player()
+        .map(|player| player.value.player.index)
+    else {
+        return slot_target;
+    };
+    let local_target = api::snapshot::ActorTargetView {
+        kind: api::snapshot::ActorKind::Player,
+        index: local_index,
+    };
+    slot_target
+        || snapshot.npcs().is_some_and(|npcs| {
+            npcs.value
+                .iter()
+                .any(|npc| npc.target == Some(local_target))
+        })
+        || snapshot.players().is_some_and(|players| {
+            players.value.iter().any(|player| {
+                player.index != local_index && player.actor.target == Some(local_target)
+            })
+        })
+}
+
 fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {
     let chat = cx.snapshot.chat_modal()?;
     let modal = chat.value.root;
@@ -1138,6 +1180,7 @@ fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {
             .snapshot()
             .in_combat()
             .is_some_and(|combat| combat.value.in_combat),
+        attacker_evidence: combat_attacker_evidence(cx),
     })
 }
 
@@ -1172,6 +1215,7 @@ fn observe_main<'a>(
             .snapshot()
             .in_combat()
             .is_some_and(|combat| combat.value.in_combat),
+        attacker_evidence: combat_attacker_evidence(cx),
     })
 }
 
