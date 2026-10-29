@@ -1701,6 +1701,13 @@ pub(crate) fn script_observe_cached_with_channels(
                                     &request,
                                     snapshot,
                                 );
+                                let prereq_allow = super::walk_permissions::native_prereq_allow(
+                                    navs,
+                                    name,
+                                    request.options,
+                                    walk_permissions,
+                                );
+                                slot.capture_native_walk_prereq_allow(&authority, prereq_allow);
                                 let arm = super::ScriptWalkArm {
                                     here,
                                     world: world.clone(),
@@ -2053,11 +2060,12 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
             } else {
                 None
             };
-        let risk = bot.native_end_risk.take();
-        let assessment = risk.as_deref().and_then(|risk| risk.assessment.clone());
-        let refusal = risk.as_deref().and_then(|risk| risk.refusal);
-        let escape = risk.as_deref().and_then(|risk| risk.escape);
-        let blocked = risk.as_deref().and_then(|risk| risk.blocked.clone());
+        let (assessment, refusal, escape, blocked) = bot
+            .native_end_risk
+            .take()
+            .map_or((None, None, None, None), |risk| {
+                (risk.assessment, risk.refusal, risk.escape, risk.blocked)
+            });
         if let script::native::WalkEnd::GateRefused(observation) = &end {
             slot.record_gate_refusal(observation.fact.observed.run, observation);
         }

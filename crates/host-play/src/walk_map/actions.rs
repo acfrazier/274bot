@@ -1070,26 +1070,24 @@ impl MapCommand {
             Some(name),
             manual_prereq,
         );
-        if let Err(crate::NoPath {
-            detail,
-            refusal: Some(refusal),
-            ..
-        }) = &result
-        {
-            if !matches!(
-                refusal,
+        let result = match result {
+            Err(crate::NoPath {
+                detail,
+                refusal: Some(refusal),
+                ..
+            }) if !matches!(
+                &refusal,
                 script::native::WalkRefusal::NoRouteWithinBounds { .. }
-            ) {
+            ) =>
+            {
                 let detail = detail
                     .as_deref()
                     .map(str::to_owned)
                     .unwrap_or_else(|| format!("{refusal:?}"));
-                return Err(ActionError::RiskRefused {
-                    refusal: *refusal,
-                    detail,
-                });
+                return Err(ActionError::RiskRefused { refusal, detail });
             }
-        }
+            result => result,
+        };
         if result.is_err() {
             // Diagnose a legal item-gated route before an all-exempt zone
             // detour: a cheaper unsafe walk must not hide an unpaid fare.
@@ -1117,15 +1115,13 @@ impl MapCommand {
                 detail,
                 refusal: Some(refusal),
                 ..
-            }) = &result
+            }) = result
             {
-                return Err(ActionError::RiskRefused {
-                    refusal: *refusal,
-                    detail: detail
-                        .as_deref()
-                        .map(str::to_owned)
-                        .unwrap_or_else(|| format!("{refusal:?}")),
-                });
+                let detail = detail
+                    .as_deref()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("{refusal:?}"));
+                return Err(ActionError::RiskRefused { refusal, detail });
             }
             if let Some(keys) = blocking_zones_for_walk(
                 world,

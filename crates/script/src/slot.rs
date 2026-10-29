@@ -2515,10 +2515,22 @@ impl SlotScript {
         None
     }
 
+    /// Capture the effective grants before dispatching this native walk.
+    pub fn capture_native_walk_prereq_allow(
+        &mut self,
+        authority: &crate::native::HostAuthority,
+        allow: crate::native::PrereqAllow,
+    ) -> bool {
+        self.native_runtime
+            .ledger
+            .as_mut()
+            .is_some_and(|ledger| ledger.capture_walk_prereq_allow(authority, allow))
+    }
+
     pub fn complete_native_walk(
         &mut self,
         authority: &crate::native::HostAuthority,
-        receipt: crate::native::WalkReceipt,
+        mut receipt: crate::native::WalkReceipt,
     ) {
         if !authority.live()
             || authority.request_id().get() != receipt.request_id
@@ -2533,6 +2545,12 @@ impl SlotScript {
             owner.run == authority.run() && owner.id == authority.action_id() && owner.live()
         }) {
             let request_id = receipt.request_id;
+            if let Some((_, allow)) = ledger
+                .walk_prereq_allow
+                .filter(|(request, _)| request.get() == request_id)
+            {
+                receipt.prereq_allow = Some(allow);
+            }
             ledger.walk = Some(receipt);
             // The native ledger uses a separate seat id from a Load walk
             // with the same request number. Its accepted terminal is the

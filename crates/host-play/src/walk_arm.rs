@@ -312,7 +312,7 @@ pub(crate) fn arm_walk_on_with_prereq(
             })
         }
         RouteOutcome::NoPath => {
-            let detail = admitted.refusal.map(|refusal| {
+            let detail = admitted.refusal.as_ref().map(|refusal| {
                 assessment
                     .as_ref()
                     .map(|assessment| Arc::clone(&assessment.reason))
@@ -368,7 +368,7 @@ pub(crate) fn arm_walk_on_with_prereq(
                     arm.route_generation = admission.generation;
                     arm.admission_pending = false;
                 }
-                arm.refusal = admitted.refusal;
+                arm.refusal = admitted.refusal.clone();
                 arm.refusal_detail = detail.clone();
             }
             Err(NoPath {
@@ -661,7 +661,7 @@ pub fn step_walk_arm_follow<D: Driver>(
         arm.traveller.terminal_leg_index()
     };
     let handed_over = matches!(&outcome, TravelOutcome::GateRefused { .. })
-        && handover_manual_refusal(arm, &outcome);
+        && handover_manual_refusal(&mut arm.manual_prereq, &outcome);
     if !handed_over {
         crate::walk_map::emit_walk_terminal(
             slot,
@@ -680,8 +680,11 @@ pub fn step_walk_arm_follow<D: Driver>(
     true
 }
 
-fn handover_manual_refusal(arm: &mut WalkArm, outcome: &TravelOutcome) -> bool {
-    let Some(context) = arm.manual_prereq.take().map(|context| *context) else {
+fn handover_manual_refusal(
+    pending: &mut Option<Box<ManualWalkPrereqContext>>,
+    outcome: &TravelOutcome,
+) -> bool {
+    let Some(context) = pending.take().map(|context| *context) else {
         return false;
     };
     let TravelOutcome::GateRefused {
