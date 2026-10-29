@@ -159,17 +159,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   has settled it that way since 0.2.4; the declarations and pages still
   described an `interrupted` result.
 
-### Fixed during development
-
-#### Scenario checks
-
-- The chicken bank check now uses a guaranteed Bones drop for its pickup and
-  deposit checks. It requires fresh combat XP after the bank return instead
-  of waiting for a random Feather drop. Up to three further bank returns may
-  restart the same 150-tick combat window. Each return follows a fresh bank
-  visit. A stalled return or a spent restart limit still fails. The 12-minute
-  deadline is the outer wall-clock limit.
-
 ### Not in this release
 
 - Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk`), pack
