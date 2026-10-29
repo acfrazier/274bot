@@ -297,9 +297,9 @@ mod smoke_tests {
     }
 
     #[test]
-    fn smoke_row_rejects_unknown_quests_and_non_base40_profiles() {
+    fn smoke_row_rejects_unknown_quests_and_accepts_declared_profiles() {
         assert!(smoke_row("not-a-quest").is_err());
-        assert!(smoke_row("dragon").is_err());
+        assert_eq!(smoke_row("dragon").unwrap().profile, TestProfile::Base60);
         assert_eq!(smoke_row("cog").unwrap().profile, TestProfile::Base40);
         assert_eq!(smoke_row("cook").unwrap().display, "Cook's Assistant");
     }
