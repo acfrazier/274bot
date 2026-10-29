@@ -710,6 +710,11 @@ pub struct OperatorSession<Io> {
     profiles_generation: u64,
     /// The saved Load order, reconciled with the vault.
     profile_order: crate::profile_order::ProfileOrder,
+    /// Uids of profiles created since the order last reconciled, in
+    /// creation sequence: the next reconcile appends them in that
+    /// sequence (an import batch keeps its file's order). Taken by each
+    /// reconcile; empty in steady state.
+    created_since_reconcile: Vec<i32>,
     /// The preferences hold a saved order (the operator reordered, or a
     /// rename kept a place): reconcile changes are written back.
     order_saved: bool,
@@ -828,6 +833,7 @@ impl<Io> OperatorSession<Io> {
             capacity_generation: 0,
             profiles_generation: 0,
             profile_order: crate::profile_order::ProfileOrder::default(),
+            created_since_reconcile: Vec::new(),
             order_saved: false,
             durable_order: crate::profile_order::ProfileOrder::default(),
             durable_order_doc: None,
@@ -1486,6 +1492,7 @@ impl<Io> OperatorSession<Io> {
         if self.order_reconciled_at == Some(self.profiles_generation) {
             return;
         }
+        let mut created = std::mem::take(&mut self.created_since_reconcile);
         let changed = match self.vault.as_ref() {
             Some(vault) => {
                 let rows = || {
@@ -1501,11 +1508,13 @@ impl<Io> OperatorSession<Io> {
                 };
                 // The durable copy follows the vault too, so a failed
                 // write's revert shows current names.
-                self.durable_order.reconcile(rows(), pending);
-                self.profile_order.reconcile(rows(), pending)
+                self.durable_order.reconcile(rows(), pending, &created);
+                self.profile_order.reconcile(rows(), pending, &created)
             }
             None => crate::profile_order::Reconciled::default(),
         };
+        created.clear();
+        self.created_since_reconcile = created;
         if changed.stored_changed || changed.sequence_changed {
             self.profiles_generation = self.profiles_generation.wrapping_add(1);
         }
@@ -3067,6 +3076,9 @@ impl<Io> OperatorSession<Io> {
         assignment_action: &'static str,
     ) -> Result<OperationId, String> {
         self.refuse_existing(&profile.username, label)?;
+        // The next order reconcile appends this profile in creation
+        // sequence with its batch (an import submits in file order).
+        self.created_since_reconcile.push(profile.uid);
         self.save_profile_with_log_action(profile, mirror, label, assignment_action)
     }
 

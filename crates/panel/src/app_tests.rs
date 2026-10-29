@@ -5334,8 +5334,8 @@ fn close_needs_no_prompt_once_the_save_settled() {
     assert!(closed.text.trim().is_empty(), "the ✕ shut Profiles");
 }
 
-/// The Profiles list shows the one saved order (here seeded by uid:
-/// zed, anna, mike), not the vault's alphabetical order.
+/// The Profiles list shows the one saved order, not the vault's
+/// alphabetical order: after a saved move, the rows follow it.
 #[test]
 fn the_profiles_list_shows_the_saved_order_not_the_vaults() {
     let _guard = crate::test_support::imgui_context_guard();
@@ -5348,6 +5348,24 @@ fn the_profiles_list_shows_the_saved_order_not_the_vaults() {
             ("mike", "mpass", 3),
         ],
     );
+    ui.frame();
+    assert_eq!(
+        ui.session.core.profile_order().names(),
+        ["anna", "mike", "zed"],
+        "seeded in vault order"
+    );
+    let op = ui
+        .session
+        .core
+        .profile_order()
+        .drop_op(
+            ui.session.core.profile_identity("zed").unwrap(),
+            ui.session.core.profile_identity("anna").unwrap(),
+        )
+        .expect("a Profiles drop");
+    ui.session
+        .reorder_profiles(op, frontend_core::ReorderSurface::Profiles);
+    ui.finish_writes();
     let shown = ui.frame();
     let at = |name: &str| {
         shown
