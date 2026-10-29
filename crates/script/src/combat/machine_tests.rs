@@ -3894,6 +3894,25 @@ fn melee_pick_never_takes_a_target_behind_a_closed_pen() {
 }
 
 #[test]
+fn melee_pick_does_not_fall_back_when_the_posted_reach_flood_is_stale() {
+    let mut scene = Scene::new("cow");
+    let here = scene.local.player.actor.tile;
+    scene.refresh();
+    let mut request = scene.request();
+    request.stand = Some(here);
+    let stale_origin = tile(here.x + 2, here.z);
+    let stale = flood_view(tile(here.x - 10, here.z - 10), 32, &[], stale_origin);
+    let mut harness = Harness::new_with_reach(&scene, request, stale);
+
+    assert_eq!(harness.machine.engaged(), None);
+    assert!(
+        harness.pending(&scene, 1).is_none(),
+        "a stale posted flood must not enable a straight-line melee pick"
+    );
+}
+
+
+#[test]
 fn failed_stand_walks_retry_to_a_bound_then_report_no_target() {
     let mut scene = Scene::new("cow");
     let here = scene.local.player.actor.tile;
@@ -3964,14 +3983,9 @@ fn stand_walk_route_ended_at_the_network_aim_is_arrival_not_failure() {
         crate::native::WalkEnd::RouteEnded,
         Some("route stopped short"),
     );
-    assert!(harness.pending(&scene, 2).is_some());
+    attack(harness.pending(&scene, 2));
     assert_eq!(harness.machine.stand_walk_failures, 0);
     assert_eq!(harness.machine.end, None);
-
-    scene.local.player.actor.tile = aim;
-    scene.refresh();
-    post_walk_receipt(&mut harness, 2, crate::native::WalkEnd::Arrived, None);
-    attack(harness.pending(&scene, 3));
 }
 
 #[test]

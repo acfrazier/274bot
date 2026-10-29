@@ -4014,6 +4014,132 @@ fn target_gone_walk_without_observed_arrival_blocks_reengagement() {
 }
 
 #[test]
+fn unreachable_stand_ends_quester_step_with_the_last_walk_failure() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let here = api::WorldTile {
+        x: 3000,
+        z: 3000,
+        level: 0,
+    };
+    let stand = api::WorldTile {
+        x: 3010,
+        z: 3000,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    seed_abort_scene(&mut snapshot, here, 40, Vec::new(), None, None);
+    let mut run = combat_test_run(
+        imp_target(&data),
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    let mut ledger = None;
+    with_step_context(&snapshot, &mut ledger, 1, |cx| run.begin_combat(cx).unwrap());
+
+    let mut walks = 0;
+    for (tick, detail) in [
+        (2, "first route failure"),
+        (3, "second route failure"),
+        (4, "last route failure"),
+    ] {
+        assert!(
+            with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx)).is_pending(),
+            "the walk request must remain pending"
+        );
+        assert_eq!(last_walk(&ledger).target, stand);
+        walks += 1;
+        post_walk_end(&mut ledger, tick, WalkEnd::NoPath, Some(detail));
+    }
+
+    let result = with_step_context(&snapshot, &mut ledger, 5, |cx| run.poll(cx));
+    match result {
+        Poll::Ready(Err(ActionError::Blocked(reason))) => {
+            assert_eq!(reason.as_ref(), "last route failure");
+        }
+        Poll::Ready(Err(other)) => panic!("expected the last route failure, got {other:?}"),
+        Poll::Ready(Ok(_)) => panic!("the unreachable stand must not complete the step"),
+        Poll::Pending => panic!("the spent walk budget must end the step"),
+    }
+    assert_eq!(walks, 3);
+    assert!(run.action.is_none(), "the Quester must not start another fight");
+}
+
+#[test]
+fn return_to_stand_route_ended_at_network_tile_is_arrival() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let stand = api::WorldTile {
+        x: 2632,
+        z: 3222,
+        level: 0,
+    };
+    let here = api::WorldTile {
+        x: 2628,
+        z: 3222,
+        level: 0,
+    };
+    let adjacent = api::WorldTile {
+        x: 2631,
+        z: 3222,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    seed_abort_scene(&mut snapshot, here, 40, Vec::new(), None, None);
+    let mut ledger = None;
+    let mut run = combat_test_run(
+        imp_target(&data),
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    assert!(
+        with_step_context(&snapshot, &mut ledger, 12, |cx| {
+            run.on_combat_report(report(CombatEnd::TargetGone), cx)
+        })
+        .is_pending()
+    );
+    let request_id = last_walk(&ledger).request_id;
+
+    let mut local = snapshot.local_player().unwrap().clone();
+    local.player.actor.tile = here;
+    local.player.network = adjacent;
+    snapshot.seed_local_player(local);
+    let result = with_step_context(&snapshot, &mut ledger, 13, |cx| {
+        run.on_return_walk(
+            WalkReceipt {
+                goal: None,
+                request_id,
+                evidence: cx.tick.cx.evidence(),
+                end: WalkEnd::RouteEnded,
+                blocked: None,
+                detail: None,
+                refusal: None,
+                assessment: None,
+                escape: None,
+            },
+            cx,
+        )
+    });
+
+    assert!(result.is_pending(), "the return walk arrived at the stand");
+    assert_eq!(run.return_walk_failures, 0);
+    assert_eq!(run.target_gone_restarts, 1);
+    assert!(matches!(&run.phase, Phase::Combat));
+    assert!(matches!(run.action.as_ref(), Some(Action::Combat(_))));
+    assert_eq!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|row| matches!(&row.effect, crate::native::HostEffect::Walk(_)))
+            .count(),
+        1,
+        "the Quester must not request another walk"
+    );
+}
+
+#[test]
 fn combat_walk_mappers_preserve_typed_evidence_without_reengaging() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let gates: Arc<[api::selected::QuestGate]> = Arc::from([api::selected::QuestGate::Complete(
