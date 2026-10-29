@@ -204,3 +204,26 @@ fn any_thread_reads_a_slots_current_tick() {
     done_tx.send(()).unwrap();
     worker.join().unwrap();
 }
+
+/// A stderr that refuses every write, as a redirected stderr on a full disk does.
+struct FullDisk;
+
+impl std::io::Write for FullDisk {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::from(std::io::ErrorKind::StorageFull))
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Err(std::io::Error::from(std::io::ErrorKind::StorageFull))
+    }
+}
+
+#[test]
+fn a_failed_debug_write_is_dropped_instead_of_panicking() {
+    // `eprintln!` panics here; a panic while a caller holds the shared nav
+    // lock poisoned it for every slot (T14-POISON-DIAG).
+    write_line(&mut FullDisk, format_args!("[nav-trace slot] walk-send"));
+
+    let mut out = Vec::new();
+    write_line(&mut out, format_args!("[nav-trace slot] walk-send"));
+    assert_eq!(out, b"[nav-trace slot] walk-send\n");
+}

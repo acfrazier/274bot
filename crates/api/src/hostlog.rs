@@ -414,9 +414,18 @@ pub fn emit(emit: Emit<'_>, args: fmt::Arguments<'_>) {
     }
 }
 
+/// Writes one debug line to stderr. A failed write (for example a full disk
+/// behind a redirected stderr) is dropped: `eprintln!` would panic instead, and
+/// callers log while they hold shared locks, so one failed write would poison
+/// them for every slot.
 #[cfg(not(test))]
 fn write_stderr(line: fmt::Arguments<'_>) {
-    eprintln!("{line}");
+    write_line(&mut std::io::stderr().lock(), line);
+}
+
+fn write_line(out: &mut impl std::io::Write, line: fmt::Arguments<'_>) {
+    // A logging failure has nowhere better to go than the sink that failed.
+    let _ = writeln!(out, "{line}");
 }
 
 #[cfg(test)]
