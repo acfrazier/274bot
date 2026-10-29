@@ -537,11 +537,18 @@ fn table(ui: &Ui, session: &mut Session) {
                     match profile_drop_target(ui) {
                         Some(ProfileDrop::Dropped(moving)) => dropped = Some((moving, index)),
                         Some(ProfileDrop::Hover(moving)) => {
-                            // The line marks where the drop would land.
+                            // The line marks where the drop would land. It
+                            // draws on the table's background channel: this
+                            // cell's own draw channel is clipped to the
+                            // Profile column, so a plain window-draw-list
+                            // line would stop at that column's edge instead
+                            // of crossing the row.
                             if let Some(before) =
                                 insertion_before(drop_op(model, moving, index).as_ref())
                             {
-                                profile_insertion_marker(ui, rect_min, rect_max, before);
+                                ui.with_table_background_channel(|| {
+                                    profile_insertion_marker(ui, rect_min, rect_max, before);
+                                });
                             }
                         }
                         None => {}
