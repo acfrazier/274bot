@@ -7931,6 +7931,7 @@ mod diagnostic_tests {
             map_members: true,
             combat_level: Some(50),
             inv: HashMap::from([(995, 60)]),
+            stats: (0..7).map(|skill| (skill, 0)).collect(),
             ..WorldState::empty()
         };
         let legacy = FindOptions {
