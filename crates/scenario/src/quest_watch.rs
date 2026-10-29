@@ -62,6 +62,9 @@ struct SeedPlan {
     #[serde(default)]
     qp_varp_id: Option<i32>,
     start_tile: [i32; 3],
+    /// Campaign oracle metadata is checked by the live driver, not seeded.
+    #[serde(default, rename = "gap")]
+    _gap: Option<serde::de::IgnoredAny>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -816,6 +819,7 @@ mod tests {
         assert_eq!(left.wait.budget_ticks, right.wait.budget_ticks);
         match (&left.kind, &right.kind) {
             (StepKind::Perform { .. }, StepKind::Perform { .. }) => {}
+            (StepKind::Repeat { .. }, StepKind::Repeat { .. }) => {}
             (
                 StepKind::Await {
                     evidence: left_evidence,
@@ -827,7 +831,7 @@ mod tests {
                 },
             ) => assert_eq!(left_evidence, right_evidence),
             (StepKind::Relog, StepKind::Relog) => {}
-            _ => panic!("seed step kinds differ between campaign and watch"),
+            _ => panic!("seed step kinds differ at {}", left.name),
         }
     }
 
@@ -840,6 +844,25 @@ mod tests {
             Ok(_) => panic!("{what} must refuse"),
             Err(error) => error,
         }
+    }
+
+    #[test]
+    fn campaign_gap_metadata_does_not_change_the_seed() {
+        let seed = build_seed_scenario(plan(CAMPAIGN_TEST_SEED_JSON)).unwrap();
+        let mut document: serde_json::Value =
+            serde_json::from_str(CAMPAIGN_TEST_SEED_JSON).unwrap();
+        document["gap"] = serde_json::json!({
+            "stage": "mortton:1",
+            "step_id": "prepare-temple",
+            "park_reason": "no step for stage",
+        });
+        let with_gap = build_seed_scenario(SeedPlan::deserialize(&document).unwrap()).unwrap();
+        assert_eq!(seed.steps.len(), with_gap.steps.len());
+        for (left, right) in seed.steps.iter().zip(&with_gap.steps) {
+            assert_same_seed_step(left, right);
+        }
+        document["unexpected"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<SeedPlan>(document).is_err());
     }
 
     #[test]

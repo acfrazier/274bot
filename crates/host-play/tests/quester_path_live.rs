@@ -255,8 +255,7 @@ fn campaign_gap(plan: &serde_json::Value) -> Result<Option<CampaignGap>, String>
         return Err("campaign gap step_id must not be empty".into());
     }
     match gap.park_reason.as_str() {
-        "wait exhausted"
-            if gap.stage.as_ref().is_none_or(|stage| !stage.is_empty()) => {}
+        "wait exhausted" if gap.stage.as_ref().is_none_or(|stage| !stage.is_empty()) => {}
         "no step for stage" if gap.stage.as_ref().is_some_and(|stage| !stage.is_empty()) => {}
         "wait exhausted" => return Err("wait gap stage must be non-empty when supplied".into()),
         "no step for stage" => return Err("no-step gap requires a non-empty stage".into()),
@@ -390,10 +389,9 @@ fn campaign_trace_messages(
     let prefix = format!("quester {quest}:");
     let mut by_account = std::collections::BTreeMap::<String, Vec<String>>::new();
     for record in logs {
-        let (Some(account), Some(message)) = (
-            record["account"].as_str(),
-            record["message"].as_str(),
-        ) else {
+        let (Some(account), Some(message)) =
+            (record["account"].as_str(), record["message"].as_str())
+        else {
             continue;
         };
         if message.starts_with(&prefix)
@@ -445,10 +443,9 @@ fn campaign_actor_receipts(
         if !path.is_file() {
             continue;
         }
-        let receipt: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(&path).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| format!("{}: {error}", path.display()))?;
+        let receipt: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).map_err(|error| error.to_string())?)
+                .map_err(|error| format!("{}: {error}", path.display()))?;
         if let Some(roles) = receipt["roles"].as_array() {
             for actor in roles {
                 insert_actor_receipt(&mut receipts, actor)?;
@@ -683,9 +680,7 @@ fn prove_actor_gap(
             let stage_events = root_events
                 .iter()
                 .filter(|event| {
-                    event.0 < context_index
-                        && event.1.stage == expected_stage
-                        && !event.1.repeated
+                    event.0 < context_index && event.1.stage == expected_stage && !event.1.repeated
                 })
                 .collect::<Vec<_>>();
             let last_begin = stage_events
@@ -699,9 +694,9 @@ fn prove_actor_gap(
             if last_begin.1.step_id != gap.step_id
                 || last_settled.1.step_id != gap.step_id
                 || last_begin.1.kind != last_settled.1.kind
-                || root_events.iter().any(|(index, event)| {
-                    *index > last_settled.0 && event.event == "begin"
-                })
+                || root_events
+                    .iter()
+                    .any(|(index, event)| *index > last_settled.0 && event.event == "begin")
                 || !prior.iter().any(|step| {
                     step["stage"].as_str() == Some(expected_stage)
                         && step["step_id"].as_str() == Some(gap.step_id.as_str())
@@ -792,15 +787,11 @@ fn live_quester_campaign() {
         std::env::var_os("QUEST_CAMPAIGN_MANIFEST").expect("QUEST_CAMPAIGN_MANIFEST"),
     );
     let campaign = campaign_cells(&manifest).unwrap_or_else(|error| panic!("{error}"));
-    let gaps = campaign
-        .iter()
-        .map(|entry| entry.gap.clone())
-        .collect::<Vec<_>>();
-    let quest = campaign[0].cell.quest.to_owned();
-    let cells = campaign
+    let quest = campaign[0].cell.quest;
+    let (cells, gaps): (Vec<_>, Vec<_>) = campaign
         .into_iter()
-        .map(|entry| entry.cell)
-        .collect::<Vec<_>>();
+        .map(|entry| (entry.cell, entry.gap))
+        .unzip();
     let result = if cells.len() == 2 {
         let roles: [Cell; 2] = cells.try_into().unwrap_or_else(|_| unreachable!());
         quester_live::run_pair(quester_live::PairCell {
@@ -811,7 +802,7 @@ fn live_quester_campaign() {
         quester_live::run(cells.into_iter().next().unwrap())
     };
     let root = PathBuf::from(std::env::var_os("LIVE_EVIDENCE_DIR").expect("LIVE_EVIDENCE_DIR"));
-    let logs = CAMPAIGN_LOGS.lock().unwrap().clone();
+    let logs = std::mem::take(&mut *CAMPAIGN_LOGS.lock().unwrap());
     let mut file = std::fs::File::create(root.join("session.jsonl")).unwrap();
     use std::io::Write;
     for line in &logs {
@@ -819,10 +810,11 @@ fn live_quester_campaign() {
     }
     drop(file);
 
-    let receipt_scan = campaign_actor_receipts(&root, &quest);
-    let gap_proof = receipt_scan.as_ref().ok().and_then(|receipts| {
-        campaign_gap_proof(&result, &gaps, &quest, &logs, receipts)
-    });
+    let receipt_scan = campaign_actor_receipts(&root, quest);
+    let gap_proof = receipt_scan
+        .as_ref()
+        .ok()
+        .and_then(|receipts| campaign_gap_proof(&result, &gaps, quest, &logs, receipts));
     let mut outcome = match &result {
         Ok(receipt) => serde_json::json!({"state": "pass", "receipt": receipt}),
         Err(error) => serde_json::json!({"state": "failed", "error": error}),
@@ -854,7 +846,6 @@ fn live_quester_campaign() {
             Ok(_) => panic!("QUEST-CAMPAIGN reported failure without a runner error"),
         }
     }
-
 }
 #[cfg(test)]
 mod smoke_tests {
@@ -1219,7 +1210,10 @@ mod campaign_gap_tests {
         assert_eq!(proof["step_id"], GAP_STEP);
         assert_eq!(proof["park_reason"], "wait exhausted");
         assert!(proof["prior_steps_settled"].as_bool().unwrap());
-        assert_eq!(proof["accounts"][0]["prior_steps"][0]["step_id"], PRIOR_STEP);
+        assert_eq!(
+            proof["accounts"][0]["prior_steps"][0]["step_id"],
+            PRIOR_STEP
+        );
         assert!(proof["accounts"][0]["prior_steps"][0]["settled"]
             .as_bool()
             .unwrap());
@@ -1330,7 +1324,10 @@ mod campaign_gap_tests {
         assert_eq!(proof["stage"], STAGE);
         assert!(proof["prior_steps_settled"].as_bool().unwrap());
         assert_eq!(proof["accounts"][0]["park_context_step"], "unknown");
-        assert_eq!(proof["accounts"][0]["prior_steps"][0]["step_id"], PRIOR_STEP);
+        assert_eq!(
+            proof["accounts"][0]["prior_steps"][0]["step_id"],
+            PRIOR_STEP
+        );
     }
 
     #[test]
