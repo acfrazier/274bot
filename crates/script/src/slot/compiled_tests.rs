@@ -2873,6 +2873,82 @@ fn native_status_logs_gatherer_last_event_at_info() {
 }
 
 #[test]
+fn completed_native_status_survives_teardown_without_copying() {
+    struct CompletingReporter(bool);
+
+    impl Script for CompletingReporter {
+        fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            if self.0 {
+                return Ok(ScriptFlow::Complete);
+            }
+            self.0 = true;
+            tick.output.status(ScriptStatus {
+                run: tick.cx.run(),
+                card: crate::CompiledId("test"),
+                phase: NativePhase::Complete,
+                active_settings: 1,
+                pending_settings: None,
+                fields: Arc::from([
+                    crate::native::StatusField {
+                        key: "ground_waited_ticks",
+                        label: "Ground pickup observed ticks",
+                        value: crate::native::StatusValue::Integer(2),
+                    },
+                    crate::native::StatusField {
+                        key: "ground_held",
+                        label: "Ground pickup held",
+                        value: crate::native::StatusValue::Integer(1),
+                    },
+                ]),
+                failure: None,
+            });
+            Ok(ScriptFlow::Continue)
+        }
+    }
+
+    let mut slot = SlotScript::new();
+    slot.start_test_script(Box::new(CompletingReporter(false)), Some(selected()))
+        .unwrap();
+    tick(&mut slot);
+    assert_eq!(slot.state(), RunState::Running);
+    let completed = slot
+        .native_status()
+        .expect("the card published its final status");
+    assert_eq!(completed.phase, NativePhase::Complete);
+
+    tick(&mut slot);
+    assert_eq!(slot.state(), RunState::Idle);
+    assert!(slot.native_run().is_none());
+    assert_eq!(
+        slot.lifecycle_receipt.as_ref().unwrap().state,
+        ScriptTerminalState::Completed
+    );
+    let retained = slot
+        .native_status()
+        .expect("completed status must remain reachable after teardown");
+    assert!(
+        Arc::ptr_eq(&completed, &retained),
+        "retain the existing status Arc"
+    );
+    for (key, expected) in [("ground_waited_ticks", 2), ("ground_held", 1)] {
+        assert!(retained.fields.iter().any(|field| {
+            field.key == key
+                && matches!(field.value, crate::native::StatusValue::Integer(value) if value == expected)
+        }));
+    }
+    tick(&mut slot);
+    assert!(Arc::ptr_eq(&completed, &slot.native_status().unwrap()));
+
+    slot.start_test_script(Box::new(CompletingReporter(false)), Some(selected()))
+        .unwrap();
+    assert!(
+        slot.native_status().is_none(),
+        "a new run clears the old terminal status"
+    );
+    slot.stop();
+}
+
+#[test]
 fn terminal_native_blocked_stop_logs_once_through_output_status() {
     install_status_line_sink();
     for (slot_name, phase, flow_blocked) in [

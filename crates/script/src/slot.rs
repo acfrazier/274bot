@@ -4024,6 +4024,10 @@ impl SlotScript {
                     self.compiled_interacts.clear();
                     self.compiled_interact_outcome_seqs.clear();
                 }
+                self.terminal_native_status = self
+                    .compiled
+                    .as_ref()
+                    .and_then(|run| run.output.status.as_ref().map(Arc::clone));
                 self.teardown_compiled(StopReason::Completed);
                 self.watchdog.cancel_clear();
                 self.state = RunState::Idle;
