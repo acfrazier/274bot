@@ -961,6 +961,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Scripts
 
+- Added stock and pricing facts for ten more shops used by Quester paths.
 - Fixed Quester rejecting quests whose game-journal title differs from the
   script's label, including Rune Mysteries.
 - Quester now waits for a random-event window to close before it reads the
