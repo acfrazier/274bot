@@ -1058,41 +1058,41 @@ fn run_world_switch_restart_cell() {
 
 #[cfg(feature = "js")]
 #[test]
-#[ignore = "requires LIVE=1, a local 289 engine at WORLD_GAME_PORT/BOT_HTTP_PORT (Engine A 127.0.0.1:44594/1080 by default), disposable HOME/cache, and real R289 assets"]
+#[ignore = "requires LIVE=1, a local 289 engine at WORLD_GAME_PORT (Engine A 127.0.0.1:44594 by default) and BOT_HTTP_PORT, which is required and has no default (Engine A 127.0.0.1:1080), disposable HOME/cache, and real R289 assets"]
 fn seat_live_js_promise() {
     run_promise_cell();
 }
 
 #[cfg(feature = "js")]
 #[test]
-#[ignore = "requires LIVE=1, a local 289 engine at WORLD_GAME_PORT/BOT_HTTP_PORT (Engine A 127.0.0.1:44594/1080 by default), disposable HOME/cache, and real R289 assets"]
+#[ignore = "requires LIVE=1, a local 289 engine at WORLD_GAME_PORT (Engine A 127.0.0.1:44594 by default) and BOT_HTTP_PORT, which is required and has no default (Engine A 127.0.0.1:1080), disposable HOME/cache, and real R289 assets"]
 fn seat_live_hook_callbacks() {
     run_hold_cell(false, false, false);
 }
 
 #[test]
-#[ignore = "requires LIVE=1, a local 289 engine at WORLD_GAME_PORT/BOT_HTTP_PORT (Engine A 127.0.0.1:44594/1080 by default), disposable HOME/cache, and real R289 assets"]
+#[ignore = "requires LIVE=1, a local 289 engine at WORLD_GAME_PORT (Engine A 127.0.0.1:44594 by default) and BOT_HTTP_PORT, which is required and has no default (Engine A 127.0.0.1:1080), disposable HOME/cache, and real R289 assets"]
 fn seat_live_native_card() {
     run_native_cell();
 }
 
 #[cfg(feature = "js")]
 #[test]
-#[ignore = "requires LIVE=1, a local 289 engine at WORLD_GAME_PORT/BOT_HTTP_PORT (Engine A 127.0.0.1:44594/1080 by default), disposable HOME/cache, and real R289 assets"]
+#[ignore = "requires LIVE=1, a local 289 engine at WORLD_GAME_PORT (Engine A 127.0.0.1:44594 by default) and BOT_HTTP_PORT, which is required and has no default (Engine A 127.0.0.1:1080), disposable HOME/cache, and real R289 assets"]
 fn seat_live_guardian_hold() {
     run_hold_cell(true, true, false);
 }
 
 #[cfg(feature = "js")]
 #[test]
-#[ignore = "requires LIVE=1, a local 289 engine at WORLD_GAME_PORT/BOT_HTTP_PORT (Engine A 127.0.0.1:44594/1080 by default), disposable HOME/cache, and real R289 assets"]
+#[ignore = "requires LIVE=1, a local 289 engine at WORLD_GAME_PORT (Engine A 127.0.0.1:44594 by default) and BOT_HTTP_PORT, which is required and has no default (Engine A 127.0.0.1:1080), disposable HOME/cache, and real R289 assets"]
 fn seat_live_kept_reconnect_and_stop() {
     run_hold_cell(false, false, true);
 }
 
 #[cfg(feature = "js")]
 #[test]
-#[ignore = "requires LIVE=1, a local 289 engine at WORLD_GAME_PORT/BOT_HTTP_PORT (Engine A 127.0.0.1:44594/1080 by default), disposable HOME/cache, and real R289 assets"]
+#[ignore = "requires LIVE=1, a local 289 engine at WORLD_GAME_PORT (Engine A 127.0.0.1:44594 by default) and BOT_HTTP_PORT, which is required and has no default (Engine A 127.0.0.1:1080), disposable HOME/cache, and real R289 assets"]
 fn seat_live_world_switch_restart() {
     run_world_switch_restart_cell();
 }
