@@ -260,6 +260,15 @@ Classify compiler-only or test-only changed hunks in the task report when
 they have no game behavior to exercise. Keep their compile or test proof.
 Do not hide a whole production file in `not_live` for such a change.
 
+## Background work health
+
+`script.work-admission-headless` controls a native step and the monotonic clock.
+It proves that a slow returned step permits later work, that shutdown reports
+an unreturned worker, and that panic and start failure keep their conditions.
+It also checks retained resource custody. These states cannot be created by
+game content. `panel.headed-nav-script` complements this proof with real profile
+and cache preparation before the live script starts.
+
 ## Add a cell
 
 1. Write and run the live cell against real game content. Do not seed the target resource or entity.

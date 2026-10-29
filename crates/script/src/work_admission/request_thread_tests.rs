@@ -310,7 +310,7 @@ fn request_shutdown_deadline_retains_custody_until_the_thread_returns() {
 }
 
 #[test]
-fn request_threads_keep_running_when_the_background_worker_stalls() {
+fn request_threads_keep_running_when_the_background_worker_is_unavailable() {
     let clock = Arc::new(ManualClock::new());
     let shared = new_service(Arc::clone(&clock));
     let conditions = conditions(&shared);
@@ -348,12 +348,13 @@ fn request_threads_keep_running_when_the_background_worker_stalls() {
         .recv_timeout(Duration::from_secs(2))
         .expect("request thread enters its step");
 
-    clock.advance(WORKER_STALL_LIMIT + Duration::from_millis(1));
-    shared.lock().observe_health();
+    // Inject the permanent outage at the service boundary. A slow step alone
+    // no longer establishes loss. The real worker-panic test covers detection.
+    latch_outage(&shared.lock().shared, ConditionCause::Panicked, clock.now());
     let condition = shared
         .lock()
         .health()
-        .expect("a stalled background worker latches the outage");
+        .expect("the injected worker outage latches");
 
     let observed = shared.lock().publication_epoch();
     assert_eq!(
