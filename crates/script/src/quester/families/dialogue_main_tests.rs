@@ -937,11 +937,7 @@ fn refused_chat_advance_does_not_adopt_a_main_scroll() {
 #[test]
 fn a_main_scroll_without_an_owned_chat_page_stays_fail_closed() {
     let ids = dialogue_ui();
-    for root in [
-        ids.scroll_root,
-        ids.quest_scroll_root,
-        ids.chapter_root,
-    ] {
+    for root in [ids.scroll_root, ids.quest_scroll_root, ids.chapter_root] {
         let mut snapshot = snapshot();
         let mut ledger = None;
         let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {

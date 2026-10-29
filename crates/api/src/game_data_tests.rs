@@ -1464,10 +1464,7 @@ fn dialogue_ui_controls_are_optional_and_refuse_invalid_identities() {
         .is_none());
     let mut duplicate_chapter = valid.clone();
     duplicate_chapter["chapter_root"] = duplicate_chapter["scroll_root"].clone();
-    assert!(decode(&duplicate_chapter)
-        .unwrap()
-        .dialogue_ui()
-        .is_none());
+    assert!(decode(&duplicate_chapter).unwrap().dialogue_ui().is_none());
     let mut duplicate = valid.clone();
     duplicate["book_forward"] = duplicate["book_close"].clone();
     assert!(decode(&duplicate).unwrap().dialogue_ui().is_none());
