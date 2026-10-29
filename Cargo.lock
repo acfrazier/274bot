@@ -3413,6 +3413,7 @@ version = "0.2.7"
 dependencies = [
  "api",
  "arboard",
+ "bytemuck",
  "client",
  "dear-imgui-rs",
  "dear-imgui-wgpu",
