@@ -22,6 +22,13 @@ impl MakeXProduct for MakeProductView {
             .find(|button| button.quantity == -1 && button.component_id >= 0)
             .map(|button| button.component_id)
     }
+
+    fn fixed_quantity_component_id(&self, quantity: i32) -> Option<i32> {
+        self.buttons
+            .iter()
+            .find(|button| button.quantity == quantity && button.component_id >= 0)
+            .map(|button| button.component_id)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -190,33 +197,35 @@ impl NativeMachine for MakeMachine {
                     let Some(products) = snapshot.make_products() else {
                         return Poll::Pending;
                     };
-                    let product = products
-                        .value
-                        .iter()
-                        .find(|product| product.object_id == self.request.menu_id);
-                    let Some(product) = product else {
-                        if now >= self.deadline {
+                    let remaining = self.request.qty - now_held.unwrap_or(0);
+                    let component_id = match self.make_x.select_fixed(
+                        Some(products.value),
+                        self.request.menu_id,
+                        remaining,
+                    ) {
+                        MakeXSelection::MenuMissing => {
+                            if now >= self.deadline {
+                                return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                    "make menu did not expose the product",
+                                ))));
+                            }
+                            return Poll::Pending;
+                        }
+                        MakeXSelection::MissingButton => {
                             return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "make menu did not expose the product",
+                                "make menu has no fixed-quantity button for remaining target",
                             ))));
                         }
-                        return Poll::Pending;
+                        MakeXSelection::InvalidCount => {
+                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                "make quantity must be positive",
+                            ))));
+                        }
+                        MakeXSelection::Click { component_id } => component_id,
                     };
-                    let Some(button) = product
-                        .buttons
-                        .iter()
-                        .filter(|button| button.quantity > 0)
-                        .max_by_key(|button| button.quantity)
-                    else {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                            "make menu has no fixed-quantity button",
-                        ))));
-                    };
-                    std::task::ready!(crate::native::defer_budget(cx.emit(
-                        InteractReq::IfButton {
-                            component_id: button.component_id,
-                        },
-                    )))?;
+                    std::task::ready!(crate::native::defer_budget(
+                        cx.emit(InteractReq::IfButton { component_id },)
+                    ))?;
                     self.phase = Phase::Product;
                     self.deadline = now.saturating_add(PRODUCT_BOUND);
                     return Poll::Pending;
@@ -258,6 +267,10 @@ mod tests {
     use client::io::ServerProt;
 
     fn make_menu_client(button_text: &str) -> Client {
+        make_menu_client_with_buttons(&[button_text])
+    }
+
+    fn make_menu_client_with_buttons(button_texts: &[&str]) -> Client {
         let mut client = Client::new(ClientConfig {
             host: "127.0.0.1".into(),
             port: 43594,
@@ -272,13 +285,19 @@ mod tests {
             name: "Wool".into(),
             ..Default::default()
         };
+        let button_ids = (0..button_texts.len())
+            .map(|index| 2120 + index as i32)
+            .collect::<Vec<_>>();
+        let mut children = Vec::with_capacity(button_ids.len() + 1);
+        children.push(2110);
+        children.extend(button_ids.iter().copied());
         client.set_iface(
             2100,
             IfType {
                 id: 2100,
                 layer_id: 2100,
                 r#type: ComponentType::TYPE_LAYER,
-                children: Some(vec![2110, 2120]),
+                children: Some(children),
                 ..Default::default()
             },
         );
@@ -299,23 +318,25 @@ mod tests {
                 ..Default::default()
             },
         );
-        client.set_iface(
-            2120,
-            IfType {
-                id: 2120,
-                layer_id: 2100,
-                r#type: ComponentType::TYPE_TEXT,
-                button_text: button_text.into(),
-                ..Default::default()
-            },
-        );
-        client.set_iface_mut(
-            2120,
-            IfTypeMut {
-                button_type: ButtonType::BUTTON_OK,
-                ..Default::default()
-            },
-        );
+        for (component_id, button_text) in button_ids.into_iter().zip(button_texts) {
+            client.set_iface(
+                component_id,
+                IfType {
+                    id: component_id,
+                    layer_id: 2100,
+                    r#type: ComponentType::TYPE_TEXT,
+                    button_text: (*button_text).into(),
+                    ..Default::default()
+                },
+            );
+            client.set_iface_mut(
+                component_id,
+                IfTypeMut {
+                    button_type: ButtonType::BUTTON_OK,
+                    ..Default::default()
+                },
+            );
+        }
         client.chat_modal_id = 2100;
         client.bump_gens(ServerProt::IF_OPENCHAT);
         client
@@ -327,6 +348,39 @@ mod tests {
         snapshot.rebuild_family(client, api::snapshot::Family::MakeProducts);
         snapshot.seed_inventory(Vec::new(), 28);
         snapshot
+    }
+
+    fn menu_snapshot_with_held(client: &Client, count: i32) -> GameSnapshot {
+        let mut snapshot = menu_snapshot(client);
+        snapshot.seed_inventory(
+            vec![api::snapshot::ItemView {
+                def: api::snapshot::ItemDefView {
+                    id: 1759,
+                    name: Some("Ball of wool".into()),
+                    stackable: false,
+                    members: false,
+                    base_value: 1,
+                    noted: false,
+                    certificate_link: -1,
+                    certificate_template: -1,
+                },
+                container: api::snapshot::ItemContainer::Inventory,
+                action_family: api::snapshot::ItemActionFamily::Held,
+                slot: 0,
+                count,
+                actions: Vec::new(),
+                component_id: 3214,
+            }],
+            28,
+        );
+        snapshot
+    }
+
+    fn request_with_qty(make_x: bool, qty: i32) -> MakeRequest {
+        MakeRequest {
+            qty,
+            ..request(make_x)
+        }
     }
 
     fn request(make_x: bool) -> MakeRequest {
@@ -457,7 +511,7 @@ mod tests {
         let client = make_menu_client("Make 10");
         let snapshot = menu_snapshot(&client);
         let mut ledger = None;
-        let handle = start_machine(&snapshot, &mut ledger, request(false));
+        let handle = start_machine(&snapshot, &mut ledger, request_with_qty(false, 10));
         let denied = with_tick(&snapshot, &mut ledger, 2, |tick| {
             spend_interaction(&mut tick.cx);
             tick.actions.poll(&handle, &mut tick.cx)
@@ -473,5 +527,49 @@ mod tests {
             &ledger.as_ref().unwrap().outbox[0].effect,
             HostEffect::Interaction(InteractReq::IfButton { component_id: 2120 })
         ));
+    }
+
+    #[test]
+    fn fixed_make_button_selects_exact_held_target_remainder() {
+        let client = make_menu_client_with_buttons(&["Make 5", "Make 10"]);
+        let snapshot = menu_snapshot_with_held(&client, 5);
+        let mut ledger = None;
+        let handle = start_machine(&snapshot, &mut ledger, request_with_qty(false, 10));
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox[0].effect,
+            HostEffect::Interaction(InteractReq::IfButton { component_id: 2120 })
+        ));
+    }
+
+    #[test]
+    fn fixed_make_button_requires_an_exact_remaining_quantity() {
+        let client = make_menu_client("Make 5");
+        let snapshot = menu_snapshot(&client);
+        let mut ledger = None;
+        let handle = start_machine(&snapshot, &mut ledger, request_with_qty(false, 10));
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 2, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            }),
+            Poll::Ready(Err(ActionError::Failed(reason)))
+                if reason.as_ref() == "make menu has no fixed-quantity button for remaining target"
+        ));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+    #[test]
+    fn production_adapter_state_sizes_stay_within_explicit_bounds() {
+        let request = std::mem::size_of::<MakeRequest>();
+        let machine = std::mem::size_of::<MakeMachine>();
+        let core = std::mem::size_of::<MakeXCore>();
+        assert!(request <= 32, "MakeRequest grew to {request} bytes");
+        assert!(machine <= 128, "MakeMachine grew to {machine} bytes");
+        assert!(core <= 16, "MakeXCore grew to {core} bytes");
+        println!(
+            "production adapter state sizes: MakeRequest={request} MakeMachine={machine} MakeXCore={core} bytes"
+        );
     }
 }

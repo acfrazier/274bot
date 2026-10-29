@@ -1,4 +1,4 @@
-//! Shared Make-X selection and count sequencing for runtime adapters.
+//! Shared production selection and Make-X count sequencing for runtime adapters.
 
 /// Frozen family-1 count-dialog open wait.
 pub const COUNT_OPEN_MS: u64 = 3_000;
@@ -13,6 +13,12 @@ pub trait MakeXProduct {
     fn object_id(&self) -> i32;
     /// Return the posted Make-X button, if the row offers one.
     fn make_x_component_id(&self) -> Option<i32>;
+
+    /// Return the fixed-quantity button for this exact count when exposed.
+    /// Adapters that only use Make-X may keep the default unavailable result.
+    fn fixed_quantity_component_id(&self, _quantity: i32) -> Option<i32> {
+        None
+    }
 }
 
 /// Current phase of the shared Make-X sequence.
@@ -33,11 +39,11 @@ pub enum MakeXPhase {
 pub enum MakeXSelection {
     /// The sequence cannot select from the current menu.
     MenuMissing,
-    /// The product has no Make-X button.
+    /// The product has no button for the requested selection.
     MissingButton,
     /// The caller supplied no valid count.
     InvalidCount,
-    /// Click the selected product's Make-X button.
+    /// Click the selected product button.
     Click {
         /// The posted button component ID.
         component_id: i32,
@@ -65,7 +71,7 @@ pub enum MakeXStep {
     ),
 }
 
-/// Shared Make-X selection, count-dialog latch and make-menu close sequence.
+/// Shared fixed-quantity/Make-X selection and count-dialog sequencing.
 /// Runtime adapters supply their row view, count semantics and clock.
 /// `Default` uses the same unselected state as [`Self::new`].
 #[derive(Clone, Copy)]
@@ -130,6 +136,30 @@ impl MakeXCore {
         MakeXSelection::Click { component_id }
     }
 
+    /// Resolve the exact fixed-quantity button for one posted product row.
+    pub fn select_fixed<P: MakeXProduct>(
+        &self,
+        products: Option<&[P]>,
+        object_id: i32,
+        quantity: i32,
+    ) -> MakeXSelection {
+        if self.phase != MakeXPhase::Select {
+            return MakeXSelection::MenuMissing;
+        }
+        if quantity < 1 {
+            return MakeXSelection::InvalidCount;
+        }
+        let Some(product) =
+            products.and_then(|rows| rows.iter().find(|row| row.object_id() == object_id))
+        else {
+            return MakeXSelection::MenuMissing;
+        };
+        let Some(component_id) = product.fixed_quantity_component_id(quantity) else {
+            return MakeXSelection::MissingButton;
+        };
+        MakeXSelection::Click { component_id }
+    }
+
     /// Advance the frozen open → one answer → close → menu-close order.
     /// `timed_out` belongs to the current phase's adapter-owned clock.
     pub fn step(
@@ -168,5 +198,72 @@ impl MakeXCore {
             }
             MakeXPhase::WaitMenuClose => MakeXStep::Wait,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Product {
+        id: i32,
+        buttons: &'static [(i32, i32)],
+        make_x: Option<i32>,
+    }
+
+    impl MakeXProduct for Product {
+        fn object_id(&self) -> i32 {
+            self.id
+        }
+
+        fn make_x_component_id(&self) -> Option<i32> {
+            self.make_x
+        }
+
+        fn fixed_quantity_component_id(&self, quantity: i32) -> Option<i32> {
+            self.buttons
+                .iter()
+                .find(|(button_quantity, component_id)| {
+                    *button_quantity == quantity && *component_id >= 0
+                })
+                .map(|(_, component_id)| *component_id)
+        }
+    }
+
+    #[test]
+    fn fixed_selection_requires_exact_product_and_quantity() {
+        let products = [
+            Product {
+                id: 7,
+                buttons: &[(1, 201), (5, 205), (10, 210)],
+                make_x: Some(220),
+            },
+            Product {
+                id: 8,
+                buttons: &[(1, 301), (5, 305), (10, 310)],
+                make_x: Some(320),
+            },
+        ];
+        let core = MakeXCore::new();
+        assert_eq!(
+            core.select_fixed(Some(&products), 7, 5),
+            MakeXSelection::Click { component_id: 205 }
+        );
+        assert_eq!(
+            core.select_fixed(Some(&products), 8, 10),
+            MakeXSelection::Click { component_id: 310 }
+        );
+        assert_eq!(
+            core.select_fixed(Some(&products), 7, 20),
+            MakeXSelection::MissingButton
+        );
+        assert_eq!(
+            core.select_fixed(Some(&products), 9, 1),
+            MakeXSelection::MenuMissing
+        );
+        assert_eq!(
+            core.select_fixed(Some(&products), 7, 0),
+            MakeXSelection::InvalidCount
+        );
     }
 }

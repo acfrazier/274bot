@@ -648,12 +648,9 @@ pub(super) fn compile_make(
             if anchor_arg.source.trim().is_empty() {
                 return Err(CompileError::code("invalid-make"));
             }
-            let loc = cx
-                .selected
-                .loc_by_config(&loc_arg.name)
-                .ok_or_else(|| {
-                    CompileError::code("unresolved-loc").with_detail(loc_arg.name.as_str())
-                })?;
+            let loc = cx.selected.loc_by_config(&loc_arg.name).ok_or_else(|| {
+                CompileError::code("unresolved-loc").with_detail(loc_arg.name.as_str())
+            })?;
             if !loc
                 .ops
                 .iter()
@@ -744,14 +741,9 @@ impl StepRun for MakeRun {
         }
         if self.trigger.is_none() && self.make.is_none() {
             if let Some(trigger) = &self.trigger_plan {
-                let near = cx
-                    .tick
-                    .cx
-                    .snapshot()
-                    .local_player()
-                    .is_some_and(|player| {
-                        reach::within(player.value.player.network, trigger.tile, 6)
-                    });
+                let near = cx.tick.cx.snapshot().local_player().is_some_and(|player| {
+                    reach::within(player.value.player.network, trigger.tile, 6)
+                });
                 if !near {
                     self.walk = Some(std::task::ready!(crate::native::defer_budget(
                         cx.tick.actions.begin::<Walk>(
@@ -1693,3 +1685,59 @@ fn done(cx: &StepContext<'_, '_>) -> StepOutcome {
 #[cfg(test)]
 #[path = "loadout_tests.rs"]
 mod loadout_tests;
+
+#[cfg(test)]
+mod production_state_size_tests {
+    use super::*;
+
+    #[allow(dead_code)]
+    struct PreviousMakePlan {
+        tile: WorldTile,
+        loc_id: i32,
+        loc_name: Arc<str>,
+        op: Arc<str>,
+        product: BankItem,
+        menu_id: i32,
+        qty: QuantityPlan,
+        make_x: bool,
+    }
+
+    #[allow(dead_code)]
+    struct PreviousMakeRun {
+        tile: WorldTile,
+        loc_id: i32,
+        loc_name: Arc<str>,
+        op: Arc<str>,
+        request: MakeRequest,
+        walk: Option<ActionHandle<Walk>>,
+        trigger: Option<ActionHandle<reach::Reach>>,
+        make: Option<ActionHandle<MakeMachine>>,
+    }
+
+    #[test]
+    fn production_state_sizes_stay_within_explicit_bounds() {
+        let trigger = std::mem::size_of::<MakeTrigger>();
+        let plan = std::mem::size_of::<MakePlan>();
+        let run = std::mem::size_of::<MakeRun>();
+        let previous_plan = std::mem::size_of::<PreviousMakePlan>();
+        let previous_run = std::mem::size_of::<PreviousMakeRun>();
+        let plan_change = plan as isize - previous_plan as isize;
+        let run_change = run as isize - previous_run as isize;
+        assert!(trigger <= 64, "MakeTrigger grew to {trigger} bytes");
+        assert!(plan <= 192, "MakePlan grew to {plan} bytes");
+        assert!(run <= 256, "MakeRun grew to {run} bytes");
+        assert!(
+            plan <= previous_plan + 16,
+            "MakePlan grew by {} bytes",
+            plan.saturating_sub(previous_plan)
+        );
+        assert!(
+            run <= previous_run + 16,
+            "MakeRun grew by {} bytes",
+            run.saturating_sub(previous_run)
+        );
+        println!(
+            "production family state sizes: MakeTrigger={trigger}; MakePlan={plan} ({plan_change:+} from {previous_plan}); MakeRun={run} ({run_change:+} from {previous_run}) bytes"
+        );
+    }
+}
