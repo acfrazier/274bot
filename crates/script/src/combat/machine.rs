@@ -431,13 +431,24 @@ impl NativeMachine for Combat {
                 // no engaged target yet, still in Prep/Engage, and the
                 // stand still ahead. Its failure is information first:
                 // the plan below walks again from the observed tile.
-                // Only the bounded count is terminal.
+                // Only the bounded count is terminal. Arrival is read
+                // from the network tile: at route end the rendered tile
+                // can lag one tile behind it, and the host then reports
+                // `RouteEnded` for a walk that did reach its aim. That
+                // receipt is arrival, not a failure.
+                let stand_arrived = self.request.stand.is_some_and(|stand| {
+                    distance(frame.local.player.network, stand) <= 1
+                });
                 let stand_walk = self.engaged.is_none()
                     && matches!(self.phase, Phase::Prep | Phase::Engage)
+                    && !stand_arrived
                     && select::stand_pending(&self.request, &frame);
                 let end = receipt.end.clone();
                 let detail = receipt.failure_detail();
                 self.pending_walk = None;
+                if stand_arrived {
+                    self.stand_walk_failures = 0;
+                }
                 if stand_walk {
                     match end {
                         WalkEnd::Arrived => self.stand_walk_failures = 0,

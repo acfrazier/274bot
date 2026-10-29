@@ -3936,6 +3936,45 @@ fn failed_stand_walks_retry_to_a_bound_then_report_no_target() {
 }
 
 #[test]
+fn stand_walk_route_ended_at_the_network_aim_is_arrival_not_failure() {
+    // At route end the host can report `RouteEnded` while the network
+    // tile already stands beside the stand and only the rendered tile
+    // lags behind. That receipt must not spend the failure bound.
+    let mut scene = Scene::new("cow");
+    let here = scene.local.player.actor.tile;
+    let stand = tile(here.x + 10, here.z);
+    scene.npcs[0].tile = stand;
+    scene.npcs[0].network = stand;
+    scene.npcs[0].distance = 10;
+    scene.refresh();
+    let mut request = scene.request();
+    request.stand = Some(stand);
+    let mut harness = Harness::new(&scene, request);
+    assert!(matches!(
+        harness.pending(&scene, 1),
+        Some(HostEffect::Walk(walk)) if walk.target == stand
+    ));
+
+    let aim = tile(stand.x - 1, stand.z);
+    scene.local.player.network = aim;
+    scene.refresh();
+    post_walk_receipt(
+        &mut harness,
+        1,
+        crate::native::WalkEnd::RouteEnded,
+        Some("route stopped short"),
+    );
+    assert!(harness.pending(&scene, 2).is_some());
+    assert_eq!(harness.machine.stand_walk_failures, 0);
+    assert_eq!(harness.machine.end, None);
+
+    scene.local.player.actor.tile = aim;
+    scene.refresh();
+    post_walk_receipt(&mut harness, 2, crate::native::WalkEnd::Arrived, None);
+    attack(harness.pending(&scene, 3));
+}
+
+#[test]
 fn user_input_ends_combat_retreat_without_relatching_failure_or_rewalking() {
     let mut scene = Scene::new("khazard_warlord");
     let here = scene.local.player.actor.tile;
