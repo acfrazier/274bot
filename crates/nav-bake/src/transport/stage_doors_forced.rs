@@ -248,9 +248,18 @@ fn movement_proofs(src: &Sources) -> HashSet<String> {
     if matches("agility_climb_up") {
         proofs.insert("agility_climb_up".to_owned());
     }
-    if ["set_forcemove_bas", "set_walkbas", "set_readywalk_bas",
-        "set_readywalkturn_bas", "bas_set", "update_bas",
-        "inzone_coord_pair_table"].into_iter().all(matches) {
+    if [
+        "set_forcemove_bas",
+        "set_walkbas",
+        "set_readywalk_bas",
+        "set_readywalkturn_bas",
+        "bas_set",
+        "update_bas",
+        "inzone_coord_pair_table",
+    ]
+    .into_iter()
+    .all(matches)
+    {
         proofs.insert("obstacle_appearance".to_owned());
     }
     proofs

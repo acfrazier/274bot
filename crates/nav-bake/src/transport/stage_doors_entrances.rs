@@ -222,7 +222,9 @@ fn quest_stage_ranges(reads: &Reads, src: &Sources, obstacle: bool) -> Option<Ve
     for varp in varps {
         let starts = &reads.stage_boundaries[varp];
         let complete = src.quest_complete.get(varp).map(|(_, value)| *value);
-        if !obstacle && complete.is_some_and(|complete| starts.iter().all(|start| *start == complete)) {
+        if !obstacle
+            && complete.is_some_and(|complete| starts.iter().all(|start| *start == complete))
+        {
             continue;
         }
         if !src.quest_signals.contains_key(varp) {
@@ -525,7 +527,10 @@ impl Motion<'_> {
             ),
             "loc_find" => Some((|| {
                 if self.obstacle == Some(obstacles::Class::Wall) {
-                    let index = input.scenery_queries.iter().position(|query| query == expr)?;
+                    let index = input
+                        .scenery_queries
+                        .iter()
+                        .position(|query| query == expr)?;
                     if input.scenery_mask & (1usize << index) == 0 {
                         return Some(Val::Bool(false));
                     }
@@ -1080,7 +1085,8 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
             reads.items.sort_unstable();
             reads.items.dedup();
             let paired_gate = has_certified_paired_gate(handler, src);
-            let stages = if reads.stage_boundaries.is_empty() || !paired_gate && obstacle.is_none() {
+            let stages = if reads.stage_boundaries.is_empty() || !paired_gate && obstacle.is_none()
+            {
                 Vec::new()
             } else {
                 let Some(stages) = quest_stage_ranges(&reads, src, obstacle.is_some()) else {
@@ -1235,7 +1241,8 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                                 })
                             });
                             for result in [complete, incomplete].into_iter().flatten() {
-                                if obstacle.is_none() && !paired_gate
+                                if obstacle.is_none()
+                                    && !paired_gate
                                     && result.needs.quests.is_empty()
                                     && result.needs.forbidden_held.is_empty()
                                     && result.needs.forbidden_worn.is_empty()
@@ -1248,8 +1255,12 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                                     continue;
                                 }
                                 if covered.contains(&(id, option))
-                                    && graph.edges[..first_new_edge].iter().any(|edge| edge.loc_id == id
-                                        && edge.option == option && edge.to == result.to) {
+                                    && graph.edges[..first_new_edge].iter().any(|edge| {
+                                        edge.loc_id == id
+                                            && edge.option == option
+                                            && edge.to == result.to
+                                    })
+                                {
                                     continue;
                                 }
                                 let mut edge = gated_edge(
