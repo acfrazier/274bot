@@ -104,6 +104,9 @@ pub(crate) struct SlotCondition {
     tables: Option<Arc<CombatTables>>,
     inv_gen: Option<u64>,
     last_tick: u32,
+    /// Tick of the PLAYER_INFO edge before the last one. A frame after an edge
+    /// can still deliver that tick's count loss, so the fruit window keeps it.
+    previous_edge_tick: u16,
     chat_seen: i32,
     chat_visible: i32,
     hit_seen: [i32; 4],
@@ -128,6 +131,7 @@ impl Default for SlotCondition {
             tables: None,
             inv_gen: None,
             last_tick: 0,
+            previous_edge_tick: 0,
             chat_seen: 0,
             chat_visible: 0,
             hit_seen: [-1; 4],
@@ -169,6 +173,7 @@ impl SlotCondition {
         self.complete = false;
         self.latch = None;
         self.pending_fruit = PendingFruit::None;
+        self.previous_edge_tick = 0;
     }
 
     pub(crate) fn current(&self) -> Option<&BotCondition> {
@@ -238,11 +243,14 @@ impl SlotCondition {
     // before inventory. NetworkPlayer.ts:191-227 writes each packet at once.
     // A drain can hold multiple PLAYER_INFO packets, so pair signals from this
     // or the immediately previous observed edge, not by a fixed tick delta.
+    // The line of tick T+1 can be read at the edge of tick T, and the count
+    // loss of T+1 can arrive in a frame after PLAYER_INFO(T+1), so the window
+    // follows PLAYER_INFO edges rather than the previous frame's tick.
     fn fruit_origin(
         &mut self,
         chat: bool,
         count_loss: bool,
-        previous_tick: u16,
+        previous_edge_tick: u16,
         now: u16,
     ) -> Option<u16> {
         let pending = self.pending_fruit;
@@ -251,7 +259,7 @@ impl SlotCondition {
             PendingFruit::Chat { tick } | PendingFruit::CountLoss { tick } => Some(tick),
         };
         let pending = pending_tick
-            .filter(|tick| *tick == previous_tick || *tick == now)
+            .filter(|tick| *tick == previous_edge_tick || *tick == now)
             .map(|_| pending);
         if pending.is_none() {
             self.pending_fruit = PendingFruit::None;
@@ -356,12 +364,23 @@ impl SlotCondition {
         let k = tick.saturating_sub(self.last_tick);
         let prev_complete = self.complete;
         self.last_tick = tick;
+        // The count loss of a tick can arrive in a frame after that tick's
+        // PLAYER_INFO edge (World.ts:1108-1116 sends PLAYER_INFO before
+        // inventory), and the fruit line of tick T+1 can be read at the edge of
+        // tick T. On an edge the window pairs with the previous edge; later
+        // frames at the same tick keep that edge as the window's other bound.
+        let previous_edge_tick = if drain.player_info {
+            self.previous_edge_tick = previous_tick;
+            previous_tick
+        } else {
+            self.previous_edge_tick
+        };
         let fruit_count_loss =
             derived.is_some_and(|fact| fact.cures.strange_fruit < self.fact.cures.strange_fruit);
         let mut poison_signal = false;
         let mut hits = [None; 4];
         let mut hit_at_edge = false;
-        if let Some(origin) = self.fruit_origin(false, fruit_count_loss, previous_tick, now) {
+        if let Some(origin) = self.fruit_origin(false, fruit_count_loss, previous_edge_tick, now) {
             // strange_fruit.rs2:10 sets %poison to min(%poison, -1). Its
             // negative timer proves that no future immunity fire can occur,
             // so the fruit earns zero lower-bound immunity credit.
@@ -414,7 +433,7 @@ impl SlotCondition {
                     self.transition(PoisonEvent::ProvenDrink { origin });
                     self.latch = None;
                 } else if line.text == FRUIT_LINE {
-                    if let Some(origin) = self.fruit_origin(true, false, previous_tick, now) {
+                    if let Some(origin) = self.fruit_origin(true, false, previous_edge_tick, now) {
                         // strange_fruit.rs2:10 sets %poison to min(%poison, -1).
                         // That negative timer proves no future immunity fire, so
                         // fruit grants zero lower-bound immunity credit.
