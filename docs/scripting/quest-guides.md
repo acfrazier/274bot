@@ -21,12 +21,39 @@ A guide is one JSON file with schema 3. It names the quest, the checks the Quest
 
   The compiler requires this header. A guide with `members: true` blocks Start on a free-to-play world with `quest requires a members world`.
 - `roles[]`: `role` (`null` for solo), `progress_binding`, `progress`, an optional owned `progress_reader` step (required for `Miniquest`; invoked initially and after every advancing step), guarded `prelude[]`, and `sequences[]`. `progress` declares quest colours, journal stage rules, flags, and monotonicity. Keep the prelude short.
-- `sequences[]`: `stage`, `required`, `terminal`, `recovery_entry`, optional `order` (`"authored"` default, `"nearest"`, or `"ordered"`; see How a run reads a guide), and `steps[]`.
+- `sequences[]`: `stage`, `required`, `terminal`, `recovery_entry`, optional `cross` declarations, optional `order` (`"authored"` default, `"nearest"`, or `"ordered"`), and `steps[]`.
 - `steps[]`: `id`, `kind`, `version`, `args`, `skip_if`, and `settle` are required. `comment` is optional. `advances` is required for Explicit handler kinds (`talk`, `interact`, `use_on`, `make`, `combat`, `gather`, `thieve`, and `x:*`); Default kinds compile as `false` when it is omitted.
 
 `skip_if` and `settle` use externally tagged predicate documents: `{"All":[...]}`, `{"Any":[...]}`, `{"Not":...}`, and `{"Fact":{"kind":"...","version":1,"args":{...}}}`. Keep this envelope as written.
 
 Step ids must stay unique across recipes and the selected role's prelude, sequences, and `progress_reader`. A solo guide declares exactly one role. Paired guides declare one role per gang.
+
+## Required danger zones
+
+Declare each unavoidable danger zone where the guide must enter or cross it.
+A sequence's `cross` grants its zones to every route in that stage.
+The sequence field uses stable navigation zone ids, with a `name` and `reason` for each zone.
+
+```json
+"cross": [{
+  "id": "renegade_knight@2773,3399,0",
+  "name": "Keep Le Faye Renegade Knight",
+  "reason": "Cross the ground floor to reach Sir Mordred."
+}]
+```
+
+Walk and combat steps can also declare an `args.cross` array of stable zone ids.
+Those grants apply only to that step's routes, including a combat step's first approach.
+A prelude step keeps its own grants.
+Each route accepts the union of its step and current stage declarations, without duplicates.
+The compiler rejects unknown ids and a route whose combined set exceeds eight zones.
+Stage declarations also require unique ids and nonempty names and reasons.
+A navigation pack must be available when a guide declares zones.
+Panel and TUI list stage and step declarations before Start, with their scopes.
+The next stage does not retain the previous stage's declarations.
+Other zones remain avoided, even when a global or card danger setting permits them.
+Protection, food, and escape logic remain active.
+
 
 
 ## Steps

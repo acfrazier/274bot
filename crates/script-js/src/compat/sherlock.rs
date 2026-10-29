@@ -1688,6 +1688,7 @@ mod tests {
                     reach_flood: self.reach_flood.as_ref(),
                     bank_memory: None,
                     collision: None,
+                    nav: None,
                     hold: self.hold,
                     world_members: api::selected::Truth::Unknown,
                     interacts: Some(Vec::new()),

@@ -79,6 +79,7 @@ fn prepare_revision(
     let pin = selected.selected_pin().unwrap();
     FamilyPreparation::run(move |families| {
         let mut cx = crate::native::PrepareContext {
+            zones: None,
             selected,
             pin,
             banks,
@@ -170,6 +171,7 @@ impl Driver {
         let flow = {
             let mut actions = NativeActions { _private: () };
             let cx = ActionContext {
+                stage_cross: None,
                 condition: None,
                 poison_unknown_pulse: u8::MAX,
                 cure_poison: crate::survival::CurePoison::WhenNeeded,
@@ -204,6 +206,7 @@ impl Driver {
                     snapshot: Some(snapshot),
                     obj_names: None,
                     compiled: crate::CompiledTick {
+                        nav: None,
                         condition: None,
                         poison_unknown_pulse: None,
                         cure_poison: crate::survival::CurePoison::WhenNeeded,

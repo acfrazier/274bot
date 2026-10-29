@@ -1047,6 +1047,7 @@ fn started_with_banks(
         Arc::new(bag),
         Arc::clone(selected),
         banks,
+        None,
     )
     .unwrap();
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -3423,6 +3424,7 @@ fn site_first_walk_resume_and_changed_site_fresh_start_keep_selected_resource_an
         Arc::new(site_willow_bag("woodcutting.market")),
         Arc::clone(&selected),
         Arc::default(),
+        None,
     )
     .unwrap();
     let deadline = Instant::now() + Duration::from_secs(20);

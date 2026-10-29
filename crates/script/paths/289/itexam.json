@@ -4,8 +4,6 @@
   "id": "itexam",
   "display_name": "Digsite Quest",
   "required": [
-    "agility:10",
-    "herblore:10",
     "thieving:25"
   ],
   "tested_stats": null,
@@ -14,28 +12,6 @@
     "members": true,
     "quest_points": 2,
     "requirements": [
-      {
-        "id": "agility:10",
-        "kind": {
-          "Skill": {
-            "skill": "agility",
-            "level": 10
-          }
-        },
-        "at": "Start",
-        "source": "content/scripts/quests/quest_itexam/scripts/itexam_journal.rs2:5-25"
-      },
-      {
-        "id": "herblore:10",
-        "kind": {
-          "Skill": {
-            "skill": "herblore",
-            "level": 10
-          }
-        },
-        "at": "Start",
-        "source": "content/scripts/quests/quest_itexam/scripts/itexam_journal.rs2:5-25"
-      },
       {
         "id": "thieving:25",
         "kind": {

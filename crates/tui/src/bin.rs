@@ -3831,6 +3831,27 @@ impl TuiSession {
             }
             None => app.params_schema.clear(),
         }
+        let zone_view_changed = match app.script_sel.as_ref().and_then(ScriptChoice::compiled_id) {
+            Some(frontend_core::scripts::CompiledCardId::QUESTER) => match app.focused_name() {
+                Some(profile) => match self.scripts.compiled_bag(
+                    &self.core,
+                    &profile,
+                    frontend_core::scripts::CompiledCardId::QUESTER,
+                ) {
+                    Ok(bag) => app.quester_start_zone_cache.update(&bag),
+                    Err(error) => app
+                        .quester_start_zone_cache
+                        .set_unavailable(format!("Quester settings are unavailable: {error}")),
+                },
+                None => app
+                    .quester_start_zone_cache
+                    .set_unavailable("Quester settings are unavailable without a focused profile"),
+            },
+            _ => app.quester_start_zone_cache.clear(),
+        };
+        if zone_view_changed {
+            app.quester_start_zone_scroll = 0;
+        }
         if app.params_state.open && app.params_schema.as_ref().is_empty() {
             app.params_state.open = false;
         }

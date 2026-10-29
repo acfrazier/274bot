@@ -57,7 +57,18 @@
         "args": { "npc": "sir_lancelot", "anchor": { "tile": [2759, 3515, 1], "source": "289 maps/m43_54.jm2:8279; pack/npc.pack:240" }, "leash": 8, "prefer": ["Any ideas on how to get into Morgan Le Faye's stronghold?"], "strict": true },
         "skip_if": { "Any": [] }, "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "arthur", "any": ["arthur:3"] } } }
       }] },
-      { "stage": "arthur:3", "required": [], "terminal": false, "recovery_entry": null, "order": "ordered", "steps": [
+      { "stage": "arthur:3", "required": [], "terminal": false, "recovery_entry": null, "order": "ordered",
+        "cross": [
+          { "id": "renegade_knight@2773,3399,0", "name": "Keep Le Faye Renegade Knight (2773,3399,0)", "reason": "Cross the keep's ground floor to reach Sir Mordred. Content maps/m43_53.jm2 and stairs.rs2:19-20." },
+          { "id": "renegade_knight@2767,3399,0", "name": "Keep Le Faye Renegade Knight (2767,3399,0)", "reason": "Cross the keep's ground floor to reach Sir Mordred. Content maps/m43_53.jm2 and stairs.rs2:19-20." },
+          { "id": "renegade_knight@2766,3397,0", "name": "Keep Le Faye Renegade Knight (2766,3397,0)", "reason": "Cross the keep's ground floor to reach Sir Mordred. Content maps/m43_53.jm2 and stairs.rs2:19-20." },
+          { "id": "renegade_knight@2771,3402,1", "name": "Keep Le Faye Renegade Knight (2771,3402,1)", "reason": "Use the keep's first-floor stairs to reach Sir Mordred. Content maps/m43_53.jm2:5255,6339 and stairs.rs2:19-20." },
+          { "id": "renegade_knight@2774,3405,1", "name": "Keep Le Faye Renegade Knight (2774,3405,1)", "reason": "Use the keep's first-floor stairs to reach Sir Mordred. Content maps/m43_53.jm2:5255,6339 and stairs.rs2:19-20." },
+          { "id": "renegade_knight@2766,3406,1", "name": "Keep Le Faye Renegade Knight (2766,3406,1)", "reason": "Use the keep's first-floor stairs to reach Sir Mordred. Content maps/m43_53.jm2:5255,6339 and stairs.rs2:19-20." },
+          { "id": "renegade_knight@2767,3400,1", "name": "Keep Le Faye Renegade Knight (2767,3400,1)", "reason": "Use the keep's first-floor stairs to reach Sir Mordred. Content maps/m43_53.jm2:5255,6339 and stairs.rs2:19-20." },
+          { "id": "renegade_knight@2770,3396,1", "name": "Keep Le Faye Renegade Knight (2770,3396,1)", "reason": "Use the keep's first-floor stairs to reach Sir Mordred. Content maps/m43_53.jm2:5255,6339 and stairs.rs2:19-20." }
+        ],
+        "steps": [
         {
           "id": "hide-in-delivery", "kind": "interact", "version": 1, "advances": false,
           "comment": "The Catherby crate requires stage 3. Both hide and exit questions take Yes. The final teleport reaches the keep. 289 scripts/quests/quest_arthur/scripts/quest_arthur.rs2:2-35,68-77; maps/m43_53.jm2:5924.",
@@ -79,7 +90,18 @@
           "skip_if": { "Any": [] }, "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "arthur", "any": ["arthur:4"] } } }
         }
       ] },
-      { "stage": "arthur:4", "required": [], "terminal": false, "recovery_entry": null, "order": "ordered", "steps": [
+      { "stage": "arthur:4", "required": [], "terminal": false, "recovery_entry": null, "order": "ordered",
+        "cross": [
+          { "id": "renegade_knight@2773,3399,0", "name": "Keep Le Faye Renegade Knight (2773,3399,0)", "reason": "Leave the keep through its stairs and ground-floor exit after Morgan's instructions. Content quest_arthur.rs2:94-115." },
+          { "id": "renegade_knight@2767,3399,0", "name": "Keep Le Faye Renegade Knight (2767,3399,0)", "reason": "Leave the keep through its stairs and ground-floor exit after Morgan's instructions. Content quest_arthur.rs2:94-115." },
+          { "id": "renegade_knight@2766,3397,0", "name": "Keep Le Faye Renegade Knight (2766,3397,0)", "reason": "Leave the keep through its stairs and ground-floor exit after Morgan's instructions. Content quest_arthur.rs2:94-115." },
+          { "id": "renegade_knight@2771,3402,1", "name": "Keep Le Faye Renegade Knight (2771,3402,1)", "reason": "Descend the keep's first-floor stairs after Morgan's instructions. Content stairs.rs2:19-20." },
+          { "id": "renegade_knight@2774,3405,1", "name": "Keep Le Faye Renegade Knight (2774,3405,1)", "reason": "Descend the keep's first-floor stairs after Morgan's instructions. Content stairs.rs2:19-20." },
+          { "id": "renegade_knight@2766,3406,1", "name": "Keep Le Faye Renegade Knight (2766,3406,1)", "reason": "Descend the keep's first-floor stairs after Morgan's instructions. Content stairs.rs2:19-20." },
+          { "id": "renegade_knight@2767,3400,1", "name": "Keep Le Faye Renegade Knight (2767,3400,1)", "reason": "Descend the keep's first-floor stairs after Morgan's instructions. Content stairs.rs2:19-20." },
+          { "id": "renegade_knight@2770,3396,1", "name": "Keep Le Faye Renegade Knight (2770,3396,1)", "reason": "Descend the keep's first-floor stairs after Morgan's instructions. Content stairs.rs2:19-20." }
+        ],
+        "steps": [
         {
           "id": "leave-keep", "kind": "interact", "version": 1, "advances": false,
           "comment": "The fortress door opens only from inside and teleports one tile west. 289 scripts/quests/quest_arthur/scripts/quest_arthur.rs2:94-115; maps/m43_53.jm2:5051.",

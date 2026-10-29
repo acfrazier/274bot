@@ -25,6 +25,7 @@ fn start(slot: &mut SlotScript, bag: SettingsBag) {
         Arc::new(bag),
         selected(),
         Arc::default(),
+        None,
     )
     .unwrap();
 }
@@ -166,6 +167,7 @@ fn grinch_start_admits_one_compiled_gather_session_without_an_isolate() {
         Arc::new(SettingsBag::new()),
         selected(),
         Arc::default(),
+        None,
     )
     .unwrap();
     assert_eq!(settle(&mut slot), StartOutcome::Ready);
@@ -197,6 +199,7 @@ fn grinch_inventory_blocked_error_retains_its_native_stop_reason() {
         )])),
         selected(),
         Arc::default(),
+        None,
     )
     .unwrap();
     assert_eq!(settle(&mut slot), StartOutcome::Ready);
@@ -269,6 +272,7 @@ fn oversized_native_settings_have_a_typed_visible_refusal() {
             Arc::new(bag),
             selected(),
             Arc::default(),
+            None,
         )
         .expect_err("oversized settings must not enter the work ledger");
     assert_eq!(
@@ -666,6 +670,7 @@ fn start_permission_slot(slot: &mut SlotScript, bag: SettingsBag) {
         Arc::new(bag),
         selected(),
         Arc::default(),
+        None,
     )
     .unwrap();
 }
@@ -1086,6 +1091,7 @@ fn gatherer_snapshot() -> api::snapshot::GameSnapshot {
     FamilyPreparation::run(|families| {
         let selected = selected();
         let mut cx = PrepareContext {
+            zones: None,
             pin: selected.selected_pin().unwrap(),
             selected,
             banks: Arc::default(),
@@ -1124,6 +1130,7 @@ fn gatherer_slot(incarnation: u64) -> SlotScript {
         Arc::new(bag),
         selected(),
         Arc::default(),
+        None,
     )
     .unwrap();
     assert_eq!(settle(&mut slot), StartOutcome::Ready);
@@ -1665,6 +1672,7 @@ fn gatherer_exclusive_heap_stays_inside_the_eight_kib_target() {
             let selected = selected();
             let pin = selected.selected_pin().unwrap();
             let mut cx = PrepareContext {
+                zones: None,
                 pin: Arc::clone(&pin),
                 selected: Arc::clone(&selected),
                 banks: Arc::default(),
@@ -1845,6 +1853,7 @@ mod api_gather_seat {
             },
             0,
             &[],
+            None,
         );
     }
 
@@ -1886,12 +1895,13 @@ mod api_gather_seat {
             },
             0,
             &[],
+            None,
         );
     }
 
     fn stop_in_seat(slot: &mut SlotScript, token: u64) {
         queue_stop_in_seat(slot, token);
-        let (_, rows, _) = slot.drain_host_interacts();
+        let (_, rows, _) = slot.drain_host_interacts(None);
         assert!(
             rows.is_empty(),
             "typed GatherStop is consumed as a reserved control"
@@ -2101,7 +2111,7 @@ mod api_gather_seat {
             },
             InteractReq::SetCameraYaw { yaw: 777 },
         ]);
-        let (policy, rows, owned) = slot.drain_host_interacts();
+        let (policy, rows, owned) = slot.drain_host_interacts(None);
         assert_eq!(policy, Some(Some(policy_override)));
         assert!(
             !owned,
@@ -2309,6 +2319,7 @@ mod api_gather_seat {
         let (prepared, instance, worker) = FamilyPreparation::run(|families| {
             let selected = selected();
             let cx = PrepareContext {
+                zones: None,
                 pin: selected.selected_pin().unwrap(),
                 selected,
                 banks: Arc::default(),
@@ -2468,12 +2479,12 @@ fn compiled_walk_decisions_keep_their_observed_epoch_across_later_ticks_and_rest
     tick(&mut slot);
     slot.observe_walk_outcome(11, crate::native::WalkCancelReason::None, None);
     tick(&mut slot);
-    let (_, older, _) = slot.drain_host_interacts();
+    let (_, older, _) = slot.drain_host_interacts(None);
 
     slot.observe_walk_outcome(12, crate::native::WalkCancelReason::None, None);
     tick(&mut slot);
     slot.restore_host_interacts(older);
-    let (_, rows, _) = slot.drain_host_interacts();
+    let (_, rows, _) = slot.drain_host_interacts(None);
     let decisions: Vec<_> = rows
         .into_iter()
         .map(|queued| {
@@ -3578,7 +3589,7 @@ fn compiled_queued_seat_row_alone_blocks_evidence_wait() {
         slot.watchdog.abort_owned_recovery(),
         WatchdogAction::AbortWalk
     );
-    let (_, rows, _) = slot.drain_host_interacts();
+    let (_, rows, _) = slot.drain_host_interacts(None);
     assert_eq!(rows.len(), 1);
     assert_eq!(
         rows[0].req,

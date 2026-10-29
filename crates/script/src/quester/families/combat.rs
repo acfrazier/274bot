@@ -524,6 +524,7 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
         None
     };
 
+    let cross: Arc<[Arc<str>]> = args.cross.into_iter().map(Arc::from).collect();
     let request = CombatRequest {
         target,
         tactic: Tactic::Open,
@@ -535,6 +536,7 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
         fallback_spells: args.fallback_spells,
         stand,
         search_bounds,
+        cross: Some(Arc::clone(&cross)),
         engage_radius: args.tactic.engage_radius,
         lost_radius: args.lost_radius,
         budget_ticks: args.kill_budget_ticks,
@@ -549,7 +551,7 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
     Ok(CombatPlan {
         request: Arc::new(request),
         tables,
-        cross: args.cross.into_iter().map(Arc::from).collect(),
+        cross,
         protect,
         until,
         win,

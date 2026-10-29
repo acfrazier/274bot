@@ -580,3 +580,132 @@ fn failed_ordered_step_is_retried_in_place() {
         Some("step settle timeout")
     );
 }
+
+#[test]
+fn terminal_timed_ground_step_publishes_its_receipt() {
+    #[derive(Default)]
+    struct Capture(Option<ScriptStatus>);
+
+    impl NativeOutput for Capture {
+        fn status(&mut self, status: ScriptStatus) {
+            self.0 = Some(status);
+        }
+        fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+        fn log(&mut self, _: api::hostlog::Level, _: &str) {}
+        fn settings_applied(&mut self, _: u64) {}
+    }
+
+    let mut document = document(SequenceOrder::Ordered, |_| never(), always());
+    let sequence = &mut document.roles[0].sequences[0];
+    sequence.terminal = true;
+    sequence.steps = vec![StepDocument {
+        id: FactKey::new("take-terminal-egg"),
+        kind: "interact".into(),
+        version: 1,
+        args: serde_json::json!({
+            "target": {"ground": "egg"}, "op": "Take", "radius": 2, "max_ticks": 100
+        }),
+        comment: None,
+        advances: Some(false),
+        skip_if: never(),
+        settle: has_egg(),
+    }];
+    // Keep the real compiled timed-pickup plan; Harness::new replaces plans.
+    let (mut script, mut snapshot) = status_fixture(document);
+    let egg = script.selected.item_by_alias("egg").unwrap();
+    let egg_def = crate::quester::families::tests::def(egg.id, "Egg");
+    let egg_id = egg.id;
+    snapshot.seed_inventory(Vec::new(), 28);
+    crate::quester::families::tests::seed_dialogue_combat(&mut snapshot, false);
+    snapshot.seed_ground_items(vec![api::snapshot::GroundItemView {
+        def: egg_def.clone(),
+        count: 1,
+        actions: vec![Some("Take".into())],
+        tile: api::WorldTile {
+            x: 3253,
+            z: 3401,
+            level: 0,
+        },
+        distance: 0,
+    }]);
+    let mut ledger = None;
+    let mut capture = Capture::default();
+    let mut began_at = None;
+    let mut completed_at = None;
+    let mut take_observed = false;
+    for tick in 1..=20 {
+        let flow = with_tick_output(&snapshot, &mut ledger, tick, &mut capture, |native| {
+            script.tick(native).unwrap()
+        });
+        if !script.begun.is_empty() {
+            began_at.get_or_insert(tick);
+        }
+        if let Some(authority) = ledger
+            .as_ref()
+            .filter(|_| !take_observed)
+            .and_then(|ledger| {
+                ledger
+                    .outbox
+                    .last()
+                    .filter(|action| {
+                        matches!(&action.effect, crate::native::HostEffect::Interaction(
+                    crate::shim::InteractReq::Obj { id: Some(id), action, .. }
+                ) if *id == egg_id && action == "Take")
+                    })
+                    .map(|action| action.authority())
+            })
+        {
+            ledger.as_mut().unwrap().complete_interaction(
+                &authority,
+                crate::native::InteractionReceipt {
+                    request_id: authority.request_id().get(),
+                    evidence: api::quest_progress::EvidenceStamp {
+                        run: authority.run(),
+                        tick,
+                        sequence: tick,
+                    },
+                    accepted: true,
+                    chat_since: 0,
+                },
+            );
+            snapshot.seed_inventory(
+                vec![api::snapshot::ItemView {
+                    def: egg_def.clone(),
+                    container: api::snapshot::ItemContainer::Inventory,
+                    action_family: api::snapshot::ItemActionFamily::Held,
+                    slot: 0,
+                    count: 1,
+                    actions: Vec::new(),
+                    component_id: 3214,
+                }],
+                28,
+            );
+            snapshot.seed_ground_items(Vec::new());
+            take_observed = true;
+        }
+        if flow == ScriptFlow::Complete {
+            completed_at = Some(tick);
+            break;
+        }
+        assert!(
+            !script.parked,
+            "the terminal pickup parked: {:?}",
+            script.last_error
+        );
+    }
+    let completed_at = completed_at.expect("the terminal pickup completes");
+    assert!(take_observed, "the real timed pickup must dispatch Take");
+    let waited = i64::try_from(completed_at - began_at.unwrap()).unwrap();
+    assert!(waited > 0);
+    let status = capture.0.expect("the terminal runner emits a status");
+    assert_eq!(status.phase, NativePhase::Complete);
+    for (key, expected) in [("ground_waited_ticks", waited), ("ground_held", 1)] {
+        assert!(
+            status.fields.iter().any(|field| {
+                field.key == key
+                    && matches!(field.value, StatusValue::Integer(value) if value == expected)
+            }),
+            "terminal status must retain {key}={expected}: {status:?}"
+        );
+    }
+}

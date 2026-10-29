@@ -4497,6 +4497,15 @@
           "$ref": "#/$defs/SequenceOrder",
           "default": "authored"
         },
+        "cross": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RequiredZoneDocument"
+          },
+          "description": "Stable navigation identities the stage may cross.",
+          "maxItems": 8,
+          "default": []
+        },
         "steps": {
           "type": "array",
           "items": {
@@ -4530,6 +4539,29 @@
         }
       ],
       "description": "How a sequence picks its next step at each step boundary."
+    },
+    "RequiredZoneDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "reason"
+      ]
     }
   }
 }

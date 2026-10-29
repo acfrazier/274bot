@@ -195,7 +195,7 @@ fn mage_family_maps_selected_spell_order_and_explicit_fallback() {
 }
 
 #[test]
-fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
+fn authored_combat_walk_permissions_reach_initial_return_and_abort_requests() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let progress = CompiledProgress {
@@ -263,14 +263,26 @@ fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
             } else {
                 input.as_object_mut().unwrap().remove("guard");
             }
-            let plan = compile(decode_args::<CombatArgs>(&input).unwrap(), &cx).unwrap();
-            for aborted in [false, true] {
+            let plan = compile_plan(decode_args::<CombatArgs>(&input).unwrap(), &cx).unwrap();
+            assert!(Arc::ptr_eq(
+                plan.request.cross.as_ref().unwrap(),
+                &plan.cross
+            ));
+            for (initial_approach, aborted) in [(true, false), (false, false), (false, true)] {
                 // Drive the real compiled plan and native combat machine, not
                 // a CombatRun with its permission fields assigned by the test.
                 let mut snapshot = GameSnapshot::new();
                 snapshot.seed_ingame(2);
                 snapshot.seed_world(api::snapshot::WorldStateView::default());
-                snapshot.seed_local_player(super::super::tests::local_player(stand));
+                let here = if initial_approach {
+                    api::WorldTile {
+                        x: stand.x - 20,
+                        ..stand
+                    }
+                } else {
+                    stand
+                };
+                snapshot.seed_local_player(super::super::tests::local_player(here));
                 snapshot.seed_inventory(vec![], 28);
                 snapshot.seed_equipment(vec![]);
                 snapshot.seed_players(vec![]);
@@ -351,9 +363,33 @@ fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
                     z: 0,
                     yaw: 0,
                 }]);
+                if initial_approach {
+                    snapshot.seed_npcs(vec![]);
+                }
                 let mut ledger = None;
                 let mut run =
                     with_step_context(&snapshot, &mut ledger, 1, |cx| plan.begin(cx).unwrap());
+                if initial_approach {
+                    assert!(
+                        with_step_context(&snapshot, &mut ledger, 2, |cx| run.poll(cx))
+                            .is_pending()
+                    );
+                    let outbox = &ledger.as_ref().unwrap().outbox;
+                    assert_eq!(outbox.len(), 1, "initial approach: cross={cross}");
+                    let crate::native::HostEffect::Walk(request) = &outbox[0].effect else {
+                        panic!("the compiled combat initial approach must submit a native walk");
+                    };
+                    assert_eq!(request.target, stand);
+                    if cross {
+                        assert_eq!(request.cross.as_ref(), &[Arc::from("draynor-jail-guards")]);
+                    } else {
+                        assert!(
+                            request.cross.is_empty(),
+                            "initial approach has no authored cross"
+                        );
+                    }
+                    continue;
+                }
                 if !aborted {
                     snapshot.seed_npcs(vec![]);
                 }

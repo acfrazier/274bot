@@ -92,29 +92,22 @@ impl From<StartError> for PrepareRunError {
     }
 }
 
-/// One operator Start retained while the bounded work ledger is temporarily
-/// full. The slot owns exactly one demand and retries on an ordinary turn.
+/// One native Start demand. The slot retains it while work admission is full.
+#[derive(Clone)]
 pub(super) struct PendingCompiledStart {
-    card: &'static crate::native::CompiledCard,
-    run: RunKey,
-    bag: Arc<SettingsBag>,
-    selected: Arc<api::game_data::SelectedGameData>,
-    banks: Arc<api::named_banks::NamedBankFacts>,
-    retained: Arc<Mutex<RetainedMemory>>,
-    account: String,
+    pub(super) card: &'static crate::native::CompiledCard,
+    pub(super) run: RunKey,
+    pub(super) bag: Arc<SettingsBag>,
+    pub(super) selected: Arc<api::game_data::SelectedGameData>,
+    pub(super) banks: Arc<api::named_banks::NamedBankFacts>,
+    pub(super) retained: Arc<Mutex<RetainedMemory>>,
+    pub(super) nav: Option<nav_planner::contract::NavLease>,
+    pub(super) account: String,
 }
 
 impl PendingCompiledStart {
     fn try_admit(&self) -> Result<Preparation, PrepareRunError> {
-        prepare_run(
-            self.card,
-            self.run,
-            Arc::clone(&self.bag),
-            Arc::clone(&self.selected),
-            Arc::clone(&self.banks),
-            Arc::clone(&self.retained),
-            self.account.clone(),
-        )
+        prepare_run(self.clone())
     }
 }
 pub(super) struct Preparation {
@@ -397,6 +390,7 @@ pub(super) fn frame_context<'a>(
             .with_reach(ctx.compiled.reach)
             .with_bank_memory(ctx.compiled.bank_memory)
             .with_world_members(ctx.compiled.world_members),
+        stage_cross: None,
         condition: ctx.compiled.condition.filter(|fact| {
             fact.session == api::condition::SessionMark::Live
                 && ctx
@@ -528,6 +522,7 @@ impl CompiledRun {
                         cure_poison: ctx.compiled.cure_poison,
                         world_members: ctx.compiled.world_members,
                         collision: ctx.compiled.collision,
+                        nav: ctx.compiled.nav,
                         walk_danger: ctx.compiled.walk_danger,
                         hold: ctx.compiled.hold,
                         service_gate: ctx.compiled.service_gate,
@@ -636,6 +631,7 @@ pub fn prepare_config(
         pin,
         banks,
         families: worker,
+        zones: None,
     };
     let config = catch_unwind(AssertUnwindSafe(|| {
         if card.id == crate::quester::card::CARD.id {
@@ -684,13 +680,16 @@ fn try_retained(
 
 /// The single off-pump registration transaction used by Browse and API seats.
 pub(super) fn prepare_run(
-    card: &'static crate::native::CompiledCard,
-    run: RunKey,
-    bag: Arc<SettingsBag>,
-    selected: Arc<api::game_data::SelectedGameData>,
-    banks: Arc<api::named_banks::NamedBankFacts>,
-    retained: Arc<Mutex<RetainedMemory>>,
-    account: String,
+    PendingCompiledStart {
+        card,
+        run,
+        bag,
+        selected,
+        banks,
+        retained,
+        account,
+        nav,
+    }: PendingCompiledStart,
 ) -> Result<Preparation, PrepareRunError> {
     let quester = card.id == crate::quester::card::CARD.id;
     let cold_gathering =
@@ -708,6 +707,7 @@ pub(super) fn prepare_run(
         preparation: Option<Box<crate::quester::registry::RegistryPreparation<'static>>>,
         quests: Option<Arc<api::quest_facts::QuestCatalog>>,
         pending: Option<Box<crate::quester::registry::PreparedRegistry>>,
+        nav: Option<nav_planner::contract::NavLease>,
         actions: u32,
     }
     let quester_state = quester.then(|| {
@@ -718,6 +718,7 @@ pub(super) fn prepare_run(
             preparation: None,
             quests: None,
             pending: None,
+            nav,
             actions: 0,
         })
     });
@@ -807,11 +808,14 @@ pub(super) fn prepare_run(
                                 )
                                 .map_err(StartError::Facts)?,
                             );
-                            state.preparation = Some(Box::new(
+                            let source =
+                                state.source.take().expect("Quester folder source captured");
+                            let preparation =
                                 crate::quester::registry::RegistryPreparation::from_source(
-                                    state.source.take().expect("Quester folder source captured"),
+                                    source,
                                     Arc::clone(&selected),
                                     Arc::clone(&quests),
+                                    state.nav.take(),
                                 )
                                 .map_err(|error| {
                                     StartError::Unavailable(
@@ -822,8 +826,8 @@ pub(super) fn prepare_run(
                                         )
                                         .into(),
                                     )
-                                })?,
-                            ));
+                                })?;
+                            state.preparation = Some(Box::new(preparation));
                             state.quests = Some(quests);
                         }
                         let preparation = state
@@ -1076,6 +1080,7 @@ impl SlotScript {
         bag: Arc<SettingsBag>,
         selected: Arc<api::game_data::SelectedGameData>,
         banks: Arc<api::named_banks::NamedBankFacts>,
+        nav: Option<nav_planner::contract::NavLease>,
     ) -> Result<(), StartError> {
         if self.quest_pairs.as_ref().is_some_and(|pairs| pairs.busy()) {
             return Err(StartError::Unavailable("Stop this pair first".into()));
@@ -1110,27 +1115,21 @@ impl SlotScript {
             self.retained
                 .get_or_insert_with(|| Arc::new(Mutex::new(RetainedMemory::default()))),
         );
-        let job = prepare_run(
+        let demand = PendingCompiledStart {
             card,
             run,
-            Arc::clone(&bag),
-            Arc::clone(&selected),
-            Arc::clone(&banks),
-            Arc::clone(&retained),
-            account.to_owned(),
-        );
+            bag,
+            selected,
+            banks,
+            retained,
+            account: account.to_owned(),
+            nav,
+        };
+        let job = demand.try_admit();
         match job {
             Ok(job) => self.preparing = Some(Box::new(job)),
             Err(PrepareRunError::Full) => {
-                self.pending_compiled_start = Some(PendingCompiledStart {
-                    card,
-                    run,
-                    bag,
-                    selected,
-                    banks,
-                    retained,
-                    account: account.to_owned(),
-                });
+                self.pending_compiled_start = Some(demand);
             }
             Err(PrepareRunError::Other(error)) => return Err(error),
         }

@@ -163,6 +163,7 @@ fn submit_progress(
     selected: Arc<api::game_data::SelectedGameData>,
     bytes: &'static [u8],
     operator: crate::local_state::OperatorLoadouts,
+    nav: Option<nav_planner::contract::NavLease>,
 ) -> Result<ProgressJob, preparation::PreparationError> {
     preparation::submit(
         PreparationKind::Profile,
@@ -176,9 +177,16 @@ fn submit_progress(
                 QuestCatalog::from_identity(selected.quest_identity())
                     .map_err(|error| Arc::from(format!("failed:{error:?}")))?,
             );
-            let path =
-                crate::quester::compile::compile_path(bytes, &selected, &quests, cap, &operator)
-                    .map_err(compile_error_reason)?;
+            let path = crate::quester::compile::compile_path(
+                bytes,
+                &selected,
+                &quests,
+                cap,
+                &operator,
+                nav.as_ref()
+                    .and_then(nav_planner::contract::NavLease::zones),
+            )
+            .map_err(compile_error_reason)?;
             Ok(PreparedProgress {
                 selected,
                 pin,
@@ -190,7 +198,12 @@ fn submit_progress(
 }
 
 impl SlotScript {
-    pub(in crate::slot) fn start_api_progress(&mut self, token: u64, quest: &str) {
+    pub(in crate::slot) fn start_api_progress(
+        &mut self,
+        token: u64,
+        quest: &str,
+        nav: Option<nav_planner::contract::NavLease>,
+    ) {
         if !self.surface_active() {
             return;
         }
@@ -302,7 +315,7 @@ impl SlotScript {
             });
             return;
         };
-        let job = submit_progress(slot, input, Arc::clone(&selected), bytes, operator);
+        let job = submit_progress(slot, input, Arc::clone(&selected), bytes, operator, nav);
         match job {
             Ok(job) => {
                 self.control_generation = generation;
@@ -357,7 +370,14 @@ impl SlotScript {
                     return;
                 }
             };
-            match submit_progress(slot, *input, Arc::clone(selected), bytes, operator) {
+            match submit_progress(
+                slot,
+                *input,
+                Arc::clone(selected),
+                bytes,
+                operator,
+                ctx.compiled.nav.cloned(),
+            ) {
                 Ok(job) => {
                     seat.progress = ProgressSeat::Preparing {
                         token: *token,

@@ -1566,6 +1566,17 @@ impl Quester {
         }
     }
 
+    fn scope_stage_cross(&self, tick: &mut NativeTick<'_>) {
+        static EMPTY: std::sync::LazyLock<Arc<[Arc<str>]>> =
+            std::sync::LazyLock::new(|| Arc::from([]));
+        let cross = self
+            .stage
+            .as_ref()
+            .and_then(|stage| sequence_for_stage(&self.path, &stage.0))
+            .map_or(&*EMPTY, |index| &self.path.sequences[index].cross);
+        tick.cx.stage_cross = Some(Arc::clone(cross));
+    }
+
     /// Re-targets the sequence after a settle outcome. The ordered cursor moves
     /// past a settled sequence step, holds on a failed one, and starts over
     /// when the stage now names another sequence.
@@ -2356,6 +2367,7 @@ impl Quester {
         tick: &mut NativeTick<'_>,
         pass: u8,
     ) -> Result<ScriptFlow, ScriptFailure> {
+        self.scope_stage_cross(tick);
         if self.step.is_none() && !self.settling && !self.needs_read {
             self.request_contradicted_read(tick);
         }
@@ -2380,6 +2392,7 @@ impl Quester {
             self.provisioner
                 .progress_read_completed(tick.cx.active_now());
         }
+        self.scope_stage_cross(tick);
         if self
             .path
             .sequences
@@ -2637,9 +2650,6 @@ impl Quester {
                 }
             };
             self.selection_since = None;
-            if selected.is_none() {
-                self.last_outcome = None;
-            }
             let Some((index, advances, prelude)) = selected else {
                 if self
                     .path
@@ -2649,6 +2659,7 @@ impl Quester {
                 {
                     return Ok(self.finish_quest(tick));
                 }
+                self.last_outcome = None;
                 if self
                     .path
                     .sequences
@@ -3145,7 +3156,10 @@ impl Script for Quester {
             self.publish(tick.output);
             return Ok(ScriptFlow::Blocked(self.blocked_failure()));
         }
-        self.advance(tick, 0)
+        let previous_cross = tick.cx.stage_cross.take();
+        let result = self.advance(tick, 0);
+        tick.cx.stage_cross = previous_cross;
+        result
     }
 
     fn interrupt(&mut self, event: Interrupt) {
@@ -3924,6 +3938,7 @@ impl Script for QueuedQuester {
             let bytes = self.queue.path_bytes(index);
             let selected = Arc::clone(&self.selected);
             let quests = Arc::clone(&self.quests);
+            let nav = tick.frame().compiled().nav.cloned();
             self.active_index = Some(index);
             let input = PreparationInput::new(
                 self.run.run,
@@ -3947,6 +3962,8 @@ impl Script for QueuedQuester {
                             cap,
                             gang,
                             &operator,
+                            nav.as_ref()
+                                .and_then(nav_planner::contract::NavLease::zones),
                         );
                         compiled.map_err(|error| {
                             let detail =
@@ -4410,6 +4427,7 @@ mod tests {
                     &quests,
                     cap,
                     &crate::local_state::OperatorLoadouts::absent(),
+                    None,
                 )
             }
         })
@@ -5029,6 +5047,43 @@ mod tests {
             );
             assert_eq!(script.attempts, 0);
         });
+    }
+
+    #[test]
+    fn stage_cross_follows_observed_stage_and_never_the_previous_cursor() {
+        let (mut script, snapshot) = status_fixture(super::super::compile::decode_cook().unwrap());
+        let path = Arc::get_mut(&mut script.path).unwrap();
+        path.sequences[0].cross = Arc::from([Arc::from("first-zone")]);
+        path.sequences[1].cross = Arc::from([Arc::from("second-zone")]);
+        let stages = [
+            path.sequences[0].stage.clone(),
+            path.sequences[1].stage.clone(),
+        ];
+        let mut ledger = None;
+        let mut output = StatusCapture::default();
+        super::super::families::tests::with_tick_output(
+            &snapshot,
+            &mut ledger,
+            1,
+            &mut output,
+            |tick| {
+                script.stage = Some(stages[0].clone());
+                script.scope_stage_cross(tick);
+                assert_eq!(
+                    tick.cx.stage_cross.as_deref().unwrap(),
+                    &[Arc::<str>::from("first-zone")]
+                );
+                script.stage = Some(stages[1].clone());
+                script.scope_stage_cross(tick);
+                assert_eq!(
+                    tick.cx.stage_cross.as_deref().unwrap(),
+                    &[Arc::<str>::from("second-zone")]
+                );
+                script.stage = None;
+                script.scope_stage_cross(tick);
+                assert!(tick.cx.stage_cross.as_deref().unwrap().is_empty());
+            },
+        );
     }
 
     pub(super) fn fixture() -> (Quester, api::snapshot::GameSnapshot) {
@@ -6666,6 +6721,7 @@ mod tests {
                     worker,
                     Some(Gang::Phoenix),
                     &crate::local_state::OperatorLoadouts::absent(),
+                    None,
                 )
             }
         })

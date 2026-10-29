@@ -238,6 +238,7 @@ fn with_tick_output_reach<R>(
         prompt_port: None,
         actions: &mut actions,
         cx: crate::native::ActionContext {
+            stage_cross: None,
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
@@ -265,6 +266,7 @@ fn with_tick_output_reach<R>(
             snapshot: Some(snapshot),
             obj_names: None,
             compiled: crate::CompiledTick {
+                nav: None,
                 condition: None,
                 poison_unknown_pulse: None,
                 cure_poison: crate::survival::CurePoison::WhenNeeded,

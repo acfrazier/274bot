@@ -229,6 +229,35 @@ fn walk_permission_setting(id: &str, label: &str, help: &str) -> SettingDef {
     definition
 }
 
+/// Plays a stage's `id:N` suffix back as an ordering ordinal; named stages
+/// (no numeric suffix) order after every numeric stage.
+fn stage_ordinal(stage: &str) -> u32 {
+    stage
+        .rsplit_once(':')
+        .and_then(|(_, ordinal)| ordinal.parse::<u32>().ok())
+        .unwrap_or(u32::MAX)
+}
+
+/// Stage identities in play order: role by role in the guide's role order,
+/// and within a role its numeric `id:N` stages in ascending N before its
+/// named stages in authored sequence order.
+fn ordered_stages(roles: &[super::path::PathRoleDocument]) -> Vec<Arc<str>> {
+    roles
+        .iter()
+        .flat_map(|role| {
+            let mut stages = role
+                .sequences
+                .iter()
+                .map(|sequence| Arc::clone(&sequence.stage.0))
+                .collect::<Vec<_>>();
+            stages.sort_by_key(|stage| stage_ordinal(stage));
+            stages
+        })
+        .collect()
+}
+
+/// One row per bundled released Path: display name, journal availability,
+/// draft status, and its stages in play order.
 pub fn released_paths() -> &'static [crate::api_progress::QuestPathRow] {
     static ROWS: LazyLock<Vec<crate::api_progress::QuestPathRow>> = LazyLock::new(|| {
         BUNDLED_INDEX
@@ -238,33 +267,6 @@ pub fn released_paths() -> &'static [crate::api_progress::QuestPathRow] {
             .map(|(entry, bytes)| {
                 let document: super::path::PathDocument =
                     serde_json::from_slice(bytes).expect("released Path document");
-                let mut stages = document
-                    .roles
-                    .iter()
-                    .flat_map(|role| {
-                        let progress = role.progress.as_ref().expect("released Path progress");
-                        [
-                            &progress.colour.not_started,
-                            &progress.colour.in_progress,
-                            &progress.colour.complete,
-                        ]
-                        .into_iter()
-                        .chain(progress.rules.iter().map(|rule| &rule.stage))
-                        .map(|stage| Arc::clone(&stage.0))
-                    })
-                    .collect::<Vec<_>>();
-                let ordinal = |stage: &Arc<str>| {
-                    stage
-                        .rsplit_once(':')
-                        .and_then(|(_, ordinal)| ordinal.parse::<u32>().ok())
-                        .unwrap_or(u32::MAX)
-                };
-                stages.sort_unstable_by(|left, right| {
-                    ordinal(left)
-                        .cmp(&ordinal(right))
-                        .then_with(|| left.cmp(right))
-                });
-                stages.dedup();
                 crate::api_progress::QuestPathRow {
                     id: Arc::clone(&document.id.0),
                     display: document.display_name.into(),
@@ -275,12 +277,71 @@ pub fn released_paths() -> &'static [crate::api_progress::QuestPathRow] {
                                 .is_some_and(|progress| !progress.rules.is_empty())
                         }),
                     draft: entry.status == Some(ReleasePathStatus::Draft),
-                    stages: stages.into(),
+                    stages: ordered_stages(&document.roles).into(),
                 }
             })
             .collect()
     });
     &ROWS
+}
+
+#[cfg(test)]
+mod released_path_stage_order_tests {
+    use super::*;
+
+    fn stages(id: &str) -> Vec<&str> {
+        released_paths()
+            .iter()
+            .find(|row| row.id.as_ref() == id)
+            .unwrap_or_else(|| panic!("{id} released row is missing"))
+            .stages
+            .iter()
+            .map(|stage| stage.as_ref())
+            .collect()
+    }
+
+    #[test]
+    fn released_path_stages_are_numeric_then_authored_within_each_role() {
+        // `itexam` authors its named stages in play order after the numeric
+        // start stage; an alphabetical sort emits done before find.
+        assert_eq!(
+            stages("itexam"),
+            [
+                "itexam:0",
+                "itexam:stamping",
+                "itexam:first",
+                "itexam:second",
+                "itexam:third",
+                "itexam:find",
+                "itexam:done",
+            ]
+        );
+        // `hero` keeps the guide's role order even though every blackarm
+        // stage key sorts before the phoenix ones.
+        assert_eq!(
+            stages("hero"),
+            [
+                "hero:p0",
+                "hero:p1",
+                "hero:p2",
+                "hero:p3",
+                "hero:p4",
+                "hero:p5",
+                "hero:p6",
+                "hero:pdone",
+                "hero:b0",
+                "hero:b1",
+                "hero:b7",
+                "hero:b8",
+                "hero:b9",
+                "hero:b10",
+                "hero:b11",
+                "hero:b12",
+                "hero:b13",
+                "hero:bdone",
+            ]
+        );
+    }
 }
 
 struct Prepared {
@@ -315,17 +376,18 @@ fn prepare(
         let quests = Arc::new(
             QuestCatalog::from_identity(cx.selected.quest_identity()).map_err(StartError::Facts)?,
         );
-        let registry = registry::reload_with_catalog(&cx.selected, Some(&quests), cx.families)
-            .map_err(|error| {
-                StartError::Unavailable(
-                    format!(
-                        "{}: {}",
-                        error.code,
-                        error.detail.as_deref().unwrap_or("Path reload failed")
+        let registry =
+            registry::reload_with_catalog(&cx.selected, Some(&quests), cx.zones, cx.families)
+                .map_err(|error| {
+                    StartError::Unavailable(
+                        format!(
+                            "{}: {}",
+                            error.code,
+                            error.detail.as_deref().unwrap_or("Path reload failed")
+                        )
+                        .into(),
                     )
-                    .into(),
-                )
-            })?;
+                })?;
         Ok(QuesterRegistryReady { registry, quests })
     })
 }
@@ -462,6 +524,7 @@ mod tests {
         FamilyPreparation::run(move |families| {
             let pin = selected.selected_pin().unwrap();
             let mut cx = PrepareContext {
+                zones: None,
                 selected,
                 pin,
                 banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
@@ -715,6 +778,7 @@ mod tests {
         FamilyPreparation::run(move |families| {
             let pin = selected.selected_pin().unwrap();
             let mut cx = PrepareContext {
+                zones: None,
                 selected,
                 pin,
                 banks: Arc::new(api::named_banks::NamedBankFacts::empty()),

@@ -328,7 +328,7 @@ impl BankSlot {
     }
 
     fn drain_seat_starts(&mut self) {
-        let (_, legacy, _) = self.slot.drain_host_interacts();
+        let (_, legacy, _) = self.slot.drain_host_interacts(None);
         assert!(
             legacy.is_empty(),
             "bank fixture emitted legacy effects instead of using the native seat"

@@ -633,6 +633,10 @@ pub struct TuiApp {
     pub script_queued: bool,
     /// The focused profile's script heading; Start keys on `(source, name)`.
     pub script_sel: Option<ScriptChoice>,
+    /// Cached disclosure for the selected Quester queue.
+    pub(crate) quester_start_zone_cache: frontend_core::scripts::QuesterStartZoneCache,
+    /// Vertical scroll through the complete pre-start disclosure.
+    pub(crate) quester_start_zone_scroll: u16,
     /// The operator picked a card in Browse since the last pump: the
     /// binary records it as the focused profile's pending selection.
     pub browse_changed: bool,
@@ -792,6 +796,8 @@ impl TuiApp {
             script_load_sel: 0,
             #[cfg(feature = "js")]
             script_load_last_dir: None,
+            quester_start_zone_cache: frontend_core::scripts::QuesterStartZoneCache::default(),
+            quester_start_zone_scroll: 0,
             params_schema: OwnedSchema::default(),
             params_unavailable: None,
             params_bag: serde_json::Map::new(),
@@ -1958,18 +1964,8 @@ impl TuiApp {
         }
     }
 
-    /// The script pane's clicks: a button runs its command, picker rows store
-    /// the selection.
-    pub(crate) fn script_click(&mut self, col: u16, row: u16) -> AppAction {
-        #[cfg(feature = "js")]
-        {
-            if self.script_load_open {
-                return self.load_click(col, row);
-            }
-            if self.rs2b0t_catalog_open {
-                return self.catalog_click(col, row);
-            }
-        }
+    /// Build the shared script-pane view, including the selected zone scope.
+    pub(crate) fn script_pane(&self) -> ScriptPane<'_> {
         let pane = ScriptPane::new(
             self.script_state,
             self.script_sel.as_ref(),
@@ -1984,6 +1980,50 @@ impl TuiApp {
             self.script_load_open,
             self.reload_confirm,
         );
+        pane.with_start_zone_view(
+            self.quester_start_zone_cache.view(),
+            self.quester_start_zone_scroll,
+        )
+    }
+
+    pub(crate) fn scroll_quester_start_zones(&mut self, delta: i32) -> bool {
+        let selected_quester = self.script_sel.as_ref().and_then(ScriptChoice::compiled_id)
+            == Some(frontend_core::scripts::CompiledCardId::QUESTER);
+        #[cfg(feature = "js")]
+        let load_open = self.script_load_open;
+        #[cfg(not(feature = "js"))]
+        let load_open = false;
+        if !selected_quester
+            || self.script_state != ScriptRunState::Idle
+            || self.script_browse_open
+            || load_open
+            || self.quester_start_zone_cache.view().is_none()
+        {
+            return false;
+        }
+        let max = self.script_pane().max_vertical_scroll(self.script_area);
+        if max == 0 {
+            return false;
+        }
+        self.quester_start_zone_scroll = i32::from(self.quester_start_zone_scroll)
+            .saturating_add(delta)
+            .clamp(0, i32::from(max)) as u16;
+        true
+    }
+
+    /// The script pane's clicks: a button runs its command, picker rows store
+    /// the selection.
+    pub(crate) fn script_click(&mut self, col: u16, row: u16) -> AppAction {
+        #[cfg(feature = "js")]
+        {
+            if self.script_load_open {
+                return self.load_click(col, row);
+            }
+            if self.rs2b0t_catalog_open {
+                return self.catalog_click(col, row);
+            }
+        }
+        let pane = self.script_pane();
         match pane.on_click(self.script_area, col, row) {
             ScriptClick::Button(label) => {
                 script_command(label).map_or(AppAction::None, |command| self.run_command(command))
@@ -2439,21 +2479,8 @@ impl TuiApp {
                 .render(inner, frame.buffer_mut());
             return;
         }
-        let pane = ScriptPane::new(
-            self.script_state,
-            self.script_sel.as_ref(),
-            &self.script_cards,
-            &self.script_category_order,
-            self.script_browse_open,
-            !self.params_schema.as_ref().is_empty(),
-        );
-        #[cfg(feature = "js")]
-        let pane = pane.with_js_controls(
-            frontend_core::scripts::paths::rs2b0t_import_deferred(),
-            self.script_load_open,
-            self.reload_confirm,
-        );
-        let pane = pane
+        let pane = self
+            .script_pane()
             .with_native_status(
                 self.focused_detail()
                     .and_then(|detail| detail.native_status()),

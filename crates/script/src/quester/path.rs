@@ -240,7 +240,23 @@ pub struct SequenceDocument {
     pub recovery_entry: Option<FactKey>,
     #[serde(default)]
     pub order: SequenceOrder,
+    /// Stable navigation identities the stage may cross.
+    #[serde(default)]
+    #[cfg_attr(feature = "path-schema", schemars(length(max = 8)))]
+    pub cross: Vec<RequiredZoneDocument>,
     pub steps: Vec<StepDocument>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct RequiredZoneDocument {
+    #[cfg_attr(feature = "path-schema", schemars(length(min = 1)))]
+    pub id: String,
+    #[cfg_attr(feature = "path-schema", schemars(length(min = 1)))]
+    pub name: String,
+    #[cfg_attr(feature = "path-schema", schemars(length(min = 1)))]
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

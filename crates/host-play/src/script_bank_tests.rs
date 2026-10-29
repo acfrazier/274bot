@@ -165,7 +165,7 @@ export async function tick(api) {{
                     assert!(slot.post_snapshot_delta(input, native, false));
                 },
             );
-            let (_, legacy, _) = slot.drain_host_interacts();
+            let (_, legacy, _) = slot.drain_host_interacts(None);
             assert!(legacy.is_empty(), "select uses the typed native seat");
             let mut cx = script::ScriptCtx {
                 driver: &mut HeldDriver,

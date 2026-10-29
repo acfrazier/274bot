@@ -54,8 +54,15 @@ fn squire_path() -> (
     .unwrap();
     let quests = Arc::new(QuestCatalog::from_identity(selected.quest_identity()).unwrap());
     let document: PathDocument = serde_json::from_str(super::super::compile::SQUIRE_JSON).unwrap();
-    let path =
-        super::super::compile::compile_uncached_for_test(&document, &selected, &quests).unwrap();
+    let path = super::super::compile::compile_uncached_for_test_with_zones(
+        &document,
+        &selected,
+        &quests,
+        super::super::compile::real_nav_lease()
+            .zones()
+            .expect("real 289 zone catalog"),
+    )
+    .unwrap();
     (selected, quests, path)
 }
 

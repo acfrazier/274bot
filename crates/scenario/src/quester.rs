@@ -1254,6 +1254,28 @@ pub fn reload_quester_path_source(
     let previous = registry::source();
     registry::set_source(source.clone());
     let loaded = (|| {
+        let nav = if source.enabled {
+            std::env::var_os("WORLD_NAV_PACK")
+                .or_else(|| std::env::var_os("NAV_PACK"))
+                .map(|pack| {
+                    let pack = PathBuf::from(pack);
+                    let bytes = std::fs::read(&pack).map_err(|error| {
+                        format!("read navigation pack {}: {error}", pack.display())
+                    })?;
+                    let world =
+                        nav_planner::world::NavWorld::from_bytes(&bytes).map_err(|error| {
+                            format!("load navigation pack {}: {error}", pack.display())
+                        })?;
+                    nav_planner::contract::NavLease::wrap(
+                        std::sync::Arc::new(world),
+                        nav_planner::contract::PackDigest::of(&bytes),
+                    )
+                    .map_err(|error| format!("bind navigation catalog: {error:?}"))
+                })
+                .transpose()?
+        } else {
+            None
+        };
         let selected = preparation::submit(
             PreparationKind::Catalogue,
             api::identity::Scope::Process,
@@ -1287,6 +1309,7 @@ pub fn reload_quester_path_source(
                     match RegistryPreparation::from_source_without_catalog(
                         preparation_source.clone(),
                         std::sync::Arc::clone(&data),
+                        nav.clone(),
                     ) {
                         Ok(candidate) => preparation = Some(candidate),
                         Err(error) => {

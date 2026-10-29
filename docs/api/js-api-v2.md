@@ -590,13 +590,16 @@ Druidic Ritual (`druid`), Gertrude's Cat (`fluffs`), Jungle Potion
 (`junglepotion`), Sea Slug Quest (`seaslug`) and Tribal Totem (`totem`). Each
 row's `draft` is `true` for those five and `false` for the twenty released
 Paths. Haunted Mine, which this server can't run,
-has no Path and is not a row. Each row's `stages` comes from that Path's colour
-mapping and journal rules. Cook and Imp Catcher are colour-only
+has no Path and is not a row. Each row's `stages` comes from that Path's
+authored role sequences. Cook and Imp Catcher are colour-only
 (`journal: false`); the rest have journal rules (`journal: true`). For example,
 Romeo & Juliet includes the six journal stages `romeojuliet:10` through
 `romeojuliet:60`, plus its not-started and complete stages (`romeojuliet:0` and
 `romeojuliet:100`).
-Stages are returned in ascending numeric stage order.
+Stages are listed role by role in the guide's role order. Within a role,
+stages with a numeric suffix (`romeojuliet:10`) come first in ascending order,
+then named stages (`itexam:stamping`, `itexam:find`) in authored sequence
+order.
 
 | Method | OK | Errors |
 | --- | --- | --- |
