@@ -812,7 +812,10 @@ fn reach_walks_through_an_open_door_instead_of_closing_it() {
             assert_eq!(request.radius, 1);
         }
         HostEffect::Interaction(request) => panic!("open door recovery must walk, got {request:?}"),
-        HostEffect::BankPick(_) | HostEffect::AssessWalk(_) | HostEffect::ServerOrdered(_) => {
+        HostEffect::BankPick(_)
+        | HostEffect::ServicePick(_)
+        | HostEffect::AssessWalk(_)
+        | HostEffect::ServerOrdered(_) => {
             panic!("open door recovery cannot select a bank or advisory")
         }
     }
@@ -1565,7 +1568,10 @@ fn closed_door_recovery_walks_to_an_operable_side_before_opening() {
         HostEffect::Interaction(request) => {
             panic!("door must be approached before Open, got {request:?}")
         }
-        HostEffect::BankPick(_) | HostEffect::AssessWalk(_) | HostEffect::ServerOrdered(_) => {
+        HostEffect::BankPick(_)
+        | HostEffect::ServicePick(_)
+        | HostEffect::AssessWalk(_)
+        | HostEffect::ServerOrdered(_) => {
             panic!("door approach cannot select a bank or advisory")
         }
     }
@@ -3648,6 +3654,7 @@ fn dialogue_approaches_a_distant_npc_before_talking() {
             }
             HostEffect::Interaction(_)
             | HostEffect::BankPick(_)
+            | HostEffect::ServicePick(_)
             | HostEffect::AssessWalk(_)
             | HostEffect::ServerOrdered(_) => {
                 panic!("talked before approaching the NPC")
@@ -3740,6 +3747,7 @@ fn use_on_chases_a_distant_npc_without_returning_to_the_initial_anchor() {
             }
             HostEffect::Interaction(_)
             | HostEffect::BankPick(_)
+            | HostEffect::ServicePick(_)
             | HostEffect::AssessWalk(_)
             | HostEffect::ServerOrdered(_) => {
                 panic!("used the item before approaching the NPC")
@@ -5834,6 +5842,7 @@ fn dialogue_nearby_blocked_npc_keeps_approaching_until_clipping_allows_talk() {
             }
             HostEffect::Interaction(_)
             | HostEffect::BankPick(_)
+            | HostEffect::ServicePick(_)
             | HostEffect::AssessWalk(_)
             | HostEffect::ServerOrdered(_) => {
                 panic!("geometric proximity cannot bypass closed clipping")

@@ -215,6 +215,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/api/src/service_pick.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/api/src/shop_facts.rs",
       "owner": "T2"
     },
@@ -2003,6 +2007,14 @@
       "owner": "T5"
     },
     {
+      "path": "crates/nav-planner/src/service_pick.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-planner/src/service_pick_tests.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/nav-planner/src/executor_adapter_tests.rs",
       "owner": "T5"
     },
@@ -3192,6 +3204,10 @@
     },
     {
       "path": "crates/script/src/acquire/run_tests.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/acquire/vendor.rs",
       "owner": "T2"
     },
     {

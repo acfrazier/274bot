@@ -575,6 +575,7 @@ mod tests {
                 HostEffect::Interaction(request) => requests.push(request),
                 HostEffect::Walk(_)
                 | HostEffect::BankPick(_)
+                | HostEffect::ServicePick(_)
                 | HostEffect::AssessWalk(_)
                 | HostEffect::ServerOrdered(_) => {
                     panic!("prayer clear only emits interactions")

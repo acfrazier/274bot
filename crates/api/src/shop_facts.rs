@@ -106,6 +106,22 @@ pub struct VendorFact<'a> {
     pub item: &'a ShopItemFact,
 }
 
+/// A joined pinned shop keeper, without a stock selection.
+///
+/// Identity comes from `data/shops/keepers.npc`'s config and `owned_shop`
+/// parameter, joined to the selected `npc.pack`; display names never join rows.
+#[derive(Debug, Clone, Copy)]
+pub struct KeeperFact<'a> {
+    /// The posted inventory selected by the keeper's `owned_shop` parameter.
+    pub record: &'a ShopRecord,
+    /// The config alias in `data/shops/keepers.npc`.
+    pub keeper_config: &'a str,
+    /// The display name in `data/shops/keepers.npc`, not an identity key.
+    pub keeper_name: &'a str,
+    /// The selected `npc.pack` type id for `keeper_config`, not a live index.
+    pub keeper_id: i32,
+}
+
 #[derive(Debug)]
 struct JoinedKeeper {
     shop_index: usize,
@@ -336,6 +352,26 @@ pub fn vendor_by_keeper_config<'a>(
         keeper_name: &keeper.name,
         keeper_id: keeper_row.keeper_id,
         item,
+    })
+}
+
+/// Borrow every keeper joined to a pinned posted shop, in content order.
+///
+/// These are the same `data/shops/keepers.npc` → `owned_shop` →
+/// selected-`npc.pack` rows used by [`vendors_for`], without an item filter.
+/// The process-wide per-revision join owns the returned rows. Once bound,
+/// constructing or advancing this iterator does not allocate.
+pub fn keepers(data: &SelectedGameData) -> impl Iterator<Item = KeeperFact<'static>> {
+    let joined = joined_shops(data);
+    let parsed = &parsed_shop_facts().keepers;
+    joined.vendor_keepers.iter().map(move |row| {
+        let keeper = &parsed[row.keeper_index];
+        KeeperFact {
+            record: &joined.shops[row.shop_index],
+            keeper_config: &keeper.config,
+            keeper_name: &keeper.name,
+            keeper_id: row.keeper_id,
+        }
     })
 }
 
@@ -1117,6 +1153,44 @@ param=shop_title,Fishing shop 2"#,
             joined[1].keeper_id,
             catalog.npc_by_config("harry").expect("Harry config").id
         );
+    }
+
+    #[test]
+    fn all_keepers_are_exactly_the_joined_vendor_set_on_both_revisions() {
+        use std::collections::BTreeSet;
+
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            let catalog = data(revision);
+            let keepers: BTreeSet<_> = super::keepers(&catalog)
+                .map(|keeper| {
+                    (
+                        keeper.record.inv.as_str(),
+                        keeper.keeper_config,
+                        keeper.keeper_id,
+                    )
+                })
+                .collect();
+            let mut vendors = BTreeSet::new();
+            for record in shops_for(&catalog) {
+                for item in &record.items {
+                    let item_id = catalog.item_by_alias(&item.obj).expect("posted item").id;
+                    for vendor in vendors_for(&catalog, item_id) {
+                        vendors.insert((
+                            vendor.record.inv.as_str(),
+                            vendor.keeper_config,
+                            vendor.keeper_id,
+                        ));
+                    }
+                }
+            }
+            assert!(!keepers.is_empty(), "{revision:?}");
+            assert_eq!(keepers, vendors, "{revision:?}");
+            assert_eq!(
+                keepers.len(),
+                joined_shops(&catalog).vendor_keepers.len(),
+                "no repeated identity on {revision:?}"
+            );
+        }
     }
 
     #[test]

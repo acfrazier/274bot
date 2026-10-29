@@ -289,7 +289,8 @@ reasons to change.
 | `prayer.rs` | prayer queries | over fact rows and observed stats |
 | `quest_facts.rs`, `quest_facts/catalog.rs` | quest identity and prereqs; roster rows | stage resolution belongs to the Path |
 | `quest_progress.rs` | compact journal/progress evidence | shared by runner, host and nav provider |
-| `shop_facts.rs` | shop preset facts | ShopBuyout presets only |
+| `shop_facts.rs` | pinned shop and keeper facts | borrowed config/type joins; posted stock and content prices |
+| `service_pick.rs` | borrowed service candidates and shared resolved keeper rows | plain facts only; collision and search stay in `nav` |
 | `clue_facts.rs` | clue row lookup | over the posted trail family |
 | `clue_logic.rs` | held-step identify | first held step in posted order |
 | `clue_pack.rs` | trail pack budgeting and keep predicate | frozen pack-plan arithmetic |
@@ -374,6 +375,7 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 | `movement.rs` | shared directional step rule | router and release producer use the same `step_ok` |
 | `router/grid.rs` | compatibility step-grid A-star | retained for fixture tests; production travel uses the collision+transport router |
 | `router/resources.rs` | resource labels on walk nodes | change only at paid hops |
+| `service_pick.rs`, `service_pick_tests.rs` | shared service-footprint access and complete-domain air/routed selection | prevalidated borrowed access; no `script` dependency |
 | `tile.rs` | tile coords and distance | x, z, level |
 | `transport.rs` | transport graph orchestration | types, ordering, shared cost and geometry |
 | `transport/` | runtime fare, web-action and Wilderness helpers | source derivation belongs to `nav-bake` |
@@ -607,7 +609,7 @@ the operator's consent and adopts the tiles already verified).
  | `native.rs`, `registry.rs` | typed card/configuration/output contract and one descriptor registry | metadata, native request kind, preparer and factory. Hosts install the JS cards with `script_js::install_cards()`. Slots refresh their static card view when the publication generation changes |
 | `native/actions.rs`, `native/ledger.rs`, `native/owner.rs`, `native/walk.rs`, `native/walk_wait.rs` | host action ledger and native walk correlation | receipts, revocation identities, route terminal versus arrival |
 | `native/death.rs`, `native/thieve.rs`, `native/thieving_core.rs` | shared death latch; native thieving machine and its core | content-derived respawn square |
-| `native_bank.rs`, `native_equipment.rs`, `native_production.rs`, `native_shop.rs`, `trade_screen.rs`, `bank.rs`, `bank/ops.rs`, `bank/npc.rs` | snapshot-driven cores shared by compiled cards and compat families | one bank transfer kernel, wear/remove, production, shop purchase and player-trade screen |
+| `native_bank.rs`, `native_equipment.rs`, `native_production.rs`, `native_shop.rs`, `trade_screen.rs`, `bank.rs`, `bank/ops.rs`, `bank/npc.rs` | snapshot-driven cores shared by compiled cards and compat families | one bank transfer kernel, typed service picks, wear/remove, production, shop purchase and player-trade screen |
 | `slot.rs` | per-uid runner lifecycle | intent and presence gates, tick edge |
 | `surface.rs`, `surface/test_support.rs` | runtime-neutral surface cards, run contract and core test factory | slot lifecycle owns trait objects and typed facts, not JS or wire state |
 | `native/recovery_hints.rs` | shared recovery-anchor cell | slot-owned hints survive surface retirement and restart |

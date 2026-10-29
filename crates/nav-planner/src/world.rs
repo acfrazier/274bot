@@ -37,6 +37,7 @@ pub struct NavWorld {
     pub graph: TransportGraph,
     banks: Vec<BankStand>,
     named_banks: OnceLock<Arc<api::named_banks::NamedBankFacts>>,
+    shop_keepers: OnceLock<Arc<api::service_pick::ShopKeeperFacts>>,
     transport_item_names: OnceLock<TransportItemNames>,
     risk_facts: OnceLock<Box<dyn Any + Send + Sync>>,
     /// The pack bytes' digest: set by [`Self::from_bytes`], or by the host's
@@ -87,6 +88,12 @@ impl NavWorld {
         self.named_banks.get()
     }
 
+    /// Pinned `keepers.npc` and selected NPC placements, resolved once against
+    /// this world's collision. Every bot shares these rows and access rings.
+    pub fn shop_keeper_facts(&self) -> Option<&Arc<api::service_pick::ShopKeeperFacts>> {
+        self.shop_keepers.get()
+    }
+
     /// Selected-cache display names for transport resources, bound once with
     /// the bank facts. An unbound/unknown item stays unnamed, never guessed.
     pub fn transport_item_name(&self, id: i32) -> Option<&str> {
@@ -125,6 +132,12 @@ impl NavWorld {
         self.named_banks
             .set(facts)
             .map_err(|_| "bank facts already bound")?;
+        self.shop_keepers
+            .set(Arc::new(crate::service_pick::resolve_shop_keepers(
+                data,
+                &self.collision,
+            )))
+            .map_err(|_| "shop keeper facts already bound")?;
         let mut ids: Vec<_> = self
             .graph
             .edges
@@ -200,6 +213,7 @@ impl NavWorld {
             graph,
             banks,
             named_banks: OnceLock::new(),
+            shop_keepers: OnceLock::new(),
             transport_item_names: OnceLock::new(),
             risk_facts: OnceLock::new(),
             content: OnceLock::new(),
