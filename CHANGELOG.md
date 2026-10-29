@@ -80,8 +80,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   end a wait only by counting game ticks that the bot has seen. Before, a
   wait also needed a minimum of real time to pass, so a slow or paused
   computer could hold a wait open after its tick count was reached. The
-  bounds are the former ones in whole ticks (8 ticks for a transfer, 2 for
-  the deposit view, 9 for the select fallback). The
+  bounds come from the game, not from a clock: 8 ticks for a transfer, 1 tick
+  for the bank's side view (the game sends it in the same tick as the bank
+  itself), and 9 ticks, counted from the request, before the bot picks the
+  nearest bank itself when the host's bank search gives no answer. The
   JavaScript `Bank` API still keeps the millisecond minimum that its frozen
   documentation states for its own waits. This closes the known issue
   "Grinch's bank trip still waits up to a fixed time".

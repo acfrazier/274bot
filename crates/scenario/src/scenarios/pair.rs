@@ -128,9 +128,18 @@ struct ClueBankRecord {
 }
 
 impl ClueBankRecord {
-    fn observe(&mut self, snap: &GameSnapshot, reward_ids: &[i32], initial: &[(i32, i32)]) {
-        let tick = snap.tick();
-        if snap.bank_component_id() >= 0 && snap.bank_loaded() {
+    /// One observation of the solver at `tick`: `bank` reads the open and
+    /// loaded bank's count of an id (`None`: no loaded bank), `pack` the
+    /// pack's.
+    fn observe(
+        &mut self,
+        tick: u32,
+        bank: Option<&dyn Fn(i32) -> i32>,
+        pack: &dyn Fn(i32) -> i32,
+        reward_ids: &[i32],
+        initial: &[(i32, i32)],
+    ) {
+        if let Some(bank) = bank {
             self.bank_opened.get_or_insert(tick);
             let equipment = initial.iter().map(|(id, _)| *id);
             let watched: Vec<i32> = reward_ids
@@ -139,7 +148,7 @@ impl ClueBankRecord {
                 .chain(equipment.filter(|id| !reward_ids.contains(id)))
                 .collect();
             for id in watched {
-                let now = pair_bank_id(snap, id);
+                let now = bank(id);
                 let before = self
                     .banked
                     .iter()
@@ -171,7 +180,7 @@ impl ClueBankRecord {
                     .filter(|(initial_id, _)| initial_id == id)
                     .map(|(_, count)| *count)
                     .sum();
-                pair_inv_id(snap, *id) > at_start
+                pack(*id) > at_start
             });
             if self.reward_first.is_some() && !in_pack_beyond_initial {
                 self.reward_pack_clear.get_or_insert(tick);
@@ -283,8 +292,16 @@ impl ClueFleetWitness {
             self.reward_banked |= self.reward_ids.iter().any(|id| pair_bank_id(snap, *id) > 0);
         }
         if slot_index == 0 {
-            self.bank
-                .observe(snap, &self.reward_ids, &self.slots[0].initial_inv);
+            let in_bank = |id| pair_bank_id(snap, id);
+            let in_pack = |id| pair_inv_id(snap, id);
+            let bank_loaded = snap.bank_component_id() >= 0 && snap.bank_loaded();
+            self.bank.observe(
+                snap.tick(),
+                bank_loaded.then_some(&in_bank as &dyn Fn(i32) -> i32),
+                &in_pack,
+                &self.reward_ids,
+                &self.slots[0].initial_inv,
+            );
         }
     }
 
@@ -2881,7 +2898,7 @@ mod prep_barrier_tests {
 
 #[cfg(test)]
 mod clue_witness_tests {
-    use super::ClueFleetWitness;
+    use super::{ClueBankRecord, ClueFleetWitness};
     use api::snapshot::GameSnapshot;
     use client::client::{Client, ClientPlayer};
     use client::io::ServerProt;
@@ -2930,58 +2947,30 @@ mod clue_witness_tests {
         assert!(witness.slots[0].saw_peer, "the helper by its own name");
     }
 
-    fn view(id: i32, count: i32, container: api::snapshot::ItemContainer) -> api::snapshot::ItemView {
-        api::snapshot::ItemView {
-            def: api::obj_names::ItemDefView {
-                id,
-                name: None,
-                stackable: false,
-                members: false,
-                base_value: 0,
-                noted: false,
-                certificate_link: -1,
-                certificate_template: -1,
-            },
-            container,
-            action_family: api::snapshot::ItemActionFamily::None,
-            slot: 0,
-            count,
-            actions: Vec::new(),
-            component_id: -1,
-        }
-    }
-
-    /// One solver observation: its pack and, when `bank` is `Some`, an open
-    /// bank holding those rows (a closed bank is `None`).
-    fn observe_solver(
-        witness: &mut ClueFleetWitness,
+    /// One solver observation at `tick`: its pack and, when `bank` is `Some`,
+    /// the loaded bank's rows (`None`: no loaded bank). Counts are by id.
+    fn record(
+        record: &mut ClueBankRecord,
         tick: u32,
         pack: &[(i32, i32)],
         bank: Option<&[(i32, i32)]>,
+        reward_ids: &[i32],
+        initial: &[(i32, i32)],
     ) {
-        use api::snapshot::ItemContainer;
-        let mut snap = seen("Solver", &[]);
-        snap.seed_tick(tick);
-        snap.seed_inventory(
-            pack.iter()
-                .map(|(id, count)| view(*id, *count, ItemContainer::Inventory))
-                .collect(),
-            28,
-        );
+        let count = |rows: &[(i32, i32)], id: i32| {
+            rows.iter()
+                .filter(|(row, _)| *row == id)
+                .map(|(_, n)| *n)
+                .sum::<i32>()
+        };
+        let in_pack = |id| count(pack, id);
         match bank {
-            Some(rows) => snap.seed_bank_observation(
-                10,
-                1,
-                Some(
-                    rows.iter()
-                        .map(|(id, count)| view(*id, *count, ItemContainer::Bank))
-                        .collect(),
-                ),
-                Vec::new(),
-            ),
-            None => snap.seed_bank_observation(-1, 1, None, Vec::new()),
+            Some(rows) => {
+                let in_bank = |id| count(rows, id);
+                record.observe(tick, Some(&in_bank), &in_pack, reward_ids, initial);
+            }
+            None => record.observe(tick, None, &in_pack, reward_ids, initial),
         }
-        witness.observe(0, &snap);
     }
 
     /// Contract item 7 (native seat answer wake): the record separates the
@@ -2994,49 +2983,53 @@ mod clue_witness_tests {
         const DAGGER: i32 = 1231;
         const SHORTBOW: i32 = 861;
         const RUNE_DAGGER: i32 = 1213;
-        let mut witness = ClueFleetWitness::default();
-        witness.start();
-        let equipment = [(COINS, 1_000), (DAGGER, 1)];
-        observe_solver(&mut witness, 10, &equipment, None);
-        let casket = [(COINS, 1_000), (DAGGER, 1), (3555, 1)];
-        observe_solver(&mut witness, 20, &casket, None);
-        let reward = [
+        let initial = [(COINS, 1_000), (DAGGER, 1)];
+        let rewards = [SHORTBOW, RUNE_DAGGER];
+        let all = [
             (COINS, 1_000),
             (DAGGER, 1),
             (SHORTBOW, 1),
             (RUNE_DAGGER, 1),
         ];
-        observe_solver(&mut witness, 30, &reward, None);
-        assert_eq!(witness.reward_ids, vec![SHORTBOW, RUNE_DAGGER]);
+        let mut bank = ClueBankRecord::default();
+        // No loaded bank: nothing is recorded.
+        record(&mut bank, 30, &all, None, &rewards, &initial);
+        assert!(bank.summary(&rewards).contains("bank_opened=none"));
         // Older stock of a watched id is the baseline of the first loaded
-        // observation.
-        observe_solver(&mut witness, 40, &reward, Some(&[(DAGGER, 3)]));
-        observe_solver(
-            &mut witness,
+        // observation, never a deposit.
+        record(&mut bank, 40, &all, Some(&[(DAGGER, 3)]), &rewards, &initial);
+        record(
+            &mut bank,
             41,
             &[(COINS, 1_000), (SHORTBOW, 1), (RUNE_DAGGER, 1)],
             Some(&[(DAGGER, 4)]),
+            &rewards,
+            &initial,
         );
-        observe_solver(
-            &mut witness,
+        record(
+            &mut bank,
             42,
             &[(COINS, 1_000), (RUNE_DAGGER, 1)],
             Some(&[(DAGGER, 4), (SHORTBOW, 1)]),
+            &rewards,
+            &initial,
         );
-        let summary = witness.terminal_summary();
+        let summary = bank.summary(&rewards);
         assert!(summary.contains("bank_opened=40"), "{summary}");
         assert!(
             summary.contains("reward_deposit first=42 last=42 rises=1"),
             "{summary}"
         );
         assert!(summary.contains("reward_pack_clear=none"), "{summary}");
-        observe_solver(
-            &mut witness,
+        record(
+            &mut bank,
             45,
             &[(COINS, 1_000)],
             Some(&[(DAGGER, 4), (SHORTBOW, 1), (RUNE_DAGGER, 1)]),
+            &rewards,
+            &initial,
         );
-        let summary = witness.terminal_summary();
+        let summary = bank.summary(&rewards);
         assert!(
             summary.contains("reward_deposit first=42 last=45 rises=2"),
             "{summary}"
