@@ -75,7 +75,7 @@ fn obstacle_state(graph: &TransportGraph, signal: &'static str, value: i32) -> W
     WorldState::empty().with_quest_evidence(QuestEvidence::new(Arc::new(ObstacleSignals(signal, value)), graph.quest_family.unwrap(), stamp))
 }
 
-fn crossing<'a>(graph: &'a TransportGraph, id: i32, from: WorldTile, to: WorldTile) -> &'a TransportEdge {
+fn crossing(graph: &TransportGraph, id: i32, from: WorldTile, to: WorldTile) -> &TransportEdge {
     graph.edges.iter().find(|edge| edge.loc_id == id && edge.takeoff == Some(from) && edge.to == to).unwrap_or_else(|| panic!("missing {id}: {from:?} -> {to:?}"))
 }
 

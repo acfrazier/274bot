@@ -66,8 +66,14 @@ pub(super) fn classify(handler: &Block, src: &Sources) -> Option<Class> {
     let (_, class) = templates.handlers.iter().find(|(template, _)| {
         template.params == handler.params && template.body == handler.body
     })?;
-    for call in reachable_calls(handler, src) {
+    let mut calls = Vec::new();
+    handler.body.iter().for_each(|stmt| stmt.calls(&mut calls));
+    let mut seen = HashSet::new();
+    while let Some(call) = calls.pop() {
         if let Some(name) = call.strip_prefix('@') {
+            if !seen.insert(name.to_owned()) {
+                continue;
+            }
             let expected = templates.labels.get(name)?;
             let Lookup::Found(actual) = Sources::one(&src.labels, name) else {
                 return None;
@@ -75,6 +81,7 @@ pub(super) fn classify(handler: &Block, src: &Sources) -> Option<Class> {
             if actual.params != expected.params || actual.body != expected.body {
                 return None;
             }
+            actual.body.iter().for_each(|stmt| stmt.calls(&mut calls));
         }
     }
     Some(*class)
