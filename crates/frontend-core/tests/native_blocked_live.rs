@@ -4,8 +4,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
+use api::identity::Settlement;
 use api::interact::{cheat, tele_args};
 use api::snapshot::GameSnapshot;
+use frontend_core::command::Completion;
 use frontend_core::scripts::{ScriptRunState, StatusView};
 use frontend_core::views::{script_status_label, script_status_reason, script_status_rows};
 use frontend_core::{
@@ -293,13 +295,27 @@ fn gatherer_parked_status_is_shared_and_controllable() {
             &account,
             deadline,
         )?;
-        submit_and_wait(
-            &mut session,
-            &mut surface,
-            OperatorCommand::Select,
-            &account,
-            deadline,
-        )?;
+        let selection = session
+            .submit(
+                OperatorCommand::Select,
+                Targets::Profile(&account),
+                &mut surface,
+            )
+            .map_err(|error| format!("submit Select: {error:?}"))?;
+        assert!(
+            selection.operation().is_none(),
+            "Select settles at dispatch"
+        );
+        let selected = session
+            .commands()
+            .report(selection.request())
+            .ok_or("Select command report disappeared")?;
+        assert_eq!(selected.members().len(), 1);
+        assert!(matches!(
+            selected.members()[0].terminal(),
+            Some(Settlement::Completed(Completion::Done))
+        ));
+        assert_eq!(session.selected(), Some(account.as_str()));
         loop {
             session.poll();
             match state.lock().unwrap().runner.status() {
