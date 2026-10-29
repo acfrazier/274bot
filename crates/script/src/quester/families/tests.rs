@@ -5777,8 +5777,17 @@ fn dialogue_open_clock_starts_after_approaching_the_npc() {
         emitted(&ledger),
         InteractReq::Npc { index: Some(7), .. }
     ));
-    // The approach took 18.6 seconds; the new Open window is still eight seconds.
-    with_tick(&snapshot, &mut ledger, 36, |t| {
+    // Talk-to is sent at tick 32 after the long approach; only now does the
+    // four-observed-tick open budget start. Captain Siad similarly writes this
+    // game message before `p_delay(2)` and its first chat page
+    // (`quest_desertrescue/scripts/captain_siad.rs2:1-11`).
+    snapshot.seed_chat_lines(vec![api::snapshot::ChatLineView {
+        sequence: 1,
+        text: "The captain looks up from his work as you address him.".into(),
+        type_: 0,
+        username: None,
+    }]);
+    with_tick(&snapshot, &mut ledger, 35, |t| {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
     });
     snapshot.seed_chat_modal(
@@ -5786,7 +5795,7 @@ fn dialogue_open_clock_starts_after_approaching_the_npc() {
         vec!["Fred the Farmer".into(), "Well I need some wool...".into()],
     );
     snapshot.seed_chat_options(vec![], 4899);
-    with_tick(&snapshot, &mut ledger, 37, |t| {
+    with_tick(&snapshot, &mut ledger, 36, |t| {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
     });
     assert!(matches!(

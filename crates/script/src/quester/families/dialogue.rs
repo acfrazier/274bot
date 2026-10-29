@@ -18,15 +18,18 @@ use std::task::Poll;
 /// later script that deliberately closes and reopens the chat authors its
 /// engine hole (`gap_ticks`).
 pub const DIALOG_GAP_TICKS: u64 = 1;
-/// A game tick is one observed `PLAYER_INFO` (`host/src/slot.rs:22-25`). A
-/// direct Talk-to is selected only within two tiles (`dialogue.rs:789`); the
-/// engine processes input and interaction in one world cycle (`World.ts:355,
-/// 717`). If needed, it moves before the second interaction check/refusal
-/// (`Player.ts:1275-1295`), advancing one tile walking or two running per cycle
-/// (`PathingEntity.ts:135-149`). Brundt's first `if_openchat` page has no
-/// content delay (`viking_brundt.rs2:33-35`; `chat.rs2:321`), so two observed
-/// ticks from send cover processing plus page delivery.
-pub const DIALOGUE_OPEN_TICKS: u64 = 2;
+/// The opening budget for an NPC Talk whose content path reaches a chat page.
+/// A scan covered 797 `[opnpc1,...]` handlers; only chat-reaching paths count
+/// here, with the largest pre-page delay `p_delay(2)` in Captain Siad
+/// (`quest_desertrescue/scripts/captain_siad.rs2:1-11`) and the seven
+/// Underground Pass slaves (`quest_upass/scripts/upass_slave.rs2:1-56`).
+/// The engine resumes `P_DELAY` at `currentTick + 1 + N`
+/// (`PlayerOps.ts:376-379`, `World.ts:692-696`), so this is two content ticks
+/// plus one scheduling tick. One observed game tick is one `PLAYER_INFO`
+/// (`host/src/slot.rs:22-25`); allow one more tick for a packet miss, consistent
+/// with the client's five-packet read limit (`client.rs:12798-12803`).
+/// NPC-script messages are progress signals, not dialogue-open failures.
+pub const DIALOGUE_OPEN_TICKS: u64 = 4;
 /// The NPC's content `wanderrange` determines the number of allowed replans.
 /// Brundt has `wanderrange=2` (`viking.npc:769-803`). Each route gets four
 /// observed ticks: the Viking gap-2 run took four ticks for its eight-tile
@@ -520,6 +523,9 @@ impl NativeMachine for Dialogue {
                     self.talk_chat_mark = None;
                     return self.drive(cx, &obs);
                 }
+                // NPC content can send a game message before its first chat page.
+                // Keep waiting for the page; only the engine's explicit reach
+                // refusal takes the recovery branch below.
                 if self
                     .talk_chat_mark
                     .is_some_and(|since| reach::saw_game_message(cx, since, reach::CANT_REACH))

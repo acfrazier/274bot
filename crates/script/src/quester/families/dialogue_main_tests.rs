@@ -1,4 +1,6 @@
-use super::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget, PAGE_SETTLE_TICKS};
+use super::dialogue::{
+    Dialogue, DialogueArgs, DialogueOptions, DialogueTarget, DIALOGUE_OPEN_TICKS, PAGE_SETTLE_TICKS,
+};
 use super::tests::{with_tick, with_tick_snapshots};
 use crate::dialogue_outcome::DialogueOutcome;
 use crate::native::{
@@ -14,7 +16,7 @@ use api::snapshot::{ChatLineView, GameSnapshot, QuestStatusView, WidgetKind, Wid
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
-const DIALOGUE_OPEN_TICK_BUDGET: u64 = 2;
+const DIALOGUE_OPEN_TICK_BUDGET: u64 = DIALOGUE_OPEN_TICKS;
 const DIALOGUE_APPROACH_ROUTE_TICKS: u16 = 4;
 
 fn snapshot() -> GameSnapshot {
@@ -1226,6 +1228,50 @@ fn dialogue_open_timeout_counts_observed_ticks_not_elapsed_time() {
         exhausted,
         Poll::Ready(Err(ActionError::Failed(reason)))
             if reason.as_ref() == "expected dialogue did not open"
+    ));
+}
+
+#[test]
+fn dialogue_open_keeps_waiting_after_npc_content_message() {
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 5,
+        z: 5,
+        level: 0,
+    }));
+    before.seed_npcs(vec![dialogue_npc(1)]);
+    let mut ledger = None;
+    let handle = with_tick(&before, &mut ledger, 1, |tick| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(npc_args(), &mut tick.cx)
+            .unwrap();
+        assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        handle
+    });
+
+    let mut progress = snapshot();
+    progress.seed_npcs(vec![dialogue_npc(1)]);
+    progress.seed_chat_lines(vec![game_message(
+        1,
+        "The captain looks up from his work as you address him.",
+    )]);
+    complete_talk(&mut ledger, 2, false, false);
+    assert!(with_tick(&progress, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+
+    let mut opened = snapshot();
+    opened.seed_chat_modal(100, vec!["Greetings.".into()]);
+    opened.seed_chat_options(vec![], 101);
+    assert!(with_tick(&opened, &mut ledger, 1 + DIALOGUE_OPEN_TICK_BUDGET, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::ContinueDialog { .. }
     ));
 }
 
