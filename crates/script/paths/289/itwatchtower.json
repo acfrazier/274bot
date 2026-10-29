@@ -4,9 +4,6 @@
   "id": "itwatchtower",
   "display_name": "Watch Tower",
   "required": [
-    "magic:14",
-    "mining:40",
-    "herblore:14",
     "thieving:15",
     "agility:25"
   ],
@@ -16,39 +13,6 @@
     "members": true,
     "quest_points": 4,
     "requirements": [
-      {
-        "id": "magic:14",
-        "kind": {
-          "Skill": {
-            "skill": "magic",
-            "level": 14
-          }
-        },
-        "at": "Start",
-        "source": "content/scripts/quests/quest_itwatchtower/scripts/itwatchtower_journal.rs2:5-32"
-      },
-      {
-        "id": "mining:40",
-        "kind": {
-          "Skill": {
-            "skill": "mining",
-            "level": 40
-          }
-        },
-        "at": "Start",
-        "source": "content/scripts/quests/quest_itwatchtower/scripts/itwatchtower_journal.rs2:5-32"
-      },
-      {
-        "id": "herblore:14",
-        "kind": {
-          "Skill": {
-            "skill": "herblore",
-            "level": 14
-          }
-        },
-        "at": "Start",
-        "source": "content/scripts/quests/quest_itwatchtower/scripts/itwatchtower_journal.rs2:5-32"
-      },
       {
         "id": "thieving:15",
         "kind": {

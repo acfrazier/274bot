@@ -3,7 +3,7 @@
   "schema":3,
   "id":"chompybird",
   "display_name":"Big Chompy Bird Hunting",
-  "required":["fletching-5","cooking-30","ranged-30","crafting-5"],
+  "required":["fletching-5","crafting-5"],
   "tested_stats":null,
   "partner":null,
   "quest":{
@@ -11,8 +11,6 @@
     "quest_points":2,
     "requirements":[
       {"id":"fletching-5","kind":{"Skill":{"skill":"fletching","level":5}},"at":"start","source":"content/scripts/quests/quest_chompybird/scripts/chompybird_journal.rs2:8-14"},
-      {"id":"cooking-30","kind":{"Skill":{"skill":"cooking","level":30}},"at":"start","source":"content/scripts/quests/quest_chompybird/scripts/chompybird_journal.rs2:16-20"},
-      {"id":"ranged-30","kind":{"Skill":{"skill":"ranged","level":30}},"at":"start","source":"content/scripts/quests/quest_chompybird/scripts/chompybird_journal.rs2:22-26"},
       {"id":"crafting-5","kind":{"Skill":{"skill":"crafting","level":5}},"at":"start","source":"content/scripts/skill_fletching/scripts/ogre_arrows.rs2:43-67"}
     ],
     "items":[],
