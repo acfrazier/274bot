@@ -63,10 +63,7 @@ fn live_zanaris_entrana_dungeon_entry() {
         }),
         Box::new(|snapshot, _, _| {
             if let Some((x, z, level)) = snapshot.tile() {
-                if (2816..=2879).contains(&x)
-                    && (9728..=9791).contains(&z)
-                    && level == 0
-                {
+                if (2816..=2879).contains(&x) && (9728..=9791).contains(&z) && level == 0 {
                     return Ok(Some(json!({
                         "event": "entrana-dungeon-entry",
                         "tile": {"x": x, "z": z, "level": level},
