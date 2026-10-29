@@ -2303,6 +2303,10 @@ impl NavWorldStateCache {
 /// Whether this observe pass needs a [`WorldState`] from the slot snapshot.
 /// The cache belongs to one slot and only retains facts while navigation is
 /// active. Family generations catch changes within a game tick.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the observe pass keeps independent cache invalidation facts explicit"
+)]
 pub(crate) fn nav_world_state_for_observe(
     cache: &mut NavWorldStateCache,
     here: Option<(i32, i32, i32)>,
