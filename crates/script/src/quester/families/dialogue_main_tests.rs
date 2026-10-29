@@ -777,9 +777,7 @@ fn continuation_waits_for_content_page_after_post_fight_close() {
     .is_pending());
     assert!(matches!(
         last_interaction(&ledger),
-        InteractReq::ContinueDialog {
-            component_id: None
-        }
+        InteractReq::ContinueDialog { component_id: None }
     ));
 }
 

@@ -365,10 +365,9 @@ impl NativeMachine for Dialogue {
         // The local health-bar flag can outlive a kill. Content can close one
         // page before it opens the next. Wait for the first continuation page
         // before treating that flag as an interruption.
-        let awaiting_initial_continuation = matches!(
-            &self.args.target,
-            DialogueTarget::Continuation
-        ) && matches!(&self.surface, Surface::Unselected);
+        let awaiting_initial_continuation =
+            matches!(&self.args.target, DialogueTarget::Continuation)
+                && matches!(&self.surface, Surface::Unselected);
         if !awaiting_initial_continuation
             && DialogueOutcome::combat_interrupted(obs.ready, obs.in_combat)
         {
