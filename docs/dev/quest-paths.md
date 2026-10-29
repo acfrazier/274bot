@@ -57,7 +57,7 @@ The compiler rejects a zero budget, an empty stop, or an unresolved item.
 
 The guide author derives the kill budget from the content's drop rate.
 Cite that rate and the budget calculation in the guide.
-For Lost City's zombie axe, the rate is 50/128.
+For Lost City's zombie axe, `drop tables/scripts/zombie.rs2:102-110` gives a rate of 50/128.
 A 24-kill budget leaves a miss probability of `(78/128)^24`, about 0.0007%.
 This is a bound, not a promise that an item will drop.
 Lost City and Eadgar can use this policy for their chance-only axe and key sources.
@@ -125,11 +125,18 @@ Expiry parks with `ground pickup exceeded its tick budget`.
 The typed receipt records the observed tick count and the final held count.
 
 The compiler rejects zero, other target kinds, and operations other than `Take`.
-This form cannot combine `max_ticks` with `settle_ms`, `dialogue`, `until`, `wait_until`, an exact target tile, or `reachable_only`.
+This form cannot combine `max_ticks` with:
+
+- `settle_ms`
+- `dialogue`
+- `until`
+- `wait_until`
+- An exact target tile
+- `reachable_only`
+
 Use the ordinary form for those contracts.
 Scorpion Catcher can use this form for the Jailer key.
 The content posts that key for 100 ticks in `drop tables/scripts/jailer.rs2:10`.
-
 
 ## Ship a bundled guide
 

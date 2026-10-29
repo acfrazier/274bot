@@ -932,6 +932,7 @@ impl StepRun for KillRun {
             receipt: Some(Arc::new(super::super::families::combat::CombatReceipt {
                 report,
                 target_gone_restarts: 0,
+                kills: 1,
             })),
         }))
     }
@@ -1962,6 +1963,7 @@ fn provisioner_pending_preserves_semantic_outcome_and_status() {
                 receipt: Some(Arc::new(crate::quester::families::combat::CombatReceipt {
                     report,
                     target_gone_restarts: 1,
+                    kills: 0,
                 })),
             });
             semantic_evidence = Some(evidence);
