@@ -168,8 +168,13 @@ fn build_seed_scenario(plan: SeedPlan) -> Result<Scenario, String> {
     }
 
     // Exact expected stats: the plan's levels, `minme` defaults elsewhere.
+    // The client's `-unused-` slots are not skills: the snapshot reports
+    // some of them at 0, so they carry no expectation.
     let mut expected_stats: BTreeMap<i32, i32> = BTreeMap::new();
     for (index, name) in Skill::names.iter().enumerate() {
+        if *name == "-unused-" {
+            continue;
+        }
         let default = if name.eq_ignore_ascii_case("hitpoints") {
             10
         } else {
