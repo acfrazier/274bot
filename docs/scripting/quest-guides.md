@@ -200,7 +200,7 @@ Provisioner's bank scan, capacity deposit and withdrawal boundaries are included
   During the hole, an inventory change, a player move, a new game chat line, or an active player animation re-arms the gap, adding `gap_ticks` again. Size it from the longest quiet stretch, not one quiet moment.
 
   Each page is answered on the tick it is first observed; a choice page whose text changed on the same chat root waits one tick for its option rows.
-- **Combat `finish`.** Flat `prefer`/`choose`/`strict`/`line_rules` fields use the shared dialogue selector, and `max_ticks` measures observed game ticks, not host polls.
+- **Combat `finish`.** Flat `prefer`/`choose`/`strict`/`line_rules`/`answer_once` fields use the shared dialogue selector, and `max_ticks` measures observed game ticks, not host polls.
 
 `interact.wait_until` optionally gates each new operation round with a predicate.
 False or unknown evidence waits without clicking; the fixed `settle_ms` deadline
