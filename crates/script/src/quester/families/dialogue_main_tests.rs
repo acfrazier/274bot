@@ -10,9 +10,12 @@ use api::game_data::DialogueUiIds;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, FactKey};
-use api::snapshot::{GameSnapshot, QuestStatusView, WidgetKind, WidgetRoot, WidgetView};
+use api::snapshot::{ChatLineView, GameSnapshot, QuestStatusView, WidgetKind, WidgetRoot, WidgetView};
 use std::sync::Arc;
 use std::task::Poll;
+use std::time::Duration;
+const DIALOGUE_OPEN_TICK_BUDGET: u64 = 2;
+const DIALOGUE_APPROACH_ROUTE_TICKS: u16 = 4;
 
 fn snapshot() -> GameSnapshot {
     let mut snapshot = GameSnapshot::new();
@@ -90,6 +93,15 @@ fn npc_args() -> DialogueArgs {
     })
 }
 
+
+fn game_message(sequence: i32, text: &str) -> ChatLineView {
+    ChatLineView {
+        type_: 0,
+        username: None,
+        text: text.to_owned(),
+        sequence,
+    }
+}
 fn widget(root: i32, component_id: i32, text: Option<&str>, hidden: bool) -> WidgetView {
     WidgetView {
         kind: WidgetKind::Widget,
@@ -1140,6 +1152,239 @@ fn dialogue_answer_after_same_tick_talk_defers_and_retries() {
 }
 
 #[test]
+fn dialogue_open_accepts_first_page_within_tick_budget() {
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 5,
+        z: 5,
+        level: 0,
+    }));
+    before.seed_npcs(vec![dialogue_npc_at(
+        1,
+        api::WorldTile {
+            x: 7,
+            z: 5,
+            level: 0,
+        },
+    )]);
+    let mut ledger = None;
+    let handle = with_tick(&before, &mut ledger, 1, |tick| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(npc_args(), &mut tick.cx)
+            .unwrap();
+        assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        handle
+    });
+
+    let mut opened = snapshot();
+    opened.seed_chat_modal(100, vec!["Greetings.".into()]);
+    opened.seed_chat_options(vec![], 101);
+    assert!(with_tick(&opened, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::ContinueDialog { .. }
+    ));
+}
+
+#[test]
+fn dialogue_open_timeout_counts_observed_ticks_not_elapsed_time() {
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 5,
+        z: 5,
+        level: 0,
+    }));
+    before.seed_npcs(vec![dialogue_npc(1)]);
+    let mut ledger = None;
+    let handle = with_tick(&before, &mut ledger, 1, |tick| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(npc_args(), &mut tick.cx)
+            .unwrap();
+        assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        handle
+    });
+
+    let first_tick = with_tick(&before, &mut ledger, 2, |tick| {
+        tick.cx.active_now = Duration::from_secs(86_400);
+        tick.actions.poll(&handle, &mut tick.cx)
+    });
+    assert!(
+        first_tick.is_pending(),
+        "one observed tick is inside the {}-tick opening budget",
+        DIALOGUE_OPEN_TICK_BUDGET
+    );
+    let exhausted = with_tick(&before, &mut ledger, 1 + DIALOGUE_OPEN_TICK_BUDGET, |tick| {
+        tick.cx.active_now = Duration::ZERO;
+        tick.actions.poll(&handle, &mut tick.cx)
+    });
+    assert!(matches!(
+        exhausted,
+        Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref() == "expected dialogue did not open"
+    ));
+}
+
+#[test]
+fn dialogue_viking_refusal_replans_and_retries_talk_for_visible_npc() {
+    let player_tile = api::WorldTile {
+        x: 5,
+        z: 5,
+        level: 0,
+    };
+    let initial_npc_tile = api::WorldTile {
+        x: 7,
+        z: 5,
+        level: 0,
+    };
+    let moved_npc_tile = api::WorldTile {
+        x: 8,
+        z: 5,
+        level: 0,
+    };
+    let brundt_id = api::game_data::for_revision(ClientRevision::R289)
+        .expect("the pinned revision has NPC identity content")
+        .npc_names()
+        .expect("the pinned revision has NPC name facts")
+        .rows
+        .iter()
+        .find(|row| row.config == "viking_brundt")
+        .expect("the Viking content identifies Brundt")
+        .id;
+    let viking_npc = |distance, tile| {
+        let mut npc = dialogue_npc_at(distance, tile);
+        npc.r#type = Some(usize::try_from(brundt_id).expect("NPC ids are nonnegative"));
+        npc.name = Some("Brundt the Chieftain".into());
+        npc
+    };
+    let viking_args = DialogueArgs {
+        target: DialogueTarget::Npc {
+            id: brundt_id,
+            name: Arc::from("Brundt the Chieftain"),
+        },
+        options: DialogueOptions::default(),
+    };
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(player_tile));
+    before.seed_npcs(vec![viking_npc(1, initial_npc_tile)]);
+    before.seed_chat_lines(vec![game_message(7, "I can't reach that!")]);
+    let mut ledger = None;
+    let handle = with_tick(&before, &mut ledger, 1, |tick| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(viking_args.clone(), &mut tick.cx)
+            .unwrap();
+        assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        handle
+    });
+    assert!(matches!(last_interaction(&ledger), InteractReq::Npc { .. }));
+
+    assert!(with_tick(&before, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(!ledger.as_ref().unwrap().outbox.iter().any(|entry| {
+        matches!(&entry.effect, HostEffect::Walk(_)) && entry.live()
+    }));
+
+    let mut refused = snapshot();
+    refused.seed_local_player(super::tests::local_player(player_tile));
+    refused.seed_npcs(vec![viking_npc(1, moved_npc_tile)]);
+    refused.seed_chat_lines(vec![
+        game_message(8, "I can't reach that!"),
+        game_message(7, "I can't reach that!"),
+    ]);
+    complete_talk(&mut ledger, 3, false, false);
+    assert!(with_tick(&refused, &mut ledger, 1 + DIALOGUE_OPEN_TICK_BUDGET, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .rev()
+            .find_map(|entry| match (&entry.effect, entry.live()) {
+                (HostEffect::Walk(request), true) => Some(request.target),
+                _ => None,
+            }),
+        Some(moved_npc_tile),
+        "the refusal recovery must target the NPC's current tile"
+    );
+
+    super::tests::post_user_input_walk_receipt(&mut ledger, 4);
+    ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
+    let mut settled = snapshot();
+    settled.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 7,
+        z: 5,
+        level: 0,
+    }));
+    settled.seed_npcs(vec![viking_npc(1, moved_npc_tile)]);
+    settled.seed_chat_lines(vec![game_message(8, "I can't reach that!")]);
+    assert!(with_tick(&settled, &mut ledger, 4, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::Npc { index: Some(7), .. }
+    ));
+}
+
+#[test]
+fn dialogue_refusal_without_replan_budget_fails_immediately_with_reason() {
+    let npc_id = 99_999;
+    let mut npc = dialogue_npc(1);
+    npc.r#type = Some(npc_id as usize);
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 5,
+        z: 5,
+        level: 0,
+    }));
+    before.seed_npcs(vec![npc.clone()]);
+    let args = DialogueArgs {
+        target: DialogueTarget::Npc {
+            id: npc_id,
+            name: Arc::from("Unknown NPC"),
+        },
+        options: DialogueOptions::default(),
+    };
+    let mut ledger = None;
+    let handle = with_tick(&before, &mut ledger, 1, |tick| {
+        let handle = tick.actions.begin::<Dialogue>(args, &mut tick.cx).unwrap();
+        assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        handle
+    });
+
+    let mut refused = snapshot();
+    refused.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 5,
+        z: 5,
+        level: 0,
+    }));
+    refused.seed_npcs(vec![npc]);
+    refused.seed_chat_lines(vec![game_message(1, "I can't reach that!")]);
+    complete_talk(&mut ledger, 2, false, false);
+    assert!(matches!(
+        with_tick(&refused, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref() == "server refused Talk-to: I can't reach that!"
+    ));
+    assert!(!ledger.as_ref().unwrap().outbox.iter().any(|entry| {
+        matches!(&entry.effect, HostEffect::Walk(_)) && entry.live()
+    }));
+}
+#[test]
 fn dialogue_approach_replans_when_npc_moves_then_talks_after_it_settles() {
     let player_tile = api::WorldTile {
         x: 5,
@@ -1303,10 +1548,12 @@ fn dialogue_approach_fails_when_npc_keeps_moving_after_content_bound() {
         );
     }
 
-    let final_tick = 2 + u64::from(replan_budget);
+    let approach_tick_budget = u64::from(replan_budget)
+        .saturating_add(1)
+        .saturating_mul(u64::from(DIALOGUE_APPROACH_ROUTE_TICKS));
     assert!(
-        final_tick.saturating_mul(600) < super::dialogue::DIALOGUE_APPROACH_MS,
-        "this fixture must reach the content bound before the dialogue deadline"
+        final_tick < approach_tick_budget,
+        "the route-replan bound must expire before the observed-tick deadline"
     );
     super::tests::post_user_input_walk_receipt(&mut ledger, final_tick);
     ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
@@ -1375,6 +1622,65 @@ fn dialogue_approach_fails_immediately_when_npc_disappears() {
         .any(|entry| { matches!(&entry.effect, HostEffect::Walk(_)) && entry.live() }));
 }
 
+
+#[test]
+fn dialogue_approach_timeout_counts_observed_ticks_not_wall_time() {
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 5,
+        z: 5,
+        level: 0,
+    }));
+    before.seed_npcs(vec![dialogue_npc(5)]);
+    let mut content_ledger = None;
+    let replan_budget = with_tick(&before, &mut content_ledger, 1, |tick| {
+        let data = api::game_data::for_revision(tick.cx.pin.revision)
+            .expect("the selected revision's NPC content is available");
+        let wander_range = data
+            .npc_name(0)
+            .expect("the dialogue fixture's NPC has content")
+            .wanderrange
+            .max(0);
+        u16::try_from(wander_range)
+            .unwrap_or(u16::MAX)
+            .saturating_mul(DIALOGUE_APPROACH_ROUTE_TICKS)
+    });
+    let approach_tick_budget = u64::from(replan_budget)
+        .saturating_add(1)
+        .saturating_mul(u64::from(DIALOGUE_APPROACH_ROUTE_TICKS));
+    let deadline_tick = 1 + approach_tick_budget;
+
+    let mut ledger = None;
+    let handle = with_tick(&before, &mut ledger, 1, |tick| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(npc_args(), &mut tick.cx)
+            .unwrap();
+        assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        handle
+    });
+    for observed_tick in 2..=deadline_tick {
+        let result = with_tick(&before, &mut ledger, observed_tick, |tick| {
+            tick.cx.active_now = if observed_tick == 2 {
+                Duration::from_secs(86_400)
+            } else {
+                Duration::ZERO
+            };
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        if observed_tick == deadline_tick {
+            assert!(matches!(
+                result,
+                Poll::Ready(Ok(DialogueOutcome::Failed))
+            ));
+        } else {
+            assert!(
+                result.is_pending(),
+                "approach must remain pending at observed tick {observed_tick}"
+            );
+        }
+    }
+}
 #[test]
 fn dialogue_main_scroll_and_book_actions_retry_after_budget_exhaustion() {
     let ids = dialogue_ui();
