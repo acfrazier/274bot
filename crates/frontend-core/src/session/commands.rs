@@ -96,9 +96,6 @@ pub enum SubmitError {
 pub(crate) enum Applied {
     /// The effect holds.
     Done,
-    /// The effect holds and supplies presentation detail for its command log.
-    #[cfg(feature = "test-support")]
-    DoneWithDetail(String),
     /// Nothing was done, for this typed reason.
     Skipped(SkipReason),
     /// The owner refused it at dispatch.
@@ -688,11 +685,6 @@ impl<Io> OperatorSession<Io> {
     /// [`CommandFailure::Rejected`] before any operation exists for it. One
     /// line per command, however many bots it refused.
     fn log_refusals(&mut self, request: RequestId, command: OperatorCommand) {
-        #[cfg(feature = "test-support")]
-        if matches!(&command, OperatorCommand::SkipQuest { .. }) {
-            self.log_skip_quest(request, command);
-            return;
-        }
         let Some(report) = self.commands.book.report(request) else {
             return;
         };
@@ -719,46 +711,6 @@ impl<Io> OperatorSession<Io> {
             .join(", ");
         let reason = match refused.as_slice() {
             [] => return,
-            [(_, reason)] => reason.clone(),
-            many => many
-                .iter()
-                .map(|(name, reason)| format!("{name}: {reason}"))
-                .collect::<Vec<_>>()
-                .join("; "),
-        };
-        self.record_refusal(command, &bots, &reason);
-    }
-
-    #[cfg(feature = "test-support")]
-    /// Log SkipQuest refusals after every targeted member has settled.
-    fn log_skip_quest(&mut self, request: RequestId, command: OperatorCommand) {
-        let Some(report) = self.commands.book.report(request) else {
-            return;
-        };
-        let mut refused = Vec::new();
-        for member in report.members() {
-            let Some(Settlement::Failed(failure)) = member.terminal() else {
-                continue;
-            };
-            let name = match member.subject() {
-                Subject::Profile(identity) => self.name_for_identity(identity),
-                Subject::Application => "application".to_owned(),
-            };
-            let reason = member.detail().map_or_else(
-                || format!("{failure:?}"),
-                |detail| format!("{failure:?}: {detail}"),
-            );
-            refused.push((name, reason));
-        }
-        if refused.is_empty() {
-            return;
-        }
-        let bots = refused
-            .iter()
-            .map(|(name, _)| name.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let reason = match refused.as_slice() {
             [(_, reason)] => reason.clone(),
             many => many
                 .iter()
@@ -1292,30 +1244,6 @@ impl<Io> OperatorSession<Io> {
                     }
                     self.select(name);
                     self.settle_member(request, command, name, Applied::Done, submitted);
-                }
-                self.release_names(names);
-            }
-            #[cfg(feature = "test-support")]
-            OperatorCommand::SkipQuest { target } => {
-                let names = self.admitted_names(request);
-                for name in &names {
-                    let applied = match self.play.as_ref() {
-                        Some(play) => match play.script_skip_quest(name, target) {
-                            Ok(skipped) => Applied::DoneWithDetail(format!(
-                                "quest_id={} step_id={}",
-                                skipped.quest_id, skipped.step_id
-                            )),
-                            Err(error) => Applied::Rejected(
-                                Rejection::NotApplicable,
-                                Some(error.message.to_string()),
-                            ),
-                        },
-                        None => Applied::Rejected(
-                            Rejection::NoHost,
-                            Some("host session is unavailable".into()),
-                        ),
-                    };
-                    self.settle_member(request, command, name, applied, submitted);
                 }
                 self.release_names(names);
             }
@@ -2168,10 +2096,6 @@ impl<Io> OperatorSession<Io> {
             }
             Applied::Later => return,
             Applied::Done => (Settlement::Completed(Completion::Done), None),
-            #[cfg(feature = "test-support")]
-            Applied::DoneWithDetail(detail) => {
-                (Settlement::Completed(Completion::Done), Some(detail))
-            }
             Applied::Skipped(reason) => (Settlement::Completed(Completion::Skipped(reason)), None),
             Applied::Rejected(rejection, detail) => (
                 Settlement::Failed(CommandFailure::Rejected(rejection)),
@@ -2248,10 +2172,6 @@ impl<Io> OperatorSession<Io> {
                 return;
             }
             Applied::Done => (Settlement::Completed(Completion::Done), None),
-            #[cfg(feature = "test-support")]
-            Applied::DoneWithDetail(detail) => {
-                (Settlement::Completed(Completion::Done), Some(detail))
-            }
             Applied::Skipped(reason) => (Settlement::Completed(Completion::Skipped(reason)), None),
             Applied::Rejected(rejection, detail) => (
                 Settlement::Failed(CommandFailure::Rejected(rejection)),

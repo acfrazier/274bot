@@ -63,8 +63,6 @@ pub struct SeatProbe {
     pub dropped: u64,
     pub late_controls: u64,
     pub live: usize,
-    /// The compiled run keeps its root owner between queued quests.
-    pub compiled_owner_live: bool,
     pub results: usize,
     pub reserved_releases: usize,
     pub mirror_revokes_consumed: u64,
@@ -840,9 +838,6 @@ impl SlotScript {
             dropped: seat.dropped(),
             late_controls: seat.late_controls(),
             live: seat.live().len(),
-            compiled_owner_live: self
-                .seat_compiled_owner
-                .is_some_and(|owner| seat.live().iter().any(|entry| entry.id == owner)),
             results: seat.results().len(),
             reserved_releases: seat.reserved_releases(),
             mirror_revokes_consumed: seat.mirror_revokes_consumed(),
