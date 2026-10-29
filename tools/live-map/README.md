@@ -305,7 +305,7 @@ flags from the reference pack. Quest cells use the quest ports and set
 `QUESTER_SPEED_RESTORE=0`. The runner never sets `QUESTER_TICK_MS`, so it sends
 no speed command: `crates/scenario/src/quester.rs:78-82` changes the world speed
 only when `QUESTER_TICK_MS` is present. The product reads `QUESTER_SPEED_RESTORE`
-only after the quest-paths branch merges (`4bc7da035`, `4e449b1a1`). Until then
+only after the `quest-campaign` branch merges (reader `4e449b1a1`). Until then
 the runner stores the flag but the flag has no reader. The runner refuses any
 cell whose command sets `QUESTER_TICK_MS`. It rewrites inline
 `_GAME_PORT`, `_HTTP_PORT`, `--port`, and `--http-port` values to the selected ports.
@@ -319,7 +319,7 @@ Some cells still open 44594/1080 instead of reading `WORLD_GAME_PORT` and
 through the shared `live_ports` helper. The runner does not rewrite those cells.
 It depends on that branch for the port move.
 Non-quest lab cells use Engine L. On aubaine the 44594/1080 defaults reach Engine L
-through the relay. On chardonnay pass `--engine-game-port 47594 --http-port 3080`
+through the relay. On chardonnay pass `--engine-game-port 47594 --engine-http-port 3080`
 (the forwarded Engine L) and never use 44594/1080 there. Quest cells use Engine Q.
 
 Each cell and pass writes `passN/cell.log` and `passN/receipt.txt` with `cell`, `pass`,
