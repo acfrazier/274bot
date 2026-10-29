@@ -785,8 +785,8 @@ mod tests {
     }"#;
 
     fn item_id_counts(items: &[(&str, i32)]) -> BTreeMap<i32, i32> {
-        let selected = api::game_data::for_revision(ClientRevision::R289)
-            .expect("R289 content loads");
+        let selected =
+            api::game_data::for_revision(ClientRevision::R289).expect("R289 content loads");
         items
             .iter()
             .map(|(alias, count)| {
@@ -889,10 +889,10 @@ mod tests {
 
     #[test]
     fn campaign_seed_starts_quester_after_the_exact_watch_seed() {
-        let campaign = quest_campaign_scenario(CAMPAIGN_TEST_SEED_JSON)
-            .expect("campaign seed plan builds");
-        let watch = build_seed_scenario(plan(CAMPAIGN_TEST_SEED_JSON))
-            .expect("watch seed plan builds");
+        let campaign =
+            quest_campaign_scenario(CAMPAIGN_TEST_SEED_JSON).expect("campaign seed plan builds");
+        let watch =
+            build_seed_scenario(plan(CAMPAIGN_TEST_SEED_JSON)).expect("watch seed plan builds");
         let start = campaign
             .steps
             .iter()
@@ -908,16 +908,22 @@ mod tests {
                 .count(),
             1
         );
-        assert_eq!(start, campaign.steps.len() - 1, "Start is the terminal step");
+        assert_eq!(
+            start,
+            campaign.steps.len() - 1,
+            "Start is the terminal step"
+        );
         assert_eq!(start, watch.steps.len() - 1, "campaign omits only logout");
-        assert_eq!(campaign.steps[start].wait.arm, Proof::SideTabAvailable { index: 3 });
+        assert_eq!(
+            campaign.steps[start].wait.arm,
+            Proof::SideTabAvailable { index: 3 }
+        );
         assert_eq!(campaign.steps[start].wait.budget_ticks, 100);
         assert_eq!(campaign.settings.start_script, Some("Quester"));
         assert_eq!(campaign.settings.terminal_shot, Some("quest_campaign"));
         assert_eq!(campaign.proof, Proof::SideTabAvailable { index: 3 });
 
-        for (campaign_step, watch_step) in
-            campaign.steps[..start].iter().zip(&watch.steps[..start])
+        for (campaign_step, watch_step) in campaign.steps[..start].iter().zip(&watch.steps[..start])
         {
             assert_same_seed_step(campaign_step, watch_step);
         }
@@ -957,8 +963,7 @@ mod tests {
             .collect();
         assert_eq!(bank_seed_steps.len(), 2);
         assert!(bank_seed_steps.iter().all(|step| {
-            step.wait.arm == Proof::SideTabAvailable { index: 3 }
-                && step.wait.budget_ticks == 100
+            step.wait.arm == Proof::SideTabAvailable { index: 3 } && step.wait.budget_ticks == 100
         }));
         assert!(campaign.steps[..start].iter().any(|step| {
             step.name == "prove the exact seeded stats, kit, tile and quest state"

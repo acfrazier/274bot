@@ -1126,7 +1126,9 @@ fn run_cells(
             raw.parse::<u32>()
                 .ok()
                 .filter(|ticks| *ticks > 0)
-                .ok_or_else(|| "QUEST_CAMPAIGN_TICKS must be a positive observed-tick count".to_owned())
+                .ok_or_else(|| {
+                    "QUEST_CAMPAIGN_TICKS must be a positive observed-tick count".to_owned()
+                })
         })
         .transpose()?;
 
@@ -1724,8 +1726,9 @@ fn run_cells(
             };
             let logged = status_json(status);
             if last_logged[index].as_ref() != Some(&logged) {
-                let tick = shared.lock().map_err(|_| "live state poisoned")?
-                    .actors[index].snapshot.tick();
+                let tick = shared.lock().map_err(|_| "live state poisoned")?.actors[index]
+                    .snapshot
+                    .tick();
                 match append_status(&status_logs[index], status, tick) {
                     Ok(logged) => last_logged[index] = Some(logged),
                     Err(error) => break 'run Err(format!("status log {}: {error}", names[index])),
@@ -2579,10 +2582,15 @@ fn run_cells(
 
         if let Some(limit) = campaign_tick_limit {
             let state = shared.lock().map_err(|_| "live state poisoned")?;
-            if let Some(actor) = state.actors.iter().find(|actor| actor.snapshot.tick() >= limit) {
+            if let Some(actor) = state
+                .actors
+                .iter()
+                .find(|actor| actor.snapshot.tick() >= limit)
+            {
                 break Err(format!(
                     "observed-tick deadline: {} reached {} ticks (limit {limit})",
-                    actor.account, actor.snapshot.tick()
+                    actor.account,
+                    actor.snapshot.tick()
                 ));
             }
         }

@@ -189,8 +189,7 @@ struct CampaignAccount {
     gang: Option<String>,
 }
 
-static CAMPAIGN_LOGS: std::sync::Mutex<Vec<serde_json::Value>> =
-    std::sync::Mutex::new(Vec::new());
+static CAMPAIGN_LOGS: std::sync::Mutex<Vec<serde_json::Value>> = std::sync::Mutex::new(Vec::new());
 struct CampaignLogSink;
 static CAMPAIGN_LOG_SINK: CampaignLogSink = CampaignLogSink;
 
@@ -207,15 +206,18 @@ impl api::hostlog::Sink for CampaignLogSink {
 }
 
 fn campaign_cells(manifest_path: &std::path::Path) -> Result<Vec<Cell>, String> {
-    let manifest: CampaignManifest = serde_json::from_slice(
-        &std::fs::read(manifest_path).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
+    let manifest: CampaignManifest =
+        serde_json::from_slice(&std::fs::read(manifest_path).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
     if !(1..=2).contains(&manifest.accounts.len()) {
         return Err("campaign requires one account, or two reciprocal partner roles".into());
     }
     let quest = &manifest.accounts[0].quest;
-    if manifest.accounts.iter().any(|account| &account.quest != quest) {
+    if manifest
+        .accounts
+        .iter()
+        .any(|account| &account.quest != quest)
+    {
         return Err("campaign runs exactly one guide per command".into());
     }
     let folder = std::env::var_os("QUESTER_PATH_DIR")
@@ -280,13 +282,18 @@ fn campaign_cells(manifest_path: &std::path::Path) -> Result<Vec<Cell>, String> 
 fn live_quester_campaign() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("WORLD_GAME_PORT").as_deref(), Ok("44694"));
-    assert!(std::env::var_os("QUESTER_TICK_MS").is_none(),
-        "campaign must not change or restore the shared Engine Q tick speed");
+    assert!(
+        std::env::var_os("QUESTER_TICK_MS").is_none(),
+        "campaign must not change or restore the shared Engine Q tick speed"
+    );
     assert!(std::env::var_os("QUEST_CAMPAIGN_TICKS").is_some());
-    assert!(api::hostlog::install_sink(&CAMPAIGN_LOG_SINK),
-        "campaign needs its own session log sink");
-    let manifest = PathBuf::from(std::env::var_os("QUEST_CAMPAIGN_MANIFEST")
-        .expect("QUEST_CAMPAIGN_MANIFEST"));
+    assert!(
+        api::hostlog::install_sink(&CAMPAIGN_LOG_SINK),
+        "campaign needs its own session log sink"
+    );
+    let manifest = PathBuf::from(
+        std::env::var_os("QUEST_CAMPAIGN_MANIFEST").expect("QUEST_CAMPAIGN_MANIFEST"),
+    );
     let cells = campaign_cells(&manifest).unwrap_or_else(|error| panic!("{error}"));
     let result = if cells.len() == 2 {
         let roles: [Cell; 2] = cells.try_into().unwrap_or_else(|_| unreachable!());
