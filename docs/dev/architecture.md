@@ -365,6 +365,9 @@ the complete pixels. The renderer forwards the typed fault by value through
 the head's `FramePaintStatus` into the mailbox's `render_fault` field.
 Only an incomplete output is `Refused`; a recovered image is usable.
 Without the explicit process fixture, the head never sets this recovery metadata.
+The headed fixture can apply loading and crosshair appear/move/remove inputs
+for one paint. Its scope restores scene and crosshair state before simulation
+resumes, including on unwind.
 
 Budget scopes are explicit fixture inputs until qualification. Growing scene,
 model, nav, sprite and GPU storage reserves its byte charge before allocation,

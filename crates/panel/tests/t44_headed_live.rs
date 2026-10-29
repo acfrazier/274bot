@@ -2,7 +2,7 @@
 //! suites do not start it; it never activates the production panel binary.
 use std::num::NonZeroUsize;
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -11,7 +11,7 @@ use client::render::backend::BackendKind;
 use client::render::budget::RenderBudgetLimits;
 use frontend_core::surface::{
     configure_render_fixture, configure_render_fixture_budgets, configure_render_fixture_control,
-    ProcessFixture, RenderTestControl, RenderTestEvent, RenderTestPoint,
+    ProcessFixture, RenderTestControl, RenderTestCross, RenderTestEvent, RenderTestPoint,
 };
 
 #[cfg(feature = "memory-profile")]
@@ -110,6 +110,7 @@ struct LiveControl {
     first_scene: OnceLock<Instant>,
     loading_paints: AtomicU64,
     post_loading_paints: AtomicU64,
+    cross_phases: AtomicU8,
 }
 
 impl LiveControl {
@@ -147,6 +148,7 @@ impl LiveControl {
             first_scene: OnceLock::new(),
             loading_paints: AtomicU64::new(0),
             post_loading_paints: AtomicU64::new(0),
+            cross_phases: AtomicU8::new(0),
         })
     }
 
@@ -184,7 +186,8 @@ impl LiveControl {
         if let Some((after, duration)) = self.loading {
             let loading = self.loading_paints.load(Ordering::Acquire);
             let resumed = self.post_loading_paints.load(Ordering::Acquire);
-            let valid = loading > 0 && resumed > 0;
+            let cross_phases = self.cross_phases.load(Ordering::Acquire);
+            let valid = loading > 0 && resumed > 0 && cross_phases == 0b1110;
             passed &= valid;
             eprintln!(
                 "t44_headed_loading_input={}",
@@ -194,6 +197,8 @@ impl LiveControl {
                     "duration_ms": duration.as_millis(),
                     "loading_paints": loading,
                     "post_loading_paints": resumed,
+                    "cross_phase_mask": cross_phases,
+                    "cross_phases": ["appear", "move", "remove"],
                     "passed": valid,
                 })
             );
@@ -227,6 +232,28 @@ impl RenderTestControl for LiveControl {
             self.post_loading_paints.fetch_add(1, Ordering::Relaxed);
             false
         }
+    }
+
+    fn cross_paint(&self) -> Option<RenderTestCross> {
+        let ((after, duration), started) = (self.loading?, self.first_scene.get()?);
+        let elapsed = started.elapsed().checked_sub(after)?;
+        if elapsed >= duration {
+            return None;
+        }
+        let third = duration.as_nanos() / 3;
+        let phase = if elapsed.as_nanos() < third {
+            1
+        } else if elapsed.as_nanos() < 2 * third {
+            2
+        } else {
+            3
+        };
+        self.cross_phases.fetch_or(1 << phase, Ordering::AcqRel);
+        Some(match phase {
+            1 => RenderTestCross::At { x: 244, y: 154 },
+            2 => RenderTestCross::At { x: 320, y: 198 },
+            _ => RenderTestCross::Hidden,
+        })
     }
 
     fn client_cycle(

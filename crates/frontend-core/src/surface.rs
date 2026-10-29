@@ -15,7 +15,7 @@ pub use host::render_head::test_hooks::{
     configure_process as configure_render_fixture,
     configure_process_control as configure_render_fixture_control,
     configure_render_budgets as configure_render_fixture_budgets, CaptureFixture, ProcessFixture,
-    RenderTestControl, RenderTestEvent, RenderTestPoint,
+    RenderTestControl, RenderTestCross, RenderTestEvent, RenderTestPoint,
 };
 
 /// One operator input event for a slot's client, in applet coordinates.

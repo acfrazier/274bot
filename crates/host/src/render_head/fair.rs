@@ -38,10 +38,20 @@ pub mod test_hooks {
         pub reservation: Option<ReservationIdentity>,
     }
 
+    /// Paint-only crosshair input, restored before the next simulation step.
+    #[derive(Debug, Clone, Copy)]
+    pub enum RenderTestCross {
+        Hidden,
+        At { x: i32, y: i32 },
+    }
+
     pub trait RenderTestControl: Send + Sync {
         fn now(&self) -> Instant;
         fn loading_paint(&self) -> bool {
             false
+        }
+        fn cross_paint(&self) -> Option<RenderTestCross> {
+            None
         }
         fn resource_failure(
             &self,
@@ -850,6 +860,7 @@ fn bridge(point: client::render::backend::gpu::test_hooks::SceneTestPoint) {
 pub(super) struct LoadingPaintScope<'a> {
     client: &'a mut Client,
     previous: Option<i32>,
+    previous_cross: Option<(i32, i32, i32, i32)>,
 }
 impl<'a> LoadingPaintScope<'a> {
     pub(super) fn enter(client: &'a mut Client, loading: bool) -> Self {
@@ -857,7 +868,31 @@ impl<'a> LoadingPaintScope<'a> {
         if previous.is_some() {
             client.scene_state = 1;
         }
-        Self { client, previous }
+        Self {
+            client,
+            previous,
+            previous_cross: None,
+        }
+    }
+    fn cross_paint(&mut self, input: Option<test_hooks::RenderTestCross>) {
+        let Some(input) = input.filter(|_| self.client.ingame) else {
+            return;
+        };
+        self.previous_cross = Some((
+            self.client.cross_mode,
+            self.client.cross_cycle,
+            self.client.cross_x,
+            self.client.cross_y,
+        ));
+        self.client.cross_cycle = 0;
+        match input {
+            test_hooks::RenderTestCross::Hidden => self.client.cross_mode = 0,
+            test_hooks::RenderTestCross::At { x, y } => {
+                self.client.cross_mode = 1;
+                self.client.cross_x = x;
+                self.client.cross_y = y;
+            }
+        }
     }
     fn client(&mut self) -> &mut Client {
         self.client
@@ -867,6 +902,12 @@ impl Drop for LoadingPaintScope<'_> {
     fn drop(&mut self) {
         if let Some(previous) = self.previous {
             self.client.scene_state = previous;
+        }
+        if let Some((mode, cycle, x, y)) = self.previous_cross {
+            self.client.cross_mode = mode;
+            self.client.cross_cycle = cycle;
+            self.client.cross_x = x;
+            self.client.cross_y = y;
         }
     }
 }
@@ -943,6 +984,12 @@ pub(super) fn paint(head: &mut Head, client: &mut Client) -> FrameOutput {
         .as_ref()
         .is_some_and(|control| control.loading_paint());
     let mut loading_scope = LoadingPaintScope::enter(client, loading);
+    loading_scope.cross_paint(
+        head.fair
+            .control
+            .as_ref()
+            .and_then(|control| control.cross_paint()),
+    );
     let start = Instant::now();
     let consumes = head.fair.stats.scene_consumes;
     let output = if head.backend_kind() == BackendKind::Gpu {
@@ -1279,20 +1326,50 @@ mod tests {
         );
         client.ingame = true;
         client.scene_state = 2;
+        client.cross_mode = 2;
+        client.cross_cycle = 100;
+        client.cross_x = 7;
+        client.cross_y = 8;
         {
             let mut scope = LoadingPaintScope::enter(&mut client, true);
+            scope.cross_paint(Some(test_hooks::RenderTestCross::At { x: 300, y: 180 }));
+            assert_eq!(scope.client().cross_mode, 1);
+            assert_eq!(scope.client().cross_cycle, 0);
+            assert_eq!((scope.client().cross_x, scope.client().cross_y), (300, 180));
             assert_eq!(scope.client().scene_state, 1);
         }
         assert_eq!(client.scene_state, 2);
+        assert_eq!(
+            (
+                client.cross_mode,
+                client.cross_cycle,
+                client.cross_x,
+                client.cross_y
+            ),
+            (2, 100, 7, 8),
+        );
         let result = catch_unwind(AssertUnwindSafe(|| {
             let mut scope = LoadingPaintScope::enter(&mut client, true);
+            scope.cross_paint(Some(test_hooks::RenderTestCross::Hidden));
+            assert_eq!(scope.client().cross_mode, 0);
             assert_eq!(scope.client().scene_state, 1);
             panic!("unwind the paint, not the simulation state");
         }));
         assert!(result.is_err());
         assert_eq!(client.scene_state, 2);
+        assert_eq!(
+            (
+                client.cross_mode,
+                client.cross_cycle,
+                client.cross_x,
+                client.cross_y
+            ),
+            (2, 100, 7, 8),
+        );
         client.ingame = false;
         let mut title = LoadingPaintScope::enter(&mut client, true);
+        title.cross_paint(Some(test_hooks::RenderTestCross::At { x: 300, y: 180 }));
+        assert_eq!(title.client().cross_mode, 2);
         assert_eq!(title.client().scene_state, 2);
     }
 
