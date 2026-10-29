@@ -603,7 +603,8 @@ fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes
             "Settings opens at {width}x{height}"
         );
 
-        for _ in 0..12 {
+        // The two prerequisite-consent rows precede the Quester Path settings.
+        for _ in 0..14 {
             app.on_key(key(KeyCode::Down));
         }
         let rows = draw(&mut app, width, height);

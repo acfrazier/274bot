@@ -3099,6 +3099,15 @@ fn removing_a_walk_slot_twice_logs_one_cancellation() {
     });
     play.focus(slot);
     session.core.set_play(Some(play));
+    publish_map_walk_snapshot(
+        &mut session.core,
+        slot,
+        Tile {
+            x: 0,
+            z: 1,
+            level: 0,
+        },
+    );
 
     let mut app = TuiApp::new("274bot headless");
     app.names = vec![slot.into()];
