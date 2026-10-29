@@ -5863,8 +5863,9 @@ fn s2b_admission_per_bot_layouts() {
     // NAV-BUSY-TRANSPORT adds 32 B to Traveller (busy-refusal retry state and
     // the distinct-tick transport clock): NavBot is 3816 B. Lab memory A/B on
     // the branch head passed (NAV-BUSY-TRANSPORT/mem-ab-r3).
-    // WALK-STALL-1029 adds 32 B of fixed no-progress state: NavBot is 3848 B.
-    // The diagnostic has no heap payload and does not grow SlotScript.
+    // WALK-STALL-1029 adds 32 B of fixed no-progress state and 8 B for the
+    // shared TickCount walk clock: NavBot measures 3856 B on Linux x86_64.
+    // Neither addition has a heap payload or grows SlotScript.
     #[cfg(all(
         target_os = "macos",
         target_arch = "aarch64",
@@ -5877,7 +5878,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3848, 1624, 512, 264)
+        (3856, 1624, 512, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -5892,7 +5893,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3848, 1624, 512, 264)
+        (3856, 1624, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);

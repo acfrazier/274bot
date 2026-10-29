@@ -8332,8 +8332,9 @@ fn executor_state_size_pins() {
     // +32 B: the transport hop's distinct-tick clock (`TickCount`) and the
     // occupied-crossing retry (`OccupiedRetry`): a refused ledge or rope
     // swing is retried within the hop budget instead of ending the follow.
-    assert_eq!(std::mem::size_of::<Traveller>(), 848);
-    assert_eq!(std::mem::size_of::<FollowRun>(), 808);
+    // +8 B: the walk budget reuses TickCount, including its observed tick.
+    assert_eq!(std::mem::size_of::<Traveller>(), 856);
+    assert_eq!(std::mem::size_of::<FollowRun>(), 816);
 }
 const BLOCKED_DISPLAY_TILE: WorldTile = WorldTile {
     x: 12,
