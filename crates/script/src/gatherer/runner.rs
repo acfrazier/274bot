@@ -2215,11 +2215,11 @@ impl Gatherer {
         if self.paused {
             return ("paused", NativePhase::Waiting);
         }
-        if matches!(self.retained.recovery, RecoveryState::Pending { .. }) {
-            return ("recovering", NativePhase::Working);
-        }
         if self.scratch.parked.is_some() {
             return ("blocked", NativePhase::Blocked);
+        }
+        if matches!(self.retained.recovery, RecoveryState::Pending { .. }) {
+            return ("recovering", NativePhase::Working);
         }
         if self.trip != TripStep::Idle && !matches!(self.active, Active::Walk(_)) {
             if self.wait_until.is_some() {

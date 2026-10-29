@@ -27,7 +27,6 @@ use api::game_data::SelectedGameData;
 use api::named_banks::{BankPreferences, NamedBankFacts};
 use api::service_pick::ShopKeeperFacts;
 use api::snapshot::{GameSnapshot, WorldTile};
-use client::client::Client;
 use parking_lot::Mutex;
 use script::bank::{Close, Open, OpenArgs, Select, SelectArgs};
 use script::native::{
