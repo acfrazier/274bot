@@ -611,6 +611,17 @@ fn skip_fixture(two_quests: bool) -> (QueuedQuester, GameSnapshot) {
     (queued, snapshot)
 }
 
+fn complete_cook_quest(snapshot: &mut GameSnapshot) {
+    snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            name: "Cook's Assistant".into(),
+            component_id: 42,
+            colour: 0x00F800,
+        }],
+        true,
+    );
+}
+
 fn activate_preparing(
     queued: &mut QueuedQuester,
     snapshot: &GameSnapshot,
@@ -632,6 +643,7 @@ fn select_terminal_sequence(active: &mut Quester) {
         .iter()
         .position(|sequence| sequence.terminal && sequence.steps.is_empty())
         .expect("fixture has a terminal sequence");
+    active.stage = Some(active.path.colour_in_progress.clone());
     active.in_prelude = false;
     active.step_index = 0;
     active.cursor = 0;
@@ -730,7 +742,7 @@ fn operator_skip_last_row_keeps_existing_blocked_end_rule() {
 
 #[test]
 fn operator_skip_wins_on_the_tick_a_quest_would_complete() {
-    let (mut natural, natural_snapshot) = skip_fixture(false);
+    let (mut natural, mut natural_snapshot) = skip_fixture(false);
     let mut natural_ledger = None;
     let mut natural_output = Capture::default();
     with_tick_output(
@@ -748,6 +760,7 @@ fn operator_skip_wins_on_the_tick_a_quest_would_complete() {
         2,
     );
     select_terminal_sequence(natural.active.as_mut().unwrap());
+    complete_cook_quest(&mut natural_snapshot);
     with_tick_output(
         &natural_snapshot,
         &mut natural_ledger,
@@ -758,7 +771,7 @@ fn operator_skip_wins_on_the_tick_a_quest_would_complete() {
     assert_eq!(natural.queue.status(0), Some(QueueStatus::Done));
     assert_eq!(natural.completed, 1);
 
-    let (mut queued, snapshot) = skip_fixture(false);
+    let (mut queued, mut snapshot) = skip_fixture(false);
     let mut ledger = None;
     let mut output = Capture::default();
     with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
@@ -767,6 +780,7 @@ fn operator_skip_wins_on_the_tick_a_quest_would_complete() {
     activate_preparing(&mut queued, &snapshot, &mut ledger, &mut output, 2);
     select_terminal_sequence(queued.active.as_mut().unwrap());
     queued.skip_quest().unwrap();
+    complete_cook_quest(&mut snapshot);
     with_tick_output(&snapshot, &mut ledger, 3, &mut output, |native| {
         assert_eq!(queued.tick(native).unwrap(), ScriptFlow::Continue);
     });
@@ -815,6 +829,7 @@ fn manual_movement_stop_during_skip_tick_wins_over_skip() {
 #[test]
 fn max_deaths_during_skip_tick_stops_the_run_before_the_next_quest() {
     let (mut queued, mut snapshot) = skip_fixture(true);
+    snapshot.seed_chat_lines(vec![]);
     queued.deaths = 2;
     let mut ledger = None;
     let mut output = Capture::default();
@@ -822,6 +837,18 @@ fn max_deaths_during_skip_tick_stops_the_run_before_the_next_quest() {
         queued.tick(native).unwrap();
     });
     activate_preparing(&mut queued, &snapshot, &mut ledger, &mut output, 2);
+    let active = queued.active.as_mut().unwrap();
+    assert!(
+        !active.death.observe(api::snapshot::SnapshotView::new(
+            Some(&snapshot),
+            api::quest_progress::EvidenceStamp {
+                run: active.run,
+                tick: 2,
+                sequence: 2,
+            },
+        )),
+        "the active quest latches the empty chat ring before the new death line"
+    );
     queued.skip_quest().unwrap();
     snapshot.seed_chat_lines(vec![ChatLineView {
         type_: 0,
