@@ -1565,13 +1565,9 @@ impl CombatRun {
         let route_ended_at_stand =
             matches!(&receipt.end, crate::native::WalkEnd::RouteEnded)
                 && self.request.stand.is_some_and(|stand| {
-                    cx.tick
-                        .cx
-                        .snapshot()
-                        .local_player()
-                        .is_some_and(|local| {
-                            crate::combat::select::stand_reached(stand, local.value)
-                        })
+                    cx.tick.cx.snapshot().local_player().is_some_and(|local| {
+                        crate::combat::select::stand_reached(stand, local.value)
+                    })
                 });
         let arrival = if route_ended_at_stand {
             Ok(receipt.evidence)

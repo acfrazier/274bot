@@ -4035,7 +4035,9 @@ fn unreachable_stand_ends_quester_step_with_the_last_walk_failure() {
         Vec::new(),
     );
     let mut ledger = None;
-    with_step_context(&snapshot, &mut ledger, 1, |cx| run.begin_combat(cx).unwrap());
+    with_step_context(&snapshot, &mut ledger, 1, |cx| {
+        run.begin_combat(cx).unwrap()
+    });
 
     let mut walks = 0;
     for (tick, detail) in [
@@ -4062,7 +4064,10 @@ fn unreachable_stand_ends_quester_step_with_the_last_walk_failure() {
         Poll::Pending => panic!("the spent walk budget must end the step"),
     }
     assert_eq!(walks, 3);
-    assert!(run.action.is_none(), "the Quester must not start another fight");
+    assert!(
+        run.action.is_none(),
+        "the Quester must not start another fight"
+    );
 }
 
 #[test]
@@ -4092,12 +4097,10 @@ fn return_to_stand_route_ended_at_network_tile_is_arrival() {
         Some(Arc::new(NeverStop)),
         Vec::new(),
     );
-    assert!(
-        with_step_context(&snapshot, &mut ledger, 12, |cx| {
-            run.on_combat_report(report(CombatEnd::TargetGone), cx)
-        })
-        .is_pending()
-    );
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(report(CombatEnd::TargetGone), cx)
+    })
+    .is_pending());
     let request_id = last_walk(&ledger).request_id;
 
     let mut local = snapshot.local_player().unwrap().clone();

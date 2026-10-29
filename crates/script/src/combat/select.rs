@@ -364,7 +364,7 @@ pub fn pick_target(
                 if reach.is_some() && route_steps.is_none() {
                     return None;
                 }
-                if not_targeting_others && taken_by_another(npc, None, frame.me()) {
+                if *not_targeting_others && taken_by_another(npc, None, frame.me()) {
                     return None;
                 }
                 let actor = npc_actor(npc)?;

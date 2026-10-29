@@ -3911,7 +3911,6 @@ fn melee_pick_does_not_fall_back_when_the_posted_reach_flood_is_stale() {
     );
 }
 
-
 #[test]
 fn failed_stand_walks_retry_to_a_bound_then_block_with_the_last_detail() {
     let mut scene = Scene::new("cow");
