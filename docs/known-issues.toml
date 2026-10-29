@@ -389,12 +389,10 @@ kind = "known-issue"
 area = "Scripts"
 text = """During a Karamja trip to the mainland without the 30-coin boat fare,
   the bot earns the fare by working for Luthas. You may see "I can't reach
-  that!" during the conversation with Luthas or after he pays and before the
-  boat boards. During the conversation, the bot can make up to three attempts
-  to reach Luthas. If all three fail, the fare is not paid and the trip does
-  not cross.
-  After payment, the fare is paid. In observed cases, the bot still boards.
-  No workaround is known."""
+  that!" when the bot approaches Luthas or after he pays and before the boat
+  boards. The bot tries up to three times to reach Luthas. If all three fail,
+  the fare is not paid and the trip does not cross. After payment, the fare is
+  paid. In observed cases, the bot still boards. No workaround is known."""
 first = "0.2.8"
 target = "none"
 severity = "medium"
