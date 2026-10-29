@@ -9,6 +9,13 @@ pub(super) const WALK_STALL_RECOVER_IDLE_TICKS: u32 = 5;
 /// Frozen `DEFAULT_PATH_STALL_TICKS` (`pathFollowPolicy.ts:6`).
 const END_BLOCKED_STALL_TICKS: u32 = 5;
 
+/// Moving walks get 25% beyond their original planned allowance. Nine
+/// completed maze/Priest walks measured at most 149/145 = 1.0276 of their
+/// budget: WALK-STALL-1029/r1/budget-ratios.json. A 5/4 cap leaves 21.64%
+/// above that observed maximum for server-path turns and recovery delays.
+/// This is a finite policy margin, not another engine timing constant.
+const WALK_MOVEMENT_MARGIN_DIVISOR: u32 = 4;
+
 /// The client is still walking an accepted click: its actor has queued
 /// route steps and the map flag of that click is still set.
 pub(super) fn walk_is_live(snapshot: &GameSnapshot) -> bool {
@@ -175,8 +182,12 @@ impl FollowRun {
             None => {
                 let counted = hop.ticks_waited.get();
                 let spent = hop.ticks_waited.observe(snapshot.tick());
-                let progressed = hop.note_progress(here);
-                if spent != counted && spent > hop.budget_ticks && !progressed {
+                let moved = hop.stall_idle_at.is_some_and(|last| last != here);
+                let moving_budget = hop
+                    .budget_ticks
+                    .saturating_add(hop.budget_ticks.div_ceil(WALK_MOVEMENT_MARGIN_DIVISOR));
+                if spent != counted && spent > hop.budget_ticks && (!moved || spent > moving_budget)
+                {
                     let why = if hop.sent_tile == Some(here) {
                         HopFailure::Dropped
                     } else {
@@ -473,8 +484,6 @@ impl FollowRun {
                     hop.start_tile = here;
                     hop.first_sent_tick = snapshot.tick();
                     hop.ticks_waited = TickCount::sent_at(snapshot.tick());
-                    hop.best_route_index = here_on_route.unwrap_or(here_i);
-                    hop.best_distance = cheb(here, aim);
                     hop.sent_tile = Some(here);
                     hop.stall_idle_ticks = 0;
                     hop.stall_idle_last_tick = Some(snapshot.tick());

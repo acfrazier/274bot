@@ -1024,8 +1024,6 @@ impl FollowRun {
                     sent: false,
                     send_refusal: None,
                     ticks_waited: TickCount::default(),
-                    best_route_index: 0,
-                    best_distance: 0,
                     budget_ticks: self.budget,
                     sent_tile: None,
                     sent_tick: snapshot.tick(),
@@ -1509,10 +1507,6 @@ struct WalkHop {
     start_tile: WorldTile,
     first_sent_tick: u32,
     ticks_waited: TickCount,
-    /// Monotone progress marks. Revisited tiles and movement away from the
-    /// aim cannot extend the hop after its planned allowance.
-    best_route_index: usize,
-    best_distance: i32,
     /// One walking tick per planned step to the accepted aim, at least the
     /// configured minimum. Recovery keeps this original route budget.
     /// Source: `engine/src/engine/entity/PathingEntity.ts:144-149`.
@@ -1542,23 +1536,6 @@ struct WalkHop {
 }
 
 impl WalkHop {
-    fn note_progress(&mut self, here: WorldTile) -> bool {
-        let distance = cheb(here, self.aim);
-        let closer = here.level == self.aim.level && distance < self.best_distance;
-        if closer {
-            self.best_distance = distance;
-        }
-        let next = self.best_route_index.saturating_add(1);
-        let route_progress = self
-            .tiles()
-            .get(next..=self.aim_index)
-            .and_then(|tiles| tiles.iter().position(|tile| *tile == here));
-        if let Some(offset) = route_progress {
-            self.best_route_index = next + offset;
-        }
-        closer || route_progress.is_some()
-    }
-
     fn tiles(&self) -> &[WorldTile] {
         self.leg.walk_tiles().expect("walk hop retains a walk leg")
     }
@@ -1736,8 +1713,6 @@ mod wait_status_tests {
             start_tile: here,
             first_sent_tick: 0,
             ticks_waited: TickCount::default(),
-            best_route_index: 0,
-            best_distance: 1,
             budget_ticks: 60,
             sent_tile: None,
             tries: 0,

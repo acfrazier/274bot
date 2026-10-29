@@ -59,11 +59,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   this log limit.
 - Walk budgets now include the planned path length at one walking tick
   per step. They count observed game ticks, not repeated status polls.
-  A walk does not expire while the player keeps getting closer to where
-  it is going: farther along its planned route, or closer to its
-  destination. Pacing back and forth between the same tiles, or drifting
-  away from the destination, does not extend the walk.
-  A stopped walk still has a finite budget, including recovery attempts.
+  Movement can extend a walk by at most 25% of its original allowance,
+  rounded up to a whole tick. This lets the server finish turns without
+  letting pacing or movement away keep a walk alive forever.
+  A stopped walk keeps its original finite budget, including recovery attempts.
 
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being

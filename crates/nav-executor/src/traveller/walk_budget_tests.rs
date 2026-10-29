@@ -40,19 +40,9 @@ fn winding_walk_budget_uses_planned_steps_not_endpoint_distance() {
     let hop = traveller.follow.as_ref().unwrap().walk.as_ref().unwrap();
     assert_eq!(hop.aim, route.dest, "the endpoint is only two tiles away");
     assert!(tiles.len() - 1 > options.budget_ticks_per_hop as usize);
-    // A live-looking actor is not progress. Even without movement, this
-    // winding path must receive its planned duration, not only 60 ticks.
-    client.minimap_flag_x = 12;
-    client.minimap_flag_z = 34;
-    client.local_player.as_mut().unwrap().entity.route_length = 3;
-    for tick in 1..=70 {
-        bump_rebuild(&mut client, &mut snapshot);
-        let outcome = traveller.follow(&mut driver, &snapshot, route.clone(), &mut options);
-        assert!(
-            outcome.is_none(),
-            "planned-duration tick {tick}: {outcome:?}"
-        );
-    }
+    // The endpoint is near, but every planned route step still needs its
+    // walking tick. Idle expiry has a separate regression below.
+    assert_eq!(hop.budget_ticks as usize, tiles.len() - 1);
     for (index, tile) in tiles.iter().enumerate().skip(1) {
         plant_player(&mut client, tile.x - 3200, tile.z - 3200);
         bump_rebuild(&mut client, &mut snapshot);
@@ -67,7 +57,7 @@ fn winding_walk_budget_uses_planned_steps_not_endpoint_distance() {
 }
 
 #[test]
-fn observed_progress_keeps_a_walk_alive_past_its_planned_allowance() {
+fn server_path_turn_keeps_a_moving_walk_alive_within_the_cap() {
     let mut client = scene_client();
     let mut snapshot = snap_at(&mut client, 0, 0);
     let mut driver = FollowRec {
@@ -91,22 +81,22 @@ fn observed_progress_keeps_a_walk_alive_past_its_planned_allowance() {
     assert!(traveller
         .follow(&mut driver, &snapshot, route.clone(), &mut options)
         .is_none());
-    // Consume the planned allowance first. New route maxima still extend
-    // the hop, but a change of tile alone is not evidence of progress.
-    client.minimap_flag_x = 12;
-    client.minimap_flag_z = 34;
-    client.local_player.as_mut().unwrap().entity.route_length = 3;
-    for _ in 0..7 {
-        bump_rebuild(&mut client, &mut snapshot);
-        assert!(traveller
-            .follow(&mut driver, &snapshot, route.clone(), &mut options)
-            .is_none());
-    }
-    let Leg::Walk { tiles: observed } = &route.legs[0] else {
-        unreachable!()
-    };
-    for (index, tile) in observed.iter().enumerate().skip(1) {
-        plant_player(&mut client, tile.x - 3200, tile.z - 3200);
+    // The server can choose tiles outside the packed route. Its turn at
+    // ticks 6..=8 holds Chebyshev distance at two. Tick 8 is already beyond
+    // the seven-tick allowance, but remains inside the nine-tick cap.
+    let observed = [
+        (0, 1),
+        (0, 2),
+        (0, 3),
+        (0, 4),
+        (0, 5),
+        (1, 5),
+        (2, 5),
+        (1, 5),
+        (0, 7),
+    ];
+    for (index, (x, z)) in observed.into_iter().enumerate() {
+        plant_player(&mut client, x, z);
         bump_rebuild(&mut client, &mut snapshot);
         let outcome = traveller.follow(&mut driver, &snapshot, route.clone(), &mut options);
         if index + 1 == observed.len() {
@@ -218,12 +208,12 @@ fn winding_idle_walk_expires_only_after_its_planned_tick_budget() {
 }
 
 #[test]
-fn two_tile_oscillation_ends_within_the_original_budget_not_2000_ticks() {
+fn two_tile_oscillation_ends_within_the_moving_budget_not_2000_ticks() {
     non_progressing_movement_expires(|tick| (0, if tick % 2 == 0 { 1 } else { 2 }));
 }
 
 #[test]
-fn movement_away_from_the_aim_ends_within_the_original_budget() {
+fn movement_away_from_the_aim_ends_within_the_moving_budget() {
     non_progressing_movement_expires(|tick| (tick as i32, 0));
 }
 
@@ -260,12 +250,14 @@ fn non_progressing_movement_expires(position: impl Fn(u32) -> (i32, i32)) {
         .unwrap()
         .budget_ticks;
     assert_eq!(budget, 7);
+    let moving_budget = budget + budget.div_ceil(4);
+    assert_eq!(moving_budget, 9);
     for tick in 1..=2000 {
         let (x, z) = position(tick);
         plant_player(&mut client, x, z);
         bump_rebuild(&mut client, &mut snapshot);
         let outcome = traveller.follow(&mut driver, &snapshot, route.clone(), &mut options);
-        if tick <= budget {
+        if tick <= moving_budget {
             assert!(outcome.is_none(), "tick {tick}: {outcome:?}");
         } else {
             assert!(
@@ -278,7 +270,7 @@ fn non_progressing_movement_expires(position: impl Fn(u32) -> (i32, i32)) {
                 ),
                 "tick {tick}: {outcome:?}"
             );
-            assert_eq!(tick, budget + 1);
+            assert_eq!(tick, moving_budget + 1);
             assert_eq!(driver.walked.len(), 1);
             return;
         }

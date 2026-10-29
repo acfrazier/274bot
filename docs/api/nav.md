@@ -1027,11 +1027,15 @@ radius 2 and glider landings radius 1 whatever the runner passes.
   nothing, batched ticks add each elapsed tick, and a backward clock
   credits one tick. Recovery keeps the original allowance, so a stopped
   walk still ends after a finite wait.
-- **Progress holds the budget open:** a hop does not expire while the
-  player keeps reaching a new best position for this hop: a new maximum
-  route index on the hop's tiles, or a new minimum Chebyshev distance to
-  the aim on its level. Movement elsewhere — pacing between the same
-  tiles, or drifting away from the aim — does not extend the budget.
+- **Movement has a finite extension:** observed tile changes can keep a hop
+  active for at most 25% beyond its original planned allowance, rounded
+  up to a whole tick. The measured maximum was 149/145 of the allowance
+  across nine completed maze/Priest walks. The 5/4 cap leaves 21.64% above
+  that maximum (`WALK-STALL-1029/r1/budget-ratios.json`). Server-path turns
+  can continue even when their Chebyshev distance stays unchanged.
+  Pacing between two tiles or drifting away cannot extend this cap.
+  An idle hop still expires on the first observed tick past its original
+  allowance. Recovery does not reset either limit.
 - **`Stalled { why: EndBlocked }`:** no walk of the follow was accepted,
   the player stands within one tile of the route's last tile on its level,
   and the client refused the click onto it on five distinct ticks (frozen
