@@ -73,8 +73,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   a free tile next to him.
   The bot makes up to three attempts each time the bot goes to talk to Luthas.
   The bot logs each failed attempt and the final failure.
-  The initial walk now waits while the host handles a random event.
-  A route failure after that event can then start fare recovery.
+  The fare walk waits while the host handles a random event.
+  After the event, the walk can continue or a route failure can start fare recovery.
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 

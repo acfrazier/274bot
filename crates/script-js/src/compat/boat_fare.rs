@@ -1899,15 +1899,15 @@ impl Family for WalkTo {
                 self.pumped = false;
                 return Step::Wait;
             }
-            // A host-owned random event suspends the first route. The host
-            // freezes follow while it handles the event, so keep the walk
-            // pending and let a later route failure enter fare recovery.
+            // The host freezes follow while it handles an owned random event.
+            // Keep this walk pending in every phase.
             if interrupted(cx) {
-                let first_route =
-                    matches!(&self.phase, WalkToPhase::Walking { retried: false, .. });
                 let owned_random =
                     observed::with(|scene| scene.since_login().ours().unwrap_or(false));
-                if first_route && owned_random && !crate::event_signal::pending() {
+                if owned_random
+                    && !crate::event_signal::pending()
+                    && !cx.user_move_intent_interrupted()
+                {
                     self.pumped = false;
                     return Step::Wait;
                 }
