@@ -108,7 +108,12 @@ fn release_build_keeps_the_script_hints_and_footer_from_before_skip_quest() {
         app.key_hints()
     );
     for (width, height) in [(120, 40), (80, 24)] {
-        let row = draw_and_capture(&mut app, width, height, &format!("release-{width}x{height}"));
+        let row = draw_and_capture(
+            &mut app,
+            width,
+            height,
+            &format!("release-{width}x{height}"),
+        );
         assert_eq!(
             row,
             expected_footer(BASE_HINTS, width),
@@ -141,8 +146,13 @@ fn test_support_build_adds_the_skip_hint_and_keeps_the_rest_fitting() {
         standard.starts_with(SCOPE) && standard.ends_with(TAIL_STANDARD),
         "120x40: the base footer tail stays: {standard}"
     );
-    for key in ["b browse", "t start", "P pause", "e stop", "f load", "v params"] {
-        assert!(standard.contains(key), "120x40: missing {key:?}: {standard}");
+    for key in [
+        "b browse", "t start", "P pause", "e stop", "f load", "v params",
+    ] {
+        assert!(
+            standard.contains(key),
+            "120x40: missing {key:?}: {standard}"
+        );
     }
 
     // The compact width cuts the row, as the base row was cut, and the Skip
