@@ -522,6 +522,91 @@ fn combat_finish_and_mixed_loot_compile_selected_configs_and_quantities() {
     invalid["finish"]["max_ticks"] = serde_json::json!(0);
     assert!(compile_json(&invalid, &cx).is_err());
 }
+#[test]
+fn combat_until_drop_compiles_selected_item_and_rejects_invalid_forms() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
+    let progress = CompiledProgress {
+        binding: FactKey::new("journal:combat_until_drop"),
+        role: None,
+        colour_not_started: FactKey::new("combat_until_drop:0"),
+        colour_in_progress: FactKey::new("combat_until_drop:1"),
+        colour_complete: FactKey::new("combat_until_drop:2"),
+        stage_keys: Arc::from([]),
+        rules: Arc::from([]),
+        flags: Arc::from([]),
+        monotonic: false,
+    };
+    let areas = HashMap::new();
+    let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from([]));
+    let recipes = HashMap::new();
+    let path = FactKey::new("combat_until_drop");
+    let cx = fixture_compile_context(
+        &data, &quests, &progress, &areas, &loadouts, &recipes, &path,
+    );
+    let args = serde_json::json!({
+        "target": {"npc": "delrith", "pick": "nearest", "not_targeting_others": true},
+        "tactic": {"kind": "open", "style": "melee", "engage_radius": 6},
+        "lost_radius": 12,
+        "kill_budget_ticks": 100,
+        "until_drop": {
+            "obj": "bones",
+            "max_kills": 2,
+            "stop": "bones_not_found"
+        }
+    });
+    let plan = compile_plan(decode_args(&args).unwrap(), &cx).unwrap();
+    let bones = data.item_by_alias("bones").unwrap();
+    assert_eq!(plan.loot.len(), 1);
+    assert_eq!(plan.loot[0].id, bones.id);
+    assert_eq!(plan.loot[0].name.as_ref(), bones.name.as_deref().unwrap());
+
+    for (until_drop, code) in [
+        (
+            serde_json::json!({
+                "obj": "not_a_selected_item",
+                "max_kills": 2,
+                "stop": "bones_not_found"
+            }),
+            "unresolved-loadout-item",
+        ),
+        (
+            serde_json::json!({"obj": "bones", "max_kills": 0, "stop": "bones_not_found"}),
+            "invalid-combat-until-drop-kill-budget",
+        ),
+        (
+            serde_json::json!({"obj": "bones", "max_kills": 2, "stop": ""}),
+            "invalid-combat-until-drop-stop",
+        ),
+        (
+            serde_json::json!({"obj": "bones", "max_kills": 2, "stop": "   "}),
+            "invalid-combat-until-drop-stop",
+        ),
+    ] {
+        let mut invalid = args.clone();
+        invalid["until_drop"] = until_drop;
+        assert_eq!(
+            compile_json(&invalid, &cx).err().unwrap().code.as_ref(),
+            code
+        );
+    }
+    for (field, value) in [
+        (
+            "finish",
+            serde_json::json!({"npc": "delrith_weakened", "max_ticks": 100}),
+        ),
+        ("until", serde_json::json!({"Any": []})),
+        ("win", serde_json::json!({"All": []})),
+    ] {
+        let mut invalid = args.clone();
+        invalid[field] = value;
+        assert_eq!(
+            compile_json(&invalid, &cx).err().unwrap().code.as_ref(),
+            "conflicting-combat-until-drop"
+        );
+    }
+}
+
 fn fixture_compile_context<'a>(
     data: &'a SelectedGameData,
     quests: &'a QuestCatalog,

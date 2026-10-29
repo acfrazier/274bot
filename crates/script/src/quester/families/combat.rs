@@ -193,7 +193,26 @@ pub(super) struct CombatArgs {
     /// Optional success predicate that ends the combat loop when true.
     #[serde(default)]
     win: Option<PredicateDocument>,
+    /// Loot one selected item until held, re-engaging up to `max_kills`.
+    #[serde(default)]
+    until_drop: Option<UntilDropArgs>,
 }
+
+/// Item and confirmed-kill budget for a combat step that waits for its drop.
+#[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+struct UntilDropArgs {
+    /// Selected item alias to loot and hold.
+    obj: String,
+    /// Maximum confirmed kills, including the kill whose loot is collected.
+    #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
+    max_kills: u32,
+    /// Authored stop name reported when the kill budget is spent without the item.
+    #[cfg_attr(feature = "path-schema", schemars(length(min = 1)))]
+    stop: String,
+}
+
 /// One optional loot item, either a single-item or explicit per-kill threshold.
 #[derive(Deserialize)]
 #[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
@@ -391,6 +410,11 @@ pub(super) fn compile(
 }
 
 fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan, CompileError> {
+    if args.until_drop.is_some()
+        && (args.finish.is_some() || args.until.is_some() || args.win.is_some())
+    {
+        return Err(CompileError::code("conflicting-combat-until-drop"));
+    }
     let protect = match args.guard.as_deref() {
         None | Some("") => false,
         Some("protect") => true,
@@ -444,7 +468,20 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
         .as_deref()
         .map(|name| compile_kit(name, cx))
         .transpose()?;
-    let loot = compile_loot(&args.loot, cx)?;
+    let mut loot = compile_loot(&args.loot, cx)?;
+    let until_drop = args
+        .until_drop
+        .map(|args| compile_until_drop(args, cx))
+        .transpose()?;
+    if let Some((item_id, item_name)) = &until_drop {
+        if !loot.iter().any(|item| item.id == *item_id) {
+            loot.push(LootItem {
+                id: *item_id,
+                name: Arc::clone(item_name),
+                qty: 1,
+            });
+        }
+    }
     let until = args
         .until
         .as_ref()
@@ -736,6 +773,20 @@ fn compile_loot(loot: &[LootArg], cx: &CompileContext<'_>) -> Result<Vec<LootIte
         });
     }
     Ok(rows)
+}
+
+
+fn compile_until_drop(
+    args: UntilDropArgs,
+    cx: &CompileContext<'_>,
+) -> Result<(i32, Arc<str>), CompileError> {
+    if args.max_kills == 0 {
+        return Err(CompileError::code("invalid-combat-until-drop-kill-budget"));
+    }
+    if args.stop.trim().is_empty() {
+        return Err(CompileError::code("invalid-combat-until-drop-stop"));
+    }
+    resolve_loadout_item(cx, &args.obj)
 }
 
 fn resolve_loadout_item(
