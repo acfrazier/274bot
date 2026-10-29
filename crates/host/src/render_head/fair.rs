@@ -504,6 +504,8 @@ pub struct HeadFairStats {
     granted_paints: u64,
     granted_paint_time: Duration,
     scene_consumes: u64,
+    last_scene_consume_at: Option<Instant>,
+    max_scene_consume_gap: Duration,
     grant_delivery_samples: u64,
     max_grant_to_consume: Duration,
     grant_wake_samples: u64,
@@ -555,6 +557,12 @@ impl HeadFairStats {
     }
     pub fn scene_consumes(&self) -> u64 {
         self.scene_consumes
+    }
+    pub fn last_scene_consume_at(&self) -> Option<Instant> {
+        self.last_scene_consume_at
+    }
+    pub fn max_scene_consume_gap(&self) -> Duration {
+        self.max_scene_consume_gap
     }
     pub fn grant_delivery_samples(&self) -> u64 {
         self.grant_delivery_samples
@@ -649,6 +657,8 @@ impl FairHead {
                 granted_paints: 0,
                 granted_paint_time: Duration::ZERO,
                 scene_consumes: 0,
+                last_scene_consume_at: None,
+                max_scene_consume_gap: Duration::ZERO,
                 grant_delivery_samples: 0,
                 max_grant_to_consume: Duration::ZERO,
                 grant_wake_samples: 0,
@@ -1074,6 +1084,12 @@ fn admit(frame: &mut GpuFrame, service: &RenderService, now: Instant) -> SceneAd
     match service.try_consume(&frame.lease, identity, now) {
         Ok(lease) => {
             let consumed_at = Instant::now();
+            let stats = &mut fair.head.stats;
+            if let Some(previous) = stats.last_scene_consume_at.replace(consumed_at) {
+                stats.max_scene_consume_gap = stats
+                    .max_scene_consume_gap
+                    .max(consumed_at.saturating_duration_since(previous));
+            }
             if let Some(elapsed) = grant_snapshot
                 .granted_at()
                 .and_then(|published_at| consumed_at.checked_duration_since(published_at))

@@ -58,6 +58,10 @@ use vault::{Profile, ProfileSettings, RasterMode};
 const BUCKETS: usize = 251;
 /// The panel's frame-consumer period (its UI loop at ~60 Hz).
 const CONSUMER_PERIOD: Duration = Duration::from_millis(16);
+/// Main's provisional starvation guard: twice the ordinary background cadence.
+/// Slice 5 still owns the measured production fairness constants.
+const BACKGROUND_CADENCE: Duration = Duration::from_secs(1);
+const BACKGROUND_SCENE_GAP: Duration = Duration::from_secs(2);
 
 fn env_or<T: std::str::FromStr>(key: &str, default: T) -> T {
     std::env::var(key)
@@ -125,6 +129,13 @@ fn add_probe_receipt(receipt: &mut Value, inputs: Option<FairProbeInputs>) {
             "inputs_ms": {
                 "M3_GRANT_TTL_MS": inputs.grant_ttl_ms,
                 "M3_SCENE_QUANTUM_MS": inputs.scene_quantum_ms,
+            },
+            "background_scene_progress_oracle": {
+                "ordinary_cadence_ms": BACKGROUND_CADENCE.as_millis(),
+                "max_gap_ms": BACKGROUND_SCENE_GAP.as_millis(),
+                "source": "Main ruling: twice ordinary background cadence; not a qualified production constant",
+                "progress_window": "whole observation cell",
+                "minimum_consumes": "max(1, floor(observed_seconds / max_gap_seconds))",
             },
         });
     }
@@ -648,6 +659,8 @@ fn fair_head_metrics(
         "scene_lease_ms": duration_ms(current.scene_lease_time(), previous.map(|stats| stats.scene_lease_time())),
         "max_scene_lease_ms": current.max_scene_lease_time().as_secs_f64() * 1e3,
         "scene_fps": scene_fps,
+        "last_scene_consume_at_t_s": current.last_scene_consume_at().map(since_epoch),
+        "max_scene_consume_gap_ms": current.max_scene_consume_gap().as_secs_f64() * 1e3,
         "oldest_demand_age_ms": current.oldest_demand_age().as_secs_f64() * 1e3,
         "backend": format!("{:?}", current.backend()),
         "has_valid_scene": current.has_valid_scene(),
@@ -699,8 +712,18 @@ struct FairOracleHead<'a> {
     paints: u64,
     gpu: bool,
     scene_consumes: u64,
+    background: bool,
+    max_scene_consume_gap: Duration,
+    since_scene_consume: Option<Duration>,
     has_valid_scene: bool,
     scene_progress: client::render::backend::SceneProgress,
+}
+
+#[cfg(feature = "render-test-hooks")]
+#[derive(Clone, Copy)]
+enum FairOracleInterval {
+    Sample,
+    Cell(Duration),
 }
 
 #[cfg(feature = "render-test-hooks")]
@@ -708,6 +731,7 @@ fn m3_fair_oracle(
     expected_heads: usize,
     heads: &[FairOracleHead<'_>],
     fault_totals: [u64; 3],
+    interval: FairOracleInterval,
 ) -> Result<(), String> {
     if heads.len() != expected_heads {
         return Err(format!(
@@ -740,14 +764,41 @@ fn m3_fair_oracle(
                 head.name
             ));
         }
-        if head.paints == 0 {
-            return Err(format!("{}: head stopped painting", head.name));
+        if let FairOracleInterval::Cell(observed) = interval {
+            if head.paints == 0 {
+                return Err(format!("{}: head stopped painting", head.name));
+            }
+            if head.gpu && head.scene_consumes == 0 {
+                return Err(format!(
+                    "{}: head painted but never consumed a scene",
+                    head.name
+                ));
+            }
+            if head.gpu && head.background {
+                let minimum = (observed.as_secs() / BACKGROUND_SCENE_GAP.as_secs()).max(1);
+                if head.scene_consumes < minimum {
+                    return Err(format!(
+                        "{}: only {} scene consumes in {:.3}s; at least {minimum} required",
+                        head.name,
+                        head.scene_consumes,
+                        observed.as_secs_f64()
+                    ));
+                }
+            }
         }
-        if head.gpu && head.paints > 0 && head.scene_consumes == 0 {
-            return Err(format!(
-                "{}: head painted but never consumed a scene",
-                head.name
-            ));
+        if head.gpu && head.background {
+            let age = head.since_scene_consume.ok_or_else(|| {
+                format!("{}: missing scene-consumption timestamp", head.name)
+            })?;
+            if head.max_scene_consume_gap > BACKGROUND_SCENE_GAP || age > BACKGROUND_SCENE_GAP {
+                return Err(format!(
+                    "{}: background scene-consumption gap exceeds {}ms: maximum {:.3}ms, current {:.3}ms",
+                    head.name,
+                    BACKGROUND_SCENE_GAP.as_millis(),
+                    head.max_scene_consume_gap.as_secs_f64() * 1e3,
+                    age.as_secs_f64() * 1e3
+                ));
+            }
         }
         if !head.gpu
             && (!head.has_valid_scene
@@ -776,10 +827,19 @@ fn m3_oracle_rejects_paints_without_scene() {
         paints: 1,
         gpu: true,
         scene_consumes: 0,
+        background: false,
+        max_scene_consume_gap: Duration::ZERO,
+        since_scene_consume: None,
         has_valid_scene: false,
         scene_progress: client::render::backend::SceneProgress::NoScene,
     };
-    let error = m3_fair_oracle(1, &[head], [0; 3]).unwrap_err();
+    let error = m3_fair_oracle(
+        1,
+        &[head],
+        [0; 3],
+        FairOracleInterval::Cell(Duration::from_secs(30)),
+    )
+    .unwrap_err();
     assert!(
         error.contains("painted but never consumed a scene"),
         "{error}"
@@ -800,17 +860,21 @@ fn m3_oracle_rejects_missing_refused_and_stopped_heads() {
         paints: 1,
         gpu: true,
         scene_consumes: 1,
+        background: false,
+        max_scene_consume_gap: Duration::ZERO,
+        since_scene_consume: Some(Duration::ZERO),
         has_valid_scene: true,
         scene_progress: client::render::backend::SceneProgress::Rebuilt,
     };
-    assert!(m3_fair_oracle(1, &[], [0; 3]).is_err());
+    assert!(m3_fair_oracle(1, &[], [0; 3], FairOracleInterval::Sample).is_err());
     assert!(m3_fair_oracle(
         1,
         &[FairOracleHead {
             refused: true,
             ..head
         }],
-        [0; 3]
+        [0; 3],
+        FairOracleInterval::Sample,
     )
     .unwrap_err()
     .contains("refused"));
@@ -820,10 +884,88 @@ fn m3_oracle_rejects_missing_refused_and_stopped_heads() {
             live: false,
             ..head
         }],
-        [0; 3]
+        [0; 3],
+        FairOracleInterval::Sample,
     )
     .unwrap_err()
     .contains("stopped"));
+}
+
+#[cfg(feature = "render-test-hooks")]
+fn background_oracle_fixture() -> FairOracleHead<'static> {
+    FairOracleHead {
+        name: "background",
+        status_present: true,
+        live: true,
+        refused: false,
+        attached: true,
+        stats_present: true,
+        identity_matches: true,
+        paints: 30,
+        gpu: true,
+        scene_consumes: 30,
+        background: true,
+        max_scene_consume_gap: Duration::from_millis(1001),
+        since_scene_consume: Some(Duration::from_millis(1)),
+        has_valid_scene: true,
+        scene_progress: client::render::backend::SceneProgress::Rebuilt,
+    }
+}
+
+#[cfg(feature = "render-test-hooks")]
+#[test]
+fn m3_oracle_accepts_phase_jitter_with_an_empty_sample() {
+    let head = background_oracle_fixture();
+    let empty = FairOracleHead {
+        paints: 0,
+        scene_consumes: 0,
+        since_scene_consume: Some(Duration::from_millis(1001)),
+        ..head
+    };
+    m3_fair_oracle(1, &[empty], [0; 3], FairOracleInterval::Sample).unwrap();
+    m3_fair_oracle(
+        1,
+        &[head],
+        [0; 3],
+        FairOracleInterval::Cell(Duration::from_secs(30)),
+    )
+    .unwrap();
+}
+
+#[cfg(feature = "render-test-hooks")]
+#[test]
+fn m3_oracle_rejects_starvation_beyond_background_gap() {
+    let head = background_oracle_fixture();
+    for starved in [
+        FairOracleHead {
+            max_scene_consume_gap: BACKGROUND_SCENE_GAP + Duration::from_millis(1),
+            ..head
+        },
+        FairOracleHead {
+            since_scene_consume: Some(BACKGROUND_SCENE_GAP + Duration::from_millis(1)),
+            ..head
+        },
+    ] {
+        let error = m3_fair_oracle(1, &[starved], [0; 3], FairOracleInterval::Sample).unwrap_err();
+        assert!(error.contains("gap exceeds 2000ms"), "{error}");
+    }
+}
+
+#[cfg(feature = "render-test-hooks")]
+#[test]
+fn m3_oracle_rejects_too_few_consumes_over_thirty_seconds() {
+    let head = FairOracleHead {
+        scene_consumes: 14,
+        ..background_oracle_fixture()
+    };
+    let error = m3_fair_oracle(
+        1,
+        &[head],
+        [0; 3],
+        FairOracleInterval::Cell(Duration::from_secs(30)),
+    )
+    .unwrap_err();
+    assert!(error.contains("at least 15 required"), "{error}");
 }
 
 #[cfg(feature = "render-test-hooks")]
@@ -833,6 +975,8 @@ fn assert_fair_interval(
     statuses: &[host_play::SlotStatus],
     from: &Mark,
     to: &Mark,
+    focused: &[bool],
+    interval: FairOracleInterval,
 ) {
     let evidence: Vec<_> = heads
         .iter()
@@ -890,6 +1034,12 @@ fn assert_fair_interval(
                     stats.backend() == client::render::backend::BackendKind::Gpu
                 }),
                 scene_consumes,
+                background: !focused[i],
+                max_scene_consume_gap: stats
+                    .map_or(Duration::ZERO, |stats| stats.max_scene_consume_gap()),
+                since_scene_consume: stats
+                    .and_then(|stats| stats.last_scene_consume_at())
+                    .map(|at| to.at.saturating_duration_since(at)),
                 has_valid_scene: stats.is_some_and(|stats| stats.has_valid_scene()),
                 scene_progress: stats
                     .map_or(client::render::backend::SceneProgress::NoScene, |stats| {
@@ -899,7 +1049,7 @@ fn assert_fair_interval(
         })
         .collect();
     let fault_totals = to.workspace.faults().totals();
-    m3_fair_oracle(heads.len(), &evidence, fault_totals)
+    m3_fair_oracle(heads.len(), &evidence, fault_totals, interval)
         .unwrap_or_else(|error| panic!("{cell}: {error}"));
 }
 
@@ -1367,26 +1517,28 @@ fn live_m3_render_contention() {
             let now = mark(&heads, &taken, pump_probe.as_deref());
             let statuses = play.statuses();
             let ingame = statuses.iter().filter(|status| status.ingame).count();
-            if probe.is_some() {
-                #[cfg(feature = "render-test-hooks")]
-                assert_fair_interval(&cell, &heads, &statuses, &last, &now);
-                #[cfg(not(feature = "render-test-hooks"))]
-                unreachable!("the probe setup rejects missing render-test-hooks");
-            }
             let mut sample = summarize(&heads, &focused, &full_rate, &last, &now, probe);
             sample["t_s"] = json!(now.at.duration_since(start.at).as_secs_f64());
             sample["ingame"] = json!(ingame);
             writeln!(samples, "{sample}").unwrap();
+            if probe.is_some() {
+                #[cfg(feature = "render-test-hooks")]
+                assert_fair_interval(
+                    &cell,
+                    &heads,
+                    &statuses,
+                    &last,
+                    &now,
+                    &focused,
+                    FairOracleInterval::Sample,
+                );
+                #[cfg(not(feature = "render-test-hooks"))]
+                unreachable!("the probe setup rejects missing render-test-hooks");
+            }
             last = now;
         }
         let statuses = play.statuses();
         let ingame = statuses.iter().filter(|status| status.ingame).count();
-        if probe.is_some() {
-            #[cfg(feature = "render-test-hooks")]
-            assert_fair_interval(&cell, &heads, &statuses, &start, &last);
-            #[cfg(not(feature = "render-test-hooks"))]
-            unreachable!("the probe setup rejects missing render-test-hooks");
-        }
         let mut summary = summarize(&heads, &focused, &full_rate, &start, &last, probe);
         summary["cell"] = json!(cell);
         summary["n"] = json!(n);
@@ -1403,6 +1555,20 @@ fn live_m3_render_contention() {
         )
         .unwrap();
         eprintln!("m3 {cell}: {}", summary["groups"]);
+        if probe.is_some() {
+            #[cfg(feature = "render-test-hooks")]
+            assert_fair_interval(
+                &cell,
+                &heads,
+                &statuses,
+                &start,
+                &last,
+                &focused,
+                FairOracleInterval::Cell(last.at.duration_since(start.at)),
+            );
+            #[cfg(not(feature = "render-test-hooks"))]
+            unreachable!("the probe setup rejects missing render-test-hooks");
+        }
         assert_eq!(ingame, n, "{cell}: every head stayed in game");
     }
 
