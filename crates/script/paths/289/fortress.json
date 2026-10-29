@@ -104,8 +104,8 @@
           {
             "id": "push-ground-wall", "kind": "interact", "version": 1, "advances": false,
             "args": { "target": { "loc": "bksecretdoor" }, "op": "Push", "anchor": { "tile": [3016, 3517, 0], "source": "C:maps/m47_54.jm2:5082; C:pack/loc.pack:2342" }, "radius": 2 },
-            "comment": "C:scripts/quests/quest_blackknight/scripts/quest_blackknight.rs2:85-88 emits the message before the passage opens. C:scripts/doors/scripts/open_and_close_doors.rs2:43-62 moves the player to [3016,3516,0]. Settle and skip on that tile.",
-            "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3016, 3516, 0], "radius": 0 } } },
+            "comment": "C:scripts/quests/quest_blackknight/scripts/quest_blackknight.rs2:85-88 emits the message before the passage opens. C:scripts/doors/scripts/door_procs.rs2:90-100 and C:scripts/doors/scripts/open_and_close_doors.rs2:52-62 move the player from [3016,3516,0] to [3016,3517,0]. Settle and skip on the inside tile.",
+            "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3016, 3517, 0], "radius": 0 } } },
             "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3016, 3517, 0], "radius": 0 } } }
           },
           {
