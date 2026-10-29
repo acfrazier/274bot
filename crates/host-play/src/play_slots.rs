@@ -1857,8 +1857,6 @@ fn spawn_slot_thread(
                                 nav_armed,
                                 map_members,
                                 session_epoch,
-                                frame.runtime_generation,
-                                *script_tick,
                             );
                             #[cfg(feature = "js")]
                             let npc_boxes = project_npc_boxes_for_isolate_snapshot(
@@ -2031,8 +2029,6 @@ fn spawn_slot_thread(
                                             true,
                                             map_members,
                                             session_epoch,
-                                            frame.runtime_generation,
-                                            *script_tick,
                                         ),
                                     );
                                     c.set_journal_paint_hidden(c.ingame && completion.journal_paint_hidden);

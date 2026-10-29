@@ -448,6 +448,11 @@ impl GameSnapshot {
     }
 
     pub fn seed_inventory(&mut self, rows: Vec<ItemView>, size: i32) {
+        self.inv = rows
+            .iter()
+            .filter(|item| item.def.id >= 0)
+            .map(|item| (item.def.id, item.count))
+            .collect();
         self.inventory = rows;
         self.inventory_size = size;
     }

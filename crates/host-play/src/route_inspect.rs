@@ -2,7 +2,7 @@
 //! bounded latest owner demand per profile. Pause does not cancel inspection,
 //! and inspection results never arm Traveller.
 
-use super::NavBot;
+use super::{try_clone_world_state, NavBot};
 use api::bank_memory::Origin;
 use api::identity::{Cancellation, Scope, Settlement, WorkIdentity};
 use api::obj_names::ObjNames;
@@ -2563,13 +2563,23 @@ fn queue_inspect_captured(
         (generation, revision, opts, lease)
     };
 
+    let mut state = state.unwrap_or_else(|| Arc::new(WorldState::empty()));
+    if opts.allow_bank_fetch && Arc::get_mut(&mut state).is_none() {
+        state = match try_clone_world_state(&state) {
+            Ok(state) => Arc::new(state),
+            Err(_) => {
+                refuse_current(navs, name, req.request_id, generation, "spawn-failed");
+                return;
+            }
+        };
+    }
     let capture = InspectCapture {
         request_id: req.request_id,
         generation,
         revision,
         world,
         lease,
-        state: state.unwrap_or_else(|| Arc::new(WorldState::empty())),
+        state,
         bank_origin: bank.origin,
         bank: bank.rows,
         from: req.from,

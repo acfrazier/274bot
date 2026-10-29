@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 #[cfg(test)]
 use std::time::Duration;
@@ -2239,8 +2239,6 @@ struct WorldStateCacheKey {
     completed_quests: u64,
     map_members: bool,
     session: (u64, u64, u64),
-    quest_run_generation: u64,
-    quest_freshness_tick: u64,
 }
 
 impl WorldStateCacheKey {
@@ -2248,8 +2246,6 @@ impl WorldStateCacheKey {
         snapshot: &GameSnapshot,
         map_members: bool,
         session_epoch: u64,
-        quest_run_generation: u64,
-        quest_freshness_tick: u64,
     ) -> Self {
         let gens = snapshot.gens();
         Self {
@@ -2260,11 +2256,58 @@ impl WorldStateCacheKey {
             completed_quests: gens.iface,
             map_members,
             session: (gens.session, gens.invalidations, session_epoch),
-            quest_run_generation,
-            quest_freshness_tick,
         }
     }
 }
+fn try_copy_map<K, V>(
+    source: &HashMap<K, V>,
+) -> Result<HashMap<K, V>, std::collections::TryReserveError>
+where
+    K: Copy + Eq + std::hash::Hash,
+    V: Copy,
+{
+    let mut copied = HashMap::new();
+    copied.try_reserve(source.len())?;
+    copied.extend(source.iter().map(|(&key, &value)| (key, value)));
+    Ok(copied)
+}
+
+fn try_copy_set<T>(source: &HashSet<T>) -> Result<HashSet<T>, std::collections::TryReserveError>
+where
+    T: Copy + Eq + std::hash::Hash,
+{
+    let mut copied = HashSet::new();
+    copied.try_reserve(source.len())?;
+    copied.extend(source.iter().copied());
+    Ok(copied)
+}
+
+pub(super) fn try_clone_world_state(
+    state: &WorldState,
+) -> Result<WorldState, std::collections::TryReserveError> {
+    let mut quests = HashSet::new();
+    quests.try_reserve(state.quests.len())?;
+    for quest in &state.quests {
+        let mut copied = String::new();
+        copied.try_reserve_exact(quest.len())?;
+        copied.push_str(quest);
+        quests.insert(copied);
+    }
+    Ok(WorldState {
+        inv: try_copy_map(&state.inv)?,
+        inventory_ready: state.inventory_ready,
+        worn: try_copy_set(&state.worn)?,
+        equipment_ready: state.equipment_ready,
+        allow_fetchable_worn: state.allow_fetchable_worn,
+        stats: try_copy_map(&state.stats)?,
+        combat_level: state.combat_level,
+        varps: try_copy_map(&state.varps)?,
+        quests,
+        map_members: state.map_members,
+        quest_evidence: state.quest_evidence.clone(),
+    })
+}
+
 
 /// Per-slot cache of snapshot-derived facts. It never stores quest evidence.
 /// Route captures attach evidence from the current context at queue time.
@@ -2312,10 +2355,6 @@ fn world_state_cache_bypassed() -> bool {
 /// Whether this observe pass needs a [`WorldState`] from the slot snapshot.
 /// The cache belongs to one slot and only retains facts while navigation is
 /// active. Family generations catch changes within a game tick.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the observe pass keeps independent cache invalidation facts explicit"
-)]
 pub(crate) fn nav_world_state_for_observe(
     cache: &mut NavWorldStateCache,
     here: Option<(i32, i32, i32)>,
@@ -2324,8 +2363,6 @@ pub(crate) fn nav_world_state_for_observe(
     nav_armed: bool,
     map_members: bool,
     session_epoch: u64,
-    quest_run_generation: u64,
-    quest_freshness_tick: u64,
 ) -> Option<Arc<WorldState>> {
     #[cfg(feature = "observe-cost-profile")]
     if world_state_cache_bypassed() {
@@ -2336,13 +2373,7 @@ pub(crate) fn nav_world_state_for_observe(
         cache.clear();
         return None;
     }
-    let key = WorldStateCacheKey::for_snapshot(
-        snapshot,
-        map_members,
-        session_epoch,
-        quest_run_generation,
-        quest_freshness_tick,
-    );
+    let key = WorldStateCacheKey::for_snapshot(snapshot, map_members, session_epoch);
     Some(cache.get_or_build(key, snapshot, map_members))
 }
 /// Borrow the current session's inventory only on running tick edges.
@@ -2547,16 +2578,8 @@ mod world_state_cache_tests {
         snapshot: &GameSnapshot,
         map_members: bool,
         session_epoch: u64,
-        quest_run_generation: u64,
-        quest_freshness_tick: u64,
     ) -> WorldStateCacheKey {
-        WorldStateCacheKey::for_snapshot(
-            snapshot,
-            map_members,
-            session_epoch,
-            quest_run_generation,
-            quest_freshness_tick,
-        )
+        WorldStateCacheKey::for_snapshot(snapshot, map_members, session_epoch)
     }
 
     fn assert_only_differs(
@@ -2576,14 +2599,6 @@ mod world_state_cache_tests {
             ),
             ("map_members", baseline.map_members != changed.map_members),
             ("session", baseline.session != changed.session),
-            (
-                "quest_run_generation",
-                baseline.quest_run_generation != changed.quest_run_generation,
-            ),
-            (
-                "quest_freshness_tick",
-                baseline.quest_freshness_tick != changed.quest_freshness_tick,
-            ),
         ];
         for (name, differs) in fields {
             assert_eq!(
@@ -2597,7 +2612,7 @@ mod world_state_cache_tests {
     #[test]
     fn cache_key_invalidates_only_each_gating_fact_dependant() {
         let baseline_snapshot = snapshot_with(|_| {}, Some(3), Some(4));
-        let baseline = key(&baseline_snapshot, false, 5, 6, 7);
+        let baseline = key(&baseline_snapshot, false, 5);
 
         let inventory = snapshot_with(
             |generations| generations.inv = generations.inv.wrapping_add(1),
@@ -2606,7 +2621,7 @@ mod world_state_cache_tests {
         );
         assert_only_differs(
             baseline,
-            key(&inventory, false, 5, 6, 7),
+            key(&inventory, false, 5),
             &["inventory", "equipment"],
             "inventory family",
         );
@@ -2618,7 +2633,7 @@ mod world_state_cache_tests {
         );
         assert_only_differs(
             baseline,
-            key(&interface, false, 5, 6, 7),
+            key(&interface, false, 5),
             &["inventory", "equipment", "completed_quests"],
             "interface family",
         );
@@ -2626,7 +2641,7 @@ mod world_state_cache_tests {
         let inventory_packet = snapshot_with(|_| {}, Some(8), Some(4));
         assert_only_differs(
             baseline,
-            key(&inventory_packet, false, 5, 6, 7),
+            key(&inventory_packet, false, 5),
             &["inventory"],
             "inventory packet generation",
         );
@@ -2634,7 +2649,7 @@ mod world_state_cache_tests {
         let equipment_packet = snapshot_with(|_| {}, Some(3), Some(9));
         assert_only_differs(
             baseline,
-            key(&equipment_packet, false, 5, 6, 7),
+            key(&equipment_packet, false, 5),
             &["equipment"],
             "equipment packet generation",
         );
@@ -2646,7 +2661,7 @@ mod world_state_cache_tests {
         );
         assert_only_differs(
             baseline,
-            key(&stats, false, 5, 6, 7),
+            key(&stats, false, 5),
             &["stats"],
             "stats family",
         );
@@ -2658,7 +2673,7 @@ mod world_state_cache_tests {
         );
         assert_only_differs(
             baseline,
-            key(&varps, false, 5, 6, 7),
+            key(&varps, false, 5),
             &["varps"],
             "varps family",
         );
@@ -2670,7 +2685,7 @@ mod world_state_cache_tests {
         );
         assert_only_differs(
             baseline,
-            key(&session, false, 5, 6, 7),
+            key(&session, false, 5),
             &["session"],
             "client session",
         );
@@ -2682,34 +2697,22 @@ mod world_state_cache_tests {
         );
         assert_only_differs(
             baseline,
-            key(&invalidation, false, 5, 6, 7),
+            key(&invalidation, false, 5),
             &["session"],
             "client invalidation",
         );
 
         assert_only_differs(
             baseline,
-            key(&baseline_snapshot, true, 5, 6, 7),
+            key(&baseline_snapshot, true, 5),
             &["map_members"],
             "world membership",
         );
         assert_only_differs(
             baseline,
-            key(&baseline_snapshot, false, 8, 6, 7),
+            key(&baseline_snapshot, false, 8),
             &["session"],
             "host session epoch",
-        );
-        assert_only_differs(
-            baseline,
-            key(&baseline_snapshot, false, 5, 9, 7),
-            &["quest_run_generation"],
-            "quest run generation",
-        );
-        assert_only_differs(
-            baseline,
-            key(&baseline_snapshot, false, 5, 6, 10),
-            &["quest_freshness_tick"],
-            "quest freshness",
         );
     }
 
@@ -2731,12 +2734,12 @@ mod world_state_cache_tests {
     fn changed_fact_generation_never_serves_stale_world_state() {
         let mut cache = NavWorldStateCache::default();
         let first_snapshot = stats_snapshot(1, 68);
-        let first_key = key(&first_snapshot, false, 1, 1, 1);
+        let first_key = key(&first_snapshot, false, 1);
         let first = cache.get_or_build(first_key, &first_snapshot, false);
         assert_eq!(first.stats.get(&10), Some(&68));
 
         let second_snapshot = stats_snapshot(2, 69);
-        let second_key = key(&second_snapshot, false, 1, 1, 1);
+        let second_key = key(&second_snapshot, false, 1);
         let second = cache.get_or_build(second_key, &second_snapshot, false);
         assert!(
             !Arc::ptr_eq(&first, &second),
@@ -2765,7 +2768,7 @@ mod world_state_cache_tests {
             xp: 0,
             used: true,
         }]);
-        let unrelated_key = key(&unrelated_snapshot, false, 1, 1, 1);
+        let unrelated_key = key(&unrelated_snapshot, false, 1);
         assert_eq!(second_key, unrelated_key);
         let reused = cache.get_or_build(unrelated_key, &unrelated_snapshot, false);
         assert!(Arc::ptr_eq(&second, &reused));
@@ -2779,7 +2782,7 @@ mod world_state_cache_tests {
     #[test]
     fn cache_hits_reuse_the_backing_without_allocating() {
         let snapshot = stats_snapshot(1, 68);
-        let cache_key = key(&snapshot, false, 1, 1, 1);
+        let cache_key = key(&snapshot, false, 1);
         let mut cache = NavWorldStateCache::default();
         let first = cache.get_or_build(cache_key, &snapshot, false);
         let mut reused = None;
@@ -2821,6 +2824,40 @@ mod world_state_cache_tests {
     }
 
     #[test]
+    fn late_profile_world_state_stays_under_12_kib() {
+        let mut state = nav_planner::WorldState::default();
+        for id in 0..20 {
+            state.inv.insert(id, id + 1);
+        }
+        state.inventory_ready = true;
+        state.worn.extend(0..5);
+        state.equipment_ready = true;
+        state.stats.extend((0..25).map(|index| (index, 80)));
+        state.varps.extend((0..394).map(|index| (index, index * 3)));
+        state.quests.extend((0..62).map(|index| {
+            let suffix = if index < 46 { "xxxxxx" } else { "xxxxx" };
+            format!("quest-{index:02}-{suffix}")
+        }));
+        state.map_members = true;
+        state.combat_level = Some(80);
+
+        assert_eq!(state.inv.len(), 20);
+        assert_eq!(state.worn.len(), 5);
+        assert_eq!(state.stats.len(), 25);
+        assert_eq!(state.varps.len(), 394);
+        assert_eq!(state.quests.len(), 62);
+        assert_eq!(state.quests.iter().map(String::len).sum::<usize>(), 914);
+        let retained_bytes = state
+            .try_shared_retained_bytes()
+            .expect("late-profile retained size fits usize");
+        assert!(
+            retained_bytes <= 12 * 1024,
+            "late-profile WorldState retained {retained_bytes} bytes"
+        );
+    }
+
+
+    #[test]
     fn inactive_observation_releases_the_slot_cache() {
         let snapshot = stats_snapshot(1, 68);
         let mut cache = NavWorldStateCache::default();
@@ -2831,8 +2868,6 @@ mod world_state_cache_tests {
             true,
             false,
             false,
-            1,
-            1,
             1,
         )
         .expect("running script needs navigation facts");
@@ -2848,8 +2883,6 @@ mod world_state_cache_tests {
             false,
             false,
             false,
-            1,
-            1,
             1,
         )
         .is_none());

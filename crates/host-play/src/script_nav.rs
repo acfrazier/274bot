@@ -1105,7 +1105,10 @@ impl RouteJob {
         let state = if request.opts.allow_bank_fetch {
             match Arc::try_unwrap(state) {
                 Ok(state) => Arc::new(state),
-                Err(shared) => Arc::new((*shared).clone()),
+                Err(shared) => Arc::new(
+                    super::try_clone_world_state(&shared)
+                        .map_err(|_| RouteJobError::Allocation)?,
+                ),
             }
         } else {
             state
@@ -8124,8 +8127,6 @@ mod diagnostic_tests {
                 false,
                 state.map_members,
                 1,
-                1,
-                1,
             )
             .expect("active route corpus state");
             let cached_again = crate::script_runtime::nav_world_state_for_observe(
@@ -8136,13 +8137,13 @@ mod diagnostic_tests {
                 false,
                 state.map_members,
                 1,
-                1,
-                1,
             )
             .expect("reused route corpus state");
             assert!(Arc::ptr_eq(&cached_state, &cached_again));
+            let original_state = Arc::new(state.clone());
             let fresh_state =
                 Arc::new(WorldState::from_snapshot(&snapshot).with_map_members(state.map_members));
+            assert_eq!(cached_state.as_ref(), original_state.as_ref());
             assert_eq!(cached_state.as_ref(), fresh_state.as_ref());
             for goal in selected.drain(..) {
                 let request = |route_state: Arc<WorldState>, candidate_goals| {
@@ -8162,17 +8163,20 @@ mod diagnostic_tests {
                     request
                 };
                 let (ordinary, _) =
-                    request(Arc::clone(&cached_state), None).drive_route_job_for_test();
+                    request(Arc::clone(&original_state), None).drive_route_job_for_test();
                 let (candidate, _) = request(
-                    Arc::clone(&cached_state),
+                    Arc::clone(&original_state),
                     Some(script::native::WalkGoals::new(vec![goal]).unwrap()),
                 )
                 .drive_route_job_for_test();
+                let (cached, _) =
+                    request(Arc::clone(&cached_state), None).drive_route_job_for_test();
                 let (fresh, _) = request(Arc::clone(&fresh_state), None).drive_route_job_for_test();
-                match (ordinary, candidate, fresh) {
+                match (ordinary, candidate, cached, fresh) {
                     (
                         RouteOutcome::Routed(ordinary),
                         RouteOutcome::Routed(candidate),
+                        RouteOutcome::Routed(cached),
                         RouteOutcome::Routed(fresh),
                     ) => {
                         assert_eq!(
@@ -8180,12 +8184,16 @@ mod diagnostic_tests {
                             "{name}: candidate route {from:?} -> {goal:?}"
                         );
                         assert_eq!(
+                            ordinary, cached,
+                            "{name}: cached route {from:?} -> {goal:?}"
+                        );
+                        assert_eq!(
                             ordinary, fresh,
-                            "{name}: cached/fresh route {from:?} -> {goal:?}"
+                            "{name}: independent fresh-state route {from:?} -> {goal:?}"
                         );
                         cached_route_bytes
                             .write_all(
-                                format!("{name}\t{from:?}\t{goal:?}\t{ordinary:?}\n").as_bytes(),
+                                format!("{name}\t{from:?}\t{goal:?}\t{cached:?}\n").as_bytes(),
                             )
                             .unwrap();
                         fresh_route_bytes
@@ -8195,13 +8203,18 @@ mod diagnostic_tests {
                             .unwrap();
                         routed += 1;
                     }
-                    (RouteOutcome::NoPath, RouteOutcome::NoPath, RouteOutcome::NoPath) => {
+                    (
+                        RouteOutcome::NoPath,
+                        RouteOutcome::NoPath,
+                        RouteOutcome::NoPath,
+                        RouteOutcome::NoPath,
+                    ) => {
                         let line = format!("{name}\t{from:?}\t{goal:?}\tno-path\n");
                         cached_route_bytes.write_all(line.as_bytes()).unwrap();
                         fresh_route_bytes.write_all(line.as_bytes()).unwrap();
                     }
                     _ => panic!(
-                        "{name}: cached/fresh route availability changed for {from:?} -> {goal:?}"
+                        "{name}: original/candidate/cached/fresh route availability changed for {from:?} -> {goal:?}"
                     ),
                 }
             }

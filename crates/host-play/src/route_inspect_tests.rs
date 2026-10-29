@@ -646,8 +646,6 @@ fn shared_cached_state_allows_cooperative_bank_fetch_postroute() {
         false,
         false,
         1,
-        1,
-        1,
     )
     .expect("active slot has cached navigation facts");
     assert_eq!(Arc::strong_count(&state), 2, "slot cache retains its Arc");
@@ -703,8 +701,6 @@ fn shared_cached_state_allows_cooperative_bank_fetch_postroute() {
         true,
         false,
         false,
-        1,
-        1,
         1,
     )
     .expect("active slot retains cached navigation facts");

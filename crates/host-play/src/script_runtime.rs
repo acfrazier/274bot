@@ -122,14 +122,9 @@ pub(super) use script_observe::{
     delay_ordered_drain_for_test, install_dispatch_barrier, install_ordered_dispatch_hook,
     script_observe, DispatchBarrier,
 };
-#[cfg(all(test, feature = "js"))]
-pub(super) use script_observe::{
-    drain_observed_host_interacts, script_observe_cached, script_observe_with_npc_boxes,
-    take_script_interacts,
-};
 pub(super) use script_observe::{
     nav_world_state_for_observe, observe_script_inv, script_observe_cached_with_channels,
-    NavWorldStateCache, ScriptObservation,
+    try_clone_world_state, NavWorldStateCache, ScriptObservation,
 };
 #[cfg(any(feature = "js", test))]
 pub(super) use script_observe::{project_npc_boxes_for_isolate_snapshot, projected_npc_boxes};
