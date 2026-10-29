@@ -1025,11 +1025,17 @@ fn spend_tick_interaction(tick: &mut crate::native::NativeTick<'_>) {
 }
 
 fn dialogue_npc(distance: i32) -> api::snapshot::NpcView {
-    let tile = api::WorldTile {
-        x: 7,
-        z: 5,
-        level: 0,
-    };
+    dialogue_npc_at(
+        distance,
+        api::WorldTile {
+            x: 7,
+            z: 5,
+            level: 0,
+        },
+    )
+}
+
+fn dialogue_npc_at(distance: i32, tile: api::WorldTile) -> api::snapshot::NpcView {
     api::snapshot::NpcView {
         index: 7,
         r#type: Some(0),
@@ -1134,7 +1140,207 @@ fn dialogue_answer_after_same_tick_talk_defers_and_retries() {
 }
 
 #[test]
-fn dialogue_approach_open_retries_after_its_walk_spends_budget() {
+fn dialogue_approach_replans_when_npc_moves_then_talks_after_it_settles() {
+    let player_tile = api::WorldTile {
+        x: 5,
+        z: 5,
+        level: 0,
+    };
+    let initial_npc_tile = api::WorldTile {
+        x: 7,
+        z: 5,
+        level: 0,
+    };
+    let moved_npc_tile = api::WorldTile {
+        x: 8,
+        z: 5,
+        level: 0,
+    };
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(player_tile));
+    before.seed_npcs(vec![dialogue_npc_at(5, initial_npc_tile)]);
+    let mut moved = snapshot();
+    moved.seed_local_player(super::tests::local_player(player_tile));
+    moved.seed_npcs(vec![dialogue_npc_at(5, moved_npc_tile)]);
+    let mut settled = snapshot();
+    settled.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 7,
+        z: 5,
+        level: 0,
+    }));
+    settled.seed_npcs(vec![dialogue_npc_at(1, moved_npc_tile)]);
+
+    let mut ledger = None;
+    let (handle, initial) = with_tick(&before, &mut ledger, 1, |tick| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(npc_args(), &mut tick.cx)
+            .unwrap();
+        let result = tick.actions.poll(&handle, &mut tick.cx);
+        (handle, result)
+    });
+    assert!(initial.is_pending());
+    assert_eq!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .rev()
+            .find_map(|entry| match (&entry.effect, entry.live()) {
+                (HostEffect::Walk(request), true) => Some(request.target),
+                _ => None,
+            }),
+        Some(initial_npc_tile)
+    );
+
+    super::tests::post_user_input_walk_receipt(&mut ledger, 2);
+    ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
+    assert!(
+        with_tick(&moved, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending(),
+        "a moved, still-visible NPC should cause an approach re-plan"
+    );
+    assert_eq!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .rev()
+            .find_map(|entry| match (&entry.effect, entry.live()) {
+                (HostEffect::Walk(request), true) => Some(request.target),
+                _ => None,
+            }),
+        Some(moved_npc_tile),
+        "the re-plan must target the NPC's current tile"
+    );
+
+    super::tests::post_user_input_walk_receipt(&mut ledger, 3);
+    ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
+    assert!(with_tick(&settled, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::Npc { index: Some(7), .. }
+    ));
+}
+
+#[test]
+fn dialogue_approach_fails_when_npc_keeps_moving_after_content_bound() {
+    let player_tile = api::WorldTile {
+        x: 5,
+        z: 5,
+        level: 0,
+    };
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(player_tile));
+    before.seed_npcs(vec![dialogue_npc(5)]);
+    let mut content_ledger = None;
+    let replan_budget = with_tick(&before, &mut content_ledger, 1, |tick| {
+        let data = api::game_data::for_revision(tick.cx.pin.revision)
+            .expect("the selected revision's NPC content is available");
+        let wander_range = data
+            .npc_name(0)
+            .expect("the dialogue fixture's NPC has content")
+            .wanderrange
+            .max(0);
+        u16::try_from(wander_range)
+            .unwrap_or(u16::MAX)
+            .saturating_mul(4)
+    });
+    assert!(replan_budget > 0, "fixture content must allow re-planning");
+
+    let mut ledger = None;
+    let (handle, initial) = with_tick(&before, &mut ledger, 1, |tick| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(npc_args(), &mut tick.cx)
+            .unwrap();
+        let result = tick.actions.poll(&handle, &mut tick.cx);
+        (handle, result)
+    });
+    assert!(initial.is_pending());
+
+    for replan in 0..replan_budget {
+        let tick_number = 2 + u64::from(replan);
+        super::tests::post_user_input_walk_receipt(&mut ledger, tick_number);
+        ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
+        let current_npc_tile = api::WorldTile {
+            x: 8 + i32::from(replan),
+            z: 5,
+            level: 0,
+        };
+        let mut moving = snapshot();
+        moving.seed_local_player(super::tests::local_player(player_tile));
+        moving.seed_npcs(vec![dialogue_npc_at(
+            5 + i32::from(replan),
+            current_npc_tile,
+        )]);
+        assert!(
+            with_tick(&moving, &mut ledger, tick_number, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            })
+            .is_pending(),
+            "each in-budget move must queue another approach"
+        );
+        assert_eq!(
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .rev()
+                .find_map(|entry| match (&entry.effect, entry.live()) {
+                    (HostEffect::Walk(request), true) => Some(request.target),
+                    _ => None,
+                }),
+            Some(current_npc_tile)
+        );
+    }
+
+    let final_tick = 2 + u64::from(replan_budget);
+    super::tests::post_user_input_walk_receipt(&mut ledger, final_tick);
+    ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
+    let last_npc_tile = api::WorldTile {
+        x: 8 + i32::from(replan_budget),
+        z: 5,
+        level: 0,
+    };
+    let mut still_moving = snapshot();
+    still_moving.seed_local_player(super::tests::local_player(player_tile));
+    still_moving.seed_npcs(vec![dialogue_npc_at(
+        5 + i32::from(replan_budget),
+        last_npc_tile,
+    )]);
+    assert!(matches!(
+        with_tick(&still_moving, &mut ledger, final_tick, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(DialogueOutcome::Failed))
+    ));
+    assert_eq!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|entry| matches!(&entry.effect, HostEffect::Walk(_)))
+            .count(),
+        usize::from(replan_budget) + 1,
+        "no route is queued once the content-derived re-plan budget is spent"
+    );
+    assert!(!ledger.as_ref().unwrap().outbox.iter().any(|entry| {
+        matches!(&entry.effect, HostEffect::Walk(_)) && entry.live()
+    }));
+}
+
+#[test]
+fn dialogue_approach_fails_immediately_when_npc_disappears() {
     let mut before = snapshot();
     before.seed_local_player(super::tests::local_player(api::WorldTile {
         x: 5,
@@ -1142,115 +1348,32 @@ fn dialogue_approach_open_retries_after_its_walk_spends_budget() {
         level: 0,
     }));
     before.seed_npcs(vec![dialogue_npc(5)]);
-    let mut after = snapshot();
-    after.seed_local_player(super::tests::local_player(api::WorldTile {
-        x: 5,
-        z: 5,
-        level: 0,
-    }));
-    after.seed_npcs(vec![dialogue_npc(1)]);
-    let mut wandered = snapshot();
-    wandered.seed_local_player(super::tests::local_player(api::WorldTile {
-        x: 5,
-        z: 5,
-        level: 0,
-    }));
-    wandered.seed_npcs(vec![dialogue_npc(5)]);
-
     let mut ledger = None;
-    let (handle, same_tick) =
-        with_tick_snapshots(&before, &after, &mut ledger, 1, |tick, after| {
-            let handle = tick
-                .actions
-                .begin::<Dialogue>(npc_args(), &mut tick.cx)
-                .unwrap();
-            tick.cx.snapshot = api::snapshot::SnapshotView::new(Some(after), tick.cx.evidence());
-            let result = tick.actions.poll(&handle, &mut tick.cx);
-            (handle, result)
-        });
-    assert!(same_tick.is_pending());
-    assert!(!ledger.as_ref().unwrap().outbox.iter().any(|entry| {
-        matches!(
-            &entry.effect,
-            HostEffect::Interaction(InteractReq::Npc { .. })
-        )
-    }));
-    let walk = ledger
-        .as_ref()
-        .unwrap()
-        .outbox
-        .iter()
-        .find(|entry| matches!(&entry.effect, HostEffect::Walk(_)))
-        .expect("the refused Talk-to must leave its approach walk queued");
-    assert!(walk.live(), "the retained approach walk remains owned");
+    let (handle, initial) = with_tick(&before, &mut ledger, 1, |tick| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(npc_args(), &mut tick.cx)
+            .unwrap();
+        let result = tick.actions.poll(&handle, &mut tick.cx);
+        (handle, result)
+    });
+    assert!(initial.is_pending());
 
-    assert!(with_tick(&wandered, &mut ledger, 2, |tick| {
-        tick.actions.poll(&handle, &mut tick.cx)
-    })
-    .is_pending());
-    let walk = ledger
-        .as_ref()
-        .unwrap()
-        .outbox
-        .iter()
-        .find(|entry| matches!(&entry.effect, HostEffect::Walk(_)))
-        .expect("the NPC wandering away must not cancel the live approach");
-    assert!(
-        walk.live(),
-        "the continued walk remains owned until its receipt"
-    );
-    assert!(!ledger.as_ref().unwrap().outbox.iter().any(|entry| {
-        matches!(
-            &entry.effect,
-            HostEffect::Interaction(InteractReq::Npc { .. })
-        )
+    let mut gone = snapshot();
+    gone.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 5,
+        z: 5,
+        level: 0,
     }));
-
-    super::tests::post_user_input_walk_receipt(&mut ledger, 3);
     assert!(matches!(
-        with_tick(&wandered, &mut ledger, 3, |tick| {
+        with_tick(&gone, &mut ledger, 2, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Ok(DialogueOutcome::Failed))
     ));
-
-    let mut successful_open_ledger = None;
-    let (successful_open, same_tick) = with_tick_snapshots(
-        &before,
-        &after,
-        &mut successful_open_ledger,
-        1,
-        |tick, after| {
-            let handle = tick
-                .actions
-                .begin::<Dialogue>(npc_args(), &mut tick.cx)
-                .unwrap();
-            tick.cx.snapshot = api::snapshot::SnapshotView::new(Some(after), tick.cx.evidence());
-            let same_tick = tick.actions.poll(&handle, &mut tick.cx);
-            (handle, same_tick)
-        },
-    );
-    assert!(same_tick.is_pending());
-    assert!(successful_open_ledger
-        .as_ref()
-        .unwrap()
-        .outbox
-        .iter()
-        .any(|entry| matches!(&entry.effect, HostEffect::Walk(_)) && entry.live()));
-    assert!(with_tick(&after, &mut successful_open_ledger, 2, |tick| {
-        tick.actions.poll(&successful_open, &mut tick.cx)
-    })
-    .is_pending());
-    assert!(!successful_open_ledger
-        .as_ref()
-        .unwrap()
-        .outbox
-        .iter()
-        .any(|entry| matches!(&entry.effect, HostEffect::Walk(_))));
-    assert!(matches!(
-        last_interaction(&successful_open_ledger),
-        InteractReq::Npc { index: Some(7), .. }
-    ));
+    assert!(!ledger.as_ref().unwrap().outbox.iter().any(|entry| {
+        matches!(&entry.effect, HostEffect::Walk(_)) && entry.live()
+    }));
 }
 
 #[test]
