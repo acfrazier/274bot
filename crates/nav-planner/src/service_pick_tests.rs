@@ -102,9 +102,10 @@ fn approach_zero_allows_each_side_and_fire_like_footprint_excludes_its_tile() {
     assert!(all.iter().any(|t| t.z > 3));
 
     let one_tile = Footprint::tile(tile(4, 4));
-    let fire_access: Vec<_> =
-        service_access_tiles(&wc, one_tile, AccessReach::Adjacent, Sides::ALL).collect();
-    assert!(!fire_access.contains(&tile(4, 4)));
+    assert!(
+        !service_access_tiles(&wc, one_tile, AccessReach::Adjacent, Sides::ALL)
+            .any(|access| access == tile(4, 4))
+    );
 }
 
 #[test]

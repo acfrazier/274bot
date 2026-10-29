@@ -222,7 +222,7 @@ impl ShopRun {
                             target,
                             loc_id: None,
                             radius: if self.nearest { 0 } else { 6 },
-                            arrival: nav::contract::ArrivalKind::Reach,
+                            arrival: nav_planner::contract::ArrivalKind::Reach,
                             options: request.walk,
                             required_after: request.required_after,
                             evidence: None,
