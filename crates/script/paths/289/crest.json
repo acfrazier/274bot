@@ -252,6 +252,16 @@
           "terminal": false,
           "recovery_entry": null,
           "steps": [
+            {"id":"buy-tuna","kind":"buy","version":1,
+             "args":{"shop":{"npc":"alfonse_the_waiter","anchor":{"tile":[2793,3188,0],"source":"content/maps/m43_49.jm2:9202; content/pack/npc.pack:794"}},"obj":"tuna","qty":1,"est_gp":130},
+             "comment":"Full-stock tuna costs 130 coins: content/scripts/areas/area_brimhaven/configs/brimhaven.inv:31-44; content/scripts/areas/area_brimhaven/configs/brimhaven.npc:26-57; content/scripts/skill_fishing/configs/fishing.obj:572-584; content/scripts/shop/scripts/shop.rs2:131-147,182-187.",
+             "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tuna"}}},
+             "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tuna"}}}},
+            {"id":"buy-swordfish","kind":"buy","version":1,
+             "args":{"shop":{"npc":"alfonse_the_waiter","anchor":{"tile":[2793,3188,0],"source":"content/maps/m43_49.jm2:9202; content/pack/npc.pack:794"}},"obj":"swordfish","qty":1,"est_gp":260},
+             "comment":"Full-stock swordfish costs 260 coins: content/scripts/areas/area_brimhaven/configs/brimhaven.inv:31-44; content/scripts/areas/area_brimhaven/configs/brimhaven.npc:26-57; content/scripts/skill_fishing/configs/fishing.obj:675-687; content/scripts/shop/scripts/shop.rs2:131-147,182-187.",
+             "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"swordfish"}}},
+             "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"swordfish"}}}},
             {
               "id": "give-fish",
               "kind": "talk",
@@ -461,6 +471,11 @@
           ]
         },
         {"stage":"crest:7","required":[],"terminal":false,"recovery_entry":null,"steps":[
+          {"id":"buy-ruby","kind":"buy","version":1,
+           "args":{"shop":{"npc":"gem_merchant","anchor":{"tile":[2669,3303,0],"source":"content/maps/m41_51.jm2:11008; content/pack/npc.pack:571"}},"obj":"ruby","qty":1,"est_gp":1500},
+           "comment":"At full stock one ruby costs 1500 coins: content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:111-122; content/scripts/areas/area_ardougne_east/configs/ardougne_east.npc:344-379; content/scripts/skill_crafting/configs/jewellery/cut_gems.obj:23-25; content/scripts/shop/scripts/shop.rs2:131-147,182-187.",
+           "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"ruby"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"perfect_ruby_ring"}}}]},
+           "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"ruby"}}}},
           {"id":"open-jewellery-interface","kind":"use_on","version":1,"advances":false,
            "comment":"content/scripts/skill_smithing/scripts/smelting/smelting.rs2:1-14; content/scripts/skill_crafting/scripts/jewellery/jewellery.rs2:16-29,174-175; content/maps/m50_50.jm2:7131. The perfect bar must be obtained from the mine before this step.",
            "args":{"item":"perfect_gold_bar","target":{"loc":"furnace1"},"anchor":{"tile":[3226,3255,0],"source":"content/maps/m50_50.jm2:7131"},"radius":5},
