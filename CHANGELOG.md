@@ -22,6 +22,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   could crash while it exited.
 - The terminal app's script pane now marks the selected compiled (native)
   script card with `>` the same way as a selected JavaScript card.
+- On Linux, the known issue where the panel could close right after start
+  on a desktop with two graphics chips no longer happens with current
+  graphics drivers and desktop versions, so it is no longer listed. 274bot
+  did not change for this. If you still see "importing the supplied dmabufs
+  failed", start the panel with `WGPU_POWER_PREF=high ./panel-play`.
 
 ### Combat
 
