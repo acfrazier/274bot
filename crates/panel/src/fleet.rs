@@ -146,7 +146,9 @@ pub(crate) fn take_drop_markers() -> Vec<DropMarker> {
         if markers.capacity() < 64 {
             markers.reserve(64 - markers.capacity());
         }
-        markers.drain(..).collect()
+        let taken = markers.clone();
+        markers.clear();
+        taken
     })
 }
 
