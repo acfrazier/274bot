@@ -18,7 +18,7 @@
     "areas": {
       "keep": { "boxes": [[2764, 3392, 2785, 3418, 0], [2764, 3392, 2785, 3418, 1], [2764, 3392, 2785, 3418, 2]], "source": "289 maps/m43_53.jm2:5050-5051,7281; scripts/quests/quest_arthur/configs/quest_arthur.constant:15-17" }
     },
-    "tools": ["obj:bread", "obj:bucket_wax", "obj:bat_bones", "obj:tinderbox", "obj:unlit_black_candle", "obj:lit_black_candle", "obj:excalibur"],
+    "tools": ["obj:bread", "obj:bucket_empty", "obj:insect_repellent", "obj:bucket_wax", "obj:bat_bones", "obj:tinderbox", "obj:unlit_black_candle", "obj:lit_black_candle", "obj:excalibur"],
     "owns_inventory": true
   },
   "roles": [{
@@ -86,6 +86,41 @@
           "args": { "target": { "loc": "lefayeunopenabledoorl" }, "op": "Open", "anchor": { "tile": [2763, 3402, 0], "source": "289 maps/m43_53.jm2:5051; pack/loc.pack:72" }, "radius": 8 },
           "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "keep" } } } },
           "settle": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "keep" } } } }
+        },
+        {
+          "id": "walk-to-repellent", "kind": "walk", "version": 1,
+          "comment": "The members-world insect repellent spawn is at Catherby [2807,3450,0]. 289 maps/m43_53.jm2:7283-7285; pack/obj.pack:29; scripts/areas/area_seers/configs/bees.obj:1-6.",
+          "args": { "tile": [2807, 3450, 0], "radius": 2, "source": "289 maps/m43_53.jm2:7283-7285; pack/obj.pack:29" },
+          "skip_if": { "Any": [{ "Fact": { "kind": "near", "version": 1, "args": { "tile": [2807, 3450, 0], "radius": 2 } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "insect_repellent" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_wax" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unlit_black_candle" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "lit_black_candle" } } }] },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2807, 3450, 0], "radius": 2 } } }
+        },
+        {
+          "id": "wait-for-repellent", "kind": "wait", "version": 1,
+          "comment": "The object has no respawnrate override. The engine default is 100 game ticks, so the wait is bounded at 200 ticks. 289 scripts/areas/area_seers/configs/bees.obj:1-11; engine/src/cache/config/ObjType.ts:182; engine/src/engine/script/handlers/ObjOps.ts:137-157.",
+          "args": { "until": { "Fact": { "kind": "ground_item_near", "version": 1, "args": { "obj": "insect_repellent", "radius": 12, "at": [2807, 3450, 0] } } }, "max_ticks": 200, "park_on_timeout": true },
+          "skip_if": { "Any": [{ "Fact": { "kind": "ground_item_near", "version": 1, "args": { "obj": "insect_repellent", "radius": 12, "at": [2807, 3450, 0] } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "insect_repellent" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_wax" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unlit_black_candle" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "lit_black_candle" } } }] },
+          "settle": { "Fact": { "kind": "ground_item_near", "version": 1, "args": { "obj": "insect_repellent", "radius": 12, "at": [2807, 3450, 0] } } }
+        },
+        {
+          "id": "take-repellent", "kind": "interact", "version": 1, "advances": false,
+          "comment": "Take the static Catherby spawn. 289 maps/m43_53.jm2:7283-7285; scripts/player/scripts/pickup.rs2:1-25.",
+          "args": { "target": { "ground": "insect_repellent" }, "op": "Take", "anchor": { "tile": [2807, 3450, 0], "source": "289 maps/m43_53.jm2:7283-7285; pack/obj.pack:29" }, "radius": 2 },
+          "skip_if": { "Any": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "insect_repellent" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_wax" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unlit_black_candle" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "lit_black_candle" } } }] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "insect_repellent" } } }
+        },
+        {
+          "id": "repel-bees", "kind": "use_on", "version": 1, "advances": false,
+          "comment": "Use repellent on a Merlin beehive. The player-scoped hive flag remains set until wax is taken; repeating the operation is harmless. 289 scripts/areas/area_seers/scripts/bees.rs2:8-22,24-36; maps/m43_53.jm2:4819-4822,4930-4933,4967,5035-5037.",
+          "args": { "item": "insect_repellent", "target": { "loc": "merlin_beehive" }, "anchor": { "tile": [2758, 3440, 0], "source": "289 maps/m43_53.jm2:4930; pack/loc.pack:69" }, "radius": 8 },
+          "skip_if": { "Any": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_wax" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unlit_black_candle" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "lit_black_candle" } } }] },
+          "settle": { "All": [] }
+        },
+        {
+          "id": "collect-beeswax", "kind": "use_on", "version": 1, "advances": false,
+          "comment": "Use the empty bucket on a repelled Merlin beehive. The engine replaces it with a bucket of wax. 289 scripts/areas/area_seers/scripts/bees.rs2:8-11,24-36; maps/m43_53.jm2:4930.",
+          "args": { "item": "bucket_empty", "target": { "loc": "merlin_beehive" }, "anchor": { "tile": [2758, 3440, 0], "source": "289 maps/m43_53.jm2:4930; pack/loc.pack:69" }, "radius": 8, "product": "bucket_wax" },
+          "skip_if": { "Any": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_wax" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "unlit_black_candle" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "lit_black_candle" } } }] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_wax" } } }
         },
         {
           "id": "ask-for-black-candle", "kind": "talk", "version": 1, "advances": false,
