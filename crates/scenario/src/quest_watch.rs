@@ -329,11 +329,11 @@ fn build_seed_scenario(plan: SeedPlan) -> Result<Scenario, String> {
             tab,
         ));
     }
-    steps.push(command_step(
-        "seed exact quest points",
-        format!("setvar qp {}", plan.quest_points),
-        tab,
-    ));
+    // No `setvar qp` step: %qp is not permanent and the engine
+    // recounts it from quest varps at every login
+    // (content/scripts/general/scripts/quests.rs2:89-96,302). The
+    // plan's completed varps therefore sum to `quest_points`, and the
+    // gate below reads the recounted value back after the relog.
     for (id, (alias, count)) in &expected_bank {
         let _ = id;
         steps.push(command_step(
@@ -384,6 +384,10 @@ fn build_seed_scenario(plan: SeedPlan) -> Result<Scenario, String> {
     ));
 
     let gate_stats = expected_stats.clone();
+    let gate_hp_index = Skill::names
+        .iter()
+        .position(|name| name.eq_ignore_ascii_case("hitpoints"))
+        .map(|index| index as i32);
     let gate_listed: Vec<i32> = listed_stats.iter().map(|(index, _)| *index).collect();
     let gate_inventory: BTreeMap<i32, i32> = expected_inventory
         .iter()
@@ -417,7 +421,16 @@ fn build_seed_scenario(plan: SeedPlan) -> Result<Scenario, String> {
                         }
                         continue;
                     };
-                    if stat.base != *expected || stat.effective != *expected {
+                    // Current Hitpoints may drop when content at the
+                    // start tile damages the bot; the seeded fact is
+                    // the base level. Every other skill is exact on
+                    // both base and effective.
+                    let effective_ok = if gate_hp_index == Some(*index) {
+                        stat.effective > 0 && stat.effective <= *expected
+                    } else {
+                        stat.effective == *expected
+                    };
+                    if stat.base != *expected || !effective_ok {
                         return false;
                     }
                 }
