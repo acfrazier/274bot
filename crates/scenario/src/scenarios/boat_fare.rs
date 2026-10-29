@@ -110,10 +110,7 @@ fn boat_fare_scenario(name: &'static str, start_tile: WorldTile, drop_mid_walk: 
         name: "tele to the selected Karamja tile before Start",
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
-                cheat(
-                    c,
-                    &tele_args(start_tile.level, start_tile.x, start_tile.z),
-                );
+                cheat(c, &tele_args(start_tile.level, start_tile.x, start_tile.z));
                 true
             }),
         },

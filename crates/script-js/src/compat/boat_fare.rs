@@ -1234,12 +1234,7 @@ fn log_approach_failure(
     record_recovery_log(logs, line);
 }
 
-fn log_staging_failure(
-    logs: &mut VecDeque<String>,
-    attempt: u32,
-    tile: WorldTile,
-    detail: &str,
-) {
+fn log_staging_failure(logs: &mut VecDeque<String>, attempt: u32, tile: WorldTile, detail: &str) {
     record_recovery_log(
         logs,
         format!(
@@ -1497,14 +1492,7 @@ impl Recover {
             } => {
                 let settled = walk.step(cx)?;
                 if talk_row(&self.facts.luthas_name).is_some() {
-                    match Self::talk_posted(
-                        &self.facts,
-                        *second,
-                        *attempt,
-                        *tried_stands,
-                        cx,
-                        logs,
-                    ) {
+                    match Self::talk_posted(&self.facts, *second, *attempt, *tried_stands, cx, logs) {
                         Ok(stage) => stage,
                         Err(done) => return Some(done),
                     }
