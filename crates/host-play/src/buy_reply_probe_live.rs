@@ -344,7 +344,11 @@ fn item_fact(data: &SelectedGameData, alias: &str) -> Result<ItemFact, String> {
         .ok_or_else(|| format!("selected R289 content has no item alias {alias:?}"))?;
     Ok(ItemFact {
         id: row.id,
-        name: Arc::from(row.name.as_str()),
+        name: Arc::from(
+            row.name
+                .as_deref()
+                .ok_or_else(|| format!("selected R289 item alias {alias:?} has no name"))?,
+        ),
     })
 }
 
@@ -469,8 +473,9 @@ fn probe_scenario(stand: WorldTile, trace: Arc<Mutex<ProbeTrace>>) -> Scenario {
     scenario.steps.push(Step {
         name: "await completed buy reply probe",
         kind: StepKind::Await {
-            evidence: "all three sampled reply series completed".into(),
+            evidence: "all three sampled reply series completed",
             ready: Box::new(move |_| trace.lock().completed),
+            summary: None,
         },
         wait: Wait {
             arm: Proof::Stat { id: 0, min: 1 },
@@ -923,7 +928,7 @@ impl Script for BuyReplyProbeScript {
                         .fail_on_tick_limit(now, dispatch_tick.unwrap_or(request_tick), "shop page")
                         .is_err()
                     {
-                        self.fail("Gerrant Trade had no observed open shop page", None)
+                        return Ok(self.fail("Gerrant Trade had no observed open shop page", None));
                     } else {
                         self.phase = Phase::AwaitOpen {
                             request_id,
@@ -2229,6 +2234,7 @@ fn run_live_probe() {
         },
         "account": account,
         "session": script_trace["session"],
+        "navigation": {"pack": nav_pack, "flags": nav_flags},
         "fixture": {
             "keeper_config": fixture.keeper.config.as_ref(),
             "keeper_name": fixture.keeper.name.as_ref(),

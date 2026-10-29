@@ -255,7 +255,7 @@ fn gatherer_parked_status_is_shared_and_controllable() {
     }));
     let frame_state = Arc::clone(&state);
     let frame_account = account.clone();
-    let mut play = host_play::run_with_template(
+    let play = host_play::run_with_template(
         template,
         true,
         vec![],

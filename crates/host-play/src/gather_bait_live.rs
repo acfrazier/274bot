@@ -507,7 +507,7 @@ fn run_cell(variant: Variant) {
     );
     let preparation_started = cell.preparation_started;
     let cell = Arc::new(Mutex::new(cell));
-    let mut monitor = GameSnapshot::new();
+    let monitor = Mutex::new(GameSnapshot::new());
     let frame_cell = Arc::clone(&cell);
     let frame_account = account.clone();
     let frame_trace = Arc::clone(&trace);
@@ -531,6 +531,7 @@ fn run_cell(variant: Variant) {
             }
             frame(client, &frame_cell, &frame_account);
             if client.ingame && client.scene_state == 2 {
+                let mut monitor = monitor.lock();
                 monitor.rebuild(client);
                 frame_trace.lock().final_bank_open = Some(monitor.bank_component_id() >= 0);
             }
@@ -578,7 +579,7 @@ fn run_cell(variant: Variant) {
                             &cell,
                             &trace,
                             format!(
-                                "Engine A PLAYER_INFO median {median:?} ms is outside 600 ms +/-30 ms; no Gatherer Start was sent"
+                                "Engine L PLAYER_INFO median {median:?} ms is outside 600 ms +/-30 ms; no Gatherer Start was sent"
                             ),
                         );
                         stage = Stage::Done;

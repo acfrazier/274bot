@@ -215,12 +215,17 @@ fn fixture(
     keepers: &ShopKeeperFacts,
 ) -> Result<Fixture, String> {
     let item = |alias: &str| {
-        data.item_by_alias(alias)
-            .map(|row| ItemFact {
-                id: row.id,
-                name: Arc::from(row.name.as_str()),
-            })
-            .ok_or_else(|| format!("R289 selected item alias {alias:?} is absent"))
+        let row = data
+            .item_by_alias(alias)
+            .ok_or_else(|| format!("R289 selected item alias {alias:?} is absent"))?;
+        let name = row
+            .name
+            .as_deref()
+            .ok_or_else(|| format!("R289 selected item alias {alias:?} has no name"))?;
+        Ok::<_, String>(ItemFact {
+            id: row.id,
+            name: Arc::from(name),
+        })
     };
     let harpoon = item("harpoon")?;
     let feather = item("feather")?;
@@ -330,6 +335,7 @@ fn scenario(kind: CellKind, stand: WorldTile, trace: Arc<Mutex<ShopTrace>>) -> S
                 let trace = trace.lock();
                 trace.outcome.is_some()
             }),
+            summary: None,
         },
         wait: Wait {
             arm: Proof::Stat { id: 0, min: 1 },
@@ -350,6 +356,7 @@ struct ShopTrace {
     start_members: Option<bool>,
     start_server_closes: Option<u64>,
     script_run: Option<String>,
+    request: Option<Value>,
     outcome: Option<Value>,
     completion_tick: Option<u64>,
     completed_at: Option<Instant>,
@@ -453,7 +460,7 @@ impl LiveState {
         if !self.snapshot.ingame() || self.snapshot.scene_state() != 2 {
             return Some("StartScript arrived before ingame scene_state=2".into());
         }
-        if self.snapshot.world().base().is_none() {
+        if self.snapshot.base().is_none() {
             return Some("StartScript arrived without a built world base".into());
         }
         if self.snapshot.tile()
@@ -712,7 +719,9 @@ impl AcquireShopScript {
                 data: Some(&self.selected),
                 members,
             },
-        ) {
+        )
+        .map_err(|error| format!("acquisition planning failed: {error:?}"))?
+        {
             script::acquire::AcquireVerdict::Plan(plan) => plan,
             script::acquire::AcquireVerdict::Satisfied => {
                 return Err("fresh pack unexpectedly satisfied both acquisition needs".into())

@@ -2937,6 +2937,8 @@ mod bank_pick_capture {
             quest_req: Vec::new(),
             varp_req: Vec::new(),
             worn_req: Vec::new(),
+            forbidden_held: Vec::new(),
+            forbidden_worn: Vec::new(),
             members_req: false,
             wildy_cap: None,
             quest_gates: Some(gates),
