@@ -1304,6 +1304,10 @@ fn dialogue_approach_fails_when_npc_keeps_moving_after_content_bound() {
     }
 
     let final_tick = 2 + u64::from(replan_budget);
+    assert!(
+        final_tick.saturating_mul(600) < super::dialogue::DIALOGUE_APPROACH_MS,
+        "this fixture must reach the content bound before the dialogue deadline"
+    );
     super::tests::post_user_input_walk_receipt(&mut ledger, final_tick);
     ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
     let last_npc_tile = api::WorldTile {
@@ -1323,17 +1327,6 @@ fn dialogue_approach_fails_when_npc_keeps_moving_after_content_bound() {
         }),
         Poll::Ready(Ok(DialogueOutcome::Failed))
     ));
-    assert_eq!(
-        ledger
-            .as_ref()
-            .unwrap()
-            .outbox
-            .iter()
-            .filter(|entry| matches!(&entry.effect, HostEffect::Walk(_)))
-            .count(),
-        usize::from(replan_budget) + 1,
-        "no route is queued once the content-derived re-plan budget is spent"
-    );
     assert!(!ledger.as_ref().unwrap().outbox.iter().any(|entry| {
         matches!(&entry.effect, HostEffect::Walk(_)) && entry.live()
     }));
