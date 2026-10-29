@@ -698,9 +698,22 @@ fn bundled_paths_have_no_shadowed_journal_rules() {
     })
     .expect("289 gather catalog");
     for (file, document) in bundled_documents() {
-        let compiled = compile_uncached_for_test(&document, &selected, &quests)
-            .unwrap_or_else(|error| panic!("{file}: {}", error.code));
-        script::quester::probe::assert_no_shadowed_rules(&compiled);
+        // A partner Path compiles only for a gang member, so check it as each declared gang.
+        let compiled: Vec<_> = match &document.partner {
+            Some(declaration) => declaration
+                .roles
+                .iter()
+                .map(|role| {
+                    compile_uncached_for_test_as(&document, &selected, &quests, role.gang)
+                        .unwrap_or_else(|error| panic!("{file}: {}", error.code))
+                })
+                .collect(),
+            None => vec![compile_uncached_for_test(&document, &selected, &quests)
+                .unwrap_or_else(|error| panic!("{file}: {}", error.code))],
+        };
+        for path in &compiled {
+            script::quester::probe::assert_no_shadowed_rules(path);
+        }
     }
 }
 
