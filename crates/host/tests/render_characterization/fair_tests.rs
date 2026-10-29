@@ -247,6 +247,45 @@ fn peer_slot_release_wakes_parked_watch_head_within_one_tick() {
 }
 
 #[test]
+fn watch_grant_wake_latency_is_measured_from_publication() {
+    let Some(_serial) = gpu_fixture() else {
+        return;
+    };
+    let now = Instant::now();
+    let mut owner = Slot::start(now, Some(RenderTestPoint::BeforeLeaseRelease));
+    owner.event(RenderTestPoint::BeforeLeaseRelease);
+    let mut peer = Slot::start(now, Some(RenderTestPoint::OverlayEntry));
+    peer.event(RenderTestPoint::OverlayEntry);
+    // Keep B inside its first Busy paint until A has published and notified.
+    // Its next actual slot tick must therefore start after the notice.
+    let published_at = Instant::now();
+    *owner.control.now.lock().unwrap() = published_at;
+    *peer.control.now.lock().unwrap() = published_at;
+    owner.release();
+    owner.event(RenderTestPoint::AfterLeaseRelease);
+    peer.release();
+    let busy = peer.painted(0);
+    assert_eq!(busy.stats.unwrap().scene_consumes(), 0);
+    let consumed = peer.event(RenderTestPoint::AfterConsume);
+    let painted = peer.painted(busy.generation);
+    let stats = painted.stats.unwrap();
+    let latency = stats.last_grant_latency().expect("a real cross-slot wake sample");
+    assert_eq!(latency.reservation(), consumed.event.reservation.unwrap());
+    assert_eq!(latency.published_at(), published_at);
+    assert!(latency.notified_at() >= latency.published_at());
+    assert!(latency.woke_at() >= latency.notified_at());
+    assert!(latency.consumed_at() >= latency.woke_at());
+    assert!(latency.consumed_at() <= Instant::now());
+    assert_eq!(stats.grant_wake_samples(), 1);
+    assert_eq!(
+        stats.max_grant_latency().unwrap().reservation(),
+        latency.reservation()
+    );
+    assert_eq!(stats.scene_releases(), 1);
+    assert!(stats.max_scene_lease_time() > Duration::ZERO);
+}
+
+#[test]
 fn own_scene_publications_do_not_self_wake() {
     let Some(_serial) = gpu_fixture() else {
         return;

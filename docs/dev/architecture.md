@@ -343,6 +343,12 @@ an explicit process fixture can activate nonwaiting admission without changing
 those production defaults. Its independent pump reports consumed overruns
 without reclaiming an active workspace. Frontend-core forwards bounded fault
 snapshots and selected-incident acknowledgements to the panel.
+The M3 `render-test-hooks` probe also requires `M3_FAIR_PROBE=1` and explicit
+grant-lifetime and scene-quantum inputs. It labels every receipt PROVISIONAL.
+Its head samples keep separate grant publication, cross-thread notification,
+actual slot-tick wake and consume times; an unobserved wake is not fabricated.
+The samples retain the worst observed delivery and consumed-lease duration
+between polls. Scene consumes and composite paints have separate rates.
 
 ### nav-planner
 

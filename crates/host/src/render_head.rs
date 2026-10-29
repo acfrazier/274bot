@@ -48,7 +48,7 @@ use crate::FrameBuf;
 #[cfg(feature = "render-test-hooks")]
 mod fair;
 #[cfg(feature = "render-test-hooks")]
-pub use fair::{test_hooks, DueOpportunity, HeadFairStats};
+pub use fair::{test_hooks, DueOpportunity, GrantLatency, HeadFairStats};
 
 /// How long a granted GPU head may take to consume its grant. A waiting head
 /// consumes within its wake-up latency, so this bounds only a head whose
@@ -639,6 +639,8 @@ struct HeadWake {
     owner: std::thread::ThreadId,
     #[cfg(feature = "render-test-hooks")]
     slot_wake: Arc<dyn Notifier>,
+    #[cfg(feature = "render-test-hooks")]
+    latest_cross_notice: Mutex<Option<(PublishSequence, Instant)>>,
 }
 
 #[cfg(all(test, feature = "render-test-hooks"))]
@@ -657,11 +659,19 @@ impl HeadWake {
             published: Condvar::new(),
             owner: std::thread::current().id(),
             slot_wake,
+            latest_cross_notice: Mutex::new(None),
         }
     }
 
     fn latest(&self) -> PublishSequence {
         *lock(&self.latest)
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    fn grant_notice(&self, sequence: PublishSequence) -> Option<Instant> {
+        lock(&self.latest_cross_notice)
+            .filter(|(published, _)| *published == sequence)
+            .map(|(_, notified_at)| notified_at)
     }
 
     /// Sleep until a publication after `seen`, for at most `slice`. Returns
@@ -684,6 +694,7 @@ impl Notifier for HeadWake {
         self.published.notify_all();
         #[cfg(feature = "render-test-hooks")]
         if fair::enabled() && std::thread::current().id() != self.owner {
+            *lock(&self.latest_cross_notice) = Some((notice.sequence(), Instant::now()));
             self.slot_wake.notify(notice);
         }
     }

@@ -541,6 +541,10 @@ impl Host {
         let random_events = slot.random_events.load(Ordering::Relaxed);
         slot.settings.random_events = random_events;
         let t_loop = std::time::Instant::now();
+        #[cfg(feature = "render-test-hooks")]
+        if let Some(head) = slot.head.as_mut() {
+            head.slot_woke(t_loop);
+        }
         slot.recover_entity_cycles(client, slot.pacing_now(t_loop));
         client.mainloop();
         client.advance_hosted_animations(false);

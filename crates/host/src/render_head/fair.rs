@@ -105,6 +105,56 @@ pub(super) fn heartbeat(now: Instant, deadline: Option<Deadline>) -> Option<Dead
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DueOpportunity(NonZeroU64);
 
+/// One cross-thread grant delivery, measured at its four distinct boundaries.
+#[derive(Debug, Clone, Copy)]
+pub struct GrantLatency {
+    reservation: ReservationIdentity,
+    published_at: Instant,
+    notified_at: Instant,
+    woke_at: Instant,
+    consumed_at: Instant,
+}
+
+impl GrantLatency {
+    fn observed(
+        reservation: ReservationIdentity,
+        published_at: Instant,
+        notified_at: Instant,
+        woke_at: Instant,
+        consumed_at: Instant,
+    ) -> Option<Self> {
+        notified_at.checked_duration_since(published_at)?;
+        woke_at.checked_duration_since(notified_at)?;
+        consumed_at.checked_duration_since(woke_at)?;
+        Some(Self {
+            reservation,
+            published_at,
+            notified_at,
+            woke_at,
+            consumed_at,
+        })
+    }
+
+    pub const fn reservation(self) -> ReservationIdentity {
+        self.reservation
+    }
+    pub const fn published_at(self) -> Instant {
+        self.published_at
+    }
+    pub const fn notified_at(self) -> Instant {
+        self.notified_at
+    }
+    pub const fn woke_at(self) -> Instant {
+        self.woke_at
+    }
+    pub const fn consumed_at(self) -> Instant {
+        self.consumed_at
+    }
+    pub fn publication_to_consume(self) -> Duration {
+        self.consumed_at.duration_since(self.published_at)
+    }
+}
+
 /// A fixed-size identity-checked sample. No renderer container traversal occurs here.
 #[derive(Debug, Clone, Copy)]
 pub struct HeadFairStats {
@@ -119,6 +169,14 @@ pub struct HeadFairStats {
     granted_paints: u64,
     granted_paint_time: Duration,
     scene_consumes: u64,
+    grant_delivery_samples: u64,
+    max_grant_to_consume: Duration,
+    grant_wake_samples: u64,
+    last_grant_latency: Option<GrantLatency>,
+    max_grant_latency: Option<GrantLatency>,
+    scene_releases: u64,
+    scene_lease_time: Duration,
+    max_scene_lease_time: Duration,
     last_opportunity: Option<DueOpportunity>,
     last_expired: Option<ReservationIdentity>,
     oldest_demand_age: Duration,
@@ -161,6 +219,30 @@ impl HeadFairStats {
     pub fn scene_consumes(&self) -> u64 {
         self.scene_consumes
     }
+    pub fn grant_delivery_samples(&self) -> u64 {
+        self.grant_delivery_samples
+    }
+    pub fn max_grant_to_consume(&self) -> Duration {
+        self.max_grant_to_consume
+    }
+    pub fn grant_wake_samples(&self) -> u64 {
+        self.grant_wake_samples
+    }
+    pub fn last_grant_latency(&self) -> Option<GrantLatency> {
+        self.last_grant_latency
+    }
+    pub fn max_grant_latency(&self) -> Option<GrantLatency> {
+        self.max_grant_latency
+    }
+    pub fn scene_releases(&self) -> u64 {
+        self.scene_releases
+    }
+    pub fn scene_lease_time(&self) -> Duration {
+        self.scene_lease_time
+    }
+    pub fn max_scene_lease_time(&self) -> Duration {
+        self.max_scene_lease_time
+    }
     pub fn oldest_demand_age(&self) -> Duration {
         self.oldest_demand_age
     }
@@ -189,6 +271,7 @@ pub(super) struct FairHead {
     focused: Option<bool>,
     control: Option<Arc<dyn test_hooks::RenderTestControl>>,
     opportunity_exhausted: bool,
+    woke_at: Option<Instant>,
 }
 
 impl FairHead {
@@ -211,6 +294,14 @@ impl FairHead {
                 granted_paints: 0,
                 granted_paint_time: Duration::ZERO,
                 scene_consumes: 0,
+                grant_delivery_samples: 0,
+                max_grant_to_consume: Duration::ZERO,
+                grant_wake_samples: 0,
+                last_grant_latency: None,
+                max_grant_latency: None,
+                scene_releases: 0,
+                scene_lease_time: Duration::ZERO,
+                max_scene_lease_time: Duration::ZERO,
                 last_opportunity: None,
                 last_expired: None,
                 oldest_demand_age: Duration::ZERO,
@@ -223,6 +314,7 @@ impl FairHead {
             focused: None,
             control,
             opportunity_exhausted: false,
+            woke_at: None,
         }
     }
 
@@ -271,6 +363,12 @@ impl FairHead {
 }
 
 impl Head {
+    pub(crate) fn slot_woke(&mut self, now: Instant) {
+        if enabled() {
+            self.fair.woke_at = Some(now);
+        }
+    }
+
     pub(crate) fn reconcile_scene_eligibility(
         &mut self,
         can_scene: bool,
@@ -429,6 +527,7 @@ impl Drop for LoadingPaintScope<'_> {
 pub(super) struct FairFrame {
     head: FairHead,
     lease: Option<FrameLease>,
+    consumed_at: Option<Instant>,
 }
 
 struct FairLent<'a> {
@@ -452,6 +551,7 @@ impl<'a> FairLent<'a> {
             fair: Some(FairFrame {
                 head: lent_state,
                 lease: None,
+                consumed_at: None,
             }),
         };
         GPU_FRAME.with(|cell| {
@@ -562,7 +662,8 @@ fn admit(frame: &mut GpuFrame, service: &RenderService, now: Instant) -> SceneAd
     }
     let due = fair.head.demand.due_at.unwrap_or_else(|| Deadline::at(now));
     let request = service.request_frame(&frame.lease, due, now);
-    fair.head.refresh(frame.lease.snapshot().1, now);
+    let (grant_sequence, grant_snapshot) = frame.lease.snapshot();
+    fair.head.refresh(grant_snapshot, now);
     let identity = match request {
         Ok(RequestOutcome::Busy(identity)) => {
             fair.head.demand.reservation = Some(identity);
@@ -576,6 +677,34 @@ fn admit(frame: &mut GpuFrame, service: &RenderService, now: Instant) -> SceneAd
     };
     match service.try_consume(&frame.lease, identity, now) {
         Ok(lease) => {
+            let consumed_at = Instant::now();
+            if let Some(elapsed) = grant_snapshot
+                .granted_at()
+                .and_then(|published_at| consumed_at.checked_duration_since(published_at))
+            {
+                fair.head.stats.grant_delivery_samples =
+                    fair.head.stats.grant_delivery_samples.saturating_add(1);
+                fair.head.stats.max_grant_to_consume =
+                    fair.head.stats.max_grant_to_consume.max(elapsed);
+            }
+            if let Some(latency) = grant_snapshot
+                .granted_at()
+                .zip(frame.wake.grant_notice(grant_sequence))
+                .zip(fair.head.woke_at)
+                .and_then(|((published, notified), woke)| {
+                    GrantLatency::observed(identity, published, notified, woke, consumed_at)
+                })
+            {
+                let stats = &mut fair.head.stats;
+                stats.grant_wake_samples = stats.grant_wake_samples.saturating_add(1);
+                stats.last_grant_latency = Some(latency);
+                if stats.max_grant_latency.is_none_or(|previous| {
+                    latency.publication_to_consume() > previous.publication_to_consume()
+                }) {
+                    stats.max_grant_latency = Some(latency);
+                }
+            }
+            fair.consumed_at = Some(consumed_at);
             fair.lease = Some(lease);
             fair.head.demand = SceneDemand::default();
             fair.head.stats.due_skips = 0;
@@ -635,7 +764,19 @@ pub(super) fn submit(frame: &mut GpuFrame, submit: &mut dyn FnMut()) {
         ),
     }
     event(test_hooks::RenderTestPoint::BeforeLeaseRelease);
-    report(lease.finish(now));
+    let finished_at = fair
+        .head
+        .control
+        .as_ref()
+        .map_or_else(Instant::now, |control| control.now());
+    report(lease.finish(finished_at));
+    if let Some(consumed_at) = fair.consumed_at.take() {
+        let elapsed = consumed_at.elapsed();
+        let stats = &mut fair.head.stats;
+        stats.scene_releases = stats.scene_releases.saturating_add(1);
+        stats.scene_lease_time = stats.scene_lease_time.saturating_add(elapsed);
+        stats.max_scene_lease_time = stats.max_scene_lease_time.max(elapsed);
+    }
     OWNS_LEASE.set(false);
     RESERVATION.set(None);
     event(test_hooks::RenderTestPoint::AfterLeaseRelease);
@@ -677,6 +818,7 @@ mod tests {
             fair: Some(FairFrame {
                 head: FairHead::new(identity, BackendKind::Gpu, None),
                 lease: None,
+                consumed_at: None,
             }),
         };
         let now = Instant::now();
