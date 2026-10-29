@@ -3049,6 +3049,7 @@ impl Combat {
             protect: false,
             food_guard: false,
             allow: Default::default(),
+            avoid: Box::default(),
         })?;
         self.pending_walk = NonZeroU64::new(id);
         self.schedule.clear(tick, 1, false);

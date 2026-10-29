@@ -18,6 +18,8 @@ struct Port {
     confirm: AtomicBool,
     cancelled: AtomicBool,
     not_ready: AtomicBool,
+    self_ref: std::sync::Mutex<Option<std::sync::Weak<Port>>>,
+    action_revoker: std::sync::Mutex<Option<crate::native::ActionRevoker>>,
 }
 
 struct CommandPlan;
@@ -29,7 +31,12 @@ impl StepPlan for CommandPlan {
 
 impl QuestPairPort for Port {
     fn shared(&self) -> Arc<dyn QuestPairPort> {
-        unreachable!()
+        self.self_ref
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(std::sync::Weak::upgrade)
+            .expect("test port shared before TradePlan begins")
     }
     fn observe(&self, _: PairRegistration, _: PairFrame<'_>) {
         unreachable!()
@@ -44,7 +51,10 @@ impl QuestPairPort for Port {
         unreachable!()
     }
     fn settings(&self, _: RunKey) -> Result<PairSettings, PairError> {
-        unreachable!()
+        Ok(PairSettings {
+            partner: Some(AccountKey(Arc::from("bob_1"))),
+            gang: None,
+        })
     }
     fn observe_gang(
         &self,
@@ -62,14 +72,15 @@ impl QuestPairPort for Port {
         unreachable!()
     }
     fn token(&self, _: RunKey, _: &FactKey) -> Result<PairToken, PairError> {
-        unreachable!()
+        Ok(pair_token())
     }
     fn register_action(
         &self,
         _: &PairToken,
         _: RunKey,
-        _: crate::native::ActionRevoker,
+        action: crate::native::ActionRevoker,
     ) -> Result<(), PairError> {
+        *self.action_revoker.lock().unwrap() = Some(action);
         Ok(())
     }
     fn begin(&self, _: PairRequest) -> Result<PairToken, PairError> {
@@ -353,6 +364,58 @@ fn trade_run_retains_args_for_each_transient_begin_error_then_starts() {
             "retry must start the native trade machine"
         );
     }
+}
+
+#[test]
+fn trade_plan_registers_logical_pair_revoker_for_prerequisite_walk() {
+    let snapshot = trade_snapshot();
+    let mut ledger = None;
+    let port = Arc::new(Port::default());
+    *port.self_ref.lock().unwrap() = Some(Arc::downgrade(&port));
+    let plan = TradePlan {
+        phase: FactKey::new("arrav:key"),
+        tile: api::WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        },
+        give: Arc::from([Item { id: 1, qty: 2 }]),
+        take: Arc::from([Item { id: 2, qty: 1 }]),
+        budget: 40,
+    };
+    let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.pairs = Some(port.as_ref());
+        let quests = api::quest_facts::QuestCatalog::empty();
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let choices = crate::quester::choices::QuestChoices::default();
+        let required_after = tick.cx.evidence();
+        plan.begin(&mut StepContext {
+            tick,
+            quests: &quests,
+            progress: &[],
+            required_after,
+            banks: &banks,
+            choices: &choices,
+        })
+        .unwrap()
+    });
+
+    assert!(ledger.as_ref().is_some_and(|ledger| {
+        ledger
+            .outbox
+            .iter()
+            .any(|operation| matches!(&operation.effect, HostEffect::Walk(_)))
+    }));
+    port.action_revoker
+        .lock()
+        .unwrap()
+        .take()
+        .expect("TradePlan registers the logical walk owner")
+        .revoke();
+    assert!(matches!(
+        with_step(&snapshot, &mut ledger, 2, |cx| run.poll(cx)),
+        Poll::Ready(Err(ActionError::Cancelled))
+    ));
 }
 
 #[test]

@@ -376,6 +376,18 @@ fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
                     .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
                     .expect("native combat must publish its report before the owned walk");
                 assert_eq!(receipt.report.end, expected);
+                assert!(
+                    if aborted {
+                        matches!(&run.phase, Phase::WalkingOutAfterAbort)
+                    } else {
+                        matches!(&run.phase, Phase::ReturningToStand)
+                    },
+                    "abort escape and ordinary return use distinct combat phases"
+                );
+                assert!(
+                    matches!(run.action.as_ref(), Some(Action::Walk(_))),
+                    "combat-owned walks remain bare and cannot resolve prerequisites"
+                );
                 let outbox = &ledger.as_ref().unwrap().outbox;
                 assert_eq!(
                     outbox.len(),
@@ -1500,6 +1512,7 @@ fn post_walk_receipt(
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     });
 }
 
@@ -2208,6 +2221,7 @@ fn aborted_walk_user_input_and_failure_preserve_the_terminal_report() {
                     refusal: None,
                     assessment: None,
                     escape: None,
+                    prereq_allow: None,
                 },
                 cx,
             )
@@ -3024,6 +3038,7 @@ fn failed_abort_walk_escapes_once_when_food_is_exhausted() {
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     });
     assert!(matches!(
         with_step_context(&snapshot, &mut ledger, 16, |cx| run.poll(cx)),
@@ -3779,6 +3794,7 @@ fn target_gone_walks_to_stand_and_rebegins_only_after_arrival() {
                 refusal: None,
                 assessment: None,
                 escape: None,
+                prereq_allow: None,
             },
             cx,
         )
@@ -3920,6 +3936,7 @@ fn target_gone_walk_without_observed_arrival_blocks_reengagement() {
                 refusal: None,
                 assessment: None,
                 escape: None,
+                prereq_allow: None,
             },
             cx,
         )
@@ -3956,6 +3973,7 @@ fn combat_walk_mappers_preserve_typed_evidence_without_reengaging() {
                 refusal: None,
                 assessment: None,
                 escape: None,
+                prereq_allow: None,
             };
             if abort {
                 run.on_abort_walk(receipt, cx)
@@ -4006,6 +4024,7 @@ fn target_gone_walk_user_input_parks_without_reengaging() {
                 refusal: None,
                 assessment: None,
                 escape: None,
+                prereq_allow: None,
             },
             cx,
         )
@@ -4071,6 +4090,7 @@ fn manual_takeover_watch_covers_return_and_loot_sublegs() {
                     refusal: None,
                     assessment: None,
                     escape: None,
+                    prereq_allow: None,
                 },
                 cx,
             )
@@ -4465,6 +4485,7 @@ fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     });
 
     assert!(with_step_context(&snapshot, &mut ledger, 15, |cx| run.poll(cx)).is_pending());

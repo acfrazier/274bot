@@ -759,7 +759,7 @@ request that names grants (Path `cross`) also has the zones engaged at the
 route's endpoint granted, the router's endpoint completion
 (`risk::Grants::request`). The named retry's witness keys never are.
 
-Permission layers above the router stay separate: the global Danger routing level in Nav config, the WalkTo-only **Route through danger zones** checkbox (one admission for the current picker opening, never persisted), per-script Script prefs (**Allow teleports**, **Allow wilderness**, **Allow danger zones**, each granting that script's own walks when the global switch is off), and per-walk Path overrides (`cross` names, `guard`, `allow_*`).
+Permission layers above the router stay separate: the global Danger routing level in Nav config, the WalkTo-only **Route through danger zones** checkbox (one admission for the current picker opening, never persisted), per-script Script prefs (**Allow teleports**, **Allow wilderness**, **Allow danger zones**, each granting that script's own walks when the global switch is off), and per-walk Path overrides (`cross` names, `guard`, `allow_*`). The prerequisite grants (Nav config **Allow dialogue steps on walks** and **Allow starting quests on walks**, both default on) compose the same way: the global switch or the script's own grant allows the step, and only a per-request Forbid narrows it.
 
 Refusals distinguish `NoRouteWithinBounds { tried, last }`, `Unsurvivable`,
 `FixableWith`, `Unknown` and `EscapeInProgress`; an ordinary hard no-path

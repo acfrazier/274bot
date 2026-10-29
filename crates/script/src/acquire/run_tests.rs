@@ -997,3 +997,208 @@ fn acquisition_owner_layout() {
     assert!(size_of::<AcquireRun>() <= 768);
     assert_eq!(size_of::<BankReceipt>(), 8);
 }
+
+#[test]
+fn bank_walk_prerequisite_handoff_reissues_once_and_cancel_keeps_run_state() {
+    let (mut snapshot, bank, banks) = fixture();
+    let data =
+        api::game_data::for_revision(api::selected::ClientRevision::R289).expect("R289 data");
+    let catalog = data
+        .try_prereq_steps()
+        .expect("R289 prerequisite catalog")
+        .catalog
+        .clone();
+    let (_, row) = catalog
+        .iter()
+        .find(|(_, row)| row.crossings.iter().any(|entry| entry.crossing.option > 0))
+        .expect("R289 has a prerequisite crossing");
+    let entry = row
+        .crossings
+        .iter()
+        .find(|entry| entry.crossing.option > 0)
+        .expect("selected row has a supported operation");
+    let crossing = entry.crossing.clone();
+    let gate = api::prereq_steps::ActionableGate {
+        gate: api::selected::QuestGate::Window(api::selected::StageWindow {
+            quest: row.establishes.quest.clone(),
+            signal: row.establishes.signal.clone(),
+            values: api::selected::InclusiveRange {
+                min: None,
+                max: None,
+            },
+        }),
+        truth: api::selected::Truth::Unknown,
+        leg: 0,
+        crossing: crossing.clone(),
+    };
+    let mut player = snapshot
+        .local_player()
+        .expect("fixture has a local player")
+        .clone();
+    player.player.network = crossing.at;
+    player.player.actor.tile = crossing.at;
+    player.player.actor.moving = false;
+    snapshot.seed_local_player(player);
+    let mut loc_actions = vec![None; usize::from(crossing.option)];
+    loc_actions[usize::from(crossing.option) - 1] = Some("Open".to_owned());
+    snapshot.seed_locs(vec![api::snapshot::LocView {
+        id: crossing.loc_id,
+        name: Some("Prerequisite crossing".into()),
+        actions: loc_actions,
+        tile: crossing.at,
+        distance: 0,
+        typecode: 0,
+        info: 0,
+        description: None,
+        layer: api::snapshot::LocLayer::GroundDecoration,
+        shape: 0,
+        angle: 0,
+        width: 1,
+        length: 1,
+        footprint_width: 1,
+        footprint_length: 1,
+        block_walk: false,
+        block_range: false,
+        active: true,
+        animation: -1,
+        map_function: -1,
+        map_scene: -1,
+        force_approach: 0,
+    }]);
+    let target = WorldTile {
+        x: crossing.at.x + 80,
+        z: crossing.at.z + 80,
+        level: crossing.at.level,
+    };
+
+    let mut ledger = None;
+    let mut run = new_run(
+        authored_request(Some(bank), true, Vec::new()),
+        &snapshot,
+        None,
+        &mut ledger,
+        &banks,
+    );
+    run.phase = Phase::Walk;
+    run.target = Some(target);
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 1, OpenGate::Open).is_pending());
+    let (outer_id, outer_run) = {
+        let action = ledger.as_ref().unwrap().outbox[0].clone();
+        (action.request_id.get(), action.run())
+    };
+    ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
+        goal: None,
+        request_id: outer_id,
+        evidence: api::quest_progress::EvidenceStamp {
+            run: outer_run,
+            tick: 2,
+            sequence: 2,
+        },
+        end: crate::native::WalkEnd::NeedsStep(Arc::from([gate])),
+        blocked: None,
+        detail: None,
+        refusal: None,
+        assessment: None,
+        escape: None,
+        prereq_allow: Some(crate::native::PrereqAllow {
+            dialogue: true,
+            quest_start: true,
+        }),
+    });
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 2, OpenGate::Open).is_pending());
+    let (probe_authority, probe_id, probe_run) = {
+        let probe = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .find(|action| {
+                matches!(
+                    &action.effect,
+                    HostEffect::Interaction(crate::shim::InteractReq::Loc {
+                        id: Some(id),
+                        ..
+                    }) if *id == crossing.loc_id
+                )
+            })
+            .expect("prerequisite probe was submitted");
+        (probe.authority(), probe.request_id.get(), probe.run())
+    };
+    ledger.as_mut().unwrap().complete_interaction(
+        &probe_authority,
+        crate::native::InteractionReceipt {
+            request_id: probe_id,
+            evidence: api::quest_progress::EvidenceStamp {
+                run: probe_run,
+                tick: 2,
+                sequence: 2,
+            },
+            accepted: true,
+            chat_since: 0,
+        },
+    );
+    let mut player = snapshot
+        .local_player()
+        .expect("fixture has a local player")
+        .clone();
+    player.player.network = crossing.to;
+    player.player.actor.tile = crossing.to;
+    snapshot.seed_local_player(player);
+    snapshot.seed_chat_lines(vec![api::snapshot::ChatLineView {
+        sequence: 1,
+        type_: 0,
+        username: None,
+        text: entry.pass.message.to_string(),
+    }]);
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 3, OpenGate::Open).is_pending());
+
+    let walk_ids: Vec<_> = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .filter_map(|action| match &action.effect {
+            HostEffect::Walk(request) => Some((action.request_id.get(), request.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(walk_ids.len(), 2, "one outer walk and one reissue");
+    let (reissued_id, reissued) = &walk_ids[1];
+    assert_eq!(reissued.target, target);
+    assert_eq!(reissued.radius, 0);
+    assert_eq!(reissued.required_after.tick, 3);
+    assert!(reissued.cross.is_empty());
+    assert!(reissued.avoid.is_empty());
+    assert!(!reissued.protect);
+    assert!(!reissued.food_guard);
+    assert_eq!(run.target, Some(target));
+    assert_eq!(run.run, outer_run);
+
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 4, OpenGate::Open).is_pending());
+    assert_eq!(
+        ledger.as_ref().unwrap().outbox.len(),
+        3,
+        "pending wrapper polls must not repeat the outer or probe action"
+    );
+    crate::quester::families::tests::with_tick_bank(&snapshot, None, &mut ledger, 5, |tick| {
+        run.cancel(tick.actions)
+    });
+    assert!(!ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .find(|action| action.request_id.get() == *reissued_id)
+        .expect("reissued walk remains recorded")
+        .live());
+    assert_eq!(
+        run.target,
+        Some(target),
+        "cancel preserves the selected bank target"
+    );
+    assert!(matches!(
+        poll_at(&mut run, &snapshot, None, &mut ledger, 6, OpenGate::Open),
+        Poll::Ready(Err(ActionError::Cancelled))
+    ));
+    assert_eq!(run.target, Some(target));
+}

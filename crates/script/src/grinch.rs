@@ -7,14 +7,14 @@ use crate::acquire::{
 use crate::gatherer::WorkArea;
 use crate::ground_take::{FailureLedger, FailureStatus};
 use crate::native::{
-    walk::Walk, ActionError, ActionHandle, CompiledCard, ConfigError, Interrupt, NativePhase,
-    NativeTick, PrepareContext, PreparedConfig, RetainedMemory, ReturnStallRecovery, Script,
-    ScriptFailure, ScriptFlow, ScriptStatus, SettingsApply, SettingsBag, StartError, StatusField,
-    StatusValue, StopReason, WalkOptions, WalkRequest,
+    ActionError, CompiledCard, ConfigError, Interrupt, NativePhase, NativeTick, PrepareContext,
+    PreparedConfig, RetainedMemory, ReturnStallRecovery, Script, ScriptFailure, ScriptFlow,
+    ScriptStatus, SettingsApply, SettingsBag, StartError, StatusField, StatusValue, StopReason,
+    WalkOptions, WalkRequest,
 };
-use crate::quester::families::reach::{
-    choose_ground, Avoid, GroundIds, GroundTake, ReachArgs, ReachKind,
-};
+use crate::quester::families::reach::{choose_ground, Avoid, GroundIds, ReachArgs, ReachKind};
+use crate::quester::prereq::reach::PrereqGroundTake;
+use crate::quester::prereq::walk::PrereqWalk;
 use crate::{CompiledId, SettingDef};
 use api::ground_take::{GroundKey, GroundRefusal, TakeOutcome};
 use api::selected::RunKey;
@@ -322,11 +322,11 @@ enum Phase {
     Scan,
     Take {
         key: GroundKey,
-        handle: ActionHandle<GroundTake>,
+        handle: PrereqGroundTake,
     },
     // Bank work is allocated only for the trip, not reserved in every empty wait.
     Bank(Box<acquire::run::AcquireRun>),
-    Return(Option<ActionHandle<Walk>>),
+    Return(Option<PrereqWalk>),
     Idle(Watch, Option<u64>),
     Stopped,
 }
@@ -373,10 +373,18 @@ impl Grinch {
     }
 
     fn invalidate(&mut self) {
-        // Dropping native handles revokes their queued requests before reuse.
+        // Wrappers revoke their current native handle before this owner is reused.
+        self.cancel_wrapped_actions();
         self.phase = Phase::AwaitReady;
         self.clear_target();
         self.set_status(NativePhase::Preparing, "waiting for ready scene");
+    }
+    fn cancel_wrapped_actions(&mut self) {
+        match &mut self.phase {
+            Phase::Take { handle, .. } => handle.cancel(),
+            Phase::Return(Some(walk)) => walk.cancel(),
+            _ => {}
+        }
     }
 
     fn publish(&mut self, tick: &mut NativeTick<'_>) {
@@ -559,6 +567,7 @@ impl Grinch {
             code: Arc::from(code),
             message: message.into(),
         };
+        self.cancel_wrapped_actions();
         self.phase = Phase::Stopped;
         self.clear_target();
         self.set_status(NativePhase::Blocked, &failure.message);
@@ -721,7 +730,7 @@ impl Grinch {
                 target_tile: Some(key.tile),
                 reachable_only: true,
             };
-            let handle = match tick.actions.begin::<GroundTake>(args, &mut tick.cx) {
+            let handle = match PrereqGroundTake::begin(args, tick.actions, &mut tick.cx) {
                 Ok(handle) => handle,
                 Err(ActionError::BudgetExhausted) => return Ok(()),
                 Err(error) => return Err(self.action_failure(error)),
@@ -763,8 +772,8 @@ impl Grinch {
                 );
                 self.scan(tick, watch)
             }
-            Phase::Take { key, handle } => {
-                let result = tick.actions.poll(&handle, &mut tick.cx);
+            Phase::Take { key, mut handle } => {
+                let result = handle.poll(tick.actions, &mut tick.cx, tick.state);
                 if let Poll::Ready(result) = &result {
                     self.trace_take(tick, key, result);
                 }
@@ -860,9 +869,9 @@ impl Grinch {
             }
             Phase::Return(handle) => {
                 let anchor = self.anchor.expect("return follows anchor capture");
-                if let Some(handle) = handle {
-                    match tick.actions.poll(&handle, &mut tick.cx) {
-                        Poll::Pending => self.phase = Phase::Return(Some(handle)),
+                if let Some(mut walk) = handle {
+                    match walk.poll(tick.actions, &mut tick.cx, tick.state) {
+                        Poll::Pending => self.phase = Phase::Return(Some(walk)),
                         Poll::Ready(Ok(receipt)) => {
                             if self.return_recovery.observe(&receipt.end) {
                                 self.phase = Phase::Return(None);
@@ -896,14 +905,15 @@ impl Grinch {
                         required_after: tick.cx.evidence(),
                         evidence: None,
                         cross: Box::default(),
+                        avoid: Box::new([]),
                         protect: false,
                         food_guard: false,
                         allow: Default::default(),
                     };
-                    match tick.actions.begin::<Walk>(request, &mut tick.cx) {
-                        Ok(handle) => {
+                    match PrereqWalk::begin(request, tick.actions, &mut tick.cx) {
+                        Ok(walk) => {
                             self.return_recovery.action_submitted();
-                            self.phase = Phase::Return(Some(handle));
+                            self.phase = Phase::Return(Some(walk));
                         }
                         Err(ActionError::BudgetExhausted) => {
                             self.phase = Phase::Return(None);
@@ -1040,6 +1050,7 @@ impl Script for Grinch {
     }
 
     fn on_stop(&mut self, _reason: StopReason) {
+        self.cancel_wrapped_actions();
         self.phase = Phase::Stopped;
         self.clear_target();
     }

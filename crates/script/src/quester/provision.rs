@@ -1103,6 +1103,7 @@ mod tests {
             refusal: None,
             assessment: None,
             escape: None,
+            prereq_allow: None,
         }
     }
 

@@ -177,6 +177,14 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
     assert!(prefs.nav.allow_teleports);
     assert!(prefs.nav.allow_wilderness);
     assert!(prefs.nav.allow_bank_fetch);
+    assert!(
+        prefs.nav.allow_prereq_dialogue,
+        "a pre-prereq fixture without the keys keeps dialogue steps on"
+    );
+    assert!(
+        prefs.nav.allow_quest_start,
+        "a pre-prereq fixture without the keys keeps quest starts on"
+    );
     assert!(prefs.nav.show_nav_path);
     assert!(!prefs.nav.hop_labels);
     assert_eq!(prefs.nav.hop_label_px, 19);

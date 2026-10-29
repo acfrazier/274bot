@@ -49,6 +49,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Navigation
 
+- Normal walks can now obtain Drezel's advice for the holy barrier and start
+  Nature Spirit before entering Mort Myre. The walker first checks the
+  crossing when its state is unknown. It remembers witnessed passes,
+  dialogue effects and refusals for the current run, then resumes the
+  original walk. Stop cancels the current walk or conversation.
+- Two default-on navigation settings allow prerequisite dialogue and quest
+  starts. A global or script grant allows the step. A per-walk `false`
+  forbids it. Combat escapes and other safety walks never stop to talk.
+  Food from Drezel remains ordinary inventory and follows existing bank
+  behavior. No prerequisite step drops it.
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
   used") stays held for at most 9 game ticks after a refusal, so the bot

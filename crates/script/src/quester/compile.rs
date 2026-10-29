@@ -148,6 +148,7 @@ pub struct CompiledPath {
     pub role: Option<FactKey>,
     pub kind: super::path::PathKind,
     pub partner: Option<super::pair::PartnerDeclaration>,
+    pub(crate) prereq: crate::native::PrereqOptions,
     pub display_name: Arc<str>,
     pub tested_stats: Option<Arc<[api::selected::SkillMinimum]>>,
     pub digest: [u8; 32],
@@ -575,8 +576,7 @@ pub fn compile_uncached_for_test(
     compile_uncached_for_test_with_loadouts(document, selected, quests, &OperatorLoadouts::absent())
 }
 
-/// Test helper: compile without the process cache, against `operator`'s
-/// rows.
+/// Test helper: compile without the process cache, against `operator`'s rows.
 pub fn compile_uncached_for_test_with_loadouts(
     document: &PathDocument,
     selected: &SelectedGameData,
@@ -1091,6 +1091,7 @@ pub(super) fn compile_uncached(
         role: role.role.clone(),
         kind: document.kind,
         partner: document.partner.clone(),
+        prereq: document.prereq.options(),
         display_name: Arc::from(document.display_name.as_str()),
         tested_stats: document.tested_stats.as_deref().map(Arc::from),
         digest,

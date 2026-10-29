@@ -139,6 +139,7 @@ mod tests {
 
         fn with<R>(&mut self, f: impl FnOnce(&mut ActionContext<'_>) -> R) -> R {
             let mut cx = ActionContext {
+                walk_prereq: Default::default(),
                 condition: None,
                 poison_unknown_pulse: u8::MAX,
                 cure_poison: crate::survival::CurePoison::WhenNeeded,

@@ -21,8 +21,8 @@ use crate::gatherer::select::{
 use crate::gatherer::settings::{admit_quest_method, GathererSettings};
 use crate::gatherer::supply::method_ready;
 use crate::gatherer::{AreaMode, WorkArea};
-use crate::native::walk::Walk;
 use crate::native::{ActionError, ActionHandle, NativeActions};
+use crate::quester::prereq::walk::PrereqWalk;
 use api::gather_methods::{GatherCatalog, GatherSkill};
 use api::snapshot::WorldTile;
 use serde::Deserialize;
@@ -269,14 +269,14 @@ struct Run {
     deadline: Duration,
     fishing: FishingSurvey,
     gather: Option<ActionHandle<GatherRun>>,
-    walk: Option<ActionHandle<Walk>>,
+    walk: Option<PrereqWalk>,
     last_attempt: Option<u64>,
 }
 
 impl StepRun for Run {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        let walk_pending = if let Some(handle) = &self.walk {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+        let walk_pending = if let Some(walk) = self.walk.as_mut() {
+            match walk.poll(cx.tick.actions, &mut cx.tick.cx, cx.tick.state) {
                 Poll::Pending => true,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
@@ -355,8 +355,9 @@ impl StepRun for Run {
         if let Some(anchor) = self.approach {
             if !super::reach::within(here.value, anchor, i32::from(self.radius)) {
                 self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                    cx.tick.actions.begin::<Walk>(
+                    PrereqWalk::begin(
                         super::reach::walk_request(anchor, self.radius, None, cx.required_after),
+                        cx.tick.actions,
                         &mut cx.tick.cx,
                     ),
                 ))?);
@@ -433,7 +434,7 @@ impl StepRun for Run {
             })?
         {
             self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
+                PrereqWalk::begin(request, cx.tick.actions, &mut cx.tick.cx),
             ))?);
             return Poll::Pending;
         }
@@ -456,6 +457,9 @@ impl StepRun for Run {
     }
 
     fn cancel(&mut self, _actions: &mut NativeActions) {
+        if let Some(walk) = self.walk.as_mut() {
+            walk.cancel();
+        }
         self.gather = None;
         self.walk = None;
     }

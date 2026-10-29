@@ -178,6 +178,8 @@ fn main() {
             allow_teleports: true,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: true,
+            allow_quest_start: true,
             show_nav_path: true,
             hop_labels: false,
             hop_label_px: 19,

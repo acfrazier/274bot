@@ -825,7 +825,8 @@ impl CooperativeJob for CooperativeBankPickJob {
                         | SearchRequest::MissingItemReqsForRoute { .. }
                         | SearchRequest::BlockingZones { .. }
                         | SearchRequest::EntranceRequirements { .. }
-                        | SearchRequest::UnresolvedQuestGates { .. } => {
+                        | SearchRequest::UnresolvedQuestGates { .. }
+                        | SearchRequest::ActionableQuestGates { .. } => {
                             unreachable!("bank-pick request uses a route search variant")
                         }
                     };
@@ -980,7 +981,8 @@ impl CooperativeJob for CooperativeBankPickJob {
                                 | SearchOutcome::MissingItemReqsForRoute { .. }
                                 | SearchOutcome::BlockingZones(_)
                                 | SearchOutcome::EntranceRequirements(_)
-                                | SearchOutcome::UnresolvedQuestGates(_) => {
+                                | SearchOutcome::UnresolvedQuestGates(_)
+                                | SearchOutcome::ActionableQuestGates(_) => {
                                     unreachable!("bank-pick search returns a route outcome")
                                 }
                             }
@@ -2636,6 +2638,7 @@ fn apply_bank_pick_result(
                         plan.lease.clone(),
                         job.request.lease.clone(),
                         Arc::clone(&custody),
+                        None,
                     );
                     bot.publish_compact_route(
                         route_generation,

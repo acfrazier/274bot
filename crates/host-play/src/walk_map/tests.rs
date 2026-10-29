@@ -963,16 +963,21 @@ fn bound_host_walk_arms_and_rejects_a_foreign_nav_without_replacing_the_route() 
     let command = model
         .confirm(ActionKind::Walk, &ctx, Some(origin), FindOptions::default())
         .unwrap();
-    let route = play
+    let snapshot = api::snapshot::GameSnapshot::new();
+    let WalkActionOutcome::Walking(route) = play
         .map_walk(
             command,
             &ctx,
+            &snapshot,
             &WorldState::empty(),
             &BankRows::default(),
             Default::default(),
             &arms,
         )
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("manual route should be armed directly");
+    };
     assert_eq!(route.route.dest, wt(3205, 3206, 0));
     let generation = {
         let arms = arms.lock().unwrap();
@@ -1001,6 +1006,7 @@ fn bound_host_walk_arms_and_rejects_a_foreign_nav_without_replacing_the_route() 
         play.map_walk(
             command,
             &foreign,
+            &snapshot,
             &WorldState::empty(),
             &BankRows::default(),
             Default::default(),
@@ -1457,10 +1463,12 @@ fn single_bot_walk_and_teleport_follow_a_focus_switch() {
             FindOptions::default(),
         )
         .unwrap();
+    let snapshot = api::snapshot::GameSnapshot::new();
     let arms = Arc::new(Mutex::new(HashMap::new()));
     play.map_walk(
         command,
         &bob_ctx,
+        &snapshot,
         &WorldState::empty(),
         &BankRows::default(),
         Default::default(),
@@ -1517,6 +1525,7 @@ fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
     assert_eq!(model.select_tile(&baked, dest), Some(dest));
 
     let empty = WorldState::empty();
+    let snapshot = api::snapshot::GameSnapshot::new();
     let bank = BankRows::default();
     let names = ["alice", "bob", "logged-out", "nopos", "scripter", "bot3"];
     let reqs: Vec<WalkSlotRequest<'_>> = names
@@ -1524,6 +1533,7 @@ fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
         .map(|name| WalkSlotRequest {
             name,
             state: &empty,
+            snapshot: Some(&snapshot),
             bank: &bank,
             risk_input: Default::default(),
         })
@@ -1679,9 +1689,11 @@ fn grouped_zone_refusal_keeps_its_named_detail() {
 
     let state = WorldState::empty();
     let bank = BankRows::default();
+    let snapshot = api::snapshot::GameSnapshot::new();
     let request = [WalkSlotRequest {
         name: "alice",
         state: &state,
+        snapshot: Some(&snapshot),
         bank: &bank,
         risk_input: Default::default(),
     }];
@@ -1820,5 +1832,38 @@ fn manual_walk_refuses_before_boarding_and_names_the_total_coin_shortfall() {
     );
     assert!(message.contains("need 60, carrying 30"), "{message}");
     // A held default refusal is the pre-S2b bare NoPath: no arm is created.
+    assert!(arms.lock().unwrap().get("alice").is_none());
+}
+
+#[test]
+fn eligible_group_walk_without_snapshot_fails_closed() {
+    let origin = t(3201, 3201, 0);
+    let destination = t(3205, 3206, 0);
+    let fixture = MapFixture::new(&world(t(3200, 3200, 0), 8, &[]), "local-289");
+    let play = fixture.play(origin);
+    let dest_ctx = bound_context(&play);
+    let baked = play.world().unwrap();
+    let mut model = MapModel::default();
+    model.bind(dest_ctx);
+    assert_eq!(model.select_tile(&baked, destination), Some(destination));
+    let plan = model
+        .confirm_walk_plan(&dest_ctx, FindOptions::default())
+        .unwrap();
+    let state = WorldState::empty();
+    let bank = BankRows::default();
+    let request = [WalkSlotRequest {
+        name: "alice",
+        state: &state,
+        snapshot: None,
+        bank: &bank,
+        risk_input: Default::default(),
+    }];
+    let arms = Arc::new(Mutex::new(HashMap::new()));
+
+    let report = play.map_walk_group(plan, &dest_ctx, &request, &arms);
+    assert_eq!(
+        report.outcomes[0].kind,
+        WalkSlotOutcomeKind::Failed(ActionError::NoOrigin)
+    );
     assert!(arms.lock().unwrap().get("alice").is_none());
 }

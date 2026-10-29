@@ -12,7 +12,7 @@ use nav_planner::world::NavWorld;
 use nav_planner::WorldState;
 use parking_lot::RwLock;
 
-use super::{abort_script_walk, route_inspect, NavBot, ScriptRouteExclusions, ScriptWalkArm};
+use super::{route_inspect, NavBot, ScriptRouteExclusions, ScriptWalkArm};
 use crate::catalog_core::ScriptAct;
 #[cfg(feature = "memory-profile")]
 use crate::memory_diagnostics;
@@ -106,34 +106,85 @@ fn route_exclusions(
     }
 }
 
-/// Same request after a reconnect carry was re-armed: preserve the frozen
-/// request and avoid recording its game action twice.
+/// Preserve a live compat owner until the replacement is accepted. The host
+/// publishes one outer terminal before it releases that owner's seat.
+pub(crate) fn retire_logical_walk(
+    slot: Option<&mut script::SlotScript>,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    request_id: Option<u64>,
+    end: script::native::WalkEnd,
+) -> bool {
+    if request_id == Some(0) {
+        return false;
+    }
+    let mut navs = navs.lock().unwrap();
+    let Some(bot) = navs.get_mut(name) else {
+        return false;
+    };
+    let compat_id = match request_id {
+        Some(request_id) => bot
+            .compat_walk_request_id()
+            .filter(|live| *live == request_id),
+        None => bot.compat_walk_request_id(),
+    };
+    if let Some(request_id) = compat_id {
+        let Some(slot) = slot else {
+            return false;
+        };
+        slot.abort_compat_walk(request_id);
+        if let Some((run, terminal_request_id, result)) = slot.take_compat_walk_terminal() {
+            if terminal_request_id.get() != request_id || bot.compat_walk_run() != Some(run) {
+                return false;
+            }
+            let (terminal_end, detail) = match result {
+                Ok(receipt) => (receipt.end, receipt.failure_detail()),
+                Err(error) => {
+                    let terminal_end = match &error {
+                        script::native::ActionError::Cancelled => {
+                            script::native::WalkEnd::Cancelled
+                        }
+                        script::native::ActionError::UserInput => {
+                            script::native::WalkEnd::UserInput
+                        }
+                        _ => script::native::WalkEnd::Failed,
+                    };
+                    (terminal_end, Some(Arc::from(error.to_string())))
+                }
+            };
+            if !bot.complete_compat_walk(request_id, terminal_end, detail) {
+                return false;
+            }
+            slot.finish_compat_walk(request_id);
+            return true;
+        }
+        if !bot.complete_compat_walk(request_id, end, None) {
+            return false;
+        }
+        slot.finish_compat_walk(request_id);
+        return true;
+    }
+    if request_id.is_some_and(|request_id| bot.walk_request_id != request_id) {
+        return false;
+    }
+    super::script_walk::abort_walk_on_bot_with_end(bot, end);
+    true
+}
+
+/// Same compat identity and route after a reconnect carry was re-armed.
 fn already_following(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     name: &str,
     request_id: u64,
     key: (WorldTile, i32, bool, bool, bool),
     exclusions: &ScriptRouteExclusions,
-    compat_tile_intent: bool,
 ) -> bool {
     request_id != 0
-        && navs.lock().unwrap().get(name).is_some_and(|bot| {
-            bot.walk_request_id == request_id
-                && bot.requested_route.is_some_and(
-                    |(to, radius, teleports, wilderness, bank_fetch, _)| {
-                        (to, radius, teleports, wilderness, bank_fetch) == key
-                    },
-                )
-                && bot.route_compat_tile_intent == compat_tile_intent
-                && bot.requested_exclusions.as_deref().map_or(
-                    exclusions.avoid_wire.is_empty() && exclusions.cross.is_empty(),
-                    |requested| {
-                        requested.avoid_wire == exclusions.avoid_wire
-                            && requested.cross == exclusions.cross
-                    },
-                )
-                && bot.script_walk_armed()
-        })
+        && navs
+            .lock()
+            .unwrap()
+            .get(name)
+            .is_some_and(|bot| bot.compat_walk_is_following(request_id, key, exclusions))
 }
 
 /// Note one game request host-play dispatched for `slot`'s script. The
@@ -193,7 +244,7 @@ pub(crate) fn dispatch_script_interact(
             cache: &None,
             obj_names_arc: &None,
         },
-        reqs,
+        None,
     )
 }
 
@@ -392,7 +443,7 @@ where
             cache: &cache,
             obj_names_arc: &obj_names_arc,
         },
-        reqs,
+        None,
     )
 }
 
@@ -420,6 +471,7 @@ pub(crate) struct InteractContext<'a> {
 pub(crate) fn dispatch_script_interact_cached_scoped<R>(
     driver: &mut dyn Driver,
     context: &InteractContext<'_>,
+    mut owner_slot: Option<&mut script::SlotScript>,
     reqs: R,
 ) -> bool
 where
@@ -502,7 +554,13 @@ where
                     // The interaction supersedes any earlier scripted walk.
                     // Cancel after validation/dispatch only: rejected or
                     // malformed requests must not disturb an armed route.
-                    abort_script_walk(navs, name);
+                    retire_logical_walk(
+                        owner_slot.as_deref_mut(),
+                        navs,
+                        name,
+                        None,
+                        script::native::WalkEnd::Cancelled,
+                    );
                 }
                 wrote |= accepted;
             }
@@ -568,7 +626,13 @@ where
                     // The interaction supersedes any earlier scripted walk.
                     // Cancel after validation/dispatch only: rejected or
                     // malformed requests must not disturb an armed route.
-                    abort_script_walk(navs, slot);
+                    retire_logical_walk(
+                        owner_slot.as_deref_mut(),
+                        navs,
+                        slot,
+                        None,
+                        script::native::WalkEnd::Cancelled,
+                    );
                 }
                 wrote |= accepted;
             }
@@ -604,9 +668,16 @@ where
                     allow_bank_fetch,
                 );
                 let exclusions = route_exclusions(avoid, cross);
-                if already_following(navs, name, request_id, key, &exclusions, false) {
+                if already_following(navs, name, request_id, key, &exclusions) {
                     continue;
                 }
+                retire_logical_walk(
+                    owner_slot.as_deref_mut(),
+                    navs,
+                    name,
+                    None,
+                    script::native::WalkEnd::Cancelled,
+                );
                 let arm = ScriptWalkArm {
                     here,
                     world: world.clone(),
@@ -669,9 +740,16 @@ where
                     allow_bank_fetch,
                 );
                 let exclusions = route_exclusions(avoid, cross);
-                if already_following(navs, name, request_id, key, &exclusions, compat_tile_intent) {
+                if already_following(navs, name, request_id, key, &exclusions) {
                     continue;
                 }
+                retire_logical_walk(
+                    owner_slot.as_deref_mut(),
+                    navs,
+                    name,
+                    None,
+                    script::native::WalkEnd::Cancelled,
+                );
                 let arm = ScriptWalkArm {
                     here,
                     world: world.clone(),
@@ -710,17 +788,13 @@ where
             }
             // Not a game packet: the follow stops, nothing is written.
             InteractReq::AbortWalk { request_id } => {
-                // Only the walk the machine itself armed; a later walk has
-                // replaced it and is not the machine's to stop.
-                let owned = request_id != 0
-                    && navs
-                        .lock()
-                        .unwrap()
-                        .get(name)
-                        .is_some_and(|bot| bot.walk_request_id == request_id);
-                if owned {
-                    abort_script_walk(navs, name);
-                }
+                retire_logical_walk(
+                    owner_slot.as_deref_mut(),
+                    navs,
+                    name,
+                    Some(request_id),
+                    script::native::WalkEnd::Cancelled,
+                );
             }
             InteractReq::WalkNearestBank => {
                 if let (Some((x, z, level)), Some(scope)) = (here, compatibility_scope) {

@@ -170,6 +170,7 @@ impl Driver {
         let flow = {
             let mut actions = NativeActions { _private: () };
             let cx = ActionContext {
+                walk_prereq: Default::default(),
                 condition: None,
                 poison_unknown_pulse: u8::MAX,
                 cure_poison: crate::survival::CurePoison::WhenNeeded,
@@ -437,6 +438,7 @@ fn respond_walk(driver: &mut Driver, tick: u64, end: WalkEnd) -> (u64, WorldTile
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     });
     (request_id, target)
 }
@@ -481,6 +483,7 @@ fn respond_stalled_walk(
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     });
     (request_id, target)
 }
@@ -1907,6 +1910,7 @@ fn pause_hold_and_same_run_relog_cancel_stale_children_and_keep_state() {
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     });
     script.interrupt(crate::native::Interrupt::Resume);
     child_tick += 1;
@@ -1939,6 +1943,7 @@ fn pause_hold_and_same_run_relog_cancel_stale_children_and_keep_state() {
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     });
     child_tick += 1;
     snapshot.seed_inventory_packet_generations(Some(4), None);
@@ -2189,4 +2194,180 @@ fn debug_state_tracks_actual_owner_and_failed_key_without_idle_churn() {
     require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 8));
     assert_eq!(driver.output.logs.len(), cooling_logs);
     println!("{MARKER}");
+}
+
+#[test]
+fn return_prerequisite_handoff_reissues_once_and_cancel_keeps_anchor_state() {
+    let (mut driver, mut script, mut snapshot, _, outer_id) = deposit_only_return_fixture();
+    let data = api::game_data::for_revision(ClientRevision::R289).expect("R289 data");
+    let catalog = data
+        .try_prereq_steps()
+        .expect("R289 prerequisite catalog")
+        .catalog
+        .clone();
+    let (_, row) = catalog
+        .iter()
+        .find(|(_, row)| row.crossings.iter().any(|entry| entry.crossing.option > 0))
+        .expect("R289 has a prerequisite crossing");
+    let entry = row
+        .crossings
+        .iter()
+        .find(|entry| entry.crossing.option > 0)
+        .expect("selected row has a supported operation");
+    let crossing = entry.crossing.clone();
+    let gate = api::prereq_steps::ActionableGate {
+        gate: api::selected::QuestGate::Window(api::selected::StageWindow {
+            quest: row.establishes.quest.clone(),
+            signal: row.establishes.signal.clone(),
+            values: api::selected::InclusiveRange {
+                min: None,
+                max: None,
+            },
+        }),
+        truth: Truth::Unknown,
+        leg: 0,
+        crossing: crossing.clone(),
+    };
+    set_position(&mut snapshot, crossing.at);
+    let mut loc_actions = vec![None; usize::from(crossing.option)];
+    loc_actions[usize::from(crossing.option) - 1] = Some("Open".to_owned());
+    snapshot.seed_locs(vec![LocView {
+        id: crossing.loc_id,
+        name: Some("Prerequisite crossing".into()),
+        actions: loc_actions,
+        tile: crossing.at,
+        distance: 0,
+        typecode: 0,
+        info: 0,
+        description: None,
+        layer: LocLayer::GroundDecoration,
+        shape: 0,
+        angle: 0,
+        width: 1,
+        length: 1,
+        footprint_width: 1,
+        footprint_length: 1,
+        block_walk: false,
+        block_range: false,
+        active: true,
+        animation: -1,
+        map_function: -1,
+        map_scene: -1,
+        force_approach: 0,
+    }]);
+    let outer_run = driver
+        .ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .find(|action| action.request_id.get() == outer_id)
+        .expect("outer return walk is retained")
+        .run();
+    driver.ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+        goal: None,
+        request_id: outer_id,
+        evidence: stamp(outer_run, 8),
+        end: WalkEnd::NeedsStep(Arc::from([gate])),
+        blocked: None,
+        detail: None,
+        refusal: None,
+        assessment: None,
+        escape: None,
+        prereq_allow: Some(crate::native::PrereqAllow {
+            dialogue: true,
+            quest_start: true,
+        }),
+    });
+    let reach = reach_view(crossing.at, &[]);
+    require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 8));
+    assert!(matches!(status(&driver).phase, NativePhase::Working));
+    assert_eq!(text_field(status(&driver), "status"), "returning to start");
+    assert_eq!(
+        latest_walk(&driver).unwrap().0,
+        outer_id,
+        "the wrapper keeps the return owner while the prerequisite is pending"
+    );
+    let probe = driver
+        .ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .rev()
+        .find(|action| {
+            matches!(
+                &action.effect,
+                HostEffect::Interaction(InteractReq::Loc { id: Some(id), .. })
+                    if *id == crossing.loc_id
+            )
+        })
+        .expect("prerequisite probe was submitted");
+    assert!(probe.live());
+    respond_interaction(&mut driver, 8, true, 0);
+    set_position(&mut snapshot, entry.pass.landing);
+    snapshot.seed_chat_lines(vec![api::snapshot::ChatLineView {
+        sequence: 1,
+        type_: 0,
+        username: None,
+        text: entry.pass.message.to_string(),
+    }]);
+    let reach = reach_view(entry.pass.landing, &[]);
+    require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 9));
+
+    let (reissued_id, target, radius) =
+        latest_walk(&driver).expect("the return walk is reissued after the pass");
+    assert!(reissued_id > outer_id);
+    assert_eq!((target, radius), (ANCHOR, 0));
+    assert_eq!(script.recovery_anchor(), None);
+    assert_eq!(integer_field(status(&driver), "banked"), 1);
+    let walk_count = driver
+        .ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .filter(|action| matches!(&action.effect, HostEffect::Walk(_)))
+        .count();
+    assert_eq!(walk_count, 3, "one bank walk, return walk, and one reissue");
+    require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 10));
+    assert_eq!(latest_walk(&driver).unwrap().0, reissued_id);
+    assert_eq!(
+        driver
+            .ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|action| matches!(&action.effect, HostEffect::Walk(_)))
+            .count(),
+        walk_count,
+        "a pending reissue is not duplicated"
+    );
+
+    script.interrupt(crate::native::Interrupt::Pause);
+    assert!(!driver
+        .ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .find(|action| action.request_id.get() == reissued_id)
+        .expect("reissued walk remains recorded")
+        .live());
+    assert_eq!(script.recovery_anchor(), Some(ANCHOR));
+    assert_eq!(integer_field(status(&driver), "banked"), 1);
+    require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 11));
+    assert_eq!(
+        driver
+            .ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|action| matches!(&action.effect, HostEffect::Walk(_)))
+            .count(),
+        walk_count,
+        "paused cancellation emits no replacement walk"
+    );
 }

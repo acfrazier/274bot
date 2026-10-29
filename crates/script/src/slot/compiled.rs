@@ -4,7 +4,7 @@ use crate::native::HostFrame;
 use crate::native::{
     ActionContext, ConfigError, Interrupt, NativeActions, NativeOutput, NativePhase, NativeTick,
     PrepareContext, PreparedConfig, RetainedMemory, Script, ScriptFailure, ScriptFlow,
-    ScriptStatus, SettingsApply, SettingsBag, StartError, StopReason,
+    ScriptStatus, SettingsApply, SettingsBag, StartError, StopReason, WalkHandover,
 };
 use crate::preparation::{self, PreparationInput, PreparationKind, PreparedTask};
 use api::quest_progress::EvidenceStamp;
@@ -391,6 +391,7 @@ pub(super) fn frame_context<'a>(
     let now = Instant::now();
     runtime.budget.observe_frame(ctx.tick, ctx.snapshot);
     ActionContext {
+        walk_prereq: Default::default(),
         evidence,
         pin,
         snapshot: api::snapshot::SnapshotView::new(ctx.snapshot, evidence)
@@ -1077,6 +1078,38 @@ impl SlotScript {
         selected: Arc<api::game_data::SelectedGameData>,
         banks: Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<(), StartError> {
+        self.start_compiled_inner(account, id, bag, selected, banks, None, None)
+    }
+
+    pub fn start_manual_walk_handover(
+        &mut self,
+        account: &str,
+        handover: WalkHandover,
+        route_run: Option<RunKey>,
+        selected: Arc<api::game_data::SelectedGameData>,
+        banks: Arc<api::named_banks::NamedBankFacts>,
+    ) -> Result<(), StartError> {
+        self.start_compiled_inner(
+            account,
+            crate::CompiledId("WalkTo"),
+            Arc::new(SettingsBag::new()),
+            selected,
+            banks,
+            Some(handover),
+            route_run,
+        )
+    }
+
+    fn start_compiled_inner(
+        &mut self,
+        account: &str,
+        id: crate::CompiledId,
+        bag: Arc<SettingsBag>,
+        selected: Arc<api::game_data::SelectedGameData>,
+        banks: Arc<api::named_banks::NamedBankFacts>,
+        handover: Option<WalkHandover>,
+        route_run: Option<RunKey>,
+    ) -> Result<(), StartError> {
         if self.quest_pairs.as_ref().is_some_and(|pairs| pairs.busy()) {
             return Err(StartError::Unavailable("Stop this pair first".into()));
         }
@@ -1101,6 +1134,9 @@ impl SlotScript {
             .max(self.runtime_generation)
             .checked_add(1)
             .ok_or_else(|| StartError::Unavailable("run generation exhausted".into()))?;
+        let manual_bank_fetch = handover
+            .as_ref()
+            .map(|handover| handover.outer.allow_bank_fetch);
         let run = RunKey {
             slot: self.incarnation,
             run: generation,
@@ -1110,6 +1146,15 @@ impl SlotScript {
             self.retained
                 .get_or_insert_with(|| Arc::new(Mutex::new(RetainedMemory::default()))),
         );
+        let handover_reserved = if let Some(handover) = handover {
+            retained
+                .lock()
+                .map_err(|_| StartError::Unavailable("walk handover storage unavailable".into()))?
+                .set_walk_handover(run, handover)?;
+            true
+        } else {
+            false
+        };
         let job = prepare_run(
             card,
             run,
@@ -1132,7 +1177,14 @@ impl SlotScript {
                     account: account.to_owned(),
                 });
             }
-            Err(PrepareRunError::Other(error)) => return Err(error),
+            Err(PrepareRunError::Other(error)) => {
+                if handover_reserved {
+                    if let Ok(mut memory) = retained.lock() {
+                        memory.take_walk_handover(run);
+                    }
+                }
+                return Err(error);
+            }
         }
         self.control_generation = generation;
         self.terminal_native_status = None;
@@ -1140,6 +1192,8 @@ impl SlotScript {
         self.start_pending = true;
         self.start_outcome = None;
         self.state = RunState::Starting;
+        self.set_manual_route_run(route_run);
+        self.set_manual_route_bank_fetch(manual_bank_fetch);
         Ok(())
     }
 

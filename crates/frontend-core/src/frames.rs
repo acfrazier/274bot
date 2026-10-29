@@ -101,8 +101,8 @@ impl FrameContext<'_> {
 }
 
 /// One slot's latest published frame facts.
-struct SlotSnapshot {
-    snapshot: GameSnapshot,
+pub(crate) struct SlotSnapshot {
+    pub(crate) snapshot: GameSnapshot,
     world_state: Option<WorldState>,
 }
 
@@ -203,6 +203,14 @@ impl FrameShared {
             .unwrap()
             .get(name)
             .map(|slot| f(&slot.snapshot))
+    }
+
+    /// Borrow the published snapshots for one confirmed group command.
+    pub(crate) fn with_snapshots<R>(
+        &self,
+        f: impl FnOnce(&HashMap<String, SlotSnapshot>) -> R,
+    ) -> R {
+        f(&self.snapshots.lock().unwrap())
     }
 
     /// Read `name`'s latest published snapshot with its world state (only

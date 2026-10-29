@@ -2501,7 +2501,7 @@ mod compact_final_route_tests {
         );
         let custody: Arc<dyn std::any::Any + Send + Sync> =
             Arc::new(reservation.hold(plan.clone()));
-        crate::walk_plan::RoutePath::compact(plan, lease, custody)
+        crate::walk_plan::RoutePath::compact(plan, lease, custody, None)
     }
 
     #[test]

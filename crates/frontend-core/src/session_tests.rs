@@ -106,7 +106,7 @@ fn empty_play() -> Play {
 #[test]
 fn walk_globals_publish_before_start_and_to_the_current_play() {
     let mut session = OperatorSession::<()>::new(InstancePermit::SkipLock);
-    let granted = WalkGlobals::new(true, true, true, true, false);
+    let granted = WalkGlobals::new(true, true, true, true, false, true, true);
     session.set_walk_globals(granted);
     session.start(vault_with("walk-globals", &[]), empty_play());
     assert_eq!(session.play().unwrap().walk_globals(), granted.to_host());

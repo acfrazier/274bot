@@ -10,6 +10,7 @@ pub mod loadouts;
 mod nav_coverage;
 pub mod pair;
 pub mod path;
+pub mod prereq;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod probe;
 pub mod progress;

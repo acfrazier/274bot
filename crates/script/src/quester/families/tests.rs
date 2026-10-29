@@ -238,6 +238,7 @@ fn with_tick_output_reach<R>(
         prompt_port: None,
         actions: &mut actions,
         cx: crate::native::ActionContext {
+            walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
@@ -498,6 +499,7 @@ pub(crate) fn post_user_input_walk_receipt(
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     });
     request_id
 }
@@ -527,6 +529,7 @@ fn mapped_walk_receipt(
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     }
 }
 
@@ -1429,6 +1432,7 @@ fn non_straight_wall_door_route_end_before_arrival_does_not_open_the_door() {
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     });
     assert!(matches!(
         with_tick_reach(&s, &reach, &mut ledger, 3, |t| t
@@ -1516,6 +1520,7 @@ fn reach_wait_walk_preserves_typed_needs_evidence() {
         refusal: None,
         assessment: None,
         escape: None,
+        prereq_allow: None,
     });
 
     let result = with_tick_reach(&s, &reach, &mut ledger, 3, |t| {
@@ -6115,6 +6120,8 @@ fn path_walk_permissions_decode_as_tri_state_options() {
         "radius": 1,
         "allow_teleports": true,
         "allow_wilderness": false,
+        "allow_prereq_dialogue": false,
+        "allow_quest_start": true,
     })))
     .unwrap();
     assert_eq!(
@@ -6123,6 +6130,8 @@ fn path_walk_permissions_decode_as_tri_state_options() {
             allow_teleports: crate::native::WalkBit::Allow,
             allow_wilderness: crate::native::WalkBit::Forbid,
             allow_danger_zones: crate::native::WalkBit::Inherit,
+            allow_prereq_dialogue: crate::native::WalkBit::Forbid,
+            allow_quest_start: crate::native::WalkBit::Allow,
         }
     );
 }
@@ -7925,6 +7934,7 @@ fn arrive_slot_walk(
             refusal: None,
             assessment: None,
             escape: None,
+            prereq_allow: None,
         },
     );
 }

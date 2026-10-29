@@ -122,6 +122,7 @@ impl Probe<'_> {
         let mut budget = TickBudget::default();
         budget.observe(evidence.tick);
         let cx = ActionContext {
+            walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,

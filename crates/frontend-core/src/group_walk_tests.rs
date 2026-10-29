@@ -144,6 +144,13 @@ fn fixture_with_world(names: &[&'static str], slots: &[Slot], world: NavWorld) -
     let mut core = OperatorSession::new(InstancePermit::SkipLock);
     core.set_spawn_workers(false);
     core.start(vault, play);
+    for observed in slots {
+        core.frames().publish_test_snapshot(
+            observed.name,
+            api::snapshot::GameSnapshot::new(),
+            WorldState::empty(),
+        );
+    }
     let _ = std::fs::remove_dir_all(&dir);
     let mut model = MapModel::default();
     model.bind(dest_context);
@@ -237,6 +244,20 @@ fn every_marked_bot_walks_to_the_one_tile_and_unmarked_bots_stay() {
         assert_eq!(f.queued(name), Some(dest), "{name}");
     }
     assert_eq!(f.queued("erin"), None, "an unmarked bot was routed");
+}
+
+#[test]
+fn group_confirmation_without_observed_snapshot_does_not_arm() {
+    let mut fixture = fixture(&["alice"], &[slot("alice", t(1, 1, 0))]);
+    assert!(fixture.core.frames().end_lifetime("alice"));
+    let report = fixture.walk_to(&marks(&[1]), t(10, 3, 0));
+    assert_eq!(report.failed_count(), 1);
+    assert_eq!(report.done_count(), 0);
+    assert_eq!(
+        report.rows()[0].outcome(),
+        &BulkOutcome::failed("no position yet"),
+    );
+    assert_eq!(fixture.queued("alice"), None);
 }
 
 #[test]

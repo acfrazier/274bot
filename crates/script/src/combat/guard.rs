@@ -936,6 +936,7 @@ mod tests {
                 protect: true,
                 food_guard: false,
                 allow: Default::default(),
+                avoid: Box::default(),
             }
         }
 

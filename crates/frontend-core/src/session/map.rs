@@ -1007,7 +1007,7 @@ impl<Io> OperatorSession<Io> {
         staged: StagedMapAction,
         name: Option<&str>,
     ) -> Result<Tile, WalkActionError> {
-        use host_play::walk_map::WalkRequest;
+        use host_play::walk_map::{WalkActionOutcome, WalkRequest};
 
         let play = self.play.as_ref();
         let profile = play.and_then(|play| play.server_profile());
@@ -1036,17 +1036,23 @@ impl<Io> OperatorSession<Io> {
             let command = staged.command.map_err(WalkActionError::into_host)?;
             command_destination = Some(command.destination());
             let play = play.ok_or(host_play::walk_map::ActionError::NoFocus)?;
-            play.map_walk(
-                command,
-                &staged.context.to_host(),
-                &state,
-                &bank,
-                input,
-                self.walk_arms(),
-            )
+            let name = name.ok_or(host_play::walk_map::ActionError::NoFocus)?;
+            self.frames
+                .with_snapshot(name, |snapshot| {
+                    play.map_walk(
+                        command,
+                        &staged.context.to_host(),
+                        snapshot,
+                        &state,
+                        &bank,
+                        input,
+                        self.walk_arms(),
+                    )
+                })
+                .ok_or(host_play::walk_map::ActionError::NoFocus)?
         });
         match result {
-            Ok(_) => {
+            Ok(WalkActionOutcome::Walking(_) | WalkActionOutcome::PrerequisiteStarted) => {
                 let destination =
                     command_destination.expect("successful map walk consumed a map command");
                 if let Some(name) = name {

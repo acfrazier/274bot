@@ -1,0 +1,1817 @@
+use super::*;
+use crate::local_state::{SlotState, StatePort};
+use crate::native::{ledger, HostEffect, InteractionReceipt, WalkReceipt};
+use crate::quester::families::tests::{def, local_player, with_tick};
+use api::local_state::{
+    AccountKey, ContentScope, DomainEdit, DomainIdentity, DomainLease, ErrorCode, LocalStatePort,
+    StoreVersion, SubmitReceipt, WriteSettlement,
+};
+use api::prereq_knowledge::CatalogRef;
+use api::prereq_steps::PrereqCrossing;
+use api::selected::{ClientRevision, FamilyPreparation};
+use api::snapshot::{
+    ChatLineView, GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView,
+    NpcView,
+};
+use std::sync::LazyLock;
+use std::time::Duration;
+
+static CATALOG: LazyLock<Arc<PrereqCatalog>> = LazyLock::new(|| {
+    FamilyPreparation::run(|worker| {
+        api::game_data::for_revision(ClientRevision::R289)
+            .unwrap()
+            .prepare_prereq_steps(worker)
+            .unwrap()
+    })
+    .unwrap()
+    .join()
+    .unwrap()
+});
+
+struct NoStore;
+impl LocalStatePort for NoStore {
+    fn lease(&self, identity: &DomainIdentity) -> Result<DomainLease, ErrorCode> {
+        Err(ErrorCode::NotReady {
+            domain: identity.domain(),
+        })
+    }
+    fn submit(&self, edit: DomainEdit) -> SubmitReceipt {
+        SubmitReceipt::Refused(ErrorCode::Busy {
+            domain: edit.identity().domain(),
+        })
+    }
+    fn observe(&self, _: api::identity::RequestId) -> Option<WriteSettlement> {
+        None
+    }
+}
+impl StatePort for NoStore {
+    fn lease_version(&self, identity: &DomainIdentity) -> Result<StoreVersion, ErrorCode> {
+        self.lease(identity).map(|lease| lease.version())
+    }
+}
+fn state() -> SlotState {
+    SlotState::new(
+        Arc::new(NoStore),
+        AccountKey::try_new("local-289", "prereq-test").unwrap(),
+        ContentScope::try_new(ClientRevision::R289, "test-content").unwrap(),
+    )
+}
+fn row(consent: ConsentSwitch) -> (u16, &'static PrereqStep) {
+    CATALOG
+        .iter()
+        .find(|(_, row)| row.consent == consent)
+        .unwrap()
+}
+fn gate(row: &PrereqStep, crossing: &PrereqCrossing, truth: Truth) -> ActionableGate {
+    ActionableGate {
+        gate: QuestGate::Window(row.establishes.clone()),
+        truth,
+        leg: 2,
+        crossing: crossing.crossing,
+    }
+}
+fn runner(row: &PrereqStep, crossing: &PrereqCrossing, truth: Truth) -> PrereqRun {
+    let mut run = PrereqRun::begin(
+        gate(row, crossing, truth),
+        RunEntry::NeedsStep,
+        PrereqAllow {
+            dialogue: true,
+            quest_start: true,
+        },
+    );
+    run.catalog = Some(Arc::clone(&CATALOG));
+    run
+}
+fn snapshot(at: WorldTile) -> GameSnapshot {
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_local_player(local_player(at));
+    snapshot.seed_inventory(vec![], 28);
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_chat_options(vec![], -1);
+    snapshot.seed_main_modal(-1, vec![]);
+    snapshot
+}
+fn page_snapshot(snapshot: &mut GameSnapshot, text: &str) {
+    snapshot.seed_chat_modal(2100, vec![text.into()]);
+    snapshot.seed_chat_options(vec![], 2105);
+}
+fn close_snapshot(snapshot: &mut GameSnapshot) {
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_chat_options(vec![], -1);
+}
+fn full_pack(snapshot: &mut GameSnapshot) {
+    snapshot.seed_inventory(
+        (0..28)
+            .map(|slot| ItemView {
+                def: def(995, "Coins"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot,
+                count: 1,
+                actions: vec![],
+                component_id: 3214,
+            })
+            .collect(),
+        28,
+    );
+}
+fn crossing_snapshot(crossing: &PrereqCrossing) -> GameSnapshot {
+    let mut snapshot = snapshot(crossing.crossing.at);
+    snapshot.seed_locs(vec![LocView {
+        id: crossing.crossing.loc_id,
+        name: Some("Authored crossing".into()),
+        actions: vec![Some("Open".into())],
+        tile: crossing.crossing.at,
+        distance: 0,
+        typecode: 0,
+        info: 0,
+        description: None,
+        layer: LocLayer::GroundDecoration,
+        shape: 0,
+        angle: 0,
+        width: 1,
+        length: 1,
+        footprint_width: 1,
+        footprint_length: 1,
+        block_walk: false,
+        block_range: false,
+        active: true,
+        animation: -1,
+        map_function: -1,
+        map_scene: -1,
+        force_approach: 0,
+    }]);
+    snapshot
+}
+fn npc_snapshot(row: &PrereqStep) -> GameSnapshot {
+    let at = row.target.anchor;
+    let mut snapshot = snapshot(at);
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let name = data.npc_name(row.target.npc).unwrap().display.clone();
+    snapshot.seed_npcs(vec![NpcView {
+        index: 7,
+        r#type: Some(row.target.npc),
+        name,
+        actions: vec![Some("Talk-to".into())],
+        tile: at,
+        distance: 0,
+        animation: -1,
+        animation_frame: 0,
+        pose_animation: -1,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        spot_animation_stamp: -1,
+        health: 1,
+        total_health: 1,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
+        level: 0,
+        size: 1,
+        network: at,
+        x: 0,
+        z: 0,
+        yaw: 0,
+    }]);
+    snapshot
+}
+fn poll(
+    run: &mut PrereqRun,
+    snapshot: &GameSnapshot,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    state: &SlotState,
+    budget: &mut PrereqBudget,
+) -> Poll<Result<Done, PrereqRefusal>> {
+    with_tick(snapshot, ledger, tick, |native| {
+        native.cx.active_now = Duration::ZERO;
+        run.poll(native.actions, &mut native.cx, Some(state), budget)
+    })
+}
+fn accept_last(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64, chat_since: i32) {
+    let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    ledger.as_mut().unwrap().complete_interaction(
+        &authority,
+        InteractionReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick,
+                sequence: tick,
+            },
+            accepted: true,
+            chat_since,
+        },
+    );
+}
+fn last_interaction(ledger: &Option<Box<ledger::Ledger>>) -> &InteractReq {
+    match &ledger.as_ref().unwrap().outbox.last().unwrap().effect {
+        HostEffect::Interaction(request) => request,
+        _ => panic!("expected an interaction"),
+    }
+}
+fn arrive(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64) {
+    let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    assert!(matches!(
+        ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        HostEffect::Walk(_)
+    ));
+    ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+        goal: None,
+        request_id: authority.request_id().get(),
+        evidence: EvidenceStamp {
+            run: authority.run(),
+            tick,
+            sequence: tick,
+        },
+        end: WalkEnd::Arrived,
+        blocked: None,
+        detail: None,
+        refusal: None,
+        assessment: None,
+        escape: None,
+        prereq_allow: Some(PrereqAllow {
+            dialogue: true,
+            quest_start: true,
+        }),
+    });
+}
+fn message(snapshot: &mut GameSnapshot, sequence: i32, text: &str) {
+    snapshot.seed_chat_lines(vec![ChatLineView {
+        sequence,
+        text: text.into(),
+        type_: 0,
+        username: None,
+    }]);
+}
+fn start_probe(
+    row: &PrereqStep,
+    crossing: &PrereqCrossing,
+    snapshot: &GameSnapshot,
+    state: &SlotState,
+) -> (PrereqRun, PrereqBudget, Option<Box<ledger::Ledger>>) {
+    let mut run = runner(row, crossing, Truth::Unknown);
+    let mut budget = PrereqBudget::default();
+    let mut ledger = None;
+    assert!(poll(&mut run, snapshot, &mut ledger, 1, state, &mut budget).is_pending());
+    assert!(matches!(last_interaction(&ledger), InteractReq::Loc { .. }));
+    accept_last(&mut ledger, 1, 10);
+    (run, budget, ledger)
+}
+fn start_talk(
+    row: &PrereqStep,
+    snapshot: &GameSnapshot,
+    state: &SlotState,
+) -> (PrereqRun, PrereqBudget, Option<Box<ledger::Ledger>>) {
+    let mut run = runner(row, &row.crossings[0], Truth::False);
+    let mut budget = PrereqBudget::default();
+    let mut ledger = None;
+    if row.consent == ConsentSwitch::QuestStart {
+        // This helper isolates one conversation. The child-row test below
+        // exercises the real A2 -> A1 precondition owner instead.
+        let (ordinal, holy) = self::row(ConsentSwitch::PrereqDialogue);
+        let fact = with_tick(snapshot, &mut ledger, 1, |native| Fact {
+            quest: holy.establishes.quest.clone(),
+            signal: holy.establishes.signal.clone(),
+            possible: holy.establishes.values,
+            after: holy.after_for(holy.establishes.values).unwrap(),
+            refused: None,
+            source: FactSource::Page {
+                row: ordinal,
+                line: 0,
+            },
+            observed: native.cx.evidence(),
+        });
+        assert!(state.record_prereq_fact(fact));
+    }
+    assert!(poll(&mut run, snapshot, &mut ledger, 1, state, &mut budget).is_pending());
+    arrive(&mut ledger, 1);
+    assert!(poll(&mut run, snapshot, &mut ledger, 2, state, &mut budget).is_pending());
+    assert!(matches!(last_interaction(&ledger), InteractReq::Npc { .. }));
+    accept_last(&mut ledger, 2, 0);
+    (run, budget, ledger)
+}
+fn next_page_send(
+    run: &mut PrereqRun,
+    snapshot: &GameSnapshot,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: &mut u64,
+    state: &SlotState,
+    budget: &mut PrereqBudget,
+) {
+    let before = ledger.as_ref().unwrap().outbox.len();
+    for _ in 0..=PAGE_TICKS + SEND_SLACK_TICKS {
+        assert!(poll(run, snapshot, ledger, *tick, state, budget).is_pending());
+        if ledger.as_ref().unwrap().outbox.len() > before {
+            assert!(matches!(
+                last_interaction(ledger),
+                InteractReq::ContinueDialog { .. } | InteractReq::Answer { .. }
+            ));
+            accept_last(ledger, *tick, 0);
+            *tick += 1;
+            return;
+        }
+        *tick += 1;
+    }
+    panic!("the page did not produce its acknowledgement within the content bound");
+}
+
+#[test]
+fn budget_visited_uses_a_length_and_no_option() {
+    let mut budget = PrereqBudget::default();
+    assert_eq!(std::mem::size_of_val(&budget.visited), 6);
+    assert!(budget.row(0));
+    assert!(!budget.row(0));
+    assert!(budget.row(1));
+    assert!(budget.row(2));
+    assert!(!budget.row(3));
+    assert_eq!(budget.visited_len, 3);
+}
+
+#[test]
+fn refusal_entry_with_denied_consent_returns_not_allowed_before_preconditions() {
+    for consent in [ConsentSwitch::PrereqDialogue, ConsentSwitch::QuestStart] {
+        let (ordinal, row) = row(consent);
+        let crossing = &row.crossings[0];
+        let state = state();
+        let snapshot = crossing_snapshot(crossing);
+        let mut ledger = None;
+        let observed = with_tick(&snapshot, &mut ledger, 1, |native| native.cx.evidence());
+        let refusal = &row.probe.refuse[0];
+        let gate = gate(row, crossing, Truth::False);
+        let fact = Fact {
+            quest: row.establishes.quest.clone(),
+            signal: row.establishes.signal.clone(),
+            possible: refusal.proves,
+            after: row.after_for(refusal.proves).unwrap(),
+            refused: Some(row.establishes.values),
+            source: FactSource::Refusal {
+                row: ordinal,
+                entry: 0,
+            },
+            observed,
+        };
+        assert!(state.record_prereq_fact(fact.clone()));
+        let before = state.prereq_snapshot();
+        let observation = Arc::new(RefusalObservation {
+            crossing: crossing.crossing,
+            leg: 2,
+            gates: vec![gate.clone()].into(),
+            matched: CatalogRef {
+                row: ordinal,
+                entry: 0,
+            },
+            fact,
+        });
+        let mut run = PrereqRun::begin(
+            gate,
+            RunEntry::GateRefused(observation),
+            PrereqAllow::default(),
+        );
+        run.catalog = Some(Arc::clone(&CATALOG));
+        let mut budget = PrereqBudget::default();
+        assert!(matches!(
+            poll(&mut run, &snapshot, &mut ledger, 2, &state, &mut budget),
+            Poll::Ready(Err(PrereqRefusal::NotAllowed { .. }))
+        ));
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+        assert_eq!(state.prereq_snapshot(), before);
+        assert_eq!(budget.rows_run, 0);
+    }
+}
+
+#[test]
+fn needs_step_entry_with_denied_consent_returns_not_allowed_before_probe() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let state = state();
+    let snapshot = crossing_snapshot(&row.crossings[0]);
+    let mut run = runner(row, &row.crossings[0], Truth::Unknown);
+    run.allow = PrereqAllow::default();
+    let mut ledger = None;
+    let mut budget = PrereqBudget::default();
+    assert!(matches!(
+        poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget),
+        Poll::Ready(Err(PrereqRefusal::NotAllowed { .. }))
+    ));
+    assert!(ledger.is_none());
+    assert_eq!(budget.probes, 0);
+}
+
+#[test]
+fn a_wait_is_not_spent_by_polls_without_a_new_player_info() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let state = state();
+    let mut snapshot = crossing_snapshot(&row.crossings[0]);
+    let (mut run, mut budget, mut ledger) = start_probe(row, &row.crossings[0], &snapshot, &state);
+    for index in 0..10 {
+        // A scene-only publication changes a loc name, not the evidence tick.
+        snapshot.seed_locs(vec![]);
+        assert!(
+            poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending(),
+            "poll {index}"
+        );
+    }
+    assert!(matches!(run.phase, Phase::Probe { .. }));
+    assert!(state.prereq_snapshot().facts().is_empty());
+}
+
+#[test]
+fn a_wait_is_spent_only_when_observed_ticks_pass_its_bound() {
+    let snapshot = snapshot(WorldTile {
+        x: 1,
+        z: 2,
+        level: 0,
+    });
+    let mut ledger = None;
+    let wait = with_tick(&snapshot, &mut ledger, 10, |native| {
+        TickWait::new(&native.cx, 3)
+    });
+    for tick in 10..=13 {
+        assert!(!wait.spent(tick));
+    }
+    assert!(wait.spent(14));
+    assert!(matches!(
+        wait.failure(PrereqWaitName::W3, 14),
+        PrereqFailure::WaitSpent {
+            wait: PrereqWaitName::W3,
+            since: 10,
+            at: 14,
+            bound: 3
+        }
+    ));
+}
+
+#[test]
+fn a_stale_pass_message_does_not_settle_the_probe() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let crossing = &row.crossings[0];
+    let state = state();
+    let mut snapshot = crossing_snapshot(crossing);
+    let (mut run, mut budget, mut ledger) = start_probe(row, crossing, &snapshot, &state);
+    snapshot.seed_local_player(local_player(crossing.pass.landing));
+    message(&mut snapshot, 10, &crossing.pass.message);
+    assert!(poll(&mut run, &snapshot, &mut ledger, 2, &state, &mut budget).is_pending());
+    assert!(state.prereq_snapshot().facts().is_empty());
+}
+
+#[test]
+fn pass_message_and_landing_settle_the_probe() {
+    for consent in [ConsentSwitch::PrereqDialogue, ConsentSwitch::QuestStart] {
+        let (_, row) = row(consent);
+        for crossing in row.crossings.iter() {
+            let state = state();
+            let mut snapshot = crossing_snapshot(crossing);
+            let (mut run, mut budget, mut ledger) = start_probe(row, crossing, &snapshot, &state);
+            snapshot.seed_local_player(local_player(crossing.pass.landing));
+            message(&mut snapshot, 11, &crossing.pass.message);
+            let result = poll(&mut run, &snapshot, &mut ledger, 2, &state, &mut budget);
+            assert!(matches!(result, Poll::Ready(Ok(Done { crossed: true }))));
+            assert_eq!(
+                state.prereq_snapshot().facts()[0].possible,
+                crossing.pass.proves
+            );
+            assert_eq!(budget.talks, 0);
+        }
+    }
+}
+
+#[test]
+fn pass_message_without_landing_keeps_waiting_until_the_bound() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let crossing = &row.crossings[0];
+    let state = state();
+    let mut snapshot = crossing_snapshot(crossing);
+    let (mut run, mut budget, mut ledger) = start_probe(row, crossing, &snapshot, &state);
+    message(&mut snapshot, 11, &crossing.pass.message);
+    for tick in 2..=4 {
+        assert!(poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget).is_pending());
+    }
+    assert!(matches!(
+        poll(&mut run, &snapshot, &mut ledger, 5, &state, &mut budget),
+        Poll::Ready(Err(PrereqRefusal::StepFailed {
+            why: PrereqFailure::ProbeUnacknowledged,
+            ..
+        }))
+    ));
+    assert!(state.prereq_snapshot().facts().is_empty());
+}
+
+#[test]
+fn refusal_page_newer_than_the_watermark_settles_the_probe() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let crossing = &row.crossings[0];
+    let state = state();
+    let mut snapshot = crossing_snapshot(crossing);
+    let (mut run, mut budget, mut ledger) = start_probe(row, crossing, &snapshot, &state);
+    page_snapshot(&mut snapshot, "STOP!");
+    assert!(poll(&mut run, &snapshot, &mut ledger, 2, &state, &mut budget).is_pending());
+    assert!(matches!(run.phase, Phase::ProbeDrain(_)));
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::ContinueDialog { .. }
+    ));
+    assert_eq!(budget.talks, 0);
+}
+
+#[test]
+fn cant_reach_ends_the_probe_at_once() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let crossing = &row.crossings[0];
+    let state = state();
+    let mut snapshot = crossing_snapshot(crossing);
+    let (mut run, mut budget, mut ledger) = start_probe(row, crossing, &snapshot, &state);
+    message(&mut snapshot, 11, "I can't reach that!");
+    assert!(matches!(
+        poll(&mut run, &snapshot, &mut ledger, 2, &state, &mut budget),
+        Poll::Ready(Err(PrereqRefusal::StepFailed {
+            why: PrereqFailure::ProbeUnacknowledged,
+            ..
+        }))
+    ));
+    assert!(state.prereq_snapshot().facts().is_empty());
+}
+
+#[test]
+fn probe_unacknowledged_after_the_bound() {
+    for consent in [ConsentSwitch::PrereqDialogue, ConsentSwitch::QuestStart] {
+        let (_, row) = row(consent);
+        let crossing = row
+            .crossings
+            .iter()
+            .max_by_key(|crossing| crossing.delay.ticks)
+            .unwrap();
+        let state = state();
+        let snapshot = crossing_snapshot(crossing);
+        let (mut run, mut budget, mut ledger) = start_probe(row, crossing, &snapshot, &state);
+        let bound = u64::from(OP_TICKS + crossing.delay.ticks + SEND_SLACK_TICKS);
+        assert_eq!(
+            bound,
+            if consent == ConsentSwitch::PrereqDialogue {
+                3
+            } else {
+                5
+            }
+        );
+        assert!(poll(
+            &mut run,
+            &snapshot,
+            &mut ledger,
+            1 + bound,
+            &state,
+            &mut budget
+        )
+        .is_pending());
+        assert!(matches!(
+            poll(
+                &mut run,
+                &snapshot,
+                &mut ledger,
+                2 + bound,
+                &state,
+                &mut budget
+            ),
+            Poll::Ready(Err(PrereqRefusal::StepFailed {
+                why: PrereqFailure::ProbeUnacknowledged,
+                ..
+            }))
+        ));
+    }
+}
+
+#[test]
+fn outward_message_on_an_inward_probe_fails_closed_and_writes_the_stage_fact() {
+    let (_, row) = row(ConsentSwitch::QuestStart);
+    let inward = row
+        .crossings
+        .iter()
+        .find(|crossing| crossing.delay.ticks > 0)
+        .unwrap();
+    let outward = row
+        .crossings
+        .iter()
+        .find(|crossing| crossing.pass.message != inward.pass.message)
+        .unwrap();
+    let state = state();
+    let mut snapshot = crossing_snapshot(inward);
+    let (mut run, mut budget, mut ledger) = start_probe(row, inward, &snapshot, &state);
+    snapshot.seed_local_player(local_player(outward.pass.landing));
+    message(&mut snapshot, 11, &outward.pass.message);
+    assert!(matches!(
+        poll(&mut run, &snapshot, &mut ledger, 2, &state, &mut budget),
+        Poll::Ready(Err(PrereqRefusal::StepFailed {
+            why: PrereqFailure::ProbeDirection { .. },
+            ..
+        }))
+    ));
+    assert_eq!(
+        state.prereq_snapshot().facts()[0].possible,
+        outward.pass.proves
+    );
+}
+
+#[test]
+fn stage_61_full_pack_unknown_bank_crosses_on_the_probe() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let crossing = &row.crossings[0];
+    let state = state();
+    let mut snapshot = crossing_snapshot(crossing);
+    full_pack(&mut snapshot);
+    let (mut run, mut budget, mut ledger) = start_probe(row, crossing, &snapshot, &state);
+    message(&mut snapshot, 11, &crossing.pass.message);
+    snapshot.seed_local_player(local_player(crossing.pass.landing));
+    assert!(matches!(
+        poll(&mut run, &snapshot, &mut ledger, 2, &state, &mut budget),
+        Poll::Ready(Ok(Done { crossed: true }))
+    ));
+    assert_eq!(budget.talks, 0);
+}
+
+#[test]
+fn reclaim_opener_with_full_pack_closes_the_chat_and_gives_no_dagger() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let branch = row
+        .talk
+        .branches
+        .iter()
+        .find(|branch| branch.outcome == BranchOutcome::Reclaimed)
+        .unwrap();
+    let state = state();
+    let mut snapshot = npc_snapshot(row);
+    full_pack(&mut snapshot);
+    let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
+    page_snapshot(&mut snapshot, &branch.opener);
+    assert!(poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget).is_pending());
+    assert!(matches!(last_interaction(&ledger), InteractReq::CloseModal));
+    assert!(state.prereq_snapshot().facts().is_empty());
+    accept_last(&mut ledger, 3, 0);
+    close_snapshot(&mut snapshot);
+    assert!(poll(&mut run, &snapshot, &mut ledger, 4, &state, &mut budget).is_pending());
+    assert!(matches!(
+        poll(&mut run, &snapshot, &mut ledger, 5, &state, &mut budget),
+        Poll::Ready(Err(PrereqRefusal::PreconditionMissing {
+            missing: PrereqMissing::FreeSlots { required: 1 },
+            ..
+        }))
+    ));
+}
+
+#[test]
+fn satisfied_opener_closes_before_the_blessing_page() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let branch = row
+        .talk
+        .branches
+        .iter()
+        .find(|branch| branch.outcome == BranchOutcome::Satisfied)
+        .unwrap();
+    let state = state();
+    let mut snapshot = npc_snapshot(row);
+    let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
+    page_snapshot(&mut snapshot, "Greetings again adventurer");
+    assert!(poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget).is_pending());
+    assert!(matches!(last_interaction(&ledger), InteractReq::CloseModal));
+    assert_eq!(state.prereq_snapshot().facts()[0].possible, branch.proves);
+    accept_last(&mut ledger, 3, 0);
+    close_snapshot(&mut snapshot);
+    assert!(poll(&mut run, &snapshot, &mut ledger, 4, &state, &mut budget).is_pending());
+    assert!(matches!(
+        poll(&mut run, &snapshot, &mut ledger, 5, &state, &mut budget),
+        Poll::Ready(Ok(Done { crossed: false }))
+    ));
+}
+
+#[test]
+fn an_unmatched_opener_without_an_authored_wildcard_closes_and_writes_nothing() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let state = state();
+    let mut snapshot = npc_snapshot(row);
+    let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
+    // The two frozen Drezel rows intentionally prove their authored wildcard
+    // opener. Exercise the generic no-matching-branch exit with no wildcard.
+    let rows = CATALOG
+        .iter()
+        .map(|(_, authored)| {
+            let mut authored = authored.clone();
+            if authored.id == row.id {
+                authored.talk.branches = authored
+                    .talk
+                    .branches
+                    .iter()
+                    .filter(|branch| branch.opener.as_ref() != "*")
+                    .cloned()
+                    .collect();
+            }
+            authored
+        })
+        .collect();
+    run.catalog = Some(Arc::new(PrereqCatalog::from_rows(rows).unwrap()));
+    page_snapshot(
+        &mut snapshot,
+        "This page belongs to an unrecognized branch.",
+    );
+    assert!(poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget).is_pending());
+    assert!(matches!(last_interaction(&ledger), InteractReq::CloseModal));
+    accept_last(&mut ledger, 3, 0);
+    close_snapshot(&mut snapshot);
+    assert!(poll(&mut run, &snapshot, &mut ledger, 4, &state, &mut budget).is_pending());
+    assert!(matches!(
+        poll(&mut run, &snapshot, &mut ledger, 5, &state, &mut budget),
+        Poll::Ready(Err(PrereqRefusal::StepUnwitnessed { .. }))
+    ));
+    assert!(state.prereq_snapshot().facts().is_empty());
+}
+
+fn conversation_completes(consent: ConsentSwitch) {
+    let (_, row) = row(consent);
+    let outcome = if consent == ConsentSwitch::PrereqDialogue {
+        BranchOutcome::Advice
+    } else {
+        BranchOutcome::Start
+    };
+    let branch = row
+        .talk
+        .branches
+        .iter()
+        .find(|branch| branch.outcome == outcome)
+        .unwrap();
+    let state = state();
+    let mut snapshot = npc_snapshot(row);
+    if consent == ConsentSwitch::PrereqDialogue {
+        full_pack(&mut snapshot);
+    }
+    let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
+    let initial_facts = state.prereq_snapshot().facts().len();
+    let mut tick = 3;
+    page_snapshot(&mut snapshot, &branch.opener);
+    next_page_send(
+        &mut run,
+        &snapshot,
+        &mut ledger,
+        &mut tick,
+        &state,
+        &mut budget,
+    );
+    assert_eq!(state.prereq_snapshot().facts().len(), initial_facts);
+    let effect = branch.effect_page.as_deref().unwrap();
+    page_snapshot(&mut snapshot, effect);
+    next_page_send(
+        &mut run,
+        &snapshot,
+        &mut ledger,
+        &mut tick,
+        &state,
+        &mut budget,
+    );
+    assert_eq!(
+        state.prereq_snapshot().facts().len(),
+        initial_facts,
+        "showing the effect page is not its acknowledgement"
+    );
+    let terminal = branch.terminal.as_deref().unwrap();
+    if terminal != effect {
+        page_snapshot(&mut snapshot, terminal);
+        next_page_send(
+            &mut run,
+            &snapshot,
+            &mut ledger,
+            &mut tick,
+            &state,
+            &mut budget,
+        );
+        assert!(state
+            .prereq_snapshot()
+            .facts()
+            .iter()
+            .any(|fact| fact.quest == row.establishes.quest && fact.possible == branch.proves));
+    }
+    close_snapshot(&mut snapshot);
+    let mut completed = false;
+    for _ in 0..=PAGE_TICKS + SEND_SLACK_TICKS + DIALOG_GAP_TICKS as u16 {
+        match poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget) {
+            Poll::Ready(Ok(Done { crossed: false })) => {
+                completed = true;
+                break;
+            }
+            Poll::Pending => tick += 1,
+            _ => panic!("the witnessed conversation did not complete"),
+        }
+    }
+    assert!(completed);
+    assert!(state
+        .prereq_snapshot()
+        .facts()
+        .iter()
+        .any(|fact| fact.quest == row.establishes.quest && fact.possible == branch.proves));
+    assert_eq!(budget.talks, 1);
+    assert!(!with_tick(
+        &snapshot,
+        &mut ledger,
+        tick,
+        |native| chat_open(&native.cx)
+    ));
+}
+
+#[test]
+fn the_a1_walk_through_completes_with_the_active_clock_frozen() {
+    conversation_completes(ConsentSwitch::PrereqDialogue);
+}
+
+#[test]
+fn a2_effect_page_writes_the_fact_and_the_terminal_page_retires_the_chat() {
+    conversation_completes(ConsentSwitch::QuestStart);
+}
+
+#[test]
+fn reclaim_retalks_once_with_the_same_row_and_budget() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let reclaimed = row
+        .talk
+        .branches
+        .iter()
+        .find(|branch| branch.outcome == BranchOutcome::Reclaimed)
+        .unwrap();
+    for second_outcome in [BranchOutcome::Advice, BranchOutcome::Reclaimed] {
+        let second = row
+            .talk
+            .branches
+            .iter()
+            .find(|branch| branch.outcome == second_outcome)
+            .unwrap();
+        let state = state();
+        let mut snapshot = npc_snapshot(row);
+        let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
+        let mut tick = 3;
+        for (index, branch) in [reclaimed, second].into_iter().enumerate() {
+            page_snapshot(&mut snapshot, &branch.opener);
+            next_page_send(
+                &mut run,
+                &snapshot,
+                &mut ledger,
+                &mut tick,
+                &state,
+                &mut budget,
+            );
+            let effect = branch.effect_page.as_deref().unwrap();
+            page_snapshot(&mut snapshot, effect);
+            next_page_send(
+                &mut run,
+                &snapshot,
+                &mut ledger,
+                &mut tick,
+                &state,
+                &mut budget,
+            );
+            if branch.terminal.as_deref().unwrap() != effect {
+                page_snapshot(&mut snapshot, branch.terminal.as_deref().unwrap());
+                next_page_send(
+                    &mut run,
+                    &snapshot,
+                    &mut ledger,
+                    &mut tick,
+                    &state,
+                    &mut budget,
+                );
+            }
+            close_snapshot(&mut snapshot);
+            let before = ledger.as_ref().unwrap().outbox.len();
+            let mut completed = false;
+            for _ in 0..=PAGE_TICKS + SEND_SLACK_TICKS + DIALOG_GAP_TICKS as u16 {
+                match poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget) {
+                    Poll::Pending
+                        if index == 0 && ledger.as_ref().unwrap().outbox.len() > before =>
+                    {
+                        assert!(matches!(last_interaction(&ledger), InteractReq::Npc { .. }));
+                        accept_last(&mut ledger, tick, 0);
+                        tick += 1;
+                        completed = true;
+                        break;
+                    }
+                    Poll::Pending => tick += 1,
+                    Poll::Ready(Ok(Done { crossed: false }))
+                        if index == 1 && second_outcome == BranchOutcome::Advice =>
+                    {
+                        completed = true;
+                        break;
+                    }
+                    Poll::Ready(Err(PrereqRefusal::StepFailed {
+                        why: PrereqFailure::ReclaimLoop,
+                        ..
+                    })) if index == 1 && second_outcome == BranchOutcome::Reclaimed => {
+                        completed = true;
+                        break;
+                    }
+                    _ => panic!("reclaim must permit exactly one owned retalk"),
+                }
+            }
+            assert!(
+                completed,
+                "conversation must settle within its authored tick bounds"
+            );
+        }
+        assert_eq!(budget.rows_run, 1);
+        assert_eq!(budget.visited_len, 1);
+        assert_eq!(budget.talks, 2);
+        assert_eq!(budget.probes, 0);
+        assert_eq!(budget.re_issues, 0);
+        assert_eq!(state.prereq_snapshot().facts()[0].possible, second.proves);
+        assert!(!ledger.as_ref().unwrap().test_owner_live());
+    }
+}
+
+#[test]
+fn a2_child_probe_and_parent_talk_share_the_same_budget() {
+    let (holy_ordinal, holy) = row(ConsentSwitch::PrereqDialogue);
+    let (mort_ordinal, mort) = row(ConsentSwitch::QuestStart);
+    let crossing = &holy.crossings[0];
+    let state = state();
+    let mut snapshot = crossing_snapshot(crossing);
+    let mut run = runner(mort, &mort.crossings[0], Truth::False);
+    let mut budget = PrereqBudget::default();
+    let mut ledger = None;
+    assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
+    assert!(matches!(last_interaction(&ledger), InteractReq::Loc { .. }));
+    assert_eq!(
+        &budget.visited[..usize::from(budget.visited_len)],
+        &[mort_ordinal, holy_ordinal]
+    );
+    assert_eq!(budget.rows_run, 2);
+    assert_eq!(budget.probes, 1);
+    accept_last(&mut ledger, 1, 10);
+    snapshot.seed_local_player(local_player(crossing.pass.landing));
+    message(&mut snapshot, 11, &crossing.pass.message);
+    assert!(poll(&mut run, &snapshot, &mut ledger, 2, &state, &mut budget).is_pending());
+    assert!(matches!(
+        ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        HostEffect::Walk(_)
+    ));
+    arrive(&mut ledger, 2);
+    snapshot = npc_snapshot(mort);
+    assert!(poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget).is_pending());
+    assert!(matches!(last_interaction(&ledger), InteractReq::Npc { .. }));
+    assert_eq!(budget.rows_run, 2);
+    assert_eq!(budget.probes, 1);
+    assert_eq!(budget.talks, 1);
+    assert_eq!(budget.re_issues, 0);
+    assert_eq!(
+        state.prereq_snapshot().facts()[0].possible,
+        holy.establishes.values
+    );
+    drop(run);
+    assert!(!ledger.as_ref().unwrap().test_owner_live());
+}
+
+#[test]
+fn page_wait_counts_from_the_ack_send_tick() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let state = state();
+    let mut snapshot = npc_snapshot(row);
+    let branch = row
+        .talk
+        .branches
+        .iter()
+        .find(|branch| branch.outcome == BranchOutcome::Advice)
+        .unwrap();
+    let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
+    page_snapshot(&mut snapshot, &branch.opener);
+    let mut tick = 3;
+    next_page_send(
+        &mut run,
+        &snapshot,
+        &mut ledger,
+        &mut tick,
+        &state,
+        &mut budget,
+    );
+    let send_tick = tick - 1;
+    for tick in send_tick + 1..=send_tick + 3 {
+        assert!(poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget).is_pending());
+    }
+    assert!(
+        matches!(poll(&mut run, &snapshot, &mut ledger, send_tick + 4, &state, &mut budget),
+        Poll::Ready(Err(PrereqRefusal::StepFailed { why: PrereqFailure::WaitSpent { wait: PrereqWaitName::W3, since, bound: 3, .. }, .. })) if since == send_tick)
+    );
+}
+
+#[test]
+fn terminal_ack_close_then_gap_ticks() {
+    let state = state();
+    let mut snapshot = snapshot(WorldTile {
+        x: 1,
+        z: 2,
+        level: 0,
+    });
+    page_snapshot(&mut snapshot, "A terminal page.");
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |native| {
+        native
+            .actions
+            .begin::<ClosePage>((), &mut native.cx)
+            .unwrap()
+    });
+    accept_last(&mut ledger, 1, 0);
+    for _ in 0..10 {
+        assert!(with_tick(&snapshot, &mut ledger, 1, |native| native
+            .actions
+            .poll(&handle, &mut native.cx))
+        .is_pending());
+    }
+    close_snapshot(&mut snapshot);
+    assert!(with_tick(&snapshot, &mut ledger, 2, |native| native
+        .actions
+        .poll(&handle, &mut native.cx))
+    .is_pending());
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 3, |native| native
+            .actions
+            .poll(&handle, &mut native.cx)),
+        Poll::Ready(Ok(Ok(())))
+    ));
+    assert!(state.prereq_snapshot().facts().is_empty());
+}
+
+fn cancel_at_effect(after_effect: bool) {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let branch = row
+        .talk
+        .branches
+        .iter()
+        .find(|branch| branch.outcome == BranchOutcome::Advice)
+        .unwrap();
+    let state = state();
+    let mut snapshot = npc_snapshot(row);
+    let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
+    let mut tick = 3;
+    page_snapshot(&mut snapshot, &branch.opener);
+    next_page_send(
+        &mut run,
+        &snapshot,
+        &mut ledger,
+        &mut tick,
+        &state,
+        &mut budget,
+    );
+    if after_effect {
+        page_snapshot(&mut snapshot, branch.effect_page.as_deref().unwrap());
+        next_page_send(
+            &mut run,
+            &snapshot,
+            &mut ledger,
+            &mut tick,
+            &state,
+            &mut budget,
+        );
+        page_snapshot(&mut snapshot, branch.terminal.as_deref().unwrap());
+        assert!(poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget).is_pending());
+        assert_eq!(state.prereq_snapshot().facts()[0].possible, branch.proves);
+    } else {
+        assert!(state.prereq_snapshot().facts().is_empty());
+    }
+    drop(run);
+    let ledger = ledger.as_ref().unwrap();
+    assert!(!ledger.test_owner_live());
+    assert!(
+        ledger.outbox.iter().all(|action| !action.live()),
+        "cancellation revokes queued clicks without closing or acknowledging the page"
+    );
+    assert_eq!(
+        state.prereq_snapshot().facts().len(),
+        usize::from(after_effect)
+    );
+}
+
+#[test]
+fn cancel_before_the_effect_page_writes_nothing() {
+    cancel_at_effect(false);
+}
+
+#[test]
+fn cancel_after_the_effect_page_keeps_the_fact() {
+    cancel_at_effect(true);
+}
+
+#[test]
+fn cancel_during_probe_revokes_the_live_handle() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let state = state();
+    let snapshot = crossing_snapshot(&row.crossings[0]);
+    let (run, _, ledger) = start_probe(row, &row.crossings[0], &snapshot, &state);
+    assert!(ledger.as_ref().unwrap().test_owner_live());
+    drop(run);
+    assert!(!ledger.as_ref().unwrap().test_owner_live());
+    assert!(ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .all(|action| !action.live()));
+    assert!(state.prereq_snapshot().facts().is_empty());
+}
+
+#[test]
+fn combat_during_talk_ends_step_failed_without_retry() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let state = state();
+    let mut snapshot = npc_snapshot(row);
+    let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
+    let mut player = local_player(row.target.anchor);
+    player.player.actor.in_combat = true;
+    snapshot.seed_local_player(player);
+    assert!(matches!(
+        poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget),
+        Poll::Ready(Err(PrereqRefusal::StepFailed {
+            why: PrereqFailure::CombatInterrupted,
+            ..
+        }))
+    ));
+    drop(run);
+    assert_eq!(budget.talks, 1);
+    assert!(state.prereq_snapshot().facts().is_empty());
+    assert!(!ledger.as_ref().unwrap().test_owner_live());
+}
+
+#[test]
+fn prerequisite_state_layout_and_ten_repeated_walks_stay_bounded() {
+    use std::mem::size_of;
+    assert!(size_of::<SessionMemory>() <= 24);
+    assert!(size_of::<Fact>() <= 160);
+    assert!(size_of::<RefusalObservation>() <= 256);
+    assert!(size_of::<TickWait>() <= 80);
+    assert!(size_of::<PrereqBudget>() <= 12);
+    assert!(size_of::<PrereqRun>() <= 1024);
+    assert!(size_of::<super::super::walk::PrereqWalk>() <= 1536);
+    let state = state();
+    let snapshot = snapshot(WorldTile {
+        x: 1,
+        z: 2,
+        level: 0,
+    });
+    let mut ledger = None;
+    let observed = with_tick(&snapshot, &mut ledger, 1, |native| native.cx.evidence());
+    let facts = [ConsentSwitch::PrereqDialogue, ConsentSwitch::QuestStart].map(|consent| {
+        let (_, row) = row(consent);
+        let crossing = &row.crossings[0];
+        Fact {
+            quest: row.establishes.quest.clone(),
+            signal: row.establishes.signal.clone(),
+            possible: crossing.pass.proves,
+            after: row.after_for(crossing.pass.proves).unwrap(),
+            refused: None,
+            source: FactSource::Crossing {
+                loc_id: crossing.crossing.loc_id,
+                option: crossing.crossing.option,
+                passed: true,
+            },
+            observed,
+        }
+    });
+    let empty = allocation_counter::measure(|| {
+        std::hint::black_box(SessionMemory::default());
+    });
+    assert_eq!(empty.count_total, 0);
+    let learned = allocation_counter::measure(|| {
+        for fact in &facts {
+            assert!(state.record_prereq_fact(fact.clone()));
+        }
+    });
+    let warmed_bytes = state.with_prereq_memory(SessionMemory::retained_bytes);
+    assert_eq!(
+        warmed_bytes,
+        size_of::<SessionMemory>() + 2 * size_of::<Fact>()
+    );
+    assert_eq!(learned.bytes_current as usize, 2 * size_of::<Fact>());
+    let repeated = allocation_counter::measure(|| {
+        for tick in 2..12 {
+            for fact in &facts {
+                let mut fact = fact.clone();
+                fact.observed.tick = tick;
+                fact.observed.sequence = tick;
+                state.record_prereq_fact(fact);
+            }
+        }
+    });
+    assert_eq!(repeated.count_total, 0);
+    assert_eq!(
+        state.with_prereq_memory(SessionMemory::retained_bytes),
+        warmed_bytes
+    );
+    // Once both facts are learned, later ordinary walks must retire their
+    // enclosing owners without retaining another request, ledger or fact slice.
+    let completed_walks = allocation_counter::measure(|| {
+        for tick in 20..30 {
+            let (mut walk, mut walk_ledger) = walk_wrapper(&snapshot);
+            wrapper_terminal(&mut walk_ledger, tick, WalkEnd::Arrived);
+            assert!(matches!(
+                wrapper_poll(&mut walk, &snapshot, &mut walk_ledger, tick, &state),
+                Poll::Ready(Ok(WalkReceipt {
+                    end: WalkEnd::Arrived,
+                    ..
+                }))
+            ));
+            assert!(!walk_ledger.as_ref().unwrap().test_owner_live());
+            assert_eq!(
+                state.with_prereq_memory(SessionMemory::retained_bytes),
+                warmed_bytes
+            );
+        }
+    });
+    assert_eq!(completed_walks.bytes_current, 0);
+    let mut evidence_copy = None;
+    let copied = allocation_counter::measure(|| evidence_copy = Some(state.prereq_snapshot()));
+    assert_eq!(copied.bytes_current as usize, 2 * size_of::<Fact>());
+    assert_eq!(evidence_copy.as_ref().unwrap().facts().len(), 2);
+    // Inclusive measurement: the real runner, native owner/ledger, observations,
+    // snapshot fixture, and learned state all remain inside the measured call.
+    let peak =
+        allocation_counter::measure(|| conversation_completes(ConsentSwitch::PrereqDialogue));
+    println!("prereq layouts slot={} memory={} fact={} observation={} wait={} budget={} run={} walk={}; empty={empty:?}; learned={learned:?}; ten-fact-updates={repeated:?}; ten-completed-walks={completed_walks:?}; route-evidence-copy={copied:?}; inclusive-resolution={peak:?}",
+        size_of::<SlotState>(), size_of::<SessionMemory>(), size_of::<Fact>(),
+        size_of::<RefusalObservation>(), size_of::<TickWait>(), size_of::<PrereqBudget>(),
+        size_of::<PrereqRun>(), size_of::<super::super::walk::PrereqWalk>());
+}
+
+#[test]
+fn branch_and_effect_text_can_span_rendered_chat_widgets_without_allocating() {
+    let texts = vec![
+        "Okay, I will keep it equipped".to_owned(),
+        "whenever I fight werewolves.".to_owned(),
+    ];
+    let fragment = "Okay, I will keep it equipped whenever I fight werewolves.";
+    assert!(page_matches(&texts, fragment));
+    assert!(page_matches(&texts, "EQUIPPED whenever"));
+    assert!(!page_matches(&texts, "werewolves. another page"));
+    assert!(!page_matches(&texts, "equippedwhenever"));
+    assert!(!page_matches(&texts, ""));
+    let allocations = allocation_counter::measure(|| {
+        for _ in 0..100 {
+            assert!(page_matches(&texts, fragment));
+        }
+    });
+    assert_eq!(allocations.count_total, 0);
+}
+
+#[test]
+fn refused_entry_selects_the_matched_catalogue_row_not_the_first_route_gate() {
+    let (_, holy) = row(ConsentSwitch::PrereqDialogue);
+    let (ordinal, mort) = row(ConsentSwitch::QuestStart);
+    let crossing = &mort.crossings[0];
+    let earlier = gate(holy, &holy.crossings[0], Truth::True);
+    let matched = gate(mort, crossing, Truth::False);
+    let gates: Arc<[ActionableGate]> = vec![earlier, matched.clone()].into();
+    let snapshot = crossing_snapshot(crossing);
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 10, |native| {
+        let possible = mort.probe.refuse[0].proves;
+        let fact = Fact {
+            quest: mort.establishes.quest.clone(),
+            signal: mort.establishes.signal.clone(),
+            possible,
+            after: mort.after_for(possible).unwrap(),
+            refused: Some(mort.establishes.values),
+            source: FactSource::Refusal {
+                row: ordinal,
+                entry: 0,
+            },
+            observed: native.cx.evidence(),
+        };
+        let observation = RefusalObservation {
+            crossing: crossing.crossing,
+            leg: matched.leg,
+            gates: Arc::clone(&gates),
+            matched: CatalogRef {
+                row: ordinal,
+                entry: 0,
+            },
+            fact,
+        };
+        let entry = RunEntry::GateRefused(Arc::new(observation.clone()));
+        assert_eq!(
+            PrereqRun::first_supported(&gates, &entry, &native.cx),
+            Some(matched)
+        );
+        let wrong_crossing = RefusalObservation {
+            crossing: holy.crossings[0].crossing,
+            ..observation
+        };
+        assert!(PrereqRun::first_supported(
+            &gates,
+            &RunEntry::GateRefused(Arc::new(wrong_crossing)),
+            &native.cx
+        )
+        .is_none());
+    });
+}
+
+fn walk_wrapper(
+    snapshot: &GameSnapshot,
+) -> (super::super::walk::PrereqWalk, Option<Box<ledger::Ledger>>) {
+    let mut ledger = None;
+    let walk = with_tick(snapshot, &mut ledger, 1, |native| {
+        let mut request = reach::walk_request(
+            WorldTile {
+                x: 3450,
+                z: 3450,
+                level: 0,
+            },
+            0,
+            None,
+            native.cx.evidence(),
+        );
+        request.protect = true;
+        request.food_guard = true;
+        request.options.allow_teleports = crate::native::WalkBit::Forbid;
+        request.options.allow_wilderness = crate::native::WalkBit::Forbid;
+        request.options.allow_danger_zones = crate::native::WalkBit::Forbid;
+        request.allow.food = false;
+        request.allow.escape = false;
+        request.avoid = vec![Arc::from("wilderness")].into_boxed_slice();
+        request.cross = vec![Arc::from("morytania")].into_boxed_slice();
+        super::super::walk::PrereqWalk::begin(request, native.actions, &mut native.cx).unwrap()
+    });
+    (walk, ledger)
+}
+
+fn wrapper_poll(
+    walk: &mut super::super::walk::PrereqWalk,
+    snapshot: &GameSnapshot,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    state: &SlotState,
+) -> Poll<Result<WalkReceipt, ActionError>> {
+    with_tick(snapshot, ledger, tick, |native| {
+        native.cx.active_now = Duration::ZERO;
+        walk.poll(native.actions, &mut native.cx, Some(state))
+    })
+}
+
+fn wrapper_terminal(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64, end: WalkEnd) {
+    arrive(ledger, tick);
+    ledger.as_mut().unwrap().walk.as_mut().unwrap().end = end;
+}
+
+fn resolve_probe_in_walk(
+    walk: &mut super::super::walk::PrereqWalk,
+    row: &PrereqStep,
+    crossing: &PrereqCrossing,
+    state: &SlotState,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+) -> GameSnapshot {
+    let mut snapshot = crossing_snapshot(crossing);
+    wrapper_terminal(
+        ledger,
+        tick,
+        WalkEnd::NeedsStep(vec![gate(row, crossing, Truth::Unknown)].into()),
+    );
+    assert!(wrapper_poll(walk, &snapshot, ledger, tick, state).is_pending());
+    assert!(matches!(last_interaction(ledger), InteractReq::Loc { .. }));
+    accept_last(ledger, tick, 100);
+    snapshot.seed_local_player(local_player(crossing.pass.landing));
+    message(&mut snapshot, 101, &crossing.pass.message);
+    assert!(wrapper_poll(walk, &snapshot, ledger, tick + 1, state).is_pending());
+    assert!(matches!(
+        ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        HostEffect::Walk(_)
+    ));
+    snapshot
+}
+
+#[test]
+fn cancel_during_prerequisite_handover_revokes_the_replacement_owner() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let snapshot = crossing_snapshot(&row.crossings[0]);
+    let state = state();
+    let (mut walk, mut ledger) = walk_wrapper(&snapshot);
+    let first = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    let revoker = walk.revoker().expect("logical cancellation capability");
+    wrapper_terminal(
+        &mut ledger,
+        2,
+        WalkEnd::NeedsStep(vec![gate(row, &row.crossings[0], Truth::Unknown)].into()),
+    );
+    assert!(wrapper_poll(&mut walk, &snapshot, &mut ledger, 2, &state).is_pending());
+    assert!(
+        !first.live(),
+        "the original owner retires before the probe starts"
+    );
+    let probe = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    assert!(probe.live());
+    revoker.revoke();
+    assert!(
+        !probe.live(),
+        "the original logical revoker follows the replacement owner"
+    );
+    assert!(matches!(
+        wrapper_poll(&mut walk, &snapshot, &mut ledger, 3, &state),
+        Poll::Ready(Ok(WalkReceipt {
+            end: WalkEnd::Cancelled,
+            ..
+        }))
+    ));
+    assert!(!ledger.as_ref().unwrap().test_owner_live());
+    assert!(matches!(
+        wrapper_poll(&mut walk, &snapshot, &mut ledger, 4, &state),
+        Poll::Ready(Err(ActionError::Stale))
+    ));
+    assert!(state.prereq_snapshot().facts().is_empty());
+}
+
+#[test]
+fn same_gate_twice_ends_step_repeated_and_preserves_the_original_walk() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let crossing = &row.crossings[0];
+    let state = state();
+    let (mut walk, mut ledger) = walk_wrapper(&crossing_snapshot(crossing));
+    let snapshot = resolve_probe_in_walk(&mut walk, row, crossing, &state, &mut ledger, 2);
+    let HostEffect::Walk(request) = &ledger.as_ref().unwrap().outbox.last().unwrap().effect else {
+        panic!("the witnessed probe must reissue the original walk");
+    };
+    assert_eq!(
+        request.target,
+        WorldTile {
+            x: 3450,
+            z: 3450,
+            level: 0
+        }
+    );
+    assert!(request.protect && request.food_guard);
+    assert!(!request.allow.food && !request.allow.escape);
+    assert_eq!(&*request.avoid[0], "wilderness");
+    assert_eq!(&*request.cross[0], "morytania");
+    assert_eq!(request.required_after.tick, 3);
+    wrapper_terminal(
+        &mut ledger,
+        4,
+        WalkEnd::NeedsStep(vec![gate(row, crossing, Truth::Unknown)].into()),
+    );
+    let Poll::Ready(Ok(receipt)) = wrapper_poll(&mut walk, &snapshot, &mut ledger, 4, &state)
+    else {
+        panic!("a repeated row must terminate instead of probing again");
+    };
+    assert_eq!(receipt.end, WalkEnd::Blocked);
+    let Some(crate::native::WalkRefusal::Prerequisite(refusal)) = receipt.refusal else {
+        panic!("the owner must receive the typed prerequisite refusal");
+    };
+    assert!(matches!(
+        refusal.as_ref(),
+        PrereqRefusal::StepRepeated { .. }
+    ));
+    assert_eq!(state.prereq_snapshot().facts().len(), 1);
+    assert!(!ledger.as_ref().unwrap().test_owner_live());
+}
+
+#[test]
+fn exhausted_re_issues_keep_the_recorded_refusal() {
+    let (ordinal, holy) = row(ConsentSwitch::PrereqDialogue);
+    let (_, mort) = row(ConsentSwitch::QuestStart);
+    let state = state();
+    let (mut walk, mut ledger) = walk_wrapper(&crossing_snapshot(&holy.crossings[0]));
+    resolve_probe_in_walk(&mut walk, holy, &holy.crossings[0], &state, &mut ledger, 2);
+    let snapshot =
+        resolve_probe_in_walk(&mut walk, mort, &mort.crossings[0], &state, &mut ledger, 4);
+    let crossing = &holy.crossings[0];
+    let gates: Arc<[ActionableGate]> = vec![gate(holy, crossing, Truth::False)].into();
+    let possible = holy.probe.refuse[0].proves;
+    let fact = with_tick(&snapshot, &mut ledger, 6, |native| Fact {
+        quest: holy.establishes.quest.clone(),
+        signal: holy.establishes.signal.clone(),
+        possible,
+        after: holy.after_for(possible).unwrap(),
+        refused: Some(holy.establishes.values),
+        source: FactSource::Refusal {
+            row: ordinal,
+            entry: 0,
+        },
+        observed: native.cx.evidence(),
+    });
+    assert!(
+        state.record_prereq_fact(fact.clone()),
+        "the host records before ownership decisions"
+    );
+    let observation = Arc::new(RefusalObservation {
+        crossing: crossing.crossing,
+        leg: gates[0].leg,
+        gates,
+        matched: CatalogRef {
+            row: ordinal,
+            entry: 0,
+        },
+        fact: fact.clone(),
+    });
+    wrapper_terminal(&mut ledger, 6, WalkEnd::GateRefused(observation));
+    let Poll::Ready(Ok(receipt)) = wrapper_poll(&mut walk, &snapshot, &mut ledger, 6, &state)
+    else {
+        panic!("the two-reissue budget must terminate the logical walk");
+    };
+    assert_eq!(receipt.end, WalkEnd::Blocked);
+    let Some(crate::native::WalkRefusal::Prerequisite(refusal)) = receipt.refusal else {
+        panic!("the exhausted budget must preserve the refusal observation");
+    };
+    assert!(matches!(
+        refusal.as_ref(),
+        PrereqRefusal::RefusedAfterStep { .. }
+    ));
+    assert!(state.prereq_snapshot().facts().contains(&fact));
+    assert!(!ledger.as_ref().unwrap().test_owner_live());
+}
+
+#[test]
+fn reach_handover_captures_inline_walk_grants_and_cancels_the_probe_owner() {
+    use crate::quester::prereq::reach::PrereqReach;
+
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let crossing = &row.crossings[0];
+    let state = state();
+    let mut snapshot = crossing_snapshot(crossing);
+    let mut door = snapshot.locs().unwrap().value[0].clone();
+    door.name = Some("Door".into());
+    snapshot.seed_locs(vec![door]);
+    let args = reach::ReachArgs {
+        kind: reach::ReachKind::Loc {
+            id: Some(crossing.crossing.loc_id),
+            name: None,
+        },
+        op: Arc::from("Open"),
+        anchor: Some(crossing.crossing.at),
+        radius: 2,
+        wait_if_missing: false,
+        target_tile: Some(crossing.crossing.at),
+        reachable_only: false,
+    };
+    let mut ledger = None;
+    let mut action = with_tick(&snapshot, &mut ledger, 1, |native| {
+        PrereqReach::begin(args, native.actions, &mut native.cx).unwrap()
+    });
+    let original = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    accept_last(&mut ledger, 1, 0);
+    message(&mut snapshot, 1, "I can't reach that!");
+    assert!(with_tick(&snapshot, &mut ledger, 2, |native| action.poll(
+        native.actions,
+        &mut native.cx,
+        Some(&state)
+    ))
+    .is_pending());
+    assert!(matches!(
+        ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        HostEffect::Walk(_)
+    ));
+    assert!(original.live(), "Reach owns its inline recovery walk");
+    wrapper_terminal(
+        &mut ledger,
+        3,
+        WalkEnd::NeedsStep(vec![gate(row, crossing, Truth::Unknown)].into()),
+    );
+    assert!(with_tick(&snapshot, &mut ledger, 3, |native| action.poll(
+        native.actions,
+        &mut native.cx,
+        Some(&state)
+    ))
+    .is_pending());
+    assert!(
+        !original.live(),
+        "the terminal Reach retires before its prerequisite owner"
+    );
+    assert!(matches!(last_interaction(&ledger), InteractReq::Loc { .. }));
+    let probe = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    assert!(
+        probe.live(),
+        "the terminal's grants authorize the owned probe"
+    );
+    action.cancel();
+    assert!(!probe.live());
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 4, |native| action.poll(
+            native.actions,
+            &mut native.cx,
+            Some(&state)
+        )),
+        Poll::Ready(Err(ActionError::Cancelled))
+    ));
+    assert!(!ledger.as_ref().unwrap().test_owner_live());
+    assert!(state.prereq_snapshot().facts().is_empty());
+}
+
+#[test]
+fn approach_walk_inherits_protect_and_allow() {
+    use crate::native::WalkBit;
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let crossing = &row.crossings[0];
+    for truth in [Truth::False, Truth::Unknown] {
+        let state = state();
+        let mut snapshot = crossing_snapshot(crossing);
+        snapshot.seed_local_player(local_player(WorldTile {
+            x: crossing.crossing.at.x - 1,
+            ..crossing.crossing.at
+        }));
+        let (mut walk, mut ledger) = walk_wrapper(&snapshot);
+        wrapper_terminal(
+            &mut ledger,
+            2,
+            WalkEnd::NeedsStep(vec![gate(row, crossing, truth)].into()),
+        );
+        assert!(wrapper_poll(&mut walk, &snapshot, &mut ledger, 2, &state).is_pending());
+        let HostEffect::Walk(request) = &ledger.as_ref().unwrap().outbox.last().unwrap().effect
+        else {
+            panic!("resolution must own a guarded approach walk");
+        };
+        assert_eq!(
+            request.target,
+            if truth == Truth::False {
+                row.target.anchor
+            } else {
+                crossing.crossing.at
+            }
+        );
+        assert!(request.protect && request.food_guard);
+        assert!(!request.allow.food && !request.allow.escape);
+        assert_eq!(request.options.allow_teleports, WalkBit::Forbid);
+        assert_eq!(request.options.allow_wilderness, WalkBit::Forbid);
+        assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
+        assert_eq!(&*request.avoid[0], "wilderness");
+        assert_eq!(&*request.cross[0], "morytania");
+        assert_eq!(request.required_after.tick, 2);
+        walk.cancel();
+        assert!(!ledger.as_ref().unwrap().test_owner_live());
+    }
+}
+
+#[test]
+fn protection_warning_reaches_the_owner_during_approach() {
+    use crate::native::{WalkEvent, WalkEventKind};
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let state = state();
+    let snapshot = crossing_snapshot(&row.crossings[0]);
+    let (mut walk, mut ledger) = walk_wrapper(&snapshot);
+    wrapper_terminal(
+        &mut ledger,
+        2,
+        WalkEnd::NeedsStep(vec![gate(row, &row.crossings[0], Truth::False)].into()),
+    );
+    assert!(wrapper_poll(&mut walk, &snapshot, &mut ledger, 2, &state).is_pending());
+    let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    ledger.as_mut().unwrap().walk_events.push(WalkEvent {
+        request_id: authority.request_id().get(),
+        evidence: EvidenceStamp {
+            run: authority.run(),
+            tick: 3,
+            sequence: 3,
+        },
+        kind: WalkEventKind::Unprotectable {
+            protect: crate::combat::GuardProtect::Missiles,
+        },
+        detail: Arc::from("Prayer 40 needed for Protect from Missiles"),
+    });
+    with_tick(&snapshot, &mut ledger, 3, |native| {
+        let handle = walk
+            .walk_handle()
+            .expect("the logical owner exposes its current approach");
+        let event = native
+            .actions
+            .take_walk_event(handle, &mut native.cx)
+            .unwrap();
+        assert!(matches!(event.kind, WalkEventKind::Unprotectable { .. }));
+        assert!(native
+            .actions
+            .take_walk_event(handle, &mut native.cx)
+            .is_none());
+    });
+    walk.cancel();
+    assert!(!ledger.as_ref().unwrap().test_owner_live());
+}
+
+#[test]
+fn exhausted_transition_budget_defers_repair_admission_without_allocating() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let state = state();
+    let snapshot = snapshot(WorldTile {
+        x: 1,
+        z: 2,
+        level: 0,
+    });
+    let mut request = reach::walk_request(
+        row.target.anchor,
+        1,
+        None,
+        EvidenceStamp {
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 1,
+        },
+    );
+    request.cross = vec![Arc::from("morytania")].into_boxed_slice();
+    request.avoid = vec![Arc::from("wilderness")].into_boxed_slice();
+    for phase in [
+        Phase::Approach(None),
+        Phase::ProbeApproach(None),
+        Phase::TalkStart,
+        Phase::ProbeDrain(ChatDrive::unstarted(true)),
+    ] {
+        let mut run = runner(row, &row.crossings[0], Truth::False);
+        run.phase = phase;
+        let mut budget = PrereqBudget::default();
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 2, |native| {
+            while native.cx.charge_transition() {}
+            let allocated = allocation_counter::measure(|| {
+                for _ in 0..10 {
+                    assert!(run
+                        .poll_with_walk(
+                            &mut native.actions,
+                            &mut native.cx,
+                            Some(&state),
+                            &mut budget,
+                            RepairWalk::from_request(&request)
+                        )
+                        .is_pending());
+                }
+            });
+            assert_eq!(
+                allocated.count_total, 0,
+                "budget-only repair polls allocated: {allocated:?}"
+            );
+        });
+        assert!(!ledger
+            .as_ref()
+            .is_some_and(|ledger| ledger.test_owner_live()));
+    }
+}
+
+#[test]
+fn a_dialogue_deadline_keeps_its_reported_failure_without_inventing_a_cause() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let state = state();
+    let snapshot = npc_snapshot(row);
+    let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
+    let before = state.prereq_snapshot();
+    let sent = ledger.as_ref().unwrap().outbox.len();
+    let result = with_tick(&snapshot, &mut ledger, 2, |native| {
+        native.cx.active_now =
+            Duration::from_millis(crate::quester::families::dialogue::DIALOGUE_OPEN_MS + 1);
+        run.poll(native.actions, &mut native.cx, Some(&state), &mut budget)
+    });
+    // The reused machine exposes this error, not a typed expiry cause.
+    assert!(matches!(result, Poll::Ready(Err(PrereqRefusal::StepFailed {
+        why: PrereqFailure::Action(reason), ..
+    })) if reason.contains("expected dialogue did not open")));
+    assert_eq!(state.prereq_snapshot(), before);
+    assert_eq!(budget.talks, 1);
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), sent);
+    assert!(!ledger.as_ref().unwrap().test_owner_live());
+}
+
+#[test]
+fn a_walk_deadline_returns_no_route_to_step_without_a_fact_or_retry() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let state = state();
+    let snapshot = snapshot(WorldTile {
+        x: 1,
+        z: 2,
+        level: 0,
+    });
+    let mut run = runner(row, &row.crossings[0], Truth::False);
+    let mut budget = PrereqBudget::default();
+    let mut ledger = None;
+    assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
+    let before = state.prereq_snapshot();
+    let result = with_tick(&snapshot, &mut ledger, 1, |native| {
+        native.cx.active_now = crate::native::walk::WALK_DEADLINE + Duration::from_millis(1);
+        run.poll(native.actions, &mut native.cx, Some(&state), &mut budget)
+    });
+    assert!(matches!(
+        result,
+        Poll::Ready(Err(PrereqRefusal::NoRouteToStep {
+            end: WalkEnd::Failed,
+            ..
+        }))
+    ));
+    assert_eq!(state.prereq_snapshot(), before);
+    assert_eq!(budget.talks, 0);
+    assert_eq!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|effect| matches!(effect.effect, HostEffect::Walk(_)))
+            .count(),
+        1
+    );
+    assert!(!ledger.as_ref().unwrap().test_owner_live());
+}
+
+#[test]
+fn the_runner_module_reads_no_active_clock() {
+    for source in [include_str!("run.rs"), include_str!("walk.rs")] {
+        assert!(!source.contains("active_now"));
+    }
+}

@@ -2378,152 +2378,36 @@
       ],
       "open:morytania": [
         {
-          "id": "barrier-reach-mausoleum",
-          "kind": "acquire",
-          "version": 1,
-          "args": {
-            "recipe": "reach:drezel-mausoleum"
-          },
-          "skip_if": {
-            "Fact": {
-              "kind": "in_area",
-              "version": 1,
-              "args": {
-                "area": "mausoleum_east"
-              }
-            }
-          },
-          "settle": {
-            "Fact": {
-              "kind": "in_area",
-              "version": 1,
-              "args": {
-                "area": "mausoleum_east"
-              }
-            }
-          }
-        },
-        {
-          "id": "barrier-reclaim-or-first-advice",
-          "kind": "talk",
-          "version": 1,
-          "args": {
-            "npc": "priestperiltrappedmonk2",
-            "anchor": {
-              "tile": [
-                3440,
-                9895,
-                0
-              ],
-              "source": "C maps/m53_154.jm2:6139; scripts/areas/area_mausoleum/scripts/drezel.rs2:8-19,138-157,277-294,343-347"
-            },
-            "leash": 2,
-            "prefer": [
-              "Well, I'm going to look around a bit more.",
-              "Sorry, not interested",
-              "Ok, thanks."
-            ],
-            "strict": true
-          },
-          "skip_if": {
-            "Any": []
-          },
-          "settle": {
-            "All": []
-          },
-          "advances": true
-        },
-        {
-          "id": "barrier-finish-advice",
-          "kind": "talk",
-          "version": 1,
-          "args": {
-            "npc": "priestperiltrappedmonk2",
-            "anchor": {
-              "tile": [
-                3440,
-                9895,
-                0
-              ],
-              "source": "C maps/m53_154.jm2:6139; scripts/areas/area_mausoleum/scripts/drezel.rs2:138-147,277-294,343-347"
-            },
-            "leash": 2,
-            "prefer": [
-              "Well, I'm going to look around a bit more.",
-              "Sorry, not interested",
-              "Ok, thanks."
-            ],
-            "strict": true
-          },
-          "skip_if": {
-            "Any": []
-          },
-          "settle": {
-            "All": []
-          },
-          "advances": true
-        },
-        {
           "id": "pass-holy-barrier",
-          "kind": "interact",
+          "kind": "walk",
           "version": 1,
           "args": {
-            "target": {
-              "loc": "pip_underground_wall_side_withportal"
-            },
-            "op": "Pass-through",
-            "anchor": {
-              "tile": [
-                3440,
-                9887,
-                0
-              ],
-              "source": "C maps/m53_154.jm2:4437 barrier at [3440,9886,0]; scripts/areas/area_mausoleum/scripts/holy_barrier.rs2:1-9"
-            },
-            "radius": 2
+            "tile": [3423, 3485, 0],
+            "radius": 0,
+            "source": "C scripts/areas/area_mausoleum/scripts/holy_barrier.rs2:1-6; row priestperil:drezel-advice in the shared prerequisite catalog",
+            "allow_quest_start": false
           },
-          "skip_if": {
-            "Fact": {
-              "kind": "message_state",
-              "version": 1,
-              "args": {
-                "set": [
-                  "You pass through the holy barrier."
-                ],
-                "clear": []
-              }
-            }
-          },
+          "skip_if": {"Any": []},
           "settle": {
             "All": [
               {
                 "Fact": {
                   "kind": "near",
                   "version": 1,
-                  "args": {
-                    "tile": [
-                      3423,
-                      3485,
-                      0
-                    ],
-                    "radius": 1
-                  }
+                  "args": {"tile": [3423, 3485, 0], "radius": 1}
                 }
               },
               {
                 "Fact": {
                   "kind": "message",
                   "version": 1,
-                  "args": {
-                    "any": [
-                      "You pass through the holy barrier."
-                    ]
-                  }
+                  "args": {"any": ["You pass through the holy barrier."]}
                 }
               }
             ]
           },
-          "advances": false
+          "advances": false,
+          "comment": "The walk resolves row A1 through the shared prerequisite runner. The catalog owns the reclaim and advice dialogue. This recipe does not start Nature Spirit."
         }
       ]
     },
@@ -4087,7 +3971,7 @@
                   }
                 ]
               },
-              "comment": "Completion at varp 60 is not gate access at 61. Two ordinary Drezel talks cover lost-Wolfbane replacement then advice; strict closing preferences decline Nature Spirit on a stage-61 resume. Actual Pass-through plus its message and scripted landing prove access. Stop immediately outside; do not enter Canifis or fight werewolves."
+              "comment": "Completion at varp 60 is not gate access at 61. The shared prerequisite runner owns Wolfbane reclaim and barrier advice. The recipe forbids Nature Spirit starts. The barrier message and scripted landing prove access. Stop immediately outside without entering Canifis or fighting werewolves."
             }
           ]
         }

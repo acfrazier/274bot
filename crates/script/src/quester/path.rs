@@ -26,10 +26,34 @@ pub struct PathDocument {
     pub required: Vec<FactKey>,
     pub tested_stats: Option<Vec<SkillMinimum>>,
     pub partner: Option<PartnerDeclaration>,
+    /// Request-level prerequisite overrides applied to every walk in this Path.
+    #[serde(default)]
+    pub prereq: PathPrereqDocument,
     /// Quest provisioning and eligibility input consumed during compilation.
     #[serde(default)]
     pub quest: Option<QuestHeaderDocument>,
     pub roles: Vec<PathRoleDocument>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct PathPrereqDocument {
+    /// None inherits grants. False forbids dialogue steps throughout the Path.
+    #[serde(default)]
+    pub dialogue: Option<bool>,
+    /// None inherits grants. False forbids quest starts throughout the Path.
+    #[serde(default)]
+    pub quest_start: Option<bool>,
+}
+
+impl PathPrereqDocument {
+    pub(crate) fn options(self) -> crate::native::PrereqOptions {
+        crate::native::PrereqOptions {
+            dialogue: self.dialogue.into(),
+            quest_start: self.quest_start.into(),
+        }
+    }
 }
 
 pub const PATH_SCHEMA: u16 = 3;

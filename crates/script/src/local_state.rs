@@ -43,6 +43,8 @@ pub struct SlotState {
     /// slot until the store's version moves: one copy and one digest per
     /// version, not per lease.
     loadouts: Mutex<Option<OperatorLoadouts>>,
+    /// Session facts survive a card's retirement. Their run stamps control authority.
+    prereq: Mutex<api::prereq_knowledge::SessionMemory>,
 }
 
 impl SlotState {
@@ -53,6 +55,7 @@ impl SlotState {
             account,
             scope,
             loadouts: Mutex::new(None),
+            prereq: Mutex::new(api::prereq_knowledge::SessionMemory::default()),
         }
     }
 
@@ -69,6 +72,23 @@ impl SlotState {
     /// The content scope the slot observes under.
     pub fn scope(&self) -> &ContentScope {
         &self.scope
+    }
+
+    /// Capture one immutable view for a route demand, never a live lock in search.
+    pub fn prereq_snapshot(&self) -> api::prereq_knowledge::SessionMemory {
+        self.prereq.lock().clone()
+    }
+
+    /// Record a witnessed content outcome on the slot's account capability.
+    pub fn record_prereq_fact(&self, fact: api::prereq_knowledge::Fact) -> bool {
+        self.prereq.lock().record(fact)
+    }
+
+    pub(crate) fn with_prereq_memory<T>(
+        &self,
+        read: impl FnOnce(&api::prereq_knowledge::SessionMemory) -> T,
+    ) -> T {
+        read(&self.prereq.lock())
     }
 
     /// The durable identity of `domain` for this slot.

@@ -312,6 +312,7 @@ fn with_tick<R>(
         prompt_port: None,
         actions: &mut actions,
         cx: crate::native::ActionContext {
+            walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,

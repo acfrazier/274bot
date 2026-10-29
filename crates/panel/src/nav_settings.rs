@@ -15,6 +15,10 @@ pub struct NavSettings {
     pub allow_wilderness: bool,
     /// Durable global permission for manual WalkTo to use BankBudget fetch.
     pub allow_bank_fetch: bool,
+    /// Durable global permission for every walk to run dialogue steps.
+    pub allow_prereq_dialogue: bool,
+    /// Durable global permission for every walk to start quests.
+    pub allow_quest_start: bool,
     /// Durable global override for every walk to route through danger zones.
     pub allow_danger_zones: bool,
     /// Allow admission of survivable crossings once the runtime net is available.
@@ -54,6 +58,8 @@ impl Default for NavSettings {
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: true,
+            allow_quest_start: true,
             allow_danger_zones: false,
             survivable_routing: true,
             script_scope_notice_ack: false,
@@ -87,6 +93,8 @@ impl NavSettings {
             self.allow_bank_fetch,
             self.allow_danger_zones,
             self.survivable_routing,
+            self.allow_prereq_dialogue,
+            self.allow_quest_start,
         )
     }
 
@@ -109,6 +117,8 @@ impl NavSettings {
         self.allow_teleports = globals.allow_teleports();
         self.allow_wilderness = globals.allow_wilderness();
         self.allow_bank_fetch = globals.allow_bank_fetch();
+        self.allow_prereq_dialogue = globals.allow_prereq_dialogue();
+        self.allow_quest_start = globals.allow_quest_start();
         self.allow_danger_zones = globals.allow_danger_zones();
         self.survivable_routing = globals.survivable_routing();
         self.script_scope_notice_ack = view.script_scope_notice_ack();
@@ -295,6 +305,15 @@ mod tests {
         assert!(NavSettings::default().pause_script_on_manual_walk_abort);
         let legacy: NavSettings = serde_json::from_str(r#"{"allow_teleports":true}"#).unwrap();
         assert!(legacy.pause_script_on_manual_walk_abort);
+    }
+
+    #[test]
+    fn prereq_grants_default_on_for_legacy_nav_preferences() {
+        assert!(NavSettings::default().allow_prereq_dialogue);
+        assert!(NavSettings::default().allow_quest_start);
+        let legacy: NavSettings = serde_json::from_str(r#"{"allow_teleports":true}"#).unwrap();
+        assert!(legacy.allow_prereq_dialogue);
+        assert!(legacy.allow_quest_start);
     }
 
     #[test]

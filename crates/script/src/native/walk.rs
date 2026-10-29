@@ -1,6 +1,8 @@
 //! Native adapter for the shared walk correlation and arrival core.
 use super::walk_wait::{HostOutcome, Observation, WalkKey, WalkSlot};
-use super::{ActionContext, ActionError, NativeMachine, WalkEnd, WalkReceipt, WalkRequest};
+use super::{
+    ActionContext, ActionError, NativeMachine, PrereqAllow, WalkEnd, WalkReceipt, WalkRequest,
+};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::SnapshotView;
 use nav_planner::contract::ArrivalKind;
@@ -24,6 +26,15 @@ pub struct Walk {
     required_after: EvidenceStamp,
     deadline: Duration,
     wait: WalkSlot,
+}
+
+impl Walk {
+    /// Read the effective grants from this walk's fresh terminal receipt.
+    pub(crate) fn prereq_allow(&self, cx: &ActionContext<'_>) -> Option<PrereqAllow> {
+        cx.walk_receipt(self.request_id)
+            .filter(|receipt| receipt.evidence.meets(self.required_after))
+            .and_then(|receipt| receipt.prereq_allow)
+    }
 }
 
 struct Frame<'a> {
@@ -136,6 +147,7 @@ impl NativeMachine for Walk {
                 refusal: None,
                 assessment: None,
                 escape: None,
+                prereq_allow: None,
             }));
         }
         if !cx.evidence().meets(self.required_after) {
@@ -190,6 +202,7 @@ impl NativeMachine for Walk {
                 refusal: None,
                 assessment: None,
                 escape: None,
+                prereq_allow: receipt.and_then(|receipt| receipt.prereq_allow),
             }));
         }
         match receipt {

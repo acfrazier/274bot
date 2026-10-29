@@ -302,7 +302,7 @@ fn iteration_settles_a_quester_paths_reload(mode: Loop) {
     let mut rig = Rig::new(mode, session);
     rig.app.settings_state.open = true;
     // The popup scrolls to the selected row: Reload Paths.
-    rig.app.settings_state.row = 14;
+    rig.app.settings_state.row = 16;
     rig.session
         .core
         .stage_quester_reload(Some(selected_game_data()));

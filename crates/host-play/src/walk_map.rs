@@ -12,8 +12,8 @@ pub(crate) use actions::{
 };
 pub use actions::{
     ActionError, ActionKind, FocusToken, GroupWalkReport, Layers, MapCommand, MapContext, MapModel,
-    MapWalkPlan, Selection, WalkExclude, WalkRequest, WalkSlotOutcome, WalkSlotOutcomeKind,
-    WalkSlotReady, WalkSlotRequest, WalkSlotStatus,
+    MapWalkPlan, Selection, WalkActionOutcome, WalkExclude, WalkRequest, WalkSlotOutcome,
+    WalkSlotOutcomeKind, WalkSlotReady, WalkSlotRequest, WalkSlotStatus,
 };
 pub use catalogue::{
     display_name_into, AuthenticatedServices, Catalogue, DisplayName, Entry, Meaning, Search,

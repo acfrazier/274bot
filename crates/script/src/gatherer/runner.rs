@@ -25,6 +25,7 @@ use crate::native::{
     ReturnStallRecovery, Script, ScriptFailure, ScriptFlow, SettingsApply, StopReason, WalkBit,
     WalkEnd, WalkOptions, WalkReceipt, WalkRequest,
 };
+use crate::quester::prereq::walk::PrereqWalk;
 use api::game_data::GatherForbiddenState;
 use api::gather_methods::known_rows;
 use api::selected::{RunKey, Truth};
@@ -97,7 +98,8 @@ enum Active {
     None,
     Gather(ActionHandle<GatherRun>),
     Drop(ActionHandle<DropBatch>),
-    Walk(ActionHandle<Walk>),
+    Walk(PrereqWalk),
+    EscapeWalk(ActionHandle<Walk>),
     Tend(ActionHandle<OneOp>),
     Select(ActionHandle<bank::Select>),
     Open(ActionHandle<bank::Open>),
@@ -461,14 +463,15 @@ impl Gatherer {
             required_after: tick.cx.evidence(),
             evidence: None,
             cross: Box::default(),
+            avoid: Box::new([]),
             protect: false,
             food_guard: false,
             allow: Default::default(),
         };
-        match tick.actions.begin::<Walk>(request, &mut tick.cx) {
-            Ok(handle) => {
+        match PrereqWalk::begin(request, tick.actions, &mut tick.cx) {
+            Ok(walk) => {
                 self.scratch.observation_walk = observation_walk;
-                self.active = Active::Walk(handle);
+                self.active = Active::Walk(walk);
                 true
             }
             Err(error) => {
@@ -829,6 +832,9 @@ impl Gatherer {
                 .as_ref()
                 .map(|target| (target.entity, target.tile)),
         );
+        if let Active::Walk(walk) = &mut self.active {
+            walk.cancel();
+        }
         self.active = Active::None;
         self.scratch.observation_walk = false;
         self.target = None;
@@ -1310,10 +1316,10 @@ impl Gatherer {
                 }
             };
         if let Some(request) = approach {
-            match tick.actions.begin::<Walk>(request, &mut tick.cx) {
-                Ok(handle) => {
+            match PrereqWalk::begin(request, tick.actions, &mut tick.cx) {
+                Ok(walk) => {
                     self.scratch.observation_walk = selected.observation_goals.is_some();
-                    self.active = Active::Walk(handle);
+                    self.active = Active::Walk(walk);
                     self.set_event("approaching target");
                 }
                 Err(error) => self.action_failure(error),
@@ -1684,8 +1690,8 @@ impl Gatherer {
                     }
                 }
             }
-            Active::Walk(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
-                Poll::Pending => self.active = Active::Walk(handle),
+            Active::Walk(mut walk) => match walk.poll(tick.actions, &mut tick.cx, tick.state) {
+                Poll::Pending => self.active = Active::Walk(walk),
                 Poll::Ready(Ok(result)) => {
                     self.handle_walk(result, tick);
                 }
@@ -1696,6 +1702,11 @@ impl Gatherer {
                         self.action_failure(error);
                     }
                 }
+            },
+            Active::EscapeWalk(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
+                Poll::Pending => self.active = Active::EscapeWalk(handle),
+                Poll::Ready(Ok(result)) => self.handle_walk(result, tick),
+                Poll::Ready(Err(error)) => self.action_failure(error),
             },
             Active::Tend(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Tend(handle),
@@ -2194,6 +2205,7 @@ impl Gatherer {
             required_after: tick.cx.evidence(),
             evidence: None,
             cross: Vec::new().into_boxed_slice(),
+            avoid: Box::new([]),
             protect: false,
             food_guard: false,
             allow: Default::default(),
@@ -2201,7 +2213,7 @@ impl Gatherer {
         match tick.actions.begin::<Walk>(request, &mut tick.cx) {
             Ok(handle) => {
                 self.scratch.observation_walk = false;
-                self.active = Active::Walk(handle);
+                self.active = Active::EscapeWalk(handle);
                 self.set_event("walking away from hazard");
             }
             Err(error) => self.action_failure(error),
@@ -2256,7 +2268,9 @@ impl Gatherer {
         if matches!(self.retained.recovery, RecoveryState::Pending { .. }) {
             return ("recovering", NativePhase::Working);
         }
-        if self.trip != TripStep::Idle && !matches!(self.active, Active::Walk(_)) {
+        if self.trip != TripStep::Idle
+            && !matches!(self.active, Active::Walk(_) | Active::EscapeWalk(_))
+        {
             if self.wait_until.is_some() {
                 return ("waiting", NativePhase::Waiting);
             }
@@ -2274,7 +2288,7 @@ impl Gatherer {
             }
             Active::Gather(_) => ("gathering", NativePhase::Working),
             Active::Drop(_) => ("dropping", NativePhase::Working),
-            Active::Walk(_)
+            Active::Walk(_) | Active::EscapeWalk(_)
                 if self.settings().skill_kind() == Skill::Fishing
                     && self
                         .target
@@ -2283,7 +2297,7 @@ impl Gatherer {
             {
                 ("surveying", NativePhase::Waiting)
             }
-            Active::Walk(_) => ("walking", NativePhase::Working),
+            Active::Walk(_) | Active::EscapeWalk(_) => ("walking", NativePhase::Working),
             Active::Tend(_) => ("tending", NativePhase::Working),
             Active::Select(_)
             | Active::Open(_)
@@ -2783,6 +2797,7 @@ mod tests {
                     refusal: None,
                     assessment: None,
                     escape: None,
+                    prereq_allow: None,
                 },
                 tick,
             );
@@ -2827,6 +2842,7 @@ mod tests {
                     refusal: None,
                     assessment: None,
                     escape: None,
+                    prereq_allow: None,
                 },
                 tick,
             );
@@ -2890,6 +2906,7 @@ mod tests {
                     refusal: None,
                     assessment: None,
                     escape: None,
+                    prereq_allow: None,
                 },
                 tick,
             );
@@ -2957,6 +2974,7 @@ mod tests {
                     refusal: None,
                     assessment: None,
                     escape: None,
+                    prereq_allow: None,
                 },
                 native,
             );
@@ -3843,6 +3861,7 @@ mod tests {
                         refusal: None,
                         assessment: None,
                         escape: None,
+                        prereq_allow: None,
                     },
                     tick,
                 );

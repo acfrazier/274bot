@@ -220,6 +220,7 @@ mod tests {
         let mut ledger = None;
         let mut budget = TickBudget::default();
         let cx = ActionContext {
+            walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,

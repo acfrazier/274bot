@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use nav_planner::router::FindOptions;
 use nav_planner::zones::ZoneExempt;
-use script::native::{RiskPolicy, WalkBit, WalkOptions, WalkPermissions};
+use script::native::{PrereqAllow, RiskPolicy, WalkBit, WalkOptions, WalkPermissions};
 
 /// Runtime net activation is held until the integrated S2c gate passes.
 pub const NET_AVAILABLE: bool = false;
@@ -63,6 +63,8 @@ pub struct WalkGlobals {
     pub allow_bank_fetch: bool,
     pub allow_danger_zones: bool,
     pub survivable_routing: bool,
+    pub allow_prereq_dialogue: bool,
+    pub allow_quest_start: bool,
 }
 
 impl Default for WalkGlobals {
@@ -73,6 +75,8 @@ impl Default for WalkGlobals {
             allow_bank_fetch: false,
             allow_danger_zones: false,
             survivable_routing: true,
+            allow_prereq_dialogue: true,
+            allow_quest_start: true,
         }
     }
 }
@@ -86,6 +90,8 @@ impl WalkGlobals {
             allow_bank_fetch: false,
             allow_danger_zones: false,
             survivable_routing: false,
+            allow_prereq_dialogue: false,
+            allow_quest_start: false,
         }
     }
 
@@ -132,6 +138,28 @@ impl WalkGlobals {
         self.effective_danger_level().risk_policy(script, walk)
     }
 
+    /// Resolve prerequisite consent. Global and script grants are additive;
+    /// only a request-level Forbid can narrow the resulting grant.
+    pub(crate) const fn prereq_allow(
+        self,
+        script: WalkPermissions,
+        walk: WalkOptions,
+    ) -> PrereqAllow {
+        PrereqAllow {
+            dialogue: (self.allow_prereq_dialogue || script.allow_prereq_dialogue)
+                && !matches!(walk.allow_prereq_dialogue, WalkBit::Forbid),
+            quest_start: (self.allow_quest_start || script.allow_quest_start)
+                && !matches!(walk.allow_quest_start, WalkBit::Forbid),
+        }
+    }
+
+    /// Manual WalkTo has no script grant or per-request override.
+    pub(crate) const fn manual_prereq_allow(self) -> PrereqAllow {
+        PrereqAllow {
+            dialogue: self.allow_prereq_dialogue,
+            quest_start: self.allow_quest_start,
+        }
+    }
     /// Resolve verdict authority separately from router grants. While held,
     /// inherited requests retain precisely the router's pre-S2b outcome;
     /// explicit script and per-walk overrides still use the admission seam.
@@ -232,6 +260,58 @@ pub(crate) fn native_admission(
         .or_else(|| bot.as_deref().and_then(|bot| bot.native_permissions))
         .unwrap_or_default();
     resolve_native_admission(globals, script, walk)
+}
+
+/// Capture effective prerequisite consent for one native admission.
+pub(crate) fn native_prereq_allow(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+    walk: WalkOptions,
+    session_permissions: Option<WalkPermissions>,
+) -> PrereqAllow {
+    let all = navs.lock().unwrap();
+    let bot = all.get(name);
+    let globals = globals_for(bot);
+    let script = session_permissions
+        .or_else(|| bot.and_then(|bot| bot.native_permissions))
+        .unwrap_or_default();
+    globals.prereq_allow(script, walk)
+}
+
+/// Capture effective prerequisite consent for a compiled or compatibility
+/// request. `Some(false)` is the only request value that narrows permission.
+pub(crate) fn compiled_prereq_allow(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+    dialogue: Option<bool>,
+    quest_start: Option<bool>,
+) -> PrereqAllow {
+    let all = navs.lock().unwrap();
+    let bot = all.get(name);
+    let globals = globals_for(bot);
+    let script = bot
+        .and_then(|bot| bot.native_permissions)
+        .unwrap_or_default();
+    let allow = |global, script, request| {
+        (global || script || request == Some(true)) && request != Some(false)
+    };
+    PrereqAllow {
+        dialogue: allow(
+            globals.allow_prereq_dialogue,
+            script.allow_prereq_dialogue,
+            dialogue,
+        ),
+        quest_start: allow(
+            globals.allow_quest_start,
+            script.allow_quest_start,
+            quest_start,
+        ),
+    }
+}
+
+/// Resolve the additive header grants for one manual WalkTo admission.
+pub(crate) fn manual_prereq_allow(globals: WalkGlobals) -> PrereqAllow {
+    globals.manual_prereq_allow()
 }
 
 fn resolve_native_admission(
@@ -901,11 +981,15 @@ mod tests {
                 allow_bank_fetch: true,
                 allow_danger_zones: global,
                 survivable_routing: true,
+                allow_prereq_dialogue: global,
+                allow_quest_start: !global,
             };
             let script = WalkPermissions {
                 allow_teleports: script,
                 allow_wilderness: script,
                 allow_danger_zones: script,
+                allow_prereq_dialogue: script,
+                allow_quest_start: script,
             };
             for (bit, expected) in [
                 (WalkBit::Inherit, inherited),
@@ -925,6 +1009,32 @@ mod tests {
                 assert_eq!(opts.zones.is_all(), expected);
                 assert!(!opts.allow_bank_fetch);
             }
+            for (request, expected) in [
+                (WalkBit::Inherit, inherited),
+                (WalkBit::Allow, inherited),
+                (WalkBit::Forbid, false),
+            ] {
+                let allowed = globals.prereq_allow(
+                    script,
+                    WalkOptions {
+                        allow_prereq_dialogue: request,
+                        allow_quest_start: request,
+                        ..WalkOptions::default()
+                    },
+                );
+                assert_eq!(allowed.dialogue, expected);
+                assert_eq!(
+                    allowed.quest_start,
+                    (!global || script.allow_quest_start) && request != WalkBit::Forbid
+                );
+            }
+            assert_eq!(
+                globals.manual_prereq_allow(),
+                PrereqAllow {
+                    dialogue: global,
+                    quest_start: !global,
+                }
+            );
             assert!(globals.manual_options(false).allow_bank_fetch);
             assert_eq!(globals.manual_options(false).zones.is_all(), global);
             assert!(globals.manual_options(true).zones.is_all());
@@ -1077,6 +1187,8 @@ mod tests {
             "allow_bank_fetch": true,
             "allow_danger_zones": true,
             "survivable_routing": false,
+            "allow_prereq_dialogue": false,
+            "allow_quest_start": true,
         });
         let bytes = serde_json::to_vec(&serde_json::json!({
             "nav": stored_walk.clone(),
@@ -1095,6 +1207,8 @@ mod tests {
             allow_bank_fetch: true,
             allow_danger_zones: true,
             survivable_routing: false,
+            allow_prereq_dialogue: false,
+            allow_quest_start: true,
         };
         assert_eq!(
             preferences
@@ -1393,6 +1507,8 @@ mod tests {
         assert!(!defaults.allow_bank_fetch);
         assert!(!defaults.allow_danger_zones);
         assert!(defaults.survivable_routing);
+        assert!(defaults.allow_prereq_dialogue);
+        assert!(defaults.allow_quest_start);
         assert_eq!(defaults.danger_level(), DangerLevel::WhenSurvivable);
         assert_eq!(defaults.effective_danger_level(), DangerLevel::Never);
         assert_eq!(
@@ -1420,6 +1536,8 @@ mod tests {
                 allow_bank_fetch: false,
                 allow_danger_zones: false,
                 survivable_routing: false,
+                allow_prereq_dialogue: false,
+                allow_quest_start: false,
             }
         );
     }

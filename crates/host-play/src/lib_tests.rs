@@ -26869,6 +26869,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
                 cache: &None,
                 obj_names_arc: &None,
             },
+            None,
             requests,
         ),
         "raw bank selection must be accepted without a movement packet",

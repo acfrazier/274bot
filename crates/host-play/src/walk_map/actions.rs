@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::atomic::Ordering;
 
-use api::snapshot::WorldTile;
+use api::snapshot::{GameSnapshot, WorldTile};
 use nav_planner::bank_fetch::{plan_bank_fetch, BankFetchError, BankRows};
 use nav_planner::map::identity::Digest;
 use nav_planner::map::spatial::{snap_walkable, GameTile};
@@ -16,6 +16,12 @@ use crate::admission::Admission;
 use crate::walk_arm::WalkRoute;
 use crate::{Play, SlotArm, WalkArms};
 use script::combat::risk::RiskInput;
+
+#[derive(Debug)]
+pub enum WalkActionOutcome {
+    Walking(WalkRoute),
+    PrerequisiteStarted,
+}
 pub(crate) const LEGACY_ZONES_DETAIL: &str = "zones: unavailable (legacy grid pack)";
 
 /// Process-unique slot lifetime plus the operator-selected world epoch. A uid
@@ -184,8 +190,8 @@ pub struct WalkRequest<'a> {
 impl WalkRequest<'_> {
     pub fn run(
         self,
-        action: impl FnOnce() -> Result<WalkRoute, ActionError>,
-    ) -> Result<WalkRoute, ActionError> {
+        action: impl FnOnce() -> Result<WalkActionOutcome, ActionError>,
+    ) -> Result<WalkActionOutcome, ActionError> {
         let outcome = action();
         if api::hostlog::enabled(api::hostlog::Category::NavEvent) {
             api::hostlog::emit(
@@ -278,11 +284,14 @@ impl fmt::Display for WalkTile {
     }
 }
 
-struct WalkOutcome<'a>(&'a Result<WalkRoute, ActionError>);
+struct WalkOutcome<'a>(&'a Result<WalkActionOutcome, ActionError>);
 impl fmt::Display for WalkOutcome<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let admitted = match self.0 {
-            Ok(admitted) => admitted,
+            Ok(WalkActionOutcome::PrerequisiteStarted) => {
+                return f.write_str("prerequisite_started")
+            }
+            Ok(WalkActionOutcome::Walking(admitted)) => admitted,
             Err(reason) => return write!(f, "refused={reason:?}"),
         };
         let route = &admitted.route;
@@ -573,6 +582,8 @@ impl WalkSlotStatus {
 pub struct WalkSlotRequest<'a> {
     pub name: &'a str,
     pub state: &'a WorldState,
+    /// The slot's current observed snapshot; missing snapshots fail closed.
+    pub snapshot: Option<&'a GameSnapshot>,
     /// The slot's bank memory rows ([`crate::Play::bank_rows`]).
     pub bank: &'a BankRows,
     pub risk_input: RiskInput,
@@ -617,6 +628,7 @@ impl MapWalkPlan {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WalkSlotOutcomeKind {
     Walking,
+    PrerequisiteStarted,
     Excluded(WalkExclude),
     Failed(ActionError),
 }
@@ -626,7 +638,7 @@ impl WalkSlotOutcomeKind {
     /// front end shows; `None` for a slot that is walking.
     pub fn reason(&self) -> Option<&'static str> {
         match self {
-            Self::Walking => None,
+            Self::Walking | Self::PrerequisiteStarted => None,
             Self::Excluded(WalkExclude::NotLoggedIn) => Some("not logged in"),
             Self::Excluded(WalkExclude::NoPosition) => Some("no position yet"),
             Self::Excluded(WalkExclude::RunningScript) => Some("running a script"),
@@ -1007,6 +1019,21 @@ impl MapCommand {
         admission: Admission,
         arms: &WalkArms,
     ) -> Result<WalkRoute, ActionError> {
+        self.walk_on_with_manual(world, current, name, state, bank, admission, arms, |_| None)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn walk_on_with_manual(
+        self,
+        world: &NavWorld,
+        current: &MapContext,
+        name: &str,
+        state: &WorldState,
+        bank: &BankRows,
+        admission: Admission,
+        arms: &WalkArms,
+        manual_prereq: impl FnOnce(&Route) -> Option<Box<crate::ManualWalkPrereqContext>>,
+    ) -> Result<WalkRoute, ActionError> {
         self.check(current, ActionKind::Walk)?;
         if !safe_standable(world, world_tile(self.origin)) {
             return Err(ActionError::OriginNotStandable);
@@ -1014,7 +1041,7 @@ impl MapCommand {
         if !safe_standable(world, world_tile(self.destination)) {
             return Err(ActionError::Blocked);
         }
-        let result = crate::arm_walk_on(
+        let result = crate::walk_arm::arm_walk_on_with_prereq(
             world,
             self.origin,
             self.destination,
@@ -1024,6 +1051,7 @@ impl MapCommand {
             admission,
             arms,
             Some(name),
+            manual_prereq,
         );
         if let Err(crate::NoPath {
             detail,
@@ -1090,6 +1118,7 @@ impl MapCommand {
                 &WalkSlotRequest {
                     name,
                     state,
+                    snapshot: None,
                     bank,
                     risk_input: admission.input,
                 },
@@ -1135,6 +1164,67 @@ impl MapCommand {
         }
     }
 }
+fn manual_outer_walk(
+    destination: Tile,
+    find: FindOptions,
+    intent_seq: u64,
+    globals: crate::WalkGlobals,
+) -> (script::native::OuterWalk, bool) {
+    let permission = |allowed| {
+        if allowed {
+            script::native::WalkBit::Allow
+        } else {
+            script::native::WalkBit::Inherit
+        }
+    };
+    let handover_enabled =
+        find.zones == nav_planner::zones::ZoneExempt::NONE || find.zones.is_all();
+    (
+        script::native::OuterWalk {
+            identity: script::native::OuterIdentity::Manual { intent_seq },
+            target: world_tile(destination),
+            radius: 0,
+            arrival: nav_planner::contract::ArrivalKind::Reach,
+            avoid: Box::default(),
+            cross: Box::default(),
+            options: script::native::WalkOptions {
+                allow_teleports: permission(find.allow_teleports),
+                allow_wilderness: permission(find.allow_wilderness),
+                allow_danger_zones: if find.zones.is_all() {
+                    script::native::WalkBit::Allow
+                } else {
+                    script::native::WalkBit::Inherit
+                },
+                allow_prereq_dialogue: script::native::WalkBit::Inherit,
+                allow_quest_start: script::native::WalkBit::Inherit,
+            },
+            allow_bank_fetch: find.allow_bank_fetch,
+            prereq_allow: globals.manual_prereq_allow(),
+        },
+        handover_enabled,
+    )
+}
+
+fn clear_manual_no_path(arms: &WalkArms, name: &str, generation: u64) {
+    let Some(arm) = arms.lock().unwrap().get(name).cloned() else {
+        return;
+    };
+    let mut arm = arm.lock().unwrap();
+    if arm.route.is_some() || arm.route_generation != generation {
+        return;
+    }
+    arm.traveller.clear();
+    arm.bank_fetch = None;
+    arm.admission = None;
+    arm.assessment = None;
+    arm.last_assessment = None;
+    arm.basis = None;
+    arm.refusal = None;
+    arm.refusal_detail = None;
+    arm.admission_pending = false;
+    arm.manual_prereq = None;
+}
+
 impl Play {
     pub fn map_focus(&self, name: &str) -> Option<FocusToken> {
         self.arms
@@ -1227,13 +1317,31 @@ impl Play {
         &self,
         command: MapCommand,
         current: &MapContext,
+        snapshot: &GameSnapshot,
         state: &WorldState,
         bank: &BankRows,
         input: RiskInput,
         arms: &WalkArms,
-    ) -> Result<WalkRoute, ActionError> {
+    ) -> Result<WalkActionOutcome, ActionError> {
+        self.map_walk_with_snapshot(command, current, Some(snapshot), state, bank, input, arms)
+    }
+
+    fn map_walk_with_snapshot(
+        &self,
+        command: MapCommand,
+        current: &MapContext,
+        snapshot: Option<&GameSnapshot>,
+        state: &WorldState,
+        bank: &BankRows,
+        input: RiskInput,
+        arms: &WalkArms,
+    ) -> Result<WalkActionOutcome, ActionError> {
         let name = self.validate_map_command(&command, current, ActionKind::Walk)?;
+        let snapshot = snapshot.ok_or(ActionError::NoOrigin)?;
         let world = self.world.as_deref().ok_or(ActionError::NoNavigation)?;
+        let options = command.options();
+        let destination = command.destination();
+        let origin = command.origin();
         let manual = arms
             .lock()
             .unwrap()
@@ -1259,8 +1367,97 @@ impl Play {
                 });
             }
         }
-        let admission = Admission::manual(command.options, input, 0, globals);
-        command.walk_on(world, current, &name, state, bank, admission, arms)
+        let start = self.script_start_handle();
+        let manual_route = start.manual_route_state(&name, snapshot, state, world);
+        let route_state = manual_route
+            .as_ref()
+            .map_or(state, |(_, _, route_state)| route_state);
+        let route_run = manual_route.as_ref().map(|(run, _, _)| *run);
+        let route_catalog = manual_route
+            .as_ref()
+            .and_then(|(_, catalog, _)| catalog.as_deref());
+        let route_generation = crate::walk_map::next_map_route_generation();
+        let (outer, handover_enabled) =
+            manual_outer_walk(destination, options, route_generation, globals);
+        let slot: std::sync::Arc<str> = std::sync::Arc::from(name.as_str());
+        let manual_prereq = |route: &Route| {
+            let (Some(run), Some(catalog)) = (route_run, route_catalog) else {
+                return None;
+            };
+            let view = nav_planner::producer::route_view(world, route).ok()?;
+            let gates = nav_planner::router::route_establishable_quest_gates(view, route_state)?;
+            let content = crate::script_runtime::route_prereq_content(catalog, run, gates)?;
+            Some(Box::new(crate::ManualWalkPrereqContext::new(
+                outer.clone(),
+                run,
+                content,
+                handover_enabled,
+                start.clone(),
+                std::sync::Arc::clone(&slot),
+            )))
+        };
+        let admission = Admission::manual(options, input, route_generation, globals);
+        let result = command.walk_on_with_manual(
+            world,
+            current,
+            &name,
+            route_state,
+            bank,
+            admission,
+            arms,
+            manual_prereq,
+        );
+        match result {
+            Ok(route) => Ok(WalkActionOutcome::Walking(route)),
+            Err(ActionError::NoPath) => {
+                if handover_enabled
+                    && (outer.prereq_allow.dialogue || outer.prereq_allow.quest_start)
+                {
+                    if let (Some(run), Some(catalog)) = (route_run, route_catalog) {
+                        if let Ok(Some(gates)) = nav_planner::router::find_actionable_quest_gates(
+                            &world.collision,
+                            &world.graph,
+                            world_tile(origin),
+                            &[world_tile(destination)],
+                            options,
+                            route_state,
+                            &[],
+                        ) {
+                            let gate_count = gates.len();
+                            if let Some(content) =
+                                crate::script_runtime::route_prereq_content(catalog, run, gates)
+                            {
+                                if let Some((x, z, level)) = snapshot.tile() {
+                                    let handover = script::native::WalkHandover {
+                                        outer,
+                                        entry: script::native::HandoverEntry::NeedsStep(
+                                            Arc::clone(&content.gates),
+                                        ),
+                                        here: WorldTile { x, z, level },
+                                    };
+                                    api::host_log!(
+                                        api::hostlog::Category::NavEvent,
+                                        api::hostlog::Level::Info,
+                                        slot = name.as_str(),
+                                        "prereq handover owner=manual entry=NeedsStep run={:?} intent_seq={} gates={} target={:?}",
+                                        run,
+                                        route_generation,
+                                        gate_count,
+                                        destination,
+                                    );
+                                    if start.start_manual_walk_to(&name, handover, run).is_ok() {
+                                        clear_manual_no_path(arms, &name, route_generation);
+                                        return Ok(WalkActionOutcome::PrerequisiteStarted);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(ActionError::NoPath)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Consume a destination plan into one `map_walk` per requested slot.
@@ -1314,11 +1511,22 @@ impl Play {
                     overlay: dest.overlay,
                     generation: dest.generation,
                 };
-                self.map_walk(command, &current, req.state, req.bank, req.risk_input, arms)
+                self.map_walk_with_snapshot(
+                    command,
+                    &current,
+                    req.snapshot,
+                    req.state,
+                    req.bank,
+                    req.risk_input,
+                    arms,
+                )
             });
             let kind = match (status, result) {
                 (WalkSlotStatus::Excluded(reason), _) => WalkSlotOutcomeKind::Excluded(reason),
-                (_, Ok(_)) => WalkSlotOutcomeKind::Walking,
+                (_, Ok(WalkActionOutcome::Walking(_))) => WalkSlotOutcomeKind::Walking,
+                (_, Ok(WalkActionOutcome::PrerequisiteStarted)) => {
+                    WalkSlotOutcomeKind::PrerequisiteStarted
+                }
                 (_, Err(error)) => WalkSlotOutcomeKind::Failed(error),
             };
             outcomes.push(WalkSlotOutcome {

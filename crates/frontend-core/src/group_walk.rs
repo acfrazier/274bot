@@ -198,20 +198,26 @@ pub(crate) fn walk_marked<Io>(
     };
 
     let bots: Vec<WalkInputs> = names.iter().map(|name| inputs(name)).collect();
-    let requests: Vec<WalkSlotRequest<'_>> = names
-        .iter()
-        .zip(&bots)
-        .map(|(name, bot)| WalkSlotRequest {
-            name,
-            state: &bot.state,
-            bank: &bot.bank,
-            risk_input: bot.risk_input,
-        })
-        .collect();
-    let report = play.map_walk_group(plan, &context, &requests, walk.arms);
+    let report = core.frames().with_snapshots(|snapshots| {
+        let requests: Vec<WalkSlotRequest<'_>> = names
+            .iter()
+            .zip(&bots)
+            .map(|(name, bot)| WalkSlotRequest {
+                name,
+                snapshot: snapshots.get(name).map(|slot| &slot.snapshot),
+                state: &bot.state,
+                bank: &bot.bank,
+                risk_input: bot.risk_input,
+            })
+            .collect();
+        play.map_walk_group(plan, &context, &requests, walk.arms)
+    });
     let mut walking = false;
     for outcome in &report.outcomes {
-        if let WalkSlotOutcomeKind::Walking = &outcome.kind {
+        if matches!(
+            &outcome.kind,
+            WalkSlotOutcomeKind::Walking | WalkSlotOutcomeKind::PrerequisiteStarted
+        ) {
             core.frames().clear_step_latch(&outcome.name);
             walking = true;
         }
@@ -228,7 +234,9 @@ pub(crate) fn walk_marked<Io>(
             .map(|(index, outcome)| {
                 let reason = outcome.kind.reason().unwrap_or("not eligible");
                 let (result, detail) = match outcome.kind {
-                    WalkSlotOutcomeKind::Walking => (BulkOutcome::Done, None),
+                    WalkSlotOutcomeKind::Walking | WalkSlotOutcomeKind::PrerequisiteStarted => {
+                        (BulkOutcome::Done, None)
+                    }
                     WalkSlotOutcomeKind::Excluded(_) => (BulkOutcome::skipped(reason), None),
                     WalkSlotOutcomeKind::Failed(ActionError::BlockedByZones { detail }) => {
                         (BulkOutcome::failed(reason), detail)

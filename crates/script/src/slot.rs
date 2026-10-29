@@ -555,6 +555,10 @@ pub struct SlotScript {
     bank_op_result_seq: u64,
     bank_op_result: bool,
     work_epoch: u64,
+    /// Logical route run retained only across internal manual WalkTo handovers.
+    manual_route_run: Option<api::selected::RunKey>,
+    /// Manual outer walk policy for the active internal WalkTo card.
+    manual_route_bank_fetch: Option<bool>,
     /// Frozen source/settings used for watchdog recreate. Cleared on
     /// operator Stop / new manual Start.
     surface_start: Option<SurfaceStart>,
@@ -661,6 +665,8 @@ impl SlotScript {
             bank_op_result_seq: 0,
             bank_op_result: false,
             work_epoch: 0,
+            manual_route_run: None,
+            manual_route_bank_fetch: None,
 
             surface_start: None,
             factories: [None; SurfaceKind::COUNT],
@@ -698,6 +704,89 @@ impl SlotScript {
     /// The bound local-state capability, if any.
     pub fn local_state(&self) -> Option<&Arc<crate::local_state::SlotState>> {
         self.local_state.as_ref()
+    }
+    /// The logical evidence run for a manual route when an internal WalkTo
+    /// helper has advanced the compiled runtime generation.
+    pub fn manual_route_run(&self) -> Option<api::selected::RunKey> {
+        self.manual_route_run
+            .filter(|run| run.slot == self.incarnation && run.session == self.work_epoch)
+    }
+
+    pub(crate) fn set_manual_route_run(&mut self, run: Option<api::selected::RunKey>) {
+        self.manual_route_run =
+            run.filter(|run| run.slot == self.incarnation && run.session == self.work_epoch);
+    }
+    pub fn manual_route_bank_fetch(&self) -> Option<bool> {
+        self.manual_route_bank_fetch.filter(|_| {
+            self.state == RunState::Running
+                && self.native_run().is_some_and(|run| {
+                    run.slot == self.incarnation && run.session == self.work_epoch
+                })
+                && self
+                    .compiled
+                    .as_ref()
+                    .is_some_and(|run| run.config.card() == crate::CompiledId("WalkTo"))
+        })
+    }
+
+    pub(crate) fn set_manual_route_bank_fetch(&mut self, allow: Option<bool>) {
+        self.manual_route_bank_fetch = allow;
+    }
+    /// Carry manual prerequisite knowledge under the run that actually
+    /// observed it. The hidden WalkTo's terminal is not evidence by itself.
+    fn update_manual_route_run_from_fact_writer(&mut self) {
+        if self.manual_route_run().is_none() || self.manual_route_bank_fetch().is_none() {
+            return;
+        }
+        let Some(run) = self.native_run() else {
+            return;
+        };
+        let Some(state) = self.local_state.as_ref() else {
+            return;
+        };
+        let writer_run = state.with_prereq_memory(|memory| {
+            memory
+                .facts()
+                .iter()
+                .find(|fact| fact.observed.run == run)
+                .map(|fact| fact.observed.run)
+        });
+        if let Some(writer_run) = writer_run {
+            self.set_manual_route_run(Some(writer_run));
+        }
+    }
+
+    /// Record a refusal only for the current native or retained manual-route run.
+    ///
+    /// The host calls this before delivering the terminal to a native owner or
+    /// choosing a handover, so consent denial and cancellation cannot erase the
+    /// observation. A stale run or session never writes into the slot memory.
+    pub fn record_gate_refusal(
+        &self,
+        run: api::selected::RunKey,
+        observation: &api::prereq_knowledge::RefusalObservation,
+    ) -> bool {
+        let current = self.native_run().unwrap_or(api::selected::RunKey {
+            slot: self.incarnation,
+            run: self.runtime_generation,
+            session: self.work_epoch,
+        });
+        let manual_current = self.manual_route_run() == Some(run)
+            && current.slot == run.slot
+            && current.session == run.session;
+        if (current != run && !manual_current) || observation.fact.observed.run != run {
+            return false;
+        }
+        let Some(api::identity::Scope::Slot(key)) = self.work_scope() else {
+            return false;
+        };
+        if key.incarnation().get() != run.slot {
+            return false;
+        }
+        let Some(state) = self.local_state.as_ref() else {
+            return false;
+        };
+        state.record_prereq_fact(observation.fact.clone())
     }
     /// Align the compiled execution with the actual host session gate, not
     /// `work_epoch` (which also advances for transient down observations).
@@ -1113,6 +1202,8 @@ impl SlotScript {
         self.bank_op_result_seq = 0;
         self.bank_op_result = false;
         self.cut_restart_times = [None; CUT_RESTART_LIMIT];
+        self.manual_route_run = None;
+        self.manual_route_bank_fetch = None;
         self.cut_restart_next = 0;
     }
 
@@ -1218,6 +1309,8 @@ impl SlotScript {
         self.pending_withdraw_x = None;
         self.pending_bank_op = None;
         self.work_epoch = self.work_epoch.wrapping_add(1);
+        self.manual_route_run = None;
+        self.manual_route_bank_fetch = None;
         self.state = RunState::Idle;
         self.source_identity = None;
         self.runtime_generation = self.runtime_generation.wrapping_add(1);
@@ -1340,6 +1433,8 @@ impl SlotScript {
         self.pending_withdraw_x = None;
         self.pending_bank_op = None;
         self.work_epoch = self.work_epoch.wrapping_add(1);
+        self.manual_route_run = None;
+        self.manual_route_bank_fetch = None;
         match std::mem::replace(&mut self.after_stop, AfterStop::Idle) {
             AfterStop::Idle => {
                 self.teardown_compiled(StopReason::Operator);
@@ -1502,6 +1597,8 @@ impl SlotScript {
             });
         }
         self.control_generation = self.control_generation.saturating_add(1);
+        self.manual_route_run = None;
+        self.manual_route_bank_fetch = None;
         self.preparing = None;
         self.pending_compiled_start = None;
         self.pending_compiled_restart = false;
@@ -1587,6 +1684,8 @@ impl SlotScript {
                 self.complete_bank_op(false);
             }
             self.work_epoch = self.work_epoch.wrapping_add(1);
+            self.manual_route_run = None;
+            self.manual_route_bank_fetch = None;
         }
         if !self.has_instance() {
             return;
@@ -3934,6 +4033,7 @@ impl SlotScript {
                 result
             }
         };
+        self.update_manual_route_run_from_fact_writer();
         if result.is_ok() {
             self.watchdog.stamp_scheduler(Instant::now());
         }
