@@ -1251,18 +1251,10 @@ impl StepRun for WalkRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         let now = cx.tick.cx.evidence().tick;
         if let Some(failed_tick) = self.retry_after_tick {
-            #[cfg(test)]
-            eprintln!(
-                "walk retry state: now={now}, failed_tick={failed_tick}, attempts={}",
-                self.attempts
-            );
             if now <= failed_tick {
                 return Poll::Pending;
             }
-            let begin = self.begin_walk(cx);
-            #[cfg(test)]
-            eprintln!("walk retry begin: {begin:?}");
-            match crate::native::defer_budget(begin) {
+            match crate::native::defer_budget(self.begin_walk(cx)) {
                 Poll::Pending => {
                     self.retry_after_tick = Some(now);
                     return Poll::Pending;
