@@ -395,8 +395,8 @@ pub struct TravelOptions<'a> {
     pub close_enough: i32,
     /// Optional observations; does not select actions or retry policy.
     pub on_event: Option<Box<dyn FnMut(TravelEvent) + 'a>>,
-    /// Tick budget for one hop (a walk send or a transport interact;
-    /// default 60).
+    /// Minimum tick budget for one hop (default 60). A walk also allows
+    /// one tick per planned route step to its aim, not straight-line distance.
     pub budget_ticks_per_hop: u32,
     /// Walk hops before `GaveUp` (default 60).
     pub max_hops: u32,
@@ -970,6 +970,7 @@ impl FollowRun {
                     sent: false,
                     send_refusal: None,
                     ticks_waited: 0,
+                    budget_ticks: self.budget,
                     sent_tile: None,
                     sent_tick: snapshot.tick(),
                     start_tile: here,
@@ -1452,6 +1453,9 @@ struct WalkHop {
     start_tile: WorldTile,
     first_sent_tick: u32,
     ticks_waited: u32,
+    /// One walking tick per planned step to the accepted aim, at least the
+    /// configured minimum. Recovery keeps this original route budget.
+    budget_ticks: u32,
     /// The player's tile when the hop's walk was sent. Used for
     /// Dropped vs Expired stall classification (`here == sent_tile` →
     /// Dropped). Stalled-walk recovery idle is tracked separately at the
@@ -1460,14 +1464,13 @@ struct WalkHop {
     tries: u32,
     /// Distinct game ticks observed idle at `stall_idle_at` without actor
     /// movement — a map flag alone does not prove the server is walking.
-    /// Separate from `ticks_waited` (poll budget); duplicate snapshot
-    /// polls do not count. Tile movement resets this counter.
+    /// Separate from `ticks_waited` (observed-tick budget); duplicate
+    /// snapshot polls do not count. Tile movement resets this counter.
     stall_idle_ticks: u32,
-    /// Snapshot tick last credited to `stall_idle_ticks`.
+    /// Last snapshot tick observed by this walk, including live movement.
     stall_idle_last_tick: Option<u32>,
-    /// Latest observed tile while counting stalled-walk idle. A change
-    /// of tile (partial hop progress) clears the idle window and starts
-    /// a new one at the new position.
+    /// Latest observed tile, retained while live so the budget can detect
+    /// progress. A tile change clears the idle window.
     stall_idle_at: Option<WorldTile>,
     /// Distinct game ticks the route's last tile, one step away, refused
     /// the click while no walk of this follow was accepted
@@ -1651,6 +1654,7 @@ mod wait_status_tests {
             start_tile: here,
             first_sent_tick: 0,
             ticks_waited: 0,
+            budget_ticks: 60,
             sent_tile: None,
             tries: 0,
             stall_idle_ticks: 0,

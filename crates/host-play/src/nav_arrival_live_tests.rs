@@ -396,8 +396,7 @@ fn lumbridge_door_walk_evidence(samples: &[Value]) -> LumbridgeDoorWalkEvidence 
         if evidence.opened_during_walk && sample["tile"] == json!(LUMBRIDGE_DOOR_TILE) {
             evidence.player_on_door_tile_after_open = true;
         }
-        if evidence.player_on_door_tile_after_open
-            && sample["tile"] == json!(LUMBRIDGE_DOOR_TARGET)
+        if evidence.player_on_door_tile_after_open && sample["tile"] == json!(LUMBRIDGE_DOOR_TARGET)
         {
             evidence.player_at_target_after_door_tile = true;
         }
@@ -1255,11 +1254,8 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
         setup_error.as_deref(),
     );
     if scenario == Scenario::LumbridgeDoor {
-        setup_report["lumbridge_door_close_wait"] = state
-            .lock()
-            .door_close_wait
-            .clone()
-            .unwrap_or(Value::Null);
+        setup_report["lumbridge_door_close_wait"] =
+            state.lock().door_close_wait.clone().unwrap_or(Value::Null);
     }
     let setup_png = write_capture(
         &run_dir,
@@ -1339,8 +1335,8 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
         serde_json::to_vec_pretty(&samples).unwrap(),
     )
     .expect("write observed game ticks");
-    let door_walk = (scenario == Scenario::LumbridgeDoor)
-        .then(|| lumbridge_door_walk_evidence(&samples));
+    let door_walk =
+        (scenario == Scenario::LumbridgeDoor).then(|| lumbridge_door_walk_evidence(&samples));
     let door_crossing_proven = scenario != Scenario::LumbridgeDoor
         || (lumbridge_door_is_closed(setup_scene.lumbridge_door)
             && door_walk.is_some_and(|proof| {

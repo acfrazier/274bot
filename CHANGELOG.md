@@ -57,6 +57,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   info line. The line identifies the current route, door, scene, or stall
   wait and its target. Movement, a new request, or the walk ending resets
   this log limit.
+- Walk budgets now include the planned path length at one walking tick
+  per step. They count observed game ticks, not repeated status polls.
+  A walk does not expire while the player is still making progress.
+  A stopped walk still has a finite budget, including recovery attempts.
 
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being

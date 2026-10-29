@@ -122,8 +122,8 @@ impl FollowRun {
         let arms = [("arrived", arrived(hop.aim, radius))];
         if api::hostlog::debug_enabled() {
             api::host_log!(Category::NavTrace, Level::Debug,
-                "walk tick={} here={here:?} aim={:?} radius={radius} ticks_waited={} sent_tile={:?} actor={:?} map_flag={:?}",
-                snapshot.tick(), hop.aim, hop.ticks_waited, hop.sent_tile,
+                "walk tick={} here={here:?} aim={:?} radius={radius} ticks_waited={} budget_ticks={} sent_tile={:?} actor={:?} map_flag={:?}",
+                snapshot.tick(), hop.aim, hop.ticks_waited, hop.budget_ticks, hop.sent_tile,
                 snapshot.local_player().map(|p| (p.player.actor.moving, p.player.actor.running, p.player.actor.in_combat, &p.player.actor.target)),
                 snapshot.map_flag()
             );
@@ -173,8 +173,15 @@ impl FollowRun {
                 Poll::Watching
             }
             None => {
-                hop.ticks_waited += 1;
-                if hop.ticks_waited > self.budget {
+                let tick = snapshot.tick();
+                let elapsed = tick.wrapping_sub(hop.stall_idle_last_tick.unwrap_or(hop.sent_tick));
+                let elapsed = if elapsed < (1u32 << 31) { elapsed } else { 1 };
+                hop.ticks_waited = hop.ticks_waited.saturating_add(elapsed);
+                let progressed = hop.stall_idle_at.or(hop.sent_tile) != Some(here)
+                    || snapshot
+                        .last_server_movement_tick()
+                        .is_some_and(|movement| tick.wrapping_sub(movement) < elapsed);
+                if elapsed != 0 && hop.ticks_waited > hop.budget_ticks && !progressed {
                     let why = if hop.sent_tile == Some(here) {
                         HopFailure::Dropped
                     } else {
@@ -212,13 +219,14 @@ impl FollowRun {
         api::host_log!(
             Category::NavEvent,
             Level::Info,
-            "walk-stall why={why:?} start={:?} end={end:?} aim={:?} first_send_tick={} last_send_tick={} tries={} waited_calls={} idle_ticks={} last_scene_rebuild_tick={:?} run_energy={} run_mode={} last_server_movement_tick={:?}",
+            "walk-stall why={why:?} start={:?} end={end:?} aim={:?} first_send_tick={} last_send_tick={} tries={} waited_ticks={} budget_ticks={} idle_ticks={} last_scene_rebuild_tick={:?} run_energy={} run_mode={} last_server_movement_tick={:?}",
             hop.start_tile,
             hop.aim,
             hop.first_sent_tick,
             hop.sent_tick,
             hop.tries.max(1),
             hop.ticks_waited,
+            hop.budget_ticks,
             hop.stall_idle_ticks,
             snapshot.last_scene_rebuild_tick(),
             snapshot.runenergy(),
@@ -274,8 +282,8 @@ impl FollowRun {
     ) {
         if hop.sent_tile.is_none() || walk_is_live(snapshot) {
             hop.stall_idle_ticks = 0;
-            hop.stall_idle_last_tick = None;
-            hop.stall_idle_at = None;
+            hop.stall_idle_last_tick = Some(snapshot.tick());
+            hop.stall_idle_at = Some(here);
             return;
         }
         if hop.stall_idle_at != Some(here) {
@@ -437,9 +445,8 @@ impl FollowRun {
         let end = hop.tiles().last().copied();
         let mut refused = (hop.end_refused_ticks, hop.end_refused_last_tick);
         let tiles = hop.tiles();
-        let here_i = tiles
-            .iter()
-            .position(|t| *t == here)
+        let here_on_route = tiles.iter().position(|t| *t == here);
+        let here_i = here_on_route
             .filter(|&i| i >= hop.cursor)
             .unwrap_or(hop.cursor);
         let (mut aim, mut idx) = pick_aim_in_scene(tiles, here, hop.cursor, snapshot.scene());
@@ -454,6 +461,10 @@ impl FollowRun {
             report_walk(options, snapshot, here, aim, &result);
             match result {
                 SendResult::Sent { .. } => {
+                    let planned_steps = idx.saturating_sub(here_on_route.unwrap_or(here_i));
+                    hop.budget_ticks = self
+                        .budget
+                        .max(u32::try_from(planned_steps).unwrap_or(u32::MAX));
                     self.hops += 1;
                     hop.aim = aim;
                     hop.aim_index = idx;
@@ -465,8 +476,8 @@ impl FollowRun {
                     hop.ticks_waited = 0;
                     hop.sent_tile = Some(here);
                     hop.stall_idle_ticks = 0;
-                    hop.stall_idle_last_tick = None;
-                    hop.stall_idle_at = None;
+                    hop.stall_idle_last_tick = Some(snapshot.tick());
+                    hop.stall_idle_at = Some(here);
                     self.walk = Some(hop);
                     return Poll::Watching;
                 }

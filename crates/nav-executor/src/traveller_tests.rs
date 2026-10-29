@@ -32,6 +32,8 @@ mod entrance_exclusion_tests;
 mod occupied_tests;
 #[path = "traveller/open_door_approach_tests.rs"]
 mod open_door_approach_tests;
+#[path = "traveller/walk_budget_tests.rs"]
+mod walk_budget_tests;
 
 // --- Task 14: pollable high-level follow (drive legs via interact+settle) ---
 
@@ -7454,7 +7456,7 @@ fn follow_partial_progress_cancel_still_exhausts_original_budget() {
 }
 
 #[test]
-fn follow_stalls_expired_when_progress_stalls() {
+fn follow_does_not_expire_while_the_player_progresses() {
     let mut c = scene_client();
     let mut snap = snap_at(&mut c, 0, 0);
     let mut rec = FollowRec {
@@ -7484,9 +7486,8 @@ fn follow_stalls_expired_when_progress_stalls() {
         budget_ticks_per_hop: 3,
         ..TravelOptions::default()
     };
-    // The player creeps one tile per tick toward the far leg end but
-    // never arrives within the tiny hop budget: the hop lapses as
-    // Expired (progress was made).
+    // The planned walk takes seven walking ticks, despite the configured
+    // three-tick minimum. Continuing progress must reach the destination.
     let mut z = 0;
     let outcome = drive(
         &mut t,
@@ -7502,10 +7503,7 @@ fn follow_stalls_expired_when_progress_stalls() {
     );
     assert!(matches!(
         outcome,
-        TravelOutcome::Stalled {
-            why: HopFailure::Expired,
-            ..
-        }
+        TravelOutcome::Arrived { at } if at == route.dest
     ));
 }
 
