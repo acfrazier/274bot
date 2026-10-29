@@ -175,7 +175,7 @@
             },
             {
               "id": "collect-four-coal", "kind": "combat", "version": 1, "advances": false,
-              "args": {"target": {"npc": "dwarf_normal", "not_targeting_others": true, "pick": "nearest"}, "stand": {"tile": [2998, 3445, 0], "source": "content/maps/m46_53.jm2:5949; content/pack/npc.pack:119"}, "lost_radius": 20, "kill_budget_ticks": 5000, "tactic": {"kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true}, "loot": ["coal"], "until": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "coal", "qty": 4}}}},
+              "args": {"target": {"npc": "dwarf_normal", "not_targeting_others": true, "pick": "nearest"}, "stand": {"tile": [2998, 3445, 0], "source": "content/maps/m46_53.jm2:5949; content/pack/npc.pack:119"}, "lost_radius": 20, "kill_budget_ticks": 5000, "tactic": {"kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true}, "loot": [{"obj": "coal", "qty": 4}], "until": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "coal", "qty": 4}}}},
               "comment": "content/scripts/drop tables/scripts/dwarf.rs2:1-13,43-50 gives coal with random result 102 or 103 of 128. This route does not require Mining 30 (content/scripts/skill_mining/configs/mine.dbrow:62-73).",
               "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "coal", "qty": 4}}},
               "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "coal", "qty": 4}}}
