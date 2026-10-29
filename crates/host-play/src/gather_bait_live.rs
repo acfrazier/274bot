@@ -154,10 +154,69 @@ fn rod_held(snapshot: &GameSnapshot) -> bool {
     count(snapshot.inventory(), FISHING_ROD) == 1
 }
 
+const TICK_SAMPLES: usize = 11;
+
+/// Frame-observed applications of consecutive PLAYER_INFO packets, not frame ticks.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+struct PlayerInfoClock {
+    #[serde(skip)]
+    last: Option<(u64, u64, Instant)>,
+    interarrival_ms: Vec<u128>,
+    coalesced_observations: usize,
+    median_ms: Option<u128>,
+}
+
+impl PlayerInfoClock {
+    fn observe(&mut self, session: u64, count: u64, now: Instant) {
+        if self
+            .last
+            .is_some_and(|(previous_session, previous_count, _)| {
+                session == previous_session && count == previous_count
+            })
+        {
+            return;
+        }
+        let Some((previous_session, previous_count, previous_at)) =
+            self.last.replace((session, count, now))
+        else {
+            return;
+        };
+        if session != previous_session {
+            self.interarrival_ms.clear();
+            self.coalesced_observations = 0;
+            self.median_ms = None;
+            return;
+        }
+        if count.checked_sub(previous_count) != Some(1) {
+            self.coalesced_observations += 1;
+            return;
+        }
+        if self.interarrival_ms.len() < TICK_SAMPLES {
+            self.interarrival_ms
+                .push(now.duration_since(previous_at).as_millis());
+            if self.interarrival_ms.len() == TICK_SAMPLES {
+                let mut sorted: [u128; TICK_SAMPLES] = self
+                    .interarrival_ms
+                    .as_slice()
+                    .try_into()
+                    .expect("the sample count is exactly TICK_SAMPLES");
+                sorted.sort_unstable();
+                self.median_ms = Some(sorted[TICK_SAMPLES / 2]);
+            }
+        }
+    }
+
+    fn accepted(&self) -> bool {
+        self.median_ms
+            .is_some_and(|median| (570..=630).contains(&median))
+    }
+}
+
 /// What the test thread observed, in order.
 #[derive(Debug, Clone, Default, serde::Serialize)]
 struct BaitTrace {
     variant: Option<Variant>,
+    player_info_clock: PlayerInfoClock,
     home: Option<String>,
     hint_path: Option<String>,
     hint_written: Option<String>,
@@ -237,6 +296,12 @@ fn origin_name(origin: Origin) -> String {
 
 /// The pass rule for the finished run; `Err` names the first broken claim.
 fn verdict(variant: Variant, trace: &BaitTrace) -> Result<(), String> {
+    if !trace.player_info_clock.accepted() {
+        return Err(format!(
+            "PLAYER_INFO median must be 600 ms +/-30 ms: {:?}",
+            trace.player_info_clock
+        ));
+    }
     let trips_due = trace.trip_due_count.unwrap_or(0);
     if trips_due != 1 {
         return Err(format!(
@@ -251,8 +316,12 @@ fn verdict(variant: Variant, trace: &BaitTrace) -> Result<(), String> {
         ));
     }
     let message = trace.failure_message.as_deref().unwrap_or("");
-    if !(message.starts_with("supply-missing:") && message.to_ascii_lowercase().contains("bait")) {
-        return Err(format!("the failure must name the bait: {message:?}"));
+    if !(message.starts_with("no Fishing bait in the pack, worn, or in the bank as seen ")
+        && message.ends_with("; nobody sells it; waiting: put a Fishing bait in the pack"))
+    {
+        return Err(format!(
+            "the failure must name the bait and observed bank: {message:?}"
+        ));
     }
     if trace.final_origin.as_deref() != Some("Session") {
         return Err(format!(
@@ -415,6 +484,7 @@ fn run_cell(variant: Variant) {
     let cell = Arc::new(Mutex::new(cell));
     let frame_cell = Arc::clone(&cell);
     let frame_account = account.clone();
+    let frame_trace = Arc::clone(&trace);
     let play = run_with_template(
         template,
         true,
@@ -425,7 +495,16 @@ fn run_cell(variant: Variant) {
             settings: ProfileSettings::default(),
         }],
         |_| (None, None),
-        move |client, _, _| frame(client, &frame_cell, &frame_account),
+        move |client, _, _| {
+            if client.ingame && client.scene_state == 2 {
+                frame_trace.lock().player_info_clock.observe(
+                    client.gens.session,
+                    client.gens.player_info,
+                    Instant::now(),
+                );
+            }
+            frame(client, &frame_cell, &frame_account);
+        },
     )
     .unwrap_or_else(|error| {
         panic!("HARNESS PREREQUISITE FAILURE (before the cell deadline): starting login: {error}")
@@ -462,9 +541,22 @@ fn run_cell(variant: Variant) {
         if !failed {
             match stage {
                 Stage::Prepare => {
+                    let median = trace.lock().player_info_clock.median_ms;
+                    let clock_ready = median.is_some_and(|value| (570..=630).contains(&value));
+                    if median.is_some() && !clock_ready {
+                        fail(
+                            &cell,
+                            &trace,
+                            format!(
+                                "Engine A PLAYER_INFO median {median:?} ms is outside 600 ms +/-30 ms; no Gatherer Start was sent"
+                            ),
+                        );
+                        stage = Stage::Done;
+                    }
                     let begin = {
                         let mut guard = cell.lock();
-                        if guard.phase == Prep::Ready
+                        if clock_ready
+                            && guard.phase == Prep::Ready
                             && guard.script_started.is_none()
                             && Instant::now().duration_since(guard.last_action)
                                 >= Duration::from_secs(1)
@@ -634,11 +726,131 @@ fn status_transitions_fold_repeated_events() {
         "native Gatherer phase=working failure=none action_state=walk last_event=bank trip due",
         "bank open booth",
         "native Gatherer phase=working failure=none last_event=deposit confirmed",
-        "native Gatherer phase=blocked failure=supply-missing failure_message=supply-missing:Fishing bait last_event=deposit confirmed",
+        "native Gatherer phase=blocked failure=supply-missing failure_message=no Fishing bait in the pack, worn, or in the bank as seen less than a minute ago this session (0 rows); nobody sells it; waiting: put a Fishing bait in the pack last_event=deposit confirmed",
     ]
     .map(str::to_owned);
     assert_eq!(
         event_transitions(&lines),
         ["started", TRIP_DUE, "deposit confirmed"]
     );
+}
+
+fn valid_trace(variant: Variant) -> BaitTrace {
+    let mut player_info_clock = PlayerInfoClock::default();
+    let started = Instant::now();
+    for tick in 0..=TICK_SAMPLES as u64 {
+        player_info_clock.observe(1, tick, started + Duration::from_millis(tick * 600));
+    }
+    BaitTrace {
+        player_info_clock,
+        start_origin: Some(
+            match variant {
+                Variant::Banked => "Unknown",
+                Variant::StaleHint => "Hint",
+            }
+            .into(),
+        ),
+        start_rows: (variant == Variant::StaleHint).then_some(vec![(FISHING_BAIT, HINTED_BAIT)]),
+        trip_due_count: Some(1),
+        max_bait: match variant {
+            Variant::Banked => BANKED_BAIT,
+            Variant::StaleHint => 0,
+        },
+        final_bait: Some(0),
+        trips: Some(i64::from(variant == Variant::Banked)),
+        failure_code: Some("supply-missing".into()),
+        failure_message: Some(
+            "no Fishing bait in the pack, worn, or in the bank as seen less than a minute ago this session (0 rows); nobody sells it; waiting: put a Fishing bait in the pack"
+                .into(),
+        ),
+        final_distance_from_spots: Some(0),
+        final_origin: Some("Session".into()),
+        final_rows: Some(Vec::new()),
+        ..BaitTrace::default()
+    }
+}
+
+#[test]
+fn bait_oracle_accepts_core_shortage_text_after_one_observed_trip() {
+    for variant in [Variant::Banked, Variant::StaleHint] {
+        assert_eq!(verdict(variant, &valid_trace(variant)), Ok(()));
+    }
+}
+
+#[test]
+fn bait_oracle_rejects_wrong_failure_item_provenance_and_trip_evidence() {
+    for variant in [Variant::Banked, Variant::StaleHint] {
+        let mut trace = valid_trace(variant);
+        trace.failure_code = Some("bank-open".into());
+        assert!(verdict(variant, &trace).is_err());
+
+        let mut trace = valid_trace(variant);
+        trace.failure_message = trace
+            .failure_message
+            .map(|message| message.replace("Fishing bait", "Feather"));
+        assert!(verdict(variant, &trace).is_err());
+
+        let mut trace = valid_trace(variant);
+        trace.failure_message = Some("supply-missing:Fishing bait".into());
+        assert!(verdict(variant, &trace).is_err());
+
+        let mut trace = valid_trace(variant);
+        trace.final_origin = Some("Hint".into());
+        assert!(verdict(variant, &trace).is_err());
+
+        let mut trace = valid_trace(variant);
+        trace.trip_due_count = Some(2);
+        assert!(verdict(variant, &trace).is_err());
+
+        let mut trace = valid_trace(variant);
+        trace.final_rows = Some(vec![(FISHING_BAIT, 1)]);
+        assert!(verdict(variant, &trace).is_err());
+    }
+    let mut trace = valid_trace(Variant::Banked);
+    trace.max_bait = BANKED_BAIT - 1;
+    assert!(verdict(Variant::Banked, &trace).is_err());
+
+    let mut trace = valid_trace(Variant::StaleHint);
+    trace.trips = Some(1);
+    assert!(verdict(Variant::StaleHint, &trace).is_err());
+}
+
+#[test]
+fn player_info_clock_excludes_frames_coalescing_and_old_sessions() {
+    let started = Instant::now();
+    let mut clock = PlayerInfoClock::default();
+    clock.observe(1, 5, started);
+    clock.observe(1, 5, started + Duration::from_millis(20));
+    assert!(clock.interarrival_ms.is_empty());
+    clock.observe(1, 6, started + Duration::from_millis(600));
+    assert_eq!(clock.interarrival_ms, [600]);
+    clock.observe(1, 8, started + Duration::from_millis(1800));
+    assert_eq!(clock.interarrival_ms, [600]);
+    assert_eq!(clock.coalesced_observations, 1);
+    clock.observe(2, 9, started + Duration::from_millis(2400));
+    assert!(clock.interarrival_ms.is_empty());
+    assert_eq!(clock.median_ms, None);
+    assert_eq!(clock.coalesced_observations, 0);
+    for tick in 1..=TICK_SAMPLES as u64 {
+        clock.observe(
+            2,
+            9 + tick,
+            started + Duration::from_millis(2400 + tick * 600),
+        );
+    }
+    assert_eq!(clock.median_ms, Some(600));
+    assert!(clock.accepted());
+}
+
+#[test]
+fn bait_oracle_rejects_missing_or_wrong_engine_tick_rate() {
+    let mut trace = valid_trace(Variant::Banked);
+    for median in [None, Some(0), Some(569), Some(631)] {
+        trace.player_info_clock.median_ms = median;
+        assert!(verdict(Variant::Banked, &trace).is_err());
+    }
+    for median in [Some(570), Some(600), Some(630)] {
+        trace.player_info_clock.median_ms = median;
+        assert_eq!(verdict(Variant::Banked, &trace), Ok(()));
+    }
 }

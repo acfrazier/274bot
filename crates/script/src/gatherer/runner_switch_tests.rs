@@ -696,6 +696,8 @@ fn bank_fixture(bank_choice: Option<&'static str>) -> (Gatherer, GameSnapshot) {
             z: 3200,
             level: 0,
         }));
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_equipment(Vec::new());
         (config, snapshot)
     })
     .unwrap()
@@ -717,7 +719,7 @@ fn bank_fixture(bank_choice: Option<&'static str>) -> (Gatherer, GameSnapshot) {
 fn gatherer_bank_pick(bank_choice: Option<&'static str>) -> crate::native_bank::BankPickRequest {
     let (mut gatherer, snapshot) = bank_fixture(bank_choice);
     let mut ledger = None;
-    gatherer.trip = TripStep::Select;
+    gatherer.trip = TripStep::Deposit;
     with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.begin_trip(tick));
     with_tick(&snapshot, &mut ledger, 2, |tick| gatherer.poll_active(tick));
     ledger
@@ -1478,11 +1480,22 @@ fn end_blocked_return_stall_is_terminal_not_a_transient_replan() {
 }
 
 #[test]
-fn typed_bank_deposit_failure_keeps_the_content_reason() {
-    let (mut gatherer, _) = fixture();
-    gatherer.deposit_failure(ActionError::BankDeposit(
-        crate::bank::ops::DepositFailure::FullStack,
-    ));
+fn acquired_bank_deposit_failure_keeps_the_content_reason() {
+    let (mut gatherer, snapshot) = fixture();
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        let request = gatherer.acquire_request(Arc::from([]), None, CloseBank::Close, &tick.cx);
+        let run = AcquireRun::new(
+            request,
+            AcquirePlan::empty(),
+            &gatherer.prepared.banks,
+            &tick.cx,
+        );
+        gatherer.acquire_failure(
+            &run,
+            ActionError::BankDeposit(crate::bank::ops::DepositFailure::FullStack),
+        );
+    });
     let failure = gatherer
         .failure
         .expect("the typed deposit failure is terminal");
@@ -1591,7 +1604,13 @@ fn unbankable_items_are_kept_and_the_bank_trip_continues_after_freeing_space() {
         snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
         with_tick(&snapshot, &mut ledger, 3, |tick| gatherer.poll_active(tick));
         assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
-        assert_eq!(gatherer.trip, TripStep::Withdraw);
+        assert_eq!(
+            gatherer.trip,
+            TripStep::Supply {
+                return_to_work: true,
+                deposit_products: false,
+            }
+        );
         assert_eq!(gatherer.retained.deposited, fish_count as u32);
         assert_eq!(
             crate::bank::ops::count_id(snapshot.inventory(), 3062),
@@ -1624,7 +1643,13 @@ fn unbankable_items_stop_only_when_the_pack_remains_full_after_deposit() {
             );
         } else {
             assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
-            assert_eq!(gatherer.trip, TripStep::Withdraw);
+            assert_eq!(
+                gatherer.trip,
+                TripStep::Supply {
+                    return_to_work: true,
+                    deposit_products: false,
+                }
+            );
         }
         assert_eq!(crate::bank::ops::count_id(snapshot.inventory(), 3062), 28);
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
@@ -1645,23 +1670,25 @@ fn tool_fetch_trip_keeps_unbankable_items_and_continues_to_withdraw_the_tool() {
     gatherer.tool.id = -1;
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 1, |tick| {
-        let verdict = SupplyPlan::plan(
-            &gatherer.prepared,
-            tick.cx.snapshot().stats().unwrap().value,
-            tick.cx.snapshot().stock(),
-        );
         assert!(
-            gatherer.admit_supply(verdict),
+            gatherer.admit_supply(&tick.cx),
             "the missing tool needs a trip"
         );
     });
-    assert_eq!(gatherer.trip, TripStep::Select);
-    // Arrival at the open bank follows the same Deposit boundary as disposal.
-    gatherer.trip = TripStep::Deposit;
+    assert_eq!(
+        gatherer.trip,
+        TripStep::Supply {
+            return_to_work: true,
+            deposit_products: true,
+        }
+    );
     with_tick(&snapshot, &mut ledger, 2, |tick| gatherer.begin_trip(tick));
     with_tick(&snapshot, &mut ledger, 3, |tick| gatherer.poll_active(tick));
     assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
-    assert_eq!(gatherer.trip, TripStep::Withdraw);
+    let Active::Acquire(run) = &gatherer.active else {
+        panic!("the supply request owns the transfer");
+    };
+    assert_eq!(run.progress().2, "Withdraw");
     with_tick(&snapshot, &mut ledger, 4, |tick| gatherer.begin_trip(tick));
     with_tick(&snapshot, &mut ledger, 5, |tick| gatherer.poll_active(tick));
     let mode = ledger.as_mut().unwrap().outbox.remove(0);
@@ -1694,6 +1721,20 @@ fn tool_fetch_trip_keeps_unbankable_items_and_continues_to_withdraw_the_tool() {
             ..
         })
     ));
+    let withdrawal = ledger.as_mut().unwrap().outbox.remove(0);
+    ledger.as_mut().unwrap().complete_interaction(
+        &withdrawal.authority(),
+        crate::native::InteractionReceipt {
+            request_id: withdrawal.request_id.get(),
+            evidence: api::quest_progress::EvidenceStamp {
+                run: withdrawal.run(),
+                tick: 6,
+                sequence: 6,
+            },
+            accepted: true,
+            chat_since: 0,
+        },
+    );
     snapshot.seed_inventory(
         vec![
             snapshot.inventory()[0].clone(),
@@ -1706,11 +1747,91 @@ fn tool_fetch_trip_keeps_unbankable_items_and_continues_to_withdraw_the_tool() {
         28,
     );
     with_tick(&snapshot, &mut ledger, 7, |tick| gatherer.poll_active(tick));
-    assert!(gatherer.scratch.withdrew_supplies);
     assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
-    assert_eq!(gatherer.trip, TripStep::Close);
+    let Active::Acquire(run) = &gatherer.active else {
+        panic!("the request must close its bank before publishing a receipt");
+    };
+    assert_eq!(run.progress().2, "Close");
+    with_tick(&snapshot, &mut ledger, 8, |tick| gatherer.poll_active(tick));
+    let close = ledger.as_mut().unwrap().outbox.remove(0);
+    assert!(matches!(
+        close.effect,
+        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Close)
+    ));
+    ledger.as_mut().unwrap().complete_interaction(
+        &close.authority(),
+        crate::native::InteractionReceipt {
+            request_id: close.request_id.get(),
+            evidence: api::quest_progress::EvidenceStamp {
+                run: close.run(),
+                tick: 8,
+                sequence: 8,
+            },
+            accepted: true,
+            chat_since: 0,
+        },
+    );
+    snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+    with_tick(&snapshot, &mut ledger, 9, |tick| gatherer.poll_active(tick));
+    assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+    assert!(gatherer.scratch.withdrew_supplies);
+    assert!(gatherer.scratch.kept_unbankable);
+    assert_eq!(gatherer.trip, TripStep::Validate);
     assert_eq!(crate::bank::ops::count_id(snapshot.inventory(), 303), 1);
     assert_eq!(crate::bank::ops::count_id(snapshot.inventory(), 3062), 28);
+}
+
+#[test]
+fn late_tool_wear_preserves_the_bank_return_and_receipt_attribution() {
+    let (mut gatherer, mut snapshot) = fixture();
+    let mut stats = snapshot.stats().to_vec();
+    stats.retain(|stat| stat.index != 0);
+    stats.push(StatView {
+        index: 0,
+        name: "attack".into(),
+        effective: 1,
+        base: 1,
+        xp: 0,
+        used: true,
+    });
+    snapshot.seed_stats(stats);
+    snapshot.seed_equipment(Vec::new());
+    snapshot.seed_inventory(
+        vec![ItemView {
+            def: def(1351, "Bronze axe"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 1,
+            actions: vec![Some("Wield".into())],
+            component_id: 3214,
+        }],
+        28,
+    );
+    gatherer.trip = TripStep::Validate;
+    gatherer.scratch.kept_unbankable = true;
+    gatherer.scratch.withdrew_supplies = true;
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        assert!(gatherer.admit_supply(&tick.cx));
+    });
+    assert_eq!(
+        gatherer.trip,
+        TripStep::Supply {
+            return_to_work: true,
+            deposit_products: false,
+        }
+    );
+    assert!(gatherer.scratch.kept_unbankable);
+    assert!(gatherer.scratch.withdrew_supplies);
+    with_tick(&snapshot, &mut ledger, 2, |tick| gatherer.begin_trip(tick));
+    let actions = &ledger.as_ref().unwrap().outbox;
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        &actions[0].effect,
+        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held { action, .. })
+            if action == "Wield"
+    ));
 }
 
 #[test]

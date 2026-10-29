@@ -542,20 +542,34 @@ fn held_unworn_wielded_tool_plans_only_one_wear_and_worn_tool_is_satisfied() {
 
 #[test]
 fn planner_uses_a_banked_lower_acceptable_tier() {
+    const RUNE_AXE: i32 = 1359;
+    const BRONZE_AXE: i32 = 1351;
     let need = tier_need(
-        ITEM,
-        &[LOWER],
+        RUNE_AXE,
+        &[BRONZE_AXE],
         1,
         Presence::Wielded,
         SourceSet::PACK | SourceSet::WORN | SourceSet::BANK,
     );
-    let counts = fixture(&[], &[(LOWER, 1)], Origin::Session);
-    let result = planned(plan_for(&request(vec![need]), &counts));
+    let counts = fixture(&[], &[(BRONZE_AXE, 1)], Origin::Session);
+    let request = request(vec![need]);
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let world = WorldFacts {
+        data: Some(&data),
+        ..WorldFacts::default()
+    };
+    let result = planned(plan(&request, &counts, world).unwrap());
     assert_eq!(result.withdrawal_count, 1);
     let row = result.withdrawals[0]
         .as_ref()
         .expect("lower tier withdrawal");
-    assert_eq!((row.id, row.target), (LOWER, 1));
+    assert_eq!((row.id, row.target), (BRONZE_AXE, 1));
+    assert_eq!(row.name.as_ref(), "Bronze axe");
+    assert!(matches!(
+        plan(&request, &counts, WorldFacts::default()),
+        Err(ActionError::Unavailable(message))
+            if message.as_ref() == "selected cache has no name for acquisition alternative 1351"
+    ));
 }
 
 #[test]

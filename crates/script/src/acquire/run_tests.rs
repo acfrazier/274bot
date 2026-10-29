@@ -623,6 +623,115 @@ fn generated_deposit_precedes_live_replan_and_receipts_exact_count() {
 }
 
 #[test]
+fn live_replan_withdraws_an_alternative_by_its_selected_name_after_deposit() {
+    const BRONZE_AXE: i32 = 1351;
+    const RUNE_AXE: i32 = 1359;
+    let (mut snapshot, bank, banks) = fixture();
+    snapshot.seed_inventory(
+        vec![item(
+            PRODUCT,
+            "Product",
+            2,
+            ItemContainer::Inventory,
+            &["Use"],
+        )],
+        28,
+    );
+    open_bank(
+        &mut snapshot,
+        Some(vec![bank_row(BRONZE_AXE, "Bronze axe", 3)]),
+        vec![side_row(PRODUCT, "Product", 2)],
+    );
+    let mut tool = need(
+        RUNE_AXE,
+        "Rune axe",
+        1,
+        1,
+        Presence::Carried,
+        NeedKind::Required,
+        SourceSet::PACK | SourceSet::WORN | SourceSet::BANK,
+    );
+    tool.alternatives = Arc::from([RUNE_AXE, BRONZE_AXE]);
+    let request = request(
+        BankStage::Planned,
+        vec![tool],
+        Some(DepositSpec::Ids {
+            products: Arc::from([PRODUCT]),
+            keep: Arc::from([]),
+        }),
+        Some(bank),
+        false,
+        false,
+        CloseBank::LeaveOpen,
+    );
+    let mut ledger = None;
+    let mut run = new_run(request, &snapshot, None, &mut ledger, &banks);
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 1, OpenGate::Open).is_pending());
+    assert!(matches!(
+        complete_interaction(&mut ledger, 1),
+        HostEffect::Interaction(crate::shim::InteractReq::InvButton { id: PRODUCT, .. })
+    ));
+    snapshot.seed_inventory(Vec::new(), 28);
+    open_bank(
+        &mut snapshot,
+        Some(vec![
+            bank_row(BRONZE_AXE, "Bronze axe", 3),
+            bank_row(PRODUCT, "Product", 2),
+        ]),
+        Vec::new(),
+    );
+    let mut withdrawal_tick = None;
+    for tick in 2..=5 {
+        assert!(poll_at(&mut run, &snapshot, None, &mut ledger, tick, OpenGate::Open).is_pending());
+        if ledger.as_ref().unwrap().outbox.is_empty() {
+            continue;
+        }
+        match complete_interaction(&mut ledger, tick) {
+            HostEffect::Interaction(crate::shim::InteractReq::SetNoteMode {
+                on: false, ..
+            }) => {}
+            HostEffect::Interaction(crate::shim::InteractReq::WithdrawX {
+                name,
+                bank_item_id,
+                count,
+                ..
+            }) => {
+                assert_eq!(bank_item_id, BRONZE_AXE);
+                assert_eq!(
+                    name, "Bronze axe",
+                    "the host validates both the id and name"
+                );
+                assert_eq!(count, 1);
+                withdrawal_tick = Some(tick);
+                break;
+            }
+            _ => panic!("live re-plan dispatched an unexpected effect"),
+        }
+    }
+    let withdrawal_tick = withdrawal_tick.expect("the alternative must be withdrawn");
+    snapshot.seed_inventory(
+        vec![item(
+            BRONZE_AXE,
+            "Bronze axe",
+            1,
+            ItemContainer::Inventory,
+            &["Wield"],
+        )],
+        28,
+    );
+    let receipt = done(poll_at(
+        &mut run,
+        &snapshot,
+        None,
+        &mut ledger,
+        withdrawal_tick + 1,
+        OpenGate::Open,
+    ));
+    assert!(receipt.complete && receipt.withdrew_any && receipt.bank_open);
+    assert_eq!(receipt.deposited, 2);
+}
+
+#[test]
 fn wear_only_run_waits_for_worn_evidence_without_walk_or_bank_effects() {
     let (mut snapshot, _bank, banks) = fixture();
     snapshot.seed_inventory(
@@ -980,6 +1089,147 @@ fn close_attempt_cap_uses_observed_tick_deadlines_and_real_interactions() {
         26,
         |tick| bank_open(&tick.cx),
     ));
+}
+
+#[test]
+fn chained_request_plans_from_open_rows_instead_of_stale_session_memory() {
+    for (remembered, observed) in [(0, 7), (7, 0)] {
+        let (mut snapshot, _bank, _banks) = fixture();
+        open_bank(
+            &mut snapshot,
+            Some(if observed > 0 {
+                vec![bank_row(ITEM, "Widget", observed)]
+            } else {
+                Vec::new()
+            }),
+            Vec::new(),
+        );
+        let memory = BankMemory::seeded(&[(ITEM, remembered)], Origin::Session);
+        let request = request(
+            BankStage::Planned,
+            vec![need(
+                ITEM,
+                "Widget",
+                5,
+                1,
+                Presence::Held,
+                NeedKind::Required,
+                SourceSet::PACK | SourceSet::BANK,
+            )],
+            None,
+            None,
+            false,
+            true,
+            CloseBank::LeaveOpen,
+        );
+        let mut ledger = None;
+        crate::quester::families::tests::with_tick_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger,
+            1,
+            |tick| {
+                let remembered_verdict =
+                    plan::plan(&request, &tick.cx.snapshot().stock(), WorldFacts::default())
+                        .unwrap();
+                let current_verdict = plan_current(&request, &tick.cx).unwrap();
+                if observed > 0 {
+                    assert!(matches!(remembered_verdict, AcquireVerdict::Blocked(_)));
+                    let AcquireVerdict::Plan(plan) = current_verdict else {
+                        panic!("the open bank has the required item");
+                    };
+                    assert_eq!(plan.withdrawal_count, 1);
+                    let row = plan.withdrawals[0].as_ref().unwrap();
+                    assert_eq!((row.id, row.target), (ITEM, 5));
+                } else {
+                    assert!(matches!(remembered_verdict, AcquireVerdict::Plan(_)));
+                    let AcquireVerdict::Blocked(block) = current_verdict else {
+                        panic!("the open bank disproves the stale remembered stock");
+                    };
+                    assert_eq!(block.reason, BlockReason::SupplyMissing);
+                    assert_eq!(block.looked.bank.unwrap().count, 0);
+                }
+            },
+        );
+        assert!(ledger.is_none(), "planning never emits an action");
+    }
+}
+
+#[test]
+fn wear_admission_keeps_the_gatherer_tool_failure_codes() {
+    for (case, expected) in [
+        (0, "tool-missing: the selected tool left the inventory"),
+        (1, "tool-missing: the selected tool has no observed name"),
+        (
+            2,
+            "tool-unusable: the selected tool has no observed equip action",
+        ),
+    ] {
+        let (mut snapshot, _bank, banks) = fixture();
+        let row = item(ITEM, "Widget", 1, ItemContainer::Inventory, &["Wield"]);
+        snapshot.seed_inventory(vec![row.clone()], 28);
+        let request = request(
+            BankStage::Planned,
+            vec![need(
+                ITEM,
+                "Widget",
+                1,
+                1,
+                Presence::Wielded,
+                NeedKind::Required,
+                SourceSet::PACK | SourceSet::WORN,
+            )],
+            None,
+            None,
+            false,
+            false,
+            CloseBank::Close,
+        );
+        let mut ledger = None;
+        let mut run = new_run(request, &snapshot, None, &mut ledger, &banks);
+        let mut changed = row;
+        let inventory = match case {
+            0 => Vec::new(),
+            1 => {
+                changed.def.name = None;
+                vec![changed]
+            }
+            2 => {
+                changed.actions.clear();
+                vec![changed]
+            }
+            _ => unreachable!(),
+        };
+        snapshot.seed_inventory(inventory, 28);
+        assert!(matches!(
+            poll_at(&mut run, &snapshot, None, &mut ledger, 2, OpenGate::Open),
+            Poll::Ready(Err(ActionError::Failed(message))) if message.as_ref() == expected
+        ));
+        assert!(ledger.is_none(), "a missing equip action emits nothing");
+    }
+}
+
+#[test]
+fn shut_bank_with_stuck_side_root_fails_before_wear_or_completion() {
+    let (mut snapshot, bank, banks) = fixture();
+    open_bank(&mut snapshot, Some(Vec::new()), Vec::new());
+    let side = snapshot.modals().side;
+    let mut request = authored_request(Some(bank), false, Vec::new());
+    request.close = CloseBank::Close;
+    let mut ledger = None;
+    let mut run = new_run(request, &snapshot, None, &mut ledger, &banks);
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 1, OpenGate::Open).is_pending());
+    assert!(is_close(first_effect(&ledger)));
+    complete_interaction(&mut ledger, 1);
+    snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+    snapshot.seed_side_modal(side);
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 2, OpenGate::Open).is_pending());
+    assert!(matches!(
+        poll_at(&mut run, &snapshot, None, &mut ledger, 9, OpenGate::Open),
+        Poll::Ready(Err(ActionError::Failed(message)))
+            if message.as_ref() == "bank-close-failed: bank did not close"
+    ));
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
 }
 
 #[test]

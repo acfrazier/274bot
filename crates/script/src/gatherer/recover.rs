@@ -18,9 +18,7 @@ impl Gatherer {
             && (self.retained.recovery != RecoveryState::Idle || !self.retained.haul_since_death);
         self.cancel_active();
         self.trip = TripStep::Idle;
-        self.selected_bank = None;
-        self.scratch.withdrawals = None;
-        self.supply_missing = None;
+        self.scratch.needs = None;
         self.observed_progress = None;
         self.proof_evidence = 0;
         self.tool = ToolState {
@@ -100,18 +98,13 @@ impl Gatherer {
         if self.needs_validate {
             match self.validate(&mut tick.cx) {
                 Validation::Pending => return,
-                Validation::Wear(tool) => {
-                    self.tool = tool;
-                    self.begin_wear(tick);
-                    return;
-                }
                 Validation::Ready => self.needs_validate = false,
             }
         }
         if self.failure.is_some() {
             return;
         }
-        if self.begin_eat(tick) {
+        if self.active_matches_none() && self.begin_eat(tick) {
             return;
         }
         match step {
@@ -122,7 +115,7 @@ impl Gatherer {
                     return;
                 }
                 let snapshot = tick.cx.snapshot();
-                let (Some(stats), Some(_), Some(_), Some(_)) = (
+                let (Some(_), Some(_), Some(_), Some(_)) = (
                     snapshot.stats(),
                     snapshot.inventory(),
                     snapshot.equipment(),
@@ -133,11 +126,7 @@ impl Gatherer {
                 // The same admission as a live boundary (N7): a
                 // `Session`-known shortage fails in place, a `Hint` or an
                 // unknown bank earns one reprovision trip.
-                if self.admit_supply(SupplyPlan::plan(
-                    &self.prepared,
-                    stats.value,
-                    snapshot.stock(),
-                )) {
+                if self.admit_supply(&tick.cx) {
                     return;
                 }
                 if snapshot
@@ -146,7 +135,11 @@ impl Gatherer {
                 {
                     // Recreation can observe a completed withdrawal before
                     // the previous instance closed its bank modal.
-                    self.advance_trip(TripStep::Close);
+                    self.scratch.needs = Some(Arc::from([]));
+                    self.advance_trip(TripStep::Supply {
+                        return_to_work: false,
+                        deposit_products: false,
+                    });
                 } else {
                     self.advance_recovery(RecoveryState::Pending { step: 4 }, tick);
                     self.needs_validate = true;

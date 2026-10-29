@@ -1372,6 +1372,43 @@ fn bank_conservation_satisfied(
         && unneeded_after.is_empty()
 }
 
+#[derive(Debug, Clone)]
+struct ReprovisionDepositEvidence {
+    session: u64,
+    opened_at: Instant,
+    observed_at: Instant,
+    expected_items: BTreeMap<i32, i32>,
+    bank_before: BTreeMap<i32, i32>,
+    bank_after: BTreeMap<i32, i32>,
+}
+
+impl ReprovisionDepositEvidence {
+    fn accounts_for(&self, id: i32, count: i32, left_in: Instant) -> bool {
+        self.opened_at <= left_in
+            && left_in <= self.observed_at
+            && self.expected_items.get(&id).is_some_and(|expected| {
+                count > 0
+                    && *expected >= count
+                    && self
+                        .bank_after
+                        .get(&id)
+                        .copied()
+                        .unwrap_or(0)
+                        .saturating_sub(self.bank_before.get(&id).copied().unwrap_or(0))
+                        >= *expected
+            })
+    }
+
+    fn as_json(&self) -> Value {
+        json!({
+            "session": self.session,
+            "expected_items": self.expected_items,
+            "bank_before": self.bank_before,
+            "bank_after": self.bank_after,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct BankTripReceipt {
     trip: i64,
@@ -1465,6 +1502,24 @@ impl BankTripReceipt {
             let before = self.bank_before.get(&id).copied().unwrap_or(0);
             let after = bank_after.get(&id).copied().unwrap_or(0);
             after.saturating_sub(before) >= *expected
+        })
+    }
+
+    fn withdrawal_observed(
+        &self,
+        inventory_after: &BTreeMap<i32, i32>,
+        bank_after: &BTreeMap<i32, i32>,
+    ) -> bool {
+        inventory_after.iter().any(|(id, count)| {
+            let gained = count.saturating_sub(self.inventory_before.get(id).copied().unwrap_or(0));
+            gained > 0
+                && self
+                    .bank_before
+                    .get(id)
+                    .copied()
+                    .unwrap_or(0)
+                    .saturating_sub(bank_after.get(id).copied().unwrap_or(0))
+                    == gained
         })
     }
 
@@ -1890,6 +1945,7 @@ struct Witness {
     death_command_tile: Option<(i32, i32, i32)>,
     death_respawn_region_unchanged: bool,
     death_progress_baselines: BTreeMap<u8, (i32, i32, i64)>,
+    death_reprovision_deposits: Vec<ReprovisionDepositEvidence>,
     death_recovered: BTreeSet<u8>,
     death_products_after: BTreeSet<u8>,
     death_xp_after: BTreeSet<u8>,
@@ -2034,6 +2090,45 @@ impl GatherSlot {
             tutorial_reseed: None,
             soak_last_refill: Instant::now(),
         }
+    }
+
+    fn is_real_content_death_reprovision(&self) -> bool {
+        self.case == LiveCase::DeathReturn
+            && self.plan.seed_locs.is_empty()
+            && self.plan.oak_tiles.is_empty()
+    }
+
+    fn observe_reprovision_bank(&mut self, observation: &Observation) -> Result<(), String> {
+        if !self.is_real_content_death_reprovision() || !self.snapshot.bank_loaded() {
+            return Ok(());
+        }
+        let session = self.snapshot.bank_session_generation();
+        let bank_after = self.snapshot_bank_counts();
+        if let Some(evidence) = self
+            .witness
+            .death_reprovision_deposits
+            .last_mut()
+            .filter(|evidence| evidence.session == session)
+        {
+            evidence.bank_after = bank_after;
+            evidence.observed_at = observation.captured_at;
+        } else {
+            let expected_items = bank_deposit_expectation(
+                &self.snapshot_inventory_counts(),
+                &self.native_deposit_ids()?,
+            );
+            self.witness
+                .death_reprovision_deposits
+                .push(ReprovisionDepositEvidence {
+                    session,
+                    opened_at: observation.captured_at,
+                    observed_at: observation.captured_at,
+                    expected_items,
+                    bank_before: bank_after.clone(),
+                    bank_after,
+                });
+        }
+        Ok(())
     }
     fn fixture_progress(&self) -> FixtureProgress {
         let latest = self.latest.as_ref();
@@ -3038,6 +3133,9 @@ impl GatherSlot {
         {
             return Err("Gatherer fetched the unusable banked pickaxe".into());
         }
+        self.observe_reprovision_bank(&observation)?;
+        self.observe_bank_open(self.witness.status_deposited)?;
+        self.observe_bank_withdrawal();
         let bank_active = self.bank_conservation_active();
         let drop_baseline = self.last_observed_dropped;
         let product_drop_baseline = self.last_observed_product_drops;
@@ -3079,6 +3177,11 @@ impl GatherSlot {
                             receipt.expected_items.contains_key(&id)
                                 && receipt.bank_increased_for(id, &bank_counts)
                         }))
+                && !self
+                    .witness
+                    .death_reprovision_deposits
+                    .iter()
+                    .any(|evidence| evidence.accounts_for(id, count, unsettled.left_in))
                 && !(id == GENIE_LAMP_ID
                     && wish_granted
                         .take_if(|granted| *granted >= unsettled.left_in)
@@ -3126,7 +3229,10 @@ impl GatherSlot {
             for (slot, old) in &previous.inventory {
                 if !observation.inventory.contains_key(slot) {
                     if self.cell.products(self.case).contains(&old.id) {
-                        if bank_active {
+                        if bank_active
+                            || (self.is_real_content_death_reprovision()
+                                && self.snapshot.bank_loaded())
+                        {
                             self.unsettled_items.entry((old.id, old.count)).or_insert(
                                 UnsettledItem {
                                     since: Instant::now(),
@@ -3535,6 +3641,74 @@ impl GatherSlot {
             .ok_or_else(|| format!("{} bank settings are not a Gatherer config", self.name()))
     }
 
+    fn observe_bank_open(&mut self, current_deposited: i64) -> Result<(), String> {
+        if !self.bank_conservation_active()
+            || !self.snapshot.bank_loaded()
+            || self.witness.pending_bank_trip.is_some()
+        {
+            return Ok(());
+        }
+        let inventory_before = self.snapshot_inventory_counts();
+        let deposit_ids = self.native_deposit_ids()?;
+        if self.case == LiveCase::FishHarpoonBank && self.witness.bank_trips.is_empty() {
+            for (id, label) in [(SPARE_NET_ID, "spare net"), (BEER_ID, "beer")] {
+                if inventory_before.get(&id) != Some(&1) || !deposit_ids.contains(&id) {
+                    return Err(format!(
+                        "{} did not prepare the seeded {label} as a deposit candidate: inventory={inventory_before:?} deposit_ids={deposit_ids:?}",
+                        self.name()
+                    ));
+                }
+            }
+        }
+        let seeded_casket_expected =
+            if self.case.requires_seeded_casket() && self.witness.bank_trips.is_empty() {
+                self.witness.seeded_casket_baseline_count
+            } else {
+                0
+            };
+        if seeded_casket_expected > 0
+            && inventory_before.get(&CASKET_ID).copied().unwrap_or(0) < seeded_casket_expected
+        {
+            return Err(format!(
+                "{} lost its seeded casket before the first bank deposit: {:?}",
+                self.name(),
+                inventory_before
+            ));
+        }
+        self.witness.pending_bank_trip = Some(BankTripReceipt::new(
+            self.witness.status_trips.saturating_add(1),
+            inventory_before,
+            &deposit_ids,
+            self.snapshot_bank_counts(),
+            current_deposited,
+            self.cell.products(self.case),
+            seeded_casket_expected,
+        ));
+        Ok(())
+    }
+
+    fn observe_bank_withdrawal(&mut self) {
+        if self.witness.bank_withdrawal_confirmed || !self.snapshot.bank_loaded() {
+            return;
+        }
+        let Some(receipt) = self.witness.pending_bank_trip.as_ref() else {
+            return;
+        };
+        self.witness.bank_withdrawal_confirmed = receipt.withdrawal_observed(
+            &self.snapshot_inventory_counts(),
+            &self.snapshot_bank_counts(),
+        );
+    }
+
+    fn status_claims_bank_close(&self, status: &script::native::ScriptStatus) -> bool {
+        // The acquisition completion event also follows wear-only requests.
+        // A missing bank field does not prove that no bank was involved.
+        text_field(status, "last_event") == Some("bank closed; validating equipment")
+            && (text_field(status, "bank") != Some("—")
+                || self.witness.pending_bank_trip.is_some()
+                || self.snapshot.bank_loaded())
+    }
+
     fn observe_bank_deposit(
         &mut self,
         status: &script::native::ScriptStatus,
@@ -3543,51 +3717,9 @@ impl GatherSlot {
         if !self.bank_conservation_active() {
             return Ok(());
         }
-        let bank = text_field(status, "bank");
-        let bank_step = bank.and_then(|bank| bank.rsplit_once("; ").map(|(_, step)| step));
+        self.observe_bank_open(current_deposited)?;
+        self.observe_bank_withdrawal();
         let event = text_field(status, "last_event");
-        if bank_step == Some("Deposit")
-            && self.snapshot.bank_loaded()
-            && self.witness.pending_bank_trip.is_none()
-        {
-            let inventory_before = self.snapshot_inventory_counts();
-            let deposit_ids = self.native_deposit_ids()?;
-            if self.case == LiveCase::FishHarpoonBank && self.witness.bank_trips.is_empty() {
-                for (id, label) in [(SPARE_NET_ID, "spare net"), (BEER_ID, "beer")] {
-                    if inventory_before.get(&id) != Some(&1) || !deposit_ids.contains(&id) {
-                        return Err(format!(
-                            "{} did not prepare the seeded {label} as a deposit candidate: inventory={inventory_before:?} deposit_ids={deposit_ids:?}",
-                            self.name()
-                        ));
-                    }
-                }
-            }
-            let seeded_casket_expected =
-                if self.case.requires_seeded_casket() && self.witness.bank_trips.is_empty() {
-                    self.witness.seeded_casket_baseline_count
-                } else {
-                    0
-                };
-            if seeded_casket_expected > 0
-                && inventory_before.get(&CASKET_ID).copied().unwrap_or(0) < seeded_casket_expected
-            {
-                return Err(format!(
-                    "{} lost its seeded casket before the first bank deposit: {:?}",
-                    self.name(),
-                    inventory_before
-                ));
-            }
-            let receipt = BankTripReceipt::new(
-                self.witness.status_trips.saturating_add(1),
-                inventory_before,
-                &deposit_ids,
-                self.snapshot_bank_counts(),
-                current_deposited,
-                self.cell.products(self.case),
-                seeded_casket_expected,
-            );
-            self.witness.pending_bank_trip = Some(receipt);
-        }
         if event == Some("deposit confirmed") && self.witness.pending_bank_trip.is_none() {
             return Err(format!(
                 "{} confirmed a deposit without pre-deposit inventory evidence",
@@ -3595,13 +3727,22 @@ impl GatherSlot {
             ));
         }
 
+        // The core skips an empty deposit, including its status and event.
+        // Its observed pack and bank still prove the zero-item boundary.
+        let empty_deposit = self
+            .witness
+            .pending_bank_trip
+            .as_ref()
+            .is_some_and(|receipt| receipt.expected_items.is_empty());
         let should_observe_deposit =
             self.witness
                 .pending_bank_trip
                 .as_ref()
                 .is_some_and(|receipt| {
                     !receipt.deposit_verified
-                        && (event == Some("deposit confirmed") || receipt.deposit_confirmed)
+                        && (event == Some("deposit confirmed")
+                            || receipt.deposit_confirmed
+                            || empty_deposit)
                 });
         if should_observe_deposit {
             let inventory_after = self.snapshot_inventory_counts();
@@ -3624,11 +3765,11 @@ impl GatherSlot {
                     bank_loaded,
                     &bank_after,
                     current_deposited,
-                    event == Some("deposit confirmed"),
+                    event == Some("deposit confirmed") || empty_deposit,
                 );
             result.map_err(|error| format!("{}: {error}", self.name()))?;
         }
-        if event == Some("bank closed; validating equipment") {
+        if self.status_claims_bank_close(status) {
             let receipt = self.witness.pending_bank_trip.as_ref();
             if !receipt.is_some_and(|receipt| receipt.deposit_verified) {
                 return Err(format!(
@@ -4382,12 +4523,6 @@ impl GatherSlot {
                     }
                 }
             }
-            if event == "bank selected" && self.witness.bank_selection_elapsed.is_none() {
-                self.witness.bank_selection_elapsed = self
-                    .witness
-                    .bank_trip_due_at
-                    .map(|started| Instant::now().duration_since(started));
-            }
             self.witness.last_status_event = Some(event.to_owned());
             if let Some(death) = event
                 .strip_prefix("recovered after death ")
@@ -4400,36 +4535,8 @@ impl GatherSlot {
                         Some(self.witness.post_drop_gathers);
                 }
             }
-            if event == "bank selected" {
-                self.witness.bank_selected = true;
-                if self.case == LiveCase::PowerToBank {
-                    let completed = self
-                        .witness
-                        .confirmed_drops
-                        .saturating_sub(self.witness.power_to_bank_edit_drop_baseline)
-                        >= self.witness.power_to_bank_edit_slots;
-                    if !self.witness.power_to_bank_edit_requested
-                        || !self.witness.power_to_bank_applied
-                        || !completed
-                    {
-                        return Err(format!(
-                            "bank selection preempted the boundary-applied Power to Bank batch: {:?}",
-                            self.witness
-                        ));
-                    }
-                }
-            }
-            if event == "withdrawal confirmed" {
-                self.witness.bank_withdrawal_confirmed = true;
-            }
-            if event == "bank closed; validating equipment" {
+            if self.status_claims_bank_close(status) {
                 self.witness.bank_closed_observed = true;
-            }
-            if self.case == LiveCase::FishBait
-                && event == "withdrawal confirmed"
-                && integer_field(status, "bait") == Some(3)
-            {
-                self.witness.bait_exact = true;
             }
             if self.case == LiveCase::WoodcuttingBankUnwieldable && event == "wielding tool" {
                 return Err("unwieldable rune axe wear action was started".into());
@@ -4508,6 +4615,30 @@ impl GatherSlot {
             }
         }
 
+        if !self.witness.bank_selected && self.complete_bank_selection() {
+            if self.case == LiveCase::PowerToBank {
+                let completed = self
+                    .witness
+                    .confirmed_drops
+                    .saturating_sub(self.witness.power_to_bank_edit_drop_baseline)
+                    >= self.witness.power_to_bank_edit_slots;
+                if !self.witness.power_to_bank_edit_requested
+                    || !self.witness.power_to_bank_applied
+                    || !completed
+                {
+                    return Err(format!(
+                        "bank selection preempted the boundary-applied Power to Bank batch: {:?}",
+                        self.witness
+                    ));
+                }
+            }
+            self.witness.bank_selected = true;
+            self.witness.bank_selection_elapsed = self
+                .witness
+                .bank_trip_due_at
+                .map(|started| Instant::now().duration_since(started));
+        }
+
         if self.case == LiveCase::FishBaitGate {
             self.witness.no_fish_xp = self.baseline.as_ref().is_some_and(|baseline| {
                 self.latest.as_ref().is_some_and(|latest| {
@@ -4555,6 +4686,13 @@ impl GatherSlot {
             }
             let expected_block = match self.case {
                 LiveCase::FishBaitGate => code == "supply-missing",
+                LiveCase::CoinRunesEmpty => {
+                    code == "supply-missing"
+                        && status.phase == script::native::NativePhase::Blocked
+                        && self.complete_bank_selection()
+                        && self.witness.bank_loaded_observed
+                        && text_field(status, "bank").is_some_and(|bank| bank.ends_with("; Supply"))
+                }
                 LiveCase::OakAbsentArea => {
                     code == "resource-unavailable" && message.starts_with("resource-unavailable")
                 }
@@ -5206,15 +5344,16 @@ impl GatherSlot {
                 Ok(())
             }
             LiveCase::CoinRunesEmpty => {
-                let at_withdraw = self
+                let at_supply = self
                     .witness
                     .last_status_bank
                     .as_deref()
-                    .is_some_and(|bank| bank.ends_with("; Withdraw"));
+                    .is_some_and(|bank| bank.ends_with("; Supply"));
                 if self.witness.failure_code.as_deref() != Some("supply-missing")
-                    || !self.witness.bank_selected
+                    || !self.witness.native_phases.contains("Blocked")
+                    || !self.complete_bank_selection()
                     || !self.witness.bank_loaded_observed
-                    || !at_withdraw
+                    || !at_supply
                     || self.witness.status_trips != 0
                     || self.witness.last_status_yielded != 0
                     || self
@@ -5369,12 +5508,11 @@ impl GatherSlot {
             .as_deref()
             .and_then(|bank| bank.split(';').nth(1))
             .map(str::trim)
-            .filter(|kind| !kind.is_empty())
+            .filter(|kind| matches!(*kind, "NearShortcut" | "Reachable" | "AirFallback"))
     }
 
     fn complete_bank_selection(&self) -> bool {
-        self.witness.bank_selected
-            && self.selected_bank_name().is_some()
+        self.selected_bank_name().is_some()
             && self.selected_bank_kind().is_some()
             && self
                 .witness
@@ -5888,6 +6026,16 @@ fn fixture_plan(
     }
     Ok((target, plan, task))
 }
+fn real_content_death_fixture(
+    _cell: Cell,
+    _case: LiveCase,
+) -> Result<(WorldTile, FixturePlan, Option<FixtureTask>), String> {
+    let mut plan = FixturePlan::default();
+    plan.bank_seed.push(("bronze_axe".into(), 3));
+    plan.inventory_seed
+        .extend(DEATH_FILLERS.iter().map(|(_, alias)| ((*alias).into(), 1)));
+    Ok((DRAYNOR_OAK_BANK_START, plan, None))
+}
 
 fn mint_profile(account: &str, password: &str, offset: i32) -> Result<Profile, String> {
     let uid = SystemTime::now()
@@ -5949,6 +6097,17 @@ fn selected_profile(
 }
 
 fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
+    run_cell_with_fixture(cell, case, fixture_plan)
+}
+
+fn run_cell_with_fixture(
+    cell: Cell,
+    case: LiveCase,
+    fixture_builder: impl FnOnce(
+        Cell,
+        LiveCase,
+    ) -> Result<(WorldTile, FixturePlan, Option<FixtureTask>), String>,
+) -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Ok(());
     }
@@ -5999,7 +6158,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             catalog_root.display()
         ));
     }
-    let (target, mut plan, fixture_task) = fixture_plan(cell, case)?;
+    let (target, mut plan, fixture_task) = fixture_builder(cell, case)?;
     let temp = TempRoot::new(cell_name)?;
     let (profile, template) = selected_profile(nav_pack, engine_dir, catalog_root, temp.path())?;
     if case == LiveCase::BankCost {
@@ -6496,7 +6655,11 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     Err(error) => break Err(error),
                 }
             };
-            let bank_config = if case.is_bank_mode() {
+            let needs_bank_config = {
+                let slot = state.lock().map_err(|_| "live state poisoned")?;
+                case.is_bank_mode() || slot.is_real_content_death_reprovision()
+            };
+            let bank_config = if needs_bank_config {
                 let preparation = match play.script_prepare_config(
                     script::CompiledId("Gatherer"),
                     1,
@@ -7180,7 +7343,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     && witness
                         .last_status_bank
                         .as_deref()
-                        .is_some_and(|bank| bank.ends_with("; Withdraw"))
+                        .is_some_and(|bank| bank.ends_with("; Supply"))
             }
             LiveCase::PowerToBank => {
                 witness.power_to_bank_applied
@@ -7522,6 +7685,23 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "xp": witness.last_xp,
         });
     }
+    if case == LiveCase::DeathReturn
+        && fixture_plan.seed_locs.is_empty()
+        && fixture_plan.oak_tiles.is_empty()
+    {
+        fixture_receipt["real_content_death_reprovision"] = json!({
+            "origin": target,
+            "resource": "oak",
+            "scene_locations_seeded": fixture_plan.seed_locs.len(),
+            "fixture_locations_seeded": fixture_plan.oak_tiles.len(),
+            "deposit_evidence": witness
+                .death_reprovision_deposits
+                .iter()
+                .map(ReprovisionDepositEvidence::as_json)
+                .collect::<Vec<_>>(),
+        });
+    }
+
     if case.is_named_site() {
         receipt["named_site"] = json!({
             "id": cell.site_id_for_case(case),
@@ -7667,6 +7847,32 @@ impl QuesterSharedCoreState {
 }
 
 #[cfg(feature = "live-harness")]
+fn quester_shared_core_completed(
+    native_status: Option<&script::native::ScriptStatus>,
+    lifecycle: Option<&script::ScriptLifecycleReceipt>,
+    run_state: script::RunState,
+) -> Result<bool, String> {
+    if let Some(status) = native_status {
+        if status.card != script::CompiledId("Quester") {
+            return Err(format!(
+                "quester_sheep terminal status belongs to {:?}",
+                status.card
+            ));
+        }
+    }
+    let Some(receipt) = lifecycle else {
+        return Ok(false);
+    };
+    if receipt.state != script::ScriptTerminalState::Completed {
+        return Err(format!(
+            "quester_sheep native run ended {:?}: {receipt:?}",
+            receipt.state
+        ));
+    }
+    Ok(run_state == script::RunState::Idle)
+}
+
+#[cfg(feature = "live-harness")]
 fn run_quester_sheep_shared_core() -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Ok(());
@@ -7777,6 +7983,7 @@ fn run_quester_sheep_shared_core() -> Result<(), String> {
         let script_error = play.script_last_error(&account);
         let native_status = play.script_native_status(&account);
         let run_state = play.script_state(&account);
+        let lifecycle = play.script_lifecycle_receipt(&account);
         let (runner_status, start_count, error) = {
             let mut slot = state.lock().map_err(|_| "Quester live state poisoned")?;
             if run_state == script::RunState::Running {
@@ -7800,27 +8007,29 @@ fn run_quester_sheep_shared_core() -> Result<(), String> {
                         "quester_sheep passed after {start_count} compiled Starts, expected one"
                     ));
                 }
-                if let Some(status) = native_status.as_ref() {
-                    if status.card != script::CompiledId("Quester") {
-                        break Err(format!(
-                            "quester_sheep terminal status belongs to {:?}",
-                            status.card
-                        ));
-                    }
-                    if status.phase == script::native::NativePhase::Complete {
+                match quester_shared_core_completed(
+                    native_status.as_deref(),
+                    lifecycle.as_ref(),
+                    run_state,
+                ) {
+                    Ok(true) => {
                         println!(
                             "{}",
                             json!({
                                 "phase": "witness",
                                 "live_case": CELL,
                                 "scenario": "quester_sheep",
-                                "card": status.card.0,
-                                "native_phase": format!("{:?}", status.phase),
+                                "card": "Quester",
+                                "native_phase": native_status.as_ref().map(|status| format!("{:?}", status.phase)),
+                                "run_state": format!("{run_state:?}"),
+                                "lifecycle": lifecycle,
                                 "start_count": start_count,
                             })
                         );
                         break Ok(());
                     }
+                    Ok(false) => {}
+                    Err(error) => break Err(error),
                 }
             }
             RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
@@ -8073,6 +8282,17 @@ fn gatherer_death_return() {
 }
 
 #[test]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, and local 289 engine"]
+fn gatherer_death_reprovision_real_content() {
+    run_cell_with_fixture(
+        Cell::Woodcutting,
+        LiveCase::DeathReturn,
+        real_content_death_fixture,
+    )
+    .unwrap();
+}
+
+#[test]
 #[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, and local 289 engine; defaults to the Lumbridge respawn-region fixture"]
 fn gatherer_death_return_respawn_region() {
     run_cell(Cell::Woodcutting, LiveCase::DeathRespawnRegion).unwrap();
@@ -8227,6 +8447,280 @@ mod bank_conservation_tests {
             28,
         );
         (config, snapshot)
+    }
+
+    fn open_bank_slot(items: &[(i32, i32)]) -> GatherSlot {
+        let (config, mut snapshot) = bank_fixture(items);
+        let (_, bank) = bank_fixture(&[(KEBAB_ID, 2)]);
+        snapshot.seed_bank_observation(5292, 1, Some(bank.inventory().to_vec()), vec![]);
+        let mut slot = GatherSlot::new(
+            Cell::Woodcutting,
+            LiveCase::WoodcuttingBank,
+            DRAYNOR_OAK_BANK_START,
+            FixturePlan::default(),
+            None,
+            false,
+        );
+        slot.bank_config = Some(config);
+        slot.snapshot = snapshot;
+        slot
+    }
+
+    fn bank_status(
+        step: &str,
+        event: &str,
+        deposited: i64,
+        trips: i64,
+    ) -> script::native::ScriptStatus {
+        use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
+        ScriptStatus {
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            card: script::CompiledId("Gatherer"),
+            phase: NativePhase::Working,
+            active_settings: 1,
+            pending_settings: None,
+            failure: None,
+            fields: Arc::from([
+                StatusField {
+                    key: "bank",
+                    label: "Bank",
+                    value: StatusValue::Text(format!("Draynor; {step}").into()),
+                },
+                StatusField {
+                    key: "last_event",
+                    label: "Event",
+                    value: StatusValue::Text(event.into()),
+                },
+                StatusField {
+                    key: "deposited",
+                    label: "Deposited",
+                    value: StatusValue::Integer(deposited),
+                },
+                StatusField {
+                    key: "trips",
+                    label: "Trips",
+                    value: StatusValue::Integer(trips),
+                },
+            ]),
+        }
+    }
+
+    fn unopened_bank_slot() -> GatherSlot {
+        let mut slot = open_bank_slot(&[]);
+        let (_, snapshot) = bank_fixture(&[]);
+        slot.snapshot = snapshot;
+        slot
+    }
+
+    fn bank_close_status(bank: &str) -> script::native::ScriptStatus {
+        let mut status = bank_status("Validate", "bank closed; validating equipment", 0, 0);
+        Arc::make_mut(&mut status.fields)
+            .iter_mut()
+            .find(|field| field.key == "bank")
+            .unwrap()
+            .value = script::native::StatusValue::Text(bank.into());
+        status
+    }
+
+    #[test]
+    fn bank_close_boundary_accepts_wear_only_without_claiming_a_bank_close() {
+        let mut slot = unopened_bank_slot();
+        slot.apply_status(&bank_close_status("—")).unwrap();
+        assert!(slot.witness.pending_bank_trip.is_none());
+        assert!(!slot.witness.bank_closed_observed);
+        assert!(!slot.witness.bank_loaded_observed);
+        assert_eq!(slot.witness.status_trips, 0);
+    }
+
+    #[test]
+    fn bank_close_boundary_rejects_a_selected_bank_without_a_receipt() {
+        let mut slot = unopened_bank_slot();
+        assert!(slot
+            .apply_status(&bank_close_status("Draynor; Validate"))
+            .is_err());
+        assert!(!slot.witness.bank_closed_observed);
+    }
+
+    #[test]
+    fn bank_close_boundary_rejects_a_missing_bank_field_without_a_receipt() {
+        let mut slot = unopened_bank_slot();
+        let mut status = bank_close_status("Draynor; Validate");
+        Arc::make_mut(&mut status.fields)
+            .iter_mut()
+            .find(|field| field.key == "bank")
+            .unwrap()
+            .key = "not_bank";
+        assert!(slot.apply_status(&status).is_err());
+        assert!(!slot.witness.bank_closed_observed);
+    }
+
+    #[test]
+    fn bank_close_boundary_rejects_an_unverified_receipt_without_a_selected_bank() {
+        let mut slot = open_bank_slot(&[(KEBAB_ID, 4)]);
+        slot.observe_running(None, slot.capture()).unwrap();
+        let receipt = slot.witness.pending_bank_trip.as_ref().unwrap();
+        assert!(!receipt.deposit_verified);
+        let (_, snapshot) = bank_fixture(&[(KEBAB_ID, 4)]);
+        slot.snapshot = snapshot;
+        assert!(slot.apply_status(&bank_close_status("—")).is_err());
+        assert!(!slot.witness.bank_closed_observed);
+    }
+
+    #[test]
+    fn bank_close_boundary_credits_a_verified_bank_receipt() {
+        let mut slot = open_bank_slot(&[]);
+        slot.observe_running(None, slot.capture()).unwrap();
+        slot.apply_status(&bank_close_status("Draynor; Validate"))
+            .unwrap();
+        let receipt = slot.witness.pending_bank_trip.as_ref().unwrap();
+        assert!(receipt.deposit_verified);
+        assert!(slot.witness.bank_closed_observed);
+    }
+
+    #[test]
+    fn bank_open_boundary_accepts_an_empty_supply_deposit_without_a_deposit_stage() {
+        let mut slot = open_bank_slot(&[]);
+        slot.observe_running(None, slot.capture()).unwrap();
+        slot.apply_status(&bank_status("Withdraw", "bank trip due", 0, 0))
+            .unwrap();
+        slot.apply_status(&bank_status(
+            "Wear",
+            "bank closed; validating equipment",
+            0,
+            0,
+        ))
+        .unwrap();
+        slot.apply_status(&bank_status("Idle", "returned to work area", 0, 1))
+            .unwrap();
+        assert_eq!(slot.witness.status_trips, 1);
+        assert!(slot.witness.bank_trips.is_empty());
+    }
+
+    #[test]
+    fn bank_open_boundary_accepts_only_the_observed_item_count_increase() {
+        let mut slot = open_bank_slot(&[(KEBAB_ID, 4)]);
+        slot.observe_running(None, slot.capture()).unwrap();
+        let receipt = slot.witness.pending_bank_trip.as_ref().unwrap();
+        assert_eq!(receipt.expected_items, counts(&[(KEBAB_ID, 4)]));
+        assert_eq!(receipt.bank_before, counts(&[(KEBAB_ID, 2)]));
+        let (_, bank) = bank_fixture(&[(KEBAB_ID, 6)]);
+        slot.snapshot.seed_inventory(vec![], 28);
+        slot.snapshot
+            .seed_bank_observation(5292, 2, Some(bank.inventory().to_vec()), vec![]);
+        slot.apply_status(&bank_status("Supply", "deposit confirmed", 4, 0))
+            .unwrap();
+        slot.apply_status(&bank_status(
+            "Wear",
+            "bank closed; validating equipment",
+            4,
+            0,
+        ))
+        .unwrap();
+        slot.apply_status(&bank_status("Idle", "returned to work area", 4, 1))
+            .unwrap();
+        assert_eq!(slot.witness.bank_trips.len(), 1);
+        assert!(slot.witness.bank_trips[0].deposit_verified);
+    }
+
+    #[test]
+    fn bank_open_boundary_rejects_items_that_vanish_without_a_bank_increase() {
+        let mut slot = open_bank_slot(&[(KEBAB_ID, 4)]);
+        slot.observe_running(None, slot.capture()).unwrap();
+        slot.snapshot.seed_inventory(vec![], 28);
+        slot.apply_status(&bank_status("Supply", "deposit confirmed", 4, 0))
+            .unwrap();
+        assert!(slot
+            .apply_status(&bank_status(
+                "Wear",
+                "bank closed; validating equipment",
+                4,
+                0,
+            ))
+            .is_err());
+    }
+
+    fn real_death_slot_at_bank() -> GatherSlot {
+        let (config, mut snapshot) = bank_fixture(&[(KEBAB_ID, 2), (BEER_ID, 1), (1521, 3)]);
+        let (_, bank) = bank_fixture(&[(KEBAB_ID, 5), (BEER_ID, 7), (1521, 2)]);
+        snapshot.seed_bank_observation(5292, 1, Some(bank.inventory().to_vec()), vec![]);
+        let (target, plan, task) =
+            real_content_death_fixture(Cell::Woodcutting, LiveCase::DeathReturn).unwrap();
+        let mut slot = GatherSlot::new(
+            Cell::Woodcutting,
+            LiveCase::DeathReturn,
+            target,
+            plan,
+            task,
+            false,
+        );
+        slot.bank_config = Some(config);
+        slot.snapshot = snapshot;
+        slot
+    }
+
+    fn reprovision_deposit_observation(
+        slot: &mut GatherSlot,
+        bank_after: &[(i32, i32)],
+    ) -> Observation {
+        let before = slot.capture();
+        slot.observe_running(None, before.clone()).unwrap();
+        let (_, bank) = bank_fixture(bank_after);
+        slot.snapshot.seed_inventory(vec![], 28);
+        slot.snapshot
+            .seed_bank_observation(5292, 2, Some(bank.inventory().to_vec()), vec![]);
+        let after = slot.capture();
+        slot.observe_running(Some(before), after.clone()).unwrap();
+        assert_eq!(slot.unsettled_items.len(), 3);
+        assert_eq!(slot.witness.confirmed_drops, 0);
+        for item in slot.unsettled_items.values_mut() {
+            item.since = Instant::now() - UNSETTLED_WINDOW;
+        }
+        after
+    }
+
+    #[test]
+    fn real_death_reprovision_conservation_accepts_observed_per_item_bank_increases() {
+        let mut slot = real_death_slot_at_bank();
+        let after =
+            reprovision_deposit_observation(&mut slot, &[(KEBAB_ID, 7), (BEER_ID, 8), (1521, 5)]);
+        slot.observe_running(Some(after), slot.capture()).unwrap();
+        assert!(slot.unsettled_items.is_empty());
+        let evidence = &slot.witness.death_reprovision_deposits[0];
+        assert_eq!(
+            evidence.expected_items,
+            counts(&[(KEBAB_ID, 2), (BEER_ID, 1), (1521, 3)])
+        );
+        assert_eq!(
+            evidence.bank_before,
+            counts(&[(KEBAB_ID, 5), (BEER_ID, 7), (1521, 2)])
+        );
+        assert_eq!(
+            evidence.bank_after,
+            counts(&[(KEBAB_ID, 7), (BEER_ID, 8), (1521, 5)])
+        );
+        assert!(!evidence.accounts_for(KEBAB_ID, 2, evidence.opened_at - Duration::from_secs(1)));
+        assert!(!evidence.accounts_for(KEBAB_ID, 2, evidence.observed_at + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn real_death_reprovision_conservation_rejects_vanished_missing_or_short_bank_rows() {
+        for bank_after in [
+            vec![(KEBAB_ID, 5), (BEER_ID, 7), (1521, 2)],
+            vec![(KEBAB_ID, 6), (BEER_ID, 8), (1521, 5)],
+            vec![(KEBAB_ID, 8), (1521, 5)],
+        ] {
+            let mut slot = real_death_slot_at_bank();
+            let after = reprovision_deposit_observation(&mut slot, &bank_after);
+            let error = slot
+                .observe_running(Some(after), slot.capture())
+                .unwrap_err();
+            assert!(error.contains("was not conserved"), "{error}");
+            assert!(!slot.unsettled_items.is_empty());
+        }
     }
 
     fn native_deposit_ids(items: &[(i32, i32)]) -> Arc<[i32]> {
@@ -8680,6 +9174,178 @@ mod bank_conservation_tests {
         let observation = slot.capture();
         slot.observe_running(Some(previous), observation.clone())?;
         slot.observe_running(Some(observation.clone()), observation)
+    }
+
+    fn coin_runes_empty_slot() -> GatherSlot {
+        let mut slot = open_bank_slot(&[]);
+        slot.case = LiveCase::CoinRunesEmpty;
+        let baseline = slot.capture();
+        slot.baseline = Some(baseline.clone());
+        slot.latest = Some(baseline);
+        slot
+    }
+
+    fn coin_runes_empty_status(step: &str, code: &str) -> script::native::ScriptStatus {
+        let mut status = soak_status(step, "bank trip due", 0, 0);
+        status.phase = script::native::NativePhase::Blocked;
+        status.failure = Some(script::native::ScriptFailure {
+            code: code.into(),
+            message: "no Fire rune in the pack, worn, or in the bank".into(),
+        });
+        status
+    }
+
+    #[test]
+    fn coin_runes_empty_accepts_a_loaded_supply_shortage() {
+        let mut slot = coin_runes_empty_slot();
+        slot.apply_status(&coin_runes_empty_status("Supply", "supply-missing"))
+            .unwrap();
+        slot.qualifies().unwrap();
+    }
+
+    #[test]
+    fn coin_runes_empty_rejects_the_retired_withdraw_stage() {
+        let mut slot = coin_runes_empty_slot();
+        assert!(slot
+            .apply_status(&coin_runes_empty_status("Withdraw", "supply-missing"))
+            .is_err());
+        assert!(slot.qualifies().is_err());
+    }
+
+    #[test]
+    fn coin_runes_empty_rejects_an_unloaded_bank() {
+        let mut slot = coin_runes_empty_slot();
+        slot.snapshot = GameSnapshot::new();
+        assert!(slot
+            .apply_status(&coin_runes_empty_status("Supply", "supply-missing"))
+            .is_err());
+        assert!(slot.qualifies().is_err());
+    }
+
+    #[test]
+    fn coin_runes_empty_rejects_an_unselected_bank() {
+        let mut slot = coin_runes_empty_slot();
+        let mut status = coin_runes_empty_status("Supply", "supply-missing");
+        let mut fields = status.fields.to_vec();
+        fields
+            .iter_mut()
+            .find(|field| field.key == "bank")
+            .unwrap()
+            .value = script::native::StatusValue::Text("—".into());
+        status.fields = fields.into();
+        assert!(slot.apply_status(&status).is_err());
+        assert!(slot.qualifies().is_err());
+    }
+
+    #[test]
+    fn coin_runes_empty_rejects_a_different_failure() {
+        let mut slot = coin_runes_empty_slot();
+        assert!(slot
+            .apply_status(&coin_runes_empty_status("Supply", "return-failed"))
+            .is_err());
+        assert!(slot.qualifies().is_err());
+    }
+
+    #[test]
+    fn coin_runes_empty_rejects_any_trip_yield_or_xp_progress() {
+        for (trips, yielded, xp) in [(1, 0, 0), (0, 1, 0), (0, 0, 1)] {
+            let mut slot = coin_runes_empty_slot();
+            slot.apply_status(&coin_runes_empty_status("Supply", "supply-missing"))
+                .unwrap();
+            slot.witness.status_trips = trips;
+            slot.witness.last_status_yielded = yielded;
+            slot.latest.as_mut().unwrap().xp = xp;
+            assert!(slot.qualifies().is_err(), "{trips}/{yielded}/{xp}");
+        }
+    }
+
+    #[test]
+    fn bank_selection_observes_the_projection_without_a_retired_event() {
+        for kind in ["Reachable", "AirFallback", "NearShortcut"] {
+            let mut slot = soak_slot_at_deposit();
+            slot.witness.bank_selected = false;
+            let mut status = soak_status("Access", "bank trip due", 0, 0);
+            let mut fields = status.fields.to_vec();
+            fields
+                .iter_mut()
+                .find(|field| field.key == "bank")
+                .unwrap()
+                .value = script::native::StatusValue::Text(
+                format!("Catherby; {kind}; access:2809,3441,0; Access").into(),
+            );
+            status.fields = fields.into();
+            slot.apply_status(&status).unwrap();
+            assert!(slot.complete_bank_selection(), "{kind}");
+            assert_eq!(slot.selected_bank_kind(), Some(kind));
+        }
+    }
+
+    #[test]
+    fn bank_selection_rejects_a_retired_event_without_a_selection_projection() {
+        let mut slot = soak_slot_at_deposit();
+        slot.witness.bank_selected = false;
+        let mut status = soak_status("Select", "bank selected", 0, 0);
+        let mut fields = status.fields.to_vec();
+        fields
+            .iter_mut()
+            .find(|field| field.key == "bank")
+            .unwrap()
+            .value = script::native::StatusValue::Text("—".into());
+        status.fields = fields.into();
+        slot.apply_status(&status).unwrap();
+        assert!(!slot.witness.bank_selected);
+        assert!(!slot.complete_bank_selection());
+    }
+
+    fn slot_before_supply_withdrawal() -> GatherSlot {
+        let mut slot = soak_slot_at_deposit();
+        slot.snapshot
+            .seed_inventory(inventory_rows(&[(NET_ID, 1)]), 28);
+        slot.snapshot
+            .seed_bank_observation(5292, 1, Some(bank_rows(&[(FEATHERS_ID, 3)])), vec![]);
+        slot.witness.pending_bank_trip = None;
+        let observation = slot.capture();
+        slot.observe_running(None, observation).unwrap();
+        slot
+    }
+
+    #[test]
+    fn bank_withdrawal_requires_matching_pack_and_bank_item_deltas() {
+        let mut slot = slot_before_supply_withdrawal();
+        observe_pack_change(&mut slot, &[(NET_ID, 1), (FEATHERS_ID, 3)], &[]).unwrap();
+        assert!(slot.witness.bank_withdrawal_confirmed);
+    }
+
+    #[test]
+    fn bank_withdrawal_rejects_an_uncredited_pack_increase() {
+        let mut slot = slot_before_supply_withdrawal();
+        observe_pack_change(
+            &mut slot,
+            &[(NET_ID, 1), (FEATHERS_ID, 3)],
+            &[(FEATHERS_ID, 3)],
+        )
+        .unwrap();
+        assert!(!slot.witness.bank_withdrawal_confirmed);
+    }
+
+    #[test]
+    fn bank_withdrawal_rejects_a_different_bank_delta_quantity() {
+        let mut slot = slot_before_supply_withdrawal();
+        observe_pack_change(
+            &mut slot,
+            &[(NET_ID, 1), (FEATHERS_ID, 3)],
+            &[(FEATHERS_ID, 1)],
+        )
+        .unwrap();
+        assert!(!slot.witness.bank_withdrawal_confirmed);
+    }
+
+    #[test]
+    fn bank_withdrawal_rejects_a_retired_event_without_item_deltas() {
+        let mut slot = slot_before_supply_withdrawal();
+        slot.apply_status(&soak_status("Withdraw", "withdrawal confirmed", 0, 0))
+            .unwrap();
+        assert!(!slot.witness.bank_withdrawal_confirmed);
     }
 
     fn age_unsettled(slot: &mut GatherSlot) {
@@ -10032,6 +10698,97 @@ mod named_site_fixture_tests {
         }
     }
 
+    fn initial_site_nav() -> Value {
+        json!({
+            "armed": true,
+            "requested": true,
+            "request_id": 2,
+            "arrival": "Area",
+            "requested_radius": 1,
+            "requested_destination": [2846, 3437, 0],
+        })
+    }
+
+    #[test]
+    fn initial_site_walk_accepts_the_unloaded_resource_approach() {
+        assert!(site_initial_nav_matches(
+            &initial_site_nav(),
+            world_tile(2844, 3429),
+            Some("surveying"),
+            Some("0_44_53_rarefish"),
+        ));
+    }
+
+    #[test]
+    fn initial_site_walk_accepts_the_loaded_resource_approach() {
+        assert!(site_initial_nav_matches(
+            &initial_site_nav(),
+            world_tile(2844, 3429),
+            Some("walking"),
+            Some("0_44_53_rarefish"),
+        ));
+    }
+
+    #[test]
+    fn initial_site_walk_rejects_non_approach_phases() {
+        for phase in [None, Some("banking"), Some("gathering"), Some("blocked")] {
+            assert!(!site_initial_nav_matches(
+                &initial_site_nav(),
+                world_tile(2844, 3429),
+                phase,
+                Some("0_44_53_rarefish"),
+            ));
+        }
+    }
+
+    #[test]
+    fn initial_site_walk_rejects_a_missing_resource_target() {
+        for phase in ["walking", "surveying"] {
+            for target in [None, Some("—")] {
+                assert!(!site_initial_nav_matches(
+                    &initial_site_nav(),
+                    world_tile(2844, 3429),
+                    Some(phase),
+                    target,
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn initial_site_walk_rejects_an_unarmed_walk() {
+        let mut nav = initial_site_nav();
+        nav["armed"] = json!(false);
+        for phase in ["walking", "surveying"] {
+            assert!(!site_initial_nav_matches(
+                &nav,
+                world_tile(2844, 3429),
+                Some(phase),
+                Some("0_44_53_rarefish"),
+            ));
+        }
+    }
+
+    #[test]
+    fn initial_site_walk_rejects_goals_outside_the_selected_site() {
+        let mut nav = initial_site_nav();
+        for goal in [
+            json!([2857, 3429, 0]),
+            json!([2846, 3437, 1]),
+            json!([2846, 3437]),
+        ] {
+            nav["requested_destination"] = goal;
+            for phase in ["walking", "surveying"] {
+                assert!(!site_initial_nav_matches(
+                    &nav,
+                    world_tile(2844, 3429),
+                    Some(phase),
+                    Some("0_44_53_rarefish"),
+                ));
+            }
+        }
+    }
+
     #[test]
     fn initial_observation_proof_requires_current_skill_specific_walk() {
         let anchor = world_tile(2844, 3429);
@@ -10286,5 +11043,100 @@ mod named_site_fixture_tests {
             anchor,
             target
         ));
+    }
+}
+#[cfg(test)]
+mod real_content_death_fixture_tests {
+    use super::*;
+
+    #[test]
+    fn death_reprovision_fixture_seeds_account_only() {
+        let (target, plan, task) =
+            real_content_death_fixture(Cell::Woodcutting, LiveCase::DeathReturn).unwrap();
+
+        assert_eq!(target, DRAYNOR_OAK_BANK_START);
+        assert_eq!(plan.bank_seed, vec![("bronze_axe".into(), 3)]);
+        assert_eq!(
+            plan.inventory_seed,
+            DEATH_FILLERS
+                .iter()
+                .map(|(_, alias)| ((*alias).into(), 1))
+                .collect::<Vec<_>>()
+        );
+        assert!(plan.seed_locs.is_empty());
+        assert!(plan.oak_tiles.is_empty());
+        assert!(task.is_none());
+    }
+}
+
+#[cfg(all(test, feature = "live-harness"))]
+mod quester_shared_core_completion_tests {
+    use super::*;
+    use script::{RunState, ScriptLifecycleReceipt, ScriptTerminalState};
+
+    fn receipt(state: ScriptTerminalState) -> ScriptLifecycleReceipt {
+        ScriptLifecycleReceipt {
+            runtime_generation: 1,
+            state,
+            tick: 100,
+            reason: "terminal fixture".into(),
+        }
+    }
+
+    #[test]
+    fn durable_completion_survives_native_status_teardown() {
+        assert!(quester_shared_core_completed(
+            None,
+            Some(&receipt(ScriptTerminalState::Completed)),
+            RunState::Idle,
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn absent_completion_and_active_runs_do_not_pass() {
+        assert!(!quester_shared_core_completed(None, None, RunState::Idle).unwrap());
+        assert!(!quester_shared_core_completed(
+            None,
+            Some(&receipt(ScriptTerminalState::Completed)),
+            RunState::Running,
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn other_terminal_states_do_not_pass() {
+        for state in [
+            ScriptTerminalState::Failed,
+            ScriptTerminalState::Stopped,
+            ScriptTerminalState::Cancelled,
+        ] {
+            assert!(
+                quester_shared_core_completed(None, Some(&receipt(state)), RunState::Idle).is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn another_cards_status_does_not_pass() {
+        let status = script::native::ScriptStatus {
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            card: script::CompiledId("Gatherer"),
+            phase: script::native::NativePhase::Complete,
+            active_settings: 1,
+            pending_settings: None,
+            failure: None,
+            fields: Arc::from([]),
+        };
+        assert!(quester_shared_core_completed(
+            Some(&status),
+            Some(&receipt(ScriptTerminalState::Completed)),
+            RunState::Idle,
+        )
+        .is_err());
     }
 }

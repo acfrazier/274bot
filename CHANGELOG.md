@@ -796,6 +796,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 - When bank selection cannot find a route, the session log now gives the
   routing error, start tile and number of candidate banks and access tiles.
+- Gatherer now shows whether its bank information was seen this session or
+  saved from an earlier session, with its age at the last status update.
+- Gatherer supply trips now share the native acquisition flow. A full pack
+  is still deposited before a missing supply is reported, and a held tool
+  that can be wielded is equipped without a bank trip. Bank refusals keep
+  their specific reason. A refill can withdraw a lower usable tool tier when
+  that is what the bank holds.
+- Fixed during development: Gatherer bank status retains the selected route
+  kind and access tile during supply trips.
 
 #### Quester
 
@@ -819,6 +828,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 #### Scenario checks
 
+- Gatherer's empty-bank reserve check now verifies the blocked supply stage
+  instead of an obsolete withdrawal stage. It still requires a selected,
+  loaded bank and no gathering progress.
+- Gatherer's named-site check recognizes the first walk to an unloaded
+  resource. It still checks the selected site, bank deposits, return walk
+  and fresh gathering progress.
+- Gatherer's bank checks distinguish equipping a held tool from closing a
+  bank. A real bank close still requires verified deposit evidence.
 - The Ardougne Thiever fight check now prepares food and attacks a real Guard
   before script Start. It no longer depends on a random stall catch.
 - The AutoFighter bank check now waits for public Bones to leave its starting

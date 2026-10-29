@@ -1099,6 +1099,15 @@ fn gatherer_snapshot() -> api::snapshot::GameSnapshot {
 }
 
 fn gatherer_tick(slot: &mut SlotScript, snapshot: &api::snapshot::GameSnapshot, tick: u32) {
+    gatherer_tick_with_bank(slot, snapshot, tick, None);
+}
+
+fn gatherer_tick_with_bank(
+    slot: &mut SlotScript,
+    snapshot: &api::snapshot::GameSnapshot,
+    tick: u32,
+    bank: Option<&api::bank_memory::BankMemory>,
+) {
     slot.on_game_tick(&mut ScriptCtx {
         driver: &mut NullDriver::default(),
         tick: u64::from(tick),
@@ -1108,7 +1117,10 @@ fn gatherer_tick(slot: &mut SlotScript, snapshot: &api::snapshot::GameSnapshot, 
         inv: None,
         snapshot: Some(snapshot),
         obj_names: None,
-        compiled: crate::CompiledTick::default(),
+        compiled: crate::CompiledTick {
+            bank_memory: bank,
+            ..Default::default()
+        },
     });
 }
 
@@ -1128,6 +1140,63 @@ fn gatherer_slot(incarnation: u64) -> SlotScript {
     .unwrap();
     assert_eq!(settle(&mut slot), StartOutcome::Ready);
     slot
+}
+
+#[test]
+fn gatherer_bank_seen_status_demotes_to_a_saved_hint_after_relog() {
+    use api::bank_memory::{BankMemory, FrameEvent};
+    use api::snapshot::ItemContainer;
+
+    let mut snapshot = gatherer_snapshot();
+    snapshot.seed_inventory(Vec::new(), 28);
+    let mut row = snapshot.equipment()[0].clone();
+    row.container = ItemContainer::Bank;
+    row.count = 2;
+    snapshot.seed_main_modal(10, Vec::new());
+    snapshot.seed_bank_observation(5382, 1, Some(vec![row]), Vec::new());
+    let mut memory = BankMemory::default();
+    let observed_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        - 3 * 86_400;
+    assert_eq!(memory.track(&snapshot, observed_at), FrameEvent::Opened);
+    let mut slot = gatherer_slot(93);
+    let bank_seen = |slot: &SlotScript| {
+        let status = slot
+            .native_status()
+            .expect("published native Gatherer status");
+        let field = status
+            .fields
+            .iter()
+            .find(|field| field.key == "bank_seen")
+            .expect("the shared status projection includes bank_seen");
+        let crate::native::StatusValue::Text(value) = &field.value else {
+            panic!("bank_seen is a typed text field");
+        };
+        Arc::clone(value)
+    };
+    gatherer_tick_with_bank(&mut slot, &snapshot, 1, Some(&memory));
+    assert_eq!(bank_seen(&slot).as_ref(), "Session, 3 days ago, 1 rows");
+    let before = slot.native_run().expect("the compiled run is active");
+
+    memory.relogged();
+    snapshot.seed_main_modal(-1, Vec::new());
+    snapshot.seed_bank_observation(-1, 2, None, Vec::new());
+    slot.reconnect_session_work();
+    slot.on_is_up(true);
+    gatherer_tick_with_bank(&mut slot, &snapshot, 2, Some(&memory));
+    assert_ne!(
+        slot.native_run()
+            .expect("the rekeyed run is active")
+            .session,
+        before.session,
+    );
+    assert_eq!(
+        bank_seen(&slot).as_ref(),
+        "Hint (saved), 3 days ago, 1 rows"
+    );
+    slot.stop();
 }
 
 fn take_gatherer_drop_actions(slot: &mut SlotScript) -> Vec<crate::native::HostAction> {
@@ -1211,6 +1280,10 @@ fn gatherer_equips_with_the_observed_tool_action_before_gathering() {
             );
             assert_ne!(operation, "Drop", "the tool is protected");
             equip_tick = Some(tick);
+            assert!(
+                !slot.has_native_actions(),
+                "wear-only acquisition must not also queue a bank operation",
+            );
             break;
         }
     }
@@ -2376,8 +2449,8 @@ mod api_gather_seat {
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>(),
             8
         );
-        // Typed RouteTooLarge adds 40 B to inline receipts: 8,206 B measured, 242 B headroom.
-        assert!(exclusive <= 8448, "exclusive API seat exceeds 8.25KiB");
+        // Inline acquisition and bank provenance: 8,662 B measured, 298 B headroom.
+        assert!(exclusive <= 8960, "exclusive API seat exceeds 8.75KiB");
         let stopped = allocation_counter::measure(|| stop_in_seat(&mut slot, 209));
         println!("API gather post-Stop retained={}B (exclusive live + Stop delta), Stop={stopped:?}, worker transient_peak={}B", exclusive + stopped.bytes_current, i128::from(worker.bytes_max) - i128::from(worker.bytes_current));
         assert!(!slot.api_owns_foreground());

@@ -1316,8 +1316,19 @@ and a shortage predicted only by the saved hint still earns one verifying trip.
 Only a bank seen open this login that cannot serve a required tool, bait,
 configured food or complete reserve cast fails in place with `supply-missing`,
 without a walk. At the open bank the live rows are planned afresh and win over
-the memory. A wielded tool counts as carried, and so does a worn required item;
+the memory. A lower usable tool tier uses that item's selected-cache name for
+its withdrawal, even when the trip was admitted before the bank was known.
+A wielded tool counts as carried, and so does a worn required item;
 consumed bait counts only from the pack.
+
+The `bank_seen` status field states where that bank information came from
+and its age when the status was last updated: `Session, 12 min ago, n rows`,
+`Hint (saved), 3 days ago, n rows`, or `unknown` before an observation.
+If the observation time cannot be compared with the current time, only the
+origin and row count are shown. A full pack is deposited before a missing
+supply is reported at the open bank. A usable axe or pickaxe already in the
+pack is equipped without a bank trip when its wield requirements are met;
+fishing tools remain carried.
 
 `baitTarget` defaults to 100 (range 1–10,000). Only a selected fishing method
 that consumes bait uses it: zero held bait makes a trip due, and the next bank
