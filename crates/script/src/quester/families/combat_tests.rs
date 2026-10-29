@@ -10,8 +10,7 @@ use api::quest_facts::QuestCatalog;
 use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, FactKey, RunKey, Truth};
 use api::snapshot::{
-    ChatLineView, GameSnapshot, GroundItemView, LocLayer, LocView, QuestListStatus,
-    QuestStatusView, SnapshotView,
+    GameSnapshot, GroundItemView, QuestListStatus, QuestStatusView, SnapshotView,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
