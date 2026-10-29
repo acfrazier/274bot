@@ -677,20 +677,13 @@ fn prove_actor_gap(
                 return None;
             }
             let prior = prior_started_steps_settled(&root_events, context_index)?;
-            let stage_events = root_events
-                .iter()
-                .filter(|event| {
-                    event.0 < context_index && event.1.stage == expected_stage && !event.1.repeated
-                })
-                .collect::<Vec<_>>();
+            let mut stage_events = root_events.iter().rev().filter(|event| {
+                event.0 < context_index && event.1.stage == expected_stage && !event.1.repeated
+            });
             let last_begin = stage_events
-                .iter()
-                .rev()
+                .clone()
                 .find(|(_, event)| event.event == "begin")?;
-            let last_settled = stage_events
-                .iter()
-                .rev()
-                .find(|(_, event)| event.event == "settled")?;
+            let last_settled = stage_events.find(|(_, event)| event.event == "settled")?;
             if last_begin.1.step_id != gap.step_id
                 || last_settled.1.step_id != gap.step_id
                 || last_begin.1.kind != last_settled.1.kind
