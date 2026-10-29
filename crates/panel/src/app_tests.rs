@@ -268,6 +268,7 @@ fn a_parked_quester_shows_its_phase_and_reason_on_the_status_card() {
 
 #[test]
 fn status_card_shows_poison_survival_need() {
+    let _guard = crate::test_support::imgui_context_guard();
     use frontend_core::{
         SurvivalCureWhy as CureWhy, SurvivalDecision as Decision, SurvivalNeed,
         SurvivalNeedWhy as NeedWhy, SurvivalOwner as Owner, SurvivalReport,
