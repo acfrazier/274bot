@@ -7,9 +7,9 @@
 //! `set_draw(true)`, as the panel's focus switch does). A consumer thread
 //! takes every mailbox on its UI period and runs the independent render pump
 //! on that same thread. Unset `M3_FAIR_PROBE` retains the legacy full/focus1
-//! cadence and grouping. With the explicit hook probe, head 0 is the focused
-//! selection in both policies while `full` sets every cadence to full-rate and
-//! `focus1` sets only head 0 to full-rate.
+//! cadence and grouping. With the explicit hook probe, `M3_FOCUS_INDEX`
+//! (default 0) selects the focused head in both policies. `full` sets every
+//! cadence to full-rate and `focus1` sets only that selection to full-rate.
 //! Per cell the harness writes a JSON summary and per-second samples:
 //! paints per head, host raster time per paint (the `performance-profile`
 //! slot timers, which `memory-profile` enables), slot frame-interval
@@ -26,9 +26,10 @@
 //!   --test m3_render_contention -- --ignored --nocapture
 //! ```
 //!
-//! `M3_BACKEND=cpu` also needs `BOT_CPU=1`. Optional: `M3_WARMUP_S` (10),
-//! `M3_OBSERVE_S` (30), `M3_POLICIES` (`full,focus1`), `M3_PORT` (44594),
-//! `M3_HTTP_PORT` (1080).
+//! `M3_BACKEND=cpu` also needs `BOT_CPU=1`. `M3_BACKEND=mixed` takes
+//! `M3_CPU_HEADS` CPU heads first and leaves `BOT_CPU` unset. Optional:
+//! `M3_FOCUS_INDEX` (0), `M3_WARMUP_S` (10), `M3_OBSERVE_S` (30),
+//! `M3_POLICIES` (`full,focus1`), `M3_PORT` (44594), `M3_HTTP_PORT` (1080).
 //!
 //! The hook-enabled probe is opt-in and never supplies TTL or quantum defaults:
 //! set `M3_FAIR_PROBE=1`, `M3_GRANT_TTL_MS`, and `M3_SCENE_QUANTUM_MS`, and
@@ -1081,21 +1082,44 @@ fn wait_ingame(play: &Play, want: usize, timeout: Duration) {
     }
 }
 
+fn cpu_heads_for(backend: &str, n: usize, mixed: Option<usize>) -> Result<usize, &'static str> {
+    match backend {
+        "cpu" => Ok(n),
+        "gpu" => Ok(0),
+        "mixed" => mixed
+            .filter(|&count| count > 0 && count < n)
+            .ok_or("mixed requires 0 < M3_CPU_HEADS < M3_N"),
+        _ => Err("M3_BACKEND must be cpu, gpu or mixed"),
+    }
+}
+
+#[test]
+fn mixed_probe_keeps_both_backend_populations() {
+    assert_eq!(cpu_heads_for("cpu", 4, None), Ok(4));
+    assert_eq!(cpu_heads_for("gpu", 4, None), Ok(0));
+    assert_eq!(cpu_heads_for("mixed", 4, Some(2)), Ok(2));
+    for count in [None, Some(0), Some(4), Some(5)] {
+        assert!(cpu_heads_for("mixed", 4, count).is_err());
+    }
+    assert!(cpu_heads_for("other", 4, None).is_err());
+}
+
 #[test]
 #[ignore = "LIVE=1 Engine A measurement; logs in its own BOT_LIVE_NAME_PREFIX accounts"]
 fn live_m3_render_contention() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let n: usize = required("M3_N").parse().expect("M3_N");
     let backend = required("M3_BACKEND");
-    let cpu = match backend.as_str() {
-        "cpu" => true,
-        "gpu" => false,
-        other => panic!("M3_BACKEND must be cpu or gpu, got {other}"),
-    };
+    let mixed = std::env::var("M3_CPU_HEADS")
+        .ok()
+        .map(|value| value.parse().expect("M3_CPU_HEADS"));
+    let cpu_heads = cpu_heads_for(&backend, n, mixed).expect("backend composition");
+    let focus_index = env_or("M3_FOCUS_INDEX", 0);
+    assert!(focus_index < n, "M3_FOCUS_INDEX must name a live head");
     assert_eq!(
         std::env::var("BOT_CPU").as_deref() == Ok("1"),
-        cpu,
-        "BOT_CPU=1 exactly for the cpu backend"
+        cpu_heads == n,
+        "BOT_CPU=1 exactly for an all-CPU composition"
     );
     let probe = fair_probe_inputs();
     configure_fair_probe(probe);
@@ -1140,7 +1164,7 @@ fn live_m3_render_contention() {
             settings: ProfileSettings {
                 auto_login: true,
                 lowmem: true,
-                raster: if cpu {
+                raster: if i < cpu_heads {
                     RasterMode::Cpu
                 } else {
                     RasterMode::Gpu
@@ -1151,9 +1175,10 @@ fn live_m3_render_contention() {
         .collect();
     let heads: Vec<HeadProbe> = names
         .iter()
-        .map(|name| {
+        .enumerate()
+        .map(|(i, name)| {
             let input = SlotInput::new();
-            input.set_prefer_cpu(cpu);
+            input.set_prefer_cpu(i < cpu_heads);
             let mailbox = FrameBuf::new();
             HeadProbe {
                 name: name.clone(),
@@ -1299,6 +1324,8 @@ fn live_m3_render_contention() {
     let mut census_receipt = json!({
         "n": n,
         "backend": backend,
+        "cpu_heads": cpu_heads,
+        "focus_index": focus_index,
         "git_rev": rev,
         "static_bytes_per_world": static_world_bytes(),
         "phases": phases,
@@ -1313,11 +1340,11 @@ fn live_m3_render_contention() {
     for policy in &policies {
         let full_rate: Vec<bool> = match policy.as_str() {
             "full" => vec![true; n],
-            "focus1" => (0..n).map(|i| i == 0).collect(),
+            "focus1" => (0..n).map(|i| i == focus_index).collect(),
             other => panic!("unknown M3 policy {other}"),
         };
         let focused: Vec<bool> = if probe.is_some() {
-            (0..n).map(|i| i == 0).collect()
+            (0..n).map(|i| i == focus_index).collect()
         } else {
             full_rate.clone()
         };
@@ -1362,6 +1389,8 @@ fn live_m3_render_contention() {
         summary["cell"] = json!(cell);
         summary["n"] = json!(n);
         summary["backend"] = json!(backend);
+        summary["cpu_heads"] = json!(cpu_heads);
+        summary["focus_index"] = json!(focus_index);
         summary["policy"] = json!(policy);
         summary["ingame_at_end"] = json!(ingame);
         summary["git_rev"] = json!(rev);

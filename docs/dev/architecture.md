@@ -349,6 +349,8 @@ Its head samples keep separate grant publication, cross-thread notification,
 actual slot-tick wake and consume times; an unobserved wake is not fabricated.
 The samples retain the worst observed delivery and consumed-lease duration
 between polls. Scene consumes and composite paints have separate rates.
+`M3_BACKEND=mixed` takes an explicit `M3_CPU_HEADS` count. `M3_FOCUS_INDEX`
+selects either backend's focused head without changing the other heads' simulation.
 
 ### nav-planner
 
