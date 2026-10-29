@@ -3498,6 +3498,48 @@ impl QueuedQuester {
                     value: StatusValue::Text(Arc::clone(&failure.message)),
                 });
             }
+            // The active executor is gone by now. The row keeps where it
+            // stopped, so a Blocked status names the quest, stage and step
+            // instead of only the queue reason.
+            if let Some(parked) = self
+                .blocked_row()
+                .and_then(|index| self.queue.parked(index))
+            {
+                static UNKNOWN_STAGE: std::sync::LazyLock<Arc<str>> =
+                    std::sync::LazyLock::new(|| Arc::from("unknown"));
+                static BLOCKED_ACTION: std::sync::LazyLock<Arc<str>> =
+                    std::sync::LazyLock::new(|| Arc::from("blocked"));
+                fields.extend([
+                    StatusField {
+                        key: "stage",
+                        label: "Stage",
+                        value: StatusValue::Text(match &parked.stage {
+                            Some(stage) => Arc::clone(stage),
+                            None => Arc::clone(&UNKNOWN_STAGE),
+                        }),
+                    },
+                    StatusField {
+                        key: "quest_id",
+                        label: "Quest ID",
+                        value: StatusValue::Text(Arc::clone(&parked.quest)),
+                    },
+                    StatusField {
+                        key: "step_id",
+                        label: "Step",
+                        value: StatusValue::Text(Arc::clone(&parked.step)),
+                    },
+                    StatusField {
+                        key: "last_failure",
+                        label: "Last failure",
+                        value: StatusValue::Text(Arc::clone(&parked.failure)),
+                    },
+                    StatusField {
+                        key: "action_state",
+                        label: "Action",
+                        value: StatusValue::Text(Arc::clone(&BLOCKED_ACTION)),
+                    },
+                ]);
+            }
         }
         if phase == NativePhase::Waiting {
             fields.push(StatusField {
@@ -3519,6 +3561,19 @@ impl QueuedQuester {
             fields: fields.into(),
             failure,
         });
+    }
+
+    /// The row `blocked()` reports: the first picked, unskipped row with a
+    /// reason. The Blocked status reads its parked detail, so the published
+    /// fields and the failure message describe the same row.
+    fn blocked_row(&self) -> Option<usize> {
+        self.queue
+            .rows()
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.picked && !row.skipped)
+            .find(|(index, _)| self.queue.reason(*index).is_some())
+            .map(|(index, _)| index)
     }
 
     fn blocked(&self) -> ScriptFailure {
@@ -3543,14 +3598,13 @@ impl QueuedQuester {
                 ),
             };
         }
-        let (reason, status) = self
-            .queue
-            .rows()
-            .iter()
-            .enumerate()
-            .filter(|(_, row)| row.picked && !row.skipped)
-            .find_map(|(index, row)| self.queue.reason(index).map(|reason| (reason, row.status)))
-            .unwrap_or(("no eligible selected quest", QueueStatus::Blocked));
+        let reported = self.blocked_row();
+        let reason = reported
+            .and_then(|index| self.queue.reason(index))
+            .unwrap_or("no eligible selected quest");
+        let status = reported
+            .and_then(|index| self.queue.status(index))
+            .unwrap_or(QueueStatus::Blocked);
         // A requirement block can be changed in Script prefs; a parked run
         // (a refused walk, a failed action) can't, so don't send the user there.
         let recovery = if status == QueueStatus::Blocked {
@@ -3740,7 +3794,25 @@ impl Script for QueuedQuester {
                             self.queue.refresh_blocked();
                         }
                         ScriptFlow::Blocked(failure) => {
-                            self.queue.mark_parked(index, failure.message)
+                            // The executor is dropped here; keep where it
+                            // stopped so the queue-level Blocked status still
+                            // names the stage and step that parked it.
+                            self.queue.mark_parked(
+                                index,
+                                super::queue::ParkedRun {
+                                    quest: Arc::clone(&active.path.id.0),
+                                    stage: active.stage.as_ref().map(|stage| Arc::clone(&stage.0)),
+                                    step: active
+                                        .parked_step
+                                        .as_ref()
+                                        .map(|parked| Arc::clone(&parked.id))
+                                        .or_else(|| {
+                                            active.current_step().map(|step| Arc::clone(&step.id.0))
+                                        })
+                                        .unwrap_or_else(|| Arc::from("")),
+                                    failure: Arc::clone(&failure.message),
+                                },
+                            );
                         }
                         ScriptFlow::Continue => unreachable!(),
                     }
@@ -4250,7 +4322,8 @@ mod tests {
         assert_eq!(output.0.len(), 5);
         for (key, expected) in [("ground_waited_ticks", 100), ("ground_held", 1)] {
             assert!(output.0[4].fields.iter().any(|field| {
-                field.key == key && matches!(field.value, StatusValue::Integer(value) if value == expected)
+                field.key == key
+                    && matches!(field.value, StatusValue::Integer(value) if value == expected)
             }));
         }
         let allocations = allocation_counter::measure(|| {
@@ -4259,7 +4332,11 @@ mod tests {
             }
         });
         assert_eq!(allocations.count_total, 0);
-        assert_eq!(output.0.len(), 5, "unchanged timed receipts are not republished");
+        assert_eq!(
+            output.0.len(),
+            5,
+            "unchanged timed receipts are not republished"
+        );
     }
 
     #[test]

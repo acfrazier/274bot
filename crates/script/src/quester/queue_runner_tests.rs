@@ -120,6 +120,92 @@ fn missing_login_quest_observation_times_out_with_recovery_instructions() {
         .is_none_or(|ledger| ledger.outbox.is_empty()));
 }
 #[test]
+fn a_parked_queue_row_publishes_its_stage_step_and_failure() {
+    use crate::quester::path::{PredicateDocument, StepDocument};
+
+    let (mut queued, mut snapshot) = fixture(cook_settings());
+    snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            name: "Cook's Assistant".into(),
+            component_id: 42,
+            colour: 0xf80000,
+        }],
+        true,
+    );
+    // One root step whose settle can never hold: the run retries it until the
+    // failure streak parks (the runner's settle-timeout policy).
+    let mut document = crate::quester::compile::decode_cook().unwrap();
+    document.quest.as_mut().unwrap().owns_inventory = true;
+    document.roles[0].sequences[0].steps = vec![StepDocument {
+        id: api::selected::FactKey::new("queue-park-step"),
+        kind: "wait".into(),
+        version: 1,
+        args: serde_json::json!({"until":{"All":[]},"max_ticks":100}),
+        comment: None,
+        advances: Some(false),
+        skip_if: PredicateDocument::Any(vec![]),
+        settle: PredicateDocument::Any(vec![]),
+    }];
+    let path = crate::quester::compile::compile_uncached_for_test(
+        &document,
+        &queued.selected,
+        &queued.quests,
+    )
+    .unwrap();
+    let expected_stage = Arc::clone(&path.colour_not_started.0);
+    let index = queued.queue.next_candidate().expect("selected cook row");
+    assert_eq!(queued.queue.id(index), Some("cook"));
+    queued.active_index = Some(index);
+
+    let mut ledger = None;
+    let mut output = Capture::default();
+    with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+        queued.activate(native, path);
+    });
+    assert!(queued.active.is_some());
+    let mut parked = false;
+    for tick in 2..=200 {
+        with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+            queued.tick(native).unwrap();
+        });
+        if queued.queue.status(index) == Some(crate::quester::queue::QueueStatus::Parked) {
+            parked = true;
+            break;
+        }
+    }
+    assert!(parked, "the never-settling step must park the queued run");
+    assert!(
+        queued.active.is_none(),
+        "the parked executor is dropped before the Blocked status is built"
+    );
+
+    let status = output.0.last().expect("blocked status was published");
+    assert_eq!(status.phase, NativePhase::Blocked);
+    let field = |key: &str| {
+        status
+            .fields
+            .iter()
+            .find(|field| field.key == key)
+            .and_then(|field| match &field.value {
+                StatusValue::Text(value) => Some(value.as_ref()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("status field {key} is missing or not text"))
+    };
+    assert_eq!(field("quest_id"), "cook");
+    assert_eq!(field("stage"), expected_stage.as_ref());
+    assert_eq!(field("step_id"), "queue-park-step");
+    assert_eq!(field("last_failure"), "step settle timeout");
+    assert_eq!(field("action_state"), "blocked");
+    let failure = status.failure.as_ref().expect("terminal failure retained");
+    assert!(
+        failure.message.contains("step settle timeout")
+            && failure.message.contains("Stop/Start Quester"),
+        "{failure:?}"
+    );
+}
+
+#[test]
 fn individually_missing_quest_row_stays_fail_closed() {
     let (mut queued, mut snapshot) = fixture(runemysteries_settings());
     snapshot.seed_quest_statuses(
@@ -144,7 +230,22 @@ fn individually_missing_quest_row_stays_fail_closed() {
         ));
     });
     assert!(queued.active.is_none());
-    assert_eq!(output.0.last().unwrap().phase, NativePhase::Blocked);
+    let status = output.0.last().unwrap();
+    assert_eq!(status.phase, NativePhase::Blocked);
+    // The row was blocked by requirements, so no step ran and the queue has no
+    // parked position to publish.
+    for key in [
+        "stage",
+        "quest_id",
+        "step_id",
+        "last_failure",
+        "action_state",
+    ] {
+        assert!(
+            !status.fields.iter().any(|field| field.key == key),
+            "a queue row that never ran publishes no {key}"
+        );
+    }
     assert!(ledger
         .as_ref()
         .is_none_or(|ledger| ledger.outbox.is_empty()));
@@ -253,7 +354,12 @@ fn a_parked_run_is_not_sent_to_script_prefs_but_a_requirement_block_is() {
     let (mut queued, _) = fixture(cook_settings());
     queued.queue.mark_parked(
         0,
-        Arc::from("no route: blocked by danger zones: White Wolf Mountain"),
+        crate::quester::queue::ParkedRun {
+            quest: Arc::from("cook"),
+            stage: Some(Arc::from("not_started")),
+            step: Arc::from("walk-draynor-bank"),
+            failure: Arc::from("no route: blocked by danger zones: White Wolf Mountain"),
+        },
     );
     let parked = queued.blocked().message;
     assert!(parked.starts_with("no route: blocked by danger zones: White Wolf Mountain; "));
