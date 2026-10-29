@@ -378,8 +378,7 @@ if(map_members = ^false) {
     ];
     for item in selected.items() {
         let category = item.category.as_deref();
-        let restricted =
-            category.is_some_and(|category| RESTRICTED_CATEGORIES.contains(&category));
+        let restricted = category.is_some_and(|category| RESTRICTED_CATEGORIES.contains(&category));
         assert_eq!(
             outbound.forbidden_held.contains(&item.id),
             restricted,
@@ -404,7 +403,10 @@ if(map_members = ^false) {
         "F2P cannot take the Entrana boat"
     );
     assert!(
-        observed_clear.clone().with_map_members(true).allows(outbound),
+        observed_clear
+            .clone()
+            .with_map_members(true)
+            .allows(outbound),
         "members worlds can take the Entrana boat when inventory and equipment are clear"
     );
 
@@ -416,7 +418,10 @@ if(map_members = ^false) {
     );
     let mut axe_worn = observed_clear.with_map_members(true);
     axe_worn.worn.insert(bronze_axe);
-    assert!(!axe_worn.allows(outbound), "a worn axe blocks the outbound boat");
+    assert!(
+        !axe_worn.allows(outbound),
+        "a worn axe blocks the outbound boat"
+    );
 
     let return_boat = graph
         .edges
