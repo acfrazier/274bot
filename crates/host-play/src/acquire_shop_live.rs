@@ -39,9 +39,9 @@ const REFERENCE_NAV_PACK: &str =
 const REFERENCE_NAV_FLAGS: &str =
     "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navflags";
 const SEED_COINS: i32 = 100_000;
-const SEED_FEATHERS: i32 = 5;
+const SEED_BAIT: i32 = 5;
 const HARPOON_TARGET: i32 = 1;
-const FEATHER_TARGET: i32 = 15;
+const BAIT_TARGET: i32 = 15;
 const PREPARATION_DEADLINE: Duration = Duration::from_secs(600);
 const CELL_DEADLINE: Duration = Duration::from_secs(180);
 const TERMINAL_CAPTURE_GRACE: Duration = Duration::from_secs(2);
@@ -95,7 +95,7 @@ struct KeeperFact {
 struct Fixture {
     kind: CellKind,
     harpoon: ItemFact,
-    feather: ItemFact,
+    bait: ItemFact,
     coins: ItemFact,
     gerrant: KeeperFact,
     harry: KeeperFact,
@@ -122,7 +122,7 @@ impl Fixture {
         let eligible = members.map(|members| {
             json!({
                 "harpoon": eligible_keeper_rows(keepers, data, self.harpoon.id, members),
-                "feather": eligible_keeper_rows(keepers, data, self.feather.id, members),
+                "bait": eligible_keeper_rows(keepers, data, self.bait.id, members),
             })
         });
         json!({
@@ -131,7 +131,7 @@ impl Fixture {
             "start_tile": self.stand,
             "items": {
                 "harpoon": {"id": self.harpoon.id, "name": self.harpoon.name.as_ref()},
-                "feather": {"id": self.feather.id, "name": self.feather.name.as_ref()},
+                "bait": {"id": self.bait.id, "name": self.bait.name.as_ref()},
                 "coins": {"id": self.coins.id, "name": self.coins.name.as_ref()},
             },
             "selected_keepers": {
@@ -142,8 +142,8 @@ impl Fixture {
                 "harpoon": api::shop_facts::vendor_by_keeper_config(
                     data, "gerrant", self.harpoon.id
                 ).is_some(),
-                "feather": api::shop_facts::vendor_by_keeper_config(
-                    data, "gerrant", self.feather.id
+                "bait": api::shop_facts::vendor_by_keeper_config(
+                    data, "gerrant", self.bait.id
                 ).is_some(),
             },
             "account_membership": members,
@@ -228,13 +228,14 @@ fn fixture(
         })
     };
     let harpoon = item("harpoon")?;
-    let feather = item("feather")?;
+    let bait = item("fishing_bait")?;
     let coins = item("coins")?;
     let gerrant = content_keeper(keepers, "gerrant", None)?;
     let harry = content_keeper(keepers, "harry", Some(CATHERBY_HARRY))?;
     if api::shop_facts::vendor_by_keeper_config(data, "gerrant", harpoon.id).is_none()
-        || api::shop_facts::vendor_by_keeper_config(data, "gerrant", feather.id).is_none()
+        || api::shop_facts::vendor_by_keeper_config(data, "gerrant", bait.id).is_none()
         || api::shop_facts::vendor_by_keeper_config(data, "harry", harpoon.id).is_none()
+        || api::shop_facts::vendor_by_keeper_config(data, "harry", bait.id).is_none()
     {
         return Err(
             "R289 pinned shop records do not contain the required Gerrant/Harry items".into(),
@@ -253,7 +254,7 @@ fn fixture(
     Ok(Fixture {
         kind,
         harpoon,
-        feather,
+        bait,
         coins,
         gerrant,
         harry,
@@ -303,7 +304,7 @@ fn profile_options(scratch: &Path) -> Result<ProfileOptions, String> {
 }
 
 fn seed_items() -> &'static [(&'static str, i32)] {
-    &[("coins", SEED_COINS), ("feather", SEED_FEATHERS)]
+    &[("coins", SEED_COINS), ("fishing_bait", SEED_BAIT)]
 }
 
 fn scenario(kind: CellKind, stand: WorldTile, trace: Arc<Mutex<ShopTrace>>) -> Scenario {
@@ -482,8 +483,8 @@ impl LiveState {
                 self.snapshot.inv_count(self.fixture.coins.id)
             ));
         }
-        if self.snapshot.inv_count(self.fixture.feather.id) != SEED_FEATHERS {
-            return Some(format!("seeded feathers were not exactly {SEED_FEATHERS}"));
+        if self.snapshot.inv_count(self.fixture.bait.id) != SEED_BAIT {
+            return Some(format!("seeded fishing bait was not exactly {SEED_BAIT}"));
         }
         if self.snapshot.inv_count(self.fixture.harpoon.id) != 0 {
             return Some("fresh pack unexpectedly already held a harpoon".into());
@@ -505,7 +506,7 @@ impl LiveState {
             "inventory": snapshot.inventory().iter().filter(|item| item.container == api::snapshot::ItemContainer::Inventory).map(item_value).collect::<Vec<_>>(),
             "held": {
                 "harpoon": snapshot.inv_count(self.fixture.harpoon.id),
-                "feather": snapshot.inv_count(self.fixture.feather.id),
+                "bait": snapshot.inv_count(self.fixture.bait.id),
                 "coins": snapshot.inv_count(self.fixture.coins.id),
             },
             "shop": {
@@ -674,10 +675,10 @@ impl AcquireShopScript {
                     alternatives: Arc::<[i32]>::from([]),
                 },
                 Need {
-                    item: self.fixture.feather.id,
-                    name: Arc::clone(&self.fixture.feather.name),
-                    target: FEATHER_TARGET,
-                    minimum: FEATHER_TARGET,
+                    item: self.fixture.bait.id,
+                    name: Arc::clone(&self.fixture.bait.name),
+                    target: BAIT_TARGET,
+                    minimum: BAIT_TARGET,
                     presence: Presence::Held,
                     kind: NeedKind::Required,
                     sources: SourceSet::PACK | SourceSet::SHOP,
@@ -706,7 +707,7 @@ impl AcquireShopScript {
             "vendor_input": self.kind.vendor_name(),
             "needs": [
                 {"item_id": self.fixture.harpoon.id, "name": self.fixture.harpoon.name.as_ref(), "target": HARPOON_TARGET, "minimum": HARPOON_TARGET, "sources": ["PACK", "SHOP"]},
-                {"item_id": self.fixture.feather.id, "name": self.fixture.feather.name.as_ref(), "target": FEATHER_TARGET, "minimum": FEATHER_TARGET, "sources": ["PACK", "SHOP"]},
+                {"item_id": self.fixture.bait.id, "name": self.fixture.bait.name.as_ref(), "target": BAIT_TARGET, "minimum": BAIT_TARGET, "sources": ["PACK", "SHOP"]},
             ],
             "coin_policy": {"sources": ["PACK"], "seeded_coins": SEED_COINS},
             "membership_gate": members,
@@ -1014,7 +1015,7 @@ fn trade_records(
         let config = keeper.map(|row| row.keeper.keeper_config);
         let requested_item = match following_item {
             Some(id) if id == i64::from(fixture.harpoon.id) => Some(fixture.harpoon.id),
-            Some(id) if id == i64::from(fixture.feather.id) => Some(fixture.feather.id),
+            Some(id) if id == i64::from(fixture.bait.id) => Some(fixture.bait.id),
             _ => None,
         };
         let allowed_type = match (requested_item, members, type_id) {
@@ -1180,7 +1181,7 @@ fn over_target_failures(actions: &[Value], frames: &[Value], fixture: &Fixture) 
         let tick = frame["tick"].as_u64().unwrap_or(0);
         for (item, target, label) in [
             (fixture.harpoon.id, HARPOON_TARGET, "harpoon"),
-            (fixture.feather.id, FEATHER_TARGET, "feather"),
+            (fixture.bait.id, BAIT_TARGET, "bait"),
         ] {
             let held = frame["held"][label].as_i64().unwrap_or(-1);
             if held < 0 || held > i64::from(target) {
@@ -1200,7 +1201,7 @@ fn over_target_failures(actions: &[Value], frames: &[Value], fixture: &Fixture) 
         };
         for (item, target, label) in [
             (fixture.harpoon.id, HARPOON_TARGET, "harpoon"),
-            (fixture.feather.id, FEATHER_TARGET, "feather"),
+            (fixture.bait.id, BAIT_TARGET, "bait"),
         ] {
             let held = inventory
                 .iter()
@@ -1527,7 +1528,7 @@ fn run_cell(kind: CellKind) {
     }
     let final_frame = shop_frames.last();
     let final_harpoon = final_frame.and_then(|frame| frame["held"]["harpoon"].as_i64());
-    let final_feather = final_frame.and_then(|frame| frame["held"]["feather"].as_i64());
+    let final_bait = final_frame.and_then(|frame| frame["held"]["bait"].as_i64());
     let native_outcome = trace_json["outcome"].clone();
     if native_outcome["variant"] != "Done"
         || native_outcome["complete"] != true
@@ -1536,10 +1537,10 @@ fn run_cell(kind: CellKind) {
         failures.push("AcquireRun did not return Done(complete=true, bought=11)".into());
     }
     if final_harpoon != Some(i64::from(HARPOON_TARGET))
-        || final_feather != Some(i64::from(FEATHER_TARGET))
+        || final_bait != Some(i64::from(BAIT_TARGET))
     {
         failures.push(format!(
-            "final held targets were harpoon={final_harpoon:?}, feather={final_feather:?}"
+            "final held targets were harpoon={final_harpoon:?}, bait={final_bait:?}"
         ));
     }
     let sent_buttons = actions
@@ -1551,8 +1552,8 @@ fn run_cell(kind: CellKind) {
     let expected_buttons = [
         (i64::from(fixture.harpoon.id), i64::from(HARPOON_TARGET)),
         (
-            i64::from(fixture.feather.id),
-            i64::from(FEATHER_TARGET - SEED_FEATHERS),
+            i64::from(fixture.bait.id),
+            i64::from(BAIT_TARGET - SEED_BAIT),
         ),
     ];
     if sent_buttons.as_slice() != expected_buttons.as_slice() {
@@ -1607,7 +1608,7 @@ fn run_cell(kind: CellKind) {
         "button_reconciliations": reconciled,
         "observed_button_transfer_total": observed_button_transfer,
         "close_reconciliation": close,
-        "final_held": {"harpoon": final_harpoon, "feather": final_feather},
+        "final_held": {"harpoon": final_harpoon, "bait": final_bait},
         "driver_packets_by_tick": driver_packets,
         "max_driver_packets_in_observed_tick": max_driver_packets,
         "driver_packet_trace_complete": driver_packets_complete,
