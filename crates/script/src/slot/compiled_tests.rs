@@ -2332,6 +2332,8 @@ mod api_gather_seat {
             run: 1,
             session: 1,
         };
+        // Keep a real Gatherer run and retention, but bypass WorkService: its
+        // shared terminal can be freed on either thread and is not seat state.
         let (prepared, retained, worker) = FamilyPreparation::run(move |families| {
             let mut prepared = None;
             let mut retained = None;
