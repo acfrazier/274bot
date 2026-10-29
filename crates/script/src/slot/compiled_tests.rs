@@ -2398,7 +2398,7 @@ mod api_gather_seat {
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>(),
             8
         );
-        // Measured comment is updated from the isolated product-state run.
+        // Isolated product-state sample: 8,248 B, leaving 200 B below the unchanged 8,448 B ceiling.
         assert!(exclusive <= 8448, "exclusive API seat exceeds 8.25KiB");
         let stopped = allocation_counter::measure(|| stop_in_seat(&mut slot, 209));
         println!("API gather post-Stop retained={}B (exclusive live + Stop delta), Stop={stopped:?}, worker transient_peak={}B", exclusive + stopped.bytes_current, i128::from(worker.bytes_max) - i128::from(worker.bytes_current));
