@@ -393,12 +393,13 @@ fn frame_hook(
                     loc.id == 1536
                         && loc.tile == (WorldTile { x: 3107, z: 3162, level: 0 })
                 }) {
-                    state.prime_open_sent = api::interact::Interactions::new(&snapshot, client)
-                        .interact(
+                    state.prime_open_sent = matches!(
+                        api::interact::Interactions::new(&snapshot, client).interact(
                             api::interact::OpTarget::Loc(door),
                             api::interact::ActionSpec::Label("Open".into()),
-                        )
-                        .is_sent();
+                        ),
+                        api::interact::SendResult::Sent { .. }
+                    );
                 }
             }
             return;
