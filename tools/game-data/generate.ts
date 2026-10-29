@@ -202,7 +202,7 @@ export function familyBytes(upstream: FamilyInputs, draft: FamilyDraft, name = '
     return `${JSON.stringify({ schema: draft.schema, ...upstream, facts: draft.payload }, null, 2)}\n`;
 }
 /** Quests extractor schema, shared by the normal generator, the selected pipeline provider, and verification. Bump only with the Rust decoder. */
-export const QUESTS_SCHEMA = 1;
+export const QUESTS_SCHEMA = 2;
 /** Static quest identity and observation metadata in the shared family envelope. No per-account progress. */
 export function extractQuestsFamily(content: string, revision: number): FamilyDraft {
     return { schema: QUESTS_SCHEMA, payload: extractQuestIdentityFacts(content, revision) };
@@ -3175,6 +3175,7 @@ async function generate(spec: Revision) {
     const questsFile = path.join(path.dirname(spec.output), String(spec.revision), 'quests.json');
     fs.mkdirSync(path.dirname(questsFile), { recursive: true });
     fs.writeFileSync(questsFile, familyBytes(gatheringInputs, quests, 'quests'));
+    const questsArtifact = { path: path.relative(path.dirname(spec.output), questsFile), schema: quests.schema, ...sha256(questsFile) };
     let prereqStepsArtifact: { path: string; schema: number; bytes: number; sha256: string } | undefined;
     if (spec.revision === 289) {
         const prereqSteps = extractPrereqStepsFacts(spec.revision);

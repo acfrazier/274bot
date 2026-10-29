@@ -7,7 +7,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 /// The extractor schema that this decoder reads.
-pub(super) const SCHEMA: u16 = 1;
+pub(super) const SCHEMA: u16 = 2;
 
 /// Artifact identity is checked before the fact payload is decoded.
 #[derive(Deserialize)]

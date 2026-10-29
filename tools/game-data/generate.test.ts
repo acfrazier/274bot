@@ -1739,7 +1739,7 @@ assert.equal(withExtras.rows.some((row) => row.id === 'routequest' && row.displa
 assert.equal(withExtras.rows.some((row) => row.id === 'misc' || row.id === 'troll_love' || row.id === 'mm'), false);
 // ---- quests family publication: static metadata, deterministic payload, actual descriptor ----
 {
-    assert.equal(QUESTS_SCHEMA, 1, 'quests family schema is pinned');
+    assert.equal(QUESTS_SCHEMA, 2, 'quests family schema includes static observation metadata');
     const draft = extractQuestsFamily(questRoot, 289);
     assert.equal(draft.schema, QUESTS_SCHEMA);
     assert.deepEqual(draft.payload, quest289, 'the family payload is the existing identity extract, unchanged');
