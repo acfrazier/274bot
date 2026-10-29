@@ -2177,9 +2177,10 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
         }
         let status = slot.native_status().unwrap();
         assert_eq!(status.phase, NativePhase::Blocked);
-        let failure = status.failure.as_ref().unwrap();
-        assert_eq!(failure.code.as_ref(), "supply-missing");
-        assert!(failure.message.contains(first.name.as_str()));
+        assert!(status.failure.is_none(), "missing supplies park the run");
+        assert_eq!(slot.state(), script::RunState::Running);
+        assert!(slot.native_run().is_some());
+        assert!(lifecycle_status_text(&slot, "block_reason").contains(first.name.as_str()));
         slot.stop();
         return;
     }
@@ -2775,9 +2776,12 @@ fn death_recovery_reads_loaded_stock_instead_of_skipping_a_needed_supply_trip() 
     }
     let status = slot.native_status().unwrap();
     assert_eq!(status.phase, NativePhase::Blocked);
-    let failure = status.failure.as_ref().unwrap();
-    assert_eq!(failure.code.as_ref(), "supply-missing");
-    assert!(failure.message.to_ascii_lowercase().contains("axe"));
+    assert!(status.failure.is_none(), "an empty bank parks recovery");
+    assert_eq!(slot.state(), script::RunState::Running);
+    assert!(slot.native_run().is_some());
+    assert!(lifecycle_status_text(&slot, "block_reason")
+        .to_ascii_lowercase()
+        .contains("axe"));
     assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 3);
     slot.stop();
 }
