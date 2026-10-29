@@ -115,6 +115,18 @@
           "terminal": false,
           "recovery_entry": null,
           "order": "ordered",
+          "cross": [
+            {
+              "id": "highwayman@2749,3521,0",
+              "name": "Highwayman, Seers road east",
+              "reason": "Walk to the poison salesman in Seers (maps/m42_54.jm2:11147). The road from the manor passes this spawn (maps/m42_55.jm2:6606)."
+            },
+            {
+              "id": "highwayman@2735,3521,0",
+              "name": "Highwayman, Seers road west",
+              "reason": "Walk back to the Sinclair family. The return road passes this spawn (maps/m42_55.jm2:6594)."
+            }
+          ],
           "steps": [
             {
               "id": "collect-thread",
