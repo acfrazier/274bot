@@ -71,9 +71,17 @@ impl Scenario {
             Self::Return => RETURN_ORIGIN,
             Self::Yew => YEW_SCENE_SEED,
             // ladders.rs2:114-119 lands at 0_48_49_33_26.
-            Self::TowerTop => WorldTile { x: 3105, z: 3162, level: 0 },
+            Self::TowerTop => WorldTile {
+                x: 3105,
+                z: 3162,
+                level: 0,
+            },
             // One tile east of the real basement ladder at 0_48_149_31_40.
-            Self::TowerBasement => WorldTile { x: 3104, z: 9576, level: 0 },
+            Self::TowerBasement => WorldTile {
+                x: 3104,
+                z: 9576,
+                level: 0,
+            },
         }
     }
 }
@@ -100,7 +108,11 @@ impl WalkSpec {
 
     fn crypt_walk() -> Self {
         Self {
-            target: WorldTile { x: 3249, z: 3192, level: 0 },
+            target: WorldTile {
+                x: 3249,
+                z: 3192,
+                level: 0,
+            },
             radius: 3,
             loc_id: None,
             loc_name: None,
@@ -322,7 +334,9 @@ fn frame_hook(
                 })
             }),
         };
-        if state.samples.last().and_then(|row| row["tick"].as_u64()) != Some(u64::from(snapshot.tick())) {
+        if state.samples.last().and_then(|row| row["tick"].as_u64())
+            != Some(u64::from(snapshot.tick()))
+        {
             let walking = state.walk_started;
             state.samples.push(json!({
                 "tick": snapshot.tick(),
@@ -332,6 +346,8 @@ fn frame_hook(
                 "map_flag": snapshot.map_flag(),
                 "actor_moving": snapshot.local_player().map(|p| p.player.actor.moving),
                 "last_movement": snapshot.last_server_movement_tick(),
+                // content/pack/obj.pack:554 selects ghostskull.
+                "ghostskull": snapshot.inv().iter().filter(|(id, _)| *id == 553).map(|(_, qty)| qty).sum::<i32>(),
             }));
         }
         if !(client.ingame && client.scene_state == 2) || state.setup_error.is_some() {
@@ -351,7 +367,9 @@ fn frame_hook(
             state.ready = false;
             return;
         }
-        state.ready = state.target.is_some();
+        state.ready = state.target.is_some()
+            && (!matches!(scenario, Scenario::TowerTop | Scenario::TowerBasement)
+                || snapshot.inv().iter().any(|&(id, qty)| id == 553 && qty > 0));
     }
 }
 
@@ -944,7 +962,8 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
     std::fs::write(
         run_dir.join("tick-samples.json"),
         serde_json::to_vec_pretty(&state.lock().samples).unwrap(),
-    ).expect("write observed game ticks");
+    )
+    .expect("write observed game ticks");
     let final_report = evidence.document(
         if arrived {
             "native-walk-terminal"
