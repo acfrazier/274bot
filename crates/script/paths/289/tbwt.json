@@ -58,7 +58,35 @@
       }
     ],
     "items": [],
-    "acquire": {},
+    "acquire": {
+      "GAP-tbwt-karambwan-retry-budget": [
+        {"id":"recover-cooking-vessel","kind":"talk","version":1,"advances":false,
+         "args":{"npc":"tbwt_lubufu","anchor":{"tile":[2770,3169,0],"source":"content/maps/m43_49.jm2:9181"},"leash":8,"prefer":["Actually, I've lost my Karambwan vessel.","... a shark ate it!"],"strict":true},
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel_loaded_with_karambwanji"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_poorly_cooked_karambwan"}}}]},
+         "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel"}}},
+         "comment":"Lubufu replaces a lost vessel after apprenticeship: content/scripts/quests/quest_tbwt/scripts/tbwt_lubufu.rs2:380-392,406-423."},
+        {"id":"catch-replacement-bait","kind":"interact","version":1,"advances":false,
+         "args":{"target":{"npc":"0_43_47_karambwanji"},"op":"Net","anchor":{"tile":[2791,3019,0],"source":"content/maps/m43_47.jm2:6487"},"radius":8,"until":{"obj":"tbwt_raw_karambwanji","qty":1}},
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwanji"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel_loaded_with_karambwanji"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_poorly_cooked_karambwan"}}}]},
+         "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwanji"}}},
+         "comment":"content/scripts/skill_fishing/scripts/fishing_spots/tbwt.rs2:25-53."},
+        {"id":"load-replacement-vessel","kind":"use_on","version":1,"advances":false,
+         "args":{"item":"tbwt_raw_karambwanji","target":{"item":"tbwt_karambwan_vessel"},"product":"tbwt_karambwan_vessel_loaded_with_karambwanji"},
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel_loaded_with_karambwanji"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_poorly_cooked_karambwan"}}}]},
+         "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel_loaded_with_karambwanji"}}},
+         "comment":"content/scripts/quests/quest_tbwt/scripts/quest_tbwt.rs2:42-56,243-258."},
+        {"id":"fish-replacement-karambwan","kind":"interact","version":1,"advances":false,
+         "args":{"target":{"npc":"lubufu_karambwan"},"op":"Fish","anchor":{"tile":[2768,3165,0],"source":"content/maps/m43_49.jm2:9180; content/pack/npc.pack:1179"},"radius":8,"settle_ms":30000},
+         "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_poorly_cooked_karambwan"}}}]},
+         "settle":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_karambwan_vessel"}}}]},
+         "comment":"Fishing 65; each attempt either catches one fish or consumes the bait: content/scripts/skill_fishing/scripts/fishing_spots/tbwt.rs2:99-133."},
+        {"id":"cook-replacement-karambwan","kind":"use_on","version":1,"advances":false,
+         "args":{"item":"tbwt_raw_karambwan","target":{"loc":"range"},"anchor":{"tile":[2787,3191,0],"source":"content/maps/m43_49.jm2:6474"},"radius":8,"settle_ms":30000},
+         "skip_if":{"Any":[{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_poorly_cooked_karambwan"}}}]},
+         "settle":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_poorly_cooked_karambwan"}}},{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tbwt_raw_karambwan"}}}}]},
+         "comment":"Before the reward cooking yields the poorly cooked fish or burns it: content/scripts/skill_cooking/scripts/cooking.rs2:32-50,142-154; content/scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:559-571."}
+      ]
+    },
     "bank": "nearest",
     "coin_float": 0,
     "loadouts": {},
@@ -1205,25 +1233,9 @@
             },
             {
               "id": "cook-poison-karambwan",
-              "kind": "use_on",
+              "kind": "acquire",
               "version": 1,
-              "advances": false,
-              "args": {
-                "item": "tbwt_raw_karambwan",
-                "target": {
-                  "loc": "range"
-                },
-                "product": "tbwt_poorly_cooked_karambwan",
-                "anchor": {
-                  "tile": [
-                    2787,
-                    3191,
-                    0
-                  ],
-                  "source": "content/scripts/skill_cooking/scripts/cooking.rs2:32-50,142-154; content/scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:559-571; content/maps/m43_49.jm2:6474"
-                },
-                "radius": 8
-              },
+              "args": {"recipe": "GAP-tbwt-karambwan-retry-budget", "max_restarts": 31},
               "skip_if": {
                 "Any": [
                   {
