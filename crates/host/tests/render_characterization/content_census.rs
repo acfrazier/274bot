@@ -16,7 +16,7 @@ use client::render::store::render_test_shared_index_layout;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-const R289_VERSION: &str = "2faf336eeb0462ed";
+const R289_VERSION: &str = "37214163f1e6ceca";
 const CLIENT_JAGS: [&str; 8] = [
     "title",
     "config",
@@ -2365,9 +2365,8 @@ fn render_budget_content_census() {
             _ => {}
         }
     }
-    let nav_font = title_bytes
-        .map(|bytes| PixFont::depack(&JagFile::new(bytes), "b12_full", false))
-        .flatten();
+    let nav_font =
+        title_bytes.and_then(|bytes| PixFont::depack(&JagFile::new(bytes), "b12_full", false));
     if nav_font.is_none() {
         inputs.fail(
             "nav_caption_font_missing",
@@ -2451,14 +2450,21 @@ fn render_budget_content_census() {
     let expected_snapshot = unpack_dir.join(R289_VERSION);
     for name in [
         "manifest",
-        "integrity",
         "models.bin",
         "anims.bin",
         "midi.bin",
         "maps.bin",
-        "config",
-    ] {
+    ]
+    .into_iter()
+    .chain(CLIENT_JAGS)
+    {
         inputs.read(&format!("snapshot:{name}"), &expected_snapshot.join(name));
+    }
+    // Legacy completed snapshots have no integrity marker. Readiness still
+    // validates their manifest; this census hashes every payload independently.
+    let integrity = expected_snapshot.join("integrity");
+    if integrity.is_file() {
+        inputs.read("snapshot:integrity", &integrity);
     }
 
     if let (Some(cache_dir_text), Some(unpack_dir_text)) = (cache_dir_text, unpack_dir_text) {
@@ -2482,7 +2488,7 @@ fn render_budget_content_census() {
                     );
                 }
                 manifest = Some(found.clone());
-                snapshot_dir = Some(PathBuf::from(found.dir));
+                snapshot_dir = Some(expected_snapshot.clone());
                 match client::unpack::load_snapshot(cache_dir_text, unpack_dir_text) {
                     Ok(loaded) => {
                         model_record_count = Some(loaded.models);
@@ -2969,7 +2975,6 @@ fn render_budget_content_census() {
     );
 }
 
-const ENGINE_MAPS_DIR: &str = "/Users/acfrazier/experiments/lostcity-289/content/maps";
 const MAP_WORLD_TILES: usize = 256 * 64;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -3138,7 +3143,10 @@ fn load_map_census(
             cell.faces
         })?;
 
-    let root = PathBuf::from(ENGINE_MAPS_DIR);
+    let root = std::env::var_os("ENGINE_DIR")
+        .map(PathBuf::from)
+        .and_then(|engine| engine.parent().map(|parent| parent.join("content/maps")))
+        .ok_or("set ENGINE_DIR to the revision-289 engine root with sibling content/maps")?;
     let entries = fs::read_dir(&root).map_err(|error| {
         format!(
             "cannot enumerate pinned engine map directory {}: {error}",
