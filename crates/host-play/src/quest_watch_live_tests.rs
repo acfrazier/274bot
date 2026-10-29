@@ -369,6 +369,14 @@ fn build_quest_watch_home() {
         });
         let mut bag = Map::new();
         bag.insert("quests".into(), json!([row.quest]));
+        // Watch-fixture walk permissions: a staged Path may route
+        // through a danger zone or the wilderness, and the runner
+        // parks instead of crossing without permission (proved live
+        // on mortton, whose first walk crosses Afflicted zones). The
+        // morning run watches the guides run, so all three are on.
+        bag.insert("allow_teleports".into(), json!(true));
+        bag.insert("allow_wilderness".into(), json!(true));
+        bag.insert("allow_danger_zones".into(), json!(true));
         if let Some(partner) = &row.partner_account {
             bag.insert("partner_account".into(), json!(partner));
         }
