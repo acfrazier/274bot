@@ -15,16 +15,14 @@ use script::native::{NativePhase, ScriptStatus, StatusValue};
 use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
-struct SkipSessionLog(
-    Mutex<
-        Vec<(
-            Option<String>,
-            api::hostlog::Source,
-            api::hostlog::Level,
-            String,
-        )>,
-    >,
-);
+struct SkipSessionLogRecord {
+    slot: Option<String>,
+    source: api::hostlog::Source,
+    level: api::hostlog::Level,
+    message: String,
+}
+
+struct SkipSessionLog(Mutex<Vec<SkipSessionLogRecord>>);
 
 impl api::hostlog::Sink for SkipSessionLog {
     fn record(&self, record: &api::hostlog::Record<'_>) {
@@ -32,12 +30,12 @@ impl api::hostlog::Sink for SkipSessionLog {
             .message
             .starts_with("command accepted: SkipQuest on ")
         {
-            self.0.lock().unwrap().push((
-                record.slot.map(str::to_owned),
-                record.source,
-                record.level,
-                record.message.to_owned(),
-            ));
+            self.0.lock().unwrap().push(SkipSessionLogRecord {
+                slot: record.slot.map(str::to_owned),
+                source: record.source,
+                level: record.level,
+                message: record.message.to_owned(),
+            });
         }
     }
 }
@@ -1280,13 +1278,13 @@ fn run_quester_skip() -> Result<(), String> {
         .lock()
         .map_err(|_| "quester skip session log poisoned")?
         .iter()
-        .find(|(slot, source, level, message)| {
-            slot.as_deref() == Some(account.as_str())
-                && *source == api::hostlog::Source::Host
-                && *level == api::hostlog::Level::Info
-                && message == &expected_skip_line
+        .find(|entry| {
+            entry.slot.as_deref() == Some(account.as_str())
+                && entry.source == api::hostlog::Source::Host
+                && entry.level == api::hostlog::Level::Info
+                && entry.message == expected_skip_line
         })
-        .map(|(_, _, _, message)| message.clone());
+        .map(|entry| entry.message.clone());
     let result = if result.is_ok() && accepted_skip_log.is_none() {
         Err(format!(
             "accepted SkipQuest info line missing from session log: {expected_skip_line}"
