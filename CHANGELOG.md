@@ -61,6 +61,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   of polls inside one tick no longer ends a crossing early, and a slow
   poll that misses several ticks no longer extends it.
 
+### Survival
+
+- A poison cure can now interrupt Gatherer and Quester work. The bot uses a
+  held antipoison dose, then resumes the work.
+- Quester waits for an active provisioning transfer to finish or reach its
+  limit before it closes the bank and drinks.
+- The panel and terminal app show the same status row for a cure or food need
+  caused by poison.
+
 ### Scripting
 
 - The script API documentation now states that moving the bot by hand during a
