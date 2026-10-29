@@ -63,11 +63,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Quester
 
-- A quest's fixed-destination walk step now retries a route failure on the
-  next observed game tick, up to three attempts in all. Each attempt starts a
-  fresh route from the player's latest observed position. If all three fail,
-  the step stops with the last route's detail; other failure types still stop
-  the step at once.
+- A fixed-destination Quester walk retries `NoPath`, `RouteEnded`, `Stalled`
+  and `Failed` receipts only when they have no typed refusal or blocked zones.
+  Each retry waits for a later observed game tick and starts a fresh route
+  from the player's latest observed position. `Refused`, any typed refusal,
+  blocked danger zones and `Blocked` entrance requirements stop at once.
+  `Aborted`, `UserInput`, `NeedsEvidence` and `Cancelled` also stop at once.
+  The walk stops after three attempts and keeps the last failure detail.
 
 ### Scripting
 

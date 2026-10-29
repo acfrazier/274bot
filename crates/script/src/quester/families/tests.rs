@@ -507,6 +507,16 @@ fn post_walk_receipt(
     end: WalkEnd,
     detail: Option<&str>,
 ) -> u64 {
+    post_walk_receipt_with(ledger, tick, end, detail, None, None)
+}
+fn post_walk_receipt_with(
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    end: WalkEnd,
+    detail: Option<&str>,
+    refusal: Option<crate::native::WalkRefusal>,
+    blocked: Option<Arc<[nav_planner::contract::ZoneKey]>>,
+) -> u64 {
     let (request_id, run) = {
         let ledger = ledger.as_ref().expect("walk request must be queued");
         let action = ledger
@@ -526,9 +536,9 @@ fn post_walk_receipt(
             sequence: tick,
         },
         end,
-        blocked: None,
+        blocked,
         detail: detail.map(Arc::from),
-        refusal: None,
+        refusal,
         assessment: None,
         escape: None,
     });
@@ -556,6 +566,46 @@ fn latest_walk_request(ledger: &Option<Box<ledger::Ledger>>) -> (u64, u64) {
         unreachable!();
     };
     (action.request_id.get(), request.required_after.tick)
+}
+fn walk_request_count(ledger: &Option<Box<ledger::Ledger>>) -> usize {
+    ledger.as_ref().map_or(0, |ledger| {
+        ledger
+            .outbox
+            .iter()
+            .filter(|action| matches!(&action.effect, HostEffect::Walk(_)))
+            .count()
+    })
+}
+
+fn assert_terminal_walk_receipt(
+    end: WalkEnd,
+    detail: Option<&str>,
+    refusal: Option<crate::native::WalkRefusal>,
+    blocked: Option<Arc<[nav_planner::contract::ZoneKey]>>,
+    expected_detail: &str,
+) {
+    let target = tile(3200, 3200);
+    let plan = walk_retry_plan(target);
+    let snapshot = ready();
+    let mut ledger = None;
+    let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        with_step(tick, |cx| plan.begin(cx).unwrap())
+    });
+    let first_request = latest_walk_request(&ledger).0;
+    assert_eq!(
+        post_walk_receipt_with(&mut ledger, 2, end, detail, refusal, blocked),
+        first_request
+    );
+    let result = with_tick(&snapshot, &mut ledger, 2, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    });
+    assert!(
+        matches!(result, Poll::Ready(Err(ActionError::Blocked(reason))) if reason.as_ref() == expected_detail),
+        "the receipt must stop the walk with its original detail"
+    );
+    assert_eq!(walk_request_count(&ledger), 1);
+    assert_eq!(latest_walk_request(&ledger).0, first_request);
+    assert!(run.take_trace_event().is_none());
 }
 
 fn assert_manual_movement(result: Poll<Result<StepOutcome, ActionError>>) {
@@ -662,6 +712,227 @@ fn quest_walk_step_retries_a_failed_route_and_completes_on_arrival() {
         }),
         Poll::Ready(Ok(_))
     ));
+}
+fn assert_retryable_walk_receipt(
+    end: WalkEnd,
+    blocked: Option<Arc<[nav_planner::contract::ZoneKey]>>,
+) {
+    let target = tile(3200, 3200);
+    let plan = walk_retry_plan(target);
+    let snapshot = ready();
+    let mut ledger = None;
+    let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        with_step(tick, |cx| plan.begin(cx).unwrap())
+    });
+    let first_request = latest_walk_request(&ledger).0;
+    assert_eq!(
+        post_walk_receipt_with(
+            &mut ledger,
+            2,
+            end,
+            Some("retryable failure"),
+            None,
+            blocked,
+        ),
+        first_request
+    );
+    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    })
+    .is_pending());
+
+    let event = run.take_trace_event().expect("each retry emits one trace event");
+    let rendered = format!("{event:?}");
+    assert!(rendered.contains("attempt: 2"));
+    assert!(rendered.contains("failure_detail: \"retryable failure\""));
+    assert!(run.take_trace_event().is_none());
+
+    assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    })
+    .is_pending());
+    let (retry_request, required_after_tick) = latest_walk_request(&ledger);
+    assert_ne!(retry_request, first_request);
+    assert_eq!(required_after_tick, 3);
+    assert!(run.take_trace_event().is_none());
+}
+
+#[test]
+fn quest_walk_no_path_receipt_retries() {
+    assert_retryable_walk_receipt(WalkEnd::NoPath, None);
+}
+
+#[test]
+fn quest_walk_route_ended_receipt_retries() {
+    assert_retryable_walk_receipt(WalkEnd::RouteEnded, None);
+}
+
+#[test]
+fn quest_walk_stalled_receipt_retries() {
+    assert_retryable_walk_receipt(
+        WalkEnd::Stalled(Arc::new(crate::native::WalkStall {
+            at: tile(3190, 3200),
+            aiming: tile(3200, 3200),
+            why: crate::native::WalkStallReason::EndBlocked,
+            tries: 1,
+        })),
+        None,
+    );
+}
+
+#[test]
+fn quest_walk_failed_receipt_retries_when_blocked_zone_list_is_empty() {
+    let empty_zones: Arc<[nav_planner::contract::ZoneKey]> =
+        Vec::<nav_planner::contract::ZoneKey>::new().into();
+    assert_retryable_walk_receipt(WalkEnd::Failed, Some(empty_zones));
+}
+
+#[test]
+fn quest_walk_risk_refusals_stop_without_retry() {
+    assert_terminal_walk_receipt(
+        WalkEnd::Refused,
+        Some("route refused by risk assessment"),
+        Some(crate::native::WalkRefusal::Unsurvivable),
+        None,
+        "route refused by risk assessment",
+    );
+    assert_terminal_walk_receipt(
+        WalkEnd::NoPath,
+        None,
+        Some(crate::native::WalkRefusal::Unsurvivable),
+        None,
+        "route is unsurvivable",
+    );
+}
+
+#[test]
+fn quest_walk_blocked_danger_zones_stop_without_retry() {
+    assert_terminal_walk_receipt(
+        WalkEnd::NoPath,
+        Some("route requires a blocked danger zone"),
+        None,
+        Some(Arc::from([nav_planner::contract::ZoneKey::Zone(0)])),
+        "route requires a blocked danger zone",
+    );
+}
+
+#[test]
+fn quest_walk_entrance_requirement_stops_without_retry() {
+    assert_terminal_walk_receipt(
+        WalkEnd::Blocked,
+        Some("entrance requires a missing item"),
+        None,
+        None,
+        "entrance requires a missing item",
+    );
+}
+
+#[test]
+fn quest_walk_aborted_receipt_stops_without_retry() {
+    assert_terminal_walk_receipt(
+        WalkEnd::Aborted,
+        Some("walk was aborted"),
+        None,
+        None,
+        "walk was aborted",
+    );
+}
+
+#[test]
+fn quest_walk_user_input_needs_evidence_and_cancelled_stop_without_retry() {
+    let gates: Arc<[api::selected::QuestGate]> =
+        Arc::from([api::selected::QuestGate::Complete(FactKey::new("walk-gate"))]);
+    let failures = [
+        (WalkEnd::UserInput, ActionError::UserInput),
+        (
+            WalkEnd::NeedsEvidence(Arc::clone(&gates)),
+            ActionError::NeedsEvidence(Arc::clone(&gates)),
+        ),
+        (WalkEnd::Cancelled, ActionError::Cancelled),
+    ];
+
+    for (end, expected) in failures {
+        let plan = walk_retry_plan(tile(3200, 3200));
+        let snapshot = ready();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        let first_request = latest_walk_request(&ledger).0;
+        assert_eq!(
+            post_walk_receipt(&mut ledger, 2, end, None),
+            first_request
+        );
+        let result = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        });
+        assert!(
+            matches!(result, Poll::Ready(Err(error)) if error == expected),
+            "typed walk failure must end the step at once"
+        );
+        assert_eq!(walk_request_count(&ledger), 1);
+        assert_eq!(latest_walk_request(&ledger).0, first_request);
+        assert!(run.take_trace_event().is_none());
+    }
+}
+
+#[test]
+fn quest_walk_retry_begin_defers_when_the_tick_budget_is_exhausted() {
+    let plan = walk_retry_plan(tile(3200, 3200));
+    let snapshot = ready();
+    let mut ledger = None;
+    let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        with_step(tick, |cx| plan.begin(cx).unwrap())
+    });
+    let first_request = latest_walk_request(&ledger).0;
+    post_walk_receipt(
+        &mut ledger,
+        2,
+        WalkEnd::NoPath,
+        Some("first route failure"),
+    );
+    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    })
+    .is_pending());
+    assert!(run.take_trace_event().is_some());
+
+    assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+        for _ in 0..32 {
+            assert!(tick.cx.budget.transition());
+        }
+        assert!(!tick.cx.budget.transition());
+        with_step(tick, |cx| run.poll(cx))
+    })
+    .is_pending());
+    assert_eq!(walk_request_count(&ledger), 1);
+    assert_eq!(latest_walk_request(&ledger).0, first_request);
+
+    assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    })
+    .is_pending());
+    let second_request = latest_walk_request(&ledger).0;
+    assert_ne!(second_request, first_request);
+    assert_eq!(walk_request_count(&ledger), 2);
+
+    post_walk_receipt(
+        &mut ledger,
+        5,
+        WalkEnd::NoPath,
+        Some("second route failure"),
+    );
+    assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    })
+    .is_pending());
+    assert!(run.take_trace_event().is_some());
+    assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    })
+    .is_pending());
+    assert_ne!(latest_walk_request(&ledger).0, second_request);
+    assert_eq!(walk_request_count(&ledger), 3);
 }
 
 #[test]

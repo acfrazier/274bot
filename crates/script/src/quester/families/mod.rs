@@ -44,7 +44,8 @@ pub(super) fn manual_movement_message() -> Arc<str> {
     Arc::clone(&REASON)
 }
 
-/// Preserve the native walk's typed refusal; `WalkRun` owns bounded retries.
+/// Map a native walk receipt to arrival evidence or its typed error.
+/// Only the `walk` step's `WalkRun` retries eligible receipt failures.
 fn walk_step_evidence(
     receipt: WalkReceipt,
 ) -> Result<api::quest_progress::EvidenceStamp, ActionError> {
@@ -1222,28 +1223,31 @@ impl StepPlan for WalkPlan {
         let mut run = WalkRun {
             plan: self.clone(),
             handle: None,
-            attempts: 0,
+            recovery: crate::native::ReturnStallRecovery::with_max_attempts(
+                WALK_STEP_MAX_ATTEMPTS,
+            ),
             retry_after_tick: None,
             warning: None,
+            trace_event: None,
         };
         run.begin_walk(cx)?;
         Ok(Box::new(run))
     }
 }
-
 struct WalkRun {
     plan: WalkPlan,
     handle: Option<ActionHandle<Walk>>,
-    attempts: u8,
+    recovery: crate::native::ReturnStallRecovery,
     retry_after_tick: Option<u64>,
     warning: Option<Arc<str>>,
+    trace_event: Option<super::compile::StepTraceEvent>,
 }
 impl WalkRun {
     fn begin_walk(&mut self, cx: &mut StepContext<'_, '_>) -> Result<(), ActionError> {
         let request = self.plan.request(cx);
         let handle = cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?;
         self.handle = Some(handle);
-        self.attempts += 1;
+        self.recovery.action_submitted();
         self.retry_after_tick = None;
         self.warning = None;
         Ok(())
@@ -1268,7 +1272,7 @@ impl StepRun for WalkRun {
 
         let result = {
             let Some(handle) = self.handle.as_ref() else {
-                return Poll::Pending;
+                return Poll::Ready(Err(ActionError::Stale));
             };
             while let Some(event) = cx.tick.actions.take_walk_event(handle, &mut cx.tick.cx) {
                 self.warning = Some(event.detail);
@@ -1276,6 +1280,15 @@ impl StepRun for WalkRun {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(receipt)) => {
+                    if self.recovery.observe_receipt(&receipt) {
+                        self.handle = None;
+                        self.retry_after_tick = Some(now);
+                        self.trace_event = Some(super::compile::StepTraceEvent::WalkRetry {
+                            attempt: self.recovery.retry_attempt_number(),
+                            failure_detail: receipt.failure_detail_or_fallback(),
+                        });
+                        return Poll::Pending;
+                    }
                     walk_step_evidence(receipt).map(|evidence| StepOutcome {
                         progress: None,
                         evidence,
@@ -1285,24 +1298,19 @@ impl StepRun for WalkRun {
                 Poll::Ready(Err(error)) => Err(error),
             }
         };
-        match result {
-            Err(error @ ActionError::Blocked(_)) => {
-                self.handle = None;
-                if self.attempts < WALK_STEP_MAX_ATTEMPTS {
-                    self.retry_after_tick = Some(now);
-                    Poll::Pending
-                } else {
-                    Poll::Ready(Err(error))
-                }
-            }
-            result => Poll::Ready(result),
-        }
+        Poll::Ready(result)
     }
+
     fn cancel(&mut self, _actions: &mut NativeActions) {}
+
     fn waiting_for(&self) -> Option<(&'static str, &Arc<str>)> {
         self.warning
             .as_ref()
             .map(|warning| ("Walk protection", warning))
+    }
+
+    fn take_trace_event(&mut self) -> Option<super::compile::StepTraceEvent> {
+        self.trace_event.take()
     }
 }
 

@@ -343,6 +343,10 @@ pub enum StepTraceEvent {
         target: crate::combat::Target,
         end: crate::combat::CombatEnd,
     },
+    WalkRetry {
+        attempt: u8,
+        failure_detail: Arc<str>,
+    },
 }
 
 #[derive(Debug, Clone)]

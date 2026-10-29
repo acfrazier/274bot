@@ -763,6 +763,16 @@ impl Quester {
                     ),
                 ),
             },
+            StepTraceEvent::WalkRetry {
+                attempt,
+                failure_detail,
+            } => self.trace.record(
+                output,
+                api::hostlog::Level::Info,
+                format_args!(
+                    "quester {quest}: stage {stage} retrying walk attempt {attempt}: {failure_detail}"
+                ),
+            ),
             StepTraceEvent::CombatSubOperationEnd { target, end } => self.trace.record(
                 output,
                 api::hostlog::Level::Info,

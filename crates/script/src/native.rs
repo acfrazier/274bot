@@ -1059,22 +1059,63 @@ pub enum WalkEnd {
 // Traveller's 60-call bound (equal to observed ticks in the current host);
 // §3 records the normal content-derived stand succeeding. One fresh plan
 // from the observed position is the supported recovery.
-const MAX_RETURN_RECOVERY_ACTIONS: u8 = 1;
+const MAX_RETURN_RECOVERY_ATTEMPTS: u8 = 2;
 
-#[derive(Default)]
+/// Counts recovery submissions separately from the initial action.
+/// `max_attempts` includes that initial action.
 pub(crate) struct ReturnStallRecovery {
     actions: u8,
+    max_attempts: u8,
     pending: bool,
 }
 
+impl Default for ReturnStallRecovery {
+    fn default() -> Self {
+        Self {
+            actions: 0,
+            max_attempts: MAX_RETURN_RECOVERY_ATTEMPTS,
+            pending: false,
+        }
+    }
+}
+
 impl ReturnStallRecovery {
+    /// Set a total request limit, including the initial request.
+    pub(crate) fn with_max_attempts(max_attempts: u8) -> Self {
+        Self {
+            max_attempts: max_attempts.max(1),
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn observe(&mut self, end: &WalkEnd) -> bool {
         let transient = matches!(
             end,
             WalkEnd::Stalled(stall)
                 if matches!(stall.why, WalkStallReason::Expired | WalkStallReason::Dropped)
         );
-        if transient && self.actions < MAX_RETURN_RECOVERY_ACTIONS && !self.pending {
+        self.observe_retryable(transient)
+    }
+
+    pub(crate) fn observe_receipt(&mut self, receipt: &WalkReceipt) -> bool {
+        let has_blocked_zones = receipt
+            .blocked
+            .as_deref()
+            .is_some_and(|blocked| !blocked.is_empty());
+        let retryable = receipt.refusal.is_none()
+            && !has_blocked_zones
+            && matches!(
+                &receipt.end,
+                WalkEnd::NoPath
+                    | WalkEnd::RouteEnded
+                    | WalkEnd::Stalled(_)
+                    | WalkEnd::Failed
+            );
+        self.observe_retryable(retryable)
+    }
+
+    fn observe_retryable(&mut self, retryable: bool) -> bool {
+        if retryable && self.actions.saturating_add(1) < self.max_attempts && !self.pending {
             self.pending = true;
             true
         } else {
@@ -1098,11 +1139,17 @@ impl ReturnStallRecovery {
         self.pending = false;
     }
 
+    /// Number of the next request after the initial request.
+    pub(crate) fn retry_attempt_number(&self) -> u8 {
+        self.actions.saturating_add(2)
+    }
+
     #[cfg(test)]
     pub(crate) fn actions(&self) -> u8 {
         self.actions
     }
 }
+
 #[derive(Debug, Clone)]
 pub struct WalkReceipt {
     pub request_id: u64,
@@ -1141,6 +1188,16 @@ impl WalkReceipt {
                     .as_ref()
                     .map(|refusal| Arc::from(refusal.to_string()))
             })
+    }
+    /// Return the host or typed detail, with the same fallback used by `into_arrival`.
+    pub(crate) fn failure_detail_or_fallback(&self) -> Arc<str> {
+        self.failure_detail().unwrap_or_else(|| {
+            Arc::from(match &self.end {
+                WalkEnd::NoPath => "walk has no route",
+                WalkEnd::RouteEnded => "walk route ended before arrival",
+                _ => "walk failed",
+            })
+        })
     }
 
     /// Accept a walk only when the adapter proved its requested arrival.
