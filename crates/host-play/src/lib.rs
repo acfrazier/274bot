@@ -315,6 +315,9 @@ pub struct Play {
     /// thread (focus/draw/stop/spawn), which re-reads the shared state on
     /// its next tick. Inserted at spawn, removed after `stop_slot` joins.
     wakes: HashMap<String, SlotWake>,
+    #[cfg(feature = "render-test-hooks")]
+    render_test_controls:
+        HashMap<String, Arc<dyn host::render_head::test_hooks::RenderTestControl>>,
     /// Host-capacity registry: each slot thread registers its own record
     /// once and writes only that record per service.
     capacity: Arc<host::CapacityMonitor>,
@@ -460,6 +463,20 @@ impl Play {
         if let Some(w) = self.wakes.get(name) {
             w.wake();
         }
+    }
+
+    /// Bind explicit render inputs before the named slot starts.
+    #[cfg(feature = "render-test-hooks")]
+    pub fn set_render_test_control(
+        &mut self,
+        name: &str,
+        control: Arc<dyn host::render_head::test_hooks::RenderTestControl>,
+    ) -> Result<(), host::render::RenderError> {
+        if self.spawned.contains(name) || self.retiring.contains_key(name) {
+            return Err(host::render::RenderError::ConfigurationLocked);
+        }
+        self.render_test_controls.insert(name.to_owned(), control);
+        Ok(())
     }
 
     /// Kick every running slot (wall-policy changes like

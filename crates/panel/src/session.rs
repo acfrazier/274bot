@@ -55,7 +55,7 @@ use nav_planner::router::{FindOptions, Route};
 use nav_planner::tile::Tile;
 use nav_planner::world::NavWorld;
 
-use crate::focus::{draw_for_slot, full_rate_for};
+use crate::focus::{draw_for_slot, full_rate_for, render_focused_for};
 use crate::nav_settings::{from_scenario, parse_html_color, NavSettings};
 use crate::wall::Wall;
 use frontend_core::{
@@ -290,11 +290,14 @@ impl SlotSurface for PanelSurface<'_> {
             profile.set_lowmem(lowmem);
         }
         input.set_prefer_cpu(raster == RasterMode::Cpu);
-        self.focus
-            .lock()
-            .unwrap()
-            .renderer_by
-            .insert(name.to_string(), raster != RasterMode::Off);
+        let render_focused = {
+            let mut focus = self.focus.lock().unwrap();
+            focus
+                .renderer_by
+                .insert(name.to_string(), raster != RasterMode::Off);
+            render_focused_for(&focus, name)
+        };
+        input.set_render_focused(render_focused);
         SlotAttach::new(
             SlotIo {
                 input: Arc::clone(&input),
@@ -3666,9 +3669,10 @@ impl Session {
             self.background_ack_open = false;
         }
         // Per-frame mirrors that must not lag a focus/renderer/wall change:
-        // the sidecar-50 cadence latch, and the speaker teardown when the
-        // owning slot is no longer running.
+        // sidecar-50 cadence, focused-render ownership, and speaker teardown
+        // when the owning slot is no longer running.
         self.sync_sidecar_cadence();
+        self.sync_render_focus();
         self.sync_nav_publish();
         if let Some(owner) = self.audio.owner() {
             if !self.core.slots().contains_key(&owner) {
@@ -4224,6 +4228,7 @@ impl Session {
         let mut focus = self.focus.lock().unwrap();
         focus.focused = Some(name.to_string());
         drop(focus);
+        self.sync_render_focus();
         // The overlay follows the focused traveller: switching focus may
         // show a different (or no) route, so force a rebuild.
         self.route_gen += 1;
@@ -4363,6 +4368,19 @@ impl Session {
         }
     }
 
+    /// Mirror the Game-pane owner independently of either frame-cadence
+    /// latch. Only changed bits wake their corresponding slot.
+    fn sync_render_focus(&self) {
+        let focus = self.focus.lock().unwrap();
+        for (name, slot) in self.core.slots() {
+            let render_focused = render_focused_for(&focus, name);
+            if slot.input.render_focused() != render_focused {
+                slot.input.set_render_focused(render_focused);
+                self.core.wake_slot(name);
+            }
+        }
+    }
+
     /// Mirror effective nav settings onto slot threads. Repeated UI frames
     /// retain the same Arc and generation so they do not invalidate the
     /// focused slot's materialized nav view.
@@ -4448,7 +4466,10 @@ impl Session {
     #[cfg(test)]
     pub(crate) fn set_focus_for_test(&mut self, name: &str) {
         self.submit(OperatorCommand::Select, Targets::Profile(name));
-        self.focus.lock().unwrap().focused = Some(name.to_string());
+        {
+            self.focus.lock().unwrap().focused = Some(name.to_string());
+        }
+        self.sync_render_focus();
     }
 
     /// A profile whose first save is still being written cannot be focused
@@ -5119,7 +5140,10 @@ impl Session {
         if let Some(next) = reselected.as_deref() {
             self.select(next);
         } else if cleared {
-            self.focus.lock().unwrap().focused = None;
+            {
+                self.focus.lock().unwrap().focused = None;
+            }
+            self.sync_render_focus();
             self.map_desk.set_input_sender(None);
             // Last focused slot gone and no neighbour: no remaining drawer
             // will publish, so release the flags sidecar here.

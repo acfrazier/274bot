@@ -320,6 +320,7 @@ unchanged manifest; compression does not change selected-content identities.
 | `lib.rs` | slot pump and crate facade | one OS thread per slot |
 | `render.rs` | neutral render reservation protocol (D12, §23 §2) | metadata only; no render thread; one process instance, owned by `render_head.rs` |
 | `render_head.rs` | per-slot render heads over the process `RenderService` (T4.2 wrap) | `HeadLease` per drawing slot; GPU scene submissions under a `FrameLease` through the client's scene-workspace hook, CPU heads take none; the client's `GPU_SCENE_LOCK` wait is retained until T4.4 |
+| `render_head/fair.rs` | opt-in fair-render admission and head samples | explicit `render-test-hooks` process fixture only; one consume per scene paint, retained Busy overlays, target slot wakes, and release before overlays |
 | `slot.rs` | per-slot drain pump | gens diff, tick synthesis, dirty families |
 | `slot_io.rs` | frame and input channels | mailbox (accepts only its attached head's frames), input, park and wake |
 | `login_queue.rs` | login FIFO and backoff | production rate limits |
@@ -336,7 +337,12 @@ dynamic draw-sprite list only on first use and releases it during draw-off
 cleanup. Attach reconstructs a head over the same Client and connection.
 Ground stamps and simulation observation generations remain on the world.
 An attached head still preserves its last 3D scene while `scene_state == 1`.
-The synchronous GPU workspace wait remains a T4.4 limitation.
+Normal builds retain the synchronous GPU workspace wait and the 100 ms wrap
+grant lifetime until the final qualification slice. With `render-test-hooks`,
+an explicit process fixture can activate nonwaiting admission without changing
+those production defaults. Its independent pump reports consumed overruns
+without reclaiming an active workspace. Frontend-core forwards bounded fault
+snapshots and selected-incident acknowledgements to the panel.
 
 ### nav-planner
 

@@ -7,6 +7,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Panel and terminal app
 
+- The panel can show persistent render fault notices and clear a selected
+  notice after its scene pass releases the renderer. A notice cannot hide a
+  scene pass that still owns the renderer. Experimental fair-render builds
+  also keep simulation and overlays running while another view builds 3D.
+  Normal builds retain the existing rendering policy pending qualification.
 - Source builds can now omit the JavaScript runtime with
   `--no-default-features`. These builds keep Gatherer, Grinch and Quester,
   their settings, and native Start, Pause, Stop and paint controls. They do

@@ -2813,6 +2813,81 @@ fn sidecar_cadence_sync_raises_members_not_focus() {
     assert!(!b_in.full_rate());
 }
 
+#[test]
+fn sidecar_and_live_full_rate_do_not_write_render_focus() {
+    let mut session = Session::new();
+    let a_input = SlotInput::new();
+    let b_input = SlotInput::new();
+    for (name, input) in [("a", &a_input), ("b", &b_input)] {
+        session.core.insert_slot_io(
+            name,
+            SlotIo {
+                input: Arc::clone(input),
+                pixels: FrameBuf::new(),
+            },
+        );
+    }
+    {
+        let mut focus = session.focus.lock().unwrap();
+        focus.renderer = true;
+        focus.game_pane_open = true;
+        focus.sidecar_50 = false;
+        focus.live_full_rate = false;
+        focus.focused_50 = false;
+        focus.only_render_selected = false;
+        focus.wall_open = true;
+        focus.wall = vec!["a".into(), "b".into()];
+        focus.renderer_by =
+            std::collections::HashMap::from([("a".into(), true), ("b".into(), true)]);
+    }
+    session.set_focus_for_test("a");
+    assert!(a_input.render_focused());
+    assert!(!b_input.render_focused());
+
+    session.focus.lock().unwrap().sidecar_50 = true;
+    session.pump_status();
+    assert!(
+        !a_input.full_rate(),
+        "sidecar-50 leaves the Game head alone"
+    );
+    assert!(
+        b_input.full_rate(),
+        "sidecar-50 raises the drawing wall member"
+    );
+    assert!(a_input.render_focused());
+    assert!(!b_input.render_focused());
+
+    {
+        let mut focus = session.focus.lock().unwrap();
+        focus.sidecar_50 = false;
+        focus.live_full_rate = true;
+    }
+    session.pump_status();
+    assert!(a_input.full_rate() && b_input.full_rate());
+    assert!(
+        a_input.render_focused() && !b_input.render_focused(),
+        "live full-rate changes cadence, not the selected render owner"
+    );
+
+    session.set_focus_for_test("b");
+    assert!(!a_input.render_focused());
+    assert!(b_input.render_focused());
+    {
+        let mut focus = session.focus.lock().unwrap();
+        focus.live_full_rate = false;
+        focus.sidecar_50 = true;
+    }
+    session.pump_status();
+    assert!(!a_input.render_focused());
+    assert!(b_input.render_focused());
+    session.focus.lock().unwrap().game_pane_open = false;
+    session.pump_status();
+    assert!(!a_input.render_focused() && !b_input.render_focused());
+    session.focus.lock().unwrap().game_pane_open = true;
+    session.pump_status();
+    assert!(!a_input.render_focused() && b_input.render_focused());
+}
+
 fn tmp_vault(name: &str) -> TestPath {
     TestPath::new(name, "vault.vault")
 }

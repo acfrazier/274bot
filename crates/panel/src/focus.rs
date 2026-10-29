@@ -64,6 +64,14 @@ pub fn draw_for_slot(f: &Focus, name: &str) -> bool {
     !f.only_render_selected && f.wall_open && f.wall.iter().any(|n| n == name)
 }
 
+/// Whether this slot owns the renderer's focused reservation priority.
+///
+/// Cadence is deliberately irrelevant: a sidecar or live full-rate request
+/// must not make another drawing slot the focused head.
+pub fn render_focused_for(f: &Focus, name: &str) -> bool {
+    draw_for_slot(f, name) && f.focused.as_deref() == Some(name)
+}
+
 /// Whether this slot runs at the 50 fps frame cadence instead of the
 /// 1 fps watch cadence. Capture does **not** raise fps. Focused 50 fps
 /// is the Game pane only; sidecar-50 is every drawing rail/grid member.
@@ -167,7 +175,9 @@ pub fn memory_draw_policy(
 mod tests {
     use std::collections::HashMap;
 
-    use super::{draw_for_slot, full_rate_for, should_capture, should_draw, Focus};
+    use super::{
+        draw_for_slot, full_rate_for, render_focused_for, should_capture, should_draw, Focus,
+    };
 
     #[cfg(feature = "memory-profile")]
     fn adverse_focus(names: &[String]) -> Focus {
@@ -556,6 +566,40 @@ mod tests {
             "sidecar still does not raise focused"
         );
         assert!(full_rate_for(&f, "b"));
+    }
+
+    #[test]
+    fn render_focus_tracks_only_the_drawn_game_pane_owner() {
+        let mut f = Focus {
+            focused: Some("a".into()),
+            renderer: true,
+            game_pane_open: true,
+            capture: false,
+            only_render_selected: false,
+            sidecar_50: false,
+            live_full_rate: false,
+            focused_50: false,
+            wall_open: true,
+            wall: vec!["a".into(), "b".into()],
+            renderer_by: HashMap::from([("a".into(), true), ("b".into(), true)]),
+        };
+
+        assert!(render_focused_for(&f, "a"));
+        assert!(!render_focused_for(&f, "b"));
+
+        f.sidecar_50 = true;
+        f.live_full_rate = true;
+        f.focused_50 = true;
+        assert!(full_rate_for(&f, "a"));
+        assert!(full_rate_for(&f, "b"));
+        assert!(render_focused_for(&f, "a"));
+        assert!(!render_focused_for(&f, "b"));
+
+        f.focused = Some("b".into());
+        assert!(!render_focused_for(&f, "a"));
+        assert!(render_focused_for(&f, "b"));
+        f.game_pane_open = false;
+        assert!(!render_focused_for(&f, "b"));
     }
 
     #[test]

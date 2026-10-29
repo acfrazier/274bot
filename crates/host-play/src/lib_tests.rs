@@ -1928,6 +1928,150 @@ fn stop_slot_wakes_a_parked_thread_before_joining() {
     assert!(play.wakes.is_empty(), "stop_slot drops the wake end");
 }
 
+#[cfg(feature = "render-test-hooks")]
+#[test]
+fn spawned_slot_render_uses_its_control_wake() {
+    use host::render_head::test_hooks::{
+        configure_process, ProcessFixture, RenderTestControl, RenderTestEvent, RenderTestPoint,
+    };
+
+    const CHILD: &str = "T44_SPAWN_WAKE_CHILD";
+    const TEST: &str = "tests::spawned_slot_render_uses_its_control_wake";
+    if std::env::var_os(CHILD).is_none() {
+        // Other unit tests initialize the production process service. Isolate
+        // the explicit fixture, using the existing live-test child pattern.
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1")
+            .status()
+            .expect("start the isolated spawn-wake test");
+        assert!(status.success(), "the isolated spawn-wake test failed");
+        return;
+    }
+    if std::env::var("BOT_CPU").as_deref() == Ok("1")
+        || client::render::backend::gpu::GpuBackend::try_new().is_err()
+    {
+        assert_ne!(
+            std::env::var("T4_REQUIRE_GPU").as_deref(),
+            Ok("1"),
+            "the spawn-wake proof requires a GPU adapter"
+        );
+        return;
+    }
+    configure_process(ProcessFixture {
+        grant_ttl: Duration::from_secs(5),
+        quantum: Duration::from_secs(10),
+    })
+    .unwrap();
+
+    struct Control {
+        now: Instant,
+        events: std::sync::mpsc::Sender<(RenderTestPoint, thread::ThreadId)>,
+        hold: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+    }
+    impl RenderTestControl for Control {
+        fn now(&self) -> Instant {
+            self.now
+        }
+        fn at(&self, event: RenderTestEvent) {
+            let _ = self.events.send((event.point, thread::current().id()));
+            if event.point == RenderTestPoint::BeforeLeaseRelease {
+                if let Some(release) = self.hold.lock().unwrap().take() {
+                    let _ = release.recv_timeout(Duration::from_secs(30));
+                }
+            }
+        }
+    }
+    let now = Instant::now();
+    let (release, held) = std::sync::mpsc::channel();
+    let (owner_events, owner_receive) = std::sync::mpsc::channel();
+    let (peer_events, peer_receive) = std::sync::mpsc::channel();
+    let owner_control = Arc::new(Control {
+        now,
+        events: owner_events,
+        hold: Mutex::new(Some(held)),
+    });
+    let peer_control = Arc::new(Control {
+        now,
+        events: peer_events,
+        hold: Mutex::new(None),
+    });
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/nonexistent-t44-cache".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |client, _, _| {
+            client.set_draw(true);
+            client.ingame = true;
+            client.scene_state = 2;
+            client.last_response = Some(Instant::now());
+        },
+    );
+    play.set_render_test_control("wake-owner", owner_control.clone())
+        .unwrap();
+    play.set_render_test_control("wake-peer", peer_control)
+        .unwrap();
+    let spawn = |play: &mut Play, name: &str, uid| {
+        let arm = SlotArm::new(uid, false);
+        arm.bypass_asset_startup_for_test();
+        arm.hold_logged_out();
+        let output = FrameBuf::new();
+        play.try_spawn_slot(
+            profile(name, uid),
+            Some(SlotInput::new()),
+            Some(Arc::clone(&output)),
+            Some(arm),
+        )
+        .unwrap();
+        output
+    };
+    let receive = |events: &std::sync::mpsc::Receiver<_>, point, timeout| {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let (observed, thread) = events
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .expect("the spawned slot reaches the render boundary");
+            if observed == point {
+                break thread;
+            }
+        }
+    };
+    let _owner = spawn(&mut play, "wake-owner", 41);
+    let owner_thread = receive(
+        &owner_receive,
+        RenderTestPoint::BeforeLeaseRelease,
+        Duration::from_secs(30),
+    );
+    assert_eq!(
+        play.set_render_test_control("wake-owner", owner_control),
+        Err(host::render::RenderError::ConfigurationLocked)
+    );
+    let peer = spawn(&mut play, "wake-peer", 42);
+    receive(
+        &peer_receive,
+        RenderTestPoint::OverlayEntry,
+        Duration::from_secs(30),
+    );
+    assert!(wait_settled(|| peer.generation() != 0));
+    assert_eq!(peer.fair_stats().unwrap().scene_consumes(), 0);
+    release.send(()).unwrap();
+    let peer_thread = receive(
+        &peer_receive,
+        RenderTestPoint::AfterConsume,
+        Duration::from_millis(500),
+    );
+    assert_ne!(owner_thread, peer_thread);
+    play.stop_slot("wake-owner");
+    play.stop_slot("wake-peer");
+}
+
 #[test]
 fn stop_slot_interrupts_login_backoff() {
     let mut play = run_with_io(

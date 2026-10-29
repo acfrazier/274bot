@@ -10,12 +10,12 @@ use super::{
     clamp_hop_label_px, debug_caption, drive_startup, edit_parameters_enabled, finish_panel_run,
     game_window_flags, hold_script_terminal_shot, live_exit_code, live_null_tick, live_script_tick,
     live_smoke_tick, live_stress_tick, loading_text, login_logout_row, logout_enabled,
-    manual_shot_label, parse_args, parse_live_args, request_clean_stop_capture,
-    request_native_failure_capture, runner_config, script_failure_scenario, smoke_settled,
-    smoke_should_fire, startup_progress, status_value_visible, Boot, LiveBoot, LiveHarness,
-    LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState, ProgressPhase, RunMode, ShotStatus,
-    SoakCapture, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
-    SMOKE_DEADLINE, SMOKE_SETTLE,
+    manual_shot_label, parse_args, parse_live_args, render_fault_banner_with,
+    request_clean_stop_capture, request_native_failure_capture, runner_config,
+    script_failure_scenario, smoke_settled, smoke_should_fire, startup_progress,
+    status_value_visible, Boot, LiveBoot, LiveHarness, LiveNull, LiveScript, LiveSmoke, LiveStress,
+    PanelState, ProgressPhase, RunMode, ShotStatus, SoakCapture, StartupPreparation, BASE_WINDOW_H,
+    BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
 };
 use crate::log_pane::log_follow_bottom;
 use crate::test_support::{patiently, TestDir};
@@ -4566,6 +4566,80 @@ fn capacity_warning_is_on_the_panel_banner() {
         text.contains("Run fewer bots or turn off render-all"),
         "{text:?}"
     );
+}
+
+#[test]
+fn render_fault_banner_stays_visible_until_acknowledged_and_released() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut context = crate::test_support::imgui_context();
+    let drawn = DrawnText::default();
+    context.set_clipboard_backend(drawn.clone());
+    let acknowledged = std::cell::Cell::new(None::<u64>);
+
+    let mut frame = |context: &mut dear_imgui_rs::Context,
+                     active: bool,
+                     acknowledged_sequence: u64,
+                     mouse: [f32; 2],
+                     pressed: bool| {
+        context.io_mut().add_mouse_pos_event(mouse);
+        context
+            .io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, pressed);
+        context.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([500.0, 400.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let mut clear_bounds = [[0.0; 2]; 2];
+        {
+            let ui = context.frame();
+            ui.log_to_clipboard(0u32);
+            ui.window("render-fault")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size([500.0, 400.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    render_fault_banner_with(
+                        ui,
+                        12,
+                        "ConsumedOverdue",
+                        active,
+                        acknowledged_sequence,
+                        |sequence| {
+                            acknowledged.set(Some(sequence));
+                            Ok(())
+                        },
+                    );
+                    clear_bounds = [ui.item_rect_min(), ui.item_rect_max()];
+                });
+            ui.log_finish();
+        }
+        context.render();
+        (drawn.0.take(), clear_bounds)
+    };
+
+    let (initial, clear_bounds) = frame(&mut context, true, 0, [-10.0, -10.0], false);
+    assert!(initial.contains("Render fault #12: ConsumedOverdue"));
+    assert!(initial.contains("consumed render workspace is still owned"));
+    assert!(initial.contains("[ Clear render fault ]"));
+
+    let clear_at = [
+        (clear_bounds[0][0] + clear_bounds[1][0]) * 0.5,
+        (clear_bounds[0][1] + clear_bounds[1][1]) * 0.5,
+    ];
+    frame(&mut context, true, 0, clear_at, false);
+    frame(&mut context, true, 0, clear_at, true);
+    frame(&mut context, true, 0, clear_at, false);
+    assert_eq!(acknowledged.get(), Some(12));
+
+    let (still_owned, _) = frame(&mut context, true, 12, [-10.0, -10.0], false);
+    assert!(still_owned.contains("Render fault #12: ConsumedOverdue"));
+    assert!(still_owned.contains("consumed render workspace is still owned"));
+    assert!(
+        !still_owned.contains("[ Clear render fault ]"),
+        "the acknowledged incident cannot be cleared while it is still active"
+    );
+
+    let (cleared, _) = frame(&mut context, false, 12, [-10.0, -10.0], false);
+    assert!(!cleared.contains("Render fault #12"));
 }
 
 /// What one frame of the Profiles window showed.

@@ -45,6 +45,11 @@ use crate::render::{
 };
 use crate::FrameBuf;
 
+#[cfg(feature = "render-test-hooks")]
+mod fair;
+#[cfg(feature = "render-test-hooks")]
+pub use fair::{test_hooks, DueOpportunity, HeadFairStats};
+
 /// How long a granted GPU head may take to consume its grant. A waiting head
 /// consumes within its wake-up latency, so this bounds only a head whose
 /// thread stalls between grant and consume. Wrap-only and unqualified: M3
@@ -63,10 +68,28 @@ struct ProcessRender {
     counters: WorkspaceCounters,
 }
 
-static PROCESS: LazyLock<ProcessRender> = LazyLock::new(|| {
+/// The qualified configuration is absent until slice 5. Normal builds retain
+/// the wrap's exact admission and deadline policy.
+fn build_process_render() -> ProcessRender {
+    #[cfg(feature = "render-test-hooks")]
+    let fixture = fair::initialize();
+    #[cfg(feature = "render-test-hooks")]
+    if fixture.is_some() {
+        client::render::backend::gpu::set_scene_admission_hook(fair::admission);
+        client::render::backend::cpu::set_cpu_host_overlay_hook(fair::host_active);
+    }
     client::render::backend::gpu::set_scene_workspace_hook(scene_workspace);
-    let service =
-        RenderService::new(WRAP_GRANT_TTL).expect("the wrap grant lifetime is positive and finite");
+    #[cfg(feature = "render-test-hooks")]
+    let ttl = fixture.map_or(WRAP_GRANT_TTL, |config| config.grant_ttl);
+    #[cfg(not(feature = "render-test-hooks"))]
+    let ttl = WRAP_GRANT_TTL;
+    let service = RenderService::new(ttl).expect("the grant lifetime is positive and finite");
+    #[cfg(feature = "render-test-hooks")]
+    if let Some(config) = fixture {
+        service
+            .set_consumed_quantum(config.quantum)
+            .expect("validated fixture quantum");
+    }
     let pump = service
         .register_pump()
         .expect("a new service registers its one pump");
@@ -75,7 +98,9 @@ static PROCESS: LazyLock<ProcessRender> = LazyLock::new(|| {
         pump,
         counters: WorkspaceCounters::default(),
     }
-});
+}
+
+static PROCESS: LazyLock<ProcessRender> = LazyLock::new(build_process_render);
 
 /// Run the process render pump at `now` and return its next deadline. The
 /// headed composition calls it from its own loop (the panel window), so a
@@ -83,7 +108,13 @@ static PROCESS: LazyLock<ProcessRender> = LazyLock::new(|| {
 /// slot asks for a frame.
 pub fn pump(now: Instant) -> Option<Deadline> {
     match PROCESS.service.pump(&PROCESS.pump, now) {
-        Ok(deadline) => deadline,
+        Ok(deadline) => {
+            #[cfg(feature = "render-test-hooks")]
+            if fair::enabled() {
+                return fair::heartbeat(now, deadline);
+            }
+            deadline
+        }
         Err(error) => {
             host_log!(Category::Lifecycle, Level::Warn, "render pump: {error}");
             None
@@ -94,7 +125,14 @@ pub fn pump(now: Instant) -> Option<Deadline> {
 /// What GPU scene submissions in this process have cost in workspace
 /// admission so far: the evidence for the wrap's retained wait.
 pub fn workspace_stats() -> WorkspaceStats {
-    PROCESS.counters.stats()
+    let mut stats = PROCESS.counters.stats();
+    stats.faults = PROCESS.service.fault_stats();
+    stats
+}
+
+/// Acknowledge an incident without clearing its totals or live ownership.
+pub fn acknowledge_fault(sequence: u64) -> Result<(), RenderError> {
+    PROCESS.service.acknowledge_fault(sequence)
 }
 
 /// A snapshot of the process's GPU scene-workspace counters.
@@ -105,9 +143,21 @@ pub struct WorkspaceStats {
     wait_ns: u64,
     max_wait_ns: u64,
     unleased: u64,
+    faults: crate::render::RenderFaultStats,
+    #[cfg(feature = "render-test-hooks")]
+    busy: u64,
 }
 
 impl WorkspaceStats {
+    pub const fn faults(&self) -> crate::render::RenderFaultStats {
+        self.faults
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    pub const fn busy(&self) -> u64 {
+        self.busy
+    }
+
     /// Scene submissions that ran under a frame lease.
     pub const fn leased(self) -> u64 {
         self.leased
@@ -143,6 +193,8 @@ struct WorkspaceCounters {
     wait_ns: AtomicU64,
     max_wait_ns: AtomicU64,
     unleased: AtomicU64,
+    #[cfg(feature = "render-test-hooks")]
+    busy: AtomicU64,
 }
 
 impl WorkspaceCounters {
@@ -167,6 +219,9 @@ impl WorkspaceCounters {
             wait_ns: self.wait_ns.load(Ordering::Relaxed),
             max_wait_ns: self.max_wait_ns.load(Ordering::Relaxed),
             unleased: self.unleased.load(Ordering::Relaxed),
+            faults: crate::render::RenderFaultStats::default(),
+            #[cfg(feature = "render-test-hooks")]
+            busy: self.busy.load(Ordering::Relaxed),
         }
     }
 }
@@ -178,12 +233,54 @@ impl WorkspaceCounters {
 pub struct SlotRender {
     slot: SlotKey,
     output: Arc<FrameBuf>,
+    #[cfg(feature = "render-test-hooks")]
+    wake: Arc<dyn Notifier>,
+    #[cfg(feature = "render-test-hooks")]
+    test_control: Option<Arc<dyn test_hooks::RenderTestControl>>,
 }
 
 impl SlotRender {
     /// The envelope for one slot worker.
-    pub fn new(slot: SlotKey, output: Arc<FrameBuf>) -> Self {
-        Self { slot, output }
+    pub fn new(slot: SlotKey, output: Arc<FrameBuf>, _wake: Arc<dyn Notifier>) -> Self {
+        Self {
+            slot,
+            output,
+            #[cfg(feature = "render-test-hooks")]
+            wake: _wake,
+            #[cfg(feature = "render-test-hooks")]
+            test_control: None,
+        }
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    pub fn with_test_control(mut self, control: Arc<dyn test_hooks::RenderTestControl>) -> Self {
+        self.test_control = Some(control);
+        self
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    pub fn fair_stats(&self) -> Option<HeadFairStats> {
+        self.output.fair_stats()
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    pub(crate) fn render_now(&self, fallback: Instant) -> Instant {
+        if fair::enabled() {
+            self.test_control
+                .as_ref()
+                .map_or(fallback, |control| control.now())
+        } else {
+            fallback
+        }
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    pub(crate) fn loading_paint(&self) -> bool {
+        fair::enabled()
+            && self
+                .test_control
+                .as_ref()
+                .is_some_and(|control| control.loading_paint())
     }
 
     /// The slot worker lifetime every head of this slot carries.
@@ -220,6 +317,8 @@ pub(crate) struct Head {
     /// is a retire and reattach, not a restart.
     prefer_cpu: bool,
     lowmem: bool,
+    #[cfg(feature = "render-test-hooks")]
+    fair: fair::FairHead,
 }
 
 impl Head {
@@ -231,6 +330,9 @@ impl Head {
         prefer_cpu: bool,
         lowmem: bool,
     ) -> Result<Self, RenderError> {
+        #[cfg(feature = "render-test-hooks")]
+        let wake = Arc::new(HeadWake::new(Arc::clone(&render.wake)));
+        #[cfg(not(feature = "render-test-hooks"))]
         let wake = Arc::new(HeadWake::default());
         let notifier: Arc<dyn Notifier> = wake.clone();
         let lease = PROCESS
@@ -244,6 +346,12 @@ impl Head {
         // driver: not time the host kept us waiting.
         let renderer = crate::capacity::off_cpu_wait(|| Renderer::new_prefer(lowmem, !prefer_cpu));
         render.output.attach_head(identity);
+        #[cfg(feature = "render-test-hooks")]
+        let fair = fair::FairHead::new(
+            identity,
+            renderer.backend_kind(),
+            render.test_control.clone(),
+        );
         Ok(Self {
             lease: Some(lease),
             identity,
@@ -253,6 +361,8 @@ impl Head {
             renderer,
             prefer_cpu,
             lowmem,
+            #[cfg(feature = "render-test-hooks")]
+            fair,
         })
     }
 
@@ -286,6 +396,10 @@ impl Head {
     /// Paint one frame. A GPU head lends its lease to this thread's scene
     /// hook for the frame, so its scene submission runs under a frame lease.
     pub(crate) fn paint(&mut self, client: &mut Client) -> FrameOutput {
+        #[cfg(feature = "render-test-hooks")]
+        if fair::enabled() {
+            return fair::paint(self, client);
+        }
         if self.renderer.backend_kind() != BackendKind::Gpu {
             return self.renderer.mainredraw(client);
         }
@@ -323,6 +437,8 @@ impl Head {
     }
 
     fn retire(&mut self) {
+        #[cfg(feature = "render-test-hooks")]
+        fair::retire(self);
         if let Some(mut lease) = self.lease.take() {
             if let Err(error) = PROCESS.service.retire(&mut lease, Instant::now()) {
                 host_log!(
@@ -382,6 +498,8 @@ impl<'a> LentHead<'a> {
                 lease: head,
                 wake: Arc::clone(wake),
                 scenes: *scenes,
+                #[cfg(feature = "render-test-hooks")]
+                fair: None,
             });
         });
         Self { lease, scenes }
@@ -402,6 +520,8 @@ struct GpuFrame {
     lease: HeadLease,
     wake: Arc<HeadWake>,
     scenes: u64,
+    #[cfg(feature = "render-test-hooks")]
+    fair: Option<fair::FairFrame>,
 }
 
 /// The client's scene-workspace hook. A thread painting a lent GPU head holds
@@ -410,7 +530,14 @@ struct GpuFrame {
 /// client's lock, as before.
 fn scene_workspace(submit: &mut dyn FnMut()) {
     GPU_FRAME.with(|frame| match frame.borrow_mut().as_mut() {
-        Some(frame) => frame.submit(&PROCESS.service, &PROCESS.counters, submit),
+        Some(frame) => {
+            #[cfg(feature = "render-test-hooks")]
+            if frame.fair.is_some() {
+                fair::submit(frame, submit);
+                return;
+            }
+            frame.submit(&PROCESS.service, &PROCESS.counters, submit);
+        }
         None => submit(),
     });
 }
@@ -504,13 +631,35 @@ impl GpuFrame {
 
 /// A head's notification sink: the latest publication sequence the service
 /// announced for it, and the condition a waiting GPU head sleeps on.
-#[derive(Default)]
+#[cfg_attr(not(feature = "render-test-hooks"), derive(Default))]
 struct HeadWake {
     latest: Mutex<PublishSequence>,
     published: Condvar,
+    #[cfg(feature = "render-test-hooks")]
+    owner: std::thread::ThreadId,
+    #[cfg(feature = "render-test-hooks")]
+    slot_wake: Arc<dyn Notifier>,
+}
+
+#[cfg(all(test, feature = "render-test-hooks"))]
+impl Default for HeadWake {
+    fn default() -> Self {
+        let (wake, _park) = crate::wake_channel();
+        Self::new(Arc::new(wake))
+    }
 }
 
 impl HeadWake {
+    #[cfg(feature = "render-test-hooks")]
+    fn new(slot_wake: Arc<dyn Notifier>) -> Self {
+        Self {
+            latest: Mutex::new(PublishSequence::default()),
+            published: Condvar::new(),
+            owner: std::thread::current().id(),
+            slot_wake,
+        }
+    }
+
     fn latest(&self) -> PublishSequence {
         *lock(&self.latest)
     }
@@ -533,6 +682,10 @@ impl Notifier for HeadWake {
         *latest = (*latest).max(notice.sequence());
         drop(latest);
         self.published.notify_all();
+        #[cfg(feature = "render-test-hooks")]
+        if fair::enabled() && std::thread::current().id() != self.owner {
+            self.slot_wake.notify(notice);
+        }
     }
 }
 
@@ -574,6 +727,8 @@ mod tests {
             lease,
             wake,
             scenes: 0,
+            #[cfg(feature = "render-test-hooks")]
+            fair: None,
         }
     }
 
@@ -583,6 +738,44 @@ mod tests {
             assert!(Instant::now() < deadline, "timed out waiting for {what}");
             thread::sleep(Duration::from_millis(1));
         }
+    }
+
+    #[test]
+    fn unset_production_quantum_keeps_dev_wrap_ttl_and_no_heartbeat() {
+        let process = build_process_render();
+        #[cfg(feature = "render-test-hooks")]
+        assert!(
+            !fair::enabled(),
+            "this unit-test binary does not configure the process"
+        );
+        assert_eq!(WRAP_GRANT_TTL, Duration::from_millis(100));
+        let head = gpu_frame(&process.service, &process.pump, 29);
+        let now = Instant::now();
+        let RequestOutcome::Granted(reservation) = process
+            .service
+            .request_frame(&head.lease, Deadline::at(now), now)
+            .unwrap()
+        else {
+            panic!("an idle wrap grants its first request");
+        };
+        assert_eq!(
+            head.lease.snapshot().1.expires_at(),
+            Some(Deadline::at(now + WRAP_GRANT_TTL))
+        );
+        let lease = process
+            .service
+            .try_consume(&head.lease, reservation, now)
+            .unwrap();
+        assert_eq!(
+            process
+                .service
+                .pump(&process.pump, now + Duration::from_secs(1))
+                .unwrap(),
+            None
+        );
+        assert_eq!(process.service.fault_stats().totals(), [0, 0, 0]);
+        assert!(process.service.fault_stats().latest().is_none());
+        drop(lease);
     }
 
     #[test]

@@ -535,6 +535,8 @@ impl Play {
             walk_globals_store: None,
             world,
             wakes: HashMap::new(),
+            #[cfg(feature = "render-test-hooks")]
+            render_test_controls: HashMap::new(),
             capacity: Arc::new(host::CapacityMonitor::new()),
             local_state,
         }

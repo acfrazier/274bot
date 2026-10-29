@@ -57,7 +57,12 @@ fn cfg() -> ClientConfig {
 /// service through it; one key per envelope, as Play mints one per worker.
 fn slot_render(buf: &Arc<FrameBuf>) -> SlotRender {
     static SLOTS: SlotKeyMinter = SlotKeyMinter::new();
-    SlotRender::new(SLOTS.mint().expect("test slot key"), Arc::clone(buf))
+    let (wake, _park) = wake_channel();
+    SlotRender::new(
+        SLOTS.mint().expect("test slot key"),
+        Arc::clone(buf),
+        Arc::new(wake),
+    )
 }
 
 #[test]

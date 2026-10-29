@@ -151,6 +151,8 @@ struct Mailbox {
     head: Option<HeadIdentity>,
     /// Why the slot's draw request has no head, while its attach is refused.
     refused: Option<RenderRefusal>,
+    #[cfg(feature = "render-test-hooks")]
+    fair_stats: Option<crate::render_head::HeadFairStats>,
     #[cfg(feature = "render-diagnostics")]
     stored_roi: Option<client::render::diagnostics::PixelRoiMeta>,
     #[cfg(feature = "render-diagnostics")]
@@ -164,6 +166,8 @@ impl FrameBuf {
                 frame: None,
                 head: None,
                 refused: None,
+                #[cfg(feature = "render-test-hooks")]
+                fair_stats: None,
                 #[cfg(feature = "render-diagnostics")]
                 stored_roi: None,
                 #[cfg(feature = "render-diagnostics")]
@@ -280,6 +284,10 @@ impl FrameBuf {
         let mut inner = self.inner.lock().unwrap();
         inner.head = Some(head);
         inner.refused = None;
+        #[cfg(feature = "render-test-hooks")]
+        {
+            inner.fair_stats = None;
+        }
     }
 
     /// `head` retired at a detach: stop accepting its frames and drain the
@@ -316,6 +324,20 @@ impl FrameBuf {
     /// render service refused its head. Shown in the slot's own cell.
     pub fn refusal(&self) -> Option<RenderRefusal> {
         self.inner.lock().unwrap().refused
+    }
+
+    /// The latest fixed-size sample for this mailbox's render generation.
+    #[cfg(feature = "render-test-hooks")]
+    pub fn fair_stats(&self) -> Option<crate::render_head::HeadFairStats> {
+        self.inner.lock().unwrap().fair_stats
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    pub(crate) fn publish_fair_stats(&self, sample: crate::render_head::HeadFairStats) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.head == Some(sample.identity()) {
+            inner.fair_stats = Some(sample);
+        }
     }
 
     /// Move the stored frame out and clear the mailbox: the single
@@ -536,6 +558,7 @@ pub struct SlotInput {
     /// every tick (host-side; the old `SlotLoop::full_rate` stub moved
     /// here so the panel can reach it).
     full_rate: AtomicBool,
+    render_focused: AtomicBool,
     /// Per-slot CpuPix3D (else GPU). Applied when the slot lazily builds
     /// its `Renderer` — flipping it on a live slot drops + reattaches the
     /// head (the `Client` and its socket stay up).
@@ -557,6 +580,7 @@ impl SlotInput {
         std::sync::Arc::new(Self {
             enabled: AtomicBool::new(false),
             full_rate: AtomicBool::new(false),
+            render_focused: AtomicBool::new(false),
             prefer_cpu: AtomicBool::new(false),
             rx: Mutex::new(UserInput {
                 rx: None,
@@ -609,6 +633,13 @@ impl SlotInput {
     }
     pub fn full_rate(&self) -> bool {
         self.full_rate.load(Ordering::Relaxed)
+    }
+    /// The actual Game-pane focus, independent of render cadence.
+    pub fn set_render_focused(&self, on: bool) {
+        self.render_focused.store(on, Ordering::Relaxed);
+    }
+    pub fn render_focused(&self) -> bool {
+        self.render_focused.load(Ordering::Relaxed)
     }
     pub fn set_prefer_cpu(&self, on: bool) {
         self.prefer_cpu.store(on, Ordering::Relaxed);
@@ -958,6 +989,12 @@ impl SlotWake {
     /// stopped draining) or a dead slot just drops the kick.
     pub fn wake(&self) {
         let _ = (&*self.tx).write(&[1]);
+    }
+}
+
+impl api::identity::Notifier for SlotWake {
+    fn notify(&self, _: api::identity::Notice) {
+        self.wake();
     }
 }
 

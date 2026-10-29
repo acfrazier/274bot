@@ -1921,6 +1921,7 @@ fn panel_window(ui: &Ui, session: &mut Session, progress: Option<StartupProgress
             ui.set_item_tooltip(crate::build_info::build_tooltip());
             banner(ui, session, progress);
             capacity_banner(ui, session);
+            render_fault_banner(ui);
             login_logout_row(ui, session);
             walkto_button(ui, session);
             slot_config_row(ui, session);
@@ -2072,6 +2073,55 @@ fn loading_banner(ui: &Ui, phase: ProgressPhase, progress: &ProgressView) {
 fn capacity_banner(ui: &Ui, session: &Session) {
     if let Some(notice) = session.core.capacity_notice() {
         ui.text_colored(WARN, notice.notice_text());
+    }
+}
+
+/// Show the latest render-service incident until it is acknowledged. An
+/// active consumed-overdue fault remains visible while it still owns the
+/// shared workspace, even after acknowledgement.
+fn render_fault_banner(ui: &Ui) {
+    let faults = frontend_core::surface::render_workspace_stats().faults();
+    let Some(fault) = faults.latest() else {
+        return;
+    };
+    let kind = format!("{:?}", fault.kind());
+    render_fault_banner_with(
+        ui,
+        fault.sequence(),
+        &kind,
+        fault.active(),
+        faults.acknowledged_sequence(),
+        |sequence| {
+            frontend_core::surface::acknowledge_render_fault(sequence)
+                .map_err(|error| error.to_string())
+        },
+    );
+}
+
+fn render_fault_banner_with(
+    ui: &Ui,
+    sequence: u64,
+    kind: &str,
+    active: bool,
+    acknowledged_sequence: u64,
+    mut acknowledge: impl FnMut(u64) -> Result<(), String>,
+) {
+    let unacknowledged = sequence > acknowledged_sequence;
+    if !active && !unacknowledged {
+        return;
+    }
+
+    ui.text_colored(WARN, format!("Render fault #{sequence}: {kind}"));
+    if active {
+        ui.text_colored(WARN, "The consumed render workspace is still owned.");
+    }
+    if unacknowledged && ui.button("Clear render fault") {
+        if let Err(error) = acknowledge(sequence) {
+            ui.text_colored(
+                ERROR,
+                format!("Could not clear render fault #{sequence}: {error}"),
+            );
+        }
     }
 }
 

@@ -261,6 +261,19 @@ pub fn pump_render(now: std::time::Instant) -> Option<std::time::Instant> {
     host::render_head::pump(now).map(|deadline| deadline.instant())
 }
 
+/// Snapshot the host render workspace and its persistent fault state.
+///
+/// Front ends use this bridge for operator-visible render health without
+/// depending on host internals.
+pub fn render_workspace_stats() -> host::render_head::WorkspaceStats {
+    host::render_head::workspace_stats()
+}
+
+/// Acknowledge one displayed render-fault incident by its sequence.
+pub fn acknowledge_render_fault(sequence: u64) -> Result<(), host::render::RenderError> {
+    host::render_head::acknowledge_fault(sequence)
+}
+
 impl InputEv {
     #[cfg(any(test, feature = "test-support"))]
     fn from_host(event: host::InputEv) -> Self {

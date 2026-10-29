@@ -51,8 +51,24 @@ const SPLASH_Y: std::ops::Range<usize> = 135..165;
 /// binary runs them one at a time.
 fn serial() -> MutexGuard<'static, ()> {
     static SERIAL: Mutex<()> = Mutex::new(());
-    SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
+    let guard = SERIAL.lock().unwrap_or_else(PoisonError::into_inner);
+    #[cfg(feature = "render-test-hooks")]
+    {
+        static CONFIGURE: std::sync::Once = std::sync::Once::new();
+        CONFIGURE.call_once(|| {
+            render_head::test_hooks::configure_process(render_head::test_hooks::ProcessFixture {
+                grant_ttl: Duration::from_millis(20),
+                quantum: Duration::from_millis(40),
+            })
+            .expect("the characterization binary configures before its first head");
+        });
+    }
+    guard
 }
+
+#[cfg(feature = "render-test-hooks")]
+#[path = "render_characterization/fair_tests.rs"]
+mod fair_tests;
 
 fn required(var: &str) -> bool {
     std::env::var(var).as_deref() == Ok("1")
@@ -766,6 +782,7 @@ fn with_slot_setup<R>(
             }
             client.last_response = Some(Instant::now());
             let bytes_out_start = client.stream.as_ref().map_or(0, ClientStream::bytes_out);
+            let (wake, park) = host::wake_channel();
             Host::run_client(
                 &mut client,
                 "t4slot",
@@ -774,8 +791,12 @@ fn with_slot_setup<R>(
                 Arc::new(AtomicBool::new(false)),
                 Arc::new(Mutex::new(String::new())),
                 Some(Arc::clone(input)),
-                Some(SlotRender::new(slot_key(), Arc::clone(mailbox))),
-                None,
+                Some(SlotRender::new(
+                    slot_key(),
+                    Arc::clone(mailbox),
+                    Arc::new(wake),
+                )),
+                Some(Arc::new(park)),
                 ScriptRunPolicy::default(),
                 |client, _, _, _, _| {
                     client.set_draw(control.draw.load(Ordering::SeqCst));

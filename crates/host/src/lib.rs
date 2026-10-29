@@ -686,6 +686,21 @@ impl Host {
         }
         slot.draw_was_on = client.draw;
         let paced_at = slot.pacing_now(t_loop);
+        #[cfg(feature = "render-test-hooks")]
+        let paced_at = render.map_or(paced_at, |render| render.render_now(paced_at));
+        #[cfg(feature = "render-test-hooks")]
+        let can_scene = client.draw
+            && client.ingame
+            && client.scene_state == 2
+            && !render.is_some_and(SlotRender::loading_paint);
+        #[cfg(feature = "render-test-hooks")]
+        if let Some(head) = slot.head.as_mut() {
+            head.reconcile_scene_eligibility(
+                can_scene,
+                input.is_some_and(SlotInput::render_focused),
+                paced_at,
+            );
+        }
         let paint = if client.ingame {
             raster_this_tick(
                 client.draw,
@@ -713,6 +728,15 @@ impl Host {
                 &mut slot.raster_was_on,
             )
         };
+        #[cfg(feature = "render-test-hooks")]
+        let ordinary_paint = paint;
+        #[cfg(feature = "render-test-hooks")]
+        let paint = paint
+            || (can_scene
+                && slot
+                    .head
+                    .as_ref()
+                    .is_some_and(|head| head.has_grant(paced_at)));
         let mut frame: Option<FrameOutput> = None;
         if paint {
             let t_r = std::time::Instant::now();
@@ -750,6 +774,23 @@ impl Host {
                 }
             }
             if let Some(head) = slot.head.as_mut() {
+                #[cfg(feature = "render-test-hooks")]
+                {
+                    head.reconcile_scene_eligibility(
+                        can_scene,
+                        input.is_some_and(SlotInput::render_focused),
+                        paced_at,
+                    );
+                    if ordinary_paint && can_scene {
+                        if let Err(error) = head.note_due(paced_at) {
+                            host_log!(
+                                Category::Lifecycle,
+                                Level::Warn,
+                                "render due opportunity: {error}"
+                            );
+                        }
+                    }
+                }
                 // `mainredraw` is the fidelity seam: it runs the
                 // `check_minimap` render half (loading splash + minimap
                 // image) and `follow_camera` before dispatching game/title

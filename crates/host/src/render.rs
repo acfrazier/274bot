@@ -12,6 +12,8 @@ use std::num::NonZeroU64;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use api::host_log;
+use api::hostlog::{Category, Level};
 use api::identity::{
     Deadline, Fence, IdentityError, IdentityKind, Notice, Notifier, Publication, PublishSequence,
     Scope, SlotKey,
@@ -250,9 +252,21 @@ pub enum RenderError {
     /// A zero-length grant lifetime cannot provide an observable grant.
     #[error("render grant lifetime must be positive")]
     ZeroGrantTtl,
-    /// The grant expiry cannot be represented by the monotonic clock.
-    #[error("render grant expiry exceeds the monotonic clock range")]
+    /// The consumed-scene quantum must be positive.
+    #[error("render consumed quantum must be positive")]
+    ZeroQuantum,
+    /// The consumed quantum is already configured or render ownership has begun.
+    #[error("render service configuration is locked")]
+    ConfigurationLocked,
+    /// A deadline cannot be represented by the monotonic clock.
+    #[error("render deadline exceeds the monotonic clock range")]
     DeadlineOverflow,
+    /// The service exhausted its monotonically increasing fault incident sequence.
+    #[error("render fault sequence space exhausted")]
+    FaultSequenceExhausted,
+    /// The requested incident sequence has not been issued by this service.
+    #[error("render fault sequence is unknown")]
+    UnknownFaultSequence,
     /// The service refused to reuse an exhausted head-generation value.
     #[error("render head-generation space exhausted")]
     HeadGenerationExhausted,
@@ -276,6 +290,98 @@ pub enum RequestOutcome {
     Busy(ReservationIdentity),
 }
 
+/// The kind of a latched render-service fault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderFaultKind {
+    /// A nonblocking scene-lock attempt failed while the workspace was consumed.
+    LockContention,
+    /// A consumed workspace remained held for at least its configured quantum.
+    ConsumedOverdue,
+    /// A bounded render resource refused the current scene.
+    ResourceLimit,
+}
+
+/// One immutable render-fault incident.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderFault {
+    sequence: u64,
+    reservation: ReservationIdentity,
+    kind: RenderFaultKind,
+    detected_at: Instant,
+    active: bool,
+}
+
+impl RenderFault {
+    /// The monotonically increasing incident sequence.
+    pub fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    /// The recorded fault kind.
+    pub fn kind(&self) -> RenderFaultKind {
+        self.kind
+    }
+
+    /// Whether this incident still describes a live workspace condition.
+    pub fn active(&self) -> bool {
+        self.active
+    }
+
+    /// The reservation that owned the workspace when this incident was recorded.
+    pub fn reservation(&self) -> ReservationIdentity {
+        self.reservation
+    }
+
+    /// The monotonic instant at which the incident was recorded.
+    pub fn detected_at(&self) -> Instant {
+        self.detected_at
+    }
+}
+
+/// Bounded lifetime totals and the latest latched render-fault incident.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RenderFaultStats {
+    lock_contention: u64,
+    consumed_overdue: u64,
+    resource_limit: u64,
+    latest: Option<RenderFault>,
+    acknowledged_sequence: u64,
+}
+
+impl RenderFaultStats {
+    /// The latest incident, whether or not it has been acknowledged.
+    pub fn latest(&self) -> Option<RenderFault> {
+        self.latest
+    }
+
+    /// Lifetime totals in lock-contention, consumed-overdue, resource-limit order.
+    pub fn totals(&self) -> [u64; 3] {
+        [
+            self.lock_contention,
+            self.consumed_overdue,
+            self.resource_limit,
+        ]
+    }
+
+    /// The greatest incident sequence explicitly acknowledged by the caller.
+    pub fn acknowledged_sequence(&self) -> u64 {
+        self.acknowledged_sequence
+    }
+}
+
+fn log_fault(fault: RenderFault) {
+    host_log!(
+        Category::Lifecycle,
+        Level::Warn,
+        "render fault #{} {:?} reservation={:?} active={} detected_at={:?}",
+        fault.sequence,
+        fault.kind,
+        fault.reservation,
+        fault.active,
+        fault.detected_at
+    );
+}
+
 /// The process-wide bounded render reservation service.
 ///
 /// `grant_ttl` must be positive and finite. F0 tests use a 20-ms fixture; this
@@ -286,6 +392,9 @@ pub struct RenderService {
 
 impl RenderService {
     /// Create a service with the caller-qualified positive finite grant lifetime.
+    ///
+    /// The consumed quantum intentionally remains unset until explicitly
+    /// configured before the first head attaches.
     pub fn new(grant_ttl: Duration) -> Result<Self, RenderError> {
         if grant_ttl.is_zero() {
             return Err(RenderError::ZeroGrantTtl);
@@ -301,6 +410,69 @@ impl RenderService {
         })
     }
 
+    /// Configure the positive finite consumed-scene quantum exactly once,
+    /// before any head attaches or workspace becomes active.
+    pub fn set_consumed_quantum(&self, quantum: Duration) -> Result<(), RenderError> {
+        if quantum.is_zero() {
+            return Err(RenderError::ZeroQuantum);
+        }
+        if Instant::now().checked_add(quantum).is_none() {
+            return Err(RenderError::DeadlineOverflow);
+        }
+        let mut state = lock_unpoisoned(&self.inner.state);
+        if state.configuration_locked
+            || state.consumed_quantum.is_some()
+            || state.workspace.is_some()
+        {
+            return Err(RenderError::ConfigurationLocked);
+        }
+        state.consumed_quantum = Some(quantum);
+        Ok(())
+    }
+
+    /// Record one fault for the live consumed workspace reservation.
+    ///
+    /// Fault totals saturate; incident sequence exhaustion is reported without
+    /// changing the counters or replacing the latest incident.
+    pub fn record_fault(
+        &self,
+        reservation: ReservationIdentity,
+        kind: RenderFaultKind,
+        now: Instant,
+    ) -> Result<(), RenderError> {
+        let fault = {
+            let mut state = lock_unpoisoned(&self.inner.state);
+            record_fault_locked(&mut state, reservation, kind, now)?
+        };
+        log_fault(fault);
+        Ok(())
+    }
+
+    /// Return a copy of the service's bounded fault snapshot.
+    pub fn fault_stats(&self) -> RenderFaultStats {
+        lock_unpoisoned(&self.inner.state).faults
+    }
+
+    /// Acknowledge the supplied issued incident without hiding a still-active
+    /// fault or acknowledging any newer incident.
+    pub fn acknowledge_fault(&self, sequence: u64) -> Result<(), RenderError> {
+        let acknowledged = {
+            let mut state = lock_unpoisoned(&self.inner.state);
+            let latest_sequence = state.faults.latest.map(|fault| fault.sequence);
+            if sequence == 0 || latest_sequence.is_none_or(|latest| sequence > latest) {
+                return Err(RenderError::UnknownFaultSequence);
+            }
+            state.faults.acknowledged_sequence = state.faults.acknowledged_sequence.max(sequence);
+            state.faults.acknowledged_sequence
+        };
+        host_log!(
+            Category::Lifecycle,
+            Level::Info,
+            "render fault acknowledged through incident #{}",
+            acknowledged
+        );
+        Ok(())
+    }
     /// Register the one independent process/window pump required before attach.
     pub fn register_pump(&self) -> Result<RenderPumpLease, RenderError> {
         let mut state = lock_unpoisoned(&self.inner.state);
@@ -366,6 +538,7 @@ impl RenderService {
             focused: false,
             retained_scene: None,
         });
+        state.configuration_locked = true;
         Ok(HeadLease {
             service: Arc::clone(&self.inner),
             cell,
@@ -694,6 +867,10 @@ struct ServiceState {
     heads: [Option<HeadEntry>; RENDER_HEAD_CAP],
     workspace: Option<WorkspaceOwner>,
     pump_registered: bool,
+    configuration_locked: bool,
+    consumed_quantum: Option<Duration>,
+    faults: RenderFaultStats,
+    next_fault_sequence: Option<NonZeroU64>,
     next_head_generation: Option<NonZeroU64>,
     next_reservation_id: Option<NonZeroU64>,
     next_insertion_sequence: Option<NonZeroU64>,
@@ -705,6 +882,10 @@ impl ServiceState {
             heads: std::array::from_fn(|_| None),
             workspace: None,
             pump_registered: false,
+            configuration_locked: false,
+            consumed_quantum: None,
+            faults: RenderFaultStats::default(),
+            next_fault_sequence: NonZeroU64::new(1),
             next_head_generation: NonZeroU64::new(1),
             next_reservation_id: NonZeroU64::new(1),
             next_insertion_sequence: NonZeroU64::new(1),
@@ -758,7 +939,11 @@ enum RequestState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WorkspaceOwner {
     Granted(ReservationIdentity),
-    Consumed(ReservationIdentity),
+    Consumed {
+        identity: ReservationIdentity,
+        consumed_at: Instant,
+        overdue_reported: bool,
+    },
 }
 
 impl HeadEntry {
@@ -843,6 +1028,7 @@ impl HeadEntry {
 struct NoticeBatch<const N: usize = NOTICE_BATCH_CAP> {
     entries: [Option<PendingNotice>; N],
     len: usize,
+    fault_log: Option<RenderFault>,
 }
 
 impl<const N: usize> NoticeBatch<N> {
@@ -850,6 +1036,7 @@ impl<const N: usize> NoticeBatch<N> {
         Self {
             entries: std::array::from_fn(|_| None),
             len: 0,
+            fault_log: None,
         }
     }
 
@@ -863,6 +1050,14 @@ impl<const N: usize> NoticeBatch<N> {
         self.len += 1;
     }
 
+    fn log_fault(&mut self, fault: RenderFault) {
+        debug_assert!(
+            self.fault_log.is_none(),
+            "one consumed workspace per service"
+        );
+        self.fault_log = Some(fault);
+    }
+
     fn dispatch(&mut self) {
         for entry in self.entries[..self.len].iter_mut() {
             if let Some(pending) = entry.take() {
@@ -870,6 +1065,9 @@ impl<const N: usize> NoticeBatch<N> {
             }
         }
         self.len = 0;
+        if let Some(fault) = self.fault_log.take() {
+            log_fault(fault);
+        }
     }
 }
 
@@ -970,7 +1168,7 @@ fn request_locked(
     let previous_request = state.heads[index].as_ref().expect("head checked").request;
     if matches!(
         state.workspace,
-        Some(WorkspaceOwner::Consumed(owner)) if owner.head == head.identity
+        Some(WorkspaceOwner::Consumed { identity, .. }) if identity.head == head.identity
     ) {
         return Err(RenderError::FrameInProgress);
     }
@@ -1024,7 +1222,70 @@ fn process_due(
     notices: &mut NoticeBatch,
 ) -> Result<(), RenderError> {
     expire_grant(state, now, notices)?;
+    if let (
+        Some(WorkspaceOwner::Consumed {
+            identity,
+            consumed_at,
+            overdue_reported: false,
+        }),
+        Some(quantum),
+    ) = (state.workspace, state.consumed_quantum)
+    {
+        let overdue_at = consumed_at
+            .checked_add(quantum)
+            .ok_or(RenderError::DeadlineOverflow)?;
+        if now >= overdue_at {
+            let fault =
+                record_fault_locked(state, identity, RenderFaultKind::ConsumedOverdue, now)?;
+            notices.log_fault(fault);
+        }
+    }
     grant_pending(service, state, now, notices)
+}
+
+fn record_fault_locked(
+    state: &mut ServiceState,
+    reservation: ReservationIdentity,
+    kind: RenderFaultKind,
+    now: Instant,
+) -> Result<RenderFault, RenderError> {
+    if !matches!(
+        state.workspace,
+        Some(WorkspaceOwner::Consumed { identity, .. }) if identity == reservation
+    ) {
+        return Err(RenderError::StaleReservation);
+    }
+    let sequence = state
+        .next_fault_sequence
+        .ok_or(RenderError::FaultSequenceExhausted)?;
+    state.next_fault_sequence = sequence.get().checked_add(1).and_then(NonZeroU64::new);
+    let total = match kind {
+        RenderFaultKind::LockContention => &mut state.faults.lock_contention,
+        RenderFaultKind::ConsumedOverdue => &mut state.faults.consumed_overdue,
+        RenderFaultKind::ResourceLimit => &mut state.faults.resource_limit,
+    };
+    *total = total.saturating_add(1);
+    let fault = RenderFault {
+        sequence: sequence.get(),
+        reservation,
+        kind,
+        detected_at: now,
+        active: true,
+    };
+    state.faults.latest = Some(fault);
+    if kind == RenderFaultKind::ConsumedOverdue {
+        if let Some(WorkspaceOwner::Consumed {
+            identity,
+            overdue_reported,
+            ..
+        }) = &mut state.workspace
+        {
+            if *identity == reservation {
+                *overdue_reported = true;
+            }
+        }
+    }
+    Ok(fault)
 }
 
 fn expire_grant(
@@ -1165,6 +1426,12 @@ fn consume_locked(
             && state.workspace == Some(WorkspaceOwner::Granted(identity))
             && !expires_at.expired(now) =>
         {
+            if state
+                .consumed_quantum
+                .is_some_and(|quantum| now.checked_add(quantum).is_none())
+            {
+                return Err(RenderError::DeadlineOverflow);
+            }
             ensure_publication_capacity(entry, 2)?;
             entry.request = RequestState::Consumed {
                 identity,
@@ -1172,7 +1439,11 @@ fn consume_locked(
                 granted_at,
                 expires_at,
             };
-            state.workspace = Some(WorkspaceOwner::Consumed(identity));
+            state.workspace = Some(WorkspaceOwner::Consumed {
+                identity,
+                consumed_at: now,
+                overdue_reported: false,
+            });
             publish_entry(entry, notices)?;
             Ok(())
         }
@@ -1300,7 +1571,13 @@ fn publish_scene_locked(
             })
         })
         .ok_or(RenderError::Cancelled)?;
-    let owns_workspace = state.workspace == Some(WorkspaceOwner::Consumed(identity));
+    let owns_workspace = matches!(
+        state.workspace,
+        Some(WorkspaceOwner::Consumed {
+            identity: current,
+            ..
+        }) if current == identity
+    );
     let entry = state.heads[index].as_mut().ok_or(RenderError::Cancelled)?;
     entry
         .fence
@@ -1334,9 +1611,20 @@ fn release_frame(
     let mut notices = NoticeBatch::new();
     let result = {
         let mut state = lock_unpoisoned(&service.state);
-        if state.workspace != Some(WorkspaceOwner::Consumed(identity)) {
+        if !matches!(
+            state.workspace,
+            Some(WorkspaceOwner::Consumed {
+                identity: current,
+                ..
+            }) if current == identity
+        ) {
             Ok(())
         } else {
+            if let Some(fault) = &mut state.faults.latest {
+                if fault.reservation == identity {
+                    fault.active = false;
+                }
+            }
             state.workspace = None;
             let result = (|| {
                 if let Some(index) = state.heads.iter().position(|entry| {
@@ -1417,7 +1705,18 @@ fn next_deadline(state: &ServiceState) -> Option<Deadline> {
                 _ => None,
             }
         }
-        Some(WorkspaceOwner::Consumed(_)) => None,
+        Some(WorkspaceOwner::Consumed {
+            consumed_at,
+            overdue_reported: false,
+            ..
+        }) => state
+            .consumed_quantum
+            .and_then(|quantum| consumed_at.checked_add(quantum))
+            .map(Deadline::at),
+        Some(WorkspaceOwner::Consumed {
+            overdue_reported: true,
+            ..
+        }) => None,
         None => state
             .heads
             .iter()
@@ -1437,6 +1736,7 @@ mod tests {
     use std::thread;
 
     const TTL: Duration = Duration::from_millis(20);
+    const QUANTUM: Duration = Duration::from_millis(10);
 
     #[derive(Default)]
     struct NoopNotifier;
@@ -1481,6 +1781,9 @@ mod tests {
 
     fn service(now: Instant) -> (RenderService, RenderPumpLease) {
         let service = RenderService::new(TTL).expect("positive fixture TTL");
+        service
+            .set_consumed_quantum(QUANTUM)
+            .expect("positive fixture quantum");
         let pump = service.register_pump().expect("first pump");
         assert_eq!(service.pump(&pump, now).unwrap(), None);
         (service, pump)
@@ -2302,5 +2605,298 @@ mod tests {
         for head in &heads {
             assert_eq!(head.snapshot().1.state(), ReservationState::Cancelled);
         }
+    }
+
+    #[test]
+    fn consumed_quantum_configuration_is_typed_and_locked() {
+        let service = RenderService::new(TTL).unwrap();
+        assert_eq!(
+            service.set_consumed_quantum(Duration::ZERO),
+            Err(RenderError::ZeroQuantum)
+        );
+        assert_eq!(
+            service.set_consumed_quantum(Duration::MAX),
+            Err(RenderError::DeadlineOverflow)
+        );
+        service.set_consumed_quantum(QUANTUM).unwrap();
+        assert_eq!(
+            service.set_consumed_quantum(QUANTUM),
+            Err(RenderError::ConfigurationLocked)
+        );
+
+        let now = clock();
+        let late_service = RenderService::new(TTL).unwrap();
+        let late_pump = late_service.register_pump().unwrap();
+        let late_head = attach(&late_service, &late_pump, 900, Arc::new(NoopNotifier));
+        assert_eq!(
+            late_service.set_consumed_quantum(QUANTUM),
+            Err(RenderError::ConfigurationLocked)
+        );
+        drop(late_head);
+
+        let active_service = RenderService::new(TTL).unwrap();
+        let active_pump = active_service.register_pump().unwrap();
+        let active_head = attach(&active_service, &active_pump, 901, Arc::new(NoopNotifier));
+        let active_grant = granted(request(&active_service, &active_head, now, now));
+        let active_frame = active_service
+            .try_consume(&active_head, active_grant, now)
+            .unwrap();
+        assert_eq!(
+            active_service.set_consumed_quantum(QUANTUM),
+            Err(RenderError::ConfigurationLocked)
+        );
+        active_frame.finish(now).unwrap();
+    }
+
+    #[test]
+    fn unset_quantum_keeps_the_consumed_workspace_without_scheduling_faults() {
+        let now = clock();
+        let service = RenderService::new(TTL).unwrap();
+        let pump = service.register_pump().unwrap();
+        let owner = attach(&service, &pump, 902, Arc::new(NoopNotifier));
+        let owner_grant = granted(request(&service, &owner, now, now));
+        let frame = service.try_consume(&owner, owner_grant, now).unwrap();
+        let peer = attach(&service, &pump, 903, Arc::new(NoopNotifier));
+        let peer_request = pending(request(&service, &peer, now, now));
+
+        let later = now + QUANTUM * 2;
+        assert_eq!(service.pump(&pump, later).unwrap(), None);
+        assert_eq!(owner.snapshot().1.state(), ReservationState::Consumed);
+        assert_eq!(peer.snapshot().1.reservation(), Some(peer_request));
+        assert_eq!(peer.snapshot().1.state(), ReservationState::Pending);
+        assert_eq!(service.fault_stats().latest(), None);
+        assert_eq!(service.fault_stats().totals(), [0, 0, 0]);
+        assert_eq!(
+            service.try_consume(&owner, owner_grant, later).unwrap_err(),
+            RenderError::AlreadyConsumed
+        );
+        frame.finish(later).unwrap();
+    }
+
+    #[test]
+    fn consumed_reservation_errors_keep_their_typed_meanings() {
+        let now = clock();
+        let (service, pump) = service(now);
+        let owner = attach(&service, &pump, 904, Arc::new(NoopNotifier));
+        let owner_grant = granted(request(&service, &owner, now, now));
+        let frame = service.try_consume(&owner, owner_grant, now).unwrap();
+        let peer = attach(&service, &pump, 905, Arc::new(NoopNotifier));
+        let peer_request = pending(request(&service, &peer, now, now));
+
+        assert_eq!(
+            service.try_consume(&owner, owner_grant, now).unwrap_err(),
+            RenderError::AlreadyConsumed
+        );
+        assert_eq!(
+            service.request_frame(&owner, Deadline::at(now), now),
+            Err(RenderError::FrameInProgress)
+        );
+        assert_eq!(
+            service.try_consume(&peer, peer_request, now).unwrap_err(),
+            RenderError::NotGranted
+        );
+        frame.finish(now).unwrap();
+    }
+
+    #[test]
+    fn lock_fault_survives_failed_paint_and_lease_release() {
+        let now = clock();
+        let (service, pump) = service(now);
+        let owner = attach(&service, &pump, 906, Arc::new(NoopNotifier));
+        let grant = granted(request(&service, &owner, now, now));
+        let frame = service.try_consume(&owner, grant, now).unwrap();
+
+        service
+            .record_fault(grant, RenderFaultKind::LockContention, now)
+            .unwrap();
+        let recorded = service.fault_stats();
+        let fault = recorded.latest().unwrap();
+        assert_eq!(fault.kind(), RenderFaultKind::LockContention);
+        assert_eq!(fault.reservation(), grant);
+        assert_eq!(fault.detected_at(), now);
+        assert!(fault.active());
+        assert_eq!(recorded.totals(), [1, 0, 0]);
+        assert_eq!(recorded.acknowledged_sequence(), 0);
+        assert_eq!(
+            service.acknowledge_fault(fault.sequence() + 1),
+            Err(RenderError::UnknownFaultSequence)
+        );
+
+        frame.finish(now).unwrap();
+        let released = service.fault_stats();
+        let fault = released.latest().unwrap();
+        assert!(!fault.active());
+        assert_eq!(released.totals(), [1, 0, 0]);
+        service.acknowledge_fault(fault.sequence()).unwrap();
+        let acknowledged = service.fault_stats();
+        assert_eq!(acknowledged.latest(), Some(fault));
+        assert_eq!(acknowledged.acknowledged_sequence(), fault.sequence());
+        assert_eq!(acknowledged.totals(), [1, 0, 0]);
+        assert_eq!(
+            service.record_fault(grant, RenderFaultKind::ResourceLimit, now),
+            Err(RenderError::StaleReservation)
+        );
+    }
+
+    #[test]
+    fn independent_pump_reports_consumed_overdue_before_owner_returns() {
+        let now = clock();
+        let (service, pump) = service(now);
+        let owner = attach(&service, &pump, 907, Arc::new(NoopNotifier));
+        let grant = granted(request(&service, &owner, now, now));
+        let frame = service.try_consume(&owner, grant, now).unwrap();
+        let peer = attach(&service, &pump, 908, Arc::new(NoopNotifier));
+        let peer_request = pending(request(&service, &peer, now, now));
+        let deadline = now + QUANTUM;
+
+        assert_eq!(
+            service
+                .pump(&pump, deadline - Duration::from_nanos(1))
+                .unwrap(),
+            Some(Deadline::at(deadline))
+        );
+        assert_eq!(service.pump(&pump, deadline).unwrap(), None);
+        let detected = service.fault_stats();
+        let fault = detected.latest().unwrap();
+        assert_eq!(fault.kind(), RenderFaultKind::ConsumedOverdue);
+        assert_eq!(fault.reservation(), grant);
+        assert_eq!(fault.detected_at(), deadline);
+        assert!(fault.active());
+        assert_eq!(detected.totals(), [0, 1, 0]);
+
+        service.acknowledge_fault(fault.sequence()).unwrap();
+        assert!(service.fault_stats().latest().unwrap().active());
+        assert_eq!(
+            service.try_consume(&owner, grant, deadline).unwrap_err(),
+            RenderError::AlreadyConsumed
+        );
+        assert_eq!(
+            service
+                .try_consume(&peer, peer_request, deadline)
+                .unwrap_err(),
+            RenderError::NotGranted
+        );
+        assert_eq!(peer.snapshot().1.state(), ReservationState::Pending);
+
+        frame.finish(deadline).unwrap();
+        let released = service.fault_stats();
+        assert!(!released.latest().unwrap().active());
+        assert_eq!(released.acknowledged_sequence(), fault.sequence());
+        assert_eq!(released.totals(), [0, 1, 0]);
+        assert_eq!(peer.snapshot().1.state(), ReservationState::Granted);
+    }
+
+    #[test]
+    fn reported_consumed_overdue_has_no_past_deadline_loop() {
+        let now = clock();
+        let (service, pump) = service(now);
+        let owner = attach(&service, &pump, 909, Arc::new(NoopNotifier));
+        let grant = granted(request(&service, &owner, now, now));
+        let frame = service.try_consume(&owner, grant, now).unwrap();
+        let peer = attach(&service, &pump, 910, Arc::new(NoopNotifier));
+        let _peer_request = pending(request(&service, &peer, now, now));
+        let deadline = now + QUANTUM;
+
+        assert_eq!(
+            service.pump(&pump, now).unwrap(),
+            Some(Deadline::at(deadline))
+        );
+        assert_eq!(service.pump(&pump, deadline).unwrap(), None);
+        assert_eq!(service.pump(&pump, deadline + QUANTUM).unwrap(), None);
+        assert_eq!(service.pump(&pump, deadline + QUANTUM * 2).unwrap(), None);
+        assert_eq!(service.fault_stats().totals(), [0, 1, 0]);
+        assert!(service.fault_stats().latest().unwrap().active());
+        assert_eq!(peer.snapshot().1.state(), ReservationState::Pending);
+
+        frame.finish(deadline + QUANTUM * 2).unwrap();
+    }
+
+    #[test]
+    fn retired_overdue_owner_drains_and_releases_safely() {
+        let now = clock();
+        let (service, pump) = service(now);
+        let mut owner = attach(&service, &pump, 911, Arc::new(NoopNotifier));
+        let grant = granted(request(&service, &owner, now, now));
+        let frame = service.try_consume(&owner, grant, now).unwrap();
+        let peer = attach(&service, &pump, 912, Arc::new(NoopNotifier));
+        let peer_request = pending(request(&service, &peer, now, now));
+
+        service.retire(&mut owner, now).unwrap();
+        assert_eq!(
+            frame.publish_retained_scene(SceneHandle::from_opaque(991)),
+            Err(RenderError::Cancelled)
+        );
+        let deadline = now + QUANTUM;
+        assert_eq!(service.pump(&pump, deadline).unwrap(), None);
+        let overdue = service.fault_stats().latest().unwrap();
+        assert_eq!(overdue.reservation(), grant);
+        assert_eq!(overdue.kind(), RenderFaultKind::ConsumedOverdue);
+        assert!(overdue.active());
+        assert_eq!(peer.snapshot().1.reservation(), Some(peer_request));
+        assert_eq!(peer.snapshot().1.state(), ReservationState::Pending);
+
+        frame.finish(deadline).unwrap();
+        assert_eq!(peer.snapshot().1.state(), ReservationState::Granted);
+        let drained = service.fault_stats().latest().unwrap();
+        assert_eq!(drained.sequence(), overdue.sequence());
+        assert!(!drained.active());
+        assert_eq!(service.fault_stats().totals(), [0, 1, 0]);
+    }
+
+    #[test]
+    fn fault_sequence_exhaustion_preserves_latest_and_saturates_totals() {
+        let now = clock();
+        let (service, pump) = service(now);
+        let owner = attach(&service, &pump, 913, Arc::new(NoopNotifier));
+        let grant = granted(request(&service, &owner, now, now));
+        let frame = service.try_consume(&owner, grant, now).unwrap();
+
+        {
+            let mut state = lock_unpoisoned(&service.inner.state);
+            state.faults.lock_contention = u64::MAX;
+        }
+        service
+            .record_fault(grant, RenderFaultKind::LockContention, now)
+            .unwrap();
+        let latest = service.fault_stats().latest().unwrap();
+        assert_eq!(service.fault_stats().totals(), [u64::MAX, 0, 0]);
+
+        {
+            let mut state = lock_unpoisoned(&service.inner.state);
+            state.next_fault_sequence = None;
+        }
+        assert_eq!(
+            service.record_fault(grant, RenderFaultKind::ResourceLimit, now),
+            Err(RenderError::FaultSequenceExhausted)
+        );
+        let failed = service.fault_stats();
+        assert_eq!(failed.latest(), Some(latest));
+        assert_eq!(failed.totals(), [u64::MAX, 0, 0]);
+        frame.finish(now).unwrap();
+    }
+
+    #[test]
+    fn stale_fault_acknowledgement_does_not_hide_a_newer_incident() {
+        let now = clock();
+        let (service, pump) = service(now);
+        let owner = attach(&service, &pump, 914, Arc::new(NoopNotifier));
+        let grant = granted(request(&service, &owner, now, now));
+        let frame = service.try_consume(&owner, grant, now).unwrap();
+        service
+            .record_fault(grant, RenderFaultKind::LockContention, now)
+            .unwrap();
+        let first = service.fault_stats().latest().unwrap();
+        service
+            .record_fault(grant, RenderFaultKind::ResourceLimit, now)
+            .unwrap();
+        let second = service.fault_stats().latest().unwrap();
+        assert!(second.sequence() > first.sequence());
+        service.acknowledge_fault(first.sequence()).unwrap();
+        let after_old_ack = service.fault_stats();
+        assert_eq!(after_old_ack.acknowledged_sequence(), first.sequence());
+        assert_eq!(after_old_ack.latest(), Some(second));
+        assert!(after_old_ack.latest().unwrap().active());
+        assert_eq!(after_old_ack.totals(), [1, 0, 1]);
+        frame.finish(now).unwrap();
     }
 }

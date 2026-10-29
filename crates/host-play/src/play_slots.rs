@@ -491,7 +491,6 @@ impl Play {
         // its name is reused. Minted before any spawn state changes, so a
         // refused mint leaves nothing behind.
         let slot_key = SLOT_KEYS.mint().map_err(|error| error.to_string())?;
-        let slot_render = mailbox.map(|mailbox| SlotRender::new(slot_key, mailbox));
         self.spawned.insert(profile.username.clone());
         let arm = arm.unwrap_or_else(|| SlotArm::new(profile.uid, true));
         // Store through the shared inner fields so a caller's own clone
@@ -501,6 +500,16 @@ impl Play {
         // The control wake: `Play::wake` kicks the parked slot thread on
         // focus/draw/stop/spawn changes; the slot thread polls the park end.
         let (wake, park) = wake_channel();
+        let slot_render =
+            mailbox.map(|mailbox| SlotRender::new(slot_key, mailbox, Arc::new(wake.clone())));
+        #[cfg(feature = "render-test-hooks")]
+        let slot_render =
+            slot_render.map(
+                |render| match self.render_test_controls.get(&profile.username) {
+                    Some(control) => render.with_test_control(Arc::clone(control)),
+                    None => render,
+                },
+            );
         let worker_wake = wake.clone();
         self.wakes.insert(profile.username.clone(), wake);
         // A slot lifetime owns exactly one row/script/command set. Publish

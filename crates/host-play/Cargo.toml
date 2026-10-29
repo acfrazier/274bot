@@ -104,6 +104,9 @@ windows-sys = { version = "0.59", features = [
 [features]
 default = ["js"]
 js = ["dep:script-js"]
+# Opt-in host render controls for the provisional M3 contention probe.
+render-test-hooks = ["host/render-test-hooks"]
+
 debug-catalog = ["api/debug-catalog"]
 # Opt-in memory benchmark harness. No effect unless BOT_MEMORY_N is set.
 # Frontend binaries install CountingAllocator (T3).

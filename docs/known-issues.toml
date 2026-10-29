@@ -12,6 +12,23 @@
 # tools/known-issues/known_issues.py.
 
 [[item]]
+id = "fair-render-retained-picks-and-camera"
+kind = "known-issue"
+area = "Drawing"
+text = """In experimental fair-render builds, a busy view retains its previous
+  3D image and entity picks. Its menu can therefore offer entities that moved.
+  Ground clicks and their traces wait for a successful scene rebuild. A delayed
+  click can select a different tile after the camera moves. Current names,
+  hitsplats and head icons use the last rebuilt camera and can appear away from
+  the old 3D entities. Text colour and wave effects keep the retained scene's
+  animation phase. CPU loading overlays use the same retained camera.
+  Wait for a fresh 3D image before selecting a ground tile or entity."""
+first = "0.2.9"
+target = "none"
+severity = "medium"
+owner = "T4"
+
+[[item]]
 id = "bank-native-planned"
 kind = "not-in-release"
 area = "Scripts"

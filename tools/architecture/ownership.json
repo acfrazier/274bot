@@ -7323,6 +7323,18 @@
       "owner": "T4"
     },
     {
+      "path": "crates/host/src/render_head/fair.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "crates/host/tests/render_characterization/fair_tests.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "crates/frontend-core/tests/render_fault_bridge.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/host-play/src/script_nav_facade_tests.rs",
       "owner": "T5"
     },

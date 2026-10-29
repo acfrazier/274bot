@@ -36,6 +36,44 @@ fn panel_adapter_request_options_override_wins_over_the_platform_default() {
     }
 }
 
+#[test]
+fn panel_render_pump_deadline_preempts_each_sleep_mode() {
+    let now = std::time::Instant::now();
+    let frame_due = now + std::time::Duration::from_secs(1);
+    let render_due = now + std::time::Duration::from_millis(50);
+
+    assert_eq!(
+        render_deadline_control_flow(RedrawMode::Poll, frame_due, Some(render_due)),
+        ControlFlow::Poll,
+        "Poll pumps every loop turn rather than sleeping past the render deadline"
+    );
+    assert_eq!(
+        render_deadline_control_flow(RedrawMode::Wait, frame_due, Some(render_due)),
+        ControlFlow::WaitUntil(render_due)
+    );
+    assert_eq!(
+        render_deadline_control_flow(
+            RedrawMode::WaitUntil { fps: 60.0 },
+            frame_due,
+            Some(render_due),
+        ),
+        ControlFlow::WaitUntil(render_due)
+    );
+    assert_eq!(
+        render_deadline_control_flow(
+            RedrawMode::WaitUntil { fps: 60.0 },
+            render_due,
+            Some(frame_due),
+        ),
+        ControlFlow::WaitUntil(render_due),
+        "the earlier panel frame still wins"
+    );
+    assert_eq!(
+        render_deadline_control_flow(RedrawMode::Wait, frame_due, None),
+        ControlFlow::Wait
+    );
+}
+
 /// The `Gpu` texture-id manager must delegate register/update/unregister
 /// to the renderer's texture store (the surface `game_view` and later
 /// screenshot tasks rely on).
