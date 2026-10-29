@@ -308,6 +308,11 @@ fn live_quester_campaign() {
         std::env::var_os("QUESTER_TICK_MS").is_none(),
         "campaign must not change or restore the shared Engine Q tick speed"
     );
+    assert_eq!(
+        std::env::var("QUESTER_SPEED_RESTORE").as_deref(),
+        Ok("0"),
+        "campaign must explicitly disable restoration of the shared Engine Q speed"
+    );
     assert!(std::env::var_os("QUEST_CAMPAIGN_TICKS").is_some());
     assert!(
         api::hostlog::install_sink(&CAMPAIGN_LOG_SINK),

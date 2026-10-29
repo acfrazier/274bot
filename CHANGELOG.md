@@ -66,7 +66,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - The quest campaign harness can now seed an exact authored account, run a
   staged folder guide headlessly, and record game-tick stage changes,
   completion, debug logs and CPU screenshots. It reuses the quest-watch
-  seed checks and the existing single-account and partner live drivers.
+  seed checks and the existing single-account and partner live drivers. Receipts
+  measure observed tick intervals, and shared Engine Q runs disable the optional
+  world-speed restoration without changing the default for isolated runs.
 
 - Quest guides can now opt in to answering a repeated menu question once and
   then moving on. `answer_once: true` skips a `prefer` entry that already
