@@ -503,8 +503,20 @@ fn build_seed_scenario(plan: SeedPlan) -> Result<Scenario, String> {
             budget_ticks: 200,
         },
     });
+    // Close the bank before the relog: a logout press behind the open
+    // bank modal can be swallowed once, and the runner never re-presses.
     steps.push(Step {
-        name: "relog to close the bank",
+        name: "close the bank",
+        kind: StepKind::Perform {
+            send: Box::new(|client, _| api::interact::close_modal(client)),
+        },
+        wait: Wait {
+            arm: Proof::BankClosed,
+            budget_ticks: 100,
+        },
+    });
+    steps.push(Step {
+        name: "relog after the bank proof",
         kind: StepKind::Relog,
         wait: Wait {
             arm: tab,
