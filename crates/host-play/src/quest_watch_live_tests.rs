@@ -380,9 +380,17 @@ fn build_quest_watch_home() {
             );
             bag.insert("gang".into(), json!(gang));
         }
+        // Compiled cards store a versioned envelope, not the bare bag
+        // (`vault::CompiledSettingsRecord`); the Quester card's schema
+        // version is 3 (`script::quester::card::CARD`).
+        let entry = vault::CompiledSettingsRecord {
+            schema_version: 3,
+            values: bag,
+        }
+        .into_entry();
         settings
             .script_settings
-            .insert("compiled:Quester".into(), bag);
+            .insert("compiled:Quester".into(), entry);
         vault
             .upsert(Profile {
                 username: row.username.clone(),
@@ -400,6 +408,13 @@ fn build_quest_watch_home() {
         let profile = reopened
             .get(&row.username)
             .unwrap_or_else(|| panic!("profile {} missing after reopen", row.username));
+        let entry = profile
+            .settings
+            .script_settings
+            .get("compiled:Quester")
+            .unwrap_or_else(|| panic!("profile {} has no Quester settings", row.username));
+        let (version, values) = vault::CompiledSettingsRecord::view(entry)
+            .unwrap_or_else(|error| panic!("profile {} settings envelope: {error}", row.username));
         rows.push(json!({
             "username": profile.username,
             "uid": profile.uid,
@@ -407,15 +422,10 @@ fn build_quest_watch_home() {
             "tutorial_skipped": profile.settings.tutorial_skipped,
             "assignment": profile.settings.script_assignment.as_ref()
                 .map(|a| json!({"source_kind": a.source_kind, "identity": a.identity})),
-            "quests": profile.settings.script_settings
-                .get("compiled:Quester")
-                .and_then(|bag| bag.get("quests")),
-            "partner_account": profile.settings.script_settings
-                .get("compiled:Quester")
-                .and_then(|bag| bag.get("partner_account")),
-            "gang": profile.settings.script_settings
-                .get("compiled:Quester")
-                .and_then(|bag| bag.get("gang")),
+            "settings_schema_version": version,
+            "quests": values.get("quests"),
+            "partner_account": values.get("partner_account"),
+            "gang": values.get("gang"),
         }));
     }
     let receipt = json!({
