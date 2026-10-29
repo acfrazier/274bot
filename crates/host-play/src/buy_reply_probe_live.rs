@@ -279,50 +279,44 @@ impl ProbeTrace {
 
 #[derive(Default)]
 struct DriverPacketTrace {
-    checkpoint: Option<Box<api::interact::PacketCheckpoint>>,
-    checkpoint_tick: Option<u32>,
     packets_by_tick: BTreeMap<u32, Vec<u8>>,
     complete: bool,
-    started: bool,
 }
 
 impl DriverPacketTrace {
-    fn begin(&mut self, client: &Client, tick: u32) {
-        self.started = true;
-        self.complete = true;
-        self.checkpoint_tick = Some(tick);
-        self.checkpoint = api::interact::Driver::packet_checkpoint(client);
-        if self.checkpoint.is_none() {
-            self.complete = false;
+    fn from_actions(actions: &[Value]) -> Self {
+        let mut trace = Self {
+            complete: true,
+            ..Self::default()
+        };
+        for action in actions
+            .iter()
+            .filter(|action| action["kind"].as_str() == Some("interaction"))
+        {
+            trace.complete &= action["wire_decoded"].as_bool() == Some(true);
+            let (Some(tick), Some(opcodes)) =
+                (action["tick"].as_u64(), action["wire_opcodes"].as_array())
+            else {
+                trace.complete = false;
+                continue;
+            };
+            let Ok(tick) = u32::try_from(tick) else {
+                trace.complete = false;
+                continue;
+            };
+            let packets = trace.packets_by_tick.entry(tick).or_default();
+            for opcode in opcodes {
+                if let Some(opcode) = opcode.as_u64().and_then(|opcode| u8::try_from(opcode).ok()) {
+                    packets.push(opcode);
+                } else {
+                    trace.complete = false;
+                }
+            }
         }
-        self.packets_by_tick.entry(tick).or_default();
+        trace.complete &= !trace.packets_by_tick.is_empty();
+        trace
     }
 
-    fn observe(&mut self, client: &Client, tick: u32) {
-        if !self.started {
-            return;
-        }
-        if let Some(checkpoint) = self.checkpoint.take() {
-            let mut packets = Vec::new();
-            let decoded =
-                api::interact::Driver::trace_packets(client, *checkpoint, &mut |opcode| {
-                    packets.push(opcode)
-                });
-            self.complete &= decoded;
-            self.packets_by_tick
-                .entry(self.checkpoint_tick.unwrap_or(tick))
-                .or_default()
-                .extend(packets);
-        } else {
-            self.complete = false;
-        }
-        self.checkpoint = api::interact::Driver::packet_checkpoint(client);
-        self.checkpoint_tick = Some(tick);
-        if self.checkpoint.is_none() {
-            self.complete = false;
-        }
-        self.packets_by_tick.entry(tick).or_default();
-    }
 
     fn value(&self) -> (Value, usize, bool) {
         let rows = self
@@ -552,6 +546,7 @@ struct BuyReplyProbeScript {
     phase: Phase,
     last_emit_tick: Option<u64>,
     open_request_started: Option<u64>,
+    reopening_after_coin_drop: bool,
 }
 
 impl BuyReplyProbeScript {
@@ -563,6 +558,7 @@ impl BuyReplyProbeScript {
             phase: Phase::OpenShop,
             last_emit_tick: None,
             open_request_started: None,
+            reopening_after_coin_drop: false,
         }
     }
 
@@ -918,7 +914,11 @@ impl BuyReplyProbeScript {
                 }
                 Ok(true) => {
                     if cx.snapshot().shop().is_some_and(|shop| shop.value.open) {
-                        self.phase = Phase::Held { next: 0 };
+                        self.phase = if self.reopening_after_coin_drop {
+                            Phase::Refusal { next: 0 }
+                        } else {
+                            Phase::Held { next: 0 }
+                        };
                     } else if self
                         .fail_on_tick_limit(now, dispatch_tick.unwrap_or(request_tick), "shop page")
                         .is_err()
@@ -1133,7 +1133,9 @@ impl BuyReplyProbeScript {
                 }
                 Ok(true) => {
                     if held_count(cx, self.fixture.coins.id) == Some(0) {
-                        self.phase = Phase::Refusal { next: 0 };
+                        self.reopening_after_coin_drop = true;
+                        self.open_request_started = None;
+                        self.phase = Phase::OpenShop;
                         ScriptFlow::Continue
                     } else if self
                         .fail_on_tick_limit(now, dispatch_tick.unwrap_or(request_tick), "coin drop")
@@ -1655,7 +1657,6 @@ struct LiveState {
     trace: Arc<Mutex<ProbeTrace>>,
     started_at: Option<Instant>,
     started: bool,
-    packet_trace: DriverPacketTrace,
 }
 
 impl LiveState {
@@ -1700,9 +1701,6 @@ impl LiveState {
                 client.gens.player_info,
                 Instant::now(),
             );
-        }
-        if self.started {
-            self.packet_trace.observe(client, self.snapshot.tick());
         }
 
         if self.runner.on_start_script() && !self.started {
@@ -1751,7 +1749,6 @@ impl LiveState {
                     }
                     self.started = true;
                     self.started_at = Some(Instant::now());
-                    self.packet_trace.begin(client, self.snapshot.tick());
                     self.runner.observe_script_running();
                 }
                 Err(error) => {
@@ -1767,15 +1764,9 @@ impl LiveState {
             self.runner.status(),
             RunnerStatus::Passed | RunnerStatus::Failed(_)
         ) {
-            if self.started {
-                self.packet_trace.observe(client, self.snapshot.tick());
-            }
             return;
         }
         self.runner.tick_with_hold(client, hold);
-        if self.started {
-            self.packet_trace.observe(client, self.snapshot.tick());
-        }
     }
 }
 
@@ -2103,7 +2094,6 @@ fn run_live_probe() {
         trace: Arc::clone(&trace),
         started_at: None,
         started: false,
-        packet_trace: DriverPacketTrace::default(),
     }));
     let state = Arc::clone(&frame_state);
     let frame_account = account.clone();
@@ -2194,9 +2184,7 @@ fn run_live_probe() {
     }
     play.script_stop(&account);
 
-    let (mut samples, observations, script_trace, packet_rows, max_packets, packet_trace_complete) = {
-        let state = frame_state.lock();
-        let packet_result = state.packet_trace.value();
+    let (mut samples, observations, script_trace) = {
         let mut trace = trace.lock();
         if let Some(error) = terminal_error.as_deref() {
             trace.fail(error.to_owned());
@@ -2220,9 +2208,6 @@ fn run_live_probe() {
             samples,
             trace.observations.clone(),
             script_trace,
-            packet_result.0,
-            packet_result.1,
-            packet_result.2,
         )
     };
     let actions = capture
@@ -2230,6 +2215,8 @@ fn run_live_probe() {
         .unwrap_or_else(|error| error.into_inner())
         .actions
         .clone();
+    let (packet_rows, max_packets, packet_trace_complete) =
+        DriverPacketTrace::from_actions(&actions).value();
     let mut capture_failures = record_capture_evidence(&mut samples, &actions);
     if !packet_trace_complete {
         capture_failures.push("outgoing Driver packet trace was incomplete".into());
@@ -2366,4 +2353,32 @@ fn run_live_probe() {
 #[ignore = "requires LIVE=1, BOT_CPU=1, an owned three-byte BOT_LIVE_NAME_PREFIX, Engine L at 127.0.0.1:47594/3080 (600 ms), R289 navigation/cache inputs, and LIVE_EVIDENCE_DIR"]
 fn live_buy_reply_probe_engine_l() {
     run_live_probe();
+}
+
+#[test]
+fn probe_packet_trace_counts_dispatch_bound_opcodes_per_observed_tick() {
+    let actions = [
+        json!({"kind": "interaction", "tick": 7, "wire_decoded": true, "wire_opcodes": [155]}),
+        json!({"kind": "interaction", "tick": 7, "wire_decoded": true, "wire_opcodes": [183]}),
+        json!({"kind": "status", "tick": 7}),
+        json!({"kind": "interaction", "tick": 8, "wire_decoded": true, "wire_opcodes": [248, 155]}),
+    ];
+    let (rows, max, complete) = DriverPacketTrace::from_actions(&actions).value();
+    assert!(complete);
+    assert_eq!(max, 2);
+    assert_eq!(rows[0], json!({"tick": 7, "count": 2, "opcodes": [155, 183]}));
+    assert_eq!(rows[1], json!({"tick": 8, "count": 2, "opcodes": [248, 155]}));
+}
+
+#[test]
+fn probe_packet_trace_rejects_missing_or_undecodable_dispatch_evidence() {
+    for actions in [
+        Vec::new(),
+        vec![json!({"kind": "interaction", "tick": 7, "wire_opcodes": [155]})],
+        vec![json!({"kind": "interaction", "tick": 7, "wire_decoded": false, "wire_opcodes": [155]})],
+        vec![json!({"kind": "interaction", "tick": 7, "wire_decoded": true, "wire_opcodes": [256]})],
+        vec![json!({"kind": "interaction", "wire_decoded": true, "wire_opcodes": [155]})],
+    ] {
+        assert!(!DriverPacketTrace::from_actions(&actions).value().2);
+    }
 }
