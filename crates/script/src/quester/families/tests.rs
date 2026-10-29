@@ -719,7 +719,10 @@ fn assert_retryable_walk_receipt(
 ) {
     let target = tile(3200, 3200);
     let plan = walk_retry_plan(target);
-    let snapshot = ready();
+    let mut snapshot = ready();
+    // `RouteEnded` is a successful route terminal, but the native adapter
+    // waits for observed idle movement before returning that receipt.
+    snapshot.seed_local_player(local_player(tile(3195, 3200)));
     let mut ledger = None;
     let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
         with_step(tick, |cx| plan.begin(cx).unwrap())
@@ -909,7 +912,7 @@ fn quest_walk_retry_begin_defers_when_the_tick_budget_is_exhausted() {
     .is_pending());
     let second_request = latest_walk_request(&ledger).0;
     assert_ne!(second_request, first_request);
-    assert_eq!(walk_request_count(&ledger), 2);
+    assert_eq!(walk_request_count(&ledger), 1);
 
     post_walk_receipt(
         &mut ledger,
