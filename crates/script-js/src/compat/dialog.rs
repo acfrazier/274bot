@@ -32,6 +32,13 @@ pub const CONTINUE_TICKS: u64 = 1;
 /// Frozen `delayTicks(2)` after a choice ack.
 pub const CHOICE_TICKS: u64 = 2;
 
+/// The posted scene wire value for a player target.
+const PLAYER_TARGET_KIND: i32 = 2;
+
+fn targets_local_player(target_kind: i32, target_index: i32, self_slot: i32) -> bool {
+    self_slot >= 0 && target_kind == PLAYER_TARGET_KIND && target_index == self_slot
+}
+
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Npc {
@@ -39,6 +46,8 @@ struct Npc {
     actions: Ops,
     distance: i32,
     index: i32,
+    target_kind: i32,
+    target_index: i32,
 }
 
 /// The posted facts this module decides from, read from the isolate scene.
@@ -53,12 +62,15 @@ struct NativeObservation {
     chat_page_fingerprint: u64,
     chat_options: Vec<String>,
     bank_open: bool,
-    /// The local player's health-bar window (see
-    /// [`DialogueOutcome::combat_interrupted`]): raised by every hit,
-    /// including a 0-damage miss, so it witnesses a combat `if_close`.
+    /// The local player's combat cycle. Self-damage can raise this without
+    /// identifying an attacker.
     in_combat: bool,
+    /// A visible NPC or player targets the local player's slot.
+    attacker_evidence: bool,
     #[cfg(test)]
     npcs: Vec<Npc>,
+    #[cfg(test)]
+    players: Vec<observed::PlayerRow>,
 }
 
 impl NativeObservation {
@@ -69,6 +81,17 @@ impl NativeObservation {
         let chat_options = session
             .chat_options()
             .map_or(&[][..], |rows| rows.as_slice());
+        let self_slot = session.self_slot().unwrap_or(-1);
+        let attacker_evidence = self_slot >= 0
+            && (session.npcs().is_some_and(|npcs| {
+                npcs.iter().any(|npc| {
+                    targets_local_player(npc.target_kind, npc.target_index, self_slot)
+                })
+            }) || session.players().is_some_and(|players| {
+                players.iter().any(|player| {
+                    targets_local_player(player.target_kind, player.target_index, self_slot)
+                })
+            }));
         Self {
             ingame: session.ingame().unwrap_or(false),
             tick: scene.tick().unwrap_or(0),
@@ -81,8 +104,11 @@ impl NativeObservation {
             chat_options: chat_options.to_vec(),
             bank_open: session.bank_open().unwrap_or(false),
             in_combat: session.in_combat().unwrap_or(false),
+            attacker_evidence,
             #[cfg(test)]
             npcs: Vec::new(),
+            #[cfg(test)]
+            players: Vec::new(),
         }
     }
 
@@ -167,10 +193,9 @@ pub(crate) struct Dialog {
     /// observation is the conversation ending (or being ended), not the
     /// wait for it to open.
     chat_seen: bool,
-    /// The chat was observed closed while the player was in combat after
-    /// having been open: an NPC hit's `if_close`, not a finished talk.
-    /// Latched because the success decision can wait out a long authored
-    /// gap after the `in_combat` window closes.
+    /// The chat closed after it was open while the player was in combat and
+    /// a visible actor targeted the local player. Latched because a success
+    /// decision can wait through a long authored gap after combat ends.
     combat_close_seen: bool,
 }
 
@@ -421,19 +446,19 @@ impl Dialog {
         Step::Wait
     }
 
-    /// Latch a witnessed combat close: the chat was open on an earlier
-    /// observation and is now closed while the player is in combat. An
-    /// NPC hit `if_close`s the chat on every swing, including a 0-damage
-    /// miss, and that same hit raises `in_combat` (see
-    /// [`DialogueOutcome::combat_interrupted`]), so the two facts
-    /// together are the hit, not a finished conversation. The compat
-    /// contract stays the frozen bool: this only turns the would-be
-    /// success into the failure value `false`.
+    /// Latch a witnessed combat close: the chat was open earlier and is now
+    /// closed while the player is in combat and a visible actor targets the
+    /// local player. The compat contract stays the frozen bool. This only
+    /// changes a would-be success to the failure value `false`.
     fn note_obs(&mut self, obs: &NativeObservation) {
         if obs.dialog_ready() {
             self.chat_seen = true;
         } else if self.chat_seen
-            && DialogueOutcome::combat_interrupted(obs.dialog_ready(), obs.in_combat)
+            && DialogueOutcome::combat_interrupted(
+                obs.dialog_ready(),
+                obs.in_combat,
+                obs.attacker_evidence,
+            )
         {
             self.combat_close_seen = true;
         }
@@ -654,12 +679,25 @@ mod tests {
     use super::*;
     use crate::machine::{self, AbortReason, Called, Handle, Outcome, Pending, Started, Take};
 
+    const LOCAL_SLOT: i32 = 1;
+
     fn npc(name: &str, actions: &[&str], distance: i32, index: i32) -> Npc {
         Npc {
             name: name.into(),
             actions: actions.iter().map(|action| Text::from(*action)).collect(),
             distance,
             index,
+            target_kind: 0,
+            target_index: -1,
+        }
+    }
+
+    fn player(target_kind: i32, target_index: i32) -> observed::PlayerRow {
+        observed::PlayerRow {
+            row: observed::SceneRow::default(),
+            index: 2,
+            target_kind,
+            target_index,
         }
     }
 
@@ -675,14 +713,18 @@ mod tests {
             chat_options: Vec::new(),
             bank_open: false,
             in_combat: false,
+            attacker_evidence: false,
             npcs,
+            players: Vec::new(),
         }
     }
 
     /// Stand in for a decoded post carrying `obs`.
     fn post(obs: &NativeObservation) {
         observed::post(obs.tick, |post| {
-            post.session(obs.ingame)
+            post
+                .session(obs.ingame)
+                .self_slot(LOCAL_SLOT)
                 .hold(obs.hold)
                 .ours(obs.ours)
                 .chat_modal_id(obs.chat_modal_id)
@@ -699,10 +741,13 @@ mod tests {
                             name: Some(npc.name.clone()),
                             distance: npc.distance,
                             actions: npc.actions.clone(),
+                            target_kind: npc.target_kind,
+                            target_index: npc.target_index,
                             ..observed::EntityRow::default()
                         })
                         .collect(),
-                );
+                )
+                .players(obs.players.clone());
         });
     }
 
@@ -909,21 +954,34 @@ mod tests {
     }
 
     #[test]
-    fn combat_closed_chat_fails_but_a_finished_chat_succeeds() {
-        // `in_combat` is the only hit fact a 0-damage miss raises: the
-        // client sets the combat cycle for every Hit mask regardless of
-        // the damage value, while HP (and `taking_damage`) stay put. So
-        // `in_combat: true` with no other change is the miss case.
-        for (in_combat, expected) in [(true, false), (false, true)] {
+    fn combat_close_requires_visible_actor_targeting_local_player() {
+        // `in_combat` can be raised by self-damage or a 0-damage miss. Neither
+        // case identifies an attacker without a visible actor target.
+        for (in_combat, attacker, expected) in [
+            (true, None, true),
+            (true, Some("npc"), false),
+            (true, Some("player"), false),
+            (false, None, true),
+        ] {
             let mut observation = obs(vec![npc("Gundai", &["Talk-to"], 1, 3)]);
             observation.chat_modal_id = 968;
             post(&observation);
             let drive = running(start("drive"));
             assert!(ops().is_empty());
-            // The chat closes: a hit's `if_close`, or the talk's own end.
             observation.tick = 2;
             observation.chat_modal_id = -1;
             observation.in_combat = in_combat;
+            match attacker {
+                Some("npc") => {
+                    observation.npcs[0].target_kind = PLAYER_TARGET_KIND;
+                    observation.npcs[0].target_index = LOCAL_SLOT;
+                }
+                Some("player") => observation
+                    .players
+                    .push(player(PLAYER_TARGET_KIND, LOCAL_SLOT)),
+                None => {}
+                Some(other) => panic!("unexpected attacker type: {other}"),
+            }
             post(&observation);
             assert!(tick().is_empty());
             assert_eq!(machine::take(drive), Take::Pending);
@@ -932,7 +990,7 @@ mod tests {
             assert_eq!(
                 machine::take(drive),
                 Take::Settled(Outcome::Done(json!(expected))),
-                "closed chat with in_combat={in_combat}"
+                "closed chat with in_combat={in_combat} and attacker={attacker:?}"
             );
         }
     }
