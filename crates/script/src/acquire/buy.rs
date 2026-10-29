@@ -17,10 +17,16 @@ use std::task::Poll;
 /// Patience before requesting the ordered page roundtrip, in observed ticks.
 ///
 /// The acquisition design's §4.8 E1–E7 establish input/output ordering:
-/// Unverified until PROBE-BUY-REPLY. Engine input is ordered and each admitted
+/// Engine input is ordered and each admitted
 /// buy runs synchronously (NetworkPlayer.ts:69–152, InvButtonHandler.ts:51–55,
 /// Player.ts:2173–2185); pack output precedes modal output (World.ts:1110–1123).
 /// Those facts establish settlement ordering, not a two-tick transit bound.
+///
+/// PROBE-BUY-REPLY on Engine L/R289 (2026-10-29) measured 300 held replies
+/// and 100 counted-close replies at one edge each, plus 100 fresh refusals
+/// at zero or one edge. K = 1 confirms two ticks under the K <= 2 rule.
+/// Receipt run: GATHERER-SHOP/buy-reply/runs/20261029T163806Z-4016658-gsh.
+///
 /// This count can request a roundtrip, but can never settle a purchase.
 pub const BUY_REPLY_TICKS: u64 = 2;
 
