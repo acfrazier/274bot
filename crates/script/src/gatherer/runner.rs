@@ -2337,7 +2337,7 @@ impl Gatherer {
                 .scratch
                 .parked
                 .as_ref()
-                .map_or_else(|| Arc::from(""), |park| Arc::clone(&park.block.message)),
+                .map_or_else(status::empty_block_reason, |park| Arc::clone(&park.block.message)),
             last_progress: self.last_gameplay_tick,
             deaths: self.retained.deaths,
             recoveries: self.retained.recoveries,

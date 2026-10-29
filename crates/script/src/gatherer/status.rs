@@ -6,7 +6,7 @@ use crate::shim::{host_control_buttons, ScriptPaint};
 use crate::CompiledId;
 use api::bank_memory::Origin;
 use api::selected::RunKey;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 #[derive(Debug, Clone)]
 pub struct StatusData {
@@ -200,9 +200,17 @@ pub fn paint(data: &StatusData) -> Arc<ScriptPaint> {
     })
 }
 
+pub(super) fn empty_block_reason() -> Arc<str> {
+    static EMPTY: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from(""));
+    Arc::clone(&EMPTY)
+}
+
 fn bank_seen_text(seen: Option<BankSeen>) -> Arc<str> {
     seen.map_or_else(
-        || Arc::from("unknown"),
+        || {
+            static UNKNOWN: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("unknown"));
+            Arc::clone(&UNKNOWN)
+        },
         |seen| bank_seen_text_at(seen, std::time::SystemTime::now()),
     )
 }
@@ -263,6 +271,24 @@ mod tests {
         fn log(&mut self, _level: Level, _message: &str) {}
 
         fn settings_applied(&mut self, _revision: u64) {}
+    }
+
+    #[test]
+    fn unchanged_status_text_uses_bounded_shared_storage() {
+        let first = allocation_counter::measure(|| {
+            drop(empty_block_reason());
+            drop(bank_seen_text(None));
+        });
+        assert!(first.count_total <= 2);
+        assert!(first.bytes_total <= 39);
+        assert_eq!(std::mem::size_of::<LazyLock<Arc<str>>>(), 24);
+        let warm = allocation_counter::measure(|| {
+            for _ in 0..1_000 {
+                assert!(empty_block_reason().is_empty());
+                assert_eq!(bank_seen_text(None).as_ref(), "unknown");
+            }
+        });
+        assert_eq!(warm.count_total, 0);
     }
 
     /// `publish` emits the shared [`KEYS`] key set with the table's value

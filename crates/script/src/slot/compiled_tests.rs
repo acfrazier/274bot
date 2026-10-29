@@ -3749,7 +3749,20 @@ fn gatherer_supply_park_keeps_its_run_controls_and_non_gameplay_watchdogs() {
     assert!(parked.failure.is_none(), "a supply park is not terminal");
     assert_eq!(slot.state(), RunState::Running);
     assert_eq!(slot.native_run(), Some(run));
-    assert_eq!(slot.evidence_wait_run, Some(run));
+    assert_eq!(
+        slot.evidence_wait_run,
+        Some(run),
+        "park admission: child={} native={} dispatch={} watchdog_frozen={} guardian={} host_hold={} session_hold={} ingame={} scene={}",
+        slot.foreground_action_active(),
+        slot.has_native_actions(),
+        slot.dispatch_open(),
+        slot.watchdog.frozen(),
+        slot.guardian_held,
+        slot.seat_host_held,
+        slot.seat_session_held,
+        snapshot.ingame(),
+        snapshot.scene_state(),
+    );
     assert!(!slot.has_native_actions());
     assert!(!slot.foreground_action_active());
     let reason = parked

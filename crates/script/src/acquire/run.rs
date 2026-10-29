@@ -67,7 +67,7 @@ pub struct AcquireRun {
     short_of_target: u8,
     child: Option<u8>,
     index: usize,
-    wear_index: usize,
+    wear_index: u8,
     open_attempts: u8,
     close_attempts: u8,
     deposit_done: bool,
@@ -425,7 +425,7 @@ impl AcquireRun {
                     let Some(id) = self
                         .wears
                         .as_deref()
-                        .and_then(|ids| ids.get(self.wear_index))
+                        .and_then(|ids| ids.get(usize::from(self.wear_index)))
                         .copied()
                     else {
                         self.phase = Phase::Child;
