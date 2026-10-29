@@ -196,7 +196,7 @@ struct RandomRouteLog {
 }
 
 impl RandomRouteUpdate {
-    fn log_events(self) -> [Option<RandomRouteLog>; 5] {
+    fn log_events(&self) -> [Option<RandomRouteLog>; 5] {
         [
             self.event_started.map(|kind| RandomRouteLog {
                 event_name: "random-event-start",
