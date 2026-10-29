@@ -34,10 +34,42 @@ pub struct CrossQuery {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RouteState {
+    #[serde(deserialize_with = "numeric_map")]
     pub skills: BTreeMap<i32, u8>,
+    #[serde(deserialize_with = "numeric_map")]
     pub varps: BTreeMap<i32, i32>,
     pub completed_quests: Vec<String>,
+    #[serde(deserialize_with = "numeric_map")]
     pub inventory: BTreeMap<i32, i32>,
+}
+
+// Internally tagged Query deserialization buffers JSON keys as strings.
+fn numeric_map<'de, D, V>(deserializer: D) -> Result<BTreeMap<i32, V>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    V: Deserialize<'de>,
+{
+    struct NumericMap<V>(std::marker::PhantomData<V>);
+    impl<'de, V: Deserialize<'de>> serde::de::Visitor<'de> for NumericMap<V> {
+        type Value = BTreeMap<i32, V>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("an object with numeric id keys")
+        }
+
+        fn visit_map<A: serde::de::MapAccess<'de>>(
+            self,
+            mut map: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut values = BTreeMap::new();
+            while let Some((key, value)) = map.next_entry::<String, V>()? {
+                let id = key.parse().map_err(serde::de::Error::custom)?;
+                values.insert(id, value);
+            }
+            Ok(values)
+        }
+    }
+    deserializer.deserialize_map(NumericMap(std::marker::PhantomData))
 }
 
 /// Product risk verdict, preserved without reimplementing its decision rules.
@@ -626,6 +658,16 @@ mod tests {
         assert_eq!(state.inv.get(&995), Some(&15));
         assert!(state.quest_evidence.is_none());
         assert_eq!(inventory_free_slots(&profile).unwrap(), 25);
+        let query = crate::Query::Crossing(CrossQuery {
+            route_state: profile.clone(),
+            ..fixture_query(Vec::new())
+        });
+        let encoded = serde_json::to_string(&query).unwrap();
+        let crate::Query::Crossing(decoded) = serde_json::from_str(&encoded).unwrap() else {
+            panic!("crossing query must retain its mode");
+        };
+        assert_eq!(decoded.route_state.inventory, profile.inventory);
+        assert_eq!(decoded.route_state.skills, profile.skills);
         profile.skills.insert(0, 99);
         assert!(player_state(&profile).is_err());
         profile.inventory.insert(1351, 29);
