@@ -2295,6 +2295,18 @@ mod api_gather_seat {
 
     #[test]
     fn warmed_load_seat_exclusive_heap_and_unchanged_polls_are_bounded() {
+        // libtest captures output on its test thread. The seat thread also owns
+        // terminal settlement, so captured output and other consumers stay out
+        // of this current-thread allocation measurement.
+        std::thread::Builder::new()
+            .name("api-seat-heap-probe".into())
+            .spawn(warmed_load_seat_exclusive_heap_and_unchanged_polls_are_bounded_on_seat_thread)
+            .expect("start isolated API-seat heap measurement")
+            .join()
+            .expect("API-seat heap measurement thread");
+    }
+
+    fn warmed_load_seat_exclusive_heap_and_unchanged_polls_are_bounded_on_seat_thread() {
         let mut snapshot = gatherer_snapshot();
         let mut warm = gatherer_slot(208);
         let mut slot = stub_surface_slot(209, true);
