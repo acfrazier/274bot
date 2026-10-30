@@ -1386,7 +1386,8 @@ fn guide_inputs(
     selected: &api::game_data::SelectedGameData,
 ) -> Result<Vec<CorpusInput>, String> {
     let mut out = Vec::new();
-    let (identities, _) = selected.quest_identity_for_bake()
+    let (identities, _) = selected
+        .quest_identity_for_bake()
         .map_err(|error| format!("load selected seed quest identities: {error:?}"))?;
     for set in ["guide_25", "guide_67"] {
         let root = PathBuf::from(roots[set]["root"].as_str().unwrap_or_default());
@@ -1439,9 +1440,9 @@ fn guide_inputs(
                     .or_else(|| args.get("from").and_then(parse_tile));
                 let fixture = match fixtures.entry(role_index) {
                     std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-                    std::collections::hash_map::Entry::Vacant(entry) => {
-                        entry.insert(GuideQualificationFixture::load(&id, &role, selected, &identities)?)
-                    }
+                    std::collections::hash_map::Entry::Vacant(entry) => entry.insert(
+                        GuideQualificationFixture::load(&id, &role, selected, &identities)?,
+                    ),
                 };
                 let sequence = (role_index, sequence_index);
                 let (from, start_rule) = if previous_sequence != Some(sequence) {
