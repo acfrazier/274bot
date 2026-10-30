@@ -3490,7 +3490,15 @@ fn apply_route_output(
             };
             let mut all = navs.lock().expect("navigation state mutex is not poisoned");
             if let Some(bot) = all.get_mut(name) {
-                if bot.advisory_request_id == authority.request_id().get() && authority.live() {
+                let stored =
+                    bot.advisory_request_id == authority.request_id().get() && authority.live();
+                log_walk_arm(name, || {
+                    format!(
+                        "assess-result request_id={} stored={stored} route_ticks={} refusal={:?}",
+                        receipt.request_id, receipt.route_ticks, receipt.refusal
+                    )
+                });
+                if stored {
                     bot.assess_result = Some(Box::new((authority, receipt)));
                 }
             }
@@ -4408,6 +4416,13 @@ impl ScriptWalkArm {
             return;
         }
         let refusal = |detail: &str| {
+            log_walk_arm(&self.name, || {
+                format!(
+                    "assess-request refused tick={} request_id={} detail={detail}",
+                    snapshot.tick(),
+                    authority.request_id().get()
+                )
+            });
             let receipt = script::native::AssessReceipt {
                 request_id: authority.request_id().get(),
                 evidence,
@@ -4553,6 +4568,7 @@ impl ScriptWalkArm {
             completion: RouteCompletion::default(),
         };
         let request_id = request.request_id;
+        let to = request.to;
         let demand = RouteDemand::Pending {
             request: Box::new(request),
             kind: RouteDemandKind::Advisory {
@@ -4580,8 +4596,17 @@ impl ScriptWalkArm {
             }
             (queued, displaced)
         };
+        let displaced_advisory = displaced.is_some();
         if let Some(displaced) = displaced {
             (*displaced).signal_completion();
+        }
+        if queued {
+            log_walk_arm(&self.name, || {
+                format!(
+                    "assess-request queued tick={} request_id={request_id} from={from:?} to={to:?} radius={radius} displaced_advisory={displaced_advisory}",
+                    snapshot.tick()
+                )
+            });
         }
         if !queued {
             refusal("Advisory route work is already pending for this slot");
@@ -6299,6 +6324,17 @@ impl NavBot {
         {
             self.pending_route = None;
         }
+        log_walk_arm_bot(|| {
+            format!(
+                "walk-cleanup kept_advisory_ticket={} kept_advisory_pending={} assess_result={:?} advisory_request_id={}",
+                self.route_ticket.is_some(),
+                self.pending_route.is_some(),
+                self.assess_result
+                    .as_ref()
+                    .map(|result| result.1.request_id),
+                self.advisory_request_id
+            )
+        });
     }
 
     /// The host ends all advisory route work of the slot (a pause, a relog or
