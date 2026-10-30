@@ -1,10 +1,11 @@
+use std::mem::size_of;
 use std::sync::Arc;
 
 use api::selected::{FactKey, QuestGate, Truth};
 
 use super::{QuestEvidence, QuestFamilyMismatch, QuestGateError, QuestGates};
 use crate::test_support::{family, family_schema, range, stamp, tbwt_evidence, window, Resolved};
-use crate::transport::TransportGraph;
+use crate::transport::{TransportEdge, TransportGraph};
 
 fn gates(list: Vec<QuestGate>) -> QuestGates {
     QuestGates::new(family(1), list).expect("valid gates")
@@ -15,8 +16,31 @@ fn shared_gates_keeps_the_canonical_gate_allocation() {
     let gates = gates(vec![QuestGate::Complete(FactKey::new("arrav"))]);
     let first = gates.shared_gates();
     let second = gates.shared_gates();
+    let clone = gates.clone();
+    let cloned = clone.shared_gates();
     assert!(Arc::ptr_eq(&first, &second));
+    assert!(Arc::ptr_eq(&first, &cloned));
     assert_eq!(first.as_ref(), gates.gates());
+}
+
+#[test]
+fn quest_gate_layout_stays_compact() {
+    assert_eq!(
+        size_of::<QuestGates>(),
+        size_of::<usize>(),
+        "QuestGates is one shared thin pointer"
+    );
+    assert_eq!(
+        size_of::<Option<QuestGates>>(),
+        size_of::<usize>(),
+        "Option<QuestGates> uses the Arc null niche"
+    );
+    // The 64-bit TransportEdge layout is 328 bytes; allow 8 bytes of headroom.
+    // The former 56-byte Option<QuestGates> added 48 bytes to every edge.
+    assert!(
+        size_of::<TransportEdge>() <= 336,
+        "TransportEdge should stay within 8 bytes of the 328-byte measured layout"
+    );
 }
 
 #[test]
