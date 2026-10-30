@@ -2032,8 +2032,8 @@ impl Quester {
         self.journal_quiet_since = None;
         if self.progress.is_none() {
             // Progress is dropped on every restart (Start, Resume, session
-            // change, death, an unpaired random event), so the first adoption
-            // after a drop replays an ordered sequence from its first step.
+            // change, run key change, death), never by a random event, so the
+            // first adoption after a drop replays an ordered sequence from its first step.
             // The reset precedes storing the read: an Unknown or Partial first
             // read must not spend it, or the Known read that follows would
             // resume at the stale cursor.
