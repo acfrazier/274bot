@@ -647,7 +647,6 @@ fn activity_finish_data<'s>(
     )
 }
 
-
 fn build_callback<'s>(
     scope: &mut v8::HandleScope<'s>,
     callback: impl v8::MapFnTo<v8::FunctionCallback>,
@@ -1589,8 +1588,7 @@ mod v8_tests {
     use super::*;
 
     const FAST_CHILD: &str = "SCRIPT_ACTIVITY_DATA_FAST_TEST_CHILD";
-    const FAST_TEST: &str =
-        "activity_v8::v8_tests::activity_data_objects_have_fast_properties";
+    const FAST_TEST: &str = "activity_v8::v8_tests::activity_data_objects_have_fast_properties";
     const HEAP_CHILD: &str = "SCRIPT_ACTIVITY_DATA_HEAP_TEST_CHILD";
     const HEAP_TEST: &str =
         "activity_v8::v8_tests::repeated_activity_data_objects_have_bounded_post_gc_heap";
@@ -1644,14 +1642,13 @@ globalThis.__activityTestOverrides = { food: 'Shark' };
     fn build_activity_data<'s>(
         scope: &mut v8::HandleScope<'s>,
         _args: v8::FunctionCallbackArguments<'s>,
-        mut rv: v8::ReturnValue,
+        rv: v8::ReturnValue,
     ) {
         let result = (|| -> JsResult<'s, v8::Local<'s, v8::Value>> {
             let global = scope.get_current_context().global(scope);
             let meta = cb::get(scope, global.into(), "__activityTestMeta")?;
             let overrides = cb::get(scope, global.into(), "__activityTestOverrides")?;
-            let settings_constructor =
-                cb::get(scope, global.into(), "__ActivityTestSettingsBag")?;
+            let settings_constructor = cb::get(scope, global.into(), "__ActivityTestSettingsBag")?;
             let owner = v8::Object::new(scope);
             let child = v8::Object::new(scope);
             let log = v8::undefined(scope).into();
@@ -1659,10 +1656,8 @@ globalThis.__activityTestOverrides = { food: 'Shark' };
             let child_id = v8::BigInt::new_from_u64(scope, 3).into();
             let undefined = v8::undefined(scope).into();
 
-            let log_data =
-                activity_log_data(scope, owner, log, meta, generation, child_id)?;
-            let finish_data =
-                activity_finish_data(scope, owner, generation, child_id, undefined)?;
+            let log_data = activity_log_data(scope, owner, log, meta, generation, child_id)?;
+            let finish_data = activity_finish_data(scope, owner, generation, child_id, undefined)?;
             let run_data = run_data(
                 scope,
                 RunData {

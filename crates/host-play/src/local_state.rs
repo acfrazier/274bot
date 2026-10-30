@@ -1512,10 +1512,9 @@ impl LocalStatePort for LocalStateService {
                 &store.file,
                 FileState::Rejected(rejection) if rejection.reason == FailureReason::Schema
             );
-        let cold_runtime_settings =
-            matches!(key, StoreKey::ScriptRuntimeSettings { .. })
-                && edit.expected().is_none()
-                && matches!(&store.file, FileState::Cold);
+        let cold_runtime_settings = matches!(key, StoreKey::ScriptRuntimeSettings { .. })
+            && edit.expected().is_none()
+            && matches!(&store.file, FileState::Cold);
         let (accepted_at, growth) = match gate(&key, store, &edit, growth) {
             Gate::Accept(version, growth) => (version, growth),
             Gate::Hydrate(code) => {

@@ -515,6 +515,8 @@ globalThis.__stop = () => ScriptRunner.stop('frame census stop');
     );
     assert_eq!(iso.probe("__frames").unwrap(), 2);
 
+    iso.probe("__unsubscribe = BotHost.addFrameListener(() => ++globalThis.__frames)")
+        .unwrap();
     iso.pause();
     assert!(
         iso.test_client_frame(),

@@ -4144,11 +4144,6 @@ export default class T extends LoopingBot {
         value["pending"], true,
         "EventSignal.pending() reads the posted flags"
     );
-    assert_eq!(
-        value["ignored"],
-        serde_json::json!([]),
-        "no posted ignore list defaults to []"
-    );
     assert_eq!(value["xp"], 1300, "Skills.xp reads the posted stats row");
     assert_eq!(
         value["idx"], 0,

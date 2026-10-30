@@ -617,10 +617,7 @@ fn replace_once(source: &mut String, needle: &str, replacement: &str) -> Result<
     Ok(())
 }
 
-fn start_catalog_task(
-    session: &LiveSession<'_>,
-    card: PreparedCatalogTask,
-) -> Result<(), String> {
+fn start_catalog_task(session: &LiveSession<'_>, card: PreparedCatalogTask) -> Result<(), String> {
     session.play.script_start_handle().start_load(
         &session.account,
         card.js,
@@ -1185,8 +1182,7 @@ fn run_runtime_catalog_cell(receipt: &mut Receipt) -> Result<(), String> {
         ));
     }
     if !session.receipt.logs.iter().any(|line| {
-        line.starts_with("RUNTIME:ACCOUNT_LEVELER_FRAME:2:")
-            && line.ends_with(":running")
+        line.starts_with("RUNTIME:ACCOUNT_LEVELER_FRAME:2:") && line.ends_with(":running")
     }) {
         return Err(format!(
             "AccountLeveler frame observer did not read Running: {:?}",
@@ -1304,8 +1300,8 @@ fn validate_walk_map_pick(logs: &[String], start: usize) -> Result<String, Strin
                 .find_map(|line| line.strip_prefix("RUNTIME:WALK_SETTINGS:"))
         })
         .ok_or_else(|| "WalkTo did not report its resolved map-pick settings".to_string())?;
-    let settings: Value =
-        serde_json::from_str(payload).map_err(|error| format!("invalid WalkTo settings: {error}"))?;
+    let settings: Value = serde_json::from_str(payload)
+        .map_err(|error| format!("invalid WalkTo settings: {error}"))?;
     let raw = settings
         .get("raw")
         .and_then(Value::as_str)
@@ -1319,8 +1315,12 @@ fn validate_walk_map_pick(logs: &[String], start: usize) -> Result<String, Strin
         part.parse::<i32>()
             .map_err(|error| format!("invalid saved WalkTo tile {raw:?}: {error}"))
     });
-    let x = parts.next().ok_or_else(|| "saved WalkTo tile has no x".to_string())??;
-    let z = parts.next().ok_or_else(|| "saved WalkTo tile has no z".to_string())??;
+    let x = parts
+        .next()
+        .ok_or_else(|| "saved WalkTo tile has no x".to_string())??;
+    let z = parts
+        .next()
+        .ok_or_else(|| "saved WalkTo tile has no z".to_string())??;
     let level = parts
         .next()
         .ok_or_else(|| "saved WalkTo tile has no level".to_string())??;
@@ -1364,7 +1364,8 @@ fn run_runtime_settings_walk_cell(receipt: &mut Receipt) -> Result<(), String> {
     instrument_walk_to_settings(&mut card.js)?;
     start_catalog_task(&session, card)?;
     wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
-        logs.iter().any(|line| line.starts_with("RUNTIME:WALK_WRITE:"))
+        logs.iter()
+            .any(|line| line.starts_with("RUNTIME:WALK_WRITE:"))
             && logs.iter().any(|line| line == "RUNTIME:WALK_PENDING")
     })?;
     if session.play.script_state(&session.account) != script::RunState::Running {
@@ -1387,7 +1388,11 @@ fn run_runtime_settings_walk_cell(receipt: &mut Receipt) -> Result<(), String> {
     }
 
     session.play.script_pause(&session.account);
-    wait_script_state(&mut session, script::RunState::Paused, "pausing pending WalkTo")?;
+    wait_script_state(
+        &mut session,
+        script::RunState::Paused,
+        "pausing pending WalkTo",
+    )?;
     wait_for_logs(&mut session, STOP_DEADLINE, |logs| {
         logs.iter().any(|line| line == "RUNTIME:WALK_PAUSE")
     })?;
@@ -1411,7 +1416,11 @@ fn run_runtime_settings_walk_cell(receipt: &mut Receipt) -> Result<(), String> {
     }
 
     session.play.script_resume(&session.account);
-    wait_script_state(&mut session, script::RunState::Running, "resuming pending WalkTo")?;
+    wait_script_state(
+        &mut session,
+        script::RunState::Running,
+        "resuming pending WalkTo",
+    )?;
     wait_for_logs(&mut session, STOP_DEADLINE, |logs| {
         logs.iter().any(|line| line == "RUNTIME:WALK_RESUME")
     })?;

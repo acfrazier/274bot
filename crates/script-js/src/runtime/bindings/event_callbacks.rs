@@ -142,7 +142,6 @@ pub(crate) fn remove_callback_for<'s>(
     });
 }
 
-
 /// Deliver a no-argument event to all listeners in registration order.
 pub(crate) fn emit_no_args(runtime: &mut Runtime, event: &str) -> Result<(), String> {
     let context = runtime.deno_runtime().main_context();
@@ -457,8 +456,8 @@ mod v8_tests {
     use serde_json::json;
 
     use super::{clear_all, install};
+    use crate::cake_stall::runtime::snapshot::dispatch_native_events;
     use crate::events::NativeEvent;
-    use crate::runtime::snapshot::dispatch_native_events;
 
     const FAST_CHILD: &str = "SCRIPT_EVENT_FAST_TEST_CHILD";
     const FAST_TEST: &str =
@@ -536,6 +535,7 @@ globalThis.__nativeEventShapeFacts = () => {
 "#,
             )
             .unwrap();
+        let events = sample_events();
         dispatch_native_events(&mut runtime, &events).unwrap();
         flush_pending_events(&mut runtime);
         let facts: serde_json::Value = runtime.eval("__nativeEventShapeFacts()").unwrap();
@@ -646,4 +646,3 @@ for (const type of ['chat.message', 'skill.xp', 'inventory.changed']) {
         clear_all();
     }
 }
-

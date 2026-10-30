@@ -247,7 +247,7 @@ fn compat_v1_bot__leaftask_constructor__contract() {
 #[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_bot__registerscript__contract() {
     assert!(
-        INDEX_DTS.contains("registerScript(manifest: BotManifestInput, origin?: string): void;"),
+        INDEX_DTS.contains("registerScript(manifest: import('*runtime/defineBot.js').BotManifestInput, origin?: string): void;"),
         "the published registerScript declaration retains its upstream signature"
     );
     assert!(
