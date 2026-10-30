@@ -610,20 +610,18 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
     if !result.reasons.is_empty() {
         return Ok(result);
     }
+    let setup = EvaluationSetup {
+        row,
+        npc,
+        weapon,
+        worn: &worn,
+        style: query.style,
+        initiates: query.player_initiates,
+        sequential_kills: query.sequential_kills,
+    };
     if let Some(stats) = query.candidate {
         let candidate_food = None;
-        match evaluate(
-            stats,
-            row,
-            npc,
-            weapon,
-            &worn,
-            query.style,
-            candidate_food,
-            0,
-            query.player_initiates,
-            query.sequential_kills,
-        ) {
+        match evaluate(stats, &setup, candidate_food, 0) {
             Ok(candidate) => result.candidate = Some(candidate),
             Err(FightError::NotModelled(reason)) => {
                 result
@@ -645,18 +643,7 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
         let mut within_five = None;
         let mut best = None;
         for food_count in 0..=food_limit {
-            let evaluation = match evaluate(
-                stats,
-                row,
-                npc,
-                weapon,
-                &worn,
-                query.style,
-                food_rule.as_ref(),
-                food_count,
-                query.player_initiates,
-                query.sequential_kills,
-            ) {
+            let evaluation = match evaluate(stats, &setup, food_rule.as_ref(), food_count) {
                 Ok(evaluation) => evaluation,
                 Err(FightError::NotModelled(reason)) => {
                     result.status = "not_modelled";
@@ -836,20 +823,24 @@ fn roll(stat: u32, bonus: i32) -> Result<u32, FightError> {
         .map_err(|_| FightError::Input("negative or overflowing combat roll".into()))
 }
 
-fn evaluate(
-    stats: Stats,
-    row: &NpcNameRow,
-    npc: &NpcRoll,
-    weapon: &Weapon,
-    worn: &[&ItemFact],
+struct EvaluationSetup<'a> {
+    row: &'a NpcNameRow,
+    npc: &'a NpcRoll,
+    weapon: &'a Weapon,
+    worn: &'a [&'a ItemFact],
     style: Style,
-    food_rule: Option<&food::FoodRule>,
-    food_count: u8,
     initiates: bool,
     sequential_kills: u8,
+}
+
+fn evaluate(
+    stats: Stats,
+    setup: &EvaluationSetup<'_>,
+    food_rule: Option<&food::FoodRule>,
+    food_count: u8,
 ) -> Result<Evaluation, FightError> {
-    validate_wear(stats, weapon, worn)?;
-    if !style.melee() {
+    validate_wear(stats, setup.weapon, setup.worn)?;
+    if !setup.style.melee() {
         return Err(FightError::Input(
             "ranged and magic attacks are not modelled".into(),
         ));
@@ -859,10 +850,10 @@ fn evaluate(
             "food count has no product-backed food rule".into(),
         ));
     }
-    let [attack, strength, defence] = style.bonuses();
-    let damage_type = weapon.damage_types[usize::from(style.code())]
+    let [attack, strength, defence] = setup.style.bonuses();
+    let damage_type = setup.weapon.damage_types[usize::from(setup.style.code())]
         .ok_or_else(|| FightError::Input("style unavailable".into()))?;
-    let npc_type = match row.damagetype.as_deref() {
+    let npc_type = match setup.row.damagetype.as_deref() {
         Some("^stab_style") => 0,
         Some("^slash_style") => 1,
         Some("^crush_style") => 2,
@@ -875,24 +866,36 @@ fn evaluate(
     let mut equipment_attack_bonus = [0i32; 3];
     let mut equipment_defence_bonus = [0i32; 3];
     for damage in 0..3 {
-        equipment_attack_bonus[damage] = weapon.attack_bonus[damage]
-            + worn.iter().map(|item| item.attack_bonus[damage]).sum::<i32>();
-        equipment_defence_bonus[damage] = weapon.defence_bonus[damage]
-            + worn.iter().map(|item| item.defence_bonus[damage]).sum::<i32>();
+        equipment_attack_bonus[damage] = setup.weapon.attack_bonus[damage]
+            + setup
+                .worn
+                .iter()
+                .map(|item| item.attack_bonus[damage])
+                .sum::<i32>();
+        equipment_defence_bonus[damage] = setup.weapon.defence_bonus[damage]
+            + setup
+                .worn
+                .iter()
+                .map(|item| item.defence_bonus[damage])
+                .sum::<i32>();
     }
-    let equipment_strength_bonus =
-        weapon.strength_bonus + worn.iter().map(|item| item.strength_bonus).sum::<i32>();
+    let equipment_strength_bonus = setup.weapon.strength_bonus
+        + setup
+            .worn
+            .iter()
+            .map(|item| item.strength_bonus)
+            .sum::<i32>();
     let equipment_range_bonus =
-        weapon.range_bonus + worn.iter().map(|item| item.range_bonus).sum::<i32>();
+        setup.weapon.range_bonus + setup.worn.iter().map(|item| item.range_bonus).sum::<i32>();
     let player_hit_chance = hit_chance(
         roll(
             u32::from(stats.attack) + 8 + attack,
             equipment_attack_bonus[damage_type],
         )?,
-        roll(npc.defence + 9, npc.defence_bonus[damage_type])?,
+        roll(setup.npc.defence + 9, setup.npc.defence_bonus[damage_type])?,
     );
     let npc_hit_chance = hit_chance(
-        roll(npc.attack + 9, npc.attack_bonus)?,
+        roll(setup.npc.attack + 9, setup.npc.attack_bonus)?,
         roll(
             u32::from(stats.defence) + 8 + defence,
             equipment_defence_bonus[npc_type],
@@ -906,21 +909,26 @@ fn evaluate(
             / 640,
     )
     .map_err(|_| FightError::Input("player maximum hit overflow".into()))?;
-    let npc_max_hit = u16::from(npc_max_hit(row).ok_or_else(|| {
-        FightError::NotModelled("NPC maximum hit unavailable".into())
-    })?);
+    let npc_max_hit = u16::from(
+        npc_max_hit(setup.row)
+            .ok_or_else(|| FightError::NotModelled("NPC maximum hit unavailable".into()))?,
+    );
     let model = SurvivalModel {
         player_hp: stats.hitpoints,
-        npc_hp: u16::try_from(row.hitpoints)
+        npc_hp: u16::try_from(setup.row.hitpoints)
             .map_err(|_| FightError::Input("NPC Hitpoints out of range".into()))?,
         player_chance: player_hit_chance,
         npc_chance: npc_hit_chance,
         player_max: player_max_hit,
         npc_max: npc_max_hit,
-        player_interval: weapon.attackrate,
-        npc_interval: npc.attackrate,
-        npc_first_tick: if initiates { 1 + npc.attackrate / 2 } else { 0 },
-        sequential_kills,
+        player_interval: setup.weapon.attackrate,
+        npc_interval: setup.npc.attackrate,
+        npc_first_tick: if setup.initiates {
+            1 + setup.npc.attackrate / 2
+        } else {
+            0
+        },
+        sequential_kills: setup.sequential_kills,
         food_rule,
         food_count,
     };
@@ -932,8 +940,8 @@ fn evaluate(
         npc_hit_chance,
         player_max_hit,
         npc_max_hit,
-        player_interval: weapon.attackrate,
-        npc_interval: npc.attackrate,
+        player_interval: setup.weapon.attackrate,
+        npc_interval: setup.npc.attackrate,
         equipment_attack_bonus,
         equipment_defence_bonus,
         equipment_strength_bonus,
@@ -1558,7 +1566,7 @@ mod tests {
             .iter()
             .find(|item| item.alias.as_deref() == Some("lobster"))
             .unwrap();
-        food::build(&tables, &npc, &lobster, hp_max).unwrap()
+        food::build(&tables, &npc, lobster, hp_max).unwrap()
     }
 
     fn sampled_damage(seed: &mut u64, chance: f64, maximum: u16) -> u16 {

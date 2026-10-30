@@ -686,7 +686,8 @@ fn player_combat_level(defence: u8, hp: u8) -> u8 {
 fn player_combat_level_base40() -> u8 {
     let level = 40u16;
     let style = (level + level).max(level + level / 2);
-    let sum = level + level + 1 / 2;
+    // Prayer is level 1 here, so integer division contributes zero.
+    let sum = level + level;
     ((10 * sum + 13 * style) / 40) as u8
 }
 

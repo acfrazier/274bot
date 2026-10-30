@@ -118,8 +118,10 @@ pub fn build(
 }
 
 fn request(tick: u16) -> WalkRequest {
-    let mut allow = WalkAllow::default();
-    allow.food = true;
+    let allow = WalkAllow {
+        food: true,
+        ..WalkAllow::default()
+    };
     WalkRequest {
         target: WorldTile { x: 2600, z: 3200, level: 0 },
         candidate_goals: None,
