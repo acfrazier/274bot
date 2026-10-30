@@ -1,0 +1,1371 @@
+//! Native ScriptActivity callbacks over the slot-owned run context.
+
+use crate::callback_v8::{self as cb, JsResult, Throw};
+use crate::lineage_v8::{self, ActivityId};
+use rustyscript::{deno_core::v8, Runtime};
+use script::surface::ScriptRuntimeContext;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+use std::sync::Arc;
+
+const DISPATCHER: &str = "__rs2b0t_script_activity";
+
+struct ActiveActivity {
+    generation: u64,
+    child_id: u64,
+    owner: v8::Global<v8::Object>,
+    child: v8::Global<v8::Value>,
+    log: v8::Global<v8::Value>,
+    meta: v8::Global<v8::Value>,
+}
+
+struct ActivityState {
+    context: RefCell<Option<Arc<ScriptRuntimeContext>>>,
+    next_child_id: Cell<u64>,
+    active: RefCell<Option<ActiveActivity>>,
+    last_owner: RefCell<Option<v8::Global<v8::Object>>>,
+    randoms_override: Cell<bool>,
+}
+
+impl ActivityState {
+    fn new() -> Self {
+        Self {
+            context: RefCell::new(None),
+            next_child_id: Cell::new(1),
+            active: RefCell::new(None),
+            last_owner: RefCell::new(None),
+            randoms_override: Cell::new(false),
+        }
+    }
+}
+
+/// Install the isolate-local activity dispatcher.
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
+    let state = Rc::new(ActivityState::new());
+    if !runtime.deno_runtime().v8_isolate().set_slot(state) {
+        return Err("activity state already installed".into());
+    }
+    cb::install(runtime, DISPATCHER, activity_callback)
+}
+
+/// Bind the latest slot-owned generation before a script can use the handle.
+pub(crate) fn bind_runtime_context(
+    runtime: &mut Runtime,
+    context: Arc<ScriptRuntimeContext>,
+) -> Result<(), String> {
+    let mut scope = runtime.deno_runtime().handle_scope();
+    let state = scope
+        .get_slot::<Rc<ActivityState>>()
+        .cloned()
+        .ok_or_else(|| "activity state is not installed".to_string())?;
+    state.active.borrow_mut().take();
+    state.last_owner.borrow_mut().take();
+    state.randoms_override.set(false);
+    *state.context.borrow_mut() = Some(context);
+    Ok(())
+}
+
+/// Release V8 handles before the isolate is retired.
+pub(crate) fn clear_all(runtime: &mut Runtime) {
+    let mut scope = runtime.deno_runtime().handle_scope();
+    if let Some(state) = scope.get_slot::<Rc<ActivityState>>().cloned() {
+        state.active.borrow_mut().take();
+        state.last_owner.borrow_mut().take();
+        state.context.borrow_mut().take();
+        state.randoms_override.set(false);
+    }
+}
+
+fn state_for_scope(scope: &v8::HandleScope) -> Option<Rc<ActivityState>> {
+    scope.get_slot::<Rc<ActivityState>>().cloned()
+}
+
+fn context_for_generation(
+    state: &ActivityState,
+    generation: u64,
+) -> Option<Arc<ScriptRuntimeContext>> {
+    let context = state.context.borrow().as_ref().map(Arc::clone)?;
+    (context.snapshot().generation == generation).then_some(context)
+}
+
+fn generation_arg(value: v8::Local<v8::Value>) -> Option<u64> {
+    let token = v8::Local::<v8::BigInt>::try_from(value).ok()?;
+    let (generation, lossless) = token.u64_value();
+    lossless.then_some(generation)
+}
+
+fn owner_arg<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    value: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Object>> {
+    if value.is_null_or_undefined() {
+        return Err(cb::type_error(scope, "ScriptActivity receiver is not an object"));
+    }
+    v8::Local::<v8::Object>::try_from(value)
+        .map_err(|_| cb::type_error(scope, "ScriptActivity receiver is not an object"))
+}
+
+fn activity_callback<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let operation = args.get(0);
+    let operation = if operation.is_string() {
+        operation.to_rust_string_lossy(scope)
+    } else {
+        String::new()
+    };
+    let result = match operation.as_str() {
+        "start" => start_promise(scope, args).map(Into::into),
+        "loop" => loop_promise(scope, args).map(Into::into),
+        _ => dispatch(scope, args),
+    };
+    cb::finish(scope, rv, result);
+}
+
+fn dispatch<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let operation = args.get(0);
+    if !operation.is_string() {
+        return Err(cb::type_error(scope, "ScriptActivity operation must be a string"));
+    }
+    let operation = operation.to_rust_string_lossy(scope);
+    let state = state_for_scope(scope)
+        .ok_or_else(|| cb::type_error(scope, "ScriptActivity state is not installed"))?;
+    match operation.as_str() {
+        "construct" => {
+            let context = state.context.borrow().as_ref().map(Arc::clone);
+            Ok(context.map_or_else(
+                || v8::null(scope).into(),
+                |context| v8::BigInt::new_from_u64(scope, context.snapshot().generation).into(),
+            ))
+        }
+        "child" => child(scope, &state, args),
+        "outcome" => outcome(scope, &state, args),
+        "currentTask" => current_task(scope, &state, args),
+        "stop" => stop(scope, &state, args),
+        "interrupt" => interrupt(scope, &state, args),
+        "ignoredRandoms" => ignored_randoms(scope, &state),
+        _ => Err(cb::type_error(scope, "unknown ScriptActivity operation")),
+    }
+}
+
+fn new_promise<'s>(
+    scope: &mut v8::HandleScope<'s>,
+) -> JsResult<'s, (v8::Local<'s, v8::PromiseResolver>, v8::Local<'s, v8::Promise>)> {
+    let resolver = v8::PromiseResolver::new(scope)
+        .ok_or_else(|| cb::type_error(scope, "could not create ScriptActivity promise"))?;
+    let promise = resolver.get_promise(scope);
+    Ok((resolver, promise))
+}
+
+fn settle_resolver<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    resolver: v8::Local<'s, v8::PromiseResolver>,
+    value: v8::Local<'s, v8::Value>,
+    reject: bool,
+) -> JsResult<'s, ()> {
+    if reject {
+        cb::catching(scope, |scope| resolver.reject(scope, value))?;
+    } else {
+        cb::catching(scope, |scope| resolver.resolve(scope, value))?;
+    }
+    Ok(())
+}
+
+fn error_value<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    message: &str,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let global = scope.get_current_context().global(scope);
+    let constructor = cb::get(scope, global.into(), "Error")?;
+    let message = cb::string(scope, message);
+    cb::construct(scope, constructor, &[message], "Error")
+}
+
+fn start_promise<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+) -> JsResult<'s, v8::Local<'s, v8::Promise>> {
+    let (resolver, promise) = new_promise(scope)?;
+    match start_inner(scope, args, resolver) {
+        Ok(()) => Ok(promise),
+        Err(Throw::Value(error)) => {
+            settle_resolver(scope, resolver, error, true)?;
+            Ok(promise)
+        }
+        Err(Throw::Terminated) => Err(Throw::Terminated),
+    }
+}
+
+fn start_inner<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    outer_resolver: v8::Local<'s, v8::PromiseResolver>,
+) -> JsResult<'s, ()> {
+    let state = state_for_scope(scope)
+        .ok_or_else(|| cb::type_error(scope, "ScriptActivity state is not installed"))?;
+    let owner = owner_arg(scope, args.get(1))?;
+    let Some(generation) = generation_arg(args.get(2)) else {
+        return Err(Throw::Value(error_value(scope, "Script run has ended")?));
+    };
+    let Some(context) = context_for_generation(&state, generation) else {
+        return Err(Throw::Value(error_value(scope, "Script run has ended")?));
+    };
+    let current = context.snapshot().activity;
+    if current.child_id.is_some() || current.in_flight || state.active.borrow().is_some() {
+        return Err(Throw::Value(error_value(scope, "An activity is already running")?));
+    }
+
+    let meta = args.get(3);
+    let overrides = args.get(4);
+    let log = args.get(5);
+    let looping_bot = args.get(6);
+    let settings_constructor = args.get(7);
+    let sustain = args.get(8);
+    let event_signal = args.get(9);
+    let run_manager = args.get(10);
+    let scheduler = args.get(11);
+    let script_aborted = args.get(12);
+    let bot_host = args.get(13);
+    let activity_finished = args.get(14);
+
+    let create = cb::get(scope, meta, "create")?;
+    let child = cb::call(scope, create, meta, &[], "meta.create")?;
+    let looping_bot = v8::Local::<v8::Object>::try_from(looping_bot)
+        .map_err(|_| cb::type_error(scope, "LoopingBot is not a constructor"))?;
+    if !cb::catching(scope, |scope| child.instance_of(scope, looping_bot))? {
+        let name = cb::to_string(scope, cb::get(scope, meta, "name")?)?;
+        return Err(Throw::Value(error_value(
+            scope,
+            &format!("{name} cannot run as an activity"),
+        )?));
+    }
+
+    let settings = settings_bag(scope, meta, overrides, settings_constructor)?;
+    cb::assign(scope, child, cb::string(scope, "settings"), settings)?;
+
+    let activity_id = state.next_child_id.get();
+    let next_id = activity_id
+        .checked_add(1)
+        .ok_or_else(|| cb::type_error(scope, "ScriptActivity id space exhausted"))?;
+    let generation_value = v8::BigInt::new_from_u64(scope, generation);
+    let child_id_value = v8::BigInt::new_from_u64(scope, activity_id);
+    let log_data = cb::object(
+        scope,
+        &[
+            ("owner", owner.into()),
+            ("log", log),
+            ("meta", meta),
+            ("generation", generation_value.into()),
+            ("childId", child_id_value.into()),
+        ],
+    )?;
+    let log_callback = build_callback(
+        scope,
+        activity_log_callback,
+        log_data,
+        "could not create ScriptActivity log callback",
+    )?;
+    cb::call_method(
+        scope,
+        child,
+        "bindLog",
+        &[log_callback.into()],
+        "child.bindLog",
+    )?;
+
+    let finish_data = cb::object(
+        scope,
+        &[
+            ("owner", owner.into()),
+            ("generation", generation_value.into()),
+            ("childId", child_id_value.into()),
+            ("ActivityFinished", activity_finished),
+        ],
+    )?;
+    let finish_callback = build_callback(
+        scope,
+        activity_finish_callback,
+        finish_data,
+        "could not create ScriptActivity finish callback",
+    )?;
+    cb::call_method(
+        scope,
+        child,
+        "bindFinish",
+        &[finish_callback.into()],
+        "child.bindFinish",
+    )?;
+
+    let (inner_resolver, inner_promise) = new_promise(scope)?;
+    let data = run_data(
+        scope,
+        owner,
+        child,
+        log,
+        meta,
+        outer_resolver,
+        generation,
+        activity_id,
+        "start",
+        sustain,
+        event_signal,
+        run_manager,
+        scheduler,
+        script_aborted,
+        activity_finished,
+        bot_host,
+    )?;
+    let on_fulfilled = build_callback(
+        scope,
+        activity_run_fulfilled,
+        data,
+        "could not create ScriptActivity completion callback",
+    )?;
+    let on_rejected = build_callback(
+        scope,
+        activity_run_rejected,
+        data,
+        "could not create ScriptActivity rejection callback",
+    )?;
+
+    if let Err(message) = context.start_activity(activity_id) {
+        return Err(Throw::Value(error_value(scope, message)?));
+    }
+    if !context.begin_activity_start(activity_id) {
+        context.clear_activity(activity_id);
+        return Err(Throw::Value(error_value(scope, "An activity is already running")?));
+    }
+    state.next_child_id.set(next_id);
+    *state.last_owner.borrow_mut() = Some(v8::Global::new(scope, owner));
+    *state.active.borrow_mut() = Some(ActiveActivity {
+        generation,
+        child_id: activity_id,
+        owner: v8::Global::new(scope, owner),
+        child: v8::Global::new(scope, child),
+        log: v8::Global::new(scope, log),
+        meta: v8::Global::new(scope, meta),
+    });
+
+    let attached = lineage_v8::enter_activity(scope, ActivityId(activity_id), |scope| {
+        cb::catching(scope, |scope| inner_promise.then2(scope, on_fulfilled, on_rejected))
+            .map(|_| ())
+    });
+    let attached = match attached {
+        Ok(result) => result,
+        Err(error) => Err(error),
+    };
+    if let Err(error) = attached {
+        context.clear_activity(activity_id);
+        clear_active(scope, &state, generation, activity_id, owner);
+        return Err(error);
+    }
+
+    let start_call = lineage_v8::enter_activity(scope, ActivityId(activity_id), |scope| {
+        let on_start = cb::get(scope, child, "onStart")?;
+        if on_start.is_null_or_undefined() {
+            Ok(v8::undefined(scope).into())
+        } else {
+            cb::call(scope, on_start, child, &[], "child.onStart")
+        }
+    });
+    match start_call {
+        Ok(Ok(value)) => settle_resolver(scope, inner_resolver, value, false)?,
+        Ok(Err(Throw::Value(error))) | Err(Throw::Value(error)) => {
+            settle_resolver(scope, inner_resolver, error, true)?;
+        }
+        Ok(Err(Throw::Terminated)) | Err(Throw::Terminated) => return Err(Throw::Terminated),
+    }
+    Ok(())
+}
+
+fn loop_promise<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+) -> JsResult<'s, v8::Local<'s, v8::Promise>> {
+    let (resolver, promise) = new_promise(scope)?;
+    match loop_inner(scope, args, resolver) {
+        Ok(()) => Ok(promise),
+        Err(Throw::Value(error)) => {
+            settle_resolver(scope, resolver, error, true)?;
+            Ok(promise)
+        }
+        Err(Throw::Terminated) => Err(Throw::Terminated),
+    }
+}
+
+fn loop_inner<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    outer_resolver: v8::Local<'s, v8::PromiseResolver>,
+) -> JsResult<'s, ()> {
+    let state = state_for_scope(scope)
+        .ok_or_else(|| cb::type_error(scope, "ScriptActivity state is not installed"))?;
+    let owner = owner_arg(scope, args.get(1))?;
+    let Some(generation) = generation_arg(args.get(2)) else {
+        settle_resolver(scope, outer_resolver, v8::undefined(scope).into(), false)?;
+        return Ok(());
+    };
+    let Some(context) = context_for_generation(&state, generation) else {
+        settle_resolver(scope, outer_resolver, v8::undefined(scope).into(), false)?;
+        return Ok(());
+    };
+    let Some((activity_id, child, log, meta)) = active_for_owner(scope, &state, generation, owner) else {
+        settle_resolver(scope, outer_resolver, v8::undefined(scope).into(), false)?;
+        return Ok(());
+    };
+    let snapshot = context.snapshot();
+    if snapshot.state.aborted() || snapshot.activity.in_flight {
+        settle_resolver(scope, outer_resolver, v8::undefined(scope).into(), false)?;
+        return Ok(());
+    }
+    let now = performance_now(scope)?;
+    if cb::lt(
+        scope,
+        now,
+        cb::num(scope, snapshot.activity.next_at_ms),
+    )? {
+        settle_resolver(scope, outer_resolver, v8::undefined(scope).into(), false)?;
+        return Ok(());
+    }
+    let bot_host = args.get(8);
+    let tick = cb::get(scope, bot_host, "tickCount")?;
+    if cb::lt(
+        scope,
+        tick,
+        cb::num(scope, snapshot.activity.next_tick),
+    )? {
+        settle_resolver(scope, outer_resolver, v8::undefined(scope).into(), false)?;
+        return Ok(());
+    }
+    let now_ms = cb::number(scope, now)?;
+    let tick_number = cb::number(scope, tick)?;
+    if !context.begin_activity_loop(activity_id, tick_number, now_ms) {
+        settle_resolver(scope, outer_resolver, v8::undefined(scope).into(), false)?;
+        return Ok(());
+    }
+
+    let sustain = args.get(3);
+    let event_signal = args.get(4);
+    let run_manager = args.get(5);
+    let scheduler = args.get(6);
+    let script_aborted = args.get(7);
+    let activity_finished = args.get(9);
+    let (inner_resolver, inner_promise) = new_promise(scope)?;
+    let data = run_data(
+        scope,
+        owner,
+        child,
+        log,
+        meta,
+        outer_resolver,
+        generation,
+        activity_id,
+        "loop",
+        sustain,
+        event_signal,
+        run_manager,
+        scheduler,
+        script_aborted,
+        activity_finished,
+        bot_host,
+    )?;
+    let on_fulfilled = build_callback(
+        scope,
+        activity_run_fulfilled,
+        data,
+        "could not create ScriptActivity completion callback",
+    )?;
+    let on_rejected = build_callback(
+        scope,
+        activity_run_rejected,
+        data,
+        "could not create ScriptActivity rejection callback",
+    )?;
+    let attached = lineage_v8::enter_activity(scope, ActivityId(activity_id), |scope| {
+        cb::catching(scope, |scope| inner_promise.then2(scope, on_fulfilled, on_rejected))
+            .map(|_| ())
+    });
+    let attached = match attached {
+        Ok(result) => result,
+        Err(error) => Err(error),
+    };
+    if let Err(error) = attached {
+        context.settle_activity_start(activity_id);
+        return Err(error);
+    }
+
+    let loop_call = lineage_v8::enter_activity(scope, ActivityId(activity_id), |scope| {
+        cb::call_method(scope, child, "loop", &[], "child.loop")
+    });
+    match loop_call {
+        Ok(Ok(value)) => settle_resolver(scope, inner_resolver, value, false)?,
+        Ok(Err(Throw::Value(error))) | Err(Throw::Value(error)) => {
+            settle_resolver(scope, inner_resolver, error, true)?;
+        }
+        Ok(Err(Throw::Terminated)) | Err(Throw::Terminated) => return Err(Throw::Terminated),
+    }
+    Ok(())
+}
+
+fn run_data<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    owner: v8::Local<'s, v8::Object>,
+    child: v8::Local<'s, v8::Value>,
+    log: v8::Local<'s, v8::Value>,
+    meta: v8::Local<'s, v8::Value>,
+    resolver: v8::Local<'s, v8::PromiseResolver>,
+    generation: u64,
+    child_id: u64,
+    mode: &str,
+    sustain: v8::Local<'s, v8::Value>,
+    event_signal: v8::Local<'s, v8::Value>,
+    run_manager: v8::Local<'s, v8::Value>,
+    scheduler: v8::Local<'s, v8::Value>,
+    script_aborted: v8::Local<'s, v8::Value>,
+    activity_finished: v8::Local<'s, v8::Value>,
+    bot_host: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    cb::object(
+        scope,
+        &[
+            ("owner", owner.into()),
+            ("child", child),
+            ("log", log),
+            ("meta", meta),
+            ("resolver", resolver.into()),
+            ("generation", v8::BigInt::new_from_u64(scope, generation).into()),
+            ("childId", v8::BigInt::new_from_u64(scope, child_id).into()),
+            ("mode", cb::string(scope, mode)),
+            ("Sustain", sustain),
+            ("EventSignal", event_signal),
+            ("RunManager", run_manager),
+            ("Scheduler", scheduler),
+            ("ScriptAborted", script_aborted),
+            ("ActivityFinished", activity_finished),
+            ("BotHost", bot_host),
+        ],
+    )
+}
+
+fn build_callback<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    callback: impl v8::MapFnTo<v8::FunctionCallback>,
+    data: v8::Local<'s, v8::Value>,
+    message: &str,
+) -> JsResult<'s, v8::Local<'s, v8::Function>> {
+    v8::Function::builder(callback)
+        .data(data)
+        .length(1)
+        .build(scope)
+        .ok_or_else(|| cb::type_error(scope, message))
+}
+
+fn activity_run_fulfilled<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    mut rv: v8::ReturnValue,
+) {
+    let result = complete_run(scope, args.data(), Some(args.get(0)), None);
+    completion_callback_result(scope, args.data(), result, &mut rv);
+}
+
+fn activity_run_rejected<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    mut rv: v8::ReturnValue,
+) {
+    let result = complete_run(scope, args.data(), None, Some(args.get(0)));
+    completion_callback_result(scope, args.data(), result, &mut rv);
+}
+
+fn completion_callback_result<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    data: v8::Local<'s, v8::Value>,
+    result: JsResult<'s, ()>,
+    rv: &mut v8::ReturnValue,
+) {
+    match result {
+        Ok(()) => rv.set(v8::undefined(scope).into()),
+        Err(Throw::Value(error)) => {
+            if let Ok(resolver) = data_resolver(scope, data) {
+                let _ = settle_resolver(scope, resolver, error, true);
+            }
+            rv.set(v8::undefined(scope).into());
+        }
+        Err(Throw::Terminated) => rv.set(v8::undefined(scope).into()),
+    }
+}
+
+fn complete_run<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    data: v8::Local<'s, v8::Value>,
+    fulfilled: Option<v8::Local<'s, v8::Value>>,
+    rejected: Option<v8::Local<'s, v8::Value>>,
+) -> JsResult<'s, ()> {
+    let state = state_for_scope(scope)
+        .ok_or_else(|| cb::type_error(scope, "ScriptActivity state is not installed"))?;
+    let owner = owner_arg(scope, cb::get(scope, data, "owner")?)?;
+    let generation = generation_arg(cb::get(scope, data, "generation")?);
+    let child_id = generation_arg(cb::get(scope, data, "childId")?)
+        .ok_or_else(|| cb::type_error(scope, "ScriptActivity child id is unavailable"))?;
+    let Some(generation) = generation else {
+        return reject_run(scope, data, error_value(scope, "Script run has ended")?);
+    };
+    let Some(context) = context_for_generation(&state, generation) else {
+        return reject_run(scope, data, error_value(scope, "Script run has ended")?);
+    };
+    if !context.owns_activity(child_id) {
+        return reject_run(scope, data, error_value(scope, "Script run has ended")?);
+    }
+
+    let mut pending_error = rejected;
+    if pending_error.is_none() {
+        if let Some(loop_result) = fulfilled {
+            let mode = cb::get(scope, data, "mode")?;
+            if mode.strict_equals(cb::string(scope, "loop")) {
+                if let Err(error) = settle_loop_result(scope, data, loop_result, child_id) {
+                    match error {
+                        Throw::Value(error) => pending_error = Some(error),
+                        Throw::Terminated => return Err(Throw::Terminated),
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(error) = pending_error {
+        match classify_run_error(scope, data, error, child_id) {
+            Ok(true) => pending_error = Some(error),
+            Ok(false) => pending_error = None,
+            Err(Throw::Value(error)) => pending_error = Some(error),
+            Err(Throw::Terminated) => return Err(Throw::Terminated),
+        }
+    }
+
+    context.settle_activity_start(child_id);
+    if context.snapshot().activity.outcome.is_some() {
+        let stop_result = cb::call_method(scope, owner.into(), "stop", &[], "this.stop");
+        if let Err(error) = stop_result {
+            match error {
+                Throw::Value(error) => pending_error = Some(error),
+                Throw::Terminated => return Err(Throw::Terminated),
+            }
+        }
+    }
+
+    if pending_error.is_none() {
+        let mode = cb::get(scope, data, "mode")?;
+        if mode.strict_equals(cb::string(scope, "start")) {
+            if active_for_owner(scope, &state, generation, owner).is_none() {
+                return settle_outer(scope, data, None);
+            }
+            // The host reads the active child's ignore list from this run-fenced handle;
+            // the native guardian remains the sole random-event owner.
+            state.randoms_override.set(true);
+        }
+    }
+    settle_outer(scope, data, pending_error)
+}
+
+fn reject_run<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    data: v8::Local<'s, v8::Value>,
+    error: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, ()> {
+    settle_outer(scope, data, Some(error))
+}
+
+fn settle_outer<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    data: v8::Local<'s, v8::Value>,
+    error: Option<v8::Local<'s, v8::Value>>,
+) -> JsResult<'s, ()> {
+    let resolver = data_resolver(scope, data)?;
+    match error {
+        Some(error) => settle_resolver(scope, resolver, error, true),
+        None => settle_resolver(scope, resolver, v8::undefined(scope).into(), false),
+    }
+}
+
+fn data_resolver<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    data: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::PromiseResolver>> {
+    let value = cb::get(scope, data, "resolver")?;
+    v8::Local::<v8::PromiseResolver>::try_from(value)
+        .map_err(|_| cb::type_error(scope, "ScriptActivity resolver is unavailable"))
+}
+
+fn classify_run_error<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    data: v8::Local<'s, v8::Value>,
+    error: v8::Local<'s, v8::Value>,
+    child_id: u64,
+) -> JsResult<'s, bool> {
+    let state = state_for_scope(scope)
+        .ok_or_else(|| cb::type_error(scope, "ScriptActivity state is not installed"))?;
+    let generation = generation_arg(cb::get(scope, data, "generation")?);
+    let context = generation.and_then(|generation| context_for_generation(&state, generation));
+    let owner = owner_arg(scope, cb::get(scope, data, "owner")?)?;
+    let script_aborted = cb::get(scope, data, "ScriptAborted")?;
+    let is_aborted = instance_of(scope, error, script_aborted)?;
+    if is_aborted {
+        let interrupted = context
+            .as_ref()
+            .is_some_and(|context| context.snapshot().activity.interrupted);
+        if !interrupted {
+            return Ok(true);
+        }
+        let scheduler = cb::get(scope, data, "Scheduler")?;
+        let active = cb::get(scope, scheduler, "active")?;
+        if !active.is_null_or_undefined() {
+            let aborted = cb::get(scope, active, "aborted")?;
+            if cb::truthy(scope, aborted) {
+                return Ok(true);
+            }
+        }
+    }
+    let interrupted = context
+        .as_ref()
+        .is_some_and(|context| context.snapshot().activity.interrupted);
+    if interrupted {
+        return Ok(false);
+    }
+
+    let activity_finished = cb::get(scope, data, "ActivityFinished")?;
+    let finished = instance_of(scope, error, activity_finished)?;
+    let kind = if finished { "finished" } else { "failed" };
+    let global = scope.get_current_context().global(scope);
+    let error_ctor = cb::get(scope, global.into(), "Error")?;
+    let reason = if instance_of(scope, error, error_ctor)? {
+        cb::get(scope, error, "message")?
+    } else {
+        let string_ctor = cb::get(scope, global.into(), "String")?;
+        cb::call(
+            scope,
+            string_ctor,
+            v8::undefined(scope).into(),
+            &[error],
+            "String",
+        )?
+    };
+    let reason_text = cb::to_string(scope, reason)?;
+    let outcome = cb::object(
+        scope,
+        &[("kind", cb::string(scope, kind)), ("reason", cb::string(scope, &reason_text))],
+    )?;
+    let context = context.ok_or_else(|| cb::type_error(scope, "Script run has ended"))?;
+    context.set_activity_outcome(child_id, kind.to_string(), reason_text.clone(), finished);
+    // The native ScriptActivity stores the caller's logger as an opaque
+    // callback. Invoke it with the activity object as receiver, like `this.log`.
+    let log = cb::get(scope, data, "log")?;
+    let message = cb::string(scope, &format!("{kind}: {reason_text}"));
+    let _ = outcome;
+    cb::call(scope, log, owner.into(), &[message], "this.log")?;
+    Ok(false)
+}
+
+fn settle_loop_result<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    data: v8::Local<'s, v8::Value>,
+    loop_result: v8::Local<'s, v8::Value>,
+    child_id: u64,
+) -> JsResult<'s, ()> {
+    let child = cb::get(scope, data, "child")?;
+    let bot_host = cb::get(scope, data, "BotHost")?;
+    let delay = if loop_result.is_number() {
+        loop_result
+    } else {
+        cb::get(scope, child, "loopDelay")?
+    };
+    let override_value = cb::get(scope, child, "loopCadence")?;
+    let cadence = resolve_cadence(scope, delay, override_value)?;
+    let kind = cb::get(scope, cadence, "kind")?;
+    let next_at = if kind.strict_equals(cb::string(scope, "time")) {
+        let now = performance_now(scope)?;
+        let ms = cb::get(scope, cadence, "ms")?;
+        let max = math_max(scope, cb::num(scope, 0.0), ms)?;
+        cb::add(scope, now, max)?
+    } else {
+        cb::num(scope, 0.0)
+    };
+    let next_tick = if kind.strict_equals(cb::string(scope, "server-tick")) {
+        let tick = cb::get(scope, bot_host, "tickCount")?;
+        let ticks = cb::get(scope, cadence, "ticks")?;
+        let ticks = if ticks.is_null_or_undefined() {
+            cb::num(scope, 1.0)
+        } else {
+            ticks
+        };
+        let max = math_max(scope, cb::num(scope, 1.0), ticks)?;
+        cb::add(scope, tick, max)?
+    } else {
+        cb::num(scope, 0.0)
+    };
+    let state = state_for_scope(scope)
+        .ok_or_else(|| cb::type_error(scope, "ScriptActivity state is not installed"))?;
+    let generation = generation_arg(cb::get(scope, data, "generation")?);
+    if let Some(context) = generation.and_then(|generation| context_for_generation(&state, generation)) {
+        context.settle_activity_loop(
+            child_id,
+            cb::number(scope, next_at)?,
+            cb::number(scope, next_tick)?,
+        );
+    }
+    Ok(())
+}
+
+fn resolve_cadence<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    delay: v8::Local<'s, v8::Value>,
+    override_value: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    if cb::truthy(scope, override_value) {
+        return Ok(override_value);
+    }
+    if cb::le(scope, delay, cb::num(scope, 0.0))? {
+        return cb::object(scope, &[("kind", cb::string(scope, "frame"))]);
+    }
+    if delay.strict_equals(cb::num(scope, 600.0)) {
+        return cb::object(
+            scope,
+            &[
+                ("kind", cb::string(scope, "server-tick")),
+                ("ticks", cb::num(scope, 1.0)),
+            ],
+        );
+    }
+    cb::object(
+        scope,
+        &[("kind", cb::string(scope, "time")), ("ms", delay)],
+    )
+}
+
+fn math_max<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    left: v8::Local<'s, v8::Value>,
+    right: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let global = scope.get_current_context().global(scope);
+    let math = cb::get(scope, global.into(), "Math")?;
+    cb::call_method(scope, math, "max", &[left, right], "Math.max")
+}
+
+fn performance_now<'s>(
+    scope: &mut v8::HandleScope<'s>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let global = scope.get_current_context().global(scope);
+    let performance = cb::get(scope, global.into(), "performance")?;
+    cb::call_method(scope, performance, "now", &[], "performance.now")
+}
+
+
+fn activity_log_callback<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let data = args.data();
+    let id = generation_arg(cb::get(scope, data, "childId").unwrap_or_else(|_| v8::undefined(scope).into()));
+    let result = if let Some(id) = id {
+        match lineage_v8::enter_activity(scope, ActivityId(id), |scope| log_child(scope, data, args.get(0), id)) {
+            Ok(result) => result,
+            Err(error) => Err(error),
+        }
+    } else {
+        Err(cb::type_error(scope, "ScriptActivity child id is unavailable"))
+    };
+    cb::finish(scope, rv, result);
+}
+
+fn log_child<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    data: v8::Local<'s, v8::Value>,
+    message: v8::Local<'s, v8::Value>,
+    child_id: u64,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let state = state_for_scope(scope)
+        .ok_or_else(|| cb::type_error(scope, "ScriptActivity state is not installed"))?;
+    let generation = generation_arg(cb::get(scope, data, "generation")?);
+    let Some(context) = generation.and_then(|generation| context_for_generation(&state, generation)) else {
+        return Ok(v8::undefined(scope).into());
+    };
+    if !context.owns_activity(child_id) {
+        return Ok(v8::undefined(scope).into());
+    }
+    let owner = cb::get(scope, data, "owner")?;
+    let log = cb::get(scope, data, "log")?;
+    let meta = cb::get(scope, data, "meta")?;
+    let name = cb::to_string(scope, cb::get(scope, meta, "name")?)?;
+    let message = cb::to_string(scope, message)?;
+    let text = cb::string(scope, &format!("[{name}] {message}"));
+    cb::call(scope, log, owner, &[text], "this.log")
+}
+
+fn activity_finish_callback<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let data = args.data();
+    let id = generation_arg(cb::get(scope, data, "childId").unwrap_or_else(|_| v8::undefined(scope).into()));
+    let result = if let Some(id) = id {
+        match lineage_v8::enter_activity(scope, ActivityId(id), |scope| finish_child(scope, data, args.get(0), id)) {
+            Ok(result) => result,
+            Err(error) => Err(error),
+        }
+    } else {
+        Err(cb::type_error(scope, "ScriptActivity child id is unavailable"))
+    };
+    cb::finish(scope, rv, result);
+}
+
+fn finish_child<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    data: v8::Local<'s, v8::Value>,
+    reason: v8::Local<'s, v8::Value>,
+    child_id: u64,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let state = state_for_scope(scope)
+        .ok_or_else(|| cb::type_error(scope, "ScriptActivity state is not installed"))?;
+    let generation = generation_arg(cb::get(scope, data, "generation")?);
+    let owner = owner_arg(scope, cb::get(scope, data, "owner")?)?;
+    let Some(context) = generation.and_then(|generation| context_for_generation(&state, generation)) else {
+        return Ok(v8::undefined(scope).into());
+    };
+    if !context.owns_activity(child_id) || !is_active_owner(scope, &state, generation.unwrap_or_default(), owner) {
+        return Ok(v8::undefined(scope).into());
+    }
+    let reason_text = cb::to_string(scope, reason)?;
+    context.set_activity_outcome(child_id, "finished".into(), reason_text, true);
+    let constructor = cb::get(scope, data, "ActivityFinished")?;
+    let error = cb::construct(scope, constructor, &[reason], "ActivityFinished")?;
+    Err(Throw::Value(error))
+}
+
+fn child<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    state: &ActivityState,
+    args: v8::FunctionCallbackArguments<'s>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let owner = owner_arg(scope, args.get(1))?;
+    let Some(generation) = generation_arg(args.get(2)) else {
+        return Ok(v8::null(scope).into());
+    };
+    let Some((_, child, _, _)) = active_for_owner(scope, state, generation, owner) else {
+        return Ok(v8::null(scope).into());
+    };
+    Ok(child)
+}
+
+fn outcome<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    state: &ActivityState,
+    args: v8::FunctionCallbackArguments<'s>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let owner = owner_arg(scope, args.get(1))?;
+    let Some(generation) = generation_arg(args.get(2)) else {
+        return Ok(v8::null(scope).into());
+    };
+    let Some(context) = context_for_generation(state, generation) else {
+        return Ok(v8::null(scope).into());
+    };
+    if !is_last_owner(scope, state, owner) {
+        return Ok(v8::null(scope).into());
+    }
+    let Some(value) = context.snapshot().activity.outcome else {
+        return Ok(v8::null(scope).into());
+    };
+    cb::object(
+        scope,
+        &[
+            ("kind", cb::string(scope, &value.kind)),
+            ("reason", cb::string(scope, &value.reason)),
+        ],
+    )
+}
+
+fn current_task<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    state: &ActivityState,
+    args: v8::FunctionCallbackArguments<'s>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let owner = owner_arg(scope, args.get(1))?;
+    let Some(generation) = generation_arg(args.get(2)) else {
+        return Ok(v8::null(scope).into());
+    };
+    let Some((_, child, _, _)) = active_for_owner(scope, state, generation, owner) else {
+        return Ok(v8::null(scope).into());
+    };
+    let task_bot = v8::Local::<v8::Object>::try_from(args.get(3))
+        .map_err(|_| cb::type_error(scope, "TaskBot is not a constructor"))?;
+    if cb::catching(scope, |scope| child.instance_of(scope, task_bot))? {
+        cb::get(scope, child, "activeTaskName")
+    } else {
+        Ok(v8::null(scope).into())
+    }
+}
+
+fn stop<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    state: &ActivityState,
+    args: v8::FunctionCallbackArguments<'s>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let owner = owner_arg(scope, args.get(1))?;
+    let Some(generation) = generation_arg(args.get(2)) else {
+        return Ok(v8::undefined(scope).into());
+    };
+    let Some(context) = context_for_generation(state, generation) else {
+        return Ok(v8::undefined(scope).into());
+    };
+    if context.snapshot().activity.in_flight {
+        let reason = cb::string(scope, "activity stopped");
+        interrupt_impl(scope, state, owner, generation, reason)?;
+        return Ok(v8::undefined(scope).into());
+    }
+    stop_child(
+        scope,
+        state,
+        owner,
+        generation,
+        args.get(3),
+        args.get(4),
+        args.get(5),
+    )?;
+    Ok(v8::undefined(scope).into())
+}
+
+fn stop_child<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    state: &ActivityState,
+    owner: v8::Local<'s, v8::Object>,
+    generation: u64,
+    sustain: v8::Local<'s, v8::Value>,
+    event_signal: v8::Local<'s, v8::Value>,
+    run_manager: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, ()> {
+    let Some(context) = context_for_generation(state, generation) else {
+        return Ok(());
+    };
+    let Some((child_id, child, _, _)) = active_for_owner(scope, state, generation, owner) else {
+        return Ok(());
+    };
+    let active = state.active.borrow_mut().take();
+    let Some(active) = active else {
+        return Ok(());
+    };
+    let child = v8::Local::new(scope, &active.child);
+    let on_stop_result = lineage_v8::enter_activity(scope, ActivityId(child_id), |scope| {
+        let on_stop = cb::get(scope, child, "onStop")?;
+        if on_stop.is_null_or_undefined() {
+            Ok(v8::undefined(scope).into())
+        } else {
+            cb::call(scope, on_stop, child, &[], "child.onStop")
+        }
+    });
+    let on_stop_result = match on_stop_result {
+        Ok(result) => result,
+        Err(error) => Err(error),
+    };
+    let cleanup_result = match on_stop_result {
+        Err(Throw::Terminated) => Err(Throw::Terminated),
+        on_stop => {
+            let cleanup = lineage_v8::enter_activity(scope, ActivityId(child_id), |scope| {
+                cleanup_child(scope, sustain, event_signal, run_manager, child)
+            });
+            let cleanup = match cleanup {
+                Ok(result) => result,
+                Err(error) => Err(error),
+            };
+            match cleanup {
+                Err(error) => Err(error),
+                Ok(()) => {
+                    state.randoms_override.set(true);
+                    on_stop.map(|_| ())
+                }
+            }
+        }
+    };
+    context.clear_activity(child_id);
+    state.active.borrow_mut().take();
+    match cleanup_result {
+        Ok(()) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn cleanup_child<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    sustain: v8::Local<'s, v8::Value>,
+    event_signal: v8::Local<'s, v8::Value>,
+    run_manager: v8::Local<'s, v8::Value>,
+    child: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, ()> {
+    cb::call_method(scope, child, "disposeSubscriptions", &[], "child.disposeSubscriptions")?;
+    cb::call_method(
+        scope,
+        sustain,
+        "set",
+        &[v8::null(scope).into()],
+        "Sustain.set",
+    )?;
+    cb::call_method(
+        scope,
+        event_signal,
+        "setInterrupt",
+        &[v8::null(scope).into()],
+        "EventSignal.setInterrupt",
+    )?;
+    cb::call_method(
+        scope,
+        run_manager,
+        "override",
+        &[v8::null(scope).into()],
+        "RunManager.override",
+    )?;
+    Ok(())
+}
+
+fn interrupt<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    state: &ActivityState,
+    args: v8::FunctionCallbackArguments<'s>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let owner = owner_arg(scope, args.get(1))?;
+    let Some(generation) = generation_arg(args.get(2)) else {
+        return Ok(v8::undefined(scope).into());
+    };
+    let reason = args.get(3);
+    interrupt_impl(scope, state, owner, generation, reason)?;
+    Ok(v8::undefined(scope).into())
+}
+
+fn interrupt_impl<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    state: &ActivityState,
+    owner: v8::Local<'s, v8::Object>,
+    generation: u64,
+    reason: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, ()> {
+    let Some(context) = context_for_generation(state, generation) else {
+        return Ok(());
+    };
+    let Some(child_id) = active_child_id(scope, state, generation, owner) else {
+        *state.last_owner.borrow_mut() = Some(v8::Global::new(scope, owner));
+        let reason = cb::to_string(scope, reason)?;
+        context.interrupt_activity(None, reason);
+        return Ok(());
+    };
+    let in_flight = context.snapshot().activity.in_flight;
+    let reason_text = cb::to_string(scope, reason)?;
+    context.interrupt_activity(Some(child_id), reason_text);
+    if in_flight {
+        crate::lifecycle_v8::abort_activity_waiters(scope, generation, child_id)?;
+    } else {
+        cb::call_method(scope, owner.into(), "stop", &[], "this.stop")?;
+    }
+    Ok(())
+}
+
+fn ignored_randoms<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    state: &ActivityState,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    if !state.randoms_override.get() {
+        return Ok(v8::undefined(scope).into());
+    }
+    let Some(context) = state.context.borrow().as_ref().map(Arc::clone) else {
+        return Ok(v8::Array::new(scope, 0).into());
+    };
+    let Some(active) = state.active.borrow().as_ref() else {
+        return Ok(v8::Array::new(scope, 0).into());
+    };
+    if active.generation != context.snapshot().generation
+        || context.state().aborted()
+        || !context.owns_activity(active.child_id)
+    {
+        return Ok(v8::Array::new(scope, 0).into());
+    }
+    let child_id = active.child_id;
+    let child = v8::Local::new(scope, &active.child);
+    let result = lineage_v8::enter_activity(scope, ActivityId(child_id), |scope| {
+        cb::call_method(scope, child, "ignoredRandoms", &[], "child.ignoredRandoms")
+    });
+    match result {
+        Ok(Ok(value)) if value.is_array() => Ok(value),
+        Ok(Ok(_)) | Ok(Err(Throw::Value(_))) | Err(Throw::Value(_)) => {
+            Ok(v8::Array::new(scope, 0).into())
+        }
+        Ok(Err(Throw::Terminated)) | Err(Throw::Terminated) => Err(Throw::Terminated),
+    }
+}
+
+
+fn active_for_owner<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    state: &ActivityState,
+    generation: u64,
+    owner: v8::Local<'s, v8::Object>,
+) -> Option<(
+    u64,
+    v8::Local<'s, v8::Value>,
+    v8::Local<'s, v8::Value>,
+    v8::Local<'s, v8::Value>,
+)> {
+    let context = context_for_generation(state, generation)?;
+    let active = state.active.borrow();
+    let active = active.as_ref()?;
+    if active.generation != generation
+        || !v8::Local::new(scope, &active.owner).strict_equals(owner.into())
+        || !context.owns_activity(active.child_id)
+    {
+        return None;
+    }
+    Some((
+        active.child_id,
+        v8::Local::new(scope, &active.child),
+        v8::Local::new(scope, &active.log),
+        v8::Local::new(scope, &active.meta),
+    ))
+}
+
+fn active_child_id(
+    scope: &mut v8::HandleScope,
+    state: &ActivityState,
+    generation: u64,
+    owner: v8::Local<v8::Object>,
+) -> Option<u64> {
+    active_for_owner(scope, state, generation, owner).map(|active| active.0)
+}
+
+fn is_active_owner(
+    scope: &mut v8::HandleScope,
+    state: &ActivityState,
+    generation: u64,
+    owner: v8::Local<v8::Object>,
+) -> bool {
+    active_child_id(scope, state, generation, owner).is_some()
+}
+
+fn is_last_owner(
+    scope: &mut v8::HandleScope,
+    state: &ActivityState,
+    owner: v8::Local<v8::Object>,
+) -> bool {
+    state.last_owner.borrow().as_ref().is_some_and(|current| {
+        v8::Local::new(scope, current).strict_equals(owner.into())
+    })
+}
+
+fn clear_active(
+    scope: &mut v8::HandleScope,
+    state: &ActivityState,
+    generation: u64,
+    child_id: u64,
+    owner: v8::Local<v8::Object>,
+) {
+    let matches = state.active.borrow().as_ref().is_some_and(|active| {
+        active.generation == generation
+            && active.child_id == child_id
+            && v8::Local::new(scope, &active.owner).strict_equals(owner.into())
+    });
+    if matches {
+        state.active.borrow_mut().take();
+    }
+}
+
+fn settings_bag<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    meta: v8::Local<'s, v8::Value>,
+    overrides: v8::Local<'s, v8::Value>,
+    constructor: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let schema = cb::get(scope, meta, "settingsSchema")?;
+    let schema = if schema.is_null_or_undefined() {
+        v8::Object::new(scope).into()
+    } else {
+        schema
+    };
+    let global = scope.get_current_context().global(scope);
+    let object_ctor = cb::get(scope, global.into(), "Object")?;
+    let entries_fn = cb::get(scope, object_ctor, "entries")?;
+    let entries = cb::call(scope, entries_fn, object_ctor, &[schema], "Object.entries")?;
+    let mapper = v8::Function::builder(settings_default_entry)
+        .build(scope)
+        .ok_or_else(|| cb::type_error(scope, "could not create settings default mapper"))?;
+    let mapped = cb::call_method(scope, entries, "map", &[mapper.into()], "entries.map")?;
+    let from_entries = cb::get(scope, object_ctor, "fromEntries")?;
+    let defaults = cb::call(scope, from_entries, object_ctor, &[mapped], "Object.fromEntries")?;
+    let values = v8::Object::new(scope);
+    spread_copy(scope, values, defaults)?;
+    spread_copy(scope, values, overrides)?;
+    cb::construct(scope, constructor, &[values.into()], "SettingsBag")
+}
+
+fn settings_default_entry<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let pair = args.get(0);
+        let key = cb::get_index(scope, pair, 0)?;
+        let setting = cb::get_index(scope, pair, 1)?;
+        let default = cb::get(scope, setting, "default")?;
+        let row = v8::Array::new(scope, 2);
+        if !row.set_index(scope, 0, key).unwrap_or(false)
+            || !row.set_index(scope, 1, default).unwrap_or(false)
+        {
+            return Err(cb::type_error(scope, "could not create settings default entry"));
+        }
+        Ok(row.into())
+    })();
+    cb::finish(scope, rv, result);
+}
+
+fn spread_copy<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    target: v8::Local<'s, v8::Object>,
+    source: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, ()> {
+    if source.is_null_or_undefined() {
+        return Ok(());
+    }
+    let source = cb::catching(scope, |scope| source.to_object(scope))?;
+    let global = scope.get_current_context().global(scope);
+    let reflect = cb::get(scope, global.into(), "Reflect")?;
+    let own_keys = cb::get(scope, reflect, "ownKeys")?;
+    let keys = cb::call(scope, own_keys, reflect, &[source.into()], "Reflect.ownKeys")?;
+    let keys = v8::Local::<v8::Array>::try_from(keys)
+        .map_err(|_| cb::type_error(scope, "Reflect.ownKeys did not return an array"))?;
+    let object_ctor = cb::get(scope, global.into(), "Object")?;
+    let descriptor_fn = cb::get(scope, object_ctor, "getOwnPropertyDescriptor")?;
+    for index in 0..keys.length() {
+        let key = cb::get_index(scope, keys.into(), index)?;
+        let descriptor = cb::call(
+            scope,
+            descriptor_fn,
+            object_ctor,
+            &[source.into(), key],
+            "Object.getOwnPropertyDescriptor",
+        )?;
+        if descriptor.is_null_or_undefined() {
+            continue;
+        }
+        let enumerable = cb::get(scope, descriptor, "enumerable")?;
+        if !cb::truthy(scope, enumerable) {
+            continue;
+        }
+        let value = cb::catching(scope, |scope| source.get(scope, key))?;
+        let created = cb::catching(scope, |scope| target.create_data_property(scope, key, value))?;
+        if !created {
+            return Err(cb::type_error(scope, "could not copy settings property"));
+        }
+    }
+    Ok(())
+}

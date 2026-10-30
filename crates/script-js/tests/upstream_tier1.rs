@@ -615,20 +615,6 @@ check(
         woodcuttingExports.resolveWoodcuttingLocation('Use Start Position', { x: 0, z: 0, level: 0 }) === null,
     'the woodcutting location exports are served natively'
 );
-await refuses('settingOptionLabel', () => settingsExports.settingOptionLabel());
-await refuses('GLOBAL_SETTINGS_CORE', () => Number(settingsExports.GLOBAL_SETTINGS_CORE));
-await refuses('NAV_SETTINGS', () => Number(settingsExports.NAV_SETTINGS));
-await refuses('GLOBAL_SETTINGS', () => Number(settingsExports.GLOBAL_SETTINGS));
-await refuses('MAP_PICKER_SETTINGS_NS', () => Number(settingsExports.MAP_PICKER_SETTINGS_NS));
-await refuses('MAP_PICKER_SETTINGS', () => Number(settingsExports.MAP_PICKER_SETTINGS));
-await refuses('LOADOUT_SETTINGS_NS', () => Number(settingsExports.LOADOUT_SETTINGS_NS));
-await refuses('LOADOUT_SETTINGS', () => Number(settingsExports.LOADOUT_SETTINGS));
-await refuses('PRICE_BOOK_SETTINGS_NS', () => Number(settingsExports.PRICE_BOOK_SETTINGS_NS));
-await refuses('PRICE_BOOK_SETTINGS', () => Number(settingsExports.PRICE_BOOK_SETTINGS));
-await refuses('resolveRunPolicy', () => runManagerExports.resolveRunPolicy());
-await refuses('shouldEnableRun', () => runManagerExports.shouldEnableRun());
-await refuses('loopReadyOrDetached', () => scriptRunnerExports.loopReadyOrDetached());
-await refuses('stopReasonOf', () => scriptRunnerExports.stopReasonOf());
 await refuses('BotHostImpl', () => new botHostExports.BotHostImpl());
 await refuses('PaintFrame', () => new paintExports.PaintFrame());
 await refuses('resolveDock', () => paintLogicExports.resolveDock());

@@ -201,6 +201,17 @@ pub(super) fn materialize_snapshot(
     } else if !had {
         set(&mut scope, obj, "bank_side_ready", falsy)?;
     }
+    if snap.has_guardian_active_event() {
+        let event = snap.guardian_active_event().unwrap_or("");
+        let value = if event.is_empty() {
+            none
+        } else {
+            js_string(&mut scope, event)?.into()
+        };
+        set(&mut scope, obj, "guardian_active_event", value)?;
+    } else if !had {
+        set(&mut scope, obj, "guardian_active_event", none)?;
+    }
     if snap.has_bank_generation() {
         let bank_generation = num(&mut scope, snap.bank_generation() as f64);
         set(&mut scope, obj, "bank_generation", bank_generation)?;

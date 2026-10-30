@@ -7,6 +7,10 @@ function addTickListener(cb) {
     tickListeners.add(cb);
     return () => tickListeners.delete(cb);
 }
+function addFrameListener(cb) {
+    const id = globalThis.__rs2b0t_native_event_on('frame', cb);
+    return () => globalThis.__rs2b0t_native_event_off(id);
+}
 
 globalThis.__rs2b0t_fire_tick_listeners = () => {
     for (const cb of tickListeners) {
@@ -32,6 +36,7 @@ export const BotHost = proxy('BotHost', {
         return snap().tick ?? 0;
     },
     addTickListener,
+    addFrameListener,
 });
 export class BotHostImpl {
     constructor() {

@@ -866,6 +866,13 @@ pub(super) fn sync_script_login(arm: &SlotArm, scripts: &ScriptWall, name: &str)
     arm.set_script_active(script_active(scripts, name));
 }
 
+fn active_guardian_event_name(status: &RandomStatus) -> Option<&str> {
+    status
+        .name
+        .as_deref()
+        .filter(|_| status.ours || status.handling)
+}
+
 /// Compact prior-frame guardian fact for catalog proof. The observe hook
 /// receives last frame's `client_frame` `RandomStatus`.
 fn bounded_guardian_fact(status: &RandomStatus) -> catalog_core::BoundedGuardian {
@@ -1798,6 +1805,18 @@ fn spawn_slot_thread(
                             #[cfg(feature = "memory-profile")]
                             memory::client_frame(c, name, hold, script_state);
                             slot_frame(c, name, frame_input);
+                            if matches!(
+                                script_state,
+                                Some(
+                                    script::RunState::Starting
+                                        | script::RunState::Running
+                                        | script::RunState::Paused,
+                                )
+                            ) {
+                                if let Some(slot) = script_slot(&slot_scripts, name) {
+                                    slot.lock().unwrap().on_client_frame();
+                                }
+                            }
                             if !mainland_sent && mainland && ready {
                                 api::interact::mainland_hop(c);
                                 mainland_sent = true;
@@ -1909,6 +1928,7 @@ fn spawn_slot_thread(
                                 hold,
                                 guardian_hold,
                                 status.ours,
+                                active_guardian_event_name(status),
                                 slot_canlight.as_deref(),
                                 Some(slot_input.as_ref()),
                                 Some(Arc::clone(&slot_cache)),
@@ -2266,6 +2286,32 @@ mod capacity_class_tests {
         assert_eq!(
             capacity_service_class(true, false, quiet),
             ServiceClass::Quiet
+        );
+    }
+}
+#[cfg(test)]
+mod active_guardian_event_tests {
+    use super::*;
+
+    #[test]
+    fn only_owned_or_handled_events_reach_script_context() {
+        let mut status = RandomStatus {
+            name: Some("abyssal guardian".into()),
+            ..RandomStatus::default()
+        };
+        assert_eq!(active_guardian_event_name(&status), None);
+
+        status.ours = true;
+        assert_eq!(
+            active_guardian_event_name(&status),
+            Some("abyssal guardian")
+        );
+
+        status.ours = false;
+        status.handling = true;
+        assert_eq!(
+            active_guardian_event_name(&status),
+            Some("abyssal guardian")
         );
     }
 }

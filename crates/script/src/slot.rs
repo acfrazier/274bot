@@ -27,8 +27,8 @@ use crate::ctx::ScriptCtx;
 use crate::native::recovery_hints::RecoveryHintsCell;
 use crate::native::seat_rows::{DecodedSeatBatch, SeatStartArgs};
 use crate::surface::{
-    PostedSnapshotFacts, SurfaceError, SurfaceFactory, SurfaceFamily, SurfaceKind, SurfaceReady,
-    SurfaceRun, SurfaceStart,
+    PostedSnapshotFacts, RuntimeControlRequest, RuntimeRunState, ScriptRuntimeContext, SurfaceError,
+    SurfaceFactory, SurfaceFamily, SurfaceKind, SurfaceReady, SurfaceRun, SurfaceStart,
 };
 use crate::watchdog::{ProgressWatchdog, Tile as WatchdogTile, WatchdogAction};
 use api::native_input::NativeInputAuthority;
@@ -572,6 +572,8 @@ pub struct SlotScript {
     runtime_generation: u64,
     last_settings_fp: Option<String>,
     native_input: Arc<NativeInputAuthority>,
+    /// Isolate-facing projection for the current Load run; replaced at spawn.
+    runtime_context: Arc<ScriptRuntimeContext>,
     /// Recovery hints retained across surface run restarts.
     recovery_hints: Arc<RecoveryHintsCell>,
 }
@@ -672,7 +674,7 @@ impl SlotScript {
             source_identity: None,
             runtime_generation: 0,
             last_settings_fp: None,
-            native_input: NativeInputAuthority::new(),
+            runtime_context: Arc::new(ScriptRuntimeContext::new(0)),
             recovery_hints: Arc::new(RecoveryHintsCell::new()),
         }
     }
@@ -1139,6 +1141,33 @@ impl SlotScript {
         }
     }
 
+    fn sync_runtime_state(&self) {
+        let state = match self.state {
+            RunState::Idle => match self.lifecycle_receipt.as_ref().map(|receipt| receipt.state) {
+                Some(ScriptTerminalState::Failed) => RuntimeRunState::Crashed,
+                Some(
+                    ScriptTerminalState::Stopped
+                    | ScriptTerminalState::Completed
+                    | ScriptTerminalState::Cancelled,
+                ) => RuntimeRunState::Stopped,
+                None => {
+                    let current = self.runtime_context.state();
+                    if current.aborted() {
+                        current
+                    } else {
+                        RuntimeRunState::Idle
+                    }
+                }
+            },
+            RunState::Starting | RunState::Running => RuntimeRunState::Running,
+            RunState::Paused if !self.want_run => RuntimeRunState::Paused,
+            RunState::Paused => RuntimeRunState::Running,
+            RunState::Stopping => RuntimeRunState::Stopping,
+            RunState::Error => RuntimeRunState::Crashed,
+        };
+        self.runtime_context.set_state(state);
+    }
+
     /// Spawn the surface and enter Starting. A queued Start already moved
     /// the runtime generation, so its respawn does not bump it again.
     fn spawn_surface(&mut self, start: SurfaceStart, bump: bool) -> Result<(), StartLoadError> {
@@ -1156,7 +1185,17 @@ impl SlotScript {
         let factory = self.factories[kind.index()]
             .as_ref()
             .ok_or(SurfaceError::NoFactory(kind))?;
-        let run = factory.spawn(&start, execution, Arc::clone(&self.recovery_hints))?;
+        let runtime_context = Arc::new(ScriptRuntimeContext::new(run_generation));
+        runtime_context.set_source_identity(self.source_identity.clone());
+        let mut run = factory.spawn_with_state(
+            &start,
+            execution,
+            Arc::clone(&self.recovery_hints),
+            self.local_state.clone(),
+        )?;
+        runtime_context.set_state(RuntimeRunState::Running);
+        run.bind_runtime_context(Arc::clone(&runtime_context));
+        self.runtime_context = runtime_context;
         self.surface = Some(run);
         self.surface_ready = false;
         self.surface_start = Some(start);
@@ -1165,6 +1204,7 @@ impl SlotScript {
         self.last_error = None;
         self.active_tick_error_generation = None;
         self.lifecycle_receipt = None;
+        self.runtime_context.set_stop_reason(None);
         self.ticks = 0;
         self.state = RunState::Starting;
         if bump {
@@ -1186,6 +1226,7 @@ impl SlotScript {
         self.surface_ready = false;
         self.setup_generation_base = None;
         self.state = RunState::Stopping;
+        self.sync_runtime_state();
         self.after_stop = after.clone();
         if matches!(after, AfterStop::Idle) {
             self.surface_start = None;
@@ -1222,6 +1263,7 @@ impl SlotScript {
         self.source_identity = None;
         self.runtime_generation = self.runtime_generation.wrapping_add(1);
         self.last_settings_fp = None;
+        self.runtime_context.set_state(RuntimeRunState::Stopped);
     }
 
     /// Resolve Start/Stop without blocking. The slot thread and UI pump
@@ -1269,6 +1311,7 @@ impl SlotScript {
                 }
             }
         }
+        self.sync_runtime_state();
         let script_cut = self
             .surface
             .as_ref()
@@ -1330,6 +1373,7 @@ impl SlotScript {
         self.last_error = Some(error);
         self.want_run = false;
         self.state = RunState::Error;
+        self.sync_runtime_state();
         self.runtime_generation = self.runtime_generation.wrapping_add(1);
         self.last_settings_fp = None;
     }
@@ -1348,6 +1392,7 @@ impl SlotScript {
                 self.watchdog.cancel_clear();
                 self.want_run = false;
                 self.state = RunState::Idle;
+                self.runtime_context.set_state(RuntimeRunState::Stopped);
             }
             AfterStop::Fail(e) => self.fail_setup(e),
             AfterStop::CutLimit(error) => self.finish_cut_limit(error),
@@ -1369,6 +1414,7 @@ impl SlotScript {
                 None => self.fail_setup("start: no retained identity".into()),
             },
         }
+        self.sync_runtime_state();
     }
 
     /// A setup that never reached Ready: no runtime ran, so the slot goes
@@ -1387,6 +1433,7 @@ impl SlotScript {
         self.last_settings_fp = None;
         self.want_run = false;
         self.state = RunState::Idle;
+        self.runtime_context.set_state(RuntimeRunState::Idle);
         self.settle_start(StartOutcome::Failed(e));
     }
 
@@ -1419,6 +1466,7 @@ impl SlotScript {
                 let _ = self.watchdog.set_frozen(true, Instant::now());
             }
             self.state = RunState::Paused;
+            self.sync_runtime_state();
         }
     }
 
@@ -1457,6 +1505,20 @@ impl SlotScript {
                 RunState::Running
             };
             self.native_input.resume();
+        }
+        self.sync_runtime_state();
+    }
+    /// Deliver one client-loop frame to a live surface. This is independent
+    /// of game ticks and remains gated by the slot-owned lifecycle.
+    pub fn on_client_frame(&mut self) {
+        if !matches!(
+            self.state,
+            RunState::Starting | RunState::Running | RunState::Paused
+        ) {
+            return;
+        }
+        if let Some(surface) = self.surface.as_deref_mut() {
+            surface.on_client_frame();
         }
     }
 
@@ -1599,6 +1661,7 @@ impl SlotScript {
         } else {
             RunState::Paused
         };
+        self.sync_runtime_state();
     }
 
     /// Re-gate a started script and invalidate deferred actions and snapshot
@@ -1786,6 +1849,8 @@ impl SlotScript {
 
     pub fn attach_source_identity(&mut self, key: impl Into<String>) {
         self.source_identity = Some(key.into());
+        self.runtime_context
+            .set_source_identity(self.source_identity.clone());
     }
 
     pub fn source_identity(&self) -> Option<&str> {
@@ -1951,6 +2016,7 @@ impl SlotScript {
         native: crate::native::snapshot_source::NativeFactsInput<'_>,
         force_banks: bool,
     ) -> bool {
+        self.sync_runtime_state();
         let Some(surface) = self.surface.as_mut() else {
             return false;
         };
@@ -4231,9 +4297,12 @@ impl SlotScript {
                     tick: receipt.tick,
                     reason: receipt.reason,
                 });
+                self.runtime_context
+                    .set_stop_reason(self.lifecycle_receipt.as_ref().map(|receipt| receipt.reason.clone()));
             }
             self.observe_lifecycle();
         }
+        self.sync_runtime_state();
         logs
     }
 

@@ -420,6 +420,9 @@ pub struct NativeFactsInput<'a> {
     /// The complete forest/result status page. `None` omits it; `Some` with
     /// empty slices explicitly clears both wire vectors.
     pub seat_page: Option<SeatPageInput<'a>>,
+    /// Guardian-owned or currently handled random event. `Some("")` explicitly
+    /// clears the last event; `None` leaves this delta field omitted.
+    pub guardian_active_event: Option<&'a str>,
 }
 
 /// A terminal select-only result. Its ordinal is resolved against Start's

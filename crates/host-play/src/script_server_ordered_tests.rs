@@ -231,6 +231,7 @@ impl Rig {
             false,
             false,
             None,
+            None,
             Some(&self.input),
             Some(cache),
             Some(Arc::clone(&self.names)),
