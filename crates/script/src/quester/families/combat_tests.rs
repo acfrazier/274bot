@@ -5555,7 +5555,11 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
         z: 3200,
         level: 0,
     };
-    let first_tile = here;
+    let first_tile = api::WorldTile {
+        x: here.x + 15,
+        z: here.z,
+        level: here.level,
+    };
     let second_tile = api::WorldTile {
         x: 3201,
         z: 3201,
@@ -5598,7 +5602,7 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
     snapshot.seed_ingame(2);
     snapshot.seed_inventory(Vec::new(), 28);
     snapshot.seed_ground_items(vec![
-        ground(1, "First drop", first_tile, 0),
+        ground(1, "First drop", first_tile, 15),
         ground(2, "Second drop", second_tile, 1),
     ]);
     let reach = seed_loot_route(&mut snapshot, here, 12);

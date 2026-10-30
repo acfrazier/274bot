@@ -1889,6 +1889,6 @@ mod make_retry_tests {
             Poll::Ready(Err(ActionError::Blocked(detail)))
                 if detail.as_ref() == "third make route failed"
         ));
-        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 3);
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
     }
 }

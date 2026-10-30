@@ -1903,34 +1903,46 @@ mod tests {
     }
     #[test]
     fn retry_replanning_failure_keeps_the_walk_receipt_detail() {
-        let target = tile(6, 5);
-        let mut seen = scene((3200, 3200), tile(5, 5), Vec::new());
+        let player = tile(5, 5);
+        let target = tile(7, 5);
+        let mut seen = scene((3200, 3200), player, Vec::new());
         seen.seed_ground_items(vec![GroundItemView {
             def: crate::quester::families::tests::def(1944, "Egg"),
             count: 1,
             actions: vec![Some("Take".into())],
             tile: target,
-            distance: 1,
+            distance: 2,
         }]);
-        let missing = scene((3200, 3200), tile(5, 5), Vec::new());
-        let mut reach = reach_in_phase(
-            seek_args(),
-            Phase::WaitWalk { door: None },
-            None,
-        );
+        let missing = scene((3200, 3200), player, Vec::new());
+        let scene = api::snapshot::SceneView {
+            available: true,
+            base_x: player.x,
+            base_z: player.z,
+            level: player.level,
+            width: 1,
+            height: 1,
+            collision_flags: vec![0],
+        };
+        let flood = api::query::SceneQuery::new(&scene, Some(player)).flood_reach();
+        let reach = api::query::pack_reach_query(&scene, flood.as_ref());
         let mut ledger = None;
-        assert!(with_tick(&seen, &mut ledger, 1, |tick| {
-            reach.walk = Some(
-                Walk::begin(
-                    walk_request(target, 1, None, tick.cx.evidence()),
-                    &mut tick.cx,
-                )
-                .unwrap(),
-            );
-            reach.walk_retry.action_submitted();
-            NativeMachine::poll(&mut reach, &mut tick.cx)
-        })
-        .is_pending());
+        let handle = crate::quester::families::tests::with_tick_reach(
+            &seen,
+            &reach,
+            &mut ledger,
+            1,
+            |tick| {
+                let handle = tick
+                    .actions
+                    .begin::<Reach>(seek_args(), &mut tick.cx)
+                    .unwrap();
+                assert!(matches!(
+                    &tick.cx.ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+                    HostEffect::Walk(_)
+                ));
+                handle
+            },
+        );
 
         post_walk_receipt(
             &mut ledger,
@@ -1938,18 +1950,30 @@ mod tests {
             WalkEnd::NoPath,
             Some("the specific first route failure"),
         );
-        assert!(with_tick(&seen, &mut ledger, 2, |tick| {
-            NativeMachine::poll(&mut reach, &mut tick.cx)
-        })
+        assert!(crate::quester::families::tests::with_tick_reach(
+            &seen,
+            &reach,
+            &mut ledger,
+            2,
+            |tick| tick.actions.poll(&handle, &mut tick.cx)
+        )
         .is_pending());
-        assert!(with_tick(&seen, &mut ledger, 2, |tick| {
-            NativeMachine::poll(&mut reach, &mut tick.cx)
-        })
+        assert!(crate::quester::families::tests::with_tick_reach(
+            &seen,
+            &reach,
+            &mut ledger,
+            2,
+            |tick| tick.actions.poll(&handle, &mut tick.cx)
+        )
         .is_pending());
         assert!(matches!(
-            with_tick(&missing, &mut ledger, 3, |tick| {
-                NativeMachine::poll(&mut reach, &mut tick.cx)
-            }),
+            crate::quester::families::tests::with_tick_reach(
+                &missing,
+                &reach,
+                &mut ledger,
+                3,
+                |tick| tick.actions.poll(&handle, &mut tick.cx)
+            ),
             Poll::Ready(Err(ActionError::Blocked(detail)))
                 if detail.as_ref() == "the specific first route failure"
         ));

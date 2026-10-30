@@ -7112,7 +7112,7 @@ fn talk_pre_dialogue_approach_retries_a_retryable_route_failure() {
     assert_eq!(retry_tick, 3);
     assert!(!run.started);
     assert!(run.dialogue.is_none());
-    assert_eq!(walk_request_count(&ledger), 2);
+    assert_eq!(walk_request_count(&ledger), 1);
 }
 
 #[test]

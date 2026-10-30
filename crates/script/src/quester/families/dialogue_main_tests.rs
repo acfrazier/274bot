@@ -1382,7 +1382,8 @@ fn dialogue_stationary_cook_approach_uses_router_route_ticks_at_fixed_ticks() {
         assert_eq!(live_walk_target(&ledger), Some(cook_tile));
         walks.observe(&ledger);
     }
-    // Tick 19 ends the route with the Cook still in place: one fresh plan.
+    // Tick 19 ends the first route with the Cook still in place. This failure
+    // retries the same tile; it does not spend the NPC-movement replan budget.
     assert!(with_tick(&six_tiles_away, &mut ledger, 19, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })
@@ -1406,18 +1407,41 @@ fn dialogue_stationary_cook_approach_uses_router_route_ticks_at_fixed_ticks() {
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
+    assert!(with_tick(&six_tiles_away, &mut ledger, 32, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(with_tick(&six_tiles_away, &mut ledger, 33, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
     assert!(matches!(
-        with_tick(&six_tiles_away, &mut ledger, 32, |tick| {
+        super::tests::last_route_effect(&ledger),
+        HostEffect::AssessWalk(request) if request.target == cook_tile
+    ));
+    super::tests::post_assess_receipt(&mut ledger, 33, 9, None);
+    assert!(with_tick(&six_tiles_away, &mut ledger, 34, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    walks.observe(&ledger);
+    assert_eq!(walks.count(), 3);
+    assert!(with_tick(&six_tiles_away, &mut ledger, 44, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        with_tick(&six_tiles_away, &mut ledger, 45, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Err(ActionError::Failed(reason)))
             if reason.as_ref()
-                == "dialogue approach failed: the walk did not reach the NPC by observed tick 32"
+                == "dialogue approach failed: the walk did not reach the NPC by observed tick 45"
     ));
 }
 
 #[test]
-fn dialogue_no_route_is_a_named_walk_failure_after_one_fresh_plan() {
+fn dialogue_no_route_retries_the_bounded_approach_budget() {
     let cook_id = content_npc_id("cook");
     let cook_tile = api::WorldTile {
         x: 0,
@@ -1468,8 +1492,18 @@ fn dialogue_no_route_is_a_named_walk_failure_after_one_fresh_plan() {
         "one fresh plan from the observed position"
     );
     super::tests::post_assess_receipt(&mut ledger, 3, 0, no_route);
+    assert!(with_tick(&before, &mut ledger, 4, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(with_tick(&before, &mut ledger, 5, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_ne!(last_assessment_id(&ledger), first);
+    super::tests::post_assess_receipt(&mut ledger, 5, 0, no_route);
     assert!(matches!(
-        with_tick(&before, &mut ledger, 4, |tick| {
+        with_tick(&before, &mut ledger, 6, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Err(ActionError::Failed(reason)))
@@ -1511,9 +1545,9 @@ fn begin_far_cook() -> (
 }
 
 /// The host never answers the route assessment (the stall seen in live run `d3c1`).
-/// The wait is 8 observed ticks, then one fresh plan, then a named failure.
+/// The wait is 8 observed ticks per plan, up to the shared three-attempt limit.
 #[test]
-fn dialogue_unanswered_route_assessment_is_asked_again_once_then_named_failure() {
+fn dialogue_unanswered_route_assessment_retries_until_the_budget_is_spent() {
     let (mut ledger, handle, before, _) = begin_far_cook();
     let first = last_assessment_id(&ledger);
     for observed in 2..9 {
@@ -1537,19 +1571,36 @@ fn dialogue_unanswered_route_assessment_is_asked_again_once_then_named_failure()
     })
     .is_pending());
     assert_ne!(last_assessment_id(&ledger), first);
+    let second = last_assessment_id(&ledger);
     for observed in 11..18 {
         assert!(with_tick(&before, &mut ledger, observed, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
     }
+    assert!(with_tick(&before, &mut ledger, 18, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    assert!(with_tick(&before, &mut ledger, 19, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_ne!(last_assessment_id(&ledger), second);
+    for observed in 20..27 {
+        assert!(with_tick(&before, &mut ledger, observed, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+    }
     assert!(matches!(
-        with_tick(&before, &mut ledger, 18, |tick| {
+        with_tick(&before, &mut ledger, 27, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Err(ActionError::Failed(reason)))
             if reason.as_ref()
-                == "dialogue approach failed: the router did not answer the route assessment by observed tick 18"
+                == "dialogue approach failed: the router did not answer the route assessment by observed tick 27"
     ));
     assert_eq!(walks_requested(&ledger), 0);
 }
@@ -1645,18 +1696,25 @@ fn dialogue_route_ending_short_with_a_still_npc_is_a_walk_failure_not_a_replan()
 
     super::tests::post_user_input_walk_receipt(&mut ledger, 6);
     ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
+    assert!(with_tick(&before, &mut ledger, 6, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(with_tick(&before, &mut ledger, 7, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
     assert!(matches!(
-        with_tick(&before, &mut ledger, 6, |tick| {
-            tick.actions.poll(&handle, &mut tick.cx)
-        }),
-        Poll::Ready(Err(ActionError::Failed(reason)))
-            if reason.as_ref()
-                == "dialogue approach failed: the walk ended before the NPC was in reach: Arrived"
+        super::tests::last_route_effect(&ledger),
+        HostEffect::AssessWalk(request)
+            if request.target.x == 7
+                && request.target.z == 5
+                && request.target.level == 0
     ));
     assert_eq!(
         walks.count(),
         2,
-        "the 24-replan cap was not spent on a still NPC"
+        "a still NPC does not spend the movement-replan budget"
     );
 }
 
@@ -2074,18 +2132,33 @@ fn dialogue_refusal_approach_failure_keeps_refusal_detail() {
         last: None,
     });
     super::tests::post_assess_receipt(&mut ledger, 3, 0, no_route);
-    for observed in [4, 5] {
-        assert!(with_tick(&missing, &mut ledger, observed, |tick| {
-            tick.actions.poll(&handle, &mut tick.cx)
-        })
-        .is_pending());
-    }
+    assert!(with_tick(&missing, &mut ledger, 4, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(with_tick(&missing, &mut ledger, 5, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
     assert!(matches!(
         super::tests::last_route_effect(&ledger),
         HostEffect::AssessWalk(request) if request.target == brundt_tile
     ));
     super::tests::post_assess_receipt(&mut ledger, 5, 0, no_route);
-    let terminal = with_tick(&missing, &mut ledger, 6, |tick| {
+    assert!(with_tick(&missing, &mut ledger, 6, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(with_tick(&missing, &mut ledger, 7, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        super::tests::last_route_effect(&ledger),
+        HostEffect::AssessWalk(request) if request.target == brundt_tile
+    ));
+    super::tests::post_assess_receipt(&mut ledger, 7, 0, no_route);
+    let terminal = with_tick(&missing, &mut ledger, 8, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     });
     assert!(
@@ -2127,6 +2200,9 @@ fn dialogue_terminal_walk_receipts_keep_typed_user_input_evidence_and_danger_err
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
+        let mut walks = WalkTally::default();
+        walks.observe(&ledger);
+        assert_eq!(walks.count(), 1);
         super::tests::post_walk_receipt_with(&mut ledger, 3, end.clone(), detail, refusal, None);
         let result = with_tick(&before, &mut ledger, 3, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
@@ -2151,8 +2227,14 @@ fn dialogue_terminal_walk_receipts_keep_typed_user_input_evidence_and_danger_err
             }
             _ => unreachable!("only terminal walk receipts are in this fixture"),
         }
-        assert_eq!(walks_requested(&ledger), 1, "terminal receipts must not retry");
-        assert_eq!(last_assessment_id(&ledger), assessment);
+        walks.observe(&ledger);
+        assert_eq!(walks.count(), 1, "terminal receipts must not retry");
+        assert!(
+            !ledger.as_ref().unwrap().outbox.iter().any(
+                |entry| matches!(&entry.effect, HostEffect::AssessWalk(_))
+            ),
+            "terminal walk receipts must not start a fresh route assessment"
+        );
     }
 }
 
@@ -2160,6 +2242,7 @@ fn dialogue_terminal_walk_receipts_keep_typed_user_input_evidence_and_danger_err
 fn dialogue_approach_exhaustion_keeps_the_last_walk_failure_detail() {
     let (mut ledger, handle, before, _) = begin_far_cook();
     super::tests::post_assess_receipt(&mut ledger, 1, 10, None);
+    let mut walks = WalkTally::default();
     for (attempt, assessment_tick, detail) in [
         (1, 1, "first route failure"),
         (2, 4, "second route failure"),
@@ -2177,6 +2260,7 @@ fn dialogue_approach_exhaustion_keeps_the_last_walk_failure_detail() {
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
+        walks.observe(&ledger);
         super::tests::post_walk_receipt(
             &mut ledger,
             walk_tick + 1,
@@ -2197,7 +2281,7 @@ fn dialogue_approach_exhaustion_keeps_the_last_walk_failure_detail() {
             ));
         }
     }
-    assert_eq!(walks_requested(&ledger), 3);
+    assert_eq!(walks.count(), 3);
 }
 
 /// A Cook that the live flood cannot reach after a server refusal: the
@@ -2290,10 +2374,11 @@ fn dialogue_refusal_recovery_keeps_the_refusal_when_the_router_finds_no_route() 
     assert!(poll_at(3).is_pending());
     assert!(poll_at(4).is_pending());
     super::tests::post_assess_receipt(&mut ledger, 4, 0, no_route);
+    assert!(poll_at(5).is_pending());
+    assert!(poll_at(6).is_pending());
+    super::tests::post_assess_receipt(&mut ledger, 6, 0, no_route);
     assert!(matches!(
-        super::tests::with_tick_reach(&refused, &reach, &mut ledger, 5, |tick| {
-            tick.actions.poll(&handle, &mut tick.cx)
-        }),
+        poll_at(7),
         Poll::Ready(Err(ActionError::Failed(reason)))
             if reason.as_ref()
                 == "server refused Talk-to: I can't reach that!; recovery walk failed: no route to the NPC: router found no route"
@@ -2677,9 +2762,8 @@ fn dialogue_approach_holds_the_route_while_the_npc_is_unseen_then_talks() {
     assert_eq!(live_walks(&ledger), 0);
 }
 
-/// The NPC never comes back: the route to its last seen tile ends, the one
-/// fresh plan runs, and the failure names the NPC, its last seen tile and the
-/// last walk's detail.
+/// The NPC never comes back: three routes to its last seen tile end, and the
+/// final error names the NPC, last seen tile and last route detail.
 #[test]
 fn dialogue_approach_unseen_npc_fails_with_its_name_and_last_seen_tile() {
     let (mut ledger, handle, before, npc_tile) = begin_far_aubury();
@@ -2734,15 +2818,44 @@ fn dialogue_approach_unseen_npc_fails_with_its_name_and_last_seen_tile() {
     .is_pending());
     walks.observe(&ledger);
     assert_eq!(walks.count(), 2);
-    super::tests::post_user_input_walk_receipt(&mut ledger, 11);
-    ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
+    super::tests::post_walk_receipt(
+        &mut ledger,
+        11,
+        crate::native::WalkEnd::Arrived,
+        None,
+    );
+    assert!(with_tick(&arrived, &mut ledger, 11, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(with_tick(&arrived, &mut ledger, 12, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
     assert!(matches!(
-        with_tick(&arrived, &mut ledger, 11, |tick| {
+        super::tests::last_route_effect(&ledger),
+        HostEffect::AssessWalk(request) if request.target == npc_tile
+    ));
+    super::tests::post_assess_receipt(&mut ledger, 12, 0, None);
+    assert!(with_tick(&arrived, &mut ledger, 13, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    walks.observe(&ledger);
+    assert_eq!(walks.count(), 3);
+    super::tests::post_walk_receipt(
+        &mut ledger,
+        14,
+        crate::native::WalkEnd::NoPath,
+        Some("last route failure"),
+    );
+    assert!(matches!(
+        with_tick(&arrived, &mut ledger, 14, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Err(ActionError::Failed(reason)))
             if reason.as_ref()
-                == "dialogue approach failed: the walk ended before the NPC was in reach: Arrived; \
+                == "dialogue approach failed: the walk ended before the NPC was in reach: last route failure; \
                     Aubury is not in view, last seen at (10, 5, level 0)"
     ));
     assert_eq!(sent_interactions(&ledger), 0, "no Talk-to to an unseen NPC");

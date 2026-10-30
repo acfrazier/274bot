@@ -1000,25 +1000,38 @@ mod tests {
             vec![],
         );
         let mut ledger = None;
-        let mut run = with_tick(&outside, &mut ledger, 1, |tick| {
-            let mut run = Thieve::begin(args(anchor, 2), &mut tick.cx).unwrap();
-            run.begin_walk(anchor, 2, &mut tick.cx).unwrap();
+        let mut action_id = 0;
+        let run = with_tick(&outside, &mut ledger, 1, |tick| {
+            let run = tick
+                .actions
+                .begin::<Thieve>(args(anchor, 2), &mut tick.cx)
+                .unwrap();
+            action_id = tick.cx.action_id;
+            tick.cx.emit(crate::shim::InteractReq::CloseModal).unwrap();
+            for _ in 0..3 {
+                assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
+            }
             run
         });
+        assert!(with_tick(&outside, &mut ledger, 2, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
         post_walk_receipt(
             &mut ledger,
-            2,
+            3,
             WalkEnd::NoPath,
             Some("first approach failed"),
         );
-        assert!(with_tick(&outside, &mut ledger, 2, |tick| {
-            run.poll(&mut tick.cx).is_pending()
-        }));
-        assert!(run.walk_retry.pending());
-
         assert!(with_tick(&outside, &mut ledger, 3, |tick| {
-            run.poll(&mut tick.cx).is_pending()
-        }));
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(run.walk_retry.pending());
+        assert!(with_tick(&outside, &mut ledger, 4, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
         let walk_count = |ledger: &Option<Box<crate::native::ledger::Ledger>>| {
             ledger
                 .as_ref()
@@ -1031,38 +1044,43 @@ mod tests {
         assert_eq!(walk_count(&ledger), 2, "the first retry is submitted");
         post_walk_receipt(
             &mut ledger,
-            4,
+            5,
             WalkEnd::NoPath,
             Some("first retry failed"),
         );
-        assert!(with_tick(&outside, &mut ledger, 4, |tick| {
-            run.poll(&mut tick.cx).is_pending()
-        }));
+        assert!(with_tick(&outside, &mut ledger, 5, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
         assert!(run.walk_retry.pending());
 
         let inside = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
-        assert!(with_tick(&inside, &mut ledger, 5, |tick| {
-            run.poll(&mut tick.cx).is_pending()
-        }));
+        assert!(with_tick(&inside, &mut ledger, 6, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
         assert!(!run.walk_retry.pending());
 
-        with_tick(&outside, &mut ledger, 6, |tick| {
+        with_tick(&outside, &mut ledger, 7, |tick| {
+            tick.cx.action_id = action_id;
             run.begin_walk(anchor, 2, &mut tick.cx).unwrap();
             run.walk_retry.action_submitted();
         });
         post_walk_receipt(
             &mut ledger,
-            7,
+            8,
             WalkEnd::NoPath,
             Some("separate approach failed"),
         );
-        assert!(with_tick(&outside, &mut ledger, 7, |tick| {
-            run.poll(&mut tick.cx).is_pending()
-        }));
+        assert!(with_tick(&outside, &mut ledger, 8, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
         assert!(
             run.walk_retry.pending(),
             "a separate approach receives a fresh retry allowance"
         );
+        assert_eq!(walk_count(&ledger), 3);
     }
 
 
