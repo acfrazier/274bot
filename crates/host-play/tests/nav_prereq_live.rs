@@ -432,7 +432,7 @@ fn make_fixture_with_seed_commands(
                                     level: here.2,
                                 };
                                 eprintln!(
-                                    "[DEBUG-nav-north] tick={} here={here:?} base=({}, {}) level={} loc={:?} layer={} typecode={} info={} operate={:?} actions={:?} before={before}",
+                                    "[DEBUG-nav-north] tick={} here={here:?} base=({}, {}) level={} loc={:?} layer={:?} typecode={} info={} operate={:?} actions={:?} before={before}",
                                     snapshot.tick(),
                                     client.map_build_base_x,
                                     client.map_build_base_z,
