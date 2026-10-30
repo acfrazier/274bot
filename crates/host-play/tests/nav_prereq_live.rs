@@ -360,7 +360,16 @@ fn make_fixture_with_seed_commands(
         api::game_data::for_revision(ClientRevision::R289).expect("selected R289 game data");
     let mut frame_commands = server_stages
         .iter()
-        .map(|(quest, stage)| format!("setvar {} {stage}", quest_varp(&selected, quest)))
+        .map(|(quest, stage)| {
+            if *quest == "priestperil" {
+                // Raw setvar leaves the login-time quest colour stale.
+                // The content's own seed proc updates both the stage and
+                // its real quest-list colour: debug_quests.rs2:327-331.
+                format!("~setpp {stage}")
+            } else {
+                format!("setvar {} {stage}", quest_varp(&selected, quest))
+            }
+        })
         .collect::<Vec<_>>();
     frame_commands.extend(seed_commands.iter().cloned());
     let seed_name = host_play::mint_live_names(1)
