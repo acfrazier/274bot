@@ -332,10 +332,7 @@ mod tests {
                     assert_eq!(policy.encoded_settings_max(), None);
                 }
                 NativeKind::CastNpc => {
-                    assert_eq!(
-                        policy.class(),
-                        RequestClass::Session(SessionFamily::Combat)
-                    );
+                    assert_eq!(policy.class(), RequestClass::Session(SessionFamily::Combat));
                     assert_eq!(policy.pause(), PausePolicy::Freeze);
                     assert_eq!(policy.takeover(), TakeoverPolicy::None);
                     assert_eq!(policy.reconnect(), ReconnectPolicy::Resume);

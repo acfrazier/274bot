@@ -1125,9 +1125,8 @@ impl<R> GameplaySeat<R> {
             // capability roots. Other Session roots block a new root,
             // including a Capability under Hunt's non-filtering foreground.
             // A busy CastNpc root alone reaches its no-dispatch false result.
-            let busy_cast_npc = kind == NativeKind::CastNpc
-                && api_foreground
-                && self.foreground().is_some();
+            let busy_cast_npc =
+                kind == NativeKind::CastNpc && api_foreground && self.foreground().is_some();
             if self.session().is_some() && !busy_cast_npc {
                 return self.refuse(id, Refusal::Busy);
             }
