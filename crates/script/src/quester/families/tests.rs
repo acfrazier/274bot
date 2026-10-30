@@ -5903,6 +5903,7 @@ fn assert_sheep_partial_spin(finish_target: bool) {
                             z,
                             id: Some(target),
                             action,
+                            ..
                         } if (*x, *z) == (here.x, here.z)
                             && *target == 2644
                             && action == "Spin"
