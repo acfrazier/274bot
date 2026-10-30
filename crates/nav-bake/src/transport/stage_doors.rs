@@ -1346,7 +1346,8 @@ impl Eval<'_> {
                         };
                         // A green journal row is canonical only when the
                         // authoritative domain makes completion exact.
-                        let gate = if facts.colour_authoritative && max == *complete
+                        let gate = if facts.colour_authoritative
+                            && max == *complete
                             && values.min == Some(*complete)
                             && values.max == Some(*complete)
                         {

@@ -863,7 +863,10 @@ fn run_brimhaven_kitchen(phoenix: bool) {
     assert_eq!(std::env::var("BOT_LIVE_NAME_PREFIX").as_deref(), Ok("npr2"));
     let evidence = required_path("NAV_KITCHEN_EVIDENCE");
     fs::create_dir_all(&evidence).unwrap();
-    let serial = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+    let serial = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
     let (account, password) = mint_live_entries(&mint_live_names(1)).pop().unwrap();
     let mut options = live_profile_options();
     options.port = Some(47594);
@@ -871,11 +874,17 @@ fn run_brimhaven_kitchen(phoenix: bool) {
     let profile = options.resolve(None).unwrap().bind().unwrap();
     let template = SharedClientTemplate::load(profile).unwrap();
     let world = template.world().unwrap();
-    let edge = world.graph.edges.iter().find(|edge| {
-        edge.loc_id == 2628 && edge.crossing_id().takeoff.z == 3190
-    }).expect("qualified kitchen door").clone();
+    let edge = world
+        .graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 2628 && edge.crossing_id().takeoff.z == 3190)
+        .expect("qualified kitchen door")
+        .clone();
     let crossing = edge.crossing_id();
-    let mut client = template.prepare_client((serial % i32::MAX as u128) as i32, true).unwrap();
+    let mut client = template
+        .prepare_client((serial % i32::MAX as u128) as i32, true)
+        .unwrap();
     client.draw = false;
     client.maininit();
     assert!(!client.error_loading);
@@ -885,12 +894,18 @@ fn run_brimhaven_kitchen(phoenix: bool) {
     let result = (|| -> Result<Value, String> {
         if !wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
             s.ingame() && s.attached() && s.scene_state() == 2
-        }) { return Err("initial scene timeout".into()); }
+        }) {
+            return Err("initial scene timeout".into());
+        }
         interact::mainland_hop(&mut client);
         assert!(interact::cheat(&mut client, "getvar tutorial").is_sent());
         if !wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
-            s.chat_lines().iter().any(|line| line.text.contains("get tutorial: 1000"))
-        }) { return Err("tutorial seed timeout".into()); }
+            s.chat_lines()
+                .iter()
+                .any(|line| line.text.contains("get tutorial: 1000"))
+        }) {
+            return Err("tutorial seed timeout".into());
+        }
         if !logout_and_wait(&mut client, &mut snapshot, &mut pump) {
             return Err("tutorial logout timeout".into());
         }
@@ -899,13 +914,25 @@ fn run_brimhaven_kitchen(phoenix: bool) {
         }
         if !wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
             s.ingame() && s.attached() && s.scene_state() == 2
-        }) { return Err("relogin scene timeout".into()); }
+        }) {
+            return Err("relogin scene timeout".into());
+        }
         // Account-local seeds only. Never create, replace, or open the world loc.
         let hero = if phoenix { 3 } else { 15 };
         let gang = if phoenix { 10 } else { 0 };
         let black_arm = if phoenix { 0 } else { 10 };
-        for (varp, value) in [("heroquest", hero), ("phoenixgang", gang), ("blackarmgang", black_arm)] {
-            let mark = snapshot.chat_lines().iter().map(|line| line.sequence).max().unwrap_or(0);
+        for (varp, value) in [
+            ("tutorial", scenario::tutorial::TUTORIAL_COMPLETE),
+            ("heroquest", hero),
+            ("phoenixgang", gang),
+            ("blackarmgang", black_arm),
+        ] {
+            let mark = snapshot
+                .chat_lines()
+                .iter()
+                .map(|line| line.sequence)
+                .max()
+                .unwrap_or(0);
             for command in [format!("setvar {varp} {value}"), format!("getvar {varp}")] {
                 if !interact::cheat(&mut client, &command).is_sent() {
                     return Err(format!("seed refused: {command}"));
@@ -913,42 +940,101 @@ fn run_brimhaven_kitchen(phoenix: bool) {
             }
             let expected = format!("get {varp}: {value}");
             if !wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
-                s.chat_lines().iter().any(|line| line.sequence > mark && line.text.contains(&expected))
-            }) { return Err(format!("missing fresh server witness: {expected}")); }
-        }
-        interact::seed_at(&mut client, crossing.takeoff.level, crossing.takeoff.x, crossing.takeoff.z);
-        if !wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
-            s.tile() == Some((crossing.takeoff.x, crossing.takeoff.z, crossing.takeoff.level))
-                && s.scene_state() == 2 && s.locs().iter().any(|loc| loc.id == 2628 && loc.tile == crossing.at)
-        }) { return Err("kitchen stand or real door absent".into()); }
-        let before_tick = snapshot.tick();
-        let mark = snapshot.chat_lines().iter().map(|line| line.sequence).max().unwrap_or(0);
-        let loc = snapshot.locs().iter().find(|loc| loc.id == 2628 && loc.tile == crossing.at).unwrap();
-        let sent = Interactions::new(&snapshot, &mut client).interact(
-            api::interact::OpTarget::Loc(loc),
-            api::interact::ActionSpec::Label("Open".into()),
-        ).is_sent();
-        if !sent { return Err("real Open interaction refused by client".into()); }
-        let settled = wait_for(&mut client, &mut snapshot, &mut pump, Duration::from_secs(20), |s| {
-            s.tick() > before_tick && if phoenix {
-                s.tile() == Some((crossing.to.x, crossing.to.z, crossing.to.level))
-            } else {
-                s.chat_lines().iter().any(|line| line.sequence > mark
-                    && line.text.contains("This door seems to be locked..."))
+                s.chat_lines()
+                    .iter()
+                    .any(|line| line.sequence > mark && line.text.contains(&expected))
+            }) {
+                return Err(format!("missing fresh server witness: {expected}"));
             }
+        }
+        interact::seed_at(
+            &mut client,
+            crossing.takeoff.level,
+            crossing.takeoff.x,
+            crossing.takeoff.z,
+        );
+        if !wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
+            s.tile()
+                == Some((
+                    crossing.takeoff.x,
+                    crossing.takeoff.z,
+                    crossing.takeoff.level,
+                ))
+                && s.scene_state() == 2
+                && s.locs()
+                    .iter()
+                    .any(|loc| loc.id == 2628 && loc.tile == crossing.at)
+        }) {
+            return Err("kitchen stand or real door absent".into());
+        }
+        let before_tick = snapshot.tick();
+        let mark = snapshot
+            .chat_lines()
+            .iter()
+            .map(|line| line.sequence)
+            .max()
+            .unwrap_or(0);
+        let loc = snapshot
+            .locs()
+            .iter()
+            .find(|loc| loc.id == 2628 && loc.tile == crossing.at)
+            .unwrap();
+        let sent = Interactions::new(&snapshot, &mut client)
+            .interact(
+                api::interact::OpTarget::Loc(loc),
+                api::interact::ActionSpec::Label("Open".into()),
+            )
+            .is_sent();
+        if !sent {
+            return Err("real Open interaction refused by client".into());
+        }
+        let settled = wait_for(
+            &mut client,
+            &mut snapshot,
+            &mut pump,
+            Duration::from_secs(20),
+            |s| {
+                s.tick() > before_tick
+                    && if phoenix {
+                        s.tile() == Some((crossing.to.x, crossing.to.z, crossing.to.level))
+                    } else {
+                        s.chat_lines().iter().any(|line| {
+                            line.sequence > mark
+                                && line.text.contains("This door seems to be locked...")
+                        })
+                    }
+            },
+        );
+        let refused = snapshot.chat_lines().iter().any(|line| {
+            line.sequence > mark && line.text.contains("This door seems to be locked...")
         });
-        let refused = snapshot.chat_lines().iter().any(|line| line.sequence > mark
-            && line.text.contains("This door seems to be locked..."));
-        let remained = snapshot.tile() == Some((crossing.takeoff.x, crossing.takeoff.z, crossing.takeoff.level));
-        let correct = settled && if phoenix { !refused } else { refused && remained };
+        let remained = snapshot.tile()
+            == Some((
+                crossing.takeoff.x,
+                crossing.takeoff.z,
+                crossing.takeoff.level,
+            ));
+        let correct = settled
+            && if phoenix {
+                !refused
+            } else {
+                refused && remained
+            };
         let receipt = json!({ "account": account, "phoenix": phoenix, "server": "Engine L through chardonnay 127.0.0.1:47594", "seeded": { "heroquest_188": hero, "phoenixgang_146": gang, "blackarmgang_145": black_arm }, "seed_authority": "fresh server getvar replies", "crossing": crossing, "before_tick": before_tick, "after_tick": snapshot.tick(), "after_tile": snapshot.tile(), "fresh_refusal": refused, "correct": correct, "chat": snapshot.chat_lines().iter().map(|line| (&line.text, line.sequence)).collect::<Vec<_>>() });
-        if !correct { return Err(format!("wrong kitchen result: {receipt}")); }
+        if !correct {
+            return Err(format!("wrong kitchen result: {receipt}"));
+        }
         Ok(receipt)
     })();
     let logout = logout_and_wait(&mut client, &mut snapshot, &mut pump);
-    if !logout { client.logout(); }
+    if !logout {
+        client.logout();
+    }
     let receipt = json!({ "result": result, "logout_observed": logout });
-    write_receipt(&evidence.join(format!("kitchen-{phoenix}-{account}-{serial}.json")), &receipt);
+    write_receipt(
+        &evidence.join(format!("kitchen-{phoenix}-{account}-{serial}.json")),
+        &receipt,
+    );
     println!("KITCHEN_LIVE {receipt}");
     assert!(logout, "live account must log out");
     assert!(result.is_ok(), "kitchen live proof failed: {receipt}");

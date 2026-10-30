@@ -237,7 +237,9 @@ pub(crate) fn arm_walk_on_with_prereq(
         .and_then(|name| {
             travellers
                 .lock()
-                .expect("a panic while holding the walk-arm registry invalidates its route ownership")
+                .expect(
+                    "a panic while holding the walk-arm registry invalidates its route ownership",
+                )
                 .get(name)
                 .cloned()
         })

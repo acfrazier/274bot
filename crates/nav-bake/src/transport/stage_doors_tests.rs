@@ -2338,7 +2338,11 @@ fn shared_journal_kitchen_door_requires_the_phoenix_signal_in_both_directions() 
     let selected =
         api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
     let (facts, identity) = selected.quest_identity_for_bake().expect("verified family");
-    let phoenix = facts.rows.iter().find(|row| row.varp == "phoenixgang").unwrap();
+    let phoenix = facts
+        .rows
+        .iter()
+        .find(|row| row.varp == "phoenixgang")
+        .unwrap();
     assert!(!phoenix.colour_authoritative);
     assert_eq!(phoenix.varp_id, 146);
     let quests = QuestSource {
@@ -2346,11 +2350,21 @@ fn shared_journal_kitchen_door_requires_the_phoenix_signal_in_both_directions() 
         facts: &facts,
     };
     let (graph, _) = derive_stage_with_quests(&fx, &[900], &quests);
-    let edges: Vec<_> = graph.edges.iter().filter(|edge| edge.loc_id == 900).collect();
+    let edges: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.loc_id == 900)
+        .collect();
     assert_eq!(edges.len(), 2, "both physical door directions survive");
     for edge in edges {
-        assert!(edge.varp_req.is_empty(), "hidden varps are not snapshot evidence");
-        assert!(edge.quest_req.is_empty(), "a shared journal colour is not membership");
+        assert!(
+            edge.varp_req.is_empty(),
+            "hidden varps are not snapshot evidence"
+        );
+        assert!(
+            edge.quest_req.is_empty(),
+            "a shared journal colour is not membership"
+        );
         let gates = edge.quest_gates.as_ref().expect("typed signal gates");
         assert_eq!(gates.gates().len(), 2);
         for gate in gates.gates() {

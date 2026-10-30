@@ -8174,22 +8174,19 @@ mod diagnostic_tests {
     #[test]
     fn compat_no_path_diagnoses_actionable_gates_before_reporting_failure() {
         let mut request = tiny_stage_request();
-        request.state = Some(WorldState::empty().with_establishable(Arc::from([
-            api::selected::StageWindow {
-                quest: api::selected::FactKey::new("quest"),
-                signal: api::selected::FactKey::new("stage"),
-                values: api::selected::InclusiveRange {
-                    min: Some(1),
-                    max: Some(1),
-                },
-            },
-        ])));
-        let mut job = RouteJob::prepare(
-            "test",
-            request,
-            RouteDemandKind::Walk { authority: None },
-        )
-        .unwrap();
+        request.state =
+            Some(
+                WorldState::empty().with_establishable(Arc::from([api::selected::StageWindow {
+                    quest: api::selected::FactKey::new("quest"),
+                    signal: api::selected::FactKey::new("stage"),
+                    values: api::selected::InclusiveRange {
+                        min: Some(1),
+                        max: Some(1),
+                    },
+                }])),
+            );
+        let mut job =
+            RouteJob::prepare("test", request, RouteDemandKind::Walk { authority: None }).unwrap();
         job.search_purpose = RouteSearchPurpose::Blocking;
         job.handle_search(SearchOutcome::BlockingZones(None))
             .unwrap();
