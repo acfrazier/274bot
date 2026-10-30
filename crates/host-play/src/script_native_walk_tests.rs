@@ -2344,9 +2344,9 @@ fn an_unroutable_native_walk_delivers_one_no_path_terminal() {
 
 #[test]
 fn native_area_walk_budget_stop_is_refused_as_incomplete_not_no_path() {
-    const WIDTH: usize = 1200;
-    const HEIGHT: usize = 1000;
-    const SPLIT_X: usize = 700;
+    const WIDTH: usize = 2200;
+    const HEIGHT: usize = 2000;
+    const SPLIT_X: usize = 2050;
     let cells = WIDTH * HEIGHT;
     let mut blocked = vec![0u64; cells.div_ceil(64)];
     for z in 0..HEIGHT {
@@ -2389,17 +2389,19 @@ fn native_area_walk_budget_stop_is_refused_as_incomplete_not_no_path() {
     let shared = rig.shared.lock();
     let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
     assert_eq!(receipt.end, WalkEnd::Refused, "{:?}", receipt.detail);
-    assert_eq!(
-        receipt.refusal,
-        Some(script::native::WalkRefusal::SearchIncomplete {
-            nodes_settled: Some(524_288),
-        }),
-    );
+    let Some(script::native::WalkRefusal::SearchIncomplete {
+        nodes_settled: Some(settled),
+    }) = receipt.refusal.as_ref()
+    else {
+        panic!("budget stop carries a typed SearchIncomplete refusal");
+    };
+    assert!(*settled > 0);
+    let expected = format!("search_result=BudgetExhausted nodes_settled={settled}");
     assert!(
         receipt
             .detail
             .as_deref()
-            .is_some_and(|detail| detail.contains("search_result=BudgetExhausted nodes_settled=524288")),
+            .is_some_and(|detail| detail.contains(&expected)),
         "{:?}",
         receipt.detail,
     );

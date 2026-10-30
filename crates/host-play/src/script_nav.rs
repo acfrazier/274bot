@@ -7597,7 +7597,7 @@ mod diagnostic_tests {
 
     #[test]
     fn first_goal_area_budget_stop_does_not_publish_supply_diagnosis() {
-        let (world, from, to) = first_goal_probe_world(1200, 1000, 700, 1199, true);
+        let (world, from, to) = first_goal_probe_world(2200, 2000, 2050, 2199, true);
         let search = nav_planner::router::find_first_with(
             &world.collision,
             &world.graph,
