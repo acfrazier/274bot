@@ -441,4 +441,149 @@ mod tests {
             Err(ActionError::Blocked(detail)) if detail.as_ref() == "no way out"
         ));
     }
+    fn biohazard_complete_gate() -> api::selected::QuestGate {
+        api::selected::QuestGate::Complete(api::selected::FactKey::new("biohazard"))
+    }
+
+    fn post_needs_evidence_receipt(
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+        tick: u64,
+    ) -> u64 {
+        let request_id = post_user_input_walk_receipt(ledger, tick);
+        let receipt = ledger
+            .as_mut()
+            .expect("ledger remains present")
+            .walk
+            .as_mut()
+            .expect("walk receipt exists");
+        receipt.end = WalkEnd::NeedsEvidence(std::sync::Arc::from([biohazard_complete_gate()]));
+        request_id
+    }
+
+    #[test]
+    fn unresolved_quest_evidence_waits_one_observed_game_tick() {
+        let run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        let target = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Walk>(
+                    crate::quester::families::reach::walk_request(
+                        target,
+                        1,
+                        None,
+                        EvidenceStamp {
+                            run,
+                            tick: 1,
+                            sequence: 1,
+                        },
+                    ),
+                    &mut tick.cx,
+                )
+                .unwrap()
+        });
+        post_needs_evidence_receipt(&mut ledger, 1);
+
+        for _ in 0..2 {
+            assert!(matches!(
+                with_tick(&snapshot, &mut ledger, 1, |tick| tick
+                    .actions
+                    .poll(&handle, &mut tick.cx)),
+                Poll::Pending
+            ));
+        }
+
+        let Poll::Ready(Ok(receipt)) =
+            with_tick(&snapshot, &mut ledger, 2, |tick| tick
+                .actions
+                .poll(&handle, &mut tick.cx))
+        else {
+            panic!("missing journal status must refuse after one observed tick");
+        };
+        assert!(matches!(
+            receipt.end,
+            WalkEnd::NeedsEvidence(gates) if gates.as_ref() == [biohazard_complete_gate()]
+        ));
+        assert!(
+            receipt
+                .failure_detail()
+                .is_some_and(|detail| detail.contains("quest-list status was not observed")),
+            "the bounded refusal names the missing journal observation"
+        );
+    }
+
+    #[test]
+    fn observed_quest_list_replans_with_a_fresh_route_request() {
+        let run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        let target = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let mut initial = GameSnapshot::new();
+        initial.seed_ingame(2);
+        let mut observed = GameSnapshot::new();
+        observed.seed_ingame(2);
+        observed.seed_quest_statuses(
+            vec![api::snapshot::QuestStatusView {
+                component_id: 42,
+                name: "Biohazard".to_owned(),
+                colour: 0xF80000,
+            }],
+            true,
+        );
+        let mut ledger = None;
+        let handle = with_tick(&initial, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Walk>(
+                    crate::quester::families::reach::walk_request(
+                        target,
+                        1,
+                        None,
+                        EvidenceStamp {
+                            run,
+                            tick: 1,
+                            sequence: 1,
+                        },
+                    ),
+                    &mut tick.cx,
+                )
+                .unwrap()
+        });
+        let original = post_needs_evidence_receipt(&mut ledger, 1);
+
+        assert!(matches!(
+            with_tick(&observed, &mut ledger, 2, |tick| tick
+                .actions
+                .poll(&handle, &mut tick.cx)),
+            Poll::Pending
+        ));
+
+        let queued = ledger
+            .as_ref()
+            .expect("ledger remains present")
+            .outbox
+            .last()
+            .expect("fresh route is queued");
+        assert_ne!(queued.request_id.get(), original);
+        let crate::native::HostEffect::Walk(request) = &queued.effect else {
+            panic!("fresh route must retain the walk request");
+        };
+        assert_eq!(request.required_after.tick, 2);
+        assert_eq!(request.target, target);
+    }
 }
