@@ -482,14 +482,19 @@ fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
     if matches!(cell.mode, Mode::LongApproach) {
         cell.origin = long_approach(&rig.world, &rig.snapshot, rig.members, cell.destination);
     }
-    rig.tele(cell.origin);
     if matches!(
         cell.mode,
         Mode::Hold | Mode::LongApproach | Mode::PoisonDuringHold
     ) {
+        // Reset the observed poison window while still at the safe setup tile.
+        // A relog at the crab origin would be blocked by the combat logout guard.
         rig.relog();
-        rig.tele(cell.origin);
-    } else {
+    }
+    rig.tele(cell.origin);
+    if !matches!(
+        cell.mode,
+        Mode::Hold | Mode::LongApproach | Mode::PoisonDuringHold
+    ) {
         rig.clear_from_observation();
     }
     let route = Arc::new(route(
