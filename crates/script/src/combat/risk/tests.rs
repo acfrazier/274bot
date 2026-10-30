@@ -994,7 +994,7 @@ fn replay_early_pass_refuses_onset() {
 }
 
 #[test]
-fn replay_no_crossing_walk_refuses_onset_on_failed_baseline() {
+fn replay_no_crossing_walk_admits_poison_despite_failed_baseline() {
     let tables = tables();
     let fx = Fixture::empty();
     let risks = RiskTables::build(&tables);
@@ -1004,19 +1004,21 @@ fn replay_no_crossing_walk_refuses_onset_on_failed_baseline() {
     no_food.poison = unattributed_onset();
     let assessment = assess(fx.route(&short_walk), &estimate, no_food);
     assert!(assessment.plan.crossings.is_empty());
-    assert_eq!(assessment.verdict, Verdict::Unsurvivable);
+    assert_eq!(assessment.verdict, Verdict::Survivable);
 
     let long_walk = route(10, 252);
     let mut food_is_not_credited = input(20, 30, 1, &tables);
     food_is_not_credited.poison = unattributed_onset();
     let assessment = assess(fx.route(&long_walk), &estimate, food_is_not_credited);
     assert!(assessment.plan.crossings.is_empty());
-    assert_eq!(assessment.verdict, Verdict::Unsurvivable);
+    assert_eq!(assessment.verdict, Verdict::Survivable);
     assert_eq!(assessment.hp_after, 20);
-    assert!(assessment
-        .supplies
-        .iter()
-        .all(|need| !matches!(need, SupplyNeed::Food { .. })));
+    assert!(
+        assessment
+            .supplies
+            .iter()
+            .all(|need| !matches!(need, SupplyNeed::Food { .. }))
+    );
 }
 
 #[test]
@@ -1406,7 +1408,7 @@ fn t5_1_each_zone_classifies_as_the_kind_its_pack_row_names() {
         "the first unsupported zone on the walk is the magic firewarrior"
     );
     assert!(
-        assessment.reason.contains("ikov-firewarrior: Some(Magic)"),
+        assessment.reason.contains("Route crosses Ice warrior at 10,100"),
         "{}",
         assessment.reason
     );
@@ -1860,11 +1862,13 @@ fn u3_c4_origin_rows_and_pending_damage_survive_an_empty_plan_endpoint() {
     )
     .unwrap();
     assert_eq!(hits, [(0, 6), (4, 12), (8, 6), (12, 6)]);
-    value.hp = 20;
-    value.hp_max = 40;
-    assert_eq!(assessment.verdict, Verdict::Unsurvivable);
-    assert_eq!(assessment.hp_after, 20);
-    assert!(assessment.bound > consts::DEATH_BOUND);
+    let mut low_hp = value;
+    low_hp.hp = 20;
+    low_hp.hp_max = 40;
+    let low_hp_assessment = assess(fx.route(&short), &cx, low_hp);
+    assert_eq!(low_hp_assessment.verdict, Verdict::Unsurvivable);
+    assert_eq!(low_hp_assessment.hp_after, 20);
+    assert!(low_hp_assessment.bound > consts::DEATH_BOUND);
 }
 
 fn edge(at: WorldTile, to: WorldTile, ticks: i32) -> TransportEdge {
@@ -1918,7 +1922,11 @@ fn r1_m2_mid_crossing_transport_hold_never_credits_food() {
     let path = fx.path(&walk);
     let mut value = input(40, 40, 6, &tables);
     value.pos = tile(85);
-    let assessment = assess(fx.route(&walk), &context(&fx, &risks, &tables), value);
+    let cx = context(&fx, &risks, &tables);
+    let assessment = assess(fx.route(&walk), &cx, value);
+    let mut no_food = input(40, 40, 0, &tables);
+    no_food.pos = tile(85);
+    let no_food_assessment = assess(fx.route(&walk), &cx, no_food);
     let mut hold_bites = Vec::new();
     let mut hold_damage = 0;
     let baseline = replay(
@@ -1945,9 +1953,14 @@ fn r1_m2_mid_crossing_transport_hold_never_credits_food() {
     );
     assert!(
         !baseline.passed,
-        "the unavailable +12 cannot save this crossing"
+        "the max-hit replay still fails despite the probabilistic no-food admission"
     );
-    assert_eq!(assessment.verdict, Verdict::Unsurvivable);
+    assert_eq!(
+        (assessment.verdict, assessment.bound),
+        (no_food_assessment.verdict, no_food_assessment.bound),
+        "inventory must not change P1-C's no-food bound"
+    );
+    assert_eq!(assessment.verdict, Verdict::Survivable);
 }
 
 #[test]
@@ -2233,7 +2246,10 @@ fn u1_u3_four_zone_crossing_keeps_distinct_ranges_rates_and_summed_hits() {
         |_, _, _, hit, _| damage += hit,
     )
     .unwrap();
-    assert_eq!(damage, 68); // 2*12 + 3*4 + 4*3 + 5*4.
+    assert_eq!(
+        damage, 37,
+        "replay stops at the crossing floor; the full own-rate bound remains 68"
+    );
     let assessed =
         assert_assessment_equivalence(fx.route(&walk), &context(&fx, &risk, &tables), value);
     assert_eq!(
@@ -2328,15 +2344,19 @@ fn u5_witnesses_unknown_overflow_and_multi_burst() {
         w,
     );
     let risk = RiskTables::build(&tables);
-    assert_eq!(
-        assert_assessment_equivalence(
-            overflow.route(&route),
-            &context(&overflow, &risk, &tables),
-            input(90, 90, 0, &tables),
-        )
-        .verdict,
-        Verdict::Unknown(UnknownWhy::Overflow)
+    let display_overflow_assessment = assert_assessment_equivalence(
+        overflow.route(&route),
+        &context(&overflow, &risk, &tables),
+        input(90, 90, 0, &tables),
     );
+    assert_eq!(
+        display_overflow_assessment.verdict,
+        Verdict::Unsurvivable,
+        "display saturation must not replace numeric death classification"
+    );
+    assert_eq!(display_overflow_assessment.crossings[0].volley, u8::MAX);
+    assert_eq!(display_overflow_assessment.volley, u8::MAX);
+    assert!(display_overflow_assessment.bound > consts::DEATH_BOUND);
 }
 
 #[test]
@@ -2418,9 +2438,10 @@ fn u9_assessment_allocation_and_cpu_measurement() {
     let mut wwm_risks = RiskTables::build(&tables);
     for ident in &wwm_ids {
         let fact = *wwm_risks.npc(*ident).expect("selected NPC fact");
+        // Keep the 19-kind synthetic workload above the 100-attack floor.
         *wwm_risks.npc_mut(*ident).expect("selected NPC fact") = KindRisk::new(
             6,
-            4,
+            3,
             9,
             1,
             Style::Melee,
