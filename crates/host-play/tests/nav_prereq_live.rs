@@ -1402,9 +1402,7 @@ fn observed_quest_stage(fixture: &LiveFixture, quest: &str, stage: i32) -> serde
 }
 
 fn drezel_advice_page_matches(texts: &[String]) -> bool {
-    texts
-        .join("\n")
-        .contains("I cannot let you pass without warning you.")
+    api::snapshot::chat_page_matches(texts, "I cannot let you pass without warning you.")
 }
 
 #[test]
