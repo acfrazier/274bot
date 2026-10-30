@@ -903,7 +903,7 @@ fn event(point: test_hooks::RenderTestPoint) {
 fn bridge(point: client::render::backend::gpu::test_hooks::SceneTestPoint) {
     use client::render::backend::gpu::test_hooks::SceneTestPoint;
     match point {
-        SceneTestPoint::AfterAdmission => {}
+        SceneTestPoint::AfterAdmission | SceneTestPoint::VertexCoordinateOverflow => {}
         SceneTestPoint::BeforeTerminal => event(test_hooks::RenderTestPoint::BeforeTerminal),
         SceneTestPoint::OverlayEntry => event(test_hooks::RenderTestPoint::OverlayEntry),
     }
