@@ -12,94 +12,94 @@ pub(super) fn read<'s>(
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let method = js_to_string(scope, method)?;
     let snapshot = snapshot(scope)?;
-    let facts = property(scope, snapshot.into(), "client_adapter")?;
+    let facts = property(scope, snapshot, "client_adapter")?;
     match method.as_str() {
-        "worldTile" => world_tile(scope, snapshot.into()),
+        "worldTile" => world_tile(scope, snapshot),
         "serverTile" => property(scope, facts, "server_tile"),
-        "selfSlot" => number_property(scope, snapshot.into(), "self_slot", -1),
-        "inventorySize" => number_property(scope, snapshot.into(), "inv_size", 0),
-        "inventory" => item_rows_property(scope, snapshot.into(), "inv"),
-        "bankSideItems" => item_rows_property(scope, snapshot.into(), "bank_side"),
+        "selfSlot" => number_property(scope, snapshot, "self_slot", -1),
+        "inventorySize" => number_property(scope, snapshot, "inv_size", 0),
+        "inventory" => item_rows_property(scope, snapshot, "inv"),
+        "bankSideItems" => item_rows_property(scope, snapshot, "bank_side"),
         "bankItems" => {
             let component = object_i32(scope, facts, "bank_com_id")?.unwrap_or(-1);
             if component >= 0 {
-                item_rows_property(scope, snapshot.into(), "bank")
+                item_rows_property(scope, snapshot, "bank")
             } else {
                 Ok(empty_array(scope).into())
             }
         }
-        "sceneState" => number_property(scope, snapshot.into(), "scene_state", 0),
-        "ingame" => bool_property_value(scope, snapshot.into(), "ingame"),
-        "npcs" => property(scope, snapshot.into(), "npcs"),
-        "locs" => property(scope, snapshot.into(), "locs"),
-        "players" => property(scope, snapshot.into(), "players"),
-        "groundItems" => property(scope, snapshot.into(), "ground"),
-        "equipment" => item_rows_property(scope, snapshot.into(), "equipment"),
-        "modals" => modals(scope, snapshot.into()),
+        "sceneState" => number_property(scope, snapshot, "scene_state", 0),
+        "ingame" => bool_property_value(scope, snapshot, "ingame"),
+        "npcs" => property(scope, snapshot, "npcs"),
+        "locs" => property(scope, snapshot, "locs"),
+        "players" => property(scope, snapshot, "players"),
+        "groundItems" => property(scope, snapshot, "ground"),
+        "equipment" => item_rows_property(scope, snapshot, "equipment"),
+        "modals" => modals(scope, snapshot),
         "chatContinueComId" => number_property(scope, facts, "chat_continue_component_id", -1),
-        "chatOptions" => chat_options(scope, snapshot.into()),
+        "chatOptions" => chat_options(scope, snapshot),
         "chatModalTexts" => modal_texts(
             scope,
             facts,
             "chat_modal_texts",
-            Some((snapshot.into(), "chat_modal_id")),
+            Some((snapshot, "chat_modal_id")),
         ),
-        "activeSideTab" => number_property(scope, snapshot.into(), "side_tab", -1),
-        "localPlayerName" => nullable_string_property(scope, snapshot.into(), "my_name"),
-        "combatLevel" => combat_level(scope, snapshot.into()),
-        "selfChat" => nullable_string_property(scope, snapshot.into(), "self_chat"),
-        "hintTile" => hint_tile(scope, snapshot.into(), facts),
-        "npcBox" => npc_box(scope, snapshot.into(), arg0),
-        "retaliateControls" => property(scope, snapshot.into(), "retaliate_controls"),
-        "inCombat" => bool_property_value(scope, snapshot.into(), "in_combat"),
-        "selfAnim" => number_property(scope, snapshot.into(), "self_anim", -1),
-        "selfFaceEntity" => self_face_entity(scope, snapshot.into()),
-        "energy" => number_property(scope, snapshot.into(), "run_energy", 0),
-        "varp" => varp(scope, snapshot.into(), arg0),
-        "stat" => stat(scope, snapshot.into(), arg0),
+        "activeSideTab" => number_property(scope, snapshot, "side_tab", -1),
+        "localPlayerName" => nullable_string_property(scope, snapshot, "my_name"),
+        "combatLevel" => combat_level(scope, snapshot),
+        "selfChat" => nullable_string_property(scope, snapshot, "self_chat"),
+        "hintTile" => hint_tile(scope, snapshot, facts),
+        "npcBox" => npc_box(scope, snapshot, arg0),
+        "retaliateControls" => property(scope, snapshot, "retaliate_controls"),
+        "inCombat" => bool_property_value(scope, snapshot, "in_combat"),
+        "selfAnim" => number_property(scope, snapshot, "self_anim", -1),
+        "selfFaceEntity" => self_face_entity(scope, snapshot),
+        "energy" => number_property(scope, snapshot, "run_energy", 0),
+        "varp" => varp(scope, snapshot, arg0),
+        "stat" => stat(scope, snapshot, arg0),
         "skillCount" => Ok(v8::Integer::new(scope, api::snapshot::stat_count() as i32).into()),
         "skillUsed" => skill_used(scope, arg0),
         "skillNames" => skill_names(scope),
         "skillUsedMask" => skill_used_mask(scope),
-        "statsReady" => bool_property_value(scope, snapshot.into(), "stats_ready"),
-        "weight" => number_property(scope, snapshot.into(), "weight", 0),
-        "chat" => chat(scope, snapshot.into(), arg0),
+        "statsReady" => bool_property_value(scope, snapshot, "stats_ready"),
+        "weight" => number_property(scope, snapshot, "weight", 0),
+        "chat" => chat(scope, snapshot, arg0),
         "playerCount" => number_property(scope, facts, "player_count", 0),
         "npcCount" => number_property(scope, facts, "npc_count", 0),
-        "cameraYaw" => camera_yaw(scope, snapshot.into()),
-        "cameraPitch" => number_property(scope, snapshot.into(), "camera_pitch", 128),
-        "takingDamage" => bool_property_value(scope, snapshot.into(), "taking_damage"),
-        "inventorySnapshotReady" => bool_property_value(scope, snapshot.into(), "inv_ready"),
+        "cameraYaw" => camera_yaw(scope, snapshot),
+        "cameraPitch" => number_property(scope, snapshot, "camera_pitch", 128),
+        "takingDamage" => bool_property_value(scope, snapshot, "taking_damage"),
+        "inventorySnapshotReady" => bool_property_value(scope, snapshot, "inv_ready"),
         "bankComId" => number_property(scope, facts, "bank_com_id", -1),
-        "bankSnapshotReady" => bank_snapshot_ready(scope, snapshot.into(), facts),
-        "bankSideSnapshotReady" => bank_side_snapshot_ready(scope, snapshot.into()),
-        "bankSnapshotGeneration" => bank_snapshot_generation(scope, snapshot.into(), facts),
+        "bankSnapshotReady" => bank_snapshot_ready(scope, snapshot, facts),
+        "bankSideSnapshotReady" => bank_side_snapshot_ready(scope, snapshot),
+        "bankSnapshotGeneration" => bank_snapshot_generation(scope, snapshot, facts),
         "runControls" => run_controls(scope, facts),
-        "toWorld" => to_world(scope, snapshot.into(), facts, arg0, arg1),
-        "toLocal" => to_local(scope, snapshot.into(), facts, arg0, arg1),
-        "collisionFlags" => collision_flags(scope, snapshot.into(), facts, arg0, arg1),
-        "lastWalkPathWorld" => last_walk_path_world(scope, facts, snapshot.into()),
+        "toWorld" => to_world(scope, snapshot, facts, arg0, arg1),
+        "toLocal" => to_local(scope, snapshot, facts, arg0, arg1),
+        "collisionFlags" => collision_flags(scope, snapshot, facts, arg0, arg1),
+        "lastWalkPathWorld" => last_walk_path_world(scope, facts, snapshot),
         "loginMessage" => string_property(scope, facts, "login_message"),
         "menuEntries" => string_array_property(scope, facts, "menu_entries"),
         "shopInv" => shop_inventory(scope, facts, arg0),
-        "puzzleBoardComId" => puzzle_board_field(scope, snapshot.into(), "component_id", -1),
-        "puzzleBoard" => puzzle_board_items(scope, snapshot.into()),
-        "puzzleBoardSize" => puzzle_board_field(scope, snapshot.into(), "size", 0),
-        "duelOffers" => duel_offers(scope, snapshot.into(), facts),
-        "tradeOfferOpen" => bool_property_value(scope, snapshot.into(), "trade_offer_open"),
-        "tradeConfirmOpen" => bool_property_value(scope, snapshot.into(), "trade_confirm_open"),
-        "tradeMyOffer" => item_rows_property(scope, snapshot.into(), "trade_mine"),
-        "tradeTheirOffer" => item_rows_property(scope, snapshot.into(), "trade_theirs"),
-        "tradeSidePack" => item_rows_property(scope, snapshot.into(), "trade_side"),
-        "tradePartner" => nullable_string_property(scope, snapshot.into(), "trade_partner"),
+        "puzzleBoardComId" => puzzle_board_field(scope, snapshot, "component_id", -1),
+        "puzzleBoard" => puzzle_board_items(scope, snapshot),
+        "puzzleBoardSize" => puzzle_board_field(scope, snapshot, "size", 0),
+        "duelOffers" => duel_offers(scope, snapshot, facts),
+        "tradeOfferOpen" => bool_property_value(scope, snapshot, "trade_offer_open"),
+        "tradeConfirmOpen" => bool_property_value(scope, snapshot, "trade_confirm_open"),
+        "tradeMyOffer" => item_rows_property(scope, snapshot, "trade_mine"),
+        "tradeTheirOffer" => item_rows_property(scope, snapshot, "trade_theirs"),
+        "tradeSidePack" => item_rows_property(scope, snapshot, "trade_side"),
+        "tradePartner" => nullable_string_property(scope, snapshot, "trade_partner"),
         "tradeConfirmOffers" => trade_confirm_offers(scope, facts),
         "tradeConfirmReady" => trade_confirm_ready(scope, facts),
         "closeButtonComId" => close_button(scope, facts, arg0),
         "mainModalTexts" => modal_texts(
             scope,
-            snapshot.into(),
+            snapshot,
             "main_modal_texts",
-            Some((snapshot.into(), "main_modal_id")),
+            Some((snapshot, "main_modal_id")),
         ),
         "ifModelObjId" => if_model_obj_id(scope, facts, arg0),
         "modalButtons" => modal_buttons(scope, facts, arg0),
@@ -108,22 +108,30 @@ pub(super) fn read<'s>(
         "selectButtonByVarp" => select_button_by_varp(scope, facts, arg0, arg1, arg2),
         "selectButtonLabelsByVarp" => select_button_labels_by_varp(scope, facts, arg0, arg1),
         "mainModalButtonNearText" => {
-            main_modal_button_near_text(scope, snapshot.into(), facts, arg0)
+            main_modal_button_near_text(scope, snapshot, facts, arg0)
         }
-        "mainSkillMultiItems" => main_skill_multi_items(scope, snapshot.into()),
-        "questStatuses" => quest_statuses(scope, snapshot.into(), facts),
-        "sideTabInterface" => side_tab_interface(scope, snapshot.into(), arg0),
+        "mainSkillMultiItems" => main_skill_multi_items(scope, snapshot),
+        "questStatuses" => quest_statuses(scope, snapshot, facts),
+        "sideTabInterface" => side_tab_interface(scope, snapshot, arg0),
         "attached" => bool_property_value(scope, facts, "attached"),
         "mapBuildBase" => map_build_base(scope, facts),
-        "modalCloseObservation" => modal_close_observation(scope, snapshot.into(), facts),
+        "modalCloseObservation" => modal_close_observation(scope, snapshot, facts),
         "ifText" => if_text(scope, facts, arg0),
-        "countDialogOpen" => bool_property_value(scope, snapshot.into(), "count_dialog_open"),
-        "makeProducts" => make_products(scope, snapshot.into()),
-        "overlayPosWorld" => overlay_pos_world(scope, facts, arg0, arg1, arg2, arg3, arg4, false),
-        "projectAreaGameWorld" => {
-            overlay_pos_world(scope, facts, arg0, arg1, arg2, arg3, arg4, true)
-        }
-        "locBox" => loc_box(scope, snapshot.into(), facts, arg0, arg1),
+        "countDialogOpen" => bool_property_value(scope, snapshot, "count_dialog_open"),
+        "makeProducts" => make_products(scope, snapshot),
+        "overlayPosWorld" => overlay_pos_world(
+            scope,
+            facts,
+            [arg0, arg1, arg2, arg3, arg4],
+            false,
+        ),
+        "projectAreaGameWorld" => overlay_pos_world(
+            scope,
+            facts,
+            [arg0, arg1, arg2, arg3, arg4],
+            true,
+        ),
+        "locBox" => loc_box(scope, snapshot, facts, arg0, arg1),
         "itemIconPixels" => item_icon_pixels(scope, facts, arg0),
         _ => {
             let _ = (arg2, arg3, arg4);
@@ -629,7 +637,7 @@ fn skill_names<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::
         let index =
             u32::try_from(index).map_err(|_| "skill index exceeds V8 array limit".to_string())?;
         output
-            .set_index(scope, index, name.into())
+            .set_index(scope, index, name)
             .ok_or_else(|| PENDING.to_string())?;
     }
     Ok(output.into())
@@ -671,8 +679,7 @@ fn chat<'s>(
         return Ok(empty_array(scope).into());
     };
     let output = v8::Array::new(scope, 0);
-    let mut out_index = 0;
-    for index in 0..limit.min(lines.length()) {
+    for (out_index, index) in (0..limit.min(lines.length())).enumerate() {
         let line = lines
             .get_index(scope, index)
             .ok_or_else(|| PENDING.to_string())?;
@@ -687,9 +694,8 @@ fn chat<'s>(
         set_key(scope, result, "username", username);
         set_key(scope, result, "text", text);
         output
-            .set_index(scope, out_index, result.into())
+            .set_index(scope, out_index as u32, result.into())
             .ok_or_else(|| PENDING.to_string())?;
-        out_index += 1;
     }
     Ok(output.into())
 }
@@ -1717,13 +1723,10 @@ fn scene_fraction(value: f64) -> i32 {
 fn overlay_pos_world<'s>(
     scope: &mut v8::HandleScope<'s>,
     facts: v8::Local<'s, v8::Value>,
-    x: v8::Local<'s, v8::Value>,
-    z: v8::Local<'s, v8::Value>,
-    height: v8::Local<'s, v8::Value>,
-    u: v8::Local<'s, v8::Value>,
-    v: v8::Local<'s, v8::Value>,
+    arguments: [v8::Local<'s, v8::Value>; 5],
     area_game: bool,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
+    let [x, z, height, u, v] = arguments;
     let Some(context) = projection_context(scope, facts)? else {
         return Ok(v8::null(scope).into());
     };
@@ -2010,7 +2013,7 @@ fn loc_box_points<'s>(
         (-half_width, half_length),
     ];
     let top_height = loc.top_height;
-    let try_heights = [top_height.max(16), top_height.min(96).max(16), 48];
+    let try_heights = [top_height.max(16), top_height.clamp(16, 96), 48];
     for top in try_heights {
         let output = v8::Array::new(scope, 8);
         let mut output_index = 0;

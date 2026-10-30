@@ -994,7 +994,7 @@ pub(super) fn materialize_snapshot(
         let active_event: v8::Local<v8::Value> = if label.is_empty() {
             v8::null(&mut scope).into()
         } else {
-            js_string(&mut scope, label)?.into()
+            js_string(&mut scope, label)?
         };
         set(&mut scope, obj, "active_event", active_event)?;
     } else if !had {
@@ -1456,7 +1456,7 @@ fn widget_fact_array<'s, 'a>(
             ("target_base", row.target_base()),
         ] {
             let value: v8::Local<v8::Value> = match value {
-                Some(value) => js_string(scope, value)?.into(),
+                Some(value) => js_string(scope, value)?,
                 None => v8::null(scope).into(),
             };
             set(scope, object, key, value)?;
