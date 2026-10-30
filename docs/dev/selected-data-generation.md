@@ -58,7 +58,7 @@ The complete catalog source digests are in `provenance.server_ordered_inputs`.
 This exact read inventory is separate from the shared family, base, and debug input lists.
 Changes to server-ordered proof inputs do not change the existing quest or gathering digests.
 
-NPC numeric operations require a complete transform closure.
+Generic NPC numeric operations require a complete transform closure.
 Static transforms, scripted transforms, temporary types, and reversion all participate in that proof.
 For a visible temporary type, the closure first includes its possible base types.
 It then follows all forward transforms from those types.
@@ -75,6 +75,16 @@ If no local evidence file exists, the verifier writes freshly generated evidence
 A stale local evidence file fails the digest check.
 This development-only output is not shipped or loaded by the product.
 Unknown label callers and unsupported NPC parameters remain conservative analysis limits, not proved dynamic content.
+
+`KnifeArm` has a separate, narrower `knife_operations` allowlist for the three
+reviewed continuing NPC fishing methods: river lure, river bait, and lava eel.
+The generator joins their selected resource target types and operation slots to
+the authored OPNPC/APNPC handler fingerprints and their source spans. A menu
+label is not an operation proof. Missing or ambiguous handlers fail generation.
+At dispatch, the request must still match the posted NPC index, current type,
+tile, and NPC-info packet generation. This proof concerns that exact current
+type. It does not prove transform closure or admit generic numeric NPC actions.
+Ending fishing methods do not use an NPC click in the arm request.
 
 The API retains one immutable catalog with the selected game data.
 Its accessor requires the exact selected pin.
@@ -97,4 +107,5 @@ Run the extractor tests with the generation checks:
 ```bash
 bun tools/game-data/server-ordered.test.ts
 bun tools/game-data/npc-transforms.test.ts
+bun tools/game-data/knife-npc.test.ts
 ```

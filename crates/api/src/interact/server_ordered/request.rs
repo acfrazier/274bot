@@ -1046,9 +1046,9 @@ fn build_click(
                             .is_some_and(Option::is_some)
                 })
                 .ok_or(ServerOrderedError::StaleTarget)?;
-            if catalog
-                .npc_operation(reference.type_id, reference.operation)
-                .is_none()
+            if !catalog
+                .npc_transforms()
+                .admits_knife_operation(reference.type_id, reference.operation)
             {
                 return Err(ServerOrderedError::ContractUnavailable);
             }

@@ -258,6 +258,14 @@ impl<'a> SnapshotView<'a> {
         })
     }
 
+    /// Latest received NPC-info generation while the scene is ready.
+    ///
+    /// Exact NPC operations use this generation with the posted type, tile,
+    /// and index. A later NPC-info packet makes that reference stale.
+    pub fn npc_info_generation(&self) -> Option<u64> {
+        Some(self.scene_ready()?.gens().npc_info)
+    }
+
     /// Latest received packet generation for the inv-tab component while its
     /// item table is available.
     pub fn inventory_packet_generation(&self) -> Option<u64> {

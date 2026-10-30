@@ -16,6 +16,7 @@ import { extractQuestStartFacts, questStartContentFiles } from './extractors/que
 import { extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
 import { loadServerOrderedFacts } from './extractors/server-ordered.ts';
 import { extractNpcTransformClosure } from './extractors/npc-transforms.ts';
+import { knifeNpcOperations } from './extractors/knife-npc.ts';
 const root = path.resolve(import.meta.dirname, '../..');
 const expected = Object.fromEntries(revisions.map(spec => [spec.revision, {
     engine: spec.expectedEngine, content: spec.expectedContent,
@@ -205,6 +206,7 @@ async function verifyRevision(revision: number) {
     assertEqual(JSON.stringify(payload.dialogue_ui), JSON.stringify(extractDialogueUiFacts(pin.contentRoot)), `${revision} source-proven dialogue UI`);
     const contentId = spec.cacheIdentity.content_id;
     if (!contentId) throw new Error(`${revision}: selected content identity is missing`);
+    const gathering = extractGatheringFamily(pin.contentRoot);
     const npcEvidence = revision === 289 ? extractNpcTransformClosure(spec.engine, spec.content) : undefined;
     const npcOperations = npcEvidence ? runtimeNpcOperations(npcEvidence) : undefined;
     if (npcEvidence) {
@@ -223,7 +225,10 @@ async function verifyRevision(revision: number) {
             cacheId: spec.cacheIdentity.cache_id,
             contentId,
         }),
-        npc_transforms: npcOperations!,
+        npc_transforms: {
+            ...npcOperations!,
+            knife_operations: knifeNpcOperations(npcEvidence!, gathering.payload),
+        },
     } : undefined;
     assertEqual(JSON.stringify(payload.server_ordered), JSON.stringify(serverOrdered), `${revision} source-proven server-ordered catalog`);
     const serverOrderedInputs = npcEvidence ? serverOrderedProvenanceInputs(spec.engine, spec.content, npcEvidence.source_inputs) : undefined;
@@ -531,7 +536,6 @@ async function verifyRevision(revision: number) {
         if (packed !== row.id) throw new Error(`${revision}: equipment obj.pack mismatch ${JSON.stringify(row)} pack=${packed}`);
     }
     if (payload.gather_methods !== undefined || payload.gather_placements !== undefined || payload.provenance.placement_inputs !== undefined) throw new Error(`${revision}: gathering facts live in the gathering family, not the core asset`);
-    const gathering = extractGatheringFamily(pin.contentRoot);
     const upstream = familyInputs(spec, pinnedCommits);
     const familyFile = path.join(root, `crates/api/data/game-data/${revision}/gathering.json`);
     if (!fs.readFileSync(familyFile).equals(Buffer.from(familyBytes(upstream, gathering, 'gathering')))) throw new Error(`${revision}: gathering family differs from the writer extract`);

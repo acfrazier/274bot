@@ -49,6 +49,16 @@ impl super::wire::DecodeFact for NpcTransformAction {
     }
 }
 
+/// Current-type handler identity for the reviewed continuing fishing methods.
+/// This is not a transform-closure proof and never admits a generic NPC action.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct KnifeNpcAction {
+    npc_type_id: i32,
+    slot: u8,
+    operation_fingerprint: String,
+}
+
 /// The runtime subset of the generated NPC proof, shared by the selected catalog.
 ///
 /// ```compile_fail
@@ -60,6 +70,7 @@ pub struct NpcTransformEvidence {
     schema: u16,
     evidence_sha256: String,
     operations: Vec<NpcTransformAction>,
+    knife_operations: Vec<KnifeNpcAction>,
 }
 
 #[derive(Deserialize)]
@@ -69,6 +80,7 @@ pub(super) struct EvidenceWire {
     evidence_sha256: String,
     #[serde(deserialize_with = "super::wire::decode_list")]
     operations: Vec<NpcTransformAction>,
+    knife_operations: Vec<KnifeNpcAction>,
 }
 
 impl NpcTransformEvidence {
@@ -91,6 +103,14 @@ impl NpcTransformEvidence {
             .map(|index| &self.operations[index])
     }
 
+    pub(super) fn admits_knife_operation(&self, npc_type_id: i32, slot: u8) -> bool {
+        self.knife_operations
+            .binary_search_by_key(&(npc_type_id, slot), |action| {
+                (action.npc_type_id, action.slot)
+            })
+            .is_ok()
+    }
+
     pub(super) fn validate(&self) -> Result<(), ContractError> {
         if self.schema != 1
             || !is_digest(&self.evidence_sha256)
@@ -98,6 +118,14 @@ impl NpcTransformEvidence {
                 (rows[0].npc_type_id, rows[0].slot) >= (rows[1].npc_type_id, rows[1].slot)
             })
             || self.operations.iter().any(|action| {
+                action.npc_type_id < 0
+                    || !(1..=5).contains(&action.slot)
+                    || !is_digest(&action.operation_fingerprint)
+            })
+            || self.knife_operations.windows(2).any(|rows| {
+                (rows[0].npc_type_id, rows[0].slot) >= (rows[1].npc_type_id, rows[1].slot)
+            })
+            || self.knife_operations.iter().any(|action| {
                 action.npc_type_id < 0
                     || !(1..=5).contains(&action.slot)
                     || !is_digest(&action.operation_fingerprint)
@@ -129,7 +157,7 @@ mod tests {
     #[test]
     fn positive_rows_are_the_only_runtime_admission_authority() {
         let facts = decode(&format!(
-            r#"{{"schema":1,"evidence_sha256":"{}","operations":[{{"npc_type_id":7,"slot":2,"operation_fingerprint":"{}"}}]}}"#,
+            r#"{{"schema":1,"evidence_sha256":"{}","operations":[{{"npc_type_id":7,"slot":2,"operation_fingerprint":"{}"}}],"knife_operations":[]}}"#,
             "a".repeat(64),
             "b".repeat(64)
         ));
@@ -159,9 +187,23 @@ mod tests {
             ),
         ] {
             let facts = decode(&format!(
-                r#"{{"schema":1,"evidence_sha256":"{digest}","operations":{rows}}}"#
+                r#"{{"schema":1,"evidence_sha256":"{digest}","operations":{rows},"knife_operations":[]}}"#
             ));
             assert_eq!(facts.validate(), Err(ContractError::InvalidContract));
         }
+    }
+
+    #[test]
+    fn exact_knife_handler_proof_never_admits_a_generic_numeric_npc_operation() {
+        let facts = decode(&format!(
+            r#"{{"schema":1,"evidence_sha256":"{}","operations":[],"knife_operations":[{{"npc_type_id":309,"slot":1,"operation_fingerprint":"{}"}}]}}"#,
+            "a".repeat(64),
+            "b".repeat(64),
+        ));
+        assert_eq!(facts.validate(), Ok(()));
+        assert!(facts.admits_knife_operation(309, 1));
+        assert!(!facts.admits_knife_operation(309, 3));
+        assert!(!facts.admits_knife_operation(310, 1));
+        assert!(facts.operation(309, 1).is_none());
     }
 }
