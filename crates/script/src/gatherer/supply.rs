@@ -1160,27 +1160,37 @@ mod tests {
 
     #[test]
     fn tick_kit_preparation_does_not_decide_method_or_tool_applicability() {
+        let prepared = prepare(crate::native::SettingsBag::new());
         for (skill, method) in [
-            ("Woodcutting", None),
-            ("Mining", None),
-            ("Fishing", Some("fishing.category_633.op1")),
+            ("Woodcutting", "woodcutting.normal"),
+            ("Mining", "mining.copper"),
+            ("Fishing", "fishing.category_633.op1"),
         ] {
             let mut settings = crate::native::SettingsBag::new();
             settings.insert("skill".into(), json!(skill));
             settings.insert("tickMethod".into(), json!("Knife"));
-            if let Some(method) = method {
-                settings.insert("fishingMethod".into(), json!(method));
-            }
-            let prepared = prepare(settings);
-            let kit = prepared.supply.tick_kit.as_ref().unwrap();
+            let mut settings = GathererSettings::from_bag(&settings).unwrap();
+            let index = prepared
+                .catalog
+                .methods()
+                .iter()
+                .position(|row| row.id.0.as_ref() == method)
+                .unwrap();
+            // Exercise the supply boundary directly: the full card still
+            // rejects incomplete native methods for their existing reasons.
+            let supply = PreparedSupply::prepare(
+                &mut settings,
+                &prepared.selected,
+                &prepared.catalog,
+                &[index],
+            )
+            .unwrap();
+            let kit = supply.tick_kit.as_ref().unwrap();
             assert_eq!(kit.knife.name.as_ref(), "Knife");
             assert_eq!(kit.logs.name.as_ref(), "Logs");
             assert_ne!(kit.knife.id, kit.logs.id);
         }
-        assert!(prepare(crate::native::SettingsBag::new())
-            .supply
-            .tick_kit
-            .is_none());
+        assert!(prepared.supply.tick_kit.is_none());
     }
 
     #[test]
