@@ -105,8 +105,8 @@ fn export() -> Result<(), String> {
     let pin = selected
         .selected_pin()
         .map_err(|e| format!("selected R289 pin: {e:?}"))?;
-    let combat =
-        CombatTables::build(&selected).map_err(|e| format!("build R289 combat tables: {e:?}"))?;
+    let combat = CombatTables::build(std::sync::Arc::clone(&selected))
+        .map_err(|e| format!("build R289 combat tables: {e:?}"))?;
     let risks = RiskTables::build(&combat);
     let mut world = NavWorld::load_pack(&pack_path)
         .map_err(|e| format!("load selected navigation pack: {e:?}"))?;
@@ -391,8 +391,6 @@ fn load_guide_roots() -> Result<Value, String> {
             let file_path = directory.join(file);
             let bytes = fs::read(&file_path)
                 .map_err(|e| format!("read guide {}: {e}", file_path.display()))?;
-            let document: Value = serde_json::from_slice(&bytes)
-                .map_err(|e| format!("parse guide {}: {e}", file_path.display()))?;
             files.push(json!({
                 "id": entry["id"],
                 "path": file_path.display().to_string(),
@@ -1388,6 +1386,8 @@ fn guide_inputs(
     selected: &api::game_data::SelectedGameData,
 ) -> Result<Vec<CorpusInput>, String> {
     let mut out = Vec::new();
+    let (identities, _) = selected.quest_identity_for_bake()
+        .map_err(|error| format!("load selected seed quest identities: {error:?}"))?;
     for set in ["guide_25", "guide_67"] {
         let root = PathBuf::from(roots[set]["root"].as_str().unwrap_or_default());
         let index_path = root.join("crates/script/paths/289/index.json");
@@ -1440,7 +1440,7 @@ fn guide_inputs(
                 let fixture = match fixtures.entry(role_index) {
                     std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
                     std::collections::hash_map::Entry::Vacant(entry) => {
-                        entry.insert(GuideQualificationFixture::load(&id, &role, selected)?)
+                        entry.insert(GuideQualificationFixture::load(&id, &role, selected, &identities)?)
                     }
                 };
                 let sequence = (role_index, sequence_index);
@@ -1751,7 +1751,7 @@ fn export_record(
                             make_risk_input(profile, *hp, input.from, map_members, poison, worn);
                         let admission =
                             make_admission(risk_input, grants_for(world, &input.grant_names));
-                        assessment_json(route, world, combat, risks, selected, &admission).map(
+                        assessment_json(route, world, combat, risks, &admission).map(
                             |assessment| json!({ "variant":id,"hp":hp,"assessment":assessment }),
                         )
                     })
@@ -1789,7 +1789,6 @@ fn export_record(
                 worn,
                 combat,
                 risks,
-                selected,
             );
             json!(search)
         } else {
@@ -1895,7 +1894,6 @@ fn end_to_end_search(
     worn: [i16; 4],
     combat: &CombatTables,
     risks: &RiskTables,
-    selected: &api::game_data::SelectedGameData,
 ) -> Value {
     let targets = input.targets.as_slice();
     if targets.is_empty() {
@@ -2037,7 +2035,7 @@ fn end_to_end_search(
                     );
                     let admission =
                         make_admission(risk_input, grants_for(world, &input.grant_names));
-                    assessment_json(route, world, combat, risks, selected, &admission)
+                    assessment_json(route, world, combat, risks, &admission)
                         .map(|result| json!({"variant":id,"hp":hp,"assessment":result}))
                 })
                 .collect::<Vec<_>>()
@@ -2059,7 +2057,6 @@ fn assessment_json(
     world: &NavWorld,
     combat: &CombatTables,
     risks: &RiskTables,
-    selected: &api::game_data::SelectedGameData,
     admission: &Admission,
 ) -> Option<Value> {
     let assessment = admission::assess(route, world, admission);

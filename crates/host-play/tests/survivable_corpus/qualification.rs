@@ -24,6 +24,7 @@ impl GuideQualificationFixture {
         guide: &str,
         role: &str,
         selected: &SelectedGameData,
+        identities: &api::game_data::QuestIdentityFacts,
     ) -> Result<Self, String> {
         let root = env_path(
             "SURVIVABLE_SEED_ROOT",
@@ -158,9 +159,6 @@ impl GuideQualificationFixture {
                 location => return Err(format!("unknown seed item location {location}")),
             }
         }
-        let identities = selected
-            .quest_identity()
-            .ok_or("selected data has no quest identities")?;
         for quest in seed["completed_quests"]
             .as_array()
             .ok_or("seed completed_quests must be an array")?
