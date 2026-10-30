@@ -870,6 +870,9 @@ fn qualify_probability_poison_starts() {
     input.combat = Some(46);
     input.set_map_members(true);
     input.set_missing_facts(false);
+    input.set_unattributed(false);
+    input.set_input_locked(false);
+    input.set_overflow(false);
     let short = poison_start(
         &world,
         &state,
