@@ -34,11 +34,12 @@ type NpcBlock = {
     crushdefence: number;
     magicdefence: number;
     rangedefence: number;
-    strengthbonus: number | null;
-    rangebonus: number | null;
+    strengthbonus: number;
+    rangebonus: number;
+    max_dealt: number;
     undead: number | null;
-    attackrate: number | null;
-    poison_severity: number | null;
+    attackrate: number;
+    poison_severity: number;
     forcemulti: boolean;
     params: Map<string, string>;
 };
@@ -112,17 +113,6 @@ export function parseNpcFiles(content: string, revision: 274 | 289, engineNpcTyp
     const definitions = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/combat.param'));
     const stats = parseNpcStatDefaults(engineNpcTypeSource, revision);
     const defaultMaxrange = revision === 274 ? 7 : -1;
-    const defaultParam = (name: string) => {
-        const definition = definitions.get(name);
-        if (definition?.type !== undefined && definition.type.toLowerCase() !== 'int') {
-            throw new Error(`npc_names: ${name} is not an integer parameter`);
-        }
-        const value = parseParamInt(definition?.default, `${name} default`);
-        if (name === 'attackrate' && value !== null && (value < 0 || value > 255)) {
-            throw new Error(`npc_names: ${name} default is out of range: ${value}`);
-        }
-        return value;
-    };
     const attackbonus = requiredParamDefault(definitions, 'attackbonus');
     const rangeattack = requiredParamDefault(definitions, 'rangeattack');
     const magicattack = requiredParamDefault(definitions, 'magicattack');
@@ -131,11 +121,31 @@ export function parseNpcFiles(content: string, revision: 274 | 289, engineNpcTyp
     const crushdefence = requiredParamDefault(definitions, 'crushdefence');
     const magicdefence = requiredParamDefault(definitions, 'magicdefence');
     const rangedefence = requiredParamDefault(definitions, 'rangedefence');
-    const strengthbonus = defaultParam('strengthbonus');
-    const rangebonus = defaultParam('rangebonus');
-    const attackrate = defaultParam('attackrate');
-    const poisonSeverity = defaultParam('poison_severity');
-    const forcemulti = (defaultParam('npc_forcemulti') ?? 0) !== 0;
+    const strengthbonus = requiredParamDefault(definitions, 'strengthbonus');
+    const rangebonus = requiredParamDefault(definitions, 'rangebonus');
+    const attackrate = requiredParamDefault(definitions, 'attackrate');
+    if (attackrate < 0 || attackrate > 255) {
+        throw new Error(`npc_names: attackrate default is out of range: ${attackrate}`);
+    }
+    const poison_severity = requiredParamDefault(definitions, 'poison_severity');
+    const forcemulti = requiredParamDefault(definitions, 'npc_forcemulti') !== 0;
+    const max_dealt = requiredParamDefault(definitions, 'max_dealt');
+    const combatDefaults = {
+        attackbonus,
+        rangeattack,
+        magicattack,
+        stabdefence,
+        slashdefence,
+        crushdefence,
+        magicdefence,
+        rangedefence,
+        strengthbonus,
+        rangebonus,
+        attackrate,
+        poison_severity,
+        forcemulti,
+        max_dealt,
+    };
     const blocks = new Map<string, NpcBlock>();
     const files: string[] = [];
     for (const file of walkContentFiles(path.join(content, 'scripts'), '.npc')) {
@@ -176,9 +186,10 @@ export function parseNpcFiles(content: string, revision: 274 | 289, engineNpcTyp
                     rangedefence,
                     strengthbonus,
                     rangebonus,
+                    max_dealt,
                     undead: null,
                     attackrate,
-                    poison_severity: poisonSeverity,
+                    poison_severity,
                     forcemulti,
                     params: new Map(),
                 };
@@ -221,16 +232,17 @@ export function parseNpcFiles(content: string, revision: 274 | 289, engineNpcTyp
                 else if (param === 'crushdefence') current.crushdefence = requiredParamInt(rawValue, `${current.name}.crushdefence`);
                 else if (param === 'magicdefence') current.magicdefence = requiredParamInt(rawValue, `${current.name}.magicdefence`);
                 else if (param === 'rangedefence') current.rangedefence = requiredParamInt(rawValue, `${current.name}.rangedefence`);
-                else if (param === 'strengthbonus') current.strengthbonus = parseParamInt(rawValue, `${current.name}.strengthbonus`);
-                else if (param === 'rangebonus') current.rangebonus = parseParamInt(rawValue, `${current.name}.rangebonus`);
+                else if (param === 'strengthbonus') current.strengthbonus = requiredParamInt(rawValue, `${current.name}.strengthbonus`);
+                else if (param === 'rangebonus') current.rangebonus = requiredParamInt(rawValue, `${current.name}.rangebonus`);
                 else if (param === 'undead') current.undead = parseParamInt(rawValue, `${current.name}.undead`);
-                else if (param === 'poison_severity') current.poison_severity = parseParamInt(rawValue, `${current.name}.poison_severity`);
-                else if (param === 'npc_forcemulti') {
-                    const value = parseParamInt(rawValue, `${current.name}.npc_forcemulti`);
-                    if (value !== null) current.forcemulti = value !== 0;
-                } else if (param === 'attackrate') {
-                    const rate = parseCombatInt(rawValue, `${current.name}.attackrate`);
-                    if (rate !== null && (rate < 0 || rate > 255)) throw new Error(`npc_names: ${current.name}.attackrate is out of range: ${rawValue}`);
+                else if (param === 'poison_severity') current.poison_severity = requiredParamInt(rawValue, `${current.name}.poison_severity`);
+                else if (param === 'npc_forcemulti') current.forcemulti = requiredParamInt(rawValue, `${current.name}.npc_forcemulti`) !== 0;
+                else if (param === 'max_dealt') current.max_dealt = requiredParamInt(rawValue, `${current.name}.max_dealt`);
+                else if (param === 'attackrate') {
+                    const rate = requiredParamInt(rawValue, `${current.name}.attackrate`);
+                    if (rate < 0 || rate > 255) {
+                        throw new Error(`npc_names: ${current.name}.attackrate is out of range: ${rawValue}`);
+                    }
                     current.attackrate = rate;
                 }
             }
@@ -239,13 +251,8 @@ export function parseNpcFiles(content: string, revision: 274 | 289, engineNpcTyp
     return {
         blocks,
         files,
-        poisonSeverity,
-        forcemulti,
         stats,
-        combatBonusDefaults: {
-            attackbonus, rangeattack, magicattack,
-            stabdefence, slashdefence, crushdefence, magicdefence, rangedefence,
-        },
+        combatDefaults,
     };
 }
 
@@ -259,8 +266,7 @@ export function extractNpcNamesFacts(
     if (revision !== 274 && revision !== 289) throw new Error(`npc_names: unsupported revision ${revision}`);
     const pack = parsePack(requireGatherText(content, 'pack/npc.pack'));
     if (pack.size === 0) throw new Error('npc_names: empty pack/npc.pack');
-    const { blocks, files, poisonSeverity, forcemulti: defaultForcemulti, stats, combatBonusDefaults } =
-        parseNpcFiles(content, revision, engineNpcTypeSource);
+    const { blocks, files, stats, combatDefaults } = parseNpcFiles(content, revision, engineNpcTypeSource);
     const combatNpcs: CombatNpcSource[] = [];
     const rows = [...pack.entries()]
         .sort((a, b) => a[1] - b[1])
@@ -300,24 +306,25 @@ export function extractNpcNamesFacts(
                 damagetype: block?.damagetype ?? null,
                 strength: block?.strength ?? stats.strength,
                 ranged: block?.ranged ?? stats.ranged,
-                attackbonus: block?.attackbonus ?? combatBonusDefaults.attackbonus,
-                rangeattack: block?.rangeattack ?? combatBonusDefaults.rangeattack,
-                magicattack: block?.magicattack ?? combatBonusDefaults.magicattack,
-                stabdefence: block?.stabdefence ?? combatBonusDefaults.stabdefence,
-                slashdefence: block?.slashdefence ?? combatBonusDefaults.slashdefence,
-                crushdefence: block?.crushdefence ?? combatBonusDefaults.crushdefence,
-                magicdefence: block?.magicdefence ?? combatBonusDefaults.magicdefence,
-                rangedefence: block?.rangedefence ?? combatBonusDefaults.rangedefence,
-                strengthbonus: block?.strengthbonus ?? null,
-                rangebonus: block?.rangebonus ?? null,
+                attackbonus: block?.attackbonus ?? combatDefaults.attackbonus,
+                rangeattack: block?.rangeattack ?? combatDefaults.rangeattack,
+                magicattack: block?.magicattack ?? combatDefaults.magicattack,
+                stabdefence: block?.stabdefence ?? combatDefaults.stabdefence,
+                slashdefence: block?.slashdefence ?? combatDefaults.slashdefence,
+                crushdefence: block?.crushdefence ?? combatDefaults.crushdefence,
+                magicdefence: block?.magicdefence ?? combatDefaults.magicdefence,
+                rangedefence: block?.rangedefence ?? combatDefaults.rangedefence,
+                strengthbonus: block?.strengthbonus ?? combatDefaults.strengthbonus,
+                rangebonus: block?.rangebonus ?? combatDefaults.rangebonus,
+                max_dealt: block?.max_dealt ?? combatDefaults.max_dealt,
                 undead: block?.undead ?? null,
                 ap_attack: combat.ap_attack,
                 attack_kind: combat.attack_kind,
                 forced_max_hit: combat.forced_max_hit,
                 dragonfire: combat.dragonfire,
-                attackrate: block?.attackrate ?? null,
-                poison_severity: block ? block.poison_severity : poisonSeverity,
-                forcemulti: block?.forcemulti ?? defaultForcemulti,
+                attackrate: block?.attackrate ?? combatDefaults.attackrate,
+                poison_severity: block?.poison_severity ?? combatDefaults.poison_severity,
+                forcemulti: block?.forcemulti ?? combatDefaults.forcemulti,
                 bespoke: combat.bespoke,
                 counter_protect: combat.counter_protect,
             };

@@ -1232,10 +1232,19 @@ pub struct WeaponStyleFact {
     pub style: u8,
     pub attackrate: u8,
     pub category: u8,
+    #[serde(default)]
+    pub tab: Option<u8>,
     pub style_slot: u8,
     pub damagetype: u8,
     pub damagestyle: u8,
     pub style_bonus: (u8, u8, u8),
+}
+
+fn deserialize_required_max_dealt<'de, D>(deserializer: D) -> Result<Option<i32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    i32::deserialize(deserializer).map(Some)
 }
 
 /// Pack-joined NPC identity for Path compile (`npc:cook`).
@@ -1297,6 +1306,10 @@ pub struct NpcNameRow {
     pub forced_max_hit: Option<i32>,
     #[serde(default, deserialize_with = "deserialize_dragonfire")]
     pub dragonfire: Option<DragonfireKind>,
+    /// NPC damage cap from `npc_param(max_dealt)` (C `npc_combat.rs2:391-428`);
+    /// the selected `combat.param:159-162` default is 1000.
+    #[serde(deserialize_with = "deserialize_required_max_dealt")]
+    pub max_dealt: Option<i32>,
     #[serde(default)]
     pub attackrate: Option<i32>,
     #[serde(default)]
@@ -1346,14 +1359,10 @@ fn validate_combat_facts_version(version: Option<u32>) -> Result<(), GameDataErr
 fn preflight_combat_facts_version(reader: impl Read) -> Result<(), String> {
     let probe: CombatVersionProbe = serde_json::from_reader(reader)
         .map_err(|error| format!("generated game data decode: {error}"))?;
-    validate_combat_facts_version(
-        probe
-            .npc_names
-            .map(|facts| {
-                let _ = facts.rows;
-                facts.combat_facts_version
-            }),
-    )
+    validate_combat_facts_version(probe.npc_names.map(|facts| {
+        let _ = facts.rows;
+        facts.combat_facts_version
+    }))
     .map_err(|error| error.to_string())
 }
 
@@ -2628,14 +2637,14 @@ impl SelectedGameData {
         &self.weapon_styles
     }
 
-    /// PvP V0 worn combat bonuses, one row per obj with a `strengthbonus`
-    /// or `rangebonus` param (§3.3).
+    /// PvP V0 worn combat bonuses, one complete row per wearable obj with
+    /// selected attack/defence and strength/range params or their defaults.
     pub fn item_combat_bonus_rows(&self) -> &[ItemCombatBonus] {
         &self.item_combat_bonus
     }
 
-    /// PvP V0 worn combat bonus for one selected obj id, or `None` when the
-    /// obj carries neither param.
+    /// PvP V0 worn combat bonus for one selected wearable obj, or `None` for a
+    /// non-wearable or unknown obj id.
     pub fn item_combat_bonus(&self, obj_id: i32) -> Option<ItemCombatBonus> {
         self.item_combat_bonus
             .iter()

@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import { parseCombatScripts } from './extractors/combat.ts';
 
-const engineNpcTypeSource = 'export default class NpcType { stats = [1, 1, 1, 1, 1, 1]; }';
-const missingHitpointsEngineNpcTypeSource = 'export default class NpcType { stats = [1, 1, 1]; }';
+const engineNpcTypeSource = `export default class NpcType {
+    stats = [1, 1, 1, 1, 1, 1];
+}`;
+const missingHitpointsEngineNpcTypeSource = `export default class NpcType {
+    stats = [1, 1, 1];
+}`;
 
 const combatParams = `[strengthbonus]
 type=int
@@ -48,6 +52,9 @@ default=0
 [npc_forcemulti]
 type=int
 default=0
+[max_dealt]
+type=int
+default=1000
 `;
 
 const npcConfig = `[plain_attacker]
@@ -55,6 +62,7 @@ name=Plain attacker
 op1=Attack
 hitpoints=2
 param=stabdefence,-1
+param=max_dealt,3
 [explicit_zero]
 name=Explicit zero
 op1=Attack
@@ -64,6 +72,7 @@ strength=0
 hitpoints=0
 ranged=0
 magic=0
+param=max_dealt,0
 [explicit_value]
 name=Explicit value
 op1=Attack
@@ -143,6 +152,18 @@ for (const revision of [274, 289] as const) {
         `${revision}: omitted levels use the NpcType source default; hitpoints honors its explicit override`,
     );
     assert.equal(plain.attackbonus, 0, `${revision}: omitted attackbonus uses combat.param default 0`);
+    assert.deepEqual(
+        [
+            plain.strengthbonus,
+            plain.rangebonus,
+            plain.attackrate,
+            plain.poison_severity,
+            plain.forcemulti,
+            plain.max_dealt,
+        ],
+        [0, 0, 4, 0, false, 3],
+        `${revision}: omitted values use combat.param defaults and max_dealt keeps its explicit cap`,
+    );
     assert.equal(plain.rangeattack, 0);
     assert.equal(plain.magicattack, 0);
     assert.equal(plain.stabdefence, -1, `${revision}: signed NPC defence bonuses are preserved`);
@@ -155,6 +176,7 @@ for (const revision of [274, 289] as const) {
         [0, 0, 0, 0, 0, 0],
         `${revision}: explicit zero stats override the engine defaults`,
     );
+    assert.equal(zero.max_dealt, 0, `${revision}: explicit zero max_dealt is preserved`);
 
     const valued = row('explicit_value');
     assert.deepEqual(
@@ -162,6 +184,7 @@ for (const revision of [274, 289] as const) {
         [20, 18, 24, 33, 3, 4],
         `${revision}: explicit combat levels override the engine defaults`,
     );
+    assert.equal(valued.max_dealt, 1000, `${revision}: omitted max_dealt uses its declared default`);
 
     const bespoke = row('bespoke_attacker');
     assert.equal(bespoke.bespoke, true, `${revision}: a type-change attack stays bespoke`);
@@ -175,33 +198,73 @@ for (const revision of [274, 289] as const) {
         [1, 1, 1, 1, 1, 1],
         `${revision}: a pack row without a content block still uses engine stat defaults`,
     );
+    assert.deepEqual(
+        [
+            absent.strengthbonus,
+            absent.rangebonus,
+            absent.attackrate,
+            absent.poison_severity,
+            absent.forcemulti,
+            absent.max_dealt,
+        ],
+        [0, 0, 4, 0, false, 1000],
+        `${revision}: a pack row without a content block uses declared combat defaults`,
+    );
 }
 
-const missingAttackbonusDefault = fixture(
-    npcConfig,
-    combatParams.replace('[attackbonus]\ntype=int\ndefault=0', '[attackbonus]\ntype=int'),
-);
-try {
-    assert.throws(
-        () => extractNpcNamesFacts(missingAttackbonusDefault, 274, engineNpcTypeSource, scripts, maxHits),
-        /attackbonus combat\.param default is missing/,
-        'the generator rejects a missing required attackbonus content default',
-    );
-} finally {
-    fs.rmSync(missingAttackbonusDefault, { recursive: true, force: true });
-}
-// The same child-mode invocation exits 0 on the previous extractor and fails
-// on this one because the pinned NpcType source omits the hitpoints default.
-assert.throws(
-    () => execFileSync(process.execPath, [import.meta.filename, '--missing-hitpoints-child'], {
+function facts_missing_fact_fails_generation() {
+    const facts = extractNpcNamesFacts(content, 274, engineNpcTypeSource, scripts, maxHits);
+    const plain = facts.rows.find((row) => row.config === 'plain_attacker');
+    assert.ok(plain, 'plain attacker row exists');
+    assert.equal(plain.attackbonus, 0, 'omitted attackbonus uses its declared combat.param default');
+
+    const requiredDefaults = [
+        ['attackbonus', '0'],
+        ['rangeattack', '0'],
+        ['magicattack', '0'],
+        ['stabdefence', '0'],
+        ['slashdefence', '0'],
+        ['crushdefence', '0'],
+        ['magicdefence', '0'],
+        ['rangedefence', '0'],
+        ['strengthbonus', '0'],
+        ['rangebonus', '0'],
+        ['attackrate', '4'],
+        ['poison_severity', '0'],
+        ['npc_forcemulti', '0'],
+        ['max_dealt', '1000'],
+    ] as const;
+    for (const [name, value] of requiredDefaults) {
+        const expected = `[${name}]\ntype=int\ndefault=${value}`;
+        const missing = combatParams.replace(expected, `[${name}]\ntype=int`);
+        assert.notEqual(missing, combatParams, `${name} fixture default exists`);
+        const root = fixture(npcConfig, missing);
+        try {
+            assert.throws(
+                () => extractNpcNamesFacts(root, 274, engineNpcTypeSource, scripts, maxHits),
+                new RegExp(`${name} combat\\.param default is missing`),
+                `${name}: missing declared combat default fails generation`,
+            );
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    }
+
+    // The same child-mode invocation exits 0 on the previous extractor and fails
+    // on this one because the pinned NpcType source omits the hitpoints default.
+    const child = spawnSync(process.execPath, [import.meta.filename, '--missing-hitpoints-child'], {
         cwd: path.resolve(import.meta.dirname, '../..'),
         encoding: 'utf8',
-    }),
-    (error: unknown) => {
-        const failure = error as { status?: number; stderr?: string | Buffer };
-        return failure.status !== undefined
-            && failure.status !== 0
-            && /missing the engine default for hitpoints/.test(String(failure.stderr));
-    },
-    'missing engine hitpoints default fails in a subprocess even though the NPC row omits hitpoints',
-);
+    });
+    assert.ok(
+        child.status !== null && child.status !== 0,
+        `missing engine hitpoints default exits nonzero in a subprocess (status ${String(child.status)})`,
+    );
+    assert.match(
+        String(child.stderr),
+        /missing the engine default for hitpoints/,
+        'the subprocess reports the absent engine hitpoints default',
+    );
+}
+
+facts_missing_fact_fails_generation();

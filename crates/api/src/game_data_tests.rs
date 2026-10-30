@@ -129,9 +129,11 @@ fn unbound_selected_data_refuses_the_gathering_family() {
 }
 
 #[test]
-fn selected_combat_facts_reject_old_rows_before_combat_consumption() {
+fn facts_old_data_is_refused_by_version() {
     let mut old: serde_json::Value = serde_json::from_slice(RAW_289).unwrap();
-    let npc_names = old["npc_names"].as_object_mut().expect("generated NPC facts");
+    let npc_names = old["npc_names"]
+        .as_object_mut()
+        .expect("generated NPC facts");
     npc_names.remove("combat_facts_version");
     let rows = npc_names["rows"]
         .as_array_mut()
@@ -148,6 +150,7 @@ fn selected_combat_facts_reject_old_rows_before_combat_consumption() {
             "stabdefence",
             "slashdefence",
             "crushdefence",
+            "max_dealt",
             "magicdefence",
             "rangedefence",
         ] {
@@ -206,6 +209,18 @@ fn selected_combat_facts_reject_old_rows_before_combat_consumption() {
     .expect_err("a current-version row cannot omit a required combat fact");
     assert!(error.contains("missing field `attack`"), "{error}");
 
+    let mut incomplete: serde_json::Value = serde_json::from_slice(RAW_289).unwrap();
+    incomplete["npc_names"]["rows"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("max_dealt");
+    let error = SelectedGameData::decode(
+        serde_json::to_vec(&incomplete).unwrap().as_slice(),
+        ClientRevision::R289,
+    )
+    .expect_err("a current-version row cannot omit max_dealt");
+    assert!(error.contains("missing field `max_dealt`"), "{error}");
+
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).expect("selected game data");
         let facts = data.npc_combat_facts().expect("current NPC combat facts");
@@ -226,6 +241,26 @@ fn selected_combat_facts_reject_old_rows_before_combat_consumption() {
             ),
             (4, 0, 0, 18, 25, 19, -4, 20)
         );
+        for (config, expected) in [
+            ("macro_triffidseed_angry", 3),
+            ("macro_swarm", 0),
+            ("salarin_the_twisted", 0),
+        ] {
+            let npc = data.npc_by_config(config).expect("NPC damage-cap override");
+            assert_eq!(
+                npc.max_dealt,
+                Some(expected),
+                "{config}: explicit max_dealt"
+            );
+        }
+    }
+}
+#[test]
+fn facts_negative_bonus_is_signed() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected game data");
+        let halberd = data.item_combat_bonus(3190).expect("bronze halberd");
+        assert_eq!((halberd.magicattack, halberd.stabdefence), (-4, -1));
     }
 }
 
@@ -241,7 +276,17 @@ fn minimal_json(tail: &str) -> String {
                     "decoder_sources": []
                 }},
                 "items": [],
-                "npc_names": {"combat_facts_version": 1, "rows": []},
+                "npc_names": {{
+                    "combat_facts_version": 1,
+                    "rows": [{{
+                        "id": 1, "config": "test_npc", "ops": [], "size": 1,
+                        "wanderrange": 5, "maxrange": 7, "attackrange": 0, "huntrange": 0, "vislevel": 0,
+                        "hitpoints": 1, "attack": 1, "defence": 1, "magic": 1,
+                        "attackbonus": 0, "rangeattack": 0, "magicattack": 0,
+                        "stabdefence": 0, "slashdefence": 0, "crushdefence": 0,
+                        "magicdefence": 0, "rangedefence": 0, "max_dealt": 1000
+                    }}]
+                }},
                 "consumption": [],
                 "pickpocket": []
                 {tail}
@@ -516,21 +561,22 @@ fn combat_fact_rows_preserve_nullable_delays_stages_and_combat_inputs() {
     assert_eq!(spell.component_id, 1158);
     assert!(spell.autocast_selectable);
 
-    let npc: NpcNameRow = serde_json::from_str(
-        r#"{
-            "id":17,"config":"test_npc","display":"Test NPC","ops":["Attack"],
-            "size":1,"wanderrange":0,"maxrange":1,"attackrange":1,"huntrange":1,
-            "vislevel":0,"hitpoints":44,"attack":87,"defence":63,"magic":58,"damagetype":null,"strength":24,"ranged":3,
-            "attackbonus":-12,"rangeattack":-9,"magicattack":4,
-            "stabdefence":-3,"slashdefence":5,"crushdefence":2,"magicdefence":-7,"rangedefence":-8,
-            "strengthbonus":8,"rangebonus":4,"undead":1,"ap_attack":true,
-            "attack_kind":"mixed","forced_max_hit":24,"dragonfire":"chromatic",
-            "headicon":8,
-            "attackrate":6,"bespoke":true
-        }"#,
-    )
-    .unwrap();
+    let npc_json = r#"{
+        "id":17,"config":"test_npc","display":"Test NPC","ops":["Attack"],
+        "size":1,"wanderrange":0,"maxrange":1,"attackrange":1,"huntrange":1,
+        "vislevel":0,"hitpoints":44,"attack":87,"defence":63,"magic":58,"damagetype":null,"strength":24,"ranged":3,
+        "attackbonus":-12,"rangeattack":-9,"magicattack":4,
+        "stabdefence":-3,"slashdefence":5,"crushdefence":2,"magicdefence":-7,"rangedefence":-8,
+        "strengthbonus":8,"rangebonus":4,"undead":1,"ap_attack":true,
+        "attack_kind":"mixed","forced_max_hit":24,"dragonfire":"chromatic","max_dealt":3,
+        "headicon":8,"attackrate":6,"bespoke":true
+    }"#;
+    let npc: NpcNameRow = serde_json::from_str(npc_json).unwrap();
     assert_eq!((npc.attack, npc.defence, npc.magic), (87, 63, 58));
+    assert_eq!(npc.max_dealt, Some(3));
+    let zero_cap_json = npc_json.replace("\"max_dealt\":3", "\"max_dealt\":0");
+    let zero_cap_npc: NpcNameRow = serde_json::from_str(&zero_cap_json).unwrap();
+    assert_eq!(zero_cap_npc.max_dealt, Some(0));
     assert_eq!(
         (
             npc.attackbonus,
@@ -2364,12 +2410,17 @@ fn item_combat_bonus_matches_the_obj_params() {
     assert_eq!((steel_arrow.strengthbonus, steel_arrow.rangebonus), (0, 16));
     let halberd = data.item_combat_bonus(3204).expect("dragon halberd");
     assert_eq!((halberd.strengthbonus, halberd.rangebonus), (89, 0));
-    assert!(
-        data.item_combat_bonus(861).is_none(),
-        "magic shortbow carries neither bonus param"
+    let magic_shortbow = data.item_combat_bonus(861).expect("magic shortbow");
+    assert_eq!(
+        (
+            magic_shortbow.rangeattack,
+            magic_shortbow.strengthbonus,
+            magic_shortbow.rangebonus
+        ),
+        (69, 0, 0),
     );
-    assert_eq!(data.item_combat_bonus_rows().len(), 269);
-    // Every field of every row: a wrong bonus fails here.
+    assert_eq!(data.item_combat_bonus_rows().len(), 708);
+    // Keep the source-backed strength/range fixtures stable; the complete family also contains attack-only wearables.
     let expected: [(i32, i32, i32); 269] = [
         (35, 25, 0),
         (78, 0, 16),
@@ -2641,12 +2692,27 @@ fn item_combat_bonus_matches_the_obj_params() {
         (4068, 16, 0),
         (4086, -10, 0),
     ];
-    let actual: Vec<(i32, i32, i32)> = data
-        .item_combat_bonus_rows()
-        .iter()
-        .map(|row| (row.obj_id, row.strengthbonus, row.rangebonus))
-        .collect();
-    assert_eq!(actual, expected);
+    let mut expected_wearable = Vec::new();
+    let mut actual = Vec::new();
+    for &(obj_id, strengthbonus, rangebonus) in &expected {
+        let item = data.item_by_id(obj_id).expect("expected item");
+        if ![
+            item.wear_position,
+            item.wear_position_2,
+            item.wear_position_3,
+        ]
+        .into_iter()
+        .any(|position| position >= 0)
+        {
+            continue;
+        }
+        expected_wearable.push((obj_id, strengthbonus, rangebonus));
+        let row = data
+            .item_combat_bonus(obj_id)
+            .expect("wearable combat item");
+        actual.push((row.obj_id, row.strengthbonus, row.rangebonus));
+    }
+    assert_eq!(actual, expected_wearable);
 }
 
 #[test]

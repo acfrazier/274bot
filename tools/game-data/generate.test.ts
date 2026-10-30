@@ -278,7 +278,58 @@ const magic = path.join(content, 'scripts/skill_magic/configs');
 fs.mkdirSync(combat, { recursive: true });
 fs.mkdirSync(magic, { recursive: true });
 const combatParamFile = path.join(content, 'scripts/skill_combat/configs/combat.param');
-const combatParams = '[strengthbonus]\ntype=int\ndefault=0\n[rangebonus]\ntype=int\ndefault=0\n[attackbonus]\ntype=int\ndefault=0\n[stabattack]\ntype=int\ndefault=0\n[slashattack]\ntype=int\ndefault=0\n[crushattack]\ntype=int\ndefault=0\n[magicattack]\ntype=int\ndefault=0\n[rangeattack]\ntype=int\ndefault=0\n[stabdefence]\ntype=int\ndefault=0\n[slashdefence]\ntype=int\ndefault=0\n[crushdefence]\ntype=int\ndefault=0\n[magicdefence]\ntype=int\ndefault=0\n[rangedefence]\ntype=int\ndefault=0\n[attackrate]\ntype=int\ndefault=4\n[poison_severity]\ntype=int\ndefault=0\n[npc_forcemulti]\ntype=int\ndefault=0\n';
+const combatParams = `[strengthbonus]
+type=int
+default=0
+[rangebonus]
+type=int
+default=0
+[attackbonus]
+type=int
+default=0
+[stabattack]
+type=int
+default=0
+[slashattack]
+type=int
+default=0
+[crushattack]
+type=int
+default=0
+[magicattack]
+type=int
+default=0
+[rangeattack]
+type=int
+default=0
+[stabdefence]
+type=int
+default=0
+[slashdefence]
+type=int
+default=0
+[crushdefence]
+type=int
+default=0
+[magicdefence]
+type=int
+default=0
+[rangedefence]
+type=int
+default=0
+[attackrate]
+type=int
+default=4
+[poison_severity]
+type=int
+default=0
+[npc_forcemulti]
+type=int
+default=0
+[max_dealt]
+type=int
+default=1000
+`;
 fs.writeFileSync(combatParamFile, combatParams);
 fs.writeFileSync(path.join(combat, 'magic_combat_spells.dbrow'), `[magic_spell_wind_strike]
 data=name,Wind Strike
@@ -428,6 +479,7 @@ param=attackbonus,6
 param=stabdefence,-1
 param=undead,^true
 param=attackrate,6
+param=max_dealt,3
 param=poison_severity,15
 param=npc_forcemulti,^true
 param=attack_anim,test_attack_seq
@@ -440,6 +492,7 @@ wanderrange=0
 op1=Attack
 hitpoints=60
 param=attackrate,4
+param=max_dealt,0
 [zamorak_like]
 name=Zamorak Like
 wanderrange=6
@@ -605,6 +658,9 @@ for (const [facts, expected] of [
 assert.throws(() => extractNpcNamesFacts(content, 275, npcTypeSource289, combatScripts), /unsupported revision 275/);
 const testNpc = npcFacts.rows.find((row) => row.config === 'test_npc')!;
 assert.equal(testNpc.attackrate, 6);
+assert.equal(testNpc.max_dealt, 3);
+assert.equal(npcFacts.rows.find((row) => row.config === 'dragon_npc')?.max_dealt, 0);
+assert.equal(npcFacts.rows.find((row) => row.config === 'khazard_warlord')?.max_dealt, 1000);
 assert.equal(testNpc.headicon, 8);
 assert.equal(npcFacts.rows.find((row) => row.config === 'dragon_npc')?.headicon, undefined);
 assert.deepEqual(
@@ -4151,10 +4207,21 @@ const noOverrides: readonly SiteOverride[] = [];
     // an untyped fact.
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'pvp-facts-fixture-'));
     for (const [name, bytes] of [
-        ['pack/param.pack', '136=specwep\n137=sa_energy\n138=strengthbonus\n139=rangebonus\n'],
+        ['pack/param.pack', [
+            '136=specwep', '137=sa_energy', '138=strengthbonus', '139=rangebonus',
+            '140=stabattack', '141=slashattack', '142=crushattack', '143=magicattack', '144=rangeattack',
+            '145=stabdefence', '146=slashdefence', '147=crushdefence', '148=magicdefence', '149=rangedefence',
+        ].join('\n') + '\n'],
         ['pack/seq.pack', '1=puncture\n'],
         ['pack/spotanim.pack', '2=sp_attack_puncture_spotanim\n'],
-        ['scripts/skill_combat/configs/combat.param', '[specwep]\ntype=int\ndefault=0\n\n[sa_energy]\ntype=int\ndefault=1000\n'],
+        ['scripts/skill_combat/configs/combat.param', `${combatParams}[specwep]
+type=int
+default=0
+
+[sa_energy]
+type=int
+default=1000
+`],
     ] as const) {
         fs.mkdirSync(path.join(fixture, path.dirname(name)), { recursive: true });
         fs.writeFileSync(path.join(fixture, name), bytes);

@@ -54,10 +54,12 @@ Do not add runtime defaults for missing combat facts.
 
 The extractor reads all six NPC combat levels and the signed combat bonuses.
 It also reads attack intervals, weapon damage styles, and style bonuses.
-Each wearable item has a complete signed attack, defence, and strength bonus row.
+Each wearable item has signed per-style attack/defence bonuses plus strength and range bonuses.
 An omitted parameter uses only its declared content default.
 The extractor reads NPC stat defaults from the pinned engine decoder.
 Missing or malformed required facts stop generation.
+NPC rows also publish `max_dealt` and attack-rate, poison-severity, and multi-combat defaults from `combat.param`.
+Version-1 rows require attack, defence, magic, the signed attack/defence bonus fields, and `max_dealt`; missing keys fail API decoding rather than becoming zero.
 
 ## Server-ordered content contracts
 
