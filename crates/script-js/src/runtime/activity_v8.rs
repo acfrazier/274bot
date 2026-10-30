@@ -121,7 +121,7 @@ fn instance_of<'s>(
 ) -> JsResult<'s, bool> {
     let constructor = v8::Local::<v8::Function>::try_from(constructor)
         .map_err(|_| cb::type_error(scope, "ScriptActivity error constructor is unavailable"))?;
-    cb::catching(scope, |scope| value.instance_of(scope, constructor))
+    cb::catching(scope, |scope| value.instance_of(scope, constructor.into()))
 }
 
 fn activity_callback<'s>(
