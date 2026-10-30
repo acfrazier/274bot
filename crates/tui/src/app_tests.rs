@@ -1946,6 +1946,29 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             EXIT_UPPER,
         ),
     ];
+    fn zone_rows(rows: &[String], area: ratatui::layout::Rect) -> Vec<String> {
+        let inner = ratatui::widgets::Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .inner(area);
+        let mut in_zone_list = false;
+        rows.iter()
+            .skip(usize::from(inner.y))
+            .take(usize::from(inner.height))
+            .filter_map(|row| {
+                let line = row
+                    .chars()
+                    .skip(usize::from(inner.x))
+                    .take(usize::from(inner.width))
+                    .collect::<String>();
+                if !in_zone_list {
+                    in_zone_list = line.contains("PgUp/PgDn.");
+                    None
+                } else {
+                    Some(line)
+                }
+            })
+            .collect()
+    }
 
     let evidence_root =
         std::env::var_os("QUESTER_DANGER_CONSENT_TUI_EVIDENCE").map(std::path::PathBuf::from);
@@ -1965,7 +1988,7 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
         app.set_quester_start_zone_view(disclosure.shared_view());
         app.script_state = ScriptRunState::Error;
 
-        let mut pages = Vec::new();
+        let mut pages: Vec<Vec<String>> = Vec::new();
         let mut page_index = 0;
         let mut rows = draw(&mut app, width, height);
         let mut shown = text(&rows);
@@ -1990,7 +2013,7 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             !shown.contains("Prince Ali Rescue"),
             "only the selected Arthur queue is disclosed: {shown}"
         );
-        pages.push(shown.clone());
+        pages.push(zone_rows(&rows, app.script_area));
 
         if let Some(root) = &evidence_root {
             let directory = root.join("QUEST-DANGER-CONSENT");
@@ -2021,7 +2044,7 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
                 shown.contains("Start zone scope") && shown.contains("[Start t]"),
                 "{width}x{height}: controls stay visible while scrolling: {shown}"
             );
-            pages.push(shown.clone());
+            pages.push(zone_rows(&rows, app.script_area));
             if let Some(root) = &evidence_root {
                 std::fs::write(
                     root.join("QUEST-DANGER-CONSENT")
@@ -2032,15 +2055,26 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             }
         }
 
-        let normalized_pages = pages
-            .iter()
-            .map(|page| page.split_whitespace().collect::<Vec<_>>().join(" "))
-            .collect::<Vec<_>>();
+        let mut combined = Vec::new();
+        for page in pages {
+            let overlap = (1..=combined.len().min(page.len()))
+                .rev()
+                .find(|&overlap| {
+                    combined[combined.len() - overlap..] == page[..overlap]
+                })
+                .unwrap_or(0);
+            combined.extend(page.into_iter().skip(overlap));
+        }
+        let normalized = combined
+            .join(" ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         for (name, id, reason) in ZONES {
             let expected = format!("{name} [{id}] Guide reason: {reason}");
             assert!(
-                normalized_pages.iter().any(|page| page.contains(&expected)),
-                "{width}x{height}: missing selected zone and reason {expected}: {normalized_pages:#?}"
+                normalized.contains(&expected),
+                "{width}x{height}: missing selected zone and reason {expected}: {normalized}"
             );
         }
         assert_eq!(app.on_key(key(KeyCode::PageUp)), AppAction::None);
