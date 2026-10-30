@@ -1508,12 +1508,7 @@ fn step_walk(
             },
             Err(RouteError::NoPath) => match fallback() {
                 Ok(route) => crate::RouteOutcome::Routed(route),
-                Err(RouteError::BudgetExhausted) => crate::RouteOutcome::IncompleteSearch {
-                    search_result: crate::walk_plan::RouteSearchResultKind::BudgetExhausted {
-                        settled: None,
-                    },
-                },
-                Err(RouteError::NoPath) => crate::RouteOutcome::NoPath,
+                Err(_) => crate::RouteOutcome::NoPath,
             },
         }
     };
