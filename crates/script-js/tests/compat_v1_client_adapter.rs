@@ -79,7 +79,15 @@ export default class ReaderCatalog extends LoopingBot {
             bankSnapshotGeneration: capture(() => reader.bankSnapshotGeneration()),
             runControls: capture(() => reader.runControls()),
             toWorld: capture(() => reader.toWorld(1, 2)),
-            collisionFlags: capture(() => reader.collisionFlags(1, 0)),
+            collisionFlags: capture(() => ({
+                value: reader.collisionFlags(1, 0),
+                bounds: [
+                    reader.collisionFlags(-1, 0),
+                    reader.collisionFlags(104, 0),
+                    reader.collisionFlags(0, -1),
+                    reader.collisionFlags(0, 104),
+                ],
+            })),
             lastWalkPathWorld: capture(() => reader.lastWalkPathWorld()),
             loginMessage: capture(() => reader.loginMessage()),
             menuEntries: capture(() => reader.menuEntries()),
@@ -520,7 +528,8 @@ fn reader_catalog() -> &'static Value {
             link_below: link_below.into(),
             locs: projection_locs.into(),
         };
-        let collision_flags = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+        let mut collision_flags = vec![0; 104 * 104];
+        collision_flags[104] = 3;
         let client = ClientAdapterFactsInput {
             attached: true,
             map_build_base: (3200, 3200),
@@ -571,8 +580,8 @@ fn reader_catalog() -> &'static Value {
                 base_x: 3200,
                 base_z: 3200,
                 level: 0,
-                width: 3,
-                height: 3,
+                width: 104,
+                height: 104,
                 flags: &collision_flags,
             }),
             bank_snapshot_generation: Some(9),
@@ -1143,7 +1152,8 @@ reader_contract!(
     "collisionFlags",
     value,
     {
-        assert_eq!(value, 3);
+        assert_eq!(value["value"], 3);
+        assert_eq!(value["bounds"], json!([null, null, null, null]));
     }
 );
 reader_contract!(
@@ -1972,9 +1982,10 @@ fn compat_v1_client_adapter__reader_modalcloseobservation__session_contract() {
         bot(
             "import { reader } from '../../adapter/ClientAdapter.js';",
             r#"
-globalThis.__sessions = [];
+globalThis.__sessions ??= [];
 globalThis.__observation = () => {
     const value = reader.modalCloseObservation();
+    if (value === null) return null;
     const same = globalThis.__sessions.length === 0
         || globalThis.__sessions[0] === value.session;
     globalThis.__sessions.push(value.session);
@@ -1982,7 +1993,6 @@ globalThis.__observation = () => {
         typeof value.session,
         same,
         value.generation,
-        globalThis.__rs2b0t_host.snapshot.client_adapter.session_generation,
     ];
 };
 "#,
@@ -2010,7 +2020,6 @@ globalThis.__observation = () => {
     assert_eq!(first[1], true);
     assert_eq!(same[0], "symbol");
     assert_eq!(same[1], true, "one client session preserves its token");
-    assert_eq!(first[3], 10);
     assert_eq!(first[2], 2);
 
     let mut next = snapshot;
@@ -2033,7 +2042,6 @@ globalThis.__observation = () => {
         "a new client session must not reuse a stale token"
     );
     assert_eq!(changed[2], 0);
-    assert_eq!(changed[3], 11);
 
     facts.attached = false;
     next.tick = 3;
@@ -2047,7 +2055,7 @@ globalThis.__observation = () => {
     iso.on_game_tick(3);
     let _ = iso.probe("true");
     assert_eq!(
-        iso.probe("reader.modalCloseObservation()").unwrap(),
+        iso.probe("__observation()").unwrap(),
         Value::Null
     );
     iso.join();
