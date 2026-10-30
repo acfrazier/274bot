@@ -11,8 +11,8 @@ use client::render::backend::{BackendKind, CaptureGeometry, ReadbackBudget, Read
 use client::render::budget::RenderBudgetLimits;
 use host::render_head::test_hooks::{
     configure_process, configure_process_control, configure_render_budgets,
-    with_process_render_budget, ProcessFixture, RenderTestControl, RenderTestCross, RenderTestEvent,
-    RenderTestPoint,
+    with_process_render_budget, ProcessFixture, RenderTestControl, RenderTestCross,
+    RenderTestEvent, RenderTestPoint,
 };
 
 #[cfg(feature = "memory-profile")]

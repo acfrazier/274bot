@@ -281,16 +281,14 @@ impl OutputProbe {
                 .head()
                 .is_some_and(|head| head_key(head) == head_key(stats.identity()))
         });
-        let (scene_progress, has_valid_scene, scene_consumes) = scene_stats.map_or(
-            (None, None, None),
-            |stats| {
+        let (scene_progress, has_valid_scene, scene_consumes) =
+            scene_stats.map_or((None, None, None), |stats| {
                 (
                     Some(format!("{:?}", stats.scene_progress())),
                     Some(stats.has_valid_scene()),
                     Some(stats.scene_consumes()),
                 )
-            },
-        );
+            });
         let mut trace = region_trace.lock().unwrap();
         if trace.frames.len() < 1024 {
             trace.frames.push(RegionFrameEvidence {
@@ -418,7 +416,6 @@ struct OutputObservation {
     fault: Option<&'static str>,
     generation: u64,
 }
-
 
 struct HeadProbe {
     name: String,
@@ -2009,9 +2006,10 @@ fn route_crosses_zone_edge(route: &Route) -> bool {
 }
 
 fn route_has_displacing_transport(route: &Route) -> bool {
-    route.legs.iter().any(|leg| {
-        matches!(leg, Leg::Transport { edge } if edge.to != edge.at)
-    })
+    route
+        .legs
+        .iter()
+        .any(|leg| matches!(leg, Leg::Transport { edge } if edge.to != edge.at))
 }
 
 fn route_movement_tick_budget(route: &Route) -> u32 {
@@ -2152,16 +2150,22 @@ fn drive_region_client(
 
     if !run.seeded && run.snapshot.ingame() && run.snapshot.attached() && client.scene_state == 2 {
         // The only fixture mutation is this account's own initial position.
-        interact::seed_at(client, REGION_ORIGIN.level, REGION_ORIGIN.x, REGION_ORIGIN.z);
+        interact::seed_at(
+            client,
+            REGION_ORIGIN.level,
+            REGION_ORIGIN.x,
+            REGION_ORIGIN.z,
+        );
         run.seeded = true;
         run.seed_tick = Some(tick);
         run.phase = RegionPhase::SeedPending;
     }
 
     if run.phase == RegionPhase::SeedPending {
-        if run.seed_tick.is_some_and(|seed_tick| {
-            tick.wrapping_sub(seed_tick) > SEED_SCENE_TICK_BUDGET
-        }) {
+        if run
+            .seed_tick
+            .is_some_and(|seed_tick| tick.wrapping_sub(seed_tick) > SEED_SCENE_TICK_BUDGET)
+        {
             let observed_tile = run.snapshot.tile();
             record_route_failure(
                 &mut run,
@@ -2234,12 +2238,7 @@ fn drive_region_client(
                 return;
             }
         };
-        let route_arm = run
-            .walk_arms
-            .lock()
-            .unwrap()
-            .get(username)
-            .cloned();
+        let route_arm = run.walk_arms.lock().unwrap().get(username).cloned();
         let Some(route_arm) = route_arm else {
             record_route_failure(&mut run, "WalkTo did not publish its production WalkArm");
             append_region_client_event(&mut run, client, mailbox, trace);
@@ -2259,7 +2258,11 @@ fn drive_region_client(
         if !run.starting_base.is_some_and(|base| {
             outside_rebuild_window(
                 base,
-                (REGION_DESTINATION.x, REGION_DESTINATION.z, REGION_DESTINATION.level),
+                (
+                    REGION_DESTINATION.x,
+                    REGION_DESTINATION.z,
+                    REGION_DESTINATION.level,
+                ),
             )
         }) {
             record_route_failure(
@@ -2321,11 +2324,13 @@ fn drive_region_client(
                         Some(username),
                     );
                     if arm.route.is_none() {
-                        if here == (
-                            REGION_DESTINATION.x,
-                            REGION_DESTINATION.z,
-                            REGION_DESTINATION.level,
-                        ) {
+                        if here
+                            == (
+                                REGION_DESTINATION.x,
+                                REGION_DESTINATION.z,
+                                REGION_DESTINATION.level,
+                            )
+                        {
                             run.phase = RegionPhase::Arrived;
                             run.arrival_tick = Some(tick);
                         } else {
@@ -2364,16 +2369,15 @@ fn drive_region_client(
         );
     }
     if run.phase == RegionPhase::Arrived
-        && run
-            .starting_base
-            .is_some_and(|starting_base| starting_base == (client.map_build_base_x, client.map_build_base_z))
+        && run.starting_base.is_some_and(|starting_base| {
+            starting_base == (client.map_build_base_x, client.map_build_base_z)
+        })
     {
         record_route_failure(
             &mut run,
             "production arrival completed without a real map-build base change",
         );
     }
-
 }
 
 fn frame_for_reason(trace: &RegionTrace, reason: &'static str) -> Option<RegionFrameEvidence> {
@@ -2392,20 +2396,13 @@ fn frame_for_reason(trace: &RegionTrace, reason: &'static str) -> Option<RegionF
 }
 
 fn rebuild_base_matches_centre_zone(event: &RegionClientEvent) -> bool {
-    event.base
-        == (
-            (event.centre_zone.0 - 6) * 8,
-            (event.centre_zone.1 - 6) * 8,
-        )
+    event.base == ((event.centre_zone.0 - 6) * 8, (event.centre_zone.1 - 6) * 8)
 }
 
 fn outside_rebuild_window(base: (i32, i32), tile: (i32, i32, i32)) -> bool {
     // Engine entity/BuildArea.ts:61-67: [originZone-4, originZone+5).
     // The client's base is (originZone-6)*8, so the relative bounds are 16..88.
-    tile.0 < base.0 + 16
-        || tile.0 >= base.0 + 88
-        || tile.1 < base.1 + 16
-        || tile.1 >= base.1 + 88
+    tile.0 < base.0 + 16 || tile.0 >= base.0 + 88 || tile.1 < base.1 + 16 || tile.1 >= base.1 + 88
 }
 
 #[test]
@@ -2420,7 +2417,11 @@ fn region_crossing_uses_engine_reload_window_not_each_eight_tile_zone() {
     assert!(outside_rebuild_window(base, (2660, 3328, 0)));
     assert!(outside_rebuild_window(
         base,
-        (REGION_DESTINATION.x, REGION_DESTINATION.z, REGION_DESTINATION.level)
+        (
+            REGION_DESTINATION.x,
+            REGION_DESTINATION.z,
+            REGION_DESTINATION.level
+        )
     ));
 }
 
@@ -2786,11 +2787,7 @@ fn real_region_crossing_draws_loading_splash_and_current_overlays() {
         if complete {
             break;
         }
-        let movement_budget = region
-            .lock()
-            .unwrap()
-            .route_tick_budget
-            .unwrap_or_default();
+        let movement_budget = region.lock().unwrap().route_tick_budget.unwrap_or_default();
         assert!(
             movement_ticks <= movement_budget,
             "region crossing exceeded the source-derived movement tick budget"
@@ -2815,8 +2812,14 @@ fn real_region_crossing_draws_loading_splash_and_current_overlays() {
             "the seeded scene begins without a minimap destination flag"
         );
         assert!(run.route_description.is_some(), "record planned route");
-        assert!(run.route_crosses_zone_edge, "planned route crosses a real scene-zone edge");
-        assert!(run.source_route_confirmed, "the nav-pack route retains its source door");
+        assert!(
+            run.route_crosses_zone_edge,
+            "planned route crosses a real scene-zone edge"
+        );
+        assert!(
+            run.source_route_confirmed,
+            "the nav-pack route retains its source door"
+        );
         assert!(
             !run.route_has_displacing_transport,
             "the source route crosses its zone edge without teleporting"
@@ -2846,32 +2849,32 @@ fn real_region_crossing_draws_loading_splash_and_current_overlays() {
     let (loading_frame, origin_frame, flag_frame, clear_frame, scene_complete_frame, trace_json) = {
         let trace = trace.lock().unwrap();
         (
-            frame_for_reason(&trace, "natural_scene_state_1").expect("captured natural loading frame"),
+            frame_for_reason(&trace, "natural_scene_state_1")
+                .expect("captured natural loading frame"),
             frame_for_reason(&trace, "origin_scene_ready").expect("captured valid origin scene"),
-            frame_for_reason(&trace, "minimap_flag_changed").expect("captured changed current overlay"),
-            frame_for_reason(&trace, "minimap_flag_cleared").expect("captured cleared current overlay"),
-            frame_for_reason(&trace, "post_rebuild_scene_complete").expect("captured rebuilt scene"),
+            frame_for_reason(&trace, "minimap_flag_changed")
+                .expect("captured changed current overlay"),
+            frame_for_reason(&trace, "minimap_flag_cleared")
+                .expect("captured cleared current overlay"),
+            frame_for_reason(&trace, "post_rebuild_scene_complete")
+                .expect("captured rebuilt scene"),
             region_trace_json(&trace),
         )
     };
     assert_ne!(
-        loading_frame.splash_band_hash_fnv1a64,
-        origin_frame.splash_band_hash_fnv1a64,
+        loading_frame.splash_band_hash_fnv1a64, origin_frame.splash_band_hash_fnv1a64,
         "the naturally dispatched loading splash changes its source-backed text band"
     );
     assert_ne!(
-        flag_frame.minimap_band_hash_fnv1a64,
-        origin_frame.minimap_band_hash_fnv1a64,
+        flag_frame.minimap_band_hash_fnv1a64, origin_frame.minimap_band_hash_fnv1a64,
         "the real WalkTo destination flag changes current minimap pixels"
     );
     assert_ne!(
-        clear_frame.minimap_band_hash_fnv1a64,
-        flag_frame.minimap_band_hash_fnv1a64,
+        clear_frame.minimap_band_hash_fnv1a64, flag_frame.minimap_band_hash_fnv1a64,
         "the production destination flag clearing changes current minimap pixels again"
     );
     assert_ne!(
-        scene_complete_frame.pixel_hash_fnv1a64,
-        loading_frame.pixel_hash_fnv1a64,
+        scene_complete_frame.pixel_hash_fnv1a64, loading_frame.pixel_hash_fnv1a64,
         "the complete post-crossing scene publishes distinct pixels"
     );
     assert_eq!(
@@ -2884,9 +2887,7 @@ fn real_region_crossing_draws_loading_splash_and_current_overlays() {
         arm.request_logout();
     }
     let logout_deadline = Instant::now() + Duration::from_secs(30);
-    while play.statuses().iter().any(|status| status.ingame)
-        && Instant::now() < logout_deadline
-    {
+    while play.statuses().iter().any(|status| status.ingame) && Instant::now() < logout_deadline {
         thread::sleep(Duration::from_millis(10));
     }
     consumer.stop_and_join();
@@ -2928,5 +2929,8 @@ fn real_region_crossing_draws_loading_splash_and_current_overlays() {
         serde_json::to_vec_pretty(&receipt).expect("serialize region-crossing evidence"),
     )
     .expect("write region-crossing evidence");
-    eprintln!("t44 real region-crossing evidence: {}", evidence_path.display());
+    eprintln!(
+        "t44 real region-crossing evidence: {}",
+        evidence_path.display()
+    );
 }
