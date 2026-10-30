@@ -75,6 +75,9 @@ fn many(world: &NavWorld, case: Case<'_>) -> Value {
         .map(|index| format!("{:?}", search.route(index)))
         .collect::<Vec<_>>());
     row["settled"] = json!(search.settled());
+    row["costs"] = json!((0..case.goals.len())
+        .map(|index| search.route(index).ok().map(|route| route.ticks))
+        .collect::<Vec<_>>());
     row
 }
 
@@ -91,6 +94,8 @@ fn first(world: &NavWorld, case: Case<'_>) -> Value {
     row["kind"] = json!("first");
     row["routes"] = json!([format!("{:?}", search.route())]);
     row["settled"] = json!(search.settled());
+    row["costs"] = json!([search.route().ok().map(|route| route.ticks)]);
+    row["proof"] = json!(format!("{:?}", search.proof()));
     row
 }
 
@@ -332,6 +337,65 @@ fn main() -> Result<(), String> {
                 options,
                 state,
                 account,
+            },
+        ));
+    }
+    // The Waterfall account needs no glory for the wilderness-allowed route.
+    // Keep both goal shapes to detect first-goal-only completeness gaps.
+    let waterfall = WorldState {
+        inv: HashMap::from([(954, 1), (995, 60)]),
+        worn: HashSet::from([1163, 1333, 1113, 1201, 1079]),
+        inventory_ready: true,
+        equipment_ready: true,
+        stats: (0..21)
+            .map(|id| (id, if id < 7 && id != 5 { 40 } else { 1 }))
+            .collect(),
+        combat_level: Some(46),
+        map_members: true,
+        ..WorldState::empty()
+    };
+    let mut almera = Vec::new();
+    for x in 2514..=2530 {
+        for z in 3490..=3506 {
+            let goal = tile(x, z, 0);
+            if world.collision.standable(goal) {
+                almera.push(goal);
+            }
+        }
+    }
+    for (area_name, exact_name, allow_teleports) in [
+        (
+            "waterfall_area_teles_off",
+            "waterfall_exact_teles_off",
+            false,
+        ),
+        ("waterfall_area_teles_on", "waterfall_exact_teles_on", true),
+    ] {
+        let options = FindOptions {
+            allow_teleports,
+            allow_wilderness: true,
+            ..FindOptions::default()
+        };
+        cases.push(first(
+            &world,
+            Case {
+                name: area_name,
+                from: tile(3092, 3243, 0),
+                goals: &almera,
+                options,
+                state: &waterfall,
+                account: "waterfall",
+            },
+        ));
+        cases.push(many(
+            &world,
+            Case {
+                name: exact_name,
+                from: tile(3092, 3243, 0),
+                goals: &[tile(2530, 3490, 0)],
+                options,
+                state: &waterfall,
+                account: "waterfall",
             },
         ));
     }

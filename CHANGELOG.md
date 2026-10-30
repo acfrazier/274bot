@@ -73,6 +73,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Navigation
 
+- Bots now find long walks to an area that the route planner gave up on
+  before, such as the walk to the Waterfall Quest start. When the planner
+  cannot tell early whether an area is reachable, it now keeps searching up
+  to its normal limit. A walk to a place that cannot be reached can take
+  longer to fail.
+
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
   used") stays held for at most 9 game ticks after a refusal, so the bot

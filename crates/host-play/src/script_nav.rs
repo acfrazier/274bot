@@ -7606,10 +7606,12 @@ mod diagnostic_tests {
     }
 
     #[test]
-    #[ignore = "bounded 524288-settle failure-cost measurement"]
-    fn candidate_preferred_failure_cost_stays_within_the_existing_first_goal_budget() {
-        // Both components exceed the backward proof's 262144-tile cap.
-        // The preferred proof must abandon, rather than cheaply close.
+    #[ignore = "bounded NODE_BUDGET failure-cost measurement"]
+    fn candidate_preferred_failure_completes_within_the_node_budget() {
+        // Both components exceed the backward proof's 262144-tile cap, so the
+        // proof abandons. An abandoned proof no longer stops the forward search
+        // at FIRST_TARGET_BUDGET: it settles the start component and returns a
+        // complete NoPath, still within NODE_BUDGET.
         let (width, height) = (1537usize, 769usize);
         let cells = width * height * 4;
         let mut blocked = vec![0u64; cells.div_ceil(64)];
@@ -7648,12 +7650,10 @@ mod diagnostic_tests {
             &WorldState::empty(),
         );
         let elapsed = started.elapsed();
-        assert_eq!(
-            search.route(),
-            Err(nav_planner::router::RouteError::BudgetExhausted)
-        );
+        assert_eq!(search.route(), Err(nav_planner::router::RouteError::NoPath));
         assert_eq!(search.proof(), nav_planner::router::ReverseProof::Abandoned);
-        assert!(search.settled() <= nav_planner::router::FIRST_TARGET_BUDGET + 1);
+        assert!(search.settled() > nav_planner::router::FIRST_TARGET_BUDGET);
+        assert!(search.settled() <= nav_planner::router::NODE_BUDGET);
         let fallback = nav_planner::router::find_first_with(
             &collision,
             &graph,
@@ -7666,10 +7666,10 @@ mod diagnostic_tests {
         .expect("the separate fallback tier must retain the zero-cost origin");
         assert_eq!(fallback.dest, from);
         let record = serde_json::json!({
-            "preferred_failure": "BudgetExhausted",
+            "preferred_failure": "NoPath",
             "proof": "Abandoned",
             "forward_settles": search.settled(),
-            "unproven_settle_budget": nav_planner::router::FIRST_TARGET_BUDGET,
+            "settle_budget": nav_planner::router::NODE_BUDGET,
             "elapsed_ms": elapsed.as_millis(),
             "fallback": fallback.dest,
             "fallback_ticks": fallback.ticks,
