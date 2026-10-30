@@ -493,7 +493,9 @@ impl Fixture {
         };
         let result = Interactions::new(&self.snapshot, client).if_button(widget);
         if !matches!(&result, SendResult::Sent { .. }) {
-            self.error = Some(format!("Black Knight's Fortress row click refused: {result:?}"));
+            self.error = Some(format!(
+                "Black Knight's Fortress row click refused: {result:?}"
+            ));
             return;
         }
         self.wrong_quest_name = Some(name);
@@ -1253,8 +1255,7 @@ fn open_quest_tab_live(play: &Play, account: &str, fixture: &Mutex<Fixture>) {
         state.quest_tab_sent = false;
     }
     wait_for(play, account, fixture, CELL_DEADLINE, |_, state| {
-        state.snapshot.active_side_tab() == 2
-            && !state.snapshot.quest_statuses().is_empty()
+        state.snapshot.active_side_tab() == 2 && !state.snapshot.quest_statuses().is_empty()
     });
 }
 
@@ -1330,8 +1331,7 @@ fn run_captured(test_name: &str, cell: Cell, body: fn()) {
 
     let revision = client::io::ClientRevision::R289;
     if cell == Cell::CastNpc {
-        let opcode =
-            client::io::map_client_prot(revision, client::io::ClientProt::OPNPCT).id as u8;
+        let opcode = client::io::map_client_prot(revision, client::io::ClientProt::OPNPCT).id as u8;
         let casts = opcodes
             .iter()
             .filter(|entry| entry["opcode"].as_u64() == Some(u64::from(opcode)))
