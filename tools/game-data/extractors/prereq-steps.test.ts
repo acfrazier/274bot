@@ -4,11 +4,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { extractQuestIdentityFacts } from './quests.ts';
-import { assertPrereqStepFacts, extractPrereqStepsFacts, loadPrereqCrossingProjection, prereqStepInputs, PREREQ_STEPS_SCHEMA } from './prereq-steps.ts';
+import { assertPrereqJournalPins, assertPrereqStepFacts, extractPrereqStepsFacts, loadPrereqCrossingProjection, prereqStepInputs, PREREQ_STEPS_SCHEMA } from './prereq-steps.ts';
 import { revisions } from '../generate.ts';
 
-assert.equal(PREREQ_STEPS_SCHEMA, 2);
-assert.deepEqual(extractPrereqStepsFacts(274).rows, []);
+assert.equal(PREREQ_STEPS_SCHEMA, 3);
+assert.deepEqual(extractPrereqStepsFacts(274), { rows: [], journals: [] });
 
 const content = revisions.find((spec) => spec.revision === 289)!.content;
 const facts = extractPrereqStepsFacts(289);
@@ -16,6 +16,18 @@ const quests = extractQuestIdentityFacts(content, 289);
 assertPrereqStepFacts(content, facts, quests.rows);
 
 assert.deepEqual(facts.rows.map((row) => row.id), ['priestperil:drezel-advice', 'druidspirit:drezel-start']);
+assert.deepEqual(facts.journals.map((journal) => journal.id), [
+    'blackarmgang:phoenixgang-stage',
+    'hero:phoenixgang-stage',
+]);
+assert.deepEqual(facts.journals[0].establishes.values, { min: 10, max: 10 });
+assert.equal(facts.journals[0].establishes.quest, 'blackarmgang');
+assert.deepEqual(facts.journals[0].rules.map((rule) => rule.proves), [
+    { min: 10, max: 10 },
+    { min: 0, max: 8 },
+]);
+assert.deepEqual(facts.journals[1].establishes.values, { min: 3, max: 15 });
+assert.deepEqual(facts.journals[1].rules[0].proves, { min: 3, max: 13 });
 assert.deepEqual(quests.rows.find((row) => row.id === 'priestperil')!.stage_domain, { min: 0, max: 61 });
 assert.equal(quests.rows.find((row) => row.id === 'priestperil')!.transmission, 'not_transmitted');
 assert.deepEqual(quests.rows.find((row) => row.id === 'druidspirit')!.stage_domain, { min: 0, max: 110 });
@@ -78,6 +90,37 @@ assert.deepEqual(doors.crossings.map((entry) => entry.delay.ticks), [2, 2, 0, 0]
         fs.rmSync(mutatedContent, { recursive: true, force: true });
     }
 }
+{
+    const mutatedContent = fs.mkdtempSync(path.join(os.tmpdir(), 'prereq-journal-line-'));
+    const sources = [
+        'scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2',
+        'scripts/quests/quest_blackarmgang/configs/quest_blackarmgang.constant',
+        'scripts/general/configs/quest.constant',
+    ];
+    try {
+        for (const relative of sources) {
+            const target = path.join(mutatedContent, relative);
+            fs.mkdirSync(path.dirname(target), { recursive: true });
+            fs.copyFileSync(path.join(content, relative), target);
+        }
+        const page = path.join(mutatedContent, sources[0]);
+        const original = fs.readFileSync(page, 'utf8');
+        const changed = original.replace('I searched the Phoenix Gang Headquarters and found', 'I searched a different place and found');
+        assert.notEqual(changed, original);
+        fs.writeFileSync(page, changed);
+        assert.throws(() => assertPrereqJournalPins(mutatedContent, [facts.journals[0]]), /needle is not pinned/);
+    } finally {
+        fs.rmSync(mutatedContent, { recursive: true, force: true });
+    }
+}
+
+const overstatedHeroJournal = structuredClone(facts.journals[1]);
+overstatedHeroJournal.rules[0].proves.max = 14;
+assert.throws(() => assertPrereqJournalPins(content, [overstatedHeroJournal]), /no source-pinned stage range/);
+
+const overstatedHeroEstablishment = structuredClone(facts.journals[1]);
+overstatedHeroEstablishment.establishes.values.max = 14;
+assert.throws(() => assertPrereqJournalPins(content, [overstatedHeroEstablishment]), /establishment window has no matching after rule/);
 
 // Delay facts must still agree with the cited p_delay lines. The A2 inward
 // count includes its door proc, while the outward branch has no such delay.
@@ -103,6 +146,11 @@ for (const source of [
     'content/scripts/areas/area_mausoleum/scripts/drezel.rs2',
     'content/scripts/skill_combat/scripts/npc/npc_combat.rs2',
     'content/scripts/general/scripts/quests.rs2',
+    'content/scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2',
+    'content/scripts/quests/quest_hero/scripts/hero_journal.rs2',
+    'content/scripts/quests/quest_blackarmgang/configs/quest_blackarmgang.constant',
+    'content/scripts/quests/quest_hero/configs/quest_hero.constant',
+    'content/scripts/general/configs/quest.constant',
     'content/pack/loc.pack',
     'content/pack/npc.pack',
     'content/pack/varp.pack',

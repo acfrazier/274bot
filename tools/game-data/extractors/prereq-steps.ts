@@ -5,7 +5,7 @@ import { integer, parseJm2LocPlacements, parseJm2NpcPlacements, parseMapsquarePa
 import { assertPrereqPreservation } from './prereq-preservation.ts';
 import type { InputHash } from '../generate.ts';
 
-export const PREREQ_STEPS_SCHEMA = 2;
+export const PREREQ_STEPS_SCHEMA = 3;
 export type RangeWire = { min: number; max: number };
 export type TileWire = { x: number; z: number; level: number };
 export type SourceWire = string;
@@ -43,7 +43,16 @@ export type PrereqRowWire = {
     memory: string;
     consent: string;
 };
-export type PrereqStepFacts = { rows: PrereqRowWire[] };
+export type PrereqJournalRuleWire = { all: string[]; proves: RangeWire; source: SourceWire };
+export type PrereqJournalWire = {
+    id: string;
+    quest: string;
+    establishes: { quest: string; signal: string; values: RangeWire };
+    after: { proves: RangeWire; after: RangeWire }[];
+    rules: PrereqJournalRuleWire[];
+    source: SourceWire;
+};
+export type PrereqStepFacts = { rows: PrereqRowWire[]; journals: PrereqJournalWire[] };
 
 const AUTHORED_FILE = path.resolve(import.meta.dirname, '../prereq-steps.json');
 
@@ -66,20 +75,33 @@ export type CrossingTemplate = {
     source: SourceWire;
 };
 export type AuthoredPrereqRow = Omit<PrereqRowWire, 'crossings'> & { crossings: CrossingTemplate[] };
-export type AuthoredPrereqTemplates = { rows: AuthoredPrereqRow[] };
+export type AuthoredPrereqTemplates = { rows: AuthoredPrereqRow[]; journals: PrereqJournalWire[] };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+function isRangeWire(value: unknown): value is RangeWire {
+    return isRecord(value) && Number.isInteger(value.min) && Number.isInteger(value.max)
+        && (value.min as number) <= (value.max as number);
+}
+
+function equalRangeWire(left: RangeWire, right: RangeWire) {
+    return left.min === right.min && left.max === right.max;
+}
 
 function loadAuthoredTemplates(): AuthoredPrereqTemplates {
     const parsed: unknown = JSON.parse(fs.readFileSync(AUTHORED_FILE, 'utf8'));
-    if (!isRecord(parsed) || !Array.isArray(parsed.rows) || Object.keys(parsed).join(',') !== 'rows') {
-        throw new Error('prereq_steps: authored templates must be exactly {rows}');
+    if (!isRecord(parsed) || !Array.isArray(parsed.rows) || !Array.isArray(parsed.journals)
+        || Object.keys(parsed).join(',') !== 'rows,journals') {
+        throw new Error('prereq_steps: authored templates must be exactly {rows,journals}');
     }
     const ids = parsed.rows.map((row) => (isRecord(row) ? row.id : undefined));
     if (ids.join('|') !== 'priestperil:drezel-advice|druidspirit:drezel-start') {
         throw new Error('prereq_steps: expected the reviewed A1/A2 template rows in route order');
+    }
+    const journalIds = parsed.journals.map((journal) => (isRecord(journal) ? journal.id : undefined));
+    if (journalIds.join('|') !== 'blackarmgang:phoenixgang-stage|hero:phoenixgang-stage') {
+        throw new Error('prereq_steps: expected the reviewed Black Arm and Heroes journal rows');
     }
     for (const row of parsed.rows) {
         if (!isRecord(row) || !Array.isArray(row.crossings)) throw new Error('prereq_steps: authored row is malformed');
@@ -118,6 +140,39 @@ function loadAuthoredTemplates(): AuthoredPrereqTemplates {
             }
             if (typeof template.source !== 'string' || template.source.length === 0) {
                 throw new Error(`prereq_steps: ${(row.id as string) ?? '?'} crossing template source is malformed`);
+            }
+        }
+    }
+    for (const value of parsed.journals) {
+        if (!isRecord(value) || Object.keys(value).sort().join(',') !== 'after,establishes,id,quest,rules,source'
+            || typeof value.id !== 'string' || value.id.length === 0
+            || typeof value.quest !== 'string' || value.quest.length === 0
+            || typeof value.source !== 'string' || value.source.length === 0
+            || !isRecord(value.establishes) || Object.keys(value.establishes).sort().join(',') !== 'quest,signal,values'
+            || typeof value.establishes.quest !== 'string' || value.establishes.quest.length === 0
+            || typeof value.establishes.signal !== 'string' || value.establishes.signal.length === 0
+            || !isRangeWire(value.establishes.values)
+            || !Array.isArray(value.after) || !Array.isArray(value.rules) || value.rules.length === 0) {
+            throw new Error('prereq_steps: authored journal is malformed');
+        }
+        for (const rule of value.after) {
+            if (!isRecord(rule) || Object.keys(rule).sort().join(',') !== 'after,proves'
+                || !isRangeWire(rule.proves) || !isRangeWire(rule.after)) {
+                throw new Error(`prereq_steps: ${value.id} journal after rule is malformed`);
+            }
+        }
+        for (const rule of value.rules) {
+            if (!isRecord(rule) || Object.keys(rule).sort().join(',') !== 'all,proves,source'
+                || !Array.isArray(rule.all) || rule.all.length === 0
+                || !rule.all.every((needle) => typeof needle === 'string' && needle.trim().length > 0)
+                || !isRangeWire(rule.proves) || typeof rule.source !== 'string' || rule.source.length === 0) {
+                throw new Error(`prereq_steps: ${value.id} journal text rule is malformed`);
+            }
+        }
+        const journal = value as unknown as PrereqJournalWire;
+        for (const rule of journal.rules) {
+            if (journal.after.filter((after) => equalRangeWire(after.proves, rule.proves)).length !== 1) {
+                throw new Error(`prereq_steps: ${journal.id} needs exactly one after rule for each journal proof`);
             }
         }
     }
@@ -437,7 +492,7 @@ function buildPrereqFacts(templates: AuthoredPrereqTemplates, projection: Valida
             }
         }
     }
-    return { rows };
+    return { rows, journals: templates.journals };
 }
 
 function parseSource(source: string) {
@@ -455,8 +510,8 @@ function parseSource(source: string) {
     });
 }
 
-function citedText(content: string, source: string) {
-    return parseSource(source).map(({ file, lines }) => {
+function citedText(content: string, source: string, onlyFiles?: ReadonlySet<string>) {
+    return parseSource(source).filter(({ file }) => !onlyFiles || onlyFiles.has(file)).map(({ file, lines }) => {
         const all = fs.readFileSync(path.join(content, file), 'utf8').split(/\r?\n/);
         for (const line of lines) if (line > all.length) throw new Error(`prereq_steps: ${file}:${line} is outside the source file`);
         return lines.map((line) => all[line - 1]).join('\n');
@@ -466,7 +521,7 @@ function citedText(content: string, source: string) {
 function isProductionScript(file: string) {
     return !file.split(path.sep).some((segment) => segment === '_test' || segment === 'debug');
 }
-function sourcePaths(content: string, rows: PrereqRowWire[]) {
+function sourcePaths(content: string, rows: PrereqRowWire[], journals: PrereqJournalWire[]) {
     const found = new Set<string>();
     const add = (source: string) => {
         for (const citation of parseSource(source)) found.add(citation.file);
@@ -498,6 +553,10 @@ function sourcePaths(content: string, rows: PrereqRowWire[]) {
         }
         for (const branch of row.talk.branches) add(branch.source);
         for (const rule of row.talk.line_rules) add(rule.source);
+    }
+    for (const journal of journals) {
+        add(journal.source);
+        for (const rule of journal.rules) add(rule.source);
     }
     return [...found].sort();
 }
@@ -534,22 +593,123 @@ type CheckedRange = { min?: unknown; max?: unknown };
 type CheckedOwnedItem = { item?: unknown };
 
 function scriptConstants(content: string) {
-    const values = new Map<string, number>();
+    const constants = new Map<string, number>();
     for (const file of walkContentFiles(path.join(content, 'scripts'), '.constant').filter(isProductionScript)) {
         const relative = path.relative(content, file);
         for (const raw of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
             const match = /^\s*\^([A-Za-z0-9_]+)\s*=\s*(-?\d+)\s*(?:\/\/.*)?$/.exec(raw);
             if (!match) continue;
             const value = integer(match[2], `${relative}: ^${match[1]}`);
-            const previous = values.get(match[1]);
+            const previous = constants.get(match[1]);
             if (previous !== undefined && previous !== value) {
                 throw new Error(`prereq_steps: conflicting ^${match[1]} constants (${previous}, ${value})`);
             }
-            values.set(match[1], value);
+            constants.set(match[1], value);
         }
     }
-    return values;
+    return constants;
 }
+
+function normalizeJournalText(text: string) {
+    return text.replace(/@[A-Za-z0-9_]+@/g, '').replace(/\|/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function journalRuleRange(
+    source: string,
+    signal: string,
+    constants: ReadonlyMap<string, number>,
+    label: string,
+    proves: RangeWire,
+    needles: readonly string[],
+) {
+    const pattern = new RegExp(`%${escapeRegExp(signal)}\\s*(<=|>=|==|=|<|>)\\s*\\^([A-Za-z0-9_]+)\\b`, 'g');
+    const comparisons = [...source.matchAll(pattern)].flatMap((match) => {
+        const name = match[2];
+        const value = constants.get(name);
+        if (value === undefined || !new RegExp(`\\^${escapeRegExp(name)}\\s*=\\s*${value}(?!\\d)`).test(source)) return [];
+        return [{ operator: match[1], name, value, index: match.index!, length: match[0].length }];
+    });
+    const candidates = new Map<string, RangeWire>();
+    for (const comparison of comparisons) {
+        let range: RangeWire | null = null;
+        if (comparison.operator === '=' || comparison.operator === '==') {
+            range = { min: comparison.value, max: comparison.value };
+        } else if (comparison.operator === '<' && comparison.value > 0) {
+            range = { min: 0, max: comparison.value - 1 };
+        } else if (comparison.operator === '<=') {
+            range = { min: 0, max: comparison.value };
+        }
+        if (range) candidates.set(`${range.min}:${range.max}`, range);
+    }
+    if ([...candidates.values()].some((range) => equalRangeWire(range, proves))) return proves;
+
+    const returnsBeforeNeedle = (comparison: typeof comparisons[number]) => {
+        const afterGuard = source.slice(comparison.index + comparison.length);
+        const returnAt = afterGuard.indexOf('return;');
+        if (returnAt < 0) return false;
+        const afterReturn = normalizeJournalText(afterGuard.slice(returnAt + 'return;'.length));
+        return needles.some((needle) => afterReturn.includes(needle));
+    };
+    const lowerCuts = comparisons.filter((comparison) =>
+        comparison.operator === '<' && returnsBeforeNeedle(comparison)
+        && comparisons.some((equal) => (equal.operator === '=' || equal.operator === '==')
+            && equal.name === comparison.name && equal.value === comparison.value
+            && returnsBeforeNeedle(equal)));
+    const upperCuts = comparisons.filter((comparison) =>
+        comparison.operator === '>' && returnsBeforeNeedle(comparison));
+    for (const lower of lowerCuts) for (const upper of upperCuts) {
+        const range = { min: lower.value + 1, max: upper.value };
+        if (range.min <= range.max && equalRangeWire(range, proves)) return range;
+    }
+    throw new Error(`prereq_steps: ${label} has no source-pinned stage range [${proves.min},${proves.max}]`);
+}
+
+/** Verify every journal rule against its page text, stage guard and cited constant. */
+export function assertPrereqJournalPins(
+    content: string,
+    journals: readonly PrereqJournalWire[],
+    constants: ReadonlyMap<string, number> = scriptConstants(content),
+) {
+    for (const journal of journals) {
+        if (journal.establishes.quest !== journal.quest) {
+            throw new Error(`prereq_steps: ${journal.id} journal page and stage window quest disagree`);
+        }
+        if (journal.establishes.signal.length === 0) {
+            throw new Error(`prereq_steps: ${journal.id} has an incomplete journal stage window`);
+        }
+        const pageFiles = new Set(parseSource(journal.source).map(({ file }) => file));
+        if (!citedText(content, journal.source).includes(`[if_button,questlist:${journal.quest}]`)) {
+            throw new Error(`prereq_steps: ${journal.id} source is not the declared journal page`);
+        }
+        for (const [index, rule] of journal.rules.entries()) {
+            const label = `${journal.id} rule ${index}`;
+            if (!parseSource(rule.source).some(({ file }) => pageFiles.has(file))) {
+                throw new Error(`prereq_steps: ${label} source is not from its journal page`);
+            }
+            const source = citedText(content, rule.source);
+            const pageText = normalizeJournalText(citedText(content, rule.source, pageFiles));
+            for (const needle of rule.all) {
+                if (needle !== normalizeJournalText(needle)) {
+                    throw new Error(`prereq_steps: ${label} needle is not normalized lowercase text`);
+                }
+                if (!pageText.includes(needle)) {
+                    throw new Error(`prereq_steps: ${label} needle is not pinned by ${rule.source}`);
+                }
+            }
+            journalRuleRange(source, journal.establishes.signal, constants, label, rule.proves, rule.all);
+        }
+        for (const rule of journal.rules) {
+            if (journal.after.filter((after) => equalRangeWire(after.proves, rule.proves)).length !== 1) {
+                throw new Error(`prereq_steps: ${journal.id} needs exactly one after rule for each journal proof`);
+            }
+        }
+        if (!journal.after.some((after) => equalRangeWire(after.after, journal.establishes.values)
+            && journal.rules.some((rule) => equalRangeWire(rule.proves, after.proves)))) {
+            throw new Error(`prereq_steps: ${journal.id} establishment window has no matching after rule`);
+        }
+    }
+}
+
 
 function escapeRegExp(value: string) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -723,7 +883,7 @@ export function extractPrereqStepsFacts(
     revision: number,
     overrides?: { projectionPath?: string; navPack?: string },
 ): PrereqStepFacts {
-    if (revision !== 289) return { rows: [] };
+    if (revision !== 289) return { rows: [], journals: [] };
     const templates = loadAuthoredTemplates();
     const projection = loadPrereqCrossingProjection(revision, overrides);
     if (!projection) throw new Error('prereq_steps: 289 requires GAME_DATA_289_PREREQ_CROSSINGS');
@@ -738,12 +898,17 @@ export function assertPrereqStepFacts(
     if (facts.rows.length !== 2 || facts.rows.map((row) => row.id).join('|') !== 'priestperil:drezel-advice|druidspirit:drezel-start') {
         throw new Error('prereq_steps: expected the reviewed A1/A2 rows in route order');
     }
+    const expectedJournals = 'blackarmgang:phoenixgang-stage|hero:phoenixgang-stage';
+    if (facts.journals.map((journal) => journal.id).join('|') !== expectedJournals) {
+        throw new Error('prereq_steps: expected the reviewed Black Arm and Heroes journal facts');
+    }
     textPins(content, facts.rows);
     const constants = scriptConstants(content);
+    assertPrereqJournalPins(content, facts.journals, constants);
     verifyPreconditions(content, facts.rows, constants);
     verifyTalkEffects(content, facts.rows, constants);
     verifyPlacements(content, facts.rows);
-    assertPrereqPreservation(content, facts.rows, questRows);
+    assertPrereqPreservation(content, facts.rows, questRows, facts.journals);
     for (const row of facts.rows) {
         const seen = new Set<string>();
         for (const crossing of row.crossings) {
@@ -762,5 +927,5 @@ export function assertPrereqStepFacts(
 }
 
 export function prereqStepInputs(content: string, facts: PrereqStepFacts): InputHash[] {
-    return sourcePaths(content, facts.rows).map((file) => ({ ...sourceFile(content, file), path: `content/${file}` }));
+    return sourcePaths(content, facts.rows, facts.journals).map((file) => ({ ...sourceFile(content, file), path: `content/${file}` }));
 }

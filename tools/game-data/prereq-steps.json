@@ -264,5 +264,64 @@
       "memory": "durable",
       "consent": "quest_start"
     }
+  ],
+  "journals": [
+    {
+      "id": "blackarmgang:phoenixgang-stage",
+      "quest": "blackarmgang",
+      "establishes": {
+        "quest": "blackarmgang",
+        "signal": "phoenixgang",
+        "values": { "min": 10, "max": 10 }
+      },
+      "after": [
+        { "proves": { "min": 10, "max": 10 }, "after": { "min": 10, "max": 10 } },
+        { "proves": { "min": 0, "max": 8 }, "after": { "min": 0, "max": 10 } }
+      ],
+      "rules": [
+        {
+          "all": [
+            "i searched the phoenix gang headquarters and found",
+            "half of the shield of arrav.",
+            "quest complete!"
+          ],
+          "proves": { "min": 10, "max": 10 },
+          "source": "scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2:96-108,203-205; scripts/general/configs/quest.constant:8"
+        },
+        {
+          "all": [
+            "i searched the black arm gang headquarters and found",
+            "half of the shield of arrav.",
+            "quest complete!"
+          ],
+          "proves": { "min": 0, "max": 8 },
+          "source": "scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2:114,186-197,203-205; scripts/quests/quest_blackarmgang/configs/quest_blackarmgang.constant:12"
+        }
+      ],
+      "source": "scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2:1"
+    },
+    {
+      "id": "hero:phoenixgang-stage",
+      "quest": "hero",
+      "establishes": {
+        "quest": "hero",
+        "signal": "heroquest",
+        "values": { "min": 3, "max": 15 }
+      },
+      "after": [
+        { "proves": { "min": 3, "max": 13 }, "after": { "min": 3, "max": 15 } }
+      ],
+      "rules": [
+        {
+          "all": [
+            "i spoke to straven about the master thieves armband.",
+            "then i told alfonse the password 'gherkin'."
+          ],
+          "proves": { "min": 3, "max": 13 },
+          "source": "scripts/quests/quest_hero/scripts/hero_journal.rs2:1-14,110-125; scripts/quests/quest_hero/configs/quest_hero.constant:3,14"
+        }
+      ],
+      "source": "scripts/quests/quest_hero/scripts/hero_journal.rs2:1"
+    }
   ]
 }

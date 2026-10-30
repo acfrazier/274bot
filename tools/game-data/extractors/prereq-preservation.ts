@@ -3,7 +3,7 @@ import path from 'node:path';
 import { walkContentFiles } from './common.ts';
 import { parseRs2Blocks, stripComment, type Rs2Block } from './gathering-content.ts';
 import { parseBody, walkStatements, type Node, type PathCond, type Stmt } from './gathering-rs2.ts';
-import type { PrereqRowWire, RangeWire } from './prereq-steps.ts';
+import type { PrereqJournalWire, PrereqRowWire, RangeWire } from './prereq-steps.ts';
 
 type Guard = { expression: string; polarity: boolean };
 type Statement = { text: string; line: number; guards: Guard[] };
@@ -589,7 +589,7 @@ function rangeHull(range: RangeWire, values: readonly number[]) {
 }
 function equalRange(left: RangeWire, right: RangeWire) { return left.min === right.min && left.max === right.max; }
 
-function computedAfter(row: PrereqRowWire, initial: RangeWire, graph: ScriptGraph, variable: string, constants: ReadonlyMap<string, number>, stageDomain: RangeWire) {
+function computedAfter(row: { id: string }, initial: RangeWire, graph: ScriptGraph, variable: string, constants: ReadonlyMap<string, number>, stageDomain: RangeWire) {
     let result = { ...initial };
     for (let pass = 0; pass <= graph.writers.length; pass += 1) {
         const additions: number[] = [];
@@ -620,6 +620,16 @@ function productionStageDomain(questRows: readonly { id: string; colour_authorit
     }
     return quest.stage_domain;
 }
+function productionJournalStageDomain(
+    questRows: readonly { id: string; colour_authoritative: boolean; transmission: string; stage_domain: RangeWire | null }[],
+    journal: PrereqJournalWire,
+) {
+    const quest = questRows.find((candidate) => candidate.id === journal.quest);
+    if (!quest || quest.transmission !== 'not_transmitted' || !quest.stage_domain) {
+        throw new Error(`prereq preservation: ${journal.id} lacks server-only stage metadata`);
+    }
+    return quest.stage_domain;
+}
 
 function assertRangesInsideDomain(row: PrereqRowWire, domain: RangeWire) {
     const ranges = [row.establishes.values, ...row.after.flatMap((rule) => [rule.proves, rule.after]),
@@ -629,11 +639,19 @@ function assertRangesInsideDomain(row: PrereqRowWire, domain: RangeWire) {
         throw new Error(`prereq preservation: ${row.id} range [${range.min},${range.max}] leaves stage domain [${domain.min},${domain.max}]`);
     }
 }
+function assertJournalRangesInsideDomain(journal: PrereqJournalWire, domain: RangeWire) {
+    const ranges = [journal.establishes.values, ...journal.after.flatMap((rule) => [rule.proves, rule.after]),
+        ...journal.rules.map((rule) => rule.proves)];
+    for (const range of ranges) if (range.min < domain.min || range.max > domain.max) {
+        throw new Error(`prereq preservation: ${journal.id} range [${range.min},${range.max}] leaves stage domain [${domain.min},${domain.max}]`);
+    }
+}
 
 export function assertPrereqPreservation(
     content: string,
     rows: readonly PrereqRowWire[],
     questRows?: readonly { id: string; colour_authoritative: boolean; transmission: string; stage_domain: RangeWire | null }[],
+    journals: readonly PrereqJournalWire[] = [],
 ) {
     const constants = readConstants(content);
     for (const row of rows) {
@@ -648,6 +666,20 @@ export function assertPrereqPreservation(
             const actual = computedAfter(row, rule.proves, graph, variable, constants, domain);
             if (!equalRange(actual, rule.after)) {
                 throw new Error(`prereq preservation: ${row.id} after [${rule.proves.min},${rule.proves.max}] is [${actual.min},${actual.max}], authored [${rule.after.min},${rule.after.max}]`);
+            }
+        }
+    }
+    for (const journal of journals) {
+        const variable = journal.establishes.signal;
+        const graph = buildGraph(content, variable, constants);
+        const unreviewedUncalled = graph.writers.find((writer) => !hasEntryPath(writer, graph) && !writer.reviewed);
+        if (unreviewedUncalled) throw new Error(`prereq preservation: writer path set is empty at ${unreviewedUncalled.file}:${unreviewedUncalled.line}`);
+        const domain = questRows ? productionJournalStageDomain(questRows, journal) : { min: 0, max: 2147483647 };
+        if (questRows) assertJournalRangesInsideDomain(journal, domain);
+        for (const rule of journal.after) {
+            const actual = computedAfter(journal, rule.proves, graph, variable, constants, domain);
+            if (!equalRange(actual, rule.after)) {
+                throw new Error(`prereq preservation: ${journal.id} after [${rule.proves.min},${rule.proves.max}] is [${actual.min},${actual.max}], authored [${rule.after.min},${rule.after.max}]`);
             }
         }
     }

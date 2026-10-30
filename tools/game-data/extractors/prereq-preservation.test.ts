@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { assertPrereqPreservation } from './prereq-preservation.ts';
-import type { PrereqRowWire } from './prereq-steps.ts';
+import type { PrereqJournalWire, PrereqRowWire } from './prereq-steps.ts';
 
 function row(proves: [number, number], after: [number, number]): PrereqRowWire {
     return {
@@ -165,3 +165,34 @@ withContent({
     () => assertPrereqPreservation(content, [row([1, 1], [1, 1])]),
     /after \[1,1\] is \[0,1\]/,
 ));
+
+function journal(proves: [number, number], after: [number, number]): PrereqJournalWire {
+    return {
+        id: 'fixture:journal',
+        quest: 'fixture',
+        establishes: {
+            quest: 'fixture',
+            signal: 'progress',
+            values: { min: after[0], max: after[1] },
+        },
+        after: [{ proves: { min: proves[0], max: proves[1] }, after: { min: after[0], max: after[1] } }],
+        rules: [{ all: ['journal text'], proves: { min: proves[0], max: proves[1] }, source: 'scripts/journal.rs2:1' }],
+        source: 'scripts/journal.rs2:1',
+    };
+}
+
+withContent({
+    [constants]: '^zero = 0\n^one = 1\n',
+    'scripts/journal.rs2': '[oploc1,root] @write;\n[label,write] %progress = ^one;\n',
+}, (content) => {
+    const fact = journal([0, 0], [0, 1]);
+    assertPrereqPreservation(content, [], undefined, [fact]);
+    const stage = { id: 'fixture', colour_authoritative: false, transmission: 'not_transmitted', stage_domain: { min: 0, max: 1 } };
+    assertPrereqPreservation(content, [], [stage], [fact]);
+    assert.throws(() => assertPrereqPreservation(
+        content,
+        [],
+        [{ ...stage, stage_domain: { min: 0, max: 0 } }],
+        [fact],
+    ), /leaves stage domain/);
+});
