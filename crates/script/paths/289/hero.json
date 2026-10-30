@@ -452,6 +452,34 @@
           "comment": "Deposit the weapon before sailing: content/scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-49."
         },
         {
+          "id": "phoenix-remove-helm", "kind": "unequip", "version": 1, "args": {"obj": "rune_full_helm"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}}}
+        },
+        {
+          "id": "phoenix-remove-body", "kind": "unequip", "version": 1, "args": {"obj": "rune_chainbody"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}}}
+        },
+        {
+          "id": "phoenix-remove-legs", "kind": "unequip", "version": 1, "args": {"obj": "rune_platelegs"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}}}
+        },
+        {
+          "id": "phoenix-remove-shield", "kind": "unequip", "version": 1, "args": {"obj": "rune_kiteshield"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}}}
+        },
+        {
+          "id": "phoenix-bank-armour", "kind": "bank", "version": 1,
+          "args": {"op": "deposit", "at": "nearest", "items": [{"obj": "rune_full_helm"}, {"obj": "rune_chainbody"}, {"obj": "rune_platelegs"}, {"obj": "rune_kiteshield"}]},
+          "skip_if": {"Any": [{"All": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_full_helm"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_chainbody"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_platelegs"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_kiteshield"}}}}]}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"All": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_full_helm"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_chainbody"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_platelegs"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_kiteshield"}}}}]},
+          "comment": "Entrana rejects helmet, body, legs and shield categories: content/scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-32."
+        },
+        {"id":"phoenix-bank-ranged-kit","kind":"bank","version":1,"args":{"op":"deposit","at":"nearest","items":[{"obj":"yew_shortbow"},{"obj":"blue_dragonhide_body"},{"obj":"blue_dragonhide_chaps"},{"obj":"blue_dragon_vambraces"}]},"skip_if":{"Any":[{"All":[{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"yew_shortbow"}}}},{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragonhide_body"}}}},{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragonhide_chaps"}}}},{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragon_vambraces"}}}}]},{"Not":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"ice_gloves"}}},{"Fact":{"kind":"worn","version":1,"args":{"obj":"ice_gloves"}}}]}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"hot_feather"}}}]},"settle":{"All":[{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"yew_shortbow"}}}},{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragonhide_body"}}}},{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragonhide_chaps"}}}},{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragon_vambraces"}}}}]},"comment":"Entrana rejects carried bows and armour: content/scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:27-32,47."},
+        {
           "id": "phoenix-bank-pick",
           "kind": "bank",
           "version": 1,
@@ -715,6 +743,57 @@
           },
           "comment": "scripts/drop tables/scripts/entrana_firebird.rs2:1-10; scripts/quests/quest_hero/scripts/objs/fire_feather.rs2:1-13",
           "advances": false
+        },
+        {
+          "id": "phoenix-withdraw-helm", "kind": "bank", "version": 1, "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_full_helm", "qty": 1}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_full_helm"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_full_helm"}}}
+        },
+        {
+          "id": "phoenix-equip-helm", "kind": "equip", "version": 1, "args": {"obj": "rune_full_helm"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}}]},
+          "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}}
+        },
+        {
+          "id": "phoenix-withdraw-body", "kind": "bank", "version": 1, "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_chainbody", "qty": 1}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_chainbody"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_chainbody"}}}
+        },
+        {
+          "id": "phoenix-equip-body", "kind": "equip", "version": 1, "args": {"obj": "rune_chainbody"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}}]},
+          "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}}
+        },
+        {
+          "id": "phoenix-withdraw-legs", "kind": "bank", "version": 1, "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_platelegs", "qty": 1}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_platelegs"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_platelegs"}}}
+        },
+        {
+          "id": "phoenix-equip-legs", "kind": "equip", "version": 1, "args": {"obj": "rune_platelegs"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}}]},
+          "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}}
+        },
+        {
+          "id": "phoenix-withdraw-shield", "kind": "bank", "version": 1, "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_kiteshield", "qty": 1}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_kiteshield"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_kiteshield"}}}
+        },
+        {
+          "id": "phoenix-equip-shield", "kind": "equip", "version": 1, "args": {"obj": "rune_kiteshield"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}}]},
+          "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}}
+        },
+        {
+          "id": "phoenix-withdraw-scimitar", "kind": "bank", "version": 1, "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_scimitar", "qty": 1}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_scimitar"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_scimitar"}}}
+        },
+        {
+          "id": "phoenix-equip-scimitar", "kind": "equip", "version": 1, "args": {"obj": "rune_scimitar"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}]},
+          "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}},
+          "comment": "Restore the melee kit before the man fight for harralander: content/scripts/drop tables/scripts/man.rs2:2,43-44."
         },
         {
           "id": "phoenix-gerrant",
@@ -1397,74 +1476,16 @@
               "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bread", "qty": 10}}},
               "comment": "Buy food before the Grip encounter: content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:15-25; content/scripts/shop/scripts/shop.rs2:59-68,131-147,182-187."
             },
-            {
-              "id": "phoenix-buy-shortbow", "kind": "buy", "version": 1,
-              "args": {"shop": {"npc": "lowe", "anchor": {"tile": [3232, 3423, 0], "source": "content/maps/m50_53.jm2:12911; content/pack/npc.pack:550"}}, "obj": "shortbow", "qty": 1, "est_gp": 50},
-              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "shortbow"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "shortbow"}}}]},
-              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "shortbow"}}},
-              "comment": "Full-stock price 50: content/scripts/skill_combat/configs/ranged/bows.obj:30-31; content/scripts/areas/area_varrock/configs/varrock.npc:332-360; content/scripts/shop/scripts/shop.rs2:138-147,182-187."
-            },
-            {
-              "id": "phoenix-wear-shortbow",
-              "kind": "equip",
-              "version": 1,
-              "args": {
-                "obj": "shortbow"
-              },
-              "skip_if": {
-                "Fact": {
-                  "kind": "worn",
-                  "version": 1,
-                  "args": {
-                    "obj": "shortbow"
-                  }
-                }
-              },
-              "settle": {
-                "Fact": {
-                  "kind": "worn",
-                  "version": 1,
-                  "args": {
-                    "obj": "shortbow"
-                  }
-                }
-              },
-              "comment": "scripts/quests/quest_hero/scripts/npcs/grip.rs2:59-64; scripts/_unpack/225/all.loc:12815-12817"
-            },
-            {
-              "id": "phoenix-buy-bronze-arrows", "kind": "buy", "version": 1,
-              "args": {"shop": {"npc": "lowe", "anchor": {"tile": [3232, 3423, 0], "source": "content/maps/m50_53.jm2:12911; content/pack/npc.pack:550"}}, "obj": "bronze_arrow", "qty": 100, "est_gp": 100},
-              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_arrow"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_arrow"}}}]},
-              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "bronze_arrow", "qty": 100}}},
-              "comment": "Full-stock price 100 for 100 arrows: content/scripts/skill_combat/configs/ranged/arrows.obj:1-4; content/scripts/areas/area_varrock/configs/varrock.npc:332-360; content/scripts/shop/scripts/shop.rs2:59-68,138-147,182-187."
-            },
-            {
-              "id": "phoenix-wear-bronze_arrow",
-              "kind": "equip",
-              "version": 1,
-              "args": {
-                "obj": "bronze_arrow"
-              },
-              "skip_if": {
-                "Fact": {
-                  "kind": "worn",
-                  "version": 1,
-                  "args": {
-                    "obj": "bronze_arrow"
-                  }
-                }
-              },
-              "settle": {
-                "Fact": {
-                  "kind": "worn",
-                  "version": 1,
-                  "args": {
-                    "obj": "bronze_arrow"
-                  }
-                }
-              },
-              "comment": "scripts/quests/quest_hero/scripts/npcs/grip.rs2:59-64; scripts/_unpack/225/all.loc:12815-12817"
-            },
+            {"id":"phoenix-withdraw-yew_shortbow","kind":"bank","version":1,"args":{"op":"withdraw","at":"nearest","items":[{"obj":"yew_shortbow","qty":1}]},"skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"yew_shortbow"}}},{"Fact":{"kind":"worn","version":1,"args":{"obj":"yew_shortbow"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"yew_shortbow"}}}},
+            {"id":"phoenix-equip-yew_shortbow","kind":"equip","version":1,"args":{"obj":"yew_shortbow"},"skip_if":{"Fact":{"kind":"worn","version":1,"args":{"obj":"yew_shortbow"}}},"settle":{"Fact":{"kind":"worn","version":1,"args":{"obj":"yew_shortbow"}}},"comment":"Grip permits the Phoenix role to attack: content/scripts/quests/quest_hero/scripts/npcs/grip.rs2:59-64. The bow and arrow levels match: content/scripts/skill_combat/scripts/player/player_ranged.rs2:76-102; content/scripts/skill_combat/configs/ranged/bows.obj:256-277; content/scripts/skill_combat/configs/ranged/arrows.obj:302-327."},
+            {"id":"phoenix-withdraw-blue_dragonhide_body","kind":"bank","version":1,"args":{"op":"withdraw","at":"nearest","items":[{"obj":"blue_dragonhide_body","qty":1}]},"skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragonhide_body"}}},{"Fact":{"kind":"worn","version":1,"args":{"obj":"blue_dragonhide_body"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragonhide_body"}}}},
+            {"id":"phoenix-equip-blue_dragonhide_body","kind":"equip","version":1,"args":{"obj":"blue_dragonhide_body"},"skip_if":{"Fact":{"kind":"worn","version":1,"args":{"obj":"blue_dragonhide_body"}}},"settle":{"Fact":{"kind":"worn","version":1,"args":{"obj":"blue_dragonhide_body"}}}},
+            {"id":"phoenix-withdraw-blue_dragonhide_chaps","kind":"bank","version":1,"args":{"op":"withdraw","at":"nearest","items":[{"obj":"blue_dragonhide_chaps","qty":1}]},"skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragonhide_chaps"}}},{"Fact":{"kind":"worn","version":1,"args":{"obj":"blue_dragonhide_chaps"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragonhide_chaps"}}}},
+            {"id":"phoenix-equip-blue_dragonhide_chaps","kind":"equip","version":1,"args":{"obj":"blue_dragonhide_chaps"},"skip_if":{"Fact":{"kind":"worn","version":1,"args":{"obj":"blue_dragonhide_chaps"}}},"settle":{"Fact":{"kind":"worn","version":1,"args":{"obj":"blue_dragonhide_chaps"}}}},
+            {"id":"phoenix-withdraw-blue_dragon_vambraces","kind":"bank","version":1,"args":{"op":"withdraw","at":"nearest","items":[{"obj":"blue_dragon_vambraces","qty":1}]},"skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragon_vambraces"}}},{"Fact":{"kind":"worn","version":1,"args":{"obj":"blue_dragon_vambraces"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"blue_dragon_vambraces"}}}},
+            {"id":"phoenix-equip-blue_dragon_vambraces","kind":"equip","version":1,"args":{"obj":"blue_dragon_vambraces"},"skip_if":{"Fact":{"kind":"worn","version":1,"args":{"obj":"blue_dragon_vambraces"}}},"settle":{"Fact":{"kind":"worn","version":1,"args":{"obj":"blue_dragon_vambraces"}}}},
+            {"id":"phoenix-withdraw-rune_arrow","kind":"bank","version":1,"args":{"op":"withdraw","at":"nearest","items":[{"obj":"rune_arrow","qty":100}],"partial_ok":true},"skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"rune_arrow"}}},{"Fact":{"kind":"worn","version":1,"args":{"obj":"rune_arrow"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"rune_arrow"}}}},
+            {"id":"phoenix-equip-rune_arrow","kind":"equip","version":1,"args":{"obj":"rune_arrow"},"skip_if":{"Fact":{"kind":"worn","version":1,"args":{"obj":"rune_arrow"}}},"settle":{"Fact":{"kind":"worn","version":1,"args":{"obj":"rune_arrow"}}}},
             {
               "id": "phoenix-open-panel",
               "kind": "interact",
@@ -2126,6 +2147,33 @@
           "comment": "Deposit the weapon before sailing: content/scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-49."
         },
         {
+          "id": "blackarm-remove-helm", "kind": "unequip", "version": 1, "args": {"obj": "rune_full_helm"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}}}
+        },
+        {
+          "id": "blackarm-remove-body", "kind": "unequip", "version": 1, "args": {"obj": "rune_chainbody"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}}}
+        },
+        {
+          "id": "blackarm-remove-legs", "kind": "unequip", "version": 1, "args": {"obj": "rune_platelegs"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}}}
+        },
+        {
+          "id": "blackarm-remove-shield", "kind": "unequip", "version": 1, "args": {"obj": "rune_kiteshield"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}}}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"Not": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}}}
+        },
+        {
+          "id": "blackarm-bank-armour", "kind": "bank", "version": 1,
+          "args": {"op": "deposit", "at": "nearest", "items": [{"obj": "rune_full_helm"}, {"obj": "rune_chainbody"}, {"obj": "rune_platelegs"}, {"obj": "rune_kiteshield"}]},
+          "skip_if": {"Any": [{"All": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_full_helm"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_chainbody"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_platelegs"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_kiteshield"}}}}]}, {"Not": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "ice_gloves"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "ice_gloves"}}}]}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}]},
+          "settle": {"All": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_full_helm"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_chainbody"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_platelegs"}}}}, {"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_kiteshield"}}}}]},
+          "comment": "Entrana rejects helmet, body, legs and shield categories: content/scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2:26-32."
+        },
+        {
           "id": "blackarm-bank-pick",
           "kind": "bank",
           "version": 1,
@@ -2389,6 +2437,57 @@
           },
           "comment": "scripts/drop tables/scripts/entrana_firebird.rs2:1-10; scripts/quests/quest_hero/scripts/objs/fire_feather.rs2:1-13",
           "advances": false
+        },
+        {
+          "id": "blackarm-withdraw-helm", "kind": "bank", "version": 1, "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_full_helm", "qty": 1}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_full_helm"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_full_helm"}}}
+        },
+        {
+          "id": "blackarm-equip-helm", "kind": "equip", "version": 1, "args": {"obj": "rune_full_helm"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}}]},
+          "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_full_helm"}}}
+        },
+        {
+          "id": "blackarm-withdraw-body", "kind": "bank", "version": 1, "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_chainbody", "qty": 1}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_chainbody"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_chainbody"}}}
+        },
+        {
+          "id": "blackarm-equip-body", "kind": "equip", "version": 1, "args": {"obj": "rune_chainbody"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}}]},
+          "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_chainbody"}}}
+        },
+        {
+          "id": "blackarm-withdraw-legs", "kind": "bank", "version": 1, "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_platelegs", "qty": 1}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_platelegs"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_platelegs"}}}
+        },
+        {
+          "id": "blackarm-equip-legs", "kind": "equip", "version": 1, "args": {"obj": "rune_platelegs"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}}]},
+          "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_platelegs"}}}
+        },
+        {
+          "id": "blackarm-withdraw-shield", "kind": "bank", "version": 1, "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_kiteshield", "qty": 1}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_kiteshield"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_kiteshield"}}}
+        },
+        {
+          "id": "blackarm-equip-shield", "kind": "equip", "version": 1, "args": {"obj": "rune_kiteshield"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}}]},
+          "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_kiteshield"}}}
+        },
+        {
+          "id": "blackarm-withdraw-scimitar", "kind": "bank", "version": 1, "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_scimitar", "qty": 1}]},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_scimitar"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_scimitar"}}}
+        },
+        {
+          "id": "blackarm-equip-scimitar", "kind": "equip", "version": 1, "args": {"obj": "rune_scimitar"},
+          "skip_if": {"Any": [{"Not": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "hot_feather"}}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_snail_slime"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "blamish_oil"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "oily_fishing_rod"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "raw_lava_eel"}}}, {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "lava_eel"}}}, {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}}]},
+          "settle": {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_scimitar"}}},
+          "comment": "Restore the melee kit before the man fight for harralander: content/scripts/drop tables/scripts/man.rs2:2,43-44."
         },
         {
           "id": "blackarm-gerrant",
