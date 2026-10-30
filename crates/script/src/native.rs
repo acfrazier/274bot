@@ -1067,14 +1067,15 @@ pub(crate) const QUEST_WALK_MAX_ATTEMPTS: u8 = 3;
 /// every family that owns an approach walk.
 pub(crate) struct WalkRetryState {
     recovery: ReturnStallRecovery,
-    retry_after_tick: Option<u64>,
+    // Read only while recovery is pending; that state owns whether this tick is set.
+    retry_after_tick: u64,
 }
 
 impl Default for WalkRetryState {
     fn default() -> Self {
         Self {
             recovery: ReturnStallRecovery::with_max_attempts(QUEST_WALK_MAX_ATTEMPTS),
-            retry_after_tick: None,
+            retry_after_tick: 0,
         }
     }
 }
@@ -1082,7 +1083,7 @@ impl Default for WalkRetryState {
 impl WalkRetryState {
     pub(crate) fn observe_failure(&mut self, receipt: &WalkReceipt, tick: u64) -> bool {
         if self.recovery.observe_receipt(receipt) {
-            self.retry_after_tick = Some(tick);
+            self.retry_after_tick = tick;
             true
         } else {
             false
@@ -1107,23 +1108,23 @@ impl WalkRetryState {
     }
 
     pub(crate) fn waiting_for_next_tick(&self, tick: u64) -> bool {
-        self.pending() && self.retry_after_tick.is_some_and(|failed| tick <= failed)
+        self.pending() && tick <= self.retry_after_tick
     }
 
     pub(crate) fn defer_until_next_tick(&mut self, tick: u64) {
         if self.pending() {
-            self.retry_after_tick = Some(tick);
+            self.retry_after_tick = tick;
         }
     }
 
     pub(crate) fn action_submitted(&mut self) {
         self.recovery.action_submitted();
-        self.retry_after_tick = None;
+        self.retry_after_tick = 0;
     }
 
     pub(crate) fn reset(&mut self) {
         self.recovery.reset();
-        self.retry_after_tick = None;
+        self.retry_after_tick = 0;
     }
 
     pub(crate) fn retry_attempt_number(&self) -> u8 {

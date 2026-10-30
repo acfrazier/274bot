@@ -31,7 +31,7 @@ pub(crate) struct ThieveActionArgs {
 pub(crate) struct Thieve {
     args: ThieveActionArgs,
     core: ThieveCore,
-    area_anchor: Option<WorldTile>,
+    walk: Option<PendingWalk>,
     walk_retry: super::WalkRetryState,
     reach: Option<Reach>,
     reach_request_id: Option<u64>,
@@ -83,6 +83,7 @@ impl NativeMachine for Thieve {
             args,
             core,
             area_anchor,
+            walk: None,
             walk_retry: super::WalkRetryState::default(),
             reach: None,
             reach_request_id: None,
