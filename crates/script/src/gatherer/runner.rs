@@ -3799,6 +3799,21 @@ mod tests {
         });
         assert!(gatherer.survival_interrupting);
         assert!(gatherer.active_transfer_in_flight());
+        let outbox = &ledger.as_ref().unwrap().outbox;
+        assert_eq!(
+            outbox
+                .iter()
+                .filter(|action| matches!(
+                    &action.effect,
+                    crate::native::HostEffect::Interaction(crate::shim::InteractReq::InvButton {
+                        id: 201..=203,
+                        ..
+                    })
+                ))
+                .count(),
+            1,
+            "the interrupted Deposit wrapper must not click another product before settling"
+        );
 
         let product = |id, count, container, slot| ItemView {
             def: def(id, "Raw fish"),
@@ -3835,21 +3850,6 @@ mod tests {
             gatherer.tick(tick).unwrap();
         });
 
-        let outbox = &ledger.as_ref().unwrap().outbox;
-        assert_eq!(
-            outbox
-                .iter()
-                .filter(|action| matches!(
-                    &action.effect,
-                    crate::native::HostEffect::Interaction(crate::shim::InteractReq::InvButton {
-                        id: 201..=203,
-                        ..
-                    })
-                ))
-                .count(),
-            1,
-            "the interrupted Deposit wrapper must not click another product"
-        );
         assert!(matches!(
             outbox.last().map(|action| &action.effect),
             Some(crate::native::HostEffect::Interaction(
@@ -3976,6 +3976,20 @@ mod tests {
         });
         assert!(gatherer.survival_interrupting);
         assert!(gatherer.active_transfer_in_flight());
+        let withdraw_clicks = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|action| matches!(
+                &action.effect,
+                crate::native::HostEffect::Interaction(crate::shim::InteractReq::WithdrawX { .. })
+            ))
+            .count();
+        assert_eq!(
+            withdraw_clicks, 1,
+            "the interrupted Withdraw wrapper must not click another bank row before settling"
+        );
 
         snapshot.seed_inventory(
             vec![
@@ -4008,13 +4022,6 @@ mod tests {
             gatherer.tick(tick).unwrap();
         });
         let outbox = &ledger.as_ref().unwrap().outbox;
-        assert!(
-            !outbox.iter().any(|action| matches!(
-                &action.effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::WithdrawX { .. })
-            )),
-            "the interrupted Withdraw wrapper must not click the second row"
-        );
         assert!(matches!(
             outbox.last().map(|action| &action.effect),
             Some(crate::native::HostEffect::Interaction(

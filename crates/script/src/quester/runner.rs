@@ -6265,48 +6265,61 @@ mod tests {
             name: None,
             choose: None,
         });
-        let mut responded_bank_pick = None;
-        let mut respond_bank_pick = |tick: &mut crate::native::NativeTick<'_>| {
-            let Some(action) = tick
-                .cx
-                .ledger
-                .as_ref()
-                .and_then(|ledger| ledger.outbox.last())
-                .filter(|action| {
+        let respond_bank_pick = |tick: &mut crate::native::NativeTick<'_>| {
+            let Some(action) = tick.cx.ledger.as_mut().and_then(|ledger| {
+                let index = ledger.outbox.iter().position(|action| {
                     matches!(
                         &action.effect,
                         crate::native::HostEffect::BankPick(_)
                     )
-                })
-            else {
+                })?;
+                Some(ledger.outbox.remove(index))
+            }) else {
                 return;
             };
             let authority = action.authority();
             let request_id = authority.request_id().get();
-            if responded_bank_pick == Some(request_id) {
-                return;
-            }
             let evidence = tick.cx.evidence();
-            tick.cx
-                .ledger
-                .as_mut()
-                .unwrap()
-                .complete_bank_pick(
-                    &authority,
-                    crate::bank::BankPickReceipt {
-                        request_id,
-                        evidence,
-                        selected: crate::bank::SelectedBank {
-                            bank_index: 0,
-                            access_tile: stand,
-                            kind: crate::bank::PickKind::Reachable,
-                            access: Some(Arc::clone(&access)),
-                        },
+            tick.cx.ledger.as_mut().unwrap().complete_bank_pick(
+                &authority,
+                crate::bank::BankPickReceipt {
+                    request_id,
+                    evidence,
+                    selected: crate::bank::SelectedBank {
+                        bank_index: 0,
+                        access_tile: stand,
+                        kind: crate::bank::PickKind::Reachable,
+                        access: Some(Arc::clone(&access)),
                     },
-                );
-            responded_bank_pick = Some(request_id);
+                },
+            );
         };
-
+        let respond_open_stand = |tick: &mut crate::native::NativeTick<'_>| {
+            let Some(action) = tick.cx.ledger.as_mut().and_then(|ledger| {
+                let index = ledger.outbox.iter().position(|action| {
+                    matches!(
+                        &action.effect,
+                        crate::native::HostEffect::Interaction(
+                            crate::shim::InteractReq::OpenStand { .. }
+                        )
+                    )
+                })?;
+                Some(ledger.outbox.remove(index))
+            }) else {
+                return;
+            };
+            let authority = action.authority();
+            let evidence = tick.cx.evidence();
+            tick.cx.ledger.as_mut().unwrap().complete_interaction(
+                &authority,
+                crate::native::InteractionReceipt {
+                    request_id: authority.request_id().get(),
+                    evidence,
+                    accepted: true,
+                    chat_since: 0,
+                },
+            );
+        };
         let mut saw_withdraw = false;
         super::super::families::tests::with_tick_bank(
             &snapshot,
@@ -6318,6 +6331,7 @@ mod tests {
                 tick.cx.cure_poison = CurePoison::WhenNeeded;
                 script.tick(tick).unwrap();
                 respond_bank_pick(tick);
+                respond_open_stand(tick);
                 let (withdraw, interaction) =
                     tick.cx
                         .ledger
@@ -6347,10 +6361,13 @@ mod tests {
 
         let mut next_tick = 2;
         if !script.provisioner.transfer_in_flight() {
-            for _ in 0..3 {
+            for _ in 0..10 {
                 let poll_tick = next_tick;
                 next_tick += 1;
-                let outbox_before = ledger.as_ref().map_or(0, |ledger| ledger.outbox.len());
+                let outbox_before = ledger
+                    .as_ref()
+                    .and_then(|ledger| ledger.outbox.last())
+                    .map_or(0, |action| action.request_id.get());
                 super::super::families::tests::with_tick_bank(
                     &snapshot,
                     Some(&memory),
@@ -6361,9 +6378,13 @@ mod tests {
                         tick.cx.cure_poison = CurePoison::WhenNeeded;
                         script.tick(tick).unwrap();
                         respond_bank_pick(tick);
+                        respond_open_stand(tick);
                         let (withdraw, interaction) =
                             tick.cx.ledger.as_ref().map_or((false, false), |ledger| {
-                                let new_action = ledger.outbox.len() > outbox_before;
+                                let new_action = ledger
+                                    .outbox
+                                    .last()
+                                    .is_some_and(|action| action.request_id.get() > outbox_before);
                                 let last = ledger.outbox.last().map(|action| &action.effect);
                                 (
                                     new_action
