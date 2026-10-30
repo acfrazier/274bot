@@ -790,6 +790,7 @@ impl StepPlan for CombatPlan {
             action: None,
             phase: Phase::Combat,
             loot_index: 0,
+            loot_retake: None,
             last_report: None,
             last_outcome: None,
             target_gone_restarts: 0,
@@ -1128,6 +1129,9 @@ struct CombatRun {
     action: Option<Action>,
     phase: Phase,
     loot_index: usize,
+    /// The loot index whose Take was cancelled by a rebuilt scene. That item
+    /// gets one retake; any further cancel for it is missed loot.
+    loot_retake: Option<usize>,
     last_report: Option<CombatReport>,
     last_outcome: Option<StepOutcome>,
     target_gone_restarts: u8,
@@ -1690,6 +1694,7 @@ impl CombatRun {
             CombatEnd::Killed => {
                 self.phase = Phase::Loot;
                 self.loot_index = 0;
+                self.loot_retake = None;
                 Poll::Pending
             }
             CombatEnd::TargetGone => {
@@ -2052,6 +2057,27 @@ impl StepRun for CombatRun {
                 // the combat step. Other errors remain visible to the caller.
                 self.action = None;
                 self.next_loot_or_reengage(cx)
+            }
+            ActionPoll::Failed(ActionError::Stale) if matches!(&self.phase, Phase::Loot) => {
+                // A rebuilt scene cancels the queued ground Take before the
+                // item op runs, but the item stays on the floor: a rebuild
+                // only rewrites the player's build area (`BuildArea.ts:57-91`),
+                // the op removes the object when it takes it
+                // (`ObjOps.ts:137-164`, `pickup.rs2:15`), and a click inside
+                // origin ± 52 is still accepted (`OpObjHandler.ts:19-28`).
+                // Re-address the same item once, on the next observed tick so
+                // the new Take binds the new scene; a second cancel for that
+                // item is missed loot like an unreachable drop.
+                self.action = None;
+                let cancelled = self.loot_index.saturating_sub(1);
+                if self.loot_retake == Some(cancelled) {
+                    self.loot_retake = None;
+                    self.next_loot_or_reengage(cx)
+                } else {
+                    self.loot_retake = Some(cancelled);
+                    self.loot_index = cancelled;
+                    Poll::Pending
+                }
             }
             ActionPoll::Failed(ActionError::Failed(reason))
                 if matches!(&self.phase, Phase::FinishDialogue) =>
