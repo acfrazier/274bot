@@ -515,7 +515,7 @@ fn a_screen_that_stays_open_ends_cleanup_after_one_close_with_the_original_failu
     assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
     assert!(poll(&snapshot, &mut ledger, &handle, 3, epoch).is_pending());
     assert_eq!(ack(&mut ledger, 3), InteractReq::CloseModal);
-    // 3 000 ms of close grace (5 server ticks) pass with the screen still open.
+    // The close grace (5 observed ticks) passes with the screen still open.
     for tick in 4..8 {
         assert!(poll(&snapshot, &mut ledger, &handle, tick, epoch).is_pending());
         assert!(
@@ -1065,7 +1065,7 @@ fn a_trade_over_its_eligible_tick_budget_still_fails_with_cleanup_after_a_hold()
 }
 
 #[test]
-fn the_offer_wait_expires_after_the_nominal_ticks_not_before() {
+fn the_offer_wait_expires_at_its_policy_budget_not_before() {
     use crate::trade_screen::TRADE_OFFER_WAIT_TICKS;
     let (mut snapshot, mut ledger, handle, port) = fixture(40);
     let epoch = Instant::now();
@@ -1098,7 +1098,7 @@ fn the_offer_wait_expires_after_the_nominal_ticks_not_before() {
 }
 
 #[test]
-fn the_confirm_wait_expires_after_the_nominal_ticks_not_before() {
+fn the_confirm_wait_expires_at_its_policy_budget_not_before() {
     use crate::trade_screen::TRADE_CONFIRM_WAIT_TICKS;
     let (mut snapshot, mut ledger, handle, port, epoch) = agreed_offers();
     port.confirm.store(true, Ordering::Relaxed);

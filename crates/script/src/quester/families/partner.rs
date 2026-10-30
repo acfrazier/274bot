@@ -580,11 +580,24 @@ enum TradePhase {
     Transfer,
     Cleanup(TradeCleanup),
 }
-/// Observed game ticks `CLOSE_MODAL` gets to close the screen: the nominal 3 000 ms
-/// over the 600 ms server tick is 5. The engine applies the request at the start of
-/// the player's next tick (`Player.ts:882-885`), so the first closed observation
-/// comes one to two ticks after it.
-const TRADE_CLOSE_GRACE_TICKS: u64 = TRADE_CLOSE_DEBOUNCE_TICKS * 5;
+/// Observed game ticks `CLOSE_MODAL` gets to close the screen. A policy budget
+/// for the host's own packet reaching the engine, on the margin rule of
+/// `trade_screen.rs` (observed maximum plus 4 ticks).
+///
+/// Engine path: the server decodes the request in `processClientsIn`
+/// (`World.ts:617`, `CloseModalHandler.ts:13` sets `requestModalClose`), applies
+/// it in the same cycle's `processPlayers` through `processQueues`
+/// (`Player.ts:882-885`, `closeModal()` runs the screen's `[if_close]` script,
+/// which closes the partner's screen too), and writes `IF_CLOSE` from the same
+/// cycle's `processClientsOut` (`World.ts:1123`, `NetworkPlayer.ts:160-164`). So
+/// the closed screen first shows with the `PLAYER_INFO` of the first cycle that
+/// reads the request, one server cycle (about 600 ms) after the request is sent,
+/// or one more cycle if the packet misses that cycle's input phase.
+///
+/// Measured on Engine L (10 injected failures, `r2/measure-table.md`): the first
+/// closed observation came 585 to 608 ms after the request, at most 1 observed
+/// tick later. Observed maximum 1, plus the margin of 4, is 5.
+const TRADE_CLOSE_GRACE_TICKS: u64 = 5;
 /// The whole failure cleanup: the close grace plus the closed-screen debounce.
 const TRADE_FAILURE_CLEANUP_TICKS: u64 = TRADE_CLOSE_GRACE_TICKS + TRADE_CLOSE_DEBOUNCE_TICKS;
 #[derive(Clone, Copy)]

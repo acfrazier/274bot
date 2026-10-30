@@ -4,7 +4,6 @@
 //! The waits are measured in a [`Moment`]. The native Quester counts observed
 //! game ticks ([`Tick`], one per `PLAYER_INFO`); the Load compat adapter keeps
 //! the frozen script's wall clock ([`Instant`]).
-use crate::bank::ops::observed_ticks_for_millis;
 use std::time::{Duration, Instant};
 
 /// Selected tradeside:inv component, shared by native and Load callers.
@@ -17,20 +16,38 @@ pub const TRADE_CONFIRM_WAIT_MS: u64 = 8_000;
 /// Load: how long a closed screen must stay closed to count as settled.
 pub const TRADE_CLOSE_DEBOUNCE_MS: u64 = 600;
 
-/// Native: observed game ticks to wait for the confirm screen after our offer
-/// accept. The wait ends on the partner account's accept click through the pair
-/// barrier, so no content signal bounds it: the nominal 5 000 ms over the 600 ms
-/// server tick is 8.33, rounded up to 9.
-pub const TRADE_OFFER_WAIT_TICKS: u64 = observed_ticks_for_millis(TRADE_OFFER_WAIT_MS);
-/// Native: observed game ticks to wait for the screen to close after our final
-/// accept. It also ends on the partner's click: the nominal 8 000 ms over 600 ms
-/// is 13.33, rounded up to 14.
-pub const TRADE_CONFIRM_WAIT_TICKS: u64 = observed_ticks_for_millis(TRADE_CONFIRM_WAIT_MS);
+// The two accept waits below, and the close grace in `quester/families/partner.rs`,
+// are policy budgets for the partner bot's input, not content constants: the
+// engine does not bound when the other account clicks. Each is at least the
+// maximum observed on the real engine plus one margin, stated once for all
+// three: margin = 4 ticks (2.4 s), two more exchanges of the two-tick length an
+// exchange takes (the partner's click, then the server cycle that applies it).
+// A value that already covers maximum + margin stays; a larger one only delays
+// the failure of a trade that is stuck. Ticks on which either account is held
+// are not counted (`EligibleClock` in `partner.rs`), so a hold is not a slow
+// partner.
+//
+// Measurement (Engine L, `host.quester-partner-trade`, 12 paired trades, 24 sides,
+// 1-minute host load 5 to 46 on 32 cores; the table and runs are
+// `/Volumes/dev-scratch/274bot-evidence/TRADE-CONFIRM-SCREEN/r2/measure-table.md`):
+// after our offer accept the confirm screen shows on the observed tick that is 1
+// or 2 ticks later (maximum 2); after our final accept the screen is first seen
+// closed 1 or 2 ticks later (maximum 2), and 3 once the one-tick debounce is
+// counted (maximum 3).
+
+/// Native: policy budget, in observed game ticks, for the partner's offer accept
+/// to open the confirm screen after our own offer accept. Observed maximum 2,
+/// plus the margin of 4, is 6; 9 covers it.
+pub const TRADE_OFFER_WAIT_TICKS: u64 = 9;
+/// Native: policy budget, in observed game ticks, for the partner's final accept
+/// to close the screen, seen closed and debounced, after our own final accept.
+/// Observed maximum 3, plus the margin of 4, is 7; 14 covers it.
+pub const TRADE_CONFIRM_WAIT_TICKS: u64 = 14;
 /// Native: observed game ticks a closed screen must stay closed. The server
 /// writes a modal change in one tick's packets (`if_openmain(tradeconfirm)` and
 /// `if_close` at `trade.rs2:147`, `:271`), so a screen that is still closed one
-/// `PLAYER_INFO` later is closed (the nominal 600 ms over 600 ms is 1).
-pub const TRADE_CLOSE_DEBOUNCE_TICKS: u64 = observed_ticks_for_millis(TRADE_CLOSE_DEBOUNCE_MS);
+/// `PLAYER_INFO` later is closed.
+pub const TRADE_CLOSE_DEBOUNCE_TICKS: u64 = 1;
 
 /// A point on the clock a trade wait runs on.
 pub trait Moment: Copy {
@@ -201,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn native_waits_are_observed_game_ticks_rounded_up_from_the_nominal_duration() {
+    fn native_waits_are_the_measured_policy_budgets_in_observed_game_ticks() {
         assert_eq!(TRADE_OFFER_WAIT_TICKS, 9);
         assert_eq!(TRADE_CONFIRM_WAIT_TICKS, 14);
         assert_eq!(TRADE_CLOSE_DEBOUNCE_TICKS, 1);

@@ -22,7 +22,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   close, and the trade's own limit, `timeout_ticks`) now count game ticks, as
   the other Quester waits do. Before, they counted clock time, so on a server
   that runs faster than 600 ms per tick a trade got more game ticks than its
-  limit.
+  limit. A hold on either account (guardian, readiness, welcome) spends none of
+  those ticks, so a trade that was held for longer than its limit carries on
+  when the hold ends. An explicit Pause still ends the trade.
 
 ## [0.2.8] — 2026-10-29 — Beta 2
 
