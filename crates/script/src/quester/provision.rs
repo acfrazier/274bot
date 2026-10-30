@@ -2784,6 +2784,7 @@ mod tests {
             let mut picks = 0;
             let mut deposits = 0;
             let mut withdrawals = 0;
+            let mut closes = 0;
             let mut ready = false;
 
             for tick in 1..=64 {
@@ -2876,7 +2877,13 @@ mod tests {
                             side_rows(&pack),
                         );
                     }
-                    Some(_) => panic!("provisioning must not close, walk or issue another effect"),
+                    Some(HostEffect::Interaction(crate::shim::InteractReq::Close)) => {
+                        assert_eq!(phase, ProvisionPhase::Closing);
+                        closes += 1;
+                        complete_open_stand(&mut ledger, tick);
+                        snapshot.seed_bank_observation(-1, tick, None, Vec::new());
+                    }
+                    Some(_) => panic!("provisioning must not walk or issue another effect"),
                     None => {}
                 }
                 match result {
@@ -2905,6 +2912,7 @@ mod tests {
                     ProvisionPhase::Scanning,
                     ProvisionPhase::Spillover,
                     ProvisionPhase::Withdrawing,
+                    ProvisionPhase::Closing,
                     ProvisionPhase::Ready
                 ]
             );
@@ -2924,9 +2932,10 @@ mod tests {
             );
             assert_eq!(provisioner.bank_starts(), 3);
             assert_eq!(provisioner.status().attempts, 3);
+            assert_eq!(closes, 1, "one close, after the last trip");
             assert!(snapshot_view(&snapshot, 64)
                 .bank_session()
-                .is_some_and(|session| session.value.open));
+                .is_some_and(|session| !session.value.open));
             assert!(ledger
                 .as_ref()
                 .is_none_or(|ledger| ledger.outbox.is_empty()));
@@ -3191,7 +3200,32 @@ mod tests {
         assert_eq!(memory.count(42), Some(0));
 
         // A Session-known shortage of an Acquirable runs its recipe: no
-        // block in place and no second bank trip.
+        // block in place and no second bank trip. The bank session ends
+        // first, so the recipe's steps never act under the bank interface.
+        tick += 1;
+        memory.track(&snapshot, tick);
+        assert!(poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            tick,
+            &plan,
+            None,
+            &memory,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        assert_eq!(provisioner.status().phase, ProvisionPhase::Closing);
+        assert!(matches!(
+            ledger
+                .as_ref()
+                .and_then(|ledger| ledger.outbox.first())
+                .map(|action| &action.effect),
+            Some(HostEffect::Interaction(crate::shim::InteractReq::Close))
+        ));
+        complete_open_stand(&mut ledger, tick);
+        snapshot.seed_bank_observation(-1, tick, None, Vec::new());
         tick += 1;
         memory.track(&snapshot, tick);
         // The empty recipe starts and finishes on that poll (TICK-FIX #7).
