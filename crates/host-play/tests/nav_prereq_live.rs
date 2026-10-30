@@ -825,7 +825,10 @@ fn item_id(selected: &api::game_data::SelectedGameData, alias: &str) -> i32 {
         .id
 }
 
-fn inventory_seed_aliases(selected: &api::game_data::SelectedGameData, slots: usize) -> Vec<String> {
+fn inventory_seed_aliases(
+    selected: &api::game_data::SelectedGameData,
+    slots: usize,
+) -> Vec<String> {
     let mut aliases = Vec::with_capacity(slots);
     let mut ids = HashSet::with_capacity(slots);
     for item in selected.items() {
@@ -838,8 +841,7 @@ fn inventory_seed_aliases(selected: &api::game_data::SelectedGameData, slots: us
         let Some(alias) = item.alias.as_deref() else {
             continue;
         };
-        if !safe_item_alias(alias)
-            || matches!(alias, "meat_pie" | "apple_pie" | "dagger_wolfbane")
+        if !safe_item_alias(alias) || matches!(alias, "meat_pie" | "apple_pie" | "dagger_wolfbane")
         {
             continue;
         }
