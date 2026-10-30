@@ -409,6 +409,9 @@ pub struct Dialogue {
     plan_tile: api::WorldTile,
     /// Arrival radius of the planned route.
     plan_radius: u16,
+    /// NPC tile from the newest snapshot that showed the NPC. While the NPC
+    /// is missing from the snapshot, the approach holds this tile.
+    last_seen_tile: api::WorldTile,
     /// Compute-only route assessment awaited in `Phase::Plan`; 0 when none.
     assess_request_id: u64,
     /// Fresh plans left for this route after a walk failure.
@@ -421,9 +424,10 @@ pub struct Dialogue {
     chat_advance_request_id: Option<u64>,
 }
 // Keep retained per-action dialogue state within its reviewed size budget.
-// 392 B measured (+8 B headroom). The approach round 3 fix added the route
-// plan (tile, radius, assessment request, retries) and a separate Talk
-// arrival and NPC-message tick: 56 B over the 336 B of round 2.
+// 400 B measured on x86_64 Linux (no headroom left). The approach round 3 fix
+// added the route plan (tile, radius, assessment request, retries) and a
+// separate Talk arrival and NPC-message tick: 56 B over the 336 B of round 2.
+// QUESTER-TALK-APPROACH-HOLD added the 12 B last seen NPC tile: 8 B over 392 B.
 const _: () = assert!(std::mem::size_of::<Dialogue>() <= 400);
 
 impl NativeMachine for Dialogue {
@@ -477,6 +481,11 @@ impl NativeMachine for Dialogue {
                 level: 0,
             },
             plan_radius: 0,
+            last_seen_tile: api::WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
             assess_request_id: 0,
             walk_retries_left: DIALOGUE_WALK_RETRIES,
             surface: Surface::Unselected,
@@ -600,13 +609,22 @@ impl NativeMachine for Dialogue {
         }
         match self.phase {
             Phase::Approach | Phase::Plan => {
-                let goal = self
+                let seen = self
                     .npc_id()
                     .and_then(|id| nearest_talk(cx, id))
                     .map(|target| approach_goal(cx, &target));
-                let Some(goal) = goal else {
-                    self.cancel_route(cx);
-                    return Poll::Ready(self.approach_target_gone());
+                // An NPC missing from a snapshot during an approach is
+                // transient, for example while it wanders (`Npc.ts:705-728`)
+                // or near a scene edge. The route keeps the last seen tile and
+                // its own observed-tick budget, and a later snapshot
+                // reacquires the NPC. A route that ends with the NPC still
+                // unseen is a walk failure with the same bounded fresh plan.
+                let goal = match seen {
+                    Some(goal) => {
+                        self.last_seen_tile = goal.tile;
+                        goal
+                    }
+                    None => held_goal(cx, self.last_seen_tile),
                 };
                 if goal.close {
                     std::task::ready!(crate::native::defer_budget(self.open(cx)))?;
@@ -923,19 +941,11 @@ impl Dialogue {
         self.talk_chat_mark = None;
     }
 
-    /// The NPC left view: not a walk failure, so no retry applies. After a
-    /// refusal the refusal stays the reported reason.
-    fn approach_target_gone(&self) -> Result<DialogueOutcome, ActionError> {
-        if self.refusal_recovery_active {
-            Err(dialogue_refusal_error())
-        } else {
-            Ok(DialogueOutcome::Failed)
-        }
-    }
-
     /// The named terminal failure of an approach whose retries are spent. A
-    /// failure after a server refusal keeps the refusal text first.
-    fn approach_error(&self, why: WalkFailure) -> ActionError {
+    /// failure after a server refusal keeps the refusal text first. When the
+    /// NPC is missing from the current snapshot, the text names the NPC and
+    /// the tile where it was last seen.
+    fn approach_error(&self, cx: &ActionContext<'_>, why: WalkFailure) -> ActionError {
         let text = match why {
             WalkFailure::NoRoute(detail) => format!("no route to the NPC: {detail}"),
             WalkFailure::Ended(detail) => {
@@ -950,6 +960,16 @@ impl Dialogue {
                 self.content_deadline_tick
             ),
             WalkFailure::NpcKeepsMoving => "the NPC kept moving through every replan".to_owned(),
+        };
+        let text = match &self.args.target {
+            DialogueTarget::Npc { id, name } if nearest_talk(cx, *id).is_none() => {
+                let tile = self.last_seen_tile;
+                format!(
+                    "{text}; {name} is not in view, last seen at ({}, {}, level {})",
+                    tile.x, tile.z, tile.level
+                )
+            }
+            _ => text,
         };
         let reason = if self.refusal_recovery_active {
             format!("{DIALOGUE_REFUSAL}; recovery walk failed: {text}")
@@ -1008,6 +1028,7 @@ impl Dialogue {
         }
         self.plan_tile = goal.tile;
         self.plan_radius = goal.radius;
+        self.last_seen_tile = goal.tile;
         self.talk_arrival_tick = None;
         self.talk_message_tick = None;
         Ok(())
@@ -1015,7 +1036,7 @@ impl Dialogue {
 
     /// Follow the route. When it is over (a walk receipt, or its tick budget)
     /// and the bot is still not in reach: a moved NPC costs one replan, and a
-    /// still NPC is a walk failure with its own bounded retry.
+    /// still or unseen NPC is a walk failure with its own bounded retry.
     fn poll_route(
         &mut self,
         cx: &mut ActionContext<'_>,
@@ -1040,7 +1061,7 @@ impl Dialogue {
         if goal.tile != self.plan_tile {
             if self.approach_replans_left == 0 {
                 self.cancel_route(cx);
-                return Poll::Ready(Err(self.approach_error(WalkFailure::NpcKeepsMoving)));
+                return Poll::Ready(Err(self.approach_error(cx, WalkFailure::NpcKeepsMoving)));
             }
             std::task::ready!(crate::native::defer_budget(self.start_route(cx, goal)))?;
             self.approach_replans_left -= 1;
@@ -1094,8 +1115,8 @@ impl Dialogue {
         Poll::Pending
     }
 
-    /// A route failed with the NPC still. Spend one fresh plan from the
-    /// observed position, or report the failure once they are spent.
+    /// A route failed with the NPC still or unseen. Spend one fresh plan from
+    /// the observed position, or report the failure once they are spent.
     fn walk_failed(
         &mut self,
         cx: &mut ActionContext<'_>,
@@ -1104,7 +1125,7 @@ impl Dialogue {
     ) -> Poll<Result<DialogueOutcome, ActionError>> {
         self.cancel_route(cx);
         if self.walk_retries_left == 0 {
-            return Poll::Ready(Err(self.approach_error(why)));
+            return Poll::Ready(Err(self.approach_error(cx, why)));
         }
         self.walk_retries_left -= 1;
         self.phase = Phase::Plan;
@@ -1860,6 +1881,19 @@ struct ApproachGoal {
     distance: i32,
     /// Within two tiles and reachable: click now, the engine walks the rest.
     close: bool,
+}
+
+/// The approach goal while the NPC is missing from the snapshot: its last seen
+/// tile. The router assesses any new route to it, and the bot never clicks an
+/// NPC it cannot see, so the goal is never close.
+fn held_goal(cx: &ActionContext<'_>, tile: api::WorldTile) -> ApproachGoal {
+    ApproachGoal {
+        tile,
+        radius: u16::from(talk_reachable(cx, tile)),
+        route_steps: None,
+        distance: i32::MAX,
+        close: false,
+    }
 }
 
 fn approach_goal(cx: &ActionContext<'_>, target: &TalkTarget<'_>) -> ApproachGoal {

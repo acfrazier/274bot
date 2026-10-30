@@ -2023,16 +2023,12 @@ fn dialogue_refusal_approach_failure_keeps_refusal_detail() {
         z: 5,
         level: 0,
     };
-    let brundt = content_dialogue_npc(
-        brundt_id,
-        "Brundt the Chieftain",
-        1,
-        api::WorldTile {
-            x: 7,
-            z: 5,
-            level: 0,
-        },
-    );
+    let brundt_tile = api::WorldTile {
+        x: 7,
+        z: 5,
+        level: 0,
+    };
+    let brundt = content_dialogue_npc(brundt_id, "Brundt the Chieftain", 1, brundt_tile);
     let mut before = snapshot();
     before.seed_local_player(super::tests::local_player(player_tile));
     before.seed_npcs(vec![brundt.clone()]);
@@ -2063,19 +2059,47 @@ fn dialogue_refusal_approach_failure_keeps_refusal_detail() {
     ));
     assert_eq!(walks_requested(&ledger), 0);
 
+    // Brundt is missing from the snapshot during the recovery route: the
+    // route holds his last seen tile, and the failure keeps the refusal first.
     let mut missing = snapshot();
     missing.seed_local_player(super::tests::local_player(player_tile));
-    let terminal = with_tick(&missing, &mut ledger, 3, |tick| {
+    let assessment = last_assessment_id(&ledger);
+    assert!(with_tick(&missing, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(last_assessment_id(&ledger), assessment);
+    let no_route = Some(crate::native::WalkRefusal::NoRouteWithinBounds {
+        tried: 0,
+        last: None,
+    });
+    super::tests::post_assess_receipt(&mut ledger, 3, 0, no_route);
+    for observed in [4, 5] {
+        assert!(with_tick(&missing, &mut ledger, observed, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+    }
+    assert!(matches!(
+        super::tests::last_route_effect(&ledger),
+        HostEffect::AssessWalk(request) if request.target == brundt_tile
+    ));
+    super::tests::post_assess_receipt(&mut ledger, 5, 0, no_route);
+    let terminal = with_tick(&missing, &mut ledger, 6, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     });
     assert!(
         matches!(
             &terminal,
             Poll::Ready(Err(ActionError::Failed(reason)))
-                if reason.as_ref() == "server refused Talk-to: I can't reach that!"
+                if reason.as_ref()
+                    == "server refused Talk-to: I can't reach that!; recovery walk failed: \
+                        no route to the NPC: router found no route; Brundt the Chieftain is not \
+                        in view, last seen at (7, 5, level 0)"
         ),
         "unexpected terminal poll: {terminal:?}"
     );
+    assert_eq!(walks_requested(&ledger), 0);
 }
 
 /// A Cook that the live flood cannot reach after a server refusal: the
@@ -2436,44 +2460,195 @@ fn dialogue_approach_replans_when_npc_moves_then_talks_after_it_settles() {
     ));
 }
 
-#[test]
-fn dialogue_approach_fails_immediately_when_npc_disappears() {
-    let mut before = snapshot();
-    before.seed_local_player(super::tests::local_player(api::WorldTile {
-        x: 5,
-        z: 5,
-        level: 0,
-    }));
-    before.seed_npcs(vec![dialogue_npc(5)]);
-    let mut ledger = None;
-    let (handle, initial) = with_tick(&before, &mut ledger, 1, |tick| {
-        let handle = tick
-            .actions
-            .begin::<Dialogue>(npc_args(), &mut tick.cx)
-            .unwrap();
-        let result = tick.actions.poll(&handle, &mut tick.cx);
-        (handle, result)
-    });
-    assert!(initial.is_pending());
-
+/// A snapshot with the player at `player` and no NPC in view.
+fn unseen_npc_snapshot(player: api::WorldTile) -> GameSnapshot {
     let mut gone = snapshot();
-    gone.seed_local_player(super::tests::local_player(api::WorldTile {
-        x: 5,
-        z: 5,
-        level: 0,
-    }));
-    assert!(matches!(
-        with_tick(&gone, &mut ledger, 2, |tick| {
-            tick.actions.poll(&handle, &mut tick.cx)
-        }),
-        Poll::Ready(Ok(DialogueOutcome::Failed))
-    ));
-    assert!(!ledger
+    gone.seed_local_player(super::tests::local_player(player));
+    gone.seed_npcs(Vec::new());
+    gone
+}
+
+fn sent_interactions(ledger: &Option<Box<ledger::Ledger>>) -> usize {
+    ledger
         .as_ref()
         .unwrap()
         .outbox
         .iter()
-        .any(|entry| { matches!(&entry.effect, HostEffect::Walk(_)) && entry.live() }));
+        .filter(|entry| matches!(&entry.effect, HostEffect::Interaction(_)))
+        .count()
+}
+
+/// Begin a Dialogue with Aubury 10 tiles east; the router assesses the route.
+fn begin_far_aubury() -> (
+    Option<Box<ledger::Ledger>>,
+    crate::native::ActionHandle<Dialogue>,
+    GameSnapshot,
+    api::WorldTile,
+) {
+    let npc_tile = api::WorldTile {
+        x: 10,
+        z: 5,
+        level: 0,
+    };
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 0,
+        z: 5,
+        level: 0,
+    }));
+    before.seed_npcs(vec![dialogue_npc_at(10, npc_tile)]);
+    let mut ledger = None;
+    let handle = with_tick(&before, &mut ledger, 1, |tick| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(npc_args(), &mut tick.cx)
+            .unwrap();
+        assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        handle
+    });
+    assert!(matches!(
+        super::tests::last_route_effect(&ledger),
+        HostEffect::AssessWalk(request) if request.target == npc_tile
+    ));
+    (ledger, handle, before, npc_tile)
+}
+
+/// Dig Site `pass-first-exam` (QUESTER-TALK-APPROACH-HOLD): one poll without
+/// the NPC in the snapshot ended the step with `dialogue failed`. The route
+/// now holds the last seen tile while the NPC is unseen, and the Talk-to
+/// follows when the NPC is seen again.
+#[test]
+fn dialogue_approach_holds_the_route_while_the_npc_is_unseen_then_talks() {
+    let (mut ledger, handle, _, npc_tile) = begin_far_aubury();
+    let first = last_assessment_id(&ledger);
+    // Unseen while the router assesses the route: the assessment stays.
+    let start = unseen_npc_snapshot(api::WorldTile {
+        x: 0,
+        z: 5,
+        level: 0,
+    });
+    assert!(
+        with_tick(&start, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending(),
+        "an unseen NPC during the route assessment is not a failure"
+    );
+    assert_eq!(last_assessment_id(&ledger), first);
+    super::tests::post_assess_receipt(&mut ledger, 2, 10, None);
+    // Still unseen when the answer arrives: the walk goes to the last seen tile.
+    assert!(with_tick(&start, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(live_walk_target(&ledger), Some(npc_tile));
+    let mut walks = WalkTally::default();
+    walks.observe(&ledger);
+    for (observed, x) in [(4, 2), (5, 4), (6, 6)] {
+        let walking = unseen_npc_snapshot(api::WorldTile { x, z: 5, level: 0 });
+        assert!(
+            with_tick(&walking, &mut ledger, observed, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            })
+            .is_pending(),
+            "the unseen NPC does not end the approach at tick {observed}"
+        );
+        assert_eq!(live_walk_target(&ledger), Some(npc_tile));
+        assert_eq!(live_walks(&ledger), 1);
+        walks.observe(&ledger);
+    }
+    assert_eq!(walks.count(), 1, "the route continues: no new walk");
+    assert_eq!(sent_interactions(&ledger), 0, "no Talk-to to an unseen NPC");
+
+    // Seen again beside the bot: the Talk-to follows and the walk ends.
+    let mut seen = snapshot();
+    seen.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 9,
+        z: 5,
+        level: 0,
+    }));
+    seen.seed_npcs(vec![dialogue_npc_at(1, npc_tile)]);
+    assert!(with_tick(&seen, &mut ledger, 7, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::Npc { index: Some(7), name, .. } if name == "Aubury"
+    ));
+    assert_eq!(live_walks(&ledger), 0);
+}
+
+/// The NPC never comes back: the route to its last seen tile ends, the one
+/// fresh plan runs, and the failure names the NPC, its last seen tile and the
+/// last walk's detail.
+#[test]
+fn dialogue_approach_unseen_npc_fails_with_its_name_and_last_seen_tile() {
+    let (mut ledger, handle, before, npc_tile) = begin_far_aubury();
+    super::tests::post_assess_receipt(&mut ledger, 1, 10, None);
+    assert!(with_tick(&before, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(live_walk_target(&ledger), Some(npc_tile));
+    let mut walks = WalkTally::default();
+    walks.observe(&ledger);
+    for observed in 3..8 {
+        let walking = unseen_npc_snapshot(api::WorldTile {
+            x: i32::try_from(observed).unwrap(),
+            z: 5,
+            level: 0,
+        });
+        assert!(with_tick(&walking, &mut ledger, observed, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(live_walk_target(&ledger), Some(npc_tile));
+    }
+    // The walk arrives at the last seen tile and the NPC is not there.
+    let arrived = unseen_npc_snapshot(api::WorldTile {
+        x: 9,
+        z: 5,
+        level: 0,
+    });
+    super::tests::post_user_input_walk_receipt(&mut ledger, 8);
+    ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
+    assert!(with_tick(&arrived, &mut ledger, 8, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(
+        ledger.as_ref().unwrap().outbox.is_empty(),
+        "the fresh plan waits one observed tick to read the snapshot again"
+    );
+    assert!(with_tick(&arrived, &mut ledger, 9, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        super::tests::last_route_effect(&ledger),
+        HostEffect::AssessWalk(request) if request.target == npc_tile
+    ));
+    super::tests::post_assess_receipt(&mut ledger, 9, 0, None);
+    assert!(with_tick(&arrived, &mut ledger, 10, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    walks.observe(&ledger);
+    assert_eq!(walks.count(), 2);
+    super::tests::post_user_input_walk_receipt(&mut ledger, 11);
+    ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
+    assert!(matches!(
+        with_tick(&arrived, &mut ledger, 11, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref()
+                == "dialogue approach failed: the walk ended before the NPC was in reach: Arrived; \
+                    Aubury is not in view, last seen at (10, 5, level 0)"
+    ));
+    assert_eq!(sent_interactions(&ledger), 0, "no Talk-to to an unseen NPC");
+    assert_eq!(live_walks(&ledger), 0);
 }
 
 #[test]

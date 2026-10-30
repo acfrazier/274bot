@@ -87,6 +87,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Quester
 
+- A Talk step no longer fails when the NPC is out of view for a moment while
+  the bot walks to it, for example while it wanders. The bot keeps walking
+  to where it last saw the NPC and talks to it when it sees it again. If the
+  NPC is still not in view when the walk and its one retry end, the step
+  stops with an error that names the NPC and the tile where it was last
+  seen.
 - After a Talk-to refusal, a guide walks to the NPC's latest observed tile and
   sends one more Talk-to request. This recovery also applies when the NPC's
   wander range is zero. If the recovery walk fails or the server refuses the
