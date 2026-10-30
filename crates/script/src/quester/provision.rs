@@ -4457,10 +4457,17 @@ mod tests {
     enum TellerStart {
         /// No banker is in the scene. The kernel waits and sends nothing.
         NoBanker,
-        /// The tick's interaction budget is spent. The kernel's talk is denied.
+        /// No banker at first, so the kernel waits. Then a banker appears, but
+        /// the tick's one interaction event is already spent: the kernel's talk
+        /// is refused. (A trip polls its kernel even on such a tick, while it
+        /// begins one only on a tick with the event unspent.)
         BudgetDenied,
         /// The kernel talks to the banker, and that request opens the bank.
         KernelOpens,
+        /// The `BudgetDenied` timeline with the event unspent: the kernel's
+        /// talk goes out on the tick that `BudgetDenied` refuses, and that
+        /// request opens the bank.
+        KernelOpensAfterWait,
     }
 
     fn teller_npc(stand: WorldTile) -> api::snapshot::NpcView {
@@ -4502,7 +4509,7 @@ mod tests {
         start: TellerStart,
     ) -> (Option<ledger::BankSessionMark>, Option<BankLease>, usize) {
         let (mut snapshot, bank, banks) = openable_bank_fixture();
-        if start != TellerStart::NoBanker {
+        if start == TellerStart::KernelOpens {
             snapshot.seed_npcs(vec![teller_npc(bank.tile)]);
         }
         let plan = scan_plan(bank);
@@ -4512,12 +4519,15 @@ mod tests {
         let mut memory = BankMemory::default();
         let mut picked = false;
         let mut kernel_waited = false;
+        let mut deny_next = false;
+        // The tick on which the kernel's talk to a late banker is due.
+        let mut talk_due = None;
         let mut receipt = false;
         let mut tick = 0;
         while tick < 20 && !receipt {
             tick += 1;
             memory.track(&snapshot, tick);
-            let deny = start == TellerStart::BudgetDenied && picked && !kernel_waited;
+            let deny = std::mem::take(&mut deny_next);
             let result = with_tick_bank(&snapshot, Some(&memory), &mut ledger, tick, |native| {
                 if deny {
                     assert!(native.cx.budget.event(false), "the tick's one event");
@@ -4569,15 +4579,25 @@ mod tests {
                     picked = true;
                 }
                 Some(HostEffect::Interaction(crate::shim::InteractReq::Npc { name, .. })) => {
-                    assert_eq!(start, TellerStart::KernelOpens, "no talk goes out");
+                    assert!(
+                        matches!(
+                            start,
+                            TellerStart::KernelOpens | TellerStart::KernelOpensAfterWait
+                        ),
+                        "{start:?}: no talk goes out"
+                    );
                     assert_eq!(name, "Banker");
+                    if start == TellerStart::KernelOpensAfterWait {
+                        assert_eq!(talk_due, Some(tick), "the talk goes out as the banker shows");
+                    }
                     complete_open_stand(&mut ledger, tick);
                     snapshot.seed_bank_observation(1, tick, Some(Vec::new()), Vec::new());
                 }
                 Some(_) => panic!("{start:?}: the teller trip issued an unexpected effect"),
-                None if picked && !kernel_waited && start != TellerStart::KernelOpens => {
-                    // The kernel waited (no banker) or was denied (budget)
-                    // without a request. The player now opens a bank.
+                None if deny => {
+                    // The kernel's talk to the banker was refused on the tick
+                    // it was due. Nothing went out. The player now opens a bank.
+                    assert_eq!(talk_due, Some(tick));
                     kernel_waited = true;
                     assert_eq!(
                         ledger.as_ref().unwrap().bank_session,
@@ -4585,6 +4605,32 @@ mod tests {
                         "{start:?}: nothing is marked before any bank opens"
                     );
                     snapshot.seed_bank_observation(1, tick, Some(Vec::new()), Vec::new());
+                }
+                None if picked && !kernel_waited && start == TellerStart::NoBanker => {
+                    // The kernel waits for a banker without a request. The
+                    // player now opens a bank.
+                    kernel_waited = true;
+                    assert_eq!(
+                        ledger.as_ref().unwrap().bank_session,
+                        None,
+                        "{start:?}: nothing is marked before any bank opens"
+                    );
+                    snapshot.seed_bank_observation(1, tick, Some(Vec::new()), Vec::new());
+                }
+                None if picked
+                    && !kernel_waited
+                    && talk_due.is_none()
+                    && matches!(
+                        start,
+                        TellerStart::BudgetDenied | TellerStart::KernelOpensAfterWait
+                    ) =>
+                {
+                    // The kernel waited for a banker. One appears now. For
+                    // `BudgetDenied`, the next tick's event is spent before
+                    // the kernel polls.
+                    snapshot.seed_npcs(vec![teller_npc(bank.tile)]);
+                    deny_next = start == TellerStart::BudgetDenied;
+                    talk_due = Some(tick + 1);
                 }
                 None => {}
             }
@@ -4597,7 +4643,7 @@ mod tests {
         assert!(receipt, "{start:?}: teller trip reached its receipt");
         assert_eq!(
             kernel_waited,
-            start != TellerStart::KernelOpens,
+            matches!(start, TellerStart::NoBanker | TellerStart::BudgetDenied),
             "{start:?}: the player open happened only after the kernel waited"
         );
         let mark = ledger.as_ref().unwrap().bank_session;
@@ -4648,12 +4694,16 @@ mod tests {
         assert_the_players_bank(TellerStart::BudgetDenied);
     }
 
+    /// The kernel's own teller open is marked, leased and closed once: at
+    /// once, and after a wait for a banker.
     #[test]
     fn a_bank_the_teller_kernel_opens_is_its_own_and_closed() {
-        let (mark, lease, closes) = teller_trip(TellerStart::KernelOpens);
-        let mark = mark.expect("the kernel's open is marked");
-        assert!(mark.opened_by_machine);
-        assert_eq!(lease, Some(BankLease::new(1, mark.generation)));
-        assert_eq!(closes, 1, "the kernel's teller bank is closed once");
+        for start in [TellerStart::KernelOpens, TellerStart::KernelOpensAfterWait] {
+            let (mark, lease, closes) = teller_trip(start);
+            let mark = mark.expect("the kernel's open is marked");
+            assert!(mark.opened_by_machine, "{start:?}");
+            assert_eq!(lease, Some(BankLease::new(1, mark.generation)), "{start:?}");
+            assert_eq!(closes, 1, "{start:?}: the kernel's teller bank is closed once");
+        }
     }
 }

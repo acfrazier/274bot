@@ -5718,6 +5718,49 @@ mod tests {
         );
     }
 
+    /// The machine's first teller talk is refused by the tick budget, so no
+    /// request went out. A bank that the player opens next is not marked as
+    /// this machine's open.
+    #[test]
+    fn a_bank_the_player_opens_after_a_denied_first_teller_talk_is_not_marked() {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_npcs(vec![npc_row(7, "Gundai", &["Talk-to"])]);
+        let mut ledger = None;
+        let handle = start_bank(
+            &snapshot,
+            &mut ledger,
+            open_request(teller_access(
+                catalog_bank("Mage Arena"),
+                Some("Gundai"),
+                0,
+                None,
+            )),
+        );
+        let denied = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            spend_interaction(&mut tick.cx);
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(denied.is_pending(), "budget denial must remain Pending");
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        let result = with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(result, Poll::Ready(Ok(_))), "{result:?}");
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        assert!(
+            !ledger
+                .as_ref()
+                .unwrap()
+                .bank_session
+                .is_some_and(|mark| mark.opened_by_machine),
+            "{:?}",
+            ledger.as_ref().unwrap().bank_session
+        );
+    }
+
     fn assert_teller_page_deferral(
         page: &GameSnapshot,
         access: Arc<BankStandAccess>,
