@@ -250,6 +250,7 @@ enum FixtureSeedPhase {
     WaitReseed(scenario::tutorial::PostRelogTutorial),
     SeedPosition,
     SeedAccount(usize),
+    WaitAccountSeed(i32),
     Ready,
 }
 
@@ -508,6 +509,23 @@ fn make_fixture_with_seed_commands(
                             send_seed_command(client, command)?;
                             *phase = FixtureSeedPhase::SeedAccount(*next_command + 1);
                         } else {
+                            let baseline = scenario::tutorial::chat_baseline(&snapshot);
+                            send_seed_command(client, scenario::tutorial::TUTORIAL_GETVAR)?;
+                            *phase = FixtureSeedPhase::WaitAccountSeed(baseline);
+                        }
+                    }
+                    FixtureSeedPhase::WaitAccountSeed(baseline) => {
+                        if let Some(line) = snapshot.chat_lines().iter().find(|line| {
+                            line.sequence > *baseline
+                                && scenario::tutorial::parse_tutorial_reply(&line.text)
+                                    == Some(scenario::tutorial::TUTORIAL_COMPLETE)
+                        }) {
+                            println!(
+                                "fixture account seeds confirmed: tick={} sequence={} after={}",
+                                snapshot.tick(),
+                                line.sequence,
+                                baseline
+                            );
                             *phase = FixtureSeedPhase::Ready;
                             frame_seeded.store(true, Ordering::Release);
                         }
