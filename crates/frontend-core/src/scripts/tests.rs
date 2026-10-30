@@ -194,7 +194,7 @@ fn fixture(test: &str, members: &[&str]) -> Fixture {
 #[test]
 fn warm_quester_script_section_shares_its_zone_text_without_allocating() {
     let _source = crate::quester_paths::registry_source_test_lock();
-    let mut f = fixture("quester-zone-frame-allocations", &["alice"]);
+    let mut f = native_fixture("quester-zone-frame-allocations", &["alice"]);
     assert!(f.scripts.persist_assignment(
         &mut f.core,
         "alice",

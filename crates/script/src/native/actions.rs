@@ -2723,6 +2723,26 @@ mod tests {
         });
     }
     #[test]
+    fn an_unscoped_walk_keeps_the_inherited_danger_policy() {
+        let mut ledger = None;
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            assert!(cx.stage_cross.is_none());
+            let mut actions = NativeActions { _private: () };
+            let handle = actions
+                .begin::<walk::Walk>(assessment_walk_request(cx.evidence()), cx)
+                .unwrap();
+            let HostEffect::Walk(request) = &cx.ledger.as_ref().unwrap().outbox[0].effect else {
+                panic!("the unscoped walk must use the native walk path");
+            };
+            assert_eq!(
+                request.options.allow_danger_zones,
+                WalkBit::Inherit,
+                "an unscoped Quester walk retains the pre-consent admission policy"
+            );
+            drop(handle);
+        });
+    }
+    #[test]
     fn plain_walk_under_step_grant_arms_food_guard_without_a_stage() {
         let mut ledger = None;
         with_frame(&mut ledger, Duration::ZERO, |cx| {

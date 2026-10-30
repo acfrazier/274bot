@@ -314,6 +314,14 @@ const CORE: &[(&str, Decision)] = &[
         "scripts/mod.rs::Scripts::assignment_name",
         Excluded("reads the profile's assignment display name"),
     ),
+    (
+        "scripts/mod.rs::Scripts::refresh_quester_start_zones",
+        Excluded("refreshes a derived cache of the selected queue's danger-zone disclosure; no operator decision"),
+    ),
+    (
+        "scripts/mod.rs::Scripts::clear_quester_start_zones",
+        Excluded("clears the derived selected-queue disclosure cache; no operator decision"),
+    ),
     ("scripts/mod.rs::Scripts::stage_cancel_queued", Staged(C::CancelQueuedStart)),
     ("scripts/mod.rs::Scripts::stage_browse_pick", Staged(C::PickBrowseCard)),
     ("scripts/mod.rs::Scripts::stage_browse_pick_clear", Staged(C::PickBrowseCard)),

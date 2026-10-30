@@ -2210,6 +2210,11 @@ fn a_rename_or_card_change_before_confirm_never_retargets_the_plan() {
 #[test]
 fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
     let mut d = driver("f3-quester-disclosure", &["alice", "bob"]);
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).expect("data");
+    d.session_mut()
+        .play_mut()
+        .expect("play")
+        .bind_script_test_data(data);
     let _source = crate::quester_paths::registry_source_test_lock();
     d.poll();
     load(&mut d, &["alice", "bob"]);
