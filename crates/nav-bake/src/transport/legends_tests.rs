@@ -61,15 +61,15 @@ fn legends_gate_requires_started_progress_and_crosses_each_leaf_both_ways() {
             assert_eq!(edge.takeoff, None);
             assert_eq!(edge.player_delta, None);
             assert!(edge.item_req.is_empty());
-            assert_eq!(edge.varp_req, vec![(101, 1)]);
+            assert_eq!(edge.varp_req, vec![(139, 1)]);
             assert!(edge.quest_gates.is_none());
             let mut started = nav_planner::world_state::WorldState::empty();
-            started.varps.insert(101, 1);
+            started.varps.insert(139, 1);
             started.map_members = true;
             started.inventory_ready = true;
             started.equipment_ready = true;
             assert!(started.allows(edge));
-            started.varps.insert(101, 0);
+            started.varps.insert(139, 0);
             assert!(!started.allows(edge));
         }
     }
@@ -415,7 +415,7 @@ fn write_legends_content(fx: &Fixture) {
          1359=rune_axe\n1357=adamant_axe\n1355=mithril_axe\n\
          1361=black_axe\n1353=steel_axe\n1349=iron_axe\n1351=bronze_axe\n",
     );
-    fx.write("pack/varp.pack", "101=legendsquest\n");
+    fx.write("pack/varp.pack", "139=legendsquest\n");
 }
 
 fn write_jungle_map(fx: &Fixture, ids: &[i32]) {

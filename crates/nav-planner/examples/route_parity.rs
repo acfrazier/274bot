@@ -469,7 +469,7 @@ fn main() -> Result<(), String> {
     let mut legends_started = observed.clone();
     legends_started.combat_level = Some(40);
     legends_started.quests.insert("The Grand Tree".into());
-    legends_started.varps.insert(101, 1);
+    legends_started.varps.insert(139, 1);
     let mut legends_ready = complete.clone();
     legends_ready.inv.insert(714, 1);
     legends_ready.inv.insert(975, 1);

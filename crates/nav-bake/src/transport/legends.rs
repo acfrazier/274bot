@@ -693,7 +693,7 @@ fn legends_quest(content_root: &Path, quests: Option<&QuestSource<'_>>) -> Optio
         "general/configs/quest.constant",
         "legends_complete",
     )?;
-    let varp_id = pinned_pack_id(content_root, "varp.pack", "legendsquest", 101)?;
+    let varp_id = pinned_pack_id(content_root, "varp.pack", "legendsquest", 139)?;
     if started != 0 || complete != 75 {
         return None;
     }
