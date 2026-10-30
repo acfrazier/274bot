@@ -472,8 +472,7 @@ impl FollowRun {
         let tiles = hop.tiles();
         let here_index = player_path_index(tiles, here, hop.cursor);
         let here_i = here_index.unwrap_or(hop.cursor);
-        let (mut aim, mut idx) =
-            pick_aim_in_scene(tiles, here_index, hop.cursor, snapshot.scene());
+        let (mut aim, mut idx) = pick_aim_in_scene(tiles, here_index, hop.cursor, snapshot.scene());
         loop {
             if aim == here {
                 (hop.end_refused_ticks, hop.end_refused_last_tick) = refused;

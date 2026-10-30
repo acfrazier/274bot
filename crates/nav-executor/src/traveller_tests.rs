@@ -1101,7 +1101,10 @@ fn follow_walks_a_bent_leg_at_walking_speed_within_each_hop_budget() {
         .into_iter()
         .map(|index| (path[index].0 - 3200, path[index].1 - 3200))
         .collect();
-    assert_eq!(rec.walked, expected_aims, "each aim advances along the bent path");
+    assert_eq!(
+        rec.walked, expected_aims,
+        "each aim advances along the bent path"
+    );
 }
 
 #[test]
@@ -1167,9 +1170,7 @@ fn long_bent_walk_aims_at_short_path_hops() {
 
     assert_eq!(tiles.len() - 1, 63, "the bent leg has 63 steps");
     let last = *tiles.last().expect("bent leg is non-empty");
-    let chebyshev_distance = (last.x - tiles[0].x)
-        .abs()
-        .max((last.z - tiles[0].z).abs());
+    let chebyshev_distance = (last.x - tiles[0].x).abs().max((last.z - tiles[0].z).abs());
     assert!(chebyshev_distance <= 17, "the leg ends within 17 tiles");
 
     let mut base = 0;
