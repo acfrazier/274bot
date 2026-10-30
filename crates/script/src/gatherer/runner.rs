@@ -2227,7 +2227,19 @@ impl Gatherer {
         if handoff && selected.target.is_none() {
             return;
         }
-        if selected.target.is_none() && self.hazard_escape.is_none() {
+        // Only permanent exclusions from failed walks spend the target set.
+        // Temporary absence and finite survey waits keep their usual paths.
+        if selected.target.is_none()
+            && self.hazard_escape.is_none()
+            && self.scratch.last_walk_failure.is_some()
+            && matches!(
+                &selected.outcome,
+                Selection::Exhausted {
+                    wait_until,
+                    absent: 0,
+                } if *wait_until == u64::from(u32::MAX)
+            )
+        {
             let reason =
                 self.block_context(Some(here.value), "no alternate resource target remains");
             if !self.fail_last_walk("walk-failed", &reason) {
