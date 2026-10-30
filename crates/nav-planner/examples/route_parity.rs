@@ -467,6 +467,8 @@ fn main() -> Result<(), String> {
         ..WorldState::empty()
     };
     let mut legends_started = observed.clone();
+    legends_started.quest_evidence =
+        quest_state(&data, &[("legends", "legendsquest", 1)])?.quest_evidence;
     legends_started.combat_level = Some(40);
     legends_started.quests.insert("The Grand Tree".into());
     legends_started.varps.insert(139, 1);

@@ -146,7 +146,7 @@ enum JungleAxeUse {
 struct LegendsQuest {
     family: QuestFamilyId,
     quest: FactKey,
-    varp_id: i32,
+    signal: FactKey,
     started_min: i32,
 }
 
@@ -284,6 +284,21 @@ fn gate_edges(
         gates.push((gate, id, open_loc_id, angle_dir));
     }
 
+    // Varp 139 is not sent to the live client. Require typed progress evidence.
+    let Ok(quest_gates) = QuestGates::new(
+        quest.family,
+        [QuestGate::Window(api::selected::StageWindow {
+            quest: quest.quest.clone(),
+            signal: quest.signal.clone(),
+            values: api::selected::InclusiveRange {
+                min: Some(quest.started_min),
+                max: None,
+            },
+        })],
+    ) else {
+        bump(skipped, SKIP_GATE_QUEST, 1);
+        return;
+    };
     let mut directions = 0;
     for (gate, id, open_loc_id, angle_dir) in gates {
         let at = WorldTile {
@@ -310,15 +325,13 @@ fn gate_edges(
                 item_req: vec![],
                 consumed_req: vec![],
                 item_returns: vec![],
-                quest_req: vec![],
-                varp_req: vec![(quest.varp_id, quest.started_min)],
-                worn_req: vec![],
+                varp_req: vec![],
                 worn_all_req: vec![],
                 forbidden_held: vec![],
                 forbidden_worn: vec![],
                 members_req: false,
                 wildy_cap: None,
-                quest_gates: None,
+                quest_gates: Some(quest_gates.clone()),
             });
             directions += 1;
         }
@@ -706,7 +719,7 @@ fn legends_quest(content_root: &Path, quests: Option<&QuestSource<'_>>) -> Optio
     Some(LegendsQuest {
         family: quests.family,
         quest: FactKey::new(&row.id),
-        varp_id,
+        signal: FactKey::new(&row.varp),
         started_min,
     })
 }

@@ -1,11 +1,58 @@
-use super::*;
-use api::selected::{FactKey, QuestGate};
+use std::sync::Arc;
 
+use super::*;
+use api::quest_progress::{EvidenceProvider, EvidenceStamp};
+use api::selected::{FactKey, InclusiveRange, QuestGate, RunKey, Truth};
 const GATE_LOC_IDS: [i32; 2] = [2391, 2392];
 const MAP_IDS: [i32; 2] = [714, 715];
 const AXE_IDS: [i32; 7] = [1349, 1351, 1353, 1355, 1357, 1359, 1361];
 const MACHETTE_ID: i32 = 975;
 const JUNGLE_LOC_IDS: [i32; 5] = [2887, 2889, 2890, 2892, 2893];
+
+struct LegendsStageEvidence {
+    value: i32,
+    stamp: EvidenceStamp,
+}
+
+impl EvidenceProvider for LegendsStageEvidence {
+    fn test_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Truth {
+        if !self.stamp.meets(required_after) {
+            return Truth::Unknown;
+        }
+        match gate {
+            QuestGate::Window(window)
+                if window.quest.0.as_ref() == "legends"
+                    && window.signal.0.as_ref() == "legendsquest" =>
+            {
+                window.values.test(&InclusiveRange {
+                    min: Some(self.value),
+                    max: Some(self.value),
+                })
+            }
+            _ => Truth::Unknown,
+        }
+    }
+}
+
+fn legends_progress_evidence(
+    family: nav_planner::quest_gates::QuestFamilyId,
+    value: i32,
+) -> nav_planner::quest_gates::QuestEvidence {
+    let stamp = EvidenceStamp {
+        run: RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: 1,
+        sequence: 1,
+    };
+    nav_planner::quest_gates::QuestEvidence::new(
+        Arc::new(LegendsStageEvidence { value, stamp }),
+        family,
+        stamp,
+    )
+}
 
 #[test]
 fn legends_gate_requires_started_progress_and_crosses_each_leaf_both_ways() {
@@ -17,8 +64,10 @@ fn legends_gate_requires_started_progress_and_crosses_each_leaf_both_ways() {
     );
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
     let (facts, identity) = selected.quest_identity_for_bake().unwrap();
+    let family =
+        nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema);
     let quests = QuestSource {
-        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+        family,
         facts: &facts,
     };
     let collision = open_collision(2724, 3345, 12, 12);
@@ -69,16 +118,32 @@ fn legends_gate_requires_started_progress_and_crosses_each_leaf_both_ways() {
             assert_eq!(edge.takeoff, None);
             assert_eq!(edge.player_delta, None);
             assert!(edge.item_req.is_empty());
-            assert_eq!(edge.varp_req, vec![(139, 1)]);
-            assert!(edge.quest_gates.is_none());
+            assert!(edge.varp_req.is_empty());
+            let Some(gates) = edge.quest_gates.as_ref() else {
+                panic!("the gate carries Legends stage evidence");
+            };
+            let [QuestGate::Window(window)] = gates.gates() else {
+                panic!("the gate carries one Legends stage window");
+            };
+            assert_eq!(window.quest, FactKey::new("legends"));
+            assert_eq!(window.signal, FactKey::new("legendsquest"));
+            assert_eq!(
+                window.values,
+                InclusiveRange {
+                    min: Some(1),
+                    max: None,
+                }
+            );
+
             let mut started = nav_planner::world_state::WorldState::empty();
-            started.varps.insert(139, 1);
-            started.map_members = true;
-            started.inventory_ready = true;
-            started.equipment_ready = true;
+            started.quest_evidence = Some(legends_progress_evidence(family, 1));
             assert!(started.allows(edge));
-            started.varps.insert(139, 0);
-            assert!(!started.allows(edge));
+            let mut not_started = nav_planner::world_state::WorldState::empty();
+            not_started.quest_evidence = Some(legends_progress_evidence(family, 0));
+            assert!(!not_started.allows(edge));
+            let mut varp_only = nav_planner::world_state::WorldState::empty();
+            varp_only.varps.insert(139, 1);
+            assert!(!varp_only.allows(edge));
         }
     }
 
