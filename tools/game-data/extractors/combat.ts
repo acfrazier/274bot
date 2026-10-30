@@ -217,6 +217,139 @@ function expandSections(body: string, script: CombatScript, scripts: CombatScrip
 function expandBody(body: string, script: CombatScript, scripts: CombatScripts, skipGenericAttack = false) {
     return expandSections(body, script, scripts, skipGenericAttack).map((section) => section.body).join('\n');
 }
+export type NpcCombatTransformTarget =
+    | { kind: 'known'; config: string }
+    | { kind: 'unknown' };
+
+type NpcTypeChangeCalls = { found: boolean; targets: string[]; unsupported: boolean };
+
+function parseCallArguments(body: string, open: number): string[] | null {
+    const args: string[] = [];
+    let start = open + 1;
+    let depth = 0;
+    let string = false;
+    let escaped = false;
+    for (let index = start; index < body.length; index++) {
+        const character = body[index]!;
+        if (string) {
+            if (escaped) escaped = false;
+            else if (character === '\\') escaped = true;
+            else if (character === '"') string = false;
+            continue;
+        }
+        if (character === '"') {
+            string = true;
+        } else if (character === '(') {
+            depth++;
+        } else if (character === ')') {
+            if (depth === 0) {
+                args.push(body.slice(start, index).trim());
+                return args;
+            }
+            depth--;
+        } else if (character === ',' && depth === 0) {
+            args.push(body.slice(start, index).trim());
+            start = index + 1;
+        }
+    }
+    return null;
+}
+
+function npcTypeChangeCalls(body: string): NpcTypeChangeCalls {
+    const targets: string[] = [];
+    let found = false;
+    let unsupported = false;
+    let string = false;
+    let escaped = false;
+    for (let index = 0; index < body.length; index++) {
+        const character = body[index]!;
+        if (string) {
+            if (escaped) escaped = false;
+            else if (character === '\\') escaped = true;
+            else if (character === '"') string = false;
+            continue;
+        }
+        if (character === '"') {
+            string = true;
+            continue;
+        }
+        if (/[A-Za-z0-9_]/.test(body[index - 1] ?? '')) continue;
+        const name = body.startsWith('npc_changetype_keepall', index)
+            ? 'npc_changetype_keepall'
+            : body.startsWith('npc_changetype', index) ? 'npc_changetype' : null;
+        if (!name) continue;
+        let open = index + name.length;
+        if (/[A-Za-z0-9_]/.test(body[open] ?? '')) continue;
+        while (/\s/.test(body[open] ?? '')) open++;
+        if (body[open] !== '(') continue;
+        found = true;
+        const args = parseCallArguments(body, open);
+        const target = args?.[0];
+        if (args?.length !== 2 || !/^[A-Za-z][A-Za-z0-9_]*$/.test(target ?? '')) {
+            unsupported = true;
+        } else {
+            targets.push(target);
+        }
+        if (args) {
+            let close = open + 1;
+            let depth = 0;
+            let inString = false;
+            let inEscape = false;
+            for (; close < body.length; close++) {
+                const current = body[close]!;
+                if (inString) {
+                    if (inEscape) inEscape = false;
+                    else if (current === '\\') inEscape = true;
+                    else if (current === '"') inString = false;
+                } else if (current === '"') inString = true;
+                else if (current === '(') depth++;
+                else if (current === ')' && depth-- === 0) break;
+            }
+            index = close;
+        }
+    }
+    return { found, targets, unsupported };
+}
+
+function directApproachAwakeningTarget(section: ScriptSection) {
+    if (section.kind !== 'ai_applayer2') return null;
+    const normalized = section.body.replace(/\s+/g, ' ').trim();
+    const match = /^npc_changetype\(\s*([A-Za-z][A-Za-z0-9_]*)\s*,\s*(\d+)\s*\)\s*;\s*npc_setmode\(\s*opplayer2\s*\)\s*;?$/.exec(normalized);
+    if (!match) return null;
+    const duration = Number(match[2]);
+    if (!Number.isSafeInteger(duration) || duration < 1) return null;
+    return match[1]!;
+}
+
+/** Derive only the straight-line attack-approach awakening contract; broader transforms fail closed. */
+export function extractNpcCombatTransformTarget(
+    config: string,
+    category: string | null,
+    scripts: CombatScripts,
+): NpcCombatTransformTarget | null {
+    const handlers = matchingTriggers(config, category, scripts)
+        .filter(({ section }) => section.kind === 'ai_applayer2' || section.kind === 'ai_opplayer2');
+    let found = false;
+    let unsupported = false;
+    const targets = new Set<string>();
+    for (const { script, section } of handlers) {
+        const handlerCalls = expandSections(section.body, script, scripts)
+            .map(({ body }) => npcTypeChangeCalls(body));
+        if (!handlerCalls.some((calls) => calls.found)) continue;
+        found = true;
+        const supportedTarget = directApproachAwakeningTarget(section);
+        if (supportedTarget === null
+            || handlerCalls.some((calls) => calls.unsupported || calls.targets.some((target) => target !== supportedTarget))) {
+            unsupported = true;
+        } else {
+            targets.add(supportedTarget);
+        }
+    }
+    if (!found) return null;
+    if (unsupported || targets.size !== 1) return { kind: 'unknown' };
+    return { kind: 'known', config: targets.values().next().value! };
+}
+
 
 const SHARED_ATTACK_PROCEDURES = new Set([
     'npc_default_attack',
