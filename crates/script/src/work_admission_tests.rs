@@ -1591,7 +1591,9 @@ impl CooperativeJob for ConsumedDropPanic {
 impl Drop for ConsumedDropPanic {
     fn drop(&mut self) {
         self.entered.send(()).expect("test observes job cleanup");
-        self.release.recv().expect("test releases the cleanup panic");
+        self.release
+            .recv()
+            .expect("test releases the cleanup panic");
         panic!("injected uncontained panic after terminal consumption");
     }
 }
@@ -1618,9 +1620,14 @@ fn worker_panic_after_terminal_consumption_retires_custody_without_relocking_reg
     entered_rx
         .recv_timeout(Duration::from_secs(2))
         .expect("completed job is held in cleanup before the panic");
-    assert_eq!(shared.lock().consume(&ticket), Ok(Settlement::Completed(12)));
+    assert_eq!(
+        shared.lock().consume(&ticket),
+        Ok(Settlement::Completed(12))
+    );
     assert_eq!(shared.lock().capacity().jobs(), 1);
-    release_tx.send(()).expect("panic after terminal consumption");
+    release_tx
+        .send(())
+        .expect("panic after terminal consumption");
 
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
