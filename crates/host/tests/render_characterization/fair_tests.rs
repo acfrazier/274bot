@@ -22,6 +22,7 @@ struct Completed {
     generation: u64,
     scene_state: i32,
     tick: u64,
+    client_ticks: u64,
 }
 
 struct Gate {
@@ -44,6 +45,7 @@ struct Control {
     events: Sender<Observed>,
     park: Arc<host::SlotPark>,
     self_wake: AtomicBool,
+    client_ticks: AtomicU64,
 }
 
 impl RenderTestControl for Control {
@@ -57,6 +59,16 @@ impl RenderTestControl for Control {
 
     fn resource_failure(&self) -> Option<client::render::backend::gpu::test_hooks::SceneTestPoint> {
         *self.resource_failure.lock().unwrap()
+    }
+
+    fn client_cycle(
+        &self,
+        _slot: SlotKey,
+        _backend: BackendKind,
+        _cycle: i32,
+        _complete_game_scene: bool,
+    ) {
+        self.client_ticks.fetch_add(1, Ordering::SeqCst);
     }
 
     fn at(&self, event: RenderTestEvent) {
@@ -151,6 +163,7 @@ impl Slot {
             events: events_tx,
             park: Arc::clone(&park),
             self_wake: AtomicBool::new(false),
+            client_ticks: AtomicU64::new(0),
         });
         let input = SlotInput::new();
         input.set_render_focused(focused);
@@ -200,6 +213,7 @@ impl Slot {
                             generation: output.generation(),
                             scene_state: client.scene_state,
                             tick: completed_ticks,
+                            client_ticks: control.client_ticks.load(Ordering::SeqCst),
                         });
                         control.stop.load(Ordering::SeqCst)
                     },
@@ -602,9 +616,13 @@ fn watch_no_paint_tick_never_self_grants_or_blocks_peer() {
     let watch = Slot::start(now, None);
     let first = watch.painted(0);
     watch.tick(now + Duration::from_millis(20));
-    receive(&watch.completed, |completed| {
-        completed.generation == first.generation
+    let completed = receive(&watch.completed, |completed| {
+        completed.tick > first.tick && completed.generation == first.generation
     });
+    assert!(
+        completed.client_ticks > first.client_ticks,
+        "the completed client tick is observed even when no paint is due"
+    );
     let mut peer = Slot::start(
         now + Duration::from_millis(20),
         Some(RenderTestPoint::AfterConsume),
@@ -839,7 +857,11 @@ fn client_scene_lock_holder_blocks_only_the_try_lock_attempt() {
             .owns_lease
     );
     assert!(!slot.event(RenderTestPoint::OverlayEntry).event.owns_lease);
-    let failed = slot.painted(first.generation);
+    let failed = receive(&slot.completed, |completed| {
+        completed.tick > first.tick
+            && completed.stats.is_some_and(|stats| stats.scene_consumes() == 2)
+    });
+    assert_eq!(failed.generation, first.generation);
     assert_eq!(failed.stats.unwrap().scene_consumes(), 2);
     assert_eq!(
         failed.stats.unwrap().scene_progress(),
@@ -1241,7 +1263,11 @@ fn host_asset_contention_releases_before_overlays() {
             .owns_lease
     );
     assert!(!peer.event(RenderTestPoint::OverlayEntry).event.owns_lease);
-    let failed = peer.painted(first.generation);
+    let failed = receive(&peer.completed, |completed| {
+        completed.tick > first.tick
+            && completed.stats.is_some_and(|stats| stats.scene_consumes() == 2)
+    });
+    assert_eq!(failed.generation, first.generation);
     let stats = failed.stats.unwrap();
     assert!(stats.has_valid_scene());
     assert_eq!(
