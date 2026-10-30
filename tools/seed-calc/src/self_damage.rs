@@ -1245,6 +1245,54 @@ mod tests {
     }
 
     #[test]
+    fn a_due_regen_during_the_rope_setup_walk_cannot_heal_before_the_fall() {
+        // `forcemove` walks the player to the rope anchor through `agility_walk`, and every
+        // walked tile ends in `p_delay(0)` (`content/scripts/skill_agility/scripts/agility.rs2:40-41`;
+        // reached from `content/scripts/quests/quest_upass/scripts/upass_obstacles.rs2:102`).
+        // `P_DELAY` keeps the player delayed for the following tick even with a zero argument
+        // (`engine/src/engine/script/handlers/PlayerOps.ts:376-380`), and normal timers need
+        // `canAccess` (`engine/src/engine/entity/Player.ts:821-831,945-955`), so no walk tick heals.
+        let before_roll = PreRoll {
+            delay_before_walk: 1,
+            walk_ticks: 2,
+            delay_after_walk: 4,
+        };
+        let initial = State {
+            hp: 1,
+            regen_phase: REGEN_TICKS - 3,
+            food: 0,
+            food_cooldown: 0,
+        };
+        let ready = advance_pre_roll(initial, before_roll, 40);
+        assert_eq!(
+            ready.hp, initial.hp,
+            "the rope setup walk must not regenerate health"
+        );
+        assert_eq!(ready.regen_phase, REGEN_TICKS);
+
+        let swing = rope_hazard(1, 2);
+        assert_eq!(swing.timing.first_attempt_before_roll, before_roll);
+        let run = execute(
+            &[Operation::SwingAcquire {
+                id: "swing-rope".into(),
+                restarts: 0,
+                stop: "swing-rope exhausted".into(),
+                swing,
+                recovery: Vec::new(),
+            }],
+            initial,
+            40,
+            None,
+        );
+        let miss_chance = 1.0 - f64::from(swing.successes_per_256()) / f64::from(ROLL_BUCKETS);
+        assert!(
+            (run.death_probability - miss_chance).abs() < 1e-12,
+            "a due heal landed before the rope fall: death {} != {miss_chance}",
+            run.death_probability
+        );
+    }
+
+    #[test]
     fn delayed_and_modal_ticks_defer_one_due_regeneration() {
         let initial = State {
             hp: 10,
