@@ -6501,9 +6501,9 @@ fn dialogue_adjacent_click_deadline_counts_from_the_engine_read_tick() {
 
 /// The NPC is two tiles away across a wall, so the live flood cannot reach it
 /// and gives no route length. The router's route (a door detour of 12 ticks)
-/// sets the walk's budget, not the straight-line distance of 2. A route that
-/// ends short while the NPC stands still is a walk failure with one fresh
-/// plan, then a named terminal failure.
+/// sets the walk budget, not the straight-line distance of 2. A route that
+/// ends short while the NPC stands still gets three fresh plans before the
+/// last route failure becomes terminal.
 #[test]
 fn dialogue_door_detour_approach_budget_is_the_routers_route_length() {
     let mut snapshot = ready();
@@ -6534,21 +6534,16 @@ fn dialogue_door_detour_approach_budget_is_the_routers_route_length() {
         last_route_effect(&ledger),
         HostEffect::Walk(request) if request.target == tile(7, 5) && request.radius == 0
     ));
-    // The walk was requested at tick 2: 12 route ticks plus 2 slack ticks.
+    // The first walk starts at tick 2. Its 12 route ticks plus 2 slack ticks
+    // keep it active through tick 15.
     for observed in [5, 9, 15] {
         let result = poll_at(&mut ledger, observed);
         assert!(
             result.is_pending(),
-            "a door detour is still walking at tick {observed}: {result:?}"
+            "the first door detour is still walking at tick {observed}: {result:?}"
         );
-        assert!(matches!(last_route_effect(&ledger), HostEffect::Walk(_)));
     }
-    // Tick 16 ends the route with the NPC still: a fresh plan, one tick later.
     assert!(poll_at(&mut ledger, 16).is_pending());
-    assert!(
-        ledger.as_ref().unwrap().outbox.is_empty(),
-        "the ended route leaves no request queued until the fresh plan"
-    );
     assert!(poll_at(&mut ledger, 17).is_pending());
     assert!(matches!(
         last_route_effect(&ledger),
@@ -6557,12 +6552,29 @@ fn dialogue_door_detour_approach_budget_is_the_routers_route_length() {
     post_assess_receipt(&mut ledger, 17, 12, None);
     assert!(poll_at(&mut ledger, 18).is_pending());
     assert!(matches!(last_route_effect(&ledger), HostEffect::Walk(_)));
-    assert!(poll_at(&mut ledger, 31).is_pending());
+    // The second detour has the same route-based budget.
+    for observed in [21, 25, 31] {
+        let result = poll_at(&mut ledger, observed);
+        assert!(
+            result.is_pending(),
+            "the second door detour is still walking at tick {observed}: {result:?}"
+        );
+    }
+    assert!(poll_at(&mut ledger, 32).is_pending());
+    assert!(poll_at(&mut ledger, 33).is_pending());
     assert!(matches!(
-        poll_at(&mut ledger, 32),
+        last_route_effect(&ledger),
+        HostEffect::AssessWalk(request) if request.target == tile(7, 5)
+    ));
+    post_assess_receipt(&mut ledger, 33, 12, None);
+    assert!(poll_at(&mut ledger, 34).is_pending());
+    assert!(matches!(last_route_effect(&ledger), HostEffect::Walk(_)));
+    assert!(poll_at(&mut ledger, 47).is_pending());
+    assert!(matches!(
+        poll_at(&mut ledger, 48),
         Poll::Ready(Err(ActionError::Failed(reason)))
             if reason.as_ref()
-                == "dialogue approach failed: the walk did not reach the NPC by observed tick 32"
+                == "dialogue approach failed: the walk did not reach the NPC by observed tick 48"
     ));
 }
 

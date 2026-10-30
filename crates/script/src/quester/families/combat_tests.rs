@@ -5565,7 +5565,7 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
         z: 3201,
         level: 0,
     };
-    let mut run = combat_test_run(
+    let mut run = combat_test_run_with_radius(
         imp_target(&data),
         None,
         Some(Arc::new(NeverStop)),
@@ -5581,6 +5581,7 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
                 qty: 1,
             },
         ],
+        20,
     );
     let ground = |id, name: &str, tile, distance| GroundItemView {
         def: api::obj_names::ItemDefView {
@@ -5605,7 +5606,7 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
         ground(1, "First drop", first_tile, 15),
         ground(2, "Second drop", second_tile, 1),
     ]);
-    let reach = seed_loot_route(&mut snapshot, here, 12);
+    let reach = seed_loot_route(&mut snapshot, here, 20);
     snapshot.seed_chat_lines(vec![]);
     let mut ledger = None;
     assert!(
@@ -5619,111 +5620,49 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
     );
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
-            x,
-            z,
-            id: Some(id),
-            action,
-            ..
-        }) if *x == first_tile.x && *z == first_tile.z && *id == 1 && action == "Take"
+        crate::native::HostEffect::Walk(_)
     ));
-    let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
-    ledger.as_mut().unwrap().complete_interaction(
-        &authority,
-        crate::native::InteractionReceipt {
-            request_id: authority.request_id().get(),
-            evidence: EvidenceStamp {
-                run: authority.run(),
-                tick: 13,
-                sequence: 13,
-            },
-            accepted: true,
-            chat_since: 0,
-        },
-    );
-    ledger.as_mut().unwrap().outbox.clear();
+    assert_eq!(run.loot_index, 0);
+    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
 
-    assert!(with_step_context(&snapshot, &mut ledger, 15, |cx| run.poll(cx)).is_pending());
+    post_walk_end(&mut ledger, 14, WalkEnd::Failed, Some("first route failure"));
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 14, |cx| run.poll(cx))
+            .is_pending()
+    );
+    assert_eq!(run.loot_index, 0, "the first route failure keeps the item active");
+
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 15, |cx| run.poll(cx))
+            .is_pending()
+    );
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Walk(_)
+    ));
+    post_walk_end(&mut ledger, 16, WalkEnd::Failed, Some("second route failure"));
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 16, |cx| run.poll(cx))
+            .is_pending()
+    );
+    assert_eq!(run.loot_index, 0, "the second route failure still retries");
+
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 17, |cx| run.poll(cx))
+            .is_pending()
+    );
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Walk(_)
+    ));
+    post_walk_end(&mut ledger, 18, WalkEnd::Failed, Some("last route failure"));
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 18, |cx| run.poll(cx))
+            .is_pending()
+    );
     assert_eq!(
         run.loot_index, 1,
-        "the item remains active during route retries"
-    );
-    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
-    assert!(ledger.as_ref().unwrap().outbox.is_empty());
-
-    assert!(with_step_context(&snapshot, &mut ledger, 16, |cx| run.poll(cx)).is_pending());
-    let second_request_id = ledger
-        .as_ref()
-        .unwrap()
-        .outbox
-        .last()
-        .unwrap()
-        .request_id
-        .get();
-    assert!(matches!(
-        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-        crate::native::HostEffect::Walk(request) if request.target == first_tile
-    ));
-    ledger.as_mut().unwrap().outbox.clear();
-    ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
-        goal: None,
-        request_id: second_request_id,
-        evidence: EvidenceStamp {
-            run: RunKey {
-                slot: 1,
-                run: 1,
-                session: 1,
-            },
-            tick: 17,
-            sequence: 17,
-        },
-        end: WalkEnd::Failed,
-        blocked: None,
-        detail: Some(Arc::from("first item route retry failed")),
-        refusal: None,
-        assessment: None,
-        escape: None,
-    });
-    assert!(with_step_context(&snapshot, &mut ledger, 17, |cx| run.poll(cx)).is_pending());
-    assert_eq!(run.loot_index, 1, "a second route failure still retries");
-
-    assert!(with_step_context(&snapshot, &mut ledger, 18, |cx| run.poll(cx)).is_pending());
-    let third_request_id = ledger
-        .as_ref()
-        .unwrap()
-        .outbox
-        .last()
-        .unwrap()
-        .request_id
-        .get();
-    assert!(matches!(
-        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-        crate::native::HostEffect::Walk(request) if request.target == first_tile
-    ));
-    ledger.as_mut().unwrap().outbox.clear();
-    ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
-        goal: None,
-        request_id: third_request_id,
-        evidence: EvidenceStamp {
-            run: RunKey {
-                slot: 1,
-                run: 1,
-                session: 1,
-            },
-            tick: 19,
-            sequence: 19,
-        },
-        end: WalkEnd::Failed,
-        blocked: None,
-        detail: Some(Arc::from("first item route retry budget exhausted")),
-        refusal: None,
-        assessment: None,
-        escape: None,
-    });
-    assert!(with_step_context(&snapshot, &mut ledger, 19, |cx| run.poll(cx)).is_pending());
-    assert_eq!(
-        run.loot_index, 2,
-        "the unreachable item is skipped only after its retry budget is exhausted"
+        "the item is skipped only after the three route attempts"
     );
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
     assert!(matches!(
