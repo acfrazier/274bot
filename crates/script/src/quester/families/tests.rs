@@ -7621,8 +7621,8 @@ fn anchored_interact_wall_walk_falls_back_to_the_loc_tile_once() {
 fn approach_retry_interact_plan(cx: &CompileContext<'_>) -> Arc<dyn StepPlan> {
     compile_interact(
         test_args::<InteractArgs>(serde_json::json!({
-            "target": {"loc": "hopper_lumbridge"},
-            "op": "Use",
+            "target": {"loc": "spinningwheel"},
+            "op": "Spin",
             "anchor": {"tile": [3167, 3308, 0], "source": "approach retry fixture"},
             "radius": 8
         })),
@@ -7632,7 +7632,12 @@ fn approach_retry_interact_plan(cx: &CompileContext<'_>) -> Arc<dyn StepPlan> {
 }
 
 fn approach_retry_interact_snapshot(cx: &CompileContext<'_>) -> GameSnapshot {
-    use_on_footprint_fixture(cx, tile(3164, 3308)).0
+    let (mut snapshot, mut target, _) = use_on_footprint_fixture(cx, tile(3164, 3308));
+    target.id = resolve_loc(cx, "spinningwheel").unwrap();
+    target.name = Some("Spinning wheel".into());
+    target.actions = vec![Some("Spin".into())];
+    snapshot.seed_locs(vec![target]);
+    snapshot
 }
 
 fn approach_retry_buy_plan(cx: &CompileContext<'_>) -> Arc<dyn StepPlan> {
@@ -7720,7 +7725,7 @@ fn interact_retries_a_failed_approach_and_dispatches_after_arrival() {
         assert!(matches!(
             emitted(&ledger),
             InteractReq::Loc { id: Some(id), action, .. }
-                if *id == resolve_loc(cx, "hopper_lumbridge").unwrap() && action == "Use"
+                if *id == resolve_loc(cx, "spinningwheel").unwrap() && action == "Spin"
         ));
     });
 }
