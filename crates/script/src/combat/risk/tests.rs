@@ -1161,7 +1161,7 @@ fn u2_unknown_classes_fail_closed_through_the_real_assessment() {
     let tables = tables();
     let wilderness = WildernessRules::default();
     for (config, members, class) in [
-        ("barbarian", false, UnknownKind::Bespoke),
+        ("shadow_spider", false, UnknownKind::Bespoke),
         ("red_dragon", false, UnknownKind::Dragonfire),
         ("trail_hard2", false, UnknownKind::CounterProtect),
         ("ikov_firewarrior", false, UnknownKind::Magic),
