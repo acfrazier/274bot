@@ -1349,7 +1349,7 @@ reader_contract!(
     "selectButtonByVarp",
     value,
     {
-        assert_eq!(value, json!([20, 20]));
+        assert_eq!(value, &json!([20, 20]));
     }
 );
 reader_contract!(
