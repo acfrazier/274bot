@@ -38,6 +38,7 @@ mod server_ordered;
 pub mod thieve;
 pub mod thieving_core;
 pub use server_ordered::ServerOrderedCompletion;
+pub mod tickcycle;
 pub mod walk;
 pub mod walk_wait;
 pub use ledger::{BankDepositTrace, HostAction, HostAuthority, HostEffect, QuietReadOwner};
