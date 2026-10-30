@@ -200,6 +200,7 @@ declare const row: InvItemSnapshot;
 declare const loc: Loc;
 declare const npc: Npc;
 declare const player: Player;
+declare const groundItem: GroundItem;
 declare const manifest: BotManifestInput;
 
 registerScript(manifest);
