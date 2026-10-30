@@ -2258,6 +2258,26 @@ fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
     let alice = d.session().profile_identity_or_synthetic("alice");
     let bob = d.session().profile_identity_or_synthetic("bob");
     set_quester_queue(&mut d, "alice", &["sheep"]);
+    let plan = d.session().fleet_plan().expect("plan waits");
+    let (registry, revision) = script::quester::registry::snapshot_with_revision();
+    assert_eq!(
+        revision,
+        plan.quester_registry_revision.expect("Quester plan revision"),
+        "registry changed after disclosure"
+    );
+    for (name, identity) in [("alice", alice), ("bob", bob)] {
+        let disclosure = plan
+            .quester_start_zones
+            .iter()
+            .find(|disclosure| disclosure.profile == identity)
+            .expect("planned disclosure");
+        let current = d
+            .models()
+            .scripts()
+            .quester_start_zones_for_card(d.session(), name, plan.card.as_ref(), &registry)
+            .expect("current disclosure");
+        assert_eq!(current, disclosure.zones, "{name} disclosure changed");
+    }
     let command = d.session().fleet_plan().expect("plan waits").command();
     let run = d.submit(command, Targets::Plan).expect("run");
     let request = run.request();
