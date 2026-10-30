@@ -2969,6 +2969,22 @@ mod tests {
 
         control.advance(Duration::from_millis(41));
         head.note_due(control.now()).unwrap();
+        let registration_frame = head.paint(&mut client);
+        assert!(registration_frame.is_fresh());
+        assert!(!proofs.publish_journal_paint(
+            identity,
+            registration_frame,
+            stamp(),
+            FramePaintStatus::default()
+        ));
+        assert_eq!(proofs.generation(), 0);
+        assert!(
+            proofs.take_journal_proof_result().unwrap().is_none(),
+            "registration cannot retain an already painted frame"
+        );
+
+        control.advance(Duration::from_millis(41));
+        head.note_due(control.now()).unwrap();
         let fresh_proof = head.paint(&mut client);
         assert!(fresh_proof.is_fresh());
         let proof_token = match &fresh_proof {
