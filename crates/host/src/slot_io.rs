@@ -205,6 +205,10 @@ pub struct FrameBuf {
     proof_frames: Option<parking_lot::Mutex<JournalProofQueue>>,
 }
 
+/// The 1,536 B ceiling is 928 B over original d65c6bdd8's 608 B Arc allocation and 528 B over the 1,008 B instrumented receipt.
+#[cfg(any(test, feature = "render-test-hooks"))]
+pub(crate) const PRODUCTION_MAILBOX_FIXED_STORAGE_CEILING_BYTES: usize = 1_536;
+
 /// Identity and scene authority frozen with one accepted mailbox frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FrameStamp {
@@ -286,6 +290,38 @@ struct Mailbox {
     fair_stats: Option<crate::render_head::HeadFairStats>,
 }
 
+#[cfg(any(test, feature = "render-test-hooks"))]
+#[allow(dead_code)]
+struct ProductionMailboxLayout {
+    frame: Option<PresentedFrame>,
+    head: Option<HeadIdentity>,
+    refused: Option<RenderRefusal>,
+    render_fault: Option<client::render::backend::RenderFault>,
+}
+
+#[cfg(any(test, feature = "render-test-hooks"))]
+#[allow(dead_code)]
+struct ProductionFrameBufLayout {
+    inner: Mutex<ProductionMailboxLayout>,
+    frame_generation: AtomicU64,
+    #[cfg(feature = "journal-paint-proof")]
+    proof_frames: Option<parking_lot::Mutex<JournalProofQueue>>,
+}
+
+#[cfg(any(test, feature = "render-test-hooks"))]
+fn arc_fixed_storage_bytes<T>() -> usize {
+    let header = std::alloc::Layout::new::<(
+        std::sync::atomic::AtomicUsize,
+        std::sync::atomic::AtomicUsize,
+    )>();
+    header
+        .extend(std::alloc::Layout::new::<T>())
+        .expect("the fixed mailbox Arc layout fits usize")
+        .0
+        .pad_to_align()
+        .size()
+}
+
 /// By-value paint metadata; no payload allocation or framebuffer layout change.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct FramePaintStatus {
@@ -306,21 +342,16 @@ impl FramePaintStatus {
 }
 
 impl FrameBuf {
-    /// Fixed per-loaded-bot Arc allocation, including the inline mailbox and
-    /// optional proof-queue descriptors. Pixel and queue payloads are separate
-    /// owners. This storage exists even when no render head is attached.
+    /// Exact fixed Arc allocation for this feature configuration. With render-test-hooks it includes test-only mailbox fields, so use the separate production receipt for product sizing.
     #[cfg(any(test, feature = "render-test-hooks"))]
     pub fn fixed_storage_bytes() -> usize {
-        let header = std::alloc::Layout::new::<(
-            std::sync::atomic::AtomicUsize,
-            std::sync::atomic::AtomicUsize,
-        )>();
-        header
-            .extend(std::alloc::Layout::new::<Self>())
-            .expect("the fixed mailbox Arc layout fits usize")
-            .0
-            .pad_to_align()
-            .size()
+        arc_fixed_storage_bytes::<Self>()
+    }
+
+    /// Production layout receipt; the mirror omits fair-stats and draw-profile instrumentation and is checked against the real no-hooks type.
+    #[cfg(any(test, feature = "render-test-hooks"))]
+    pub(crate) fn production_fixed_storage_bytes() -> usize {
+        arc_fixed_storage_bytes::<ProductionFrameBufLayout>()
     }
 
     pub fn new() -> std::sync::Arc<Self> {
@@ -2072,6 +2103,28 @@ mod tests {
     use std::cell::RefCell;
     use std::sync::{Arc, Barrier, TryLockError};
     use std::time::{Duration, Instant};
+
+    #[cfg(not(feature = "render-test-hooks"))]
+    #[test]
+    fn production_mailbox_fixed_storage_layout_receipt() {
+        let bytes = FrameBuf::fixed_storage_bytes();
+        assert_eq!(bytes, FrameBuf::production_fixed_storage_bytes());
+        assert!(
+            bytes <= super::PRODUCTION_MAILBOX_FIXED_STORAGE_CEILING_BYTES,
+            "production per-loaded-bot mailbox is {bytes} B; ceiling is {} B",
+            super::PRODUCTION_MAILBOX_FIXED_STORAGE_CEILING_BYTES,
+        );
+        println!(
+            "T4.4 production per-loaded-bot mailbox fixed storage: pointer_bytes={} performance_profile={} render_diagnostics={} journal_paint_proof={} bytes={} ceiling={} headroom={}",
+            std::mem::size_of::<usize>(),
+            cfg!(feature = "performance-profile"),
+            cfg!(feature = "render-diagnostics"),
+            cfg!(feature = "journal-paint-proof"),
+            bytes,
+            super::PRODUCTION_MAILBOX_FIXED_STORAGE_CEILING_BYTES,
+            super::PRODUCTION_MAILBOX_FIXED_STORAGE_CEILING_BYTES - bytes,
+        );
+    }
 
     fn applet_pixmap(pixels: Vec<i32>) -> FrameOutput {
         FrameOutput::PixMap(PixMap {

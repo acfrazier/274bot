@@ -177,10 +177,10 @@ pub mod test_hooks {
     /// TLS. It counts neither the aliased HeadWake notifier payload nor the
     /// pre-existing SlotWake payload. The caller-supplied RenderTestControl Arc
     /// payload is fixture-owned and is not represented as zero-byte storage.
-    /// `mailbox_per_loaded_bot_bytes` is a separate loaded-bot base row and is
-    /// not multiplied by attached heads. `s_consumer_active_bytes` omits the
-    /// gate block already present in `s_gate`; `s_consumer` is the draining
-    /// receipt, which adds that gate block once when its producer has retired.
+    /// The mailbox row is the no-hooks production layout, not the larger instrumented `FrameBuf`.
+    /// The no-hooks slot-I/O receipt measures that layout against the actual production type.
+    /// `s_consumer_active_bytes` omits the gate block already present in `s_gate`; `s_consumer`
+    /// is the draining receipt, which adds that gate block once when its producer has retired.
     #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
     pub struct ScalarReceipt {
         s_head: usize,
@@ -326,7 +326,7 @@ pub mod test_hooks {
             s_consumer_active_bytes,
             s_consumer,
             s_service,
-            mailbox_per_loaded_bot_bytes: FrameBuf::fixed_storage_bytes(),
+            mailbox_per_loaded_bot_bytes: FrameBuf::production_fixed_storage_bytes(),
             head_inline_bytes,
             head_thread_local_bytes,
             head_wake_arc_allocation_bytes,
@@ -1475,6 +1475,19 @@ mod tests {
         assert_eq!(title.client().scene_state, 2);
     }
 
+    // Observed x86_64 Linux receipts are from drawing-memory-n10-final.json.
+    #[cfg(feature = "render-test-hooks")]
+    const S_HEAD_CEILING_BYTES: usize = 3_072; // 582 B (23%) above the observed 2,490 B head row.
+    #[cfg(feature = "render-test-hooks")]
+    const S_GATE_CEILING_BYTES: usize = 64; // 8 B (14%) above the observed 56 B gate row.
+    #[cfg(feature = "render-test-hooks")]
+    const S_CONSUMER_ACTIVE_CEILING_BYTES: usize = 384; // 48 B (14%) above the observed 336 B active row.
+    #[cfg(feature = "render-test-hooks")]
+    const S_CONSUMER_DRAINING_CEILING_BYTES: usize = 448; // 56 B (14%) above the observed 392 B draining row.
+    #[cfg(feature = "render-test-hooks")]
+    const S_SERVICE_CEILING_BYTES: usize = 24_576; // 2,688 B (12%) above the observed 21,888 B process row.
+
+
     #[cfg(feature = "render-test-hooks")]
     #[test]
     fn scalar_receipt_tripwire_records_disjoint_owner_rows() {
@@ -1506,8 +1519,46 @@ mod tests {
         );
         assert_eq!(
             receipt.mailbox_per_loaded_bot_bytes(),
-            FrameBuf::fixed_storage_bytes()
+            FrameBuf::production_fixed_storage_bytes()
         );
+        assert!(
+            receipt.s_head() <= S_HEAD_CEILING_BYTES,
+            "S_head={} B exceeds {} B ceiling",
+            receipt.s_head(),
+            S_HEAD_CEILING_BYTES
+        );
+        assert!(
+            receipt.s_gate() <= S_GATE_CEILING_BYTES,
+            "S_gate={} B exceeds {} B ceiling",
+            receipt.s_gate(),
+            S_GATE_CEILING_BYTES
+        );
+        assert!(
+            receipt.s_consumer_active_bytes() <= S_CONSUMER_ACTIVE_CEILING_BYTES,
+            "active S_consumer={} B exceeds {} B ceiling",
+            receipt.s_consumer_active_bytes(),
+            S_CONSUMER_ACTIVE_CEILING_BYTES
+        );
+        assert!(
+            receipt.s_consumer() <= S_CONSUMER_DRAINING_CEILING_BYTES,
+            "draining S_consumer={} B exceeds {} B ceiling",
+            receipt.s_consumer(),
+            S_CONSUMER_DRAINING_CEILING_BYTES
+        );
+        assert!(
+            receipt.s_service() <= S_SERVICE_CEILING_BYTES,
+            "S_service={} B exceeds {} B ceiling",
+            receipt.s_service(),
+            S_SERVICE_CEILING_BYTES
+        );
+        assert!(
+            receipt.mailbox_per_loaded_bot_bytes()
+                <= crate::slot_io::PRODUCTION_MAILBOX_FIXED_STORAGE_CEILING_BYTES,
+            "production mailbox={} B exceeds {} B ceiling",
+            receipt.mailbox_per_loaded_bot_bytes(),
+            crate::slot_io::PRODUCTION_MAILBOX_FIXED_STORAGE_CEILING_BYTES
+        );
+
         if receipt.process_budget_state_allocation_count() == 0 {
             assert_eq!(receipt.head_budget_state_allocation_count(), 0);
             assert_eq!(receipt.head_budget_arc_allocation_bytes(), 0);
@@ -1524,8 +1575,10 @@ mod tests {
             assert!(receipt.head_budget_arc_allocation_bytes() > 0);
         }
         println!(
-            "T4.4 render scalar receipt tripwire: pointer_bytes={} {receipt:?}",
-            std::mem::size_of::<usize>()
+            "T4.4 render scalar receipt tripwire: pointer_bytes={} hook_instrumented_mailbox_bytes={} production_mailbox_bytes={} {receipt:?}",
+            std::mem::size_of::<usize>(),
+            FrameBuf::fixed_storage_bytes(),
+            receipt.mailbox_per_loaded_bot_bytes(),
         );
     }
 }
