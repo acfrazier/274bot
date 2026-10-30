@@ -720,6 +720,8 @@ fn start_drop(
     protected: bool,
 ) -> Arc<Mutex<Option<Result<script::gatherer::DropResult, ActionError>>>> {
     let result = Arc::new(Mutex::new(None));
+    let mut protected_ids = [0; script::gatherer::MAX_PROTECTED];
+    protected_ids[0] = 946;
     let slot = script_slot_or_insert(&rig.scripts, "so3-wire");
     slot.lock()
         .unwrap()
@@ -727,7 +729,7 @@ fn start_drop(
             Box::new(RealDropScript {
                 args: Some(script::gatherer::DropBatchArgs {
                     products: Arc::from([1511]),
-                    protected: [946, 0, 0, 0, 0, 0, 0, 0],
+                    protected: protected_ids,
                     protected_len: u8::from(protected),
                 }),
                 handle: None,
@@ -2175,37 +2177,54 @@ fn knife_npc_request(rig: &mut Rig, type_id: usize, operation: u8) -> ServerOrde
 }
 
 #[test]
-fn ordered_knife_continuing_npc_fishing_requires_selected_content_handler_proof() {
-    for (type_id, operation) in [(309, 1), (309, 3), (800, 1)] {
-        let mut rig = Rig::new();
-        let request = knife_npc_request(&mut rig, type_id, operation);
-        rig.start([Emission::Content(request)]);
-        rig.pump(1);
-        rig.pump(2);
-        let receipt = rig.receipt();
-        assert!(
-            receipt.terminal.is_none(),
-            "{type_id}/{operation}: {receipt:?}"
-        );
-        assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (3, 4));
-        let packets = rig.decoded();
-        let click = match operation {
-            1 => Send::opnpc1(7).unwrap(),
-            3 => Send::opnpc3(7).unwrap(),
-            _ => unreachable!(),
-        };
-        assert_eq!(packets.len(), 4);
-        assert_eq!(
-            packets[3],
-            (
-                click
-                    .validate_for_revision(rig.client.revision())
-                    .unwrap()
-                    .opcode,
-                click.body().to_vec(),
-            ),
-        );
+fn ordered_knife_continuing_npc_fishing_requires_transform_closure() {
+    for type_id in [309, 310, 311, 314, 315, 317, 318, 328, 329, 800, 927, 1189, 1190] {
+        for operation in [1, 3] {
+            if type_id == 800 && operation == 3 {
+                continue;
+            }
+            let mut rig = Rig::new();
+            let request = knife_npc_request(&mut rig, type_id, operation);
+            rig.start([Emission::Content(request)]);
+            rig.pump(1);
+            rig.pump(2);
+            let receipt = rig.receipt();
+            assert_eq!(
+                receipt.terminal,
+                Some(ServerOrderedError::ContractUnavailable),
+                "{type_id}/{operation}: a current-type handler is not a transform-closure proof"
+            );
+            assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+            assert_no_cipher_movement(&rig);
+        }
     }
+}
+
+#[test]
+fn ordered_knife_transformed_whirlpool_never_arms() {
+    let mut rig = Rig::new();
+    let posted = knife_npc_request(&mut rig, 309, 1);
+    let _transformed = knife_npc_request(&mut rig, 403, 1);
+    rig.start([Emission::Content(posted)]);
+    rig.pump(1);
+    rig.pump(2);
+    let receipt = rig.receipt();
+    assert_eq!(receipt.terminal, Some(ServerOrderedError::StaleTarget));
+    assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+    assert_no_cipher_movement(&rig);
+
+    let mut rig = Rig::new();
+    let observed = knife_npc_request(&mut rig, 403, 1);
+    rig.start([Emission::Content(observed)]);
+    rig.pump(1);
+    rig.pump(2);
+    let receipt = rig.receipt();
+    assert_eq!(
+        receipt.terminal,
+        Some(ServerOrderedError::ContractUnavailable)
+    );
+    assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+    assert_no_cipher_movement(&rig);
 }
 
 #[test]
