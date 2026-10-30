@@ -93,9 +93,7 @@ fn npc_hit(
 }
 
 fn attack_duration(live: &super::LiveRow, risks: &RiskTables) -> Result<i32, UnknownWhy> {
-    let kind = risks
-        .npc(live.ident)
-        .ok_or(UnknownWhy::AlreadyEngaged)?;
+    let kind = risks.npc(live.ident).ok_or(UnknownWhy::AlreadyEngaged)?;
     if kind.r == 0 {
         return Err(UnknownWhy::Overflow);
     }

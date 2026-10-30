@@ -380,10 +380,7 @@ fn npc_risk_from_rows(rows: &[NpcNameRow], id: i32, combat: &CombatTables) -> Ki
 }
 
 /// The effective selected NPC row, resolving content-proven awakenings.
-pub(super) fn effective_npc_row<'a>(
-    id: i32,
-    combat: &'a CombatTables,
-) -> Option<&'a NpcNameRow> {
+pub(super) fn effective_npc_row<'a>(id: i32, combat: &'a CombatTables) -> Option<&'a NpcNameRow> {
     let rows = combat
         .selected()
         .npc_names()
@@ -762,12 +759,7 @@ mod tests {
             assert_eq!(risk.npc(row.id), Some(&expected), "{}", row.config);
             assert_eq!(risk.npc_or_missing(row.id), expected);
             if row.combat_transform.is_none() {
-                assert_eq!(
-                    expected,
-                    KindRisk::from_npc(row, &combat),
-                    "{}",
-                    row.config
-                );
+                assert_eq!(expected, KindRisk::from_npc(row, &combat), "{}", row.config);
                 assert_eq!(
                     effective_npc_row(row.id, &combat).map(|effective| effective.id),
                     Some(row.id)
@@ -830,7 +822,11 @@ mod tests {
             );
             let expected = KindRisk::from_npc(awake, &combat);
             assert_eq!(risk.npc(dormant.id), Some(&expected), "{dormant_config}");
-            assert_eq!(risk.npc_or_missing(dormant.id), expected, "{dormant_config}");
+            assert_eq!(
+                risk.npc_or_missing(dormant.id),
+                expected,
+                "{dormant_config}"
+            );
             assert_eq!(
                 risk.npc(dormant.id),
                 risk.npc(awake.id),
