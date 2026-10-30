@@ -5,7 +5,7 @@ use script_js::wire::{
     ChatLineInput, ChatOptionInput, ClientAdapterFactsInput, CollisionViewInput, ItemRowInput,
     MainModalTextsInput, MakeButtonInput, MakeProductInput, NativeFactsInput, NpcBoxInput,
     ProjectionSceneInput, PuzzleBoardInput, SceneEntityInput, SideTabIfaceInput, SnapshotInput,
-    TileInput, VarpInput, WidgetFactInput,
+    TileInput, VarpInput, WidgetFactInput, WidgetTextInput,
 };
 use script_js::{LoadIsolate, LoadShape, Ready};
 use serde_json::{json, Value};
@@ -427,6 +427,12 @@ fn reader_catalog() -> &'static Value {
             their_large_widget,
             quest_text,
         ];
+
+        let widget_texts = [WidgetTextInput {
+            component_id: 11,
+            text: "Would you like to Continue?",
+            item_count: -1,
+        }];
         let main_texts = [
             "Would you like to Continue?".to_string(),
             "Choose an option".to_string(),
@@ -451,6 +457,7 @@ fn reader_catalog() -> &'static Value {
             z: 3222,
             level: 0,
         });
+        snapshot.widgets = &widget_texts;
         snapshot.inv = &inv;
         snapshot.inv_size = 28;
         snapshot.bank = &bank;
