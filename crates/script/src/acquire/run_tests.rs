@@ -214,7 +214,7 @@ fn poll_at(
     tick_number: u64,
     gate: OpenGate,
 ) -> Poll<Result<AcquireOutcome, ActionError>> {
-    crate::quester::families::tests::with_tick_bank(snapshot, memory, ledger, tick_number, |tick| {
+    crate::quester::families::tests::with_tick_scene_bank(snapshot, memory, ledger, tick_number, |tick| {
         run.poll(tick, gate)
     })
 }
@@ -1041,32 +1041,7 @@ fn bank_walk_prerequisite_handoff_reissues_once_and_cancel_keeps_run_state() {
     player.player.actor.tile = crossing.takeoff;
     player.player.actor.moving = false;
     snapshot.seed_local_player(player);
-    let mut loc_actions = vec![None; usize::from(crossing.option)];
-    loc_actions[usize::from(crossing.option) - 1] = Some("Open".to_owned());
-    snapshot.seed_locs(vec![api::snapshot::LocView {
-        id: crossing.loc_id,
-        name: Some("Prerequisite crossing".into()),
-        actions: loc_actions,
-        tile: crossing.at,
-        distance: 0,
-        typecode: 0,
-        info: 0,
-        description: None,
-        layer: api::snapshot::LocLayer::GroundDecoration,
-        shape: 0,
-        angle: 0,
-        width: 1,
-        length: 1,
-        footprint_width: 1,
-        footprint_length: 1,
-        block_walk: false,
-        block_range: false,
-        active: true,
-        animation: -1,
-        map_function: -1,
-        map_scene: -1,
-        force_approach: 0,
-    }]);
+    crate::quester::families::tests::seed_prereq_crossing(&mut snapshot, row, &crossing);
     let target = WorldTile {
         x: crossing.at.x + 80,
         z: crossing.at.z + 80,

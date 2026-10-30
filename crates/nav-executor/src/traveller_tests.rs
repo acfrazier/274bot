@@ -8345,13 +8345,15 @@ fn executor_state_size_pins() {
     // occupied-crossing retry (`OccupiedRetry`): a refused ledge or rope
     // swing is retried within the hop budget instead of ending the follow.
     // Prerequisite refusal-page tracking adds 176 B to the active hop union.
+    // Full physical identity retains takeoff and destination: +24 B over the
+    // former anchor-only crossing. It names both A1 approaches and A2 directions.
     eprintln!(
         "prereq executor layout Traveller={} FollowRun={}",
         std::mem::size_of::<Traveller>(),
         std::mem::size_of::<FollowRun>()
     );
-    assert_eq!(std::mem::size_of::<Traveller>(), 1024);
-    assert_eq!(std::mem::size_of::<FollowRun>(), 984);
+    assert_eq!(std::mem::size_of::<Traveller>(), 1048);
+    assert_eq!(std::mem::size_of::<FollowRun>(), 1008);
 }
 const BLOCKED_DISPLAY_TILE: WorldTile = WorldTile {
     x: 12,

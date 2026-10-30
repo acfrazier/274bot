@@ -98,15 +98,16 @@ fn wait_log(name: PrereqWaitName, wait: TickWait, at: u64, end: &str) {
 /// second request or permission box between ticks.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct RepairWalk<'a> {
-    options: WalkOptions,
-    protect: bool,
-    food_guard: bool,
-    allow: WalkAllow,
-    cross: &'a [Arc<str>],
-    avoid: &'a [Arc<str>],
-    evidence: Option<&'a Arc<dyn EvidenceProvider>>,
+    pub(super) options: WalkOptions,
+    pub(super) protect: bool,
+    pub(super) food_guard: bool,
+    pub(super) allow: WalkAllow,
+    pub(super) cross: &'a [Arc<str>],
+    pub(super) avoid: &'a [Arc<str>],
+    pub(super) evidence: Option<&'a Arc<dyn EvidenceProvider>>,
 }
 impl<'a> RepairWalk<'a> {
+    #[cfg(test)]
     pub(crate) fn from_request(request: &'a WalkRequest) -> Self {
         Self {
             options: request.options,

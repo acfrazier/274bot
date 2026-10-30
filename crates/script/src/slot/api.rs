@@ -44,17 +44,19 @@ pub(super) struct ApiSeat {
 enum CompatWalkSeat {
     #[default]
     Idle,
-    Owned {
-        run: RunKey,
-        request_id: RequestId,
-        owner: Box<CompatWalkOwner>,
-        pin: Arc<SelectedPin>,
-    },
+    Owned(Box<CompatWalkOwner>),
 }
 
-/// The completed receipt replaces the runner in its existing allocation.
-/// Unrelated native API seats reserve neither an inline receipt nor a box.
-enum CompatWalkOwner {
+/// Only a real handover allocates its metadata and continuation together.
+struct CompatWalkOwner {
+    run: RunKey,
+    request_id: RequestId,
+    pin: Arc<SelectedPin>,
+    state: CompatWalkState,
+}
+
+/// Completion replaces the runner in that same allocation.
+enum CompatWalkState {
     Walking(PrereqWalk),
     Finished(Result<WalkReceipt, ActionError>),
 }
@@ -63,7 +65,7 @@ impl CompatWalkSeat {
     fn request_id(&self) -> Option<RequestId> {
         match self {
             Self::Idle => None,
-            Self::Owned { request_id, .. } => Some(*request_id),
+            Self::Owned(owner) => Some(owner.request_id),
         }
     }
 
@@ -304,12 +306,12 @@ impl SlotScript {
         self.retained
             .get_or_insert_with(|| Arc::new(Mutex::new(RetainedMemory::default())));
         let seat = self.api.get_or_insert_with(|| Box::new(ApiSeat::default()));
-        seat.compat_walk = CompatWalkSeat::Owned {
+        seat.compat_walk = CompatWalkSeat::Owned(Box::new(CompatWalkOwner {
             run,
             request_id,
-            owner: Box::new(CompatWalkOwner::Walking(PrereqWalk::from_handover(handover))),
             pin,
-        };
+            state: CompatWalkState::Walking(PrereqWalk::from_handover(handover)),
+        }));
         Ok(())
     }
 
@@ -318,19 +320,14 @@ impl SlotScript {
     pub fn take_compat_walk_terminal(
         &self,
     ) -> Option<(RunKey, RequestId, Result<WalkReceipt, ActionError>)> {
-        let CompatWalkSeat::Owned {
-            run,
-            request_id,
-            owner,
-            ..
-        } = &self.api.as_ref()?.compat_walk
+        let CompatWalkSeat::Owned(owner) = &self.api.as_ref()?.compat_walk
         else {
             return None;
         };
-        let CompatWalkOwner::Finished(result) = owner.as_ref() else {
+        let CompatWalkState::Finished(result) = &owner.state else {
             return None;
         };
-        Some((*run, *request_id, result.clone()))
+        Some((owner.run, owner.request_id, result.clone()))
     }
 
     /// Cancel only the exact compatibility walk seat that the host owns.
@@ -341,22 +338,18 @@ impl SlotScript {
         let Some(seat) = self.api.as_mut() else {
             return false;
         };
-        let CompatWalkSeat::Owned {
-            request_id: live,
-            owner,
-            ..
-        } = &mut seat.compat_walk
+        let CompatWalkSeat::Owned(owner) = &mut seat.compat_walk
         else {
             return false;
         };
-        if *live != request_id {
+        if owner.request_id != request_id {
             return false;
         }
-        let CompatWalkOwner::Walking(walk) = owner.as_mut() else {
+        let CompatWalkState::Walking(walk) = &mut owner.state else {
             return false;
         };
         walk.cancel();
-        **owner = CompatWalkOwner::Finished(Err(ActionError::Cancelled));
+        owner.state = CompatWalkState::Finished(Err(ActionError::Cancelled));
         true
     }
 
@@ -943,16 +936,14 @@ impl SlotScript {
     }
 
     fn tick_api_compat_walk(&mut self, seat: &mut ApiSeat, ctx: &mut ScriptCtx<'_>) {
-        let CompatWalkSeat::Owned {
-            run, owner, pin, ..
-        } = &mut seat.compat_walk
+        let CompatWalkSeat::Owned(owner) = &mut seat.compat_walk
         else {
             return;
         };
-        let CompatWalkOwner::Walking(walk) = owner.as_mut() else {
+        let CompatWalkState::Walking(walk) = &mut owner.state else {
             return;
         };
-        let result = if !self.compat_walk_run_is_current(*run) {
+        let result = if !self.compat_walk_run_is_current(owner.run) {
             walk.cancel();
             Some(Err(ActionError::Cancelled))
         } else if let Some(retained) = self.retained.as_ref() {
@@ -960,8 +951,13 @@ impl SlotScript {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let mut actions = NativeActions { _private: () };
-            let mut cx =
-                compiled::frame_context(ctx, *run, pin, &mut retained, &mut self.native_runtime);
+            let mut cx = compiled::frame_context(
+                ctx,
+                owner.run,
+                &owner.pin,
+                &mut retained,
+                &mut self.native_runtime,
+            );
             match walk.poll(&mut actions, &mut cx, self.local_state.as_deref()) {
                 std::task::Poll::Pending => None,
                 std::task::Poll::Ready(result) => Some(result),
@@ -973,7 +969,7 @@ impl SlotScript {
             )))
         };
         if let Some(result) = result {
-            **owner = CompatWalkOwner::Finished(result);
+            owner.state = CompatWalkState::Finished(result);
         }
     }
 
@@ -1137,9 +1133,10 @@ mod compat_walk_layout_tests {
             std::mem::size_of::<Box<PrereqWalk>>(),
             std::mem::size_of::<usize>(),
         );
-        assert!(
-            std::mem::size_of::<CompatWalkSeat>() <= 64,
-            "compatibility state must not reserve an inline prerequisite runner",
+        assert_eq!(
+            std::mem::size_of::<CompatWalkSeat>(),
+            std::mem::size_of::<usize>(),
+            "unrelated API seats pay only one pointer for compatibility walks",
         );
     }
 }

@@ -58,7 +58,7 @@ fn tick(slot: &mut SlotScript) {
 }
 
 #[test]
-fn manual_walk_handover_starts_internal_card_and_completes_once() {
+fn manual_walk_handover_starts_internal_card_and_refuses_an_empty_diagnosis_once() {
     let mut slot = SlotScript::new();
     slot.bind_incarnation(102_421);
     let here = api::snapshot::WorldTile {
@@ -109,11 +109,12 @@ fn manual_walk_handover_starts_internal_card_and_completes_once() {
     assert!(retained.take_walk_handover(walk_run).is_none());
     drop(retained);
 
+    // An empty gate diagnosis cannot prove arrival, even at the requested tile.
     tick(&mut slot);
     assert_eq!(slot.state(), RunState::Idle);
     assert_eq!(
         slot.lifecycle_receipt().map(|receipt| receipt.state),
-        Some(crate::ScriptTerminalState::Completed),
+        Some(crate::ScriptTerminalState::Failed),
     );
 }
 #[test]

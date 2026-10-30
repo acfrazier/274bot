@@ -1,7 +1,7 @@
 use super::super::select::PlacementClass;
 use super::*;
 use crate::native::WalkStallReason;
-use crate::quester::families::tests::{def, with_tick};
+use crate::quester::families::tests::{def, with_tick, with_tick_scene_reach};
 use api::gather_methods::{known_rows, TargetClass};
 use api::named_banks::{NamedBank, NamedBankFacts};
 use api::selected::{EntityId, FamilyPreparation};
@@ -99,32 +99,16 @@ fn prerequisite_handoff_reissues_original_walk_once_and_cancel_revokes_it() {
     player.player.actor.tile = crossing.takeoff;
     player.player.actor.moving = false;
     snapshot.seed_local_player(player);
-    let mut actions = vec![None; usize::from(crossing.option)];
-    actions[usize::from(crossing.option) - 1] = Some("Open".to_owned());
-    snapshot.seed_locs(vec![LocView {
-        id: crossing.loc_id,
-        name: Some("Prerequisite crossing".into()),
-        actions,
-        tile: crossing.at,
-        distance: 0,
-        typecode: 0,
-        info: 0,
-        description: None,
-        layer: LocLayer::GroundDecoration,
-        shape: 0,
-        angle: 0,
-        width: 1,
-        length: 1,
-        footprint_width: 1,
-        footprint_length: 1,
-        block_walk: false,
-        block_range: false,
-        active: true,
-        animation: -1,
-        map_function: -1,
-        map_scene: -1,
-        force_approach: 0,
-    }]);
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let catalog = FamilyPreparation::run(move |worker| data.prepare_prereq_steps(worker).unwrap())
+        .unwrap()
+        .join()
+        .unwrap();
+    let (_, row) = catalog
+        .iter()
+        .find(|(_, row)| row.crossing(&crossing).is_some())
+        .unwrap();
+    crate::quester::families::tests::seed_prereq_crossing(&mut snapshot, row, &crossing);
 
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -153,7 +137,7 @@ fn prerequisite_handoff_reissues_original_walk_once_and_cancel_revokes_it() {
             quest_start: true,
         }),
     });
-    with_tick(&snapshot, &mut ledger, 2, |tick| {
+    with_tick_scene_reach(&snapshot, &mut ledger, 2, |tick| {
         gatherer.poll_active(tick);
     });
     assert!(matches!(gatherer.active, Active::Walk(_)));

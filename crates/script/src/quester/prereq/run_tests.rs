@@ -1,7 +1,7 @@
 use super::*;
 use crate::local_state::{SlotState, StatePort};
 use crate::native::{ledger, HostEffect, InteractionReceipt, WalkReceipt};
-use crate::quester::families::tests::{def, local_player, with_tick};
+use crate::quester::families::tests::{def, local_player, with_tick_scene_reach as with_tick};
 use api::local_state::{
     AccountKey, ContentScope, DomainEdit, DomainIdentity, DomainLease, ErrorCode, LocalStatePort,
     StoreVersion, SubmitReceipt, WriteSettlement,
@@ -118,30 +118,15 @@ fn full_pack(snapshot: &mut GameSnapshot) {
 }
 fn crossing_snapshot(crossing: &PrereqCrossing) -> GameSnapshot {
     let mut snapshot = snapshot(crossing.crossing.takeoff);
-    snapshot.seed_locs(vec![LocView {
-        id: crossing.crossing.loc_id,
-        name: Some("Authored crossing".into()),
-        actions: vec![Some("Open".into())],
-        tile: crossing.crossing.at,
-        distance: 0,
-        typecode: 0,
-        info: 0,
-        description: None,
-        layer: LocLayer::GroundDecoration,
-        shape: 0,
-        angle: 0,
-        width: 1,
-        length: 1,
-        footprint_width: 1,
-        footprint_length: 1,
-        block_walk: false,
-        block_range: false,
-        active: true,
-        animation: -1,
-        map_function: -1,
-        map_scene: -1,
-        force_approach: 0,
-    }]);
+    let (_, row) = CATALOG
+        .iter()
+        .find(|(_, row)| row.crossing(&crossing.crossing).is_some())
+        .unwrap();
+    crate::quester::families::tests::seed_prereq_crossing(
+        &mut snapshot,
+        row,
+        &crossing.crossing,
+    );
     snapshot
 }
 fn npc_snapshot(row: &PrereqStep) -> GameSnapshot {

@@ -2231,32 +2231,7 @@ fn return_prerequisite_handoff_reissues_once_and_cancel_keeps_anchor_state() {
         crossing: crossing.clone(),
     };
     set_position(&mut snapshot, crossing.takeoff);
-    let mut loc_actions = vec![None; usize::from(crossing.option)];
-    loc_actions[usize::from(crossing.option) - 1] = Some("Open".to_owned());
-    snapshot.seed_locs(vec![LocView {
-        id: crossing.loc_id,
-        name: Some("Prerequisite crossing".into()),
-        actions: loc_actions,
-        tile: crossing.at,
-        distance: 0,
-        typecode: 0,
-        info: 0,
-        description: None,
-        layer: LocLayer::GroundDecoration,
-        shape: 0,
-        angle: 0,
-        width: 1,
-        length: 1,
-        footprint_width: 1,
-        footprint_length: 1,
-        block_walk: false,
-        block_range: false,
-        active: true,
-        animation: -1,
-        map_function: -1,
-        map_scene: -1,
-        force_approach: 0,
-    }]);
+    crate::quester::families::tests::seed_prereq_crossing(&mut snapshot, row, &crossing);
     let outer_run = driver
         .ledger
         .as_ref()
@@ -2281,14 +2256,13 @@ fn return_prerequisite_handoff_reissues_once_and_cancel_keeps_anchor_state() {
             quest_start: true,
         }),
     });
-    let reach = reach_view(crossing.takeoff, &[]);
+    let reach = crate::quester::families::tests::scene_reach(&snapshot);
     require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 8));
     assert!(matches!(status(&driver).phase, NativePhase::Working));
     assert_eq!(text_field(status(&driver), "status"), "returning to start");
-    assert_eq!(
-        latest_walk(&driver).unwrap().0,
-        outer_id,
-        "the wrapper keeps the return owner while the prerequisite is pending"
+    assert!(
+        latest_walk(&driver).is_none(),
+        "the probe owns the foreground before the original return is reissued"
     );
     let probe = driver
         .ledger

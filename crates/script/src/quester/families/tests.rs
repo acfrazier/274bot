@@ -92,6 +92,96 @@ pub(crate) fn with_tick_reach<R>(
     )
 }
 
+/// Publish the same collision flood as the host for scene-backed fixtures.
+pub(crate) fn with_tick_scene_reach<R>(
+    snapshot: &GameSnapshot,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    with_tick_scene_bank(snapshot, None, ledger, tick, f)
+}
+
+pub(crate) fn scene_reach(snapshot: &GameSnapshot) -> api::query::ReachQueryView {
+    let scene = snapshot.scene();
+    let here = snapshot.local_player().map(|player| player.player.network);
+    let flood = api::query::SceneQuery::new(scene, here).flood_reach();
+    api::query::pack_reach_query(scene, flood.as_ref())
+}
+
+pub(crate) fn with_tick_scene_bank<R>(
+    snapshot: &GameSnapshot,
+    bank: Option<&api::bank_memory::BankMemory>,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    let reach = scene_reach(snapshot);
+    with_tick_output_reach(
+        snapshot,
+        Some(&reach),
+        Truth::Unknown,
+        ledger,
+        tick,
+        &mut Output,
+        bank,
+        snapshot,
+        None,
+        |native, _, _| f(native),
+    )
+}
+
+/// Geometry of the two reviewed prerequisite fixtures, including the blocked
+/// A1 anchor and the A2 straight wall's engine-operable north and south stands.
+pub(crate) fn seed_prereq_crossing(
+    snapshot: &mut GameSnapshot,
+    row: &api::prereq_steps::PrereqStep,
+    crossing: &api::prereq_steps::CrossingId,
+) {
+    assert!(row.crossing(crossing).is_some());
+    let barrier = row.consent == api::prereq_steps::ConsentSwitch::PrereqDialogue;
+    let mut actions = vec![None; usize::from(crossing.option)];
+    actions[usize::from(crossing.option) - 1] =
+        Some(if barrier { "Pass-through" } else { "Open" }.into());
+    snapshot.seed_locs(vec![LocView {
+        id: crossing.loc_id,
+        name: Some("Prerequisite crossing".into()),
+        actions,
+        tile: crossing.at,
+        distance: 1,
+        typecode: 0,
+        info: 0,
+        description: None,
+        layer: if barrier { LocLayer::Ground } else { LocLayer::Wall },
+        shape: if barrier { 10 } else { 0 },
+        angle: if barrier { 1 } else { 3 },
+        width: 1,
+        length: 1,
+        footprint_width: 1,
+        footprint_length: 1,
+        block_walk: true,
+        block_range: false,
+        active: true,
+        animation: -1,
+        map_function: -1,
+        map_scene: -1,
+        force_approach: 0,
+    }]);
+    let mut scene = api::snapshot::SceneView {
+        available: true,
+        base_x: crossing.at.x - 2,
+        base_z: crossing.at.z - 2,
+        level: crossing.at.level,
+        width: 5,
+        height: 5,
+        collision_flags: vec![0; 25],
+    };
+    if barrier {
+        scene.collision_flags[12] = client::dash3d::CollisionFlag::SQ_BLOCKED;
+    }
+    snapshot.seed_scene(scene);
+}
+
 pub(crate) fn with_tick_reach_snapshots<R>(
     snapshot: &GameSnapshot,
     next_snapshot: &GameSnapshot,

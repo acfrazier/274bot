@@ -12,8 +12,91 @@ use api::selected::QuestGate;
 use std::sync::Arc;
 use std::task::Poll;
 
+/// A reissue gets the current evidence stamp. Retaining the old 40-byte stamp
+/// would enlarge every ordinary native walk without preserving any policy.
+struct SavedNativeWalk {
+    target: api::WorldTile,
+    candidate_goals: Option<crate::native::WalkGoals>,
+    loc_id: Option<i32>,
+    radius: u16,
+    arrival: nav_planner::contract::ArrivalKind,
+    options: crate::native::WalkOptions,
+    evidence: Option<Arc<dyn api::quest_progress::EvidenceProvider>>,
+    cross: Box<[Arc<str>]>,
+    avoid: Box<[Arc<str>]>,
+    protect: bool,
+    food_guard: bool,
+    allow: WalkAllow,
+}
+
+impl From<WalkRequest> for SavedNativeWalk {
+    fn from(request: WalkRequest) -> Self {
+        let WalkRequest {
+            target,
+            candidate_goals,
+            loc_id,
+            radius,
+            arrival,
+            options,
+            required_after: _,
+            evidence,
+            cross,
+            avoid,
+            protect,
+            food_guard,
+            allow,
+        } = request;
+        Self {
+            target,
+            candidate_goals,
+            loc_id,
+            radius,
+            arrival,
+            options,
+            evidence,
+            cross,
+            avoid,
+            protect,
+            food_guard,
+            allow,
+        }
+    }
+}
+
+impl SavedNativeWalk {
+    fn request(&self, required_after: api::quest_progress::EvidenceStamp) -> WalkRequest {
+        WalkRequest {
+            target: self.target,
+            candidate_goals: self.candidate_goals.clone(),
+            loc_id: self.loc_id,
+            radius: self.radius,
+            arrival: self.arrival,
+            options: self.options,
+            required_after,
+            evidence: self.evidence.clone(),
+            cross: self.cross.clone(),
+            avoid: self.avoid.clone(),
+            protect: self.protect,
+            food_guard: self.food_guard,
+            allow: self.allow,
+        }
+    }
+
+    fn repair(&self) -> RepairWalk<'_> {
+        RepairWalk {
+            options: self.options,
+            protect: self.protect,
+            food_guard: self.food_guard,
+            allow: self.allow,
+            cross: &self.cross,
+            avoid: &self.avoid,
+            evidence: self.evidence.as_ref(),
+        }
+    }
+}
+
 enum OriginalWalk {
-    Native(WalkRequest),
+    Native(SavedNativeWalk),
     Handover(OuterWalk),
 }
 
@@ -43,7 +126,7 @@ impl PrereqWalk {
     ) -> Result<Self, ActionError> {
         let handle = actions.begin::<Walk>(request.clone(), cx)?;
         Ok(Self {
-            original: OriginalWalk::Native(request),
+            original: OriginalWalk::Native(request.into()),
             phase: Phase::Walking(handle),
             budget: PrereqBudget::default(),
             last_receipt: None,
@@ -150,8 +233,8 @@ impl PrereqWalk {
     }
 
     fn request(&self, cx: &ActionContext<'_>) -> WalkRequest {
-        let mut request = match &self.original {
-            OriginalWalk::Native(request) => request.clone(),
+        match &self.original {
+            OriginalWalk::Native(request) => request.request(cx.evidence()),
             OriginalWalk::Handover(outer) => WalkRequest {
                 target: outer.target,
                 candidate_goals: None,
@@ -167,9 +250,7 @@ impl PrereqWalk {
                 food_guard: false,
                 allow: WalkAllow::default(),
             },
-        };
-        request.required_after = cx.evidence();
-        request
+        }
     }
 
     pub fn poll(
@@ -264,7 +345,7 @@ impl PrereqWalk {
                 }
                 Phase::Resolving(run) => {
                     let repair = match &self.original {
-                        OriginalWalk::Native(request) => RepairWalk::from_request(request),
+                        OriginalWalk::Native(request) => request.repair(),
                         OriginalWalk::Handover(outer) => RepairWalk::from_outer(outer),
                     };
                     match std::task::ready!(run.poll_with_walk(
@@ -302,5 +383,49 @@ impl PrereqWalk {
                 Phase::Complete => return Poll::Ready(Err(ActionError::Stale)),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use api::quest_progress::EvidenceStamp;
+    use api::selected::RunKey;
+
+    #[test]
+    fn saving_native_policy_allocates_nothing_and_does_not_retain_the_old_stamp() {
+        let original = EvidenceStamp {
+            run: RunKey { slot: 1, run: 2, session: 3 },
+            tick: 4,
+            sequence: 5,
+        };
+        let next = EvidenceStamp { tick: 6, sequence: 7, ..original };
+        let target = api::WorldTile { x: 10, z: 20, level: 0 };
+        let mut request = crate::quester::families::reach::walk_request(
+            target, 2, Some(42), original,
+        );
+        request.options.allow_teleports = crate::native::WalkBit::Forbid;
+        request.protect = true;
+        request.food_guard = true;
+        request.allow.food = false;
+        let mut saved = None;
+        let measured = allocation_counter::measure(|| {
+            saved = Some(SavedNativeWalk::from(request));
+        });
+        let saved = saved.unwrap();
+        let reissued = saved.request(next);
+        assert_eq!(measured.count_total, 0);
+        assert_eq!(reissued.required_after, next);
+        assert_eq!(reissued.target, target);
+        assert_eq!(reissued.radius, 2);
+        assert_eq!(reissued.loc_id, Some(42));
+        assert_eq!(reissued.options.allow_teleports, crate::native::WalkBit::Forbid);
+        assert!(reissued.protect && reissued.food_guard);
+        assert!(!reissued.allow.food);
+        assert!(
+            std::mem::size_of::<SavedNativeWalk>()
+                + std::mem::size_of::<EvidenceStamp>()
+                <= std::mem::size_of::<WalkRequest>()
+        );
     }
 }

@@ -596,6 +596,13 @@ It never walks onto a blocked anchor or substitutes an arbitrary nearby tile.
 Loc interaction reach remains the engine's shape-, rotation-, footprint-
 and wall-aware rule; a route endpoint alone does not prove operability.
 
+Probes require the host's current collision reach view; an unverified target
+does not grant permission to click. Compatibility handovers keep their
+request identity, selected pin and continuation in one cold allocation.
+Unrelated API seats reserve only a pointer. Native reissues retain the
+original destination and policy, but bind a fresh evidence stamp rather than
+keeping the expired request stamp in every ordinary walk.
+
 
 ## Router (`nav_planner::router`)
 

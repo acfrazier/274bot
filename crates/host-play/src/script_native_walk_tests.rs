@@ -3484,7 +3484,9 @@ fn native_protect_alone_does_not_grant_danger_and_invalid_cross_still_refuses() 
     }
     for names in [
         vec![Arc::from("unknown-danger-zone")],
-        vec![Arc::from("test-barrier@2,0,0"); 9],
+        (2..11)
+            .map(|x| Arc::from(format!("test-barrier@{x},0,0")))
+            .collect(),
     ] {
         let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
         rig.shared.lock().options.allow_danger_zones = script::native::WalkBit::Forbid;
@@ -5873,9 +5875,10 @@ fn s2b_admission_per_bot_layouts() {
     // NAV-BUSY-TRANSPORT adds 32 B to Traveller (busy-refusal retry state and
     // the distinct-tick transport clock): NavBot is 3816 B. Lab memory A/B on
     // the branch head passed (NAV-BUSY-TRANSPORT/mem-ab-r3).
-    // Prerequisite hop tracking and captured logical-walk ownership add 216 B
-    // to NavBot; the slot's manual-run alias and exact bank policy add 32 B.
-    // Linux x86_64 measured 4032 B / 1656 B on this branch. The batch owns
+    // Prerequisite hop tracking and captured logical-walk ownership add 240 B
+    // to NavBot, including 24 B for physical takeoff/destination identity;
+    // the slot's manual-run alias and exact bank policy add 32 B.
+    // Linux x86_64 measured 4056 B / 1656 B on this branch. The batch owns
     // the corresponding macOS pre-FLOOR and Linux/Windows memory lanes.
     #[cfg(all(
         target_os = "macos",
@@ -5889,7 +5892,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (4032, 1656, 512, 264)
+        (4056, 1656, 512, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -5904,7 +5907,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (4032, 1656, 512, 264)
+        (4056, 1656, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);
