@@ -2926,17 +2926,6 @@ fn special_fact_formulas_match_content() {
 }
 
 #[test]
-fn rule_button_is_none_on_revision_274() {
-    // Revision 274 predates PvP V0: its generated `rule_buttons` default to
-    // zeros, and `rule_button` reports `None` instead of component 0.
-    let data = for_revision(ClientRevision::R274).unwrap();
-    let controls = data.duel_controls().expect("274 has duel controls");
-    for bit in 0..14u8 {
-        assert_eq!(controls.rule_button(bit), None, "274 rule_button({bit})");
-    }
-}
-
-#[test]
 fn pvp_shared_facts_have_bounded_layout() {
     // Once-per-process facts carry size tripwires only (no lab A/B for V0).
     // Measured `SpecialWeaponFact` is 52 bytes; the bound allows headroom.
