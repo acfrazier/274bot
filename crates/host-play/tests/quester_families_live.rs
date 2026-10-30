@@ -16,7 +16,7 @@
 mod quester_live;
 
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use api::game_data::SelectedGameData;
@@ -1576,6 +1576,7 @@ struct PrereqFailureOracle {
     apple_pie: i32,
     pies: i32,
     stand: WorldTile,
+    start_inventory: Arc<Mutex<Option<Vec<Value>>>>,
 }
 
 impl PrereqFailureOracle {
@@ -1629,6 +1630,7 @@ impl PrereqFailureOracle {
             apple_pie,
             pies: case.pies,
             stand: case.stand,
+            start_inventory: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -1639,22 +1641,34 @@ impl PrereqFailureOracle {
         lifecycle: Option<&script::ScriptLifecycleReceipt>,
         dialogue_seen: &[String],
     ) -> Result<Option<Value>, String> {
-        let Some(terminal) =
-            lifecycle.filter(|receipt| receipt.state == script::ScriptTerminalState::Failed)
-        else {
+        let Some(native) = status else {
             return Ok(None);
         };
-        let failure = status
-            .and_then(|status| status.failure.as_ref())
-            .ok_or("failed prerequisite cell has no native failure")?;
-        if !failure.message.contains(self.expected) && !terminal.reason.contains(self.expected) {
+        if native.phase != script::native::NativePhase::Blocked {
+            if native.failure.is_some() {
+                return Err(format!("negative prerequisite has failure outside Blocked: {native:?}"));
+            }
+            return Ok(None);
+        }
+        let failure = native
+            .failure
+            .as_ref()
+            .ok_or("blocked prerequisite cell has no native failure")?;
+        if failure.code.as_ref() != "parked"
+            || !self.messages.iter().any(|message| message == failure.message.as_ref())
+        {
             return Err(format!(
-                "expected prerequisite failure {:?}, got {failure:?}; {terminal:?}",
-                self.expected
+                "expected exact prerequisite refusal {:?}, got {failure:?}",
+                self.messages
             ));
         }
         if snapshot.modals().chat != -1 || snapshot.modals().main != -1 {
-            return Ok(None);
+            return Err("blocked prerequisite left an open modal".into());
+        }
+        let inventory_after = inventory_receipt(snapshot);
+        let inventory_before = self.start_inventory.lock().map_err(|_| "start inventory poisoned")?;
+        if inventory_before.as_ref() != Some(&inventory_after) {
+            return Err(format!("denied prerequisite changed inventory: before={inventory_before:?}, after={inventory_after:?}"));
         }
         require_item(snapshot, self.wolfbane, 0, "dagger_wolfbane")?;
         require_item(snapshot, self.meat_pie, self.pies, "meat_pie")?;
@@ -1740,6 +1754,7 @@ mod prereq_failure_oracle_tests {
                 .collect(),
             28,
         );
+        *oracle.start_inventory.lock().unwrap() = Some(inventory_receipt(&snapshot));
         let status = ScriptStatus {
             run: RunKey { slot: 1, run: 1, session: 1 },
             card: script::CompiledId("Quester"),
@@ -1816,6 +1831,11 @@ fn run_quester_prereq_case(case: PrereqLiveCase, expected_failure: Option<&'stat
     let wolfbane = item_id(&selected, "dagger_wolfbane");
     let meat_pie = item_id(&selected, "meat_pie");
     let apple_pie = item_id(&selected, "apple_pie");
+    let failure_oracle = expected_failure
+        .map(|expected| PrereqFailureOracle::new(Arc::clone(&selected), expected, &case));
+    let failure_inventory = failure_oracle
+        .as_ref()
+        .map(|oracle| Arc::clone(&oracle.start_inventory));
     let items: &'static [(&'static str, i32)] = match case.pies {
         0 => &[],
         27 => &[("meat_pie", 27)],
@@ -1876,6 +1896,10 @@ fn run_quester_prereq_case(case: PrereqLiveCase, expected_failure: Option<&'stat
         require_item(snapshot, wolfbane, 0, "dagger_wolfbane")?;
         require_item(snapshot, meat_pie, pies, "meat_pie")?;
         require_item(snapshot, apple_pie, 0, "apple_pie")?;
+        if let Some(inventory) = failure_inventory.as_ref() {
+            *inventory.lock().map_err(|_| "start inventory poisoned")? =
+                Some(inventory_receipt(snapshot));
+        }
         observed_sequence.store(
             snapshot
                 .chat_lines()
@@ -1896,8 +1920,6 @@ fn run_quester_prereq_case(case: PrereqLiveCase, expected_failure: Option<&'stat
         document.prereq.quest_start = Some(false);
     }
     let start = family_start(document, Arc::clone(&selected), quests);
-    let failure_oracle = expected_failure
-        .map(|expected| PrereqFailureOracle::new(Arc::clone(&selected), expected, &case));
     let mut dialogue_seen = Vec::new();
     let mut holy_landing = false;
     let mut mort_landing = false;
@@ -2007,8 +2029,12 @@ fn run_quester_prereq_case(case: PrereqLiveCase, expected_failure: Option<&'stat
             "native_status": native_status_receipt(status), "lifecycle": lifecycle}),
         ))
     });
-    quester_live::run_family(cell, start, observe)
-        .unwrap_or_else(|error| panic!("{selector} native prerequisite proof failed: {error}"));
+    let result = if expected_failure.is_some() {
+        quester_live::run_family_expected_blocked(cell, start, observe)
+    } else {
+        quester_live::run_family(cell, start, observe)
+    };
+    result.unwrap_or_else(|error| panic!("{selector} native prerequisite proof failed: {error}"));
     eprintln!("prereq cell outcome=completed test={selector}");
 }
 

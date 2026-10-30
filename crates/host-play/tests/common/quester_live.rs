@@ -962,22 +962,38 @@ enum FamilyBlockedPolicy {
     Observe,
 }
 
-fn family_parked_error(status: &ScriptStatus, _policy: FamilyBlockedPolicy) -> Option<String> {
+fn family_parked_error(status: &ScriptStatus, policy: FamilyBlockedPolicy) -> Option<String> {
+    if matches!(policy, FamilyBlockedPolicy::Observe)
+        && status.phase == NativePhase::Blocked
+        && status.failure.is_some()
+    {
+        return None;
+    }
     parked(status)
 }
 
 pub fn run(cell: Cell) -> Result<Value, String> {
-    run_inner(cell, None, None, None, false)
+    run_inner(cell, None, None, None, false, FamilyBlockedPolicy::Reject)
 }
 
 /// Run the generic Path live cell with shared world-wide tick-speed controls.
 pub fn run_quester_path(cell: Cell) -> Result<Value, String> {
-    run_inner(cell, None, None, None, true)
+    run_inner(cell, None, None, None, true, FamilyBlockedPolicy::Reject)
 }
 
 /// Run an inline native family fixture without a second launcher or capture driver.
 pub fn run_family(cell: Cell, start: StartFamily, observe: ObserveFamily) -> Result<Value, String> {
-    run_inner(cell, Some(start), Some(observe), None, false)
+    run_inner(cell, Some(start), Some(observe), None, false, FamilyBlockedPolicy::Reject)
+}
+
+/// Let an explicit negative-family oracle inspect native Blocked with a failure.
+/// The oracle must prove its exact expected refusal and reject changed state.
+pub fn run_family_expected_blocked(
+    cell: Cell,
+    start: StartFamily,
+    observe: ObserveFamily,
+) -> Result<Value, String> {
+    run_inner(cell, Some(start), Some(observe), None, false, FamilyBlockedPolicy::Observe)
 }
 
 /// Run the Path with a cell-specific success oracle and polling observations.
@@ -986,7 +1002,7 @@ pub fn run_observed(
     observe: ObserveFamily,
     observe_tick: ObserveTick,
 ) -> Result<Value, String> {
-    run_inner(cell, None, Some(observe), Some(observe_tick), false)
+    run_inner(cell, None, Some(observe), Some(observe_tick), false, FamilyBlockedPolicy::Reject)
 }
 
 fn run_inner(
@@ -995,6 +1011,7 @@ fn run_inner(
     observe_family: Option<ObserveFamily>,
     observe_tick: Option<ObserveTick>,
     quester_path: bool,
+    blocked_policy: FamilyBlockedPolicy,
 ) -> Result<Value, String> {
     let Cell {
         quest,
@@ -1019,6 +1036,7 @@ fn run_inner(
         observe_family,
         observe_tick,
         quester_path,
+        blocked_policy,
     )
 }
 
@@ -1049,7 +1067,7 @@ pub fn run_pair(pair: PairCell) -> Result<Value, String> {
             }
         })
         .collect();
-    run_cells(cells, RunPlan::Pair(mode), None, None, None, false)
+    run_cells(cells, RunPlan::Pair(mode), None, None, None, false, FamilyBlockedPolicy::Reject)
 }
 
 fn has_native_start(script: Option<&str>, family_override: bool) -> bool {
@@ -1063,6 +1081,7 @@ fn run_cells(
     mut observe_family: Option<ObserveFamily>,
     mut observe_tick: Option<ObserveTick>,
     quester_path: bool,
+    blocked_policy: FamilyBlockedPolicy,
 ) -> Result<Value, String> {
     #[cfg(feature = "js")]
     script_js::install_cards().map_err(|error| error.to_string())?;
@@ -1848,7 +1867,7 @@ fn run_cells(
                     break 'run Err(format!("{} Quester lifecycle error: {error}", names[index]));
                 }
                 if let Some(status) = observation.status.as_deref() {
-                    if let Some(reason) = family_parked_error(status, FamilyBlockedPolicy::Reject) {
+                    if let Some(reason) = family_parked_error(status, blocked_policy) {
                         break 'run Err(format!(
                             "{} Quester parked/blocked: {reason}",
                             names[index]
