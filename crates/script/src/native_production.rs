@@ -24,11 +24,15 @@ const MENU_PACKET_ORDER_TICKS: u64 = 1;
 // opens the input dialog and suspends the script (`engine/src/engine/script/handlers/PlayerOps.ts:369-371`).
 // Allow two observed game ticks for the button and count-dialog signals.
 const MAKE_X_SIGNAL_TICKS: u64 = 2;
-// The slowest output/repeat bound is three ticks in
-// `content/scripts/skill_crafting/scripts/spinning/spinning.rs2:83-99` and
-// `content/scripts/skill_smithing/scripts/smithing/smithing.rs2:269-286`.
-// Fletching and pottery use two-tick output queues:
-// `content/scripts/skill_fletching/scripts/cut_logs.rs2:83-103` and
+// Make-X spinning starts its first weak queue after three ticks
+// (`content/scripts/skill_crafting/scripts/spinning/spinning.rs2:87-103`).
+// Allow one more player-info observation tick for the first product.
+const MAKE_X_INITIAL_PRODUCT_TICKS: u64 = 4;
+// Repeated production output arrives within three ticks in spinning and smithing.
+// Fletching and pottery use two-tick queues.
+// Sources: `content/scripts/skill_crafting/scripts/spinning/spinning.rs2:98`,
+// `content/scripts/skill_smithing/scripts/smithing/smithing.rs2:269-286`,
+// `content/scripts/skill_fletching/scripts/cut_logs.rs2:83-103`, and
 // `content/scripts/skill_crafting/scripts/pottery/pottery.rs2:80-101`.
 const PRODUCT_PROGRESS_TICKS: u64 = 3;
 // Smithing posts the product after its delay, then delays three ticks before
@@ -320,7 +324,8 @@ impl NativeMachine for MakeMachine {
                             if now_held.is_some_and(|count| count >= self.request.qty) {
                                 return Poll::Ready(Ok(MakeReceipt { held: current }));
                             }
-                            self.deadline_tick = tick.saturating_add(PRODUCT_PROGRESS_TICKS);
+                            self.deadline_tick =
+                                tick.saturating_add(MAKE_X_INITIAL_PRODUCT_TICKS);
                             continue 'phases;
                         }
                         MakeXStep::TimedOut(phase) => {
@@ -934,6 +939,65 @@ mod tests {
             &ledger.as_ref().unwrap().outbox[0].effect,
             HostEffect::Interaction(InteractReq::IfButton { component_id: 2120 })
         ));
+    }
+
+    #[test]
+    fn make_x_waits_for_the_first_queued_spinning_product() {
+        let mut client = make_menu_client("Make X");
+        let menu = menu_snapshot(&client);
+        let mut ledger = None;
+        let handle = start_machine(&menu, &mut ledger, request(true));
+
+        let clicked = with_tick(&menu, &mut ledger, 2, |tick| {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            acknowledge_current(&mut tick.cx)
+        });
+        assert!(matches!(
+            clicked,
+            HostEffect::Interaction(InteractReq::IfButton { component_id: 2120 })
+        ));
+
+        client.dialog_input_open = true;
+        client.bump_gens(ServerProt::IF_OPENCHAT);
+        let mut count_open = menu_snapshot_with_held(&client, 0);
+        count_open.rebuild_family(&client, api::snapshot::Family::Modals);
+        let answered = with_tick(&count_open, &mut ledger, 3, |tick| {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            acknowledge_current(&mut tick.cx)
+        });
+        assert!(matches!(
+            answered,
+            HostEffect::Interaction(InteractReq::AnswerCount { value: 20 })
+        ));
+
+        client.dialog_input_open = false;
+        client.bump_gens(ServerProt::IF_OPENCHAT);
+        let mut count_closed = menu_snapshot_with_held(&client, 0);
+        count_closed.rebuild_family(&client, api::snapshot::Family::Modals);
+        assert!(with_tick(&count_closed, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+
+        client.chat_modal_id = -1;
+        client.bump_gens(ServerProt::IF_CLOSE);
+        let mut menu_closed = menu_snapshot_with_held(&client, 0);
+        menu_closed.rebuild_family(&client, api::snapshot::Family::Modals);
+        assert!(with_tick(&menu_closed, &mut ledger, 5, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+
+        // The three-tick content queue publishes its first product one observation later.
+        assert!(with_tick(&menu_closed, &mut ledger, 8, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        let first_product = menu_snapshot_with_held(&client, 1);
+        assert!(with_tick(&first_product, &mut ledger, 9, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
     }
 
     #[test]

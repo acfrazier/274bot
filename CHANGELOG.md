@@ -84,6 +84,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   packet-order margin for the engine's next-tick input and interface update
   (`E: engine/src/engine/World.ts:350-355,
   engine/src/engine/entity/NetworkPlayer.ts:171-177`).
+- Make-X production now waits one more observed game tick for a spinning
+  wheel's first product.
 - Non-kill combat re-engagements are bounded by the 700-tick maximum NPC
   respawn in revision 289 and the engine's three-tick target-gone end. The
   request tick budget adjusts the bound. `until_drop` uses its authored
