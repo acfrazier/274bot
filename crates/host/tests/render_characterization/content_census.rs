@@ -3694,6 +3694,7 @@ fn load_map_census(
             .ok_or_else(|| format!("maps.bin has no land record {land_id}"))?;
         referenced_record_ids.insert(land_id);
         let mut cells_in_record = 0usize;
+        let mut invalid_shape = None;
         let mut invalid_face_count = None;
         map_cache::visit_land(land, |cell| {
             cells_in_record += 1;
@@ -3728,7 +3729,15 @@ fn load_map_census(
             let face_count = match u8::try_from(faces) {
                 Ok(face_count) => face_count,
                 Err(_) => {
-                    invalid_face_count = Some((entry.square_x, entry.square_z, cell.plane, cell.x, cell.z, shape, faces));
+                    invalid_face_count = Some((
+                        entry.square_x,
+                        entry.square_z,
+                        cell.plane,
+                        cell.x,
+                        cell.z,
+                        shape,
+                        faces,
+                    ));
                     return;
                 }
             };
