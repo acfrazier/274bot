@@ -13,19 +13,14 @@ use std::time::Duration;
 /// this is the machine's backstop, measured on the active clock so pause,
 /// hold, not-ready and Blocked intervals do not spend it.
 pub const WALK_DEADLINE: Duration = Duration::from_secs(10 * 60);
-/// Login's `initalltabs` sends the quest tab and all row colours together.
-/// One later observed game tick is enough for the client snapshot to catch up.
+/// Login's `initalltabs` opens the quest tab and calls `update_questlist`.
+/// Allow one later observed game tick for that UI state to reach the snapshot.
 const QUEST_LIST_STATUS_WAIT_TICKS: u64 = 1;
 
 pub struct Walk {
-    key: WalkKey,
-    arrival: ArrivalKind,
-    // Retain only arrival mode. The host retains the goals and reports their tier.
-    candidate_goals: bool,
     // Keep the replay payload outside the inline machine budget.
     request: Box<WalkRequest>,
     request_id: u64,
-    required_after: EvidenceStamp,
     quest_list_wait_since: Option<u64>,
     quest_list_retry_used: bool,
     deadline: Duration,
@@ -39,6 +34,14 @@ struct Frame<'a> {
     arrival: ArrivalKind,
     candidate_goals: bool,
     goal: Option<api::WorldTile>,
+}
+
+fn walk_key(request: &WalkRequest) -> WalkKey {
+    WalkKey {
+        tile: request.target,
+        radius: i32::from(request.radius),
+        allow_teleports: request.options.allow_teleports.explicit(),
+    }
 }
 
 fn quest_list_status_observed(snapshot: SnapshotView<'_>) -> bool {
@@ -99,7 +102,7 @@ impl Observation for Frame<'_> {
 }
 
 impl Walk {
-    fn replan_with_current_quest_list(
+    fn replan_after_quest_list_wait(
         &mut self,
         cx: &mut ActionContext<'_>,
     ) -> Result<(), ActionError> {
@@ -108,13 +111,12 @@ impl Walk {
         request.required_after = required_after;
         let request_id = cx.walk(request)?;
         self.request.required_after = required_after;
-        self.required_after = required_after;
         self.request_id = request_id;
         self.quest_list_wait_since = None;
         self.quest_list_retry_used = true;
         self.wait.begin(
             NonZeroU64::new(request_id).expect("host request is nonzero"),
-            self.key,
+            walk_key(&self.request),
             HostOutcome::empty(),
         );
         Ok(())
@@ -126,14 +128,7 @@ impl NativeMachine for Walk {
     type Output = WalkReceipt;
 
     fn begin(request: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
-        let key = WalkKey {
-            tile: request.target,
-            radius: i32::from(request.radius),
-            allow_teleports: request.options.allow_teleports.explicit(),
-        };
-        let arrival = request.arrival;
-        let required_after = request.required_after;
-        let candidate_goals = request.candidate_goals.is_some();
+        let key = walk_key(&request);
         let request_id = cx.walk(request.clone())?;
         let mut wait = WalkSlot::new();
         wait.begin(
@@ -142,12 +137,8 @@ impl NativeMachine for Walk {
             HostOutcome::empty(),
         );
         Ok(Self {
-            key,
-            arrival,
-            candidate_goals,
             request: Box::new(request),
             request_id,
-            required_after,
             quest_list_wait_since: None,
             quest_list_retry_used: false,
             deadline: cx.active_now().saturating_add(WALK_DEADLINE),
@@ -176,14 +167,14 @@ impl NativeMachine for Walk {
                 escape: None,
             }));
         }
-        if !cx.evidence().meets(self.required_after) {
+        if !cx.evidence().meets(self.request.required_after) {
             return Poll::Pending;
         }
 
         let needs_quest_evidence = cx
             .walk_receipt(self.request_id)
             .is_some_and(|receipt| {
-                receipt.evidence.meets(self.required_after)
+                receipt.evidence.meets(self.request.required_after)
                     && matches!(&receipt.end, WalkEnd::NeedsEvidence(_))
             });
         if needs_quest_evidence {
@@ -192,7 +183,11 @@ impl NativeMachine for Walk {
                 .expect("quest-evidence receipt remains correlated")
                 .clone();
             if self.quest_list_retry_used {
-                return Poll::Ready(Ok(receipt));
+                let mut refused = receipt;
+                refused.detail = Some(std::sync::Arc::from(
+                    "fresh route still needs the named quest gate after one observed game tick",
+                ));
+                return Poll::Ready(Ok(refused));
             }
             let started = self
                 .quest_list_wait_since
@@ -201,7 +196,7 @@ impl NativeMachine for Walk {
                 return Poll::Pending;
             }
             if quest_list_status_observed(cx.snapshot()) {
-                if let Err(error) = self.replan_with_current_quest_list(cx) {
+                if let Err(error) = self.replan_after_quest_list_wait(cx) {
                     return Poll::Ready(Err(error));
                 }
                 return Poll::Pending;
@@ -214,7 +209,7 @@ impl NativeMachine for Walk {
         }
         let receipt = cx
             .walk_receipt(self.request_id)
-            .filter(|receipt| receipt.evidence.meets(self.required_after));
+            .filter(|receipt| receipt.evidence.meets(self.request.required_after));
         let outcome = receipt.map_or_else(HostOutcome::empty, |receipt| HostOutcome {
             seq: receipt.evidence.sequence,
             generation: receipt.evidence.run.run,
@@ -224,14 +219,14 @@ impl NativeMachine for Walk {
                 WalkEnd::Arrived | WalkEnd::RouteEnded | WalkEnd::Blocked
             ),
             blocked: receipt.end == WalkEnd::Blocked,
-            key: self.key,
+            key: walk_key(&self.request),
         });
         let frame = Frame {
             snapshot: cx.snapshot(),
             outcome,
             loc_id: self.request.loc_id,
-            arrival: self.arrival,
-            candidate_goals: self.candidate_goals,
+            arrival: self.request.arrival,
+            candidate_goals: self.request.candidate_goals.is_some(),
             goal: receipt.and_then(|receipt| receipt.goal),
         };
         if !self.wait.poll(self.request_id, &frame) {
@@ -249,7 +244,7 @@ impl NativeMachine for Walk {
             return Poll::Pending;
         }
 
-        if frame.arrived(self.key) {
+        if frame.arrived(walk_key(&self.request)) {
             let detail = receipt.and_then(|receipt| receipt.detail.clone());
             return Poll::Ready(Ok(WalkReceipt {
                 goal: frame.goal,
@@ -532,7 +527,7 @@ mod tests {
     }
 
     #[test]
-    fn unresolved_quest_evidence_waits_one_observed_game_tick() {
+    fn unresolved_quest_evidence_waits_one_observed_game_tick_then_refuses() {
         let run = RunKey {
             slot: 1,
             run: 1,
@@ -563,7 +558,7 @@ mod tests {
                 )
                 .unwrap()
         });
-        post_needs_evidence_receipt(&mut ledger, 1);
+        let original = post_needs_evidence_receipt(&mut ledger, 1);
 
         for _ in 0..2 {
             assert!(matches!(
@@ -581,6 +576,7 @@ mod tests {
         else {
             panic!("missing journal status must refuse after one observed tick");
         };
+        assert_eq!(receipt.request_id, original);
         assert!(matches!(
             &receipt.end,
             WalkEnd::NeedsEvidence(gates) if gates.as_ref() == [biohazard_complete_gate()]
@@ -591,10 +587,21 @@ mod tests {
                 .is_some_and(|detail| detail.contains("quest-list status was not observed")),
             "the bounded refusal names the missing journal observation"
         );
+        assert_eq!(
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .filter(|entry| matches!(&entry.effect, crate::native::HostEffect::Walk(_)))
+                .count(),
+            1,
+            "no route is retried when quest-list statuses are still missing"
+        );
     }
 
     #[test]
-    fn observed_quest_list_replans_with_a_fresh_route_request() {
+    fn observed_not_started_quest_replans_to_an_arriving_route() {
         let run = RunKey {
             slot: 1,
             run: 1,
@@ -617,6 +624,7 @@ mod tests {
             }],
             true,
         );
+        observed.seed_local_player(local_player(target));
         let mut ledger = None;
         let handle = with_tick(&initial, &mut ledger, 1, |tick| {
             tick.actions
@@ -666,18 +674,22 @@ mod tests {
             assert_eq!(request.target, target);
             queued.request_id.get()
         };
-        let retried = post_needs_evidence_receipt(&mut ledger, 2);
+        let retried = post_user_input_walk_receipt(&mut ledger, 2);
         assert_eq!(retried, retried_request_id);
+        ledger
+            .as_mut()
+            .expect("ledger remains present")
+            .walk
+            .as_mut()
+            .expect("fresh route receipt exists")
+            .end = WalkEnd::Arrived;
         let Poll::Ready(Ok(receipt)) = with_tick(&observed, &mut ledger, 3, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }) else {
-            panic!("the one permitted replan must settle the second refusal");
+            panic!("an observed not-started quest permits the refreshed route");
         };
         assert_eq!(receipt.request_id, retried);
-        assert!(matches!(
-            &receipt.end,
-            WalkEnd::NeedsEvidence(gates) if gates.as_ref() == [biohazard_complete_gate()]
-        ));
+        assert!(matches!(receipt.end, WalkEnd::Arrived));
         assert_eq!(
             ledger
                 .as_ref()
@@ -687,7 +699,7 @@ mod tests {
                 .filter(|entry| matches!(&entry.effect, crate::native::HostEffect::Walk(_)))
                 .count(),
             2,
-            "a second unknown result must not start another route retry"
+            "only one fresh route is queued for the observed status"
         );
     }
 }
