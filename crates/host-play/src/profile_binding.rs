@@ -852,7 +852,7 @@ impl ProfileSelection {
                 let data = api::game_data::for_revision(self.revision())?;
                 let identity = data
                     .verify_quest_family_identity()
-                    .map_err(|error| format!("navigation quest family: {error}"))?;
+                    .map_err(|error| format!("navigation quest family: {error:?}"))?;
                 let expected = nav_planner::quest_gates::QuestFamilyId::new(
                     identity.sha256,
                     identity.schema,
