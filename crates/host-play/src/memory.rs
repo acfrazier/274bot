@@ -170,8 +170,10 @@ fn configure_frame_delivery(names: &[String]) {
         .iter()
         .cloned()
         .map(|name| {
-            let mut counters = FrameDeliveryCounters::default();
-            counters.interval_started = Some(now);
+            let counters = FrameDeliveryCounters {
+                interval_started: Some(now),
+                ..FrameDeliveryCounters::default()
+            };
             (name, counters)
         })
         .collect::<HashMap<_, _>>();
@@ -2782,10 +2784,9 @@ impl Run {
             Some(Q4FrameCell::Pause) => {
                 if self.q4_pause_request_at.is_none() {
                     Some(self.config.n)
-                } else if self.q4_pause_started_at.is_none() {
-                    None
-                } else if self.q4_pause_resume_requested_at.is_some()
-                    && self.q4_resume_counts.is_none()
+                } else if self.q4_pause_started_at.is_none()
+                    || (self.q4_pause_resume_requested_at.is_some()
+                        && self.q4_resume_counts.is_none())
                 {
                     None
                 } else if self.q4_resume_counts.is_some() {
