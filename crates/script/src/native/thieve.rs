@@ -608,7 +608,7 @@ mod tests {
     use super::*;
     use crate::native::thieving_core::DEFAULT_ACTION_DEADLINE;
     use crate::quester::families::tests::{
-        def, local_player, post_walk_receipt, post_user_input_walk_receipt, with_tick,
+        def, local_player, post_user_input_walk_receipt, post_walk_receipt, with_tick,
         with_tick_reach,
     };
     use api::snapshot::{
@@ -963,8 +963,7 @@ mod tests {
         assert_eq!(request.target, anchor);
         assert_eq!(request.required_after.tick, 4);
 
-        let second_request =
-            post_walk_receipt(&mut ledger, 5, WalkEnd::Arrived, None);
+        let second_request = post_walk_receipt(&mut ledger, 5, WalkEnd::Arrived, None);
         assert_ne!(second_request, first_request);
         let arrived = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
         assert!(with_tick(&arrived, &mut ledger, 5, |tick| {

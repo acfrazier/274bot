@@ -4,9 +4,7 @@
 //! `Shop.open` ([`crate::shop_open`]): one Trade per attempt with a
 //! route-length tick deadline, and a nav walk to an unreachable keeper.
 use crate::native::walk::Walk;
-use crate::native::{
-    ActionContext, ActionError, NativeMachine, WalkRetryState,
-};
+use crate::native::{ActionContext, ActionError, NativeMachine, WalkRetryState};
 use crate::quester::families::reach::walk_request;
 use crate::reach_route;
 use crate::shim::InteractReq;
@@ -817,7 +815,14 @@ mod tests {
             &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
             HostEffect::Walk(_)
         ));
-        let first_request_id = ledger.as_ref().unwrap().outbox.last().unwrap().request_id.get();
+        let first_request_id = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .unwrap()
+            .request_id
+            .get();
         assert_eq!(
             post_walk_receipt(&mut ledger, 3, WalkEnd::NoPath, Some("first route failed")),
             first_request_id

@@ -2884,10 +2884,7 @@ fn run_cells(
             .collect::<Vec<_>>(),
     });
     if !logout_complete {
-        let reason = format!(
-            "clean logout timed out for {}",
-            stuck_accounts.join(", ")
-        );
+        let reason = format!("clean logout timed out for {}", stuck_accounts.join(", "));
         result = match result {
             Ok(()) => Err(reason),
             Err(previous) => Err(format!("{previous}; {reason}")),

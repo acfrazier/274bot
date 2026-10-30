@@ -423,10 +423,7 @@ impl NativeMachine for Combat {
         }
         self.flags |= OBSERVED;
         if self.approach_walk_pending() {
-            if let Some(receipt) = self
-                .pending_walk
-                .and_then(|id| cx.walk_receipt(id.get()))
-            {
+            if let Some(receipt) = self.pending_walk.and_then(|id| cx.walk_receipt(id.get())) {
                 match receipt.clone().into_arrival() {
                     Ok(_) => self.reset_approach_recovery(),
                     Err(error) => {

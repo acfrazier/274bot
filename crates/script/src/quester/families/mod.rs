@@ -1638,12 +1638,10 @@ impl StepRun for TalkRun {
                     if self.walk_retry.waiting_for_next_tick(now_tick) {
                         return Poll::Pending;
                     }
-                    let walk = match crate::native::defer_budget(
-                        cx.tick.actions.begin::<Walk>(
-                            reach::walk_request(tile, self.leash, None, cx.required_after),
-                            &mut cx.tick.cx,
-                        ),
-                    ) {
+                    let walk = match crate::native::defer_budget(cx.tick.actions.begin::<Walk>(
+                        reach::walk_request(tile, self.leash, None, cx.required_after),
+                        &mut cx.tick.cx,
+                    )) {
                         Poll::Pending => {
                             self.walk_retry.defer_until_next_tick(now_tick);
                             return Poll::Pending;

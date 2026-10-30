@@ -3753,12 +3753,7 @@ fn quester_combat_approach_replans_after_no_path() {
         Some(HostEffect::Walk(walk))
             if walk.target == stand && walk.required_after.tick == 3
     ));
-    approach_walk_receipt(
-        &mut harness,
-        4,
-        crate::native::WalkEnd::Arrived,
-        None,
-    );
+    approach_walk_receipt(&mut harness, 4, crate::native::WalkEnd::Arrived, None);
     scene.local.player.actor.tile = stand;
     scene.refresh();
     assert!(harness.poll_stamp(&scene.snapshot, 4, 4).is_pending());

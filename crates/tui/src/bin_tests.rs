@@ -4292,7 +4292,6 @@ fn incomplete_live_run_still_fails_after_shutdown_cleanup() {
     assert!(!session.core.has_play(), "cleanup quits the Play session");
 }
 
-
 /// Nothing loaded is not an error when quitting.
 #[test]
 fn quit_with_nothing_loaded_is_not_an_error() {

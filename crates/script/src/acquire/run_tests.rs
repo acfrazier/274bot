@@ -428,12 +428,7 @@ fn quester_bank_access_retries_a_failed_walk_on_the_next_tick() {
     assert_eq!(request.required_after.tick, 4);
 
     snapshot.seed_local_player(crate::quester::families::tests::local_player(STAND));
-    crate::quester::families::tests::post_walk_receipt(
-        &mut ledger,
-        5,
-        WalkEnd::Arrived,
-        None,
-    );
+    crate::quester::families::tests::post_walk_receipt(&mut ledger, 5, WalkEnd::Arrived, None);
     assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 5, OpenGate::Open).is_pending());
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,

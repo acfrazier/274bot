@@ -4490,12 +4490,22 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
     });
 
     assert!(with_step_context(&snapshot, &mut ledger, 15, |cx| run.poll(cx)).is_pending());
-    assert_eq!(run.loot_index, 1, "the item remains active during route retries");
+    assert_eq!(
+        run.loot_index, 1,
+        "the item remains active during route retries"
+    );
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
     assert!(ledger.as_ref().unwrap().outbox.is_empty());
 
     assert!(with_step_context(&snapshot, &mut ledger, 16, |cx| run.poll(cx)).is_pending());
-    let second_request_id = ledger.as_ref().unwrap().outbox.last().unwrap().request_id.get();
+    let second_request_id = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .last()
+        .unwrap()
+        .request_id
+        .get();
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
         crate::native::HostEffect::Walk(request) if request.target == door
@@ -4524,7 +4534,14 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
     assert_eq!(run.loot_index, 1, "a second route failure still retries");
 
     assert!(with_step_context(&snapshot, &mut ledger, 18, |cx| run.poll(cx)).is_pending());
-    let third_request_id = ledger.as_ref().unwrap().outbox.last().unwrap().request_id.get();
+    let third_request_id = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .last()
+        .unwrap()
+        .request_id
+        .get();
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
         crate::native::HostEffect::Walk(request) if request.target == door

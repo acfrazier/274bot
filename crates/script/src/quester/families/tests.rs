@@ -7442,7 +7442,14 @@ fn anchored_use_on_wall_walk_uses_network_side_then_falls_back_once() {
                     && request.radius == 0
                     && request.loc_id.is_none()
         ));
-        let initial_request_id = ledger.as_ref().unwrap().outbox.last().unwrap().request_id.get();
+        let initial_request_id = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .unwrap()
+            .request_id
+            .get();
         assert_eq!(
             post_user_input_walk_receipt(&mut ledger, 3),
             initial_request_id
@@ -7491,7 +7498,14 @@ fn anchored_use_on_wall_walk_uses_network_side_then_falls_back_once() {
                     && request.radius == 1
                     && request.loc_id.is_none()
         ));
-        let fallback_request_id = ledger.as_ref().unwrap().outbox.last().unwrap().request_id.get();
+        let fallback_request_id = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .unwrap()
+            .request_id
+            .get();
         assert_ne!(fallback_request_id, initial_request_id);
 
         assert_eq!(
@@ -7516,7 +7530,14 @@ fn anchored_use_on_wall_walk_uses_network_side_then_falls_back_once() {
             Some(HostEffect::Walk(request))
                 if request.target == wall_tile && request.radius == 1
         ));
-        let final_request_id = ledger.as_ref().unwrap().outbox.last().unwrap().request_id.get();
+        let final_request_id = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .unwrap()
+            .request_id
+            .get();
         assert_ne!(final_request_id, fallback_request_id);
         assert_eq!(
             post_user_input_walk_receipt(&mut ledger, 8),
@@ -7584,7 +7605,14 @@ fn anchored_interact_wall_walk_falls_back_to_the_loc_tile_once() {
                     && request.radius == 0
                     && request.loc_id.is_none()
         ));
-        let initial_request_id = ledger.as_ref().unwrap().outbox.last().unwrap().request_id.get();
+        let initial_request_id = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .unwrap()
+            .request_id
+            .get();
 
         assert_eq!(
             post_user_input_walk_receipt(&mut ledger, 3),
@@ -7634,7 +7662,14 @@ fn anchored_interact_wall_walk_falls_back_to_the_loc_tile_once() {
                     && request.radius == 1
                     && request.loc_id.is_none()
         ));
-        let fallback_request_id = ledger.as_ref().unwrap().outbox.last().unwrap().request_id.get();
+        let fallback_request_id = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .unwrap()
+            .request_id
+            .get();
         assert_ne!(fallback_request_id, initial_request_id);
 
         assert_eq!(
@@ -7659,7 +7694,14 @@ fn anchored_interact_wall_walk_falls_back_to_the_loc_tile_once() {
             Some(HostEffect::Walk(request))
                 if request.target == wall_tile && request.radius == 1
         ));
-        let final_request_id = ledger.as_ref().unwrap().outbox.last().unwrap().request_id.get();
+        let final_request_id = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .unwrap()
+            .request_id
+            .get();
         assert_ne!(final_request_id, fallback_request_id);
         assert_eq!(
             post_user_input_walk_receipt(&mut ledger, 8),
@@ -7794,7 +7836,12 @@ fn interact_retries_a_failed_approach_and_dispatches_after_arrival() {
         let target = latest_retry_walk_target(&ledger);
 
         assert_eq!(
-            post_walk_receipt(&mut ledger, 3, WalkEnd::NoPath, Some("first approach failed")),
+            post_walk_receipt(
+                &mut ledger,
+                3,
+                WalkEnd::NoPath,
+                Some("first approach failed")
+            ),
             first_request
         );
         assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
@@ -7849,7 +7896,12 @@ fn buy_retries_a_failed_approach_and_starts_at_the_shop() {
         assert_eq!(latest_retry_walk_target(&ledger), anchor);
 
         assert_eq!(
-            post_walk_receipt(&mut ledger, 3, WalkEnd::NoPath, Some("first shop route failed")),
+            post_walk_receipt(
+                &mut ledger,
+                3,
+                WalkEnd::NoPath,
+                Some("first shop route failed")
+            ),
             first_request
         );
         assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
@@ -7915,12 +7967,7 @@ fn approach_retries_park_with_the_last_detail_after_three_attempts() {
                 let failure_tick = u64::from(attempt) * 2 + 1;
                 let detail = format!("{family} route failure {attempt}");
                 assert_eq!(
-                    post_walk_receipt(
-                        &mut ledger,
-                        failure_tick,
-                        WalkEnd::NoPath,
-                        Some(&detail),
-                    ),
+                    post_walk_receipt(&mut ledger, failure_tick, WalkEnd::NoPath, Some(&detail),),
                     active_request
                 );
                 let result = with_tick(&snapshot, &mut ledger, failure_tick, |tick| {
@@ -7945,7 +7992,11 @@ fn approach_retries_park_with_the_last_detail_after_three_attempts() {
                     );
                 }
             }
-            assert_eq!(requests.len(), 3, "{family} should use its complete retry budget");
+            assert_eq!(
+                requests.len(),
+                3,
+                "{family} should use its complete retry budget"
+            );
         }
     });
 }

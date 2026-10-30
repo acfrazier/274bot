@@ -386,8 +386,7 @@ impl NativeMachine for Dialogue {
                 if self.walk_request_id != 0 {
                     if let Some(receipt) = cx.walk_receipt(self.walk_request_id).cloned() {
                         self.walk_request_id = 0;
-                        let retryable =
-                            crate::native::WalkRetryState::retryable_receipt(&receipt);
+                        let retryable = crate::native::WalkRetryState::retryable_receipt(&receipt);
                         if self
                             .walk_retry
                             .observe_failure(&receipt, cx.evidence().tick)

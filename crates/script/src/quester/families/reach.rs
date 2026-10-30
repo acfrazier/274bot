@@ -337,7 +337,10 @@ impl NativeMachine for Reach {
                 match self.walk.as_mut().expect("door recovery walk").poll(cx) {
                     Poll::Pending => Poll::Pending,
                     Poll::Ready(Ok(receipt)) => {
-                        if self.walk_retry.observe_failure(&receipt, cx.evidence().tick) {
+                        if self
+                            .walk_retry
+                            .observe_failure(&receipt, cx.evidence().tick)
+                        {
                             self.walk = None;
                             return Poll::Pending;
                         }
