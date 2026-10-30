@@ -78,9 +78,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   a window only when the full in-progress value range lies inside it. A walk
   reports the quest, window bounds and unknown evidence state.
 
-- Navigation now rejects a pack built from different quest data before a bot
-  starts walking. The error identifies the mismatch and asks you to rebuild
-  or replace the pack, instead of reporting missing quest evidence.
+- A profile no longer loads if its navigation pack was built from different
+  quest data. The error identifies the mismatch and asks you to rebuild or
+  replace the pack, instead of reporting missing quest evidence.
+
+- When a walk needs quest evidence, the bot waits up to one game tick for
+  the quest list. Once the needed rows arrive, it plans the route once more.
 
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being

@@ -3993,8 +3993,14 @@ fn captured_route_quests(
 ) -> Option<nav_planner::quest_gates::QuestEvidence> {
     let prepared = context.and_then(|context| {
         let identity = context.selected.quest_family_identity()?;
-        if nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema) != family
-        {
+        let selected_family =
+            nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema);
+        if selected_family != family {
+            api::host_log!(
+                api::hostlog::Category::NavTrace,
+                api::hostlog::Level::Debug,
+                "navigation quest-list evidence unavailable: pack family {family:?} differs from selected family {selected_family:?}",
+            );
             return None;
         }
         let quests = context.selected.try_quests()?;

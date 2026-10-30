@@ -2668,11 +2668,7 @@ mod tests {
 
     #[test]
     fn instance_with_widening_stays_inside_the_inline_budget() {
-        assert!(
-            size_of::<Walk>() <= 136,
-            "Walk={} exceeds its inline budget",
-            size_of::<Walk>()
-        );
+        assert_eq!(size_of::<Walk>(), 208);
         assert!(
             size_of::<Gatherer>() <= 1024,
             "Gatherer={} exceeds its inline budget",

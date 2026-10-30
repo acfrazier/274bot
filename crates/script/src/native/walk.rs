@@ -20,8 +20,9 @@ pub const WALK_DEADLINE: Duration = Duration::from_secs(10 * 60);
 const QUEST_LIST_STATUS_WAIT_TICKS: u64 = 1;
 
 pub struct Walk {
-    // Keep the replay payload outside the inline machine budget.
-    request: Box<WalkRequest>,
+    // The host consumes its dispatch payload, so replay fields must remain
+    // owned here. Keep them inline instead of allocating a second box.
+    request: WalkRequest,
     request_id: u64,
     quest_list_wait_since: Option<u64>,
     quest_list_retry_used: bool,
@@ -46,41 +47,21 @@ fn walk_key(request: &WalkRequest) -> WalkKey {
     }
 }
 
-fn quest_key_matches_row(key: &str, row_name: &str) -> bool {
-    let key = key
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric())
-        .map(|character| character.to_ascii_lowercase());
-    let row_name = row_name
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric())
-        .map(|character| character.to_ascii_lowercase());
-    key.eq(row_name)
-}
-
-fn quest_list_gate_observed(
-    gate: &QuestGate,
-    rows: Option<&[api::snapshot::QuestStatusView]>,
-) -> bool {
-    let QuestGate::Complete(quest) = gate else {
-        return false;
-    };
-    rows.is_some_and(|rows| {
-        rows.iter()
-            .find(|row| quest_key_matches_row(&quest.0, &row.name))
-            .is_some_and(|row| row.status() != api::snapshot::QuestListStatus::Unknown)
-    })
-}
-
 fn quest_list_status_observed(
     gates: &[QuestGate],
-    rows: Option<&[api::snapshot::QuestStatusView]>,
+    quests: Option<&api::quest_facts::QuestCatalog>,
+    snapshot: SnapshotView<'_>,
 ) -> bool {
     let mut has_complete_gate = false;
     for gate in gates {
-        if matches!(gate, QuestGate::Complete(_)) {
+        if let QuestGate::Complete(quest) = gate {
             has_complete_gate = true;
-            if !quest_list_gate_observed(gate, rows) {
+            if !quests
+                .and_then(|quests| {
+                    api::quest_progress::quest_list_status(quests, &quest.0, snapshot)
+                })
+                .is_some_and(|status| status.value != api::snapshot::QuestListStatus::Unknown)
+            {
                 return false;
             }
         }
@@ -88,8 +69,9 @@ fn quest_list_status_observed(
     if has_complete_gate {
         return true;
     }
-    rows.is_some_and(|rows| {
-        rows.iter()
+    snapshot.quest_statuses().is_some_and(|rows| {
+        rows.value
+            .iter()
             .any(|row| row.status() != api::snapshot::QuestListStatus::Unknown)
     })
 }
@@ -149,7 +131,7 @@ impl Walk {
         cx: &mut ActionContext<'_>,
     ) -> Result<(), ActionError> {
         let required_after = cx.evidence();
-        let mut request = self.request.as_ref().clone();
+        let mut request = self.request.clone();
         request.required_after = required_after;
         let request_id = cx.walk(request)?;
         self.request.required_after = required_after;
@@ -179,7 +161,7 @@ impl NativeMachine for Walk {
             HostOutcome::empty(),
         );
         Ok(Self {
-            request: Box::new(request),
+            request,
             request_id,
             quest_list_wait_since: None,
             quest_list_retry_used: false,
@@ -237,7 +219,17 @@ impl NativeMachine for Walk {
             let started = self.quest_list_wait_since.get_or_insert(tick);
             let snapshot = cx.snapshot();
             let quest_rows = snapshot.quest_statuses().map(|statuses| statuses.value);
-            let gate_status_observed = quest_list_status_observed(gates, quest_rows);
+            // The catalog is prepared off-pump. This access only borrows its
+            // cached rows and uses the provider's canonical ID-to-display match.
+            let quests = api::game_data::for_revision(cx.pin().revision)
+                .ok()
+                .filter(|data| {
+                    data.selected_pin()
+                        .is_ok_and(|pin| pin.as_ref() == cx.pin())
+                })
+                .and_then(|data| data.try_quests());
+            let gate_status_observed =
+                quest_list_status_observed(gates, quests.as_deref(), snapshot);
             if first_observation || tick != *started {
                 api::host_log!(
                     api::hostlog::Category::NavTrace,
@@ -593,7 +585,62 @@ mod tests {
         assert_observed_quest_replans("priestperil", "Priest in Peril");
     }
 
+    #[test]
+    #[ignore = "requires NAV_PACK naming a real quest-gated pack"]
+    fn pack_completion_gates_resolve_observed_catalog_rows() {
+        let path = std::env::var_os("NAV_PACK").expect("explicit real quest-gated pack");
+        let world = nav_planner::world::NavWorld::load_pack(std::path::Path::new(&path))
+            .expect("load real quest-gated pack");
+        let quests = prepared_quests();
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_quest_statuses(
+            quests
+                .iter()
+                .map(|facts| api::snapshot::QuestStatusView {
+                    component_id: 0,
+                    name: facts.display.to_string(),
+                    colour: 0xF80000,
+                })
+                .collect(),
+            true,
+        );
+        let stamp = EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 1,
+        };
+        let view = SnapshotView::new(Some(&snapshot), stamp);
+        let ids: std::collections::BTreeSet<_> = world
+            .graph
+            .edges
+            .iter()
+            .filter_map(|edge| edge.quest_gates.as_ref())
+            .flat_map(|gates| gates.gates())
+            .filter_map(|gate| match gate {
+                QuestGate::Complete(quest) => Some(&quest.0),
+                QuestGate::Window(_) => None,
+            })
+            .collect();
+        assert!(!ids.is_empty(), "the pack must contain completion gates");
+        for id in &ids {
+            let gate = complete_gate(id);
+            let facts = quests.quest(id).expect("gate has a catalog identity");
+            assert!(
+                quest_list_status_observed(&[gate], Some(&quests), view),
+                "completion gate {id} must resolve its catalog row"
+            );
+            println!("QUEST_ROW\t{id}\t{}\tobserved", facts.display);
+        }
+        println!("QUEST_ROW_COUNT={}", ids.len());
+    }
+
     fn assert_observed_quest_replans(quest: &str, display: &str) {
+        let _quests = prepared_quests();
         let run = RunKey {
             slot: 1,
             run: 1,
@@ -693,5 +740,17 @@ mod tests {
             2,
             "only one fresh route is queued for the observed status"
         );
+    }
+
+    fn prepared_quests() -> Arc<api::quest_facts::QuestCatalog> {
+        api::selected::FamilyPreparation::run(|worker| {
+            api::game_data::for_revision(api::selected::ClientRevision::R289)
+                .unwrap()
+                .prepare_quests(worker)
+                .unwrap()
+        })
+        .unwrap()
+        .join()
+        .unwrap()
     }
 }
