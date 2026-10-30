@@ -36,7 +36,7 @@ use api::host_log;
 use api::hostlog::{Category, Level};
 use api::identity::{Deadline, Notice, Notifier, PublishSequence, SlotKey};
 use client::client::Client;
-use client::render::backend::{BackendKind, FrameOutput};
+use client::render::backend::{gpu::SceneSubmit, BackendKind, FrameOutput};
 use client::render::Renderer;
 
 use crate::render::{
@@ -628,7 +628,10 @@ fn scene_workspace(submit: &mut dyn FnMut()) {
                 fair::submit(frame, submit);
                 return;
             }
-            frame.submit(&PROCESS.service, &PROCESS.counters, submit);
+            frame.submit(&PROCESS.service, &PROCESS.counters, &mut || {
+                submit();
+                client::render::backend::gpu::current_scene_submit_result()
+            });
         }
         None => submit(),
     });
@@ -639,23 +642,45 @@ impl GpuFrame {
         &mut self,
         service: &RenderService,
         counters: &WorkspaceCounters,
-        submit: &mut dyn FnMut(),
+        submit: &mut dyn FnMut() -> SceneSubmit,
     ) {
         match self.reserve(service) {
             Ok((frame, wait)) => {
-                submit();
+                let result = submit();
                 counters.leased(wait);
-                self.scenes += 1;
-                // Generation-checked: refused once this head is retired. The
-                // handle names this head's scene as of its n-th submission.
-                if let Err(error) =
-                    frame.publish_retained_scene(SceneHandle::from_opaque(self.scenes))
-                {
-                    host_log!(
+                match result {
+                    SceneSubmit::Submitted => {
+                        self.scenes += 1;
+                        // Only a completed submission can replace this head's
+                        // retained scene. A fault keeps its last good scene.
+                        if let Err(error) =
+                            frame.publish_retained_scene(SceneHandle::from_opaque(self.scenes))
+                        {
+                            host_log!(
+                                Category::Lifecycle,
+                                Level::Warn,
+                                "render retained scene: {error}"
+                            );
+                        }
+                    }
+                    SceneSubmit::ResourceLimited | SceneSubmit::LockContended => {
+                        let kind = if result == SceneSubmit::ResourceLimited {
+                            crate::render::RenderFaultKind::ResourceLimit
+                        } else {
+                            crate::render::RenderFaultKind::LockContention
+                        };
+                        // record_fault writes exactly one host_log line for
+                        // this consumed reservation's incident, gate on or off.
+                        if let Err(error) = service.record_fault(frame.identity(), kind, Instant::now())
+                        {
+                            host_log!(Category::Lifecycle, Level::Warn, "render fault: {error}");
+                        }
+                    }
+                    SceneSubmit::NotRun => host_log!(
                         Category::Lifecycle,
                         Level::Warn,
-                        "render retained scene: {error}"
-                    );
+                        "render callback did not submit the consumed scene"
+                    ),
                 }
                 if let Err(error) = frame.finish(Instant::now()) {
                     host_log!(Category::Lifecycle, Level::Warn, "render frame: {error}");
@@ -1005,14 +1030,70 @@ mod tests {
     }
 
     #[test]
+    fn default_vertex_cap_fault_logs_once_and_keeps_the_retained_scene() {
+        const CHILD: &str = "T44_DEFAULT_CAP_LOG_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "render_head::tests::default_vertex_cap_fault_logs_once_and_keeps_the_retained_scene",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .expect("spawn an isolated default render log test");
+            assert!(
+                output.status.success(),
+                "default render log child failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            return;
+        }
+        struct Capture(Mutex<Vec<(Level, String)>>);
+        impl api::hostlog::Sink for Capture {
+            fn record(&self, record: &api::hostlog::Record<'_>) {
+                lock(&self.0).push((record.level, record.message.to_owned()));
+            }
+        }
+        static CAPTURE: Capture = Capture(Mutex::new(Vec::new()));
+        assert!(api::hostlog::install_sink(&CAPTURE));
+        #[cfg(feature = "render-test-hooks")]
+        assert!(!fair::enabled(), "the fair gate must remain unset");
+        let (service, pump) = service(WRAP_GRANT_TTL);
+        let counters = WorkspaceCounters::default();
+        let mut frame = gpu_frame(&service, &pump, 932);
+        frame.submit(&service, &counters, &mut || SceneSubmit::Submitted);
+        let retained = frame.lease.snapshot().1.retained_scene();
+        assert_eq!(retained, Some(SceneHandle::from_opaque(1)));
+        // The client's checked vertex-cap failure returns ResourceLimited
+        // from this same callback, without submitting a replacement image.
+        frame.submit(&service, &counters, &mut || SceneSubmit::ResourceLimited);
+        assert_eq!(frame.lease.snapshot().1.retained_scene(), retained);
+        assert_eq!(frame.lease.snapshot().1.state(), ReservationState::Idle);
+        assert_eq!(frame.scenes, 1);
+        assert_eq!(service.fault_stats().totals(), [0, 0, 1]);
+        let lines = lock(&CAPTURE.0);
+        assert_eq!(lines.len(), 1, "one host_log line per failed scene incident");
+        assert_eq!(lines[0].0, Level::Warn);
+        assert!(lines[0].1.starts_with("render fault #1 ResourceLimit "));
+    }
+
+    #[test]
     fn an_idle_workspace_leases_the_scene_and_retains_it_per_head() {
         let (service, pump) = service(TTL);
         let counters = WorkspaceCounters::default();
         let mut first = gpu_frame(&service, &pump, 1);
         let second = gpu_frame(&service, &pump, 2);
         let mut ran = 0;
-        first.submit(&service, &counters, &mut || ran += 1);
-        first.submit(&service, &counters, &mut || ran += 1);
+        first.submit(&service, &counters, &mut || {
+            ran += 1;
+            SceneSubmit::Submitted
+        });
+        first.submit(&service, &counters, &mut || {
+            ran += 1;
+            SceneSubmit::Submitted
+        });
         assert_eq!(ran, 2);
         let (sequence, snapshot) = first.lease.snapshot();
         assert_eq!(snapshot.state(), ReservationState::Idle);
@@ -1056,7 +1137,8 @@ mod tests {
         thread::scope(|scope| {
             let submitting = scope.spawn(|| {
                 waiter.submit(&service, &counters, &mut || {
-                    ran.store(true, Ordering::SeqCst)
+                    ran.store(true, Ordering::SeqCst);
+                    SceneSubmit::Submitted
                 });
             });
             wait_until("the waiter's Pending publication", || {
@@ -1101,7 +1183,10 @@ mod tests {
 
         let mut waiter = gpu_frame(&service, &pump, 6);
         let mut ran = 0;
-        waiter.submit(&service, &counters, &mut || ran += 1);
+        waiter.submit(&service, &counters, &mut || {
+            ran += 1;
+            SceneSubmit::Submitted
+        });
         assert_eq!(ran, 1);
         assert!(
             granted_at.elapsed() >= TTL,
@@ -1122,7 +1207,10 @@ mod tests {
         let mut frame = gpu_frame(&service, &pump, 7);
         service.retire(&mut frame.lease, Instant::now()).unwrap();
         let mut ran = 0;
-        frame.submit(&service, &counters, &mut || ran += 1);
+        frame.submit(&service, &counters, &mut || {
+            ran += 1;
+            SceneSubmit::Submitted
+        });
         assert_eq!(ran, 1, "the scene still submits, as before the wrap");
         assert_eq!(frame.lease.snapshot().1.retained_scene(), None);
         let stats = counters.stats();
@@ -1195,7 +1283,10 @@ mod tests {
                         let mut frame = gpu_frame(service, &pump, 100 + thread);
                         scope.spawn(move || {
                             for _ in 0..rounds {
-                                frame.submit(service, counters, &mut || spin(section));
+                                frame.submit(service, counters, &mut || {
+                                    spin(section);
+                                    SceneSubmit::Submitted
+                                });
                             }
                         });
                     }

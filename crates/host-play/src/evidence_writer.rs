@@ -341,9 +341,12 @@ impl EvidenceJob {
     }
 }
 
-#[expect(
-    clippy::large_enum_variant,
-    reason = "The bounded queue charges inline job storage and avoids one allocation per capture"
+#[cfg_attr(
+    feature = "render-diagnostics",
+    expect(
+        clippy::large_enum_variant,
+        reason = "The bounded queue charges inline job storage and avoids one allocation per capture"
+    )
 )]
 enum QueuedRequest {
     Native(EvidenceRequest),

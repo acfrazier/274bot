@@ -301,6 +301,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Fixed during development
 
+- GPU frames with an out-of-range vertex now report a resource fault in release
+  builds instead of wrapping the coordinate. The renderer keeps the last good
+  image. Normal builds log each failed scene incident once, without the
+  experimental fair-render gate.
 - Startup waits for saved preferences before it chooses and loads a profile.
   Saving a new profile during that wait keeps the terminal app's original boot
   load and login. Renaming the boot profile keeps its pending load attached to
