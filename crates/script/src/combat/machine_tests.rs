@@ -612,6 +612,61 @@ fn user_input_walk_receipt(harness: &mut Harness, tick: u64) {
         escape: None,
     });
 }
+fn stand_approach_fixture(
+    stand_distance: i32,
+    budget_ticks: Option<u16>,
+) -> (Scene, Harness, api::WorldTile) {
+    let mut scene = Scene::new("imp");
+    let here = scene.local.player.actor.tile;
+    let stand = tile(here.x + stand_distance, here.z);
+    scene.npcs[0].tile = tile(stand.x + 10, stand.z);
+    scene.npcs[0].distance = stand_distance + 10;
+    scene.refresh();
+    let mut request = scene.request();
+    request.stand = Some(stand);
+    request.engage_radius = 1;
+    if let Some(budget_ticks) = budget_ticks {
+        request.budget_ticks = budget_ticks;
+    }
+    let mut harness = Harness::new(&scene, request);
+    assert!(matches!(
+        harness.pending(&scene, 1),
+        Some(HostEffect::Walk(walk)) if walk.target == stand
+    ));
+    (scene, harness, stand)
+}
+
+fn stand_walk_receipt(
+    harness: &mut Harness,
+    tick: u64,
+    end: crate::native::WalkEnd,
+    detail: Option<&str>,
+) {
+    let request_id = harness
+        .machine
+        .pending_walk
+        .expect("combat stand walk was issued")
+        .get();
+    harness.runtime.ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
+        goal: None,
+        request_id,
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick,
+            sequence: tick,
+        },
+        end,
+        blocked: None,
+        detail: detail.map(Arc::from),
+        refusal: None,
+        assessment: None,
+        escape: None,
+    });
+}
 #[test]
 fn combat_machine_cure_row_precedes_eat_row() {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3711,6 +3766,58 @@ fn user_input_ends_combat_approach_without_rewalk_or_attack() {
         Poll::Ready(Err(ActionError::UserInput))
     ));
     assert_len(&harness.drain(None), 0);
+}
+
+#[test]
+fn configured_stand_150_tiles_away_does_not_time_out_while_walk_is_pending() {
+    let (scene, mut harness, stand) = stand_approach_fixture(150, None);
+    assert_eq!(stand.x - scene.local.player.actor.tile.x, 150);
+    for tick in 2..=80 {
+        assert!(harness.pending(&scene, tick).is_none());
+    }
+    assert!(harness.machine.pending_walk.is_some());
+}
+
+#[test]
+fn configured_stand_no_target_window_starts_at_observed_arrival() {
+    let (mut scene, mut harness, stand) = stand_approach_fixture(150, None);
+    for tick in 2..=4 {
+        assert!(harness.pending(&scene, tick).is_none());
+    }
+    scene.local.player.actor.tile = stand;
+    scene.refresh();
+    stand_walk_receipt(&mut harness, 5, crate::native::WalkEnd::Arrived, None);
+    assert!(harness.pending(&scene, 5).is_none());
+    for tick in 6..=19 {
+        assert!(harness.pending(&scene, tick).is_none());
+    }
+    assert_eq!(harness.ready(&scene, 20).end, CombatEnd::NoTarget);
+}
+
+#[test]
+fn configured_stand_walk_failure_returns_its_detail() {
+    let (scene, mut harness, _) = stand_approach_fixture(150, None);
+    let detail = "route failed after bounded retries";
+    stand_walk_receipt(
+        &mut harness,
+        2,
+        crate::native::WalkEnd::NoPath,
+        Some(detail),
+    );
+    let result = harness.poll(&scene.snapshot, 2);
+    assert!(matches!(
+        result,
+        Poll::Ready(Err(ActionError::Blocked(actual))) if actual.as_ref() == detail
+    ));
+}
+
+#[test]
+fn configured_stand_approach_still_obeys_the_callers_combat_budget() {
+    let (scene, mut harness, _) = stand_approach_fixture(150, Some(20));
+    for tick in 2..20 {
+        assert!(harness.pending(&scene, tick).is_none());
+    }
+    assert_eq!(harness.ready(&scene, 20).end, CombatEnd::Budget);
 }
 
 #[test]
