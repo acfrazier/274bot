@@ -16,7 +16,6 @@ import { extractQuestStartFacts, questStartContentFiles } from './extractors/que
 import { extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
 import { loadServerOrderedFacts } from './extractors/server-ordered.ts';
 import { extractNpcTransformClosure } from './extractors/npc-transforms.ts';
-import { knifeNpcOperations } from './extractors/knife-npc.ts';
 const root = path.resolve(import.meta.dirname, '../..');
 const expected = Object.fromEntries(revisions.map(spec => [spec.revision, {
     engine: spec.expectedEngine, content: spec.expectedContent,
@@ -225,10 +224,7 @@ async function verifyRevision(revision: number) {
             cacheId: spec.cacheIdentity.cache_id,
             contentId,
         }),
-        npc_transforms: {
-            ...npcOperations!,
-            knife_operations: knifeNpcOperations(npcEvidence!, gathering.payload),
-        },
+        npc_transforms: npcOperations!,
     } : undefined;
     assertEqual(JSON.stringify(payload.server_ordered), JSON.stringify(serverOrdered), `${revision} source-proven server-ordered catalog`);
     const serverOrderedInputs = npcEvidence ? serverOrderedProvenanceInputs(spec.engine, spec.content, npcEvidence.source_inputs) : undefined;

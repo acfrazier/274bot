@@ -20,7 +20,6 @@ import { extractDebugCatalog, engineHandlerRelative } from './extractors/debug.t
 import { dialogueUiContentFiles, extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
 import { loadServerOrderedFacts, serverOrderedContentFiles, serverOrderedEngineInputPaths } from './extractors/server-ordered.ts';
 import { extractNpcTransformClosure, npcTransformInputPaths, type NpcTransformClosureEvidence } from './extractors/npc-transforms.ts';
-import { knifeNpcOperations } from './extractors/knife-npc.ts';
 
 type ObjType = { id: number; debugname: string | null; name: string | null; cost: number; stackable: boolean; members: boolean; certlink: number; certtemplate: number; wearpos: number; wearpos2: number; wearpos3: number; manwear: number; tradeable?: boolean; countobj?: ArrayLike<number> | null; category?: number; params?: Map<number, number | string> };
 type NpcType = { id: number; debugname?: string | null; name: string | null };
@@ -3116,10 +3115,7 @@ async function generate(spec: Revision) {
             cacheId: spec.cacheIdentity.cache_id,
             contentId,
         }),
-        npc_transforms: {
-            ...runtimeNpcOperations(npcEvidence!),
-            knife_operations: knifeNpcOperations(npcEvidence!, gathering.payload),
-        },
+        npc_transforms: runtimeNpcOperations(npcEvidence!),
     } : undefined;
     if (serverOrdered) Object.assign(facts, { server_ordered: serverOrdered });
     const cookRow = questIdentity.rows.find((row) => row.id === 'cook');

@@ -5,6 +5,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ## Unreleased
 
+### Gatherer
+
+- Knife-arm NPC requests require a complete selected-content transform proof.
+  A fishing spot with an unproved transform path uses ordinary fishing instead.
+  Whirlpool and Big fish event types are not tick-armed.
+- The host's disposal integration tests now use Gatherer's protected-item bound,
+  so the optional knife and log supply does not break their compilation.
+
 ## [0.2.8] — 2026-10-29 — Beta 2
 
 ### Panel and terminal app

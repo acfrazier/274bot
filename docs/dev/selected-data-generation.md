@@ -91,15 +91,16 @@ A stale local evidence file fails the digest check.
 This development-only output is not shipped or loaded by the product.
 Unknown label callers and unsupported NPC parameters remain conservative analysis limits, not proved dynamic content.
 
-`KnifeArm` has a separate, narrower `knife_operations` allowlist for the three
-reviewed continuing NPC fishing methods: river lure, river bait, and lava eel.
-The generator joins their selected resource target types and operation slots to
-the authored OPNPC/APNPC handler fingerprints and their source spans. A menu
-label is not an operation proof. Missing or ambiguous handlers fail generation.
-At dispatch, the request must still match the posted NPC index, current type,
-tile, and NPC-info packet generation. This proof concerns that exact current
-type. It does not prove transform closure or admit generic numeric NPC actions.
-Ending fishing methods do not use an NPC click in the arm request.
+`KnifeArm` uses the same complete transform-closure allowlist for an NPC click.
+A current-type OPNPC/APNPC handler, a menu label, or an exact NPC-info generation
+does not replace that proof. If generation cannot prove the same intended
+numeric action for every reachable type, the spot is not tick-armed; Gatherer
+uses ordinary fishing. The revision 289 river-lure, river-bait, and lava-eel
+targets have no positive closure rows. Whirlpool and Big fish event types are
+not armed and remain subject to the guardian's hazard handling. At dispatch,
+the request must also match the observed NPC index, current type, tile, and
+NPC-info packet generation. Ending fishing methods do not put an NPC click in
+the arm request.
 
 The API retains one immutable catalog with the selected game data.
 Its accessor requires the exact selected pin.
@@ -122,5 +123,4 @@ Run the extractor tests with the generation checks:
 ```bash
 bun tools/game-data/server-ordered.test.ts
 bun tools/game-data/npc-transforms.test.ts
-bun tools/game-data/knife-npc.test.ts
 ```
