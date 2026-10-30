@@ -264,7 +264,8 @@ struct WalkTally(Vec<u64>);
 impl WalkTally {
     fn observe(&mut self, ledger: &Option<Box<ledger::Ledger>>) {
         for entry in &ledger.as_ref().unwrap().outbox {
-            if matches!(&entry.effect, HostEffect::Walk(_)) && !self.0.contains(&entry.request_id.get())
+            if matches!(&entry.effect, HostEffect::Walk(_))
+                && !self.0.contains(&entry.request_id.get())
             {
                 self.0.push(entry.request_id.get());
             }

@@ -694,9 +694,7 @@ impl NativeMachine for Dialogue {
                         self.gap_inventory = inventory;
                         self.gap_position = position;
                         self.gap_chat_mark = chat_mark;
-                        if self.gap_rearms_left > 0
-                            && self.gap_rearm_tick != Some(obs.tick)
-                        {
+                        if self.gap_rearms_left > 0 && self.gap_rearm_tick != Some(obs.tick) {
                             self.gap_rearms_left -= 1;
                             self.gap_rearm_tick = Some(obs.tick);
                             self.due_tick = obs.tick.saturating_add(self.gap_ticks());
