@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::env;
+use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -12,7 +13,6 @@ const RA_VERSION: &str = "rust-analyzer 0.3.3081-standalone";
 const FLATC_URL: &str = "https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g%2B%2B-13.zip";
 const FLATC_ARCHIVE_SHA256: &str =
     "9f87066dc5dfa7fe02090b55bab5f3e55df03e32c9b0cdf229004ade7d091039";
-const FLATC_VERSION: &str = "flatc version 25.12.19";
 const ARCH_BRANCH: &str = "main";
 
 const CLIPPY_COMMANDS: &[(&str, &str)] = &[
@@ -468,7 +468,28 @@ fn run_test_step(step: &Step, command: &str, root: &Path, log: &mut File) -> Res
     result
 }
 
+fn is_cargo_run_package_variable(name: &OsStr) -> bool {
+    let name = name.as_encoded_bytes();
+    name == b"CARGO_MANIFEST_DIR"
+        || name == b"CARGO_MANIFEST_PATH"
+        || name.starts_with(b"CARGO_PKG_")
+        || name.starts_with(b"CARGO_CRATE_")
+        || name.starts_with(b"CARGO_BIN_")
+}
+
+fn clear_cargo_run_package_environment(
+    process: &mut Command,
+    names: impl IntoIterator<Item = OsString>,
+) {
+    for name in names {
+        if is_cargo_run_package_variable(&name) {
+            process.env_remove(name);
+        }
+    }
+}
+
 fn configure_common_environment(process: &mut Command) {
+    clear_cargo_run_package_environment(process, env::vars_os().map(|(name, _)| name));
     process
         .env("CARGO_INCREMENTAL", "0")
         .env("CARGO_PROFILE_DEV_DEBUG", "0")
@@ -705,7 +726,8 @@ fn flatbuffers_step(
         step.name
     )
     .map_err(io_error)?;
-    let flatc = ensure_flatc(&options.cache_dir, log)?;
+    let expected_version = flatc_expected_version(root)?;
+    let flatc = ensure_flatc(&options.cache_dir, &expected_version, log)?;
     let schema_root = if root.join("crates/script-js/schema/isolate.fbs").is_file() {
         root.join("crates/script-js/schema")
     } else {
@@ -982,7 +1004,58 @@ fn ensure_rust_analyzer(cache: &Path, log: &mut File) -> Result<PathBuf, String>
     Ok(binary)
 }
 
-fn ensure_flatc(cache: &Path, log: &mut File) -> Result<PathBuf, String> {
+fn flatc_expected_version(root: &Path) -> Result<String, String> {
+    let manifest_path = root.join("crates/script-js/Cargo.toml");
+    let manifest = fs::read_to_string(&manifest_path)
+        .map_err(|error| format!("cannot read {}: {error}", manifest_path.display()))?;
+    flatc_version_from_manifest(&manifest).map_err(|error| {
+        format!(
+            "cannot read flatc version from {}: {error}",
+            manifest_path.display()
+        )
+    })
+}
+
+fn flatc_version_from_manifest(manifest: &str) -> Result<String, String> {
+    let mut in_dependencies = false;
+    for line in manifest.lines() {
+        let line = line.trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            in_dependencies = line == "[dependencies]";
+            continue;
+        }
+        if !in_dependencies {
+            continue;
+        }
+        let Some((name, dependency)) = line.split_once('=') else {
+            continue;
+        };
+        if name.trim() != "flatbuffers" {
+            continue;
+        }
+        let dependency = dependency.trim();
+        let requirement = dependency
+            .split_once("version")
+            .and_then(|(_, field)| field.split_once('=').map(|(_, value)| value.trim()))
+            .or_else(|| dependency.strip_prefix('"').map(|_| dependency))
+            .and_then(|value| value.strip_prefix('"'))
+            .and_then(|value| value.split_once('"').map(|(version, _)| version))
+            .ok_or_else(|| "flatbuffers dependency has no readable version pin".to_owned())?;
+        let version = requirement
+            .strip_prefix('=')
+            .filter(|version| {
+                !version.is_empty()
+                    && version
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || byte == b'.')
+            })
+            .ok_or_else(|| "flatbuffers dependency does not use an exact version pin".to_owned())?;
+        return Ok(format!("flatc version {version}"));
+    }
+    Err("flatbuffers dependency is missing from [dependencies]".to_owned())
+}
+
+fn ensure_flatc(cache: &Path, expected_version: &str, log: &mut File) -> Result<PathBuf, String> {
     ensure_linux_x86_64("flatc")?;
     let bin_dir = cache.join("bin");
     let download_dir = cache.join("downloads");
@@ -1000,7 +1073,7 @@ fn ensure_flatc(cache: &Path, log: &mut File) -> Result<PathBuf, String> {
             .is_some_and(|matches| matches)
     {
         let version = command_output(&binary, &["--version"], Path::new("."), log)?;
-        if version.trim() == FLATC_VERSION {
+        if version.trim() == expected_version {
             return Ok(binary);
         }
     }
@@ -1042,11 +1115,11 @@ fn ensure_flatc(cache: &Path, log: &mut File) -> Result<PathBuf, String> {
         .map_err(|error| format!("flatc archive has no usable flatc binary: {error}"))?;
     set_executable(&copied)?;
     let version = command_output(&copied, &["--version"], Path::new("."), log)?;
-    if version.trim() != FLATC_VERSION {
+    if version.trim() != expected_version {
         let _ = fs::remove_file(&copied);
         let _ = fs::remove_dir_all(&extract);
         return Err(format!(
-            "pinned flatc version mismatch: expected `{FLATC_VERSION}`, found `{}`",
+            "pinned flatc version mismatch: expected `{expected_version}`, found `{}`",
             version.trim()
         ));
     }
@@ -1184,6 +1257,56 @@ mod tests {
                 .any(|name| name == "test-host-play-memory-26.04")
         );
         assert!(names.iter().any(|name| name == "ci-self-check"));
+    }
+
+    #[test]
+    fn step_environment_clears_cargo_package_variables() {
+        let names = [
+            "CARGO_MANIFEST_DIR",
+            "CARGO_MANIFEST_PATH",
+            "CARGO_PKG_VERSION",
+            "CARGO_PKG_NAME",
+            "CARGO_CRATE_NAME",
+            "CARGO_BIN_NAME",
+            "CARGO_BIN_EXE_xtask",
+        ];
+        let check = format!(
+            "for name in {}; do if printenv \"$name\" >/dev/null; then exit 1; fi; done; test \"$CARGO_HOME\" = preserved",
+            names.join(" ")
+        );
+        let mut process = Command::new("bash");
+        process
+            .arg("-c")
+            .arg(check)
+            .env("CARGO_HOME", "preserved");
+        for name in names {
+            process.env(name, "cargo-injected");
+        }
+        clear_cargo_run_package_environment(
+            &mut process,
+            names.iter().map(|name| OsString::from(*name)),
+        );
+        let output = process.output().expect("step environment probe starts");
+        assert!(
+            output.status.success(),
+            "step inherited cargo package variables: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn flatc_version_comes_from_the_flatbuffers_manifest_pin() {
+        let manifest = "[dependencies]\nflatbuffers = { version = \"=26.1.2\" }\n";
+        assert_eq!(
+            flatc_version_from_manifest(manifest).as_deref(),
+            Ok("flatc version 26.1.2")
+        );
+    }
+
+    #[test]
+    fn flatc_version_parser_rejects_non_exact_pins() {
+        let manifest = "[dependencies]\nflatbuffers = { version = \"25.12.19\" }\n";
+        assert!(flatc_version_from_manifest(manifest).is_err());
     }
 
     #[test]
