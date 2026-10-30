@@ -35,11 +35,11 @@ fn quest_gate_layout_stays_compact() {
         size_of::<usize>(),
         "Option<QuestGates> uses the Arc null niche"
     );
-    // The 64-bit TransportEdge layout is 328 bytes; allow 8 bytes of headroom.
+    // The 64-bit TransportEdge target is 328 bytes; allow 8 bytes of headroom.
     // The former 56-byte Option<QuestGates> added 48 bytes to every edge.
     assert!(
         size_of::<TransportEdge>() <= 336,
-        "TransportEdge should stay within 8 bytes of the 328-byte measured layout"
+        "TransportEdge should stay within 8 bytes of the 328-byte layout target"
     );
 }
 
