@@ -2553,6 +2553,7 @@ mod watchdog_restart_tests {
 mod world_state_cache_tests {
     use super::{NavWorldStateCache, WorldStateCacheKey};
     use api::snapshot::{GameSnapshot, StatView};
+    use std::fmt::Write as _;
     use std::sync::Arc;
 
     fn snapshot_with(
@@ -2817,7 +2818,10 @@ mod world_state_cache_tests {
         state.varps.extend((0..394).map(|index| (index, index * 3)));
         state.quests.extend((0..62).map(|index| {
             let suffix = if index < 46 { "xxxxxx" } else { "xxxxx" };
-            format!("quest-{index:02}-{suffix}")
+            let mut name = String::with_capacity("quest-".len() + 2 + 1 + suffix.len());
+            write!(&mut name, "quest-{index:02}-{suffix}")
+                .expect("writing a fixed quest name to String cannot fail");
+            name
         }));
         state.map_members = true;
         state.combat_level = Some(80);
@@ -2828,6 +2832,12 @@ mod world_state_cache_tests {
         assert_eq!(state.varps.len(), 394);
         assert_eq!(state.quests.len(), 62);
         assert_eq!(state.quests.iter().map(String::len).sum::<usize>(), 914);
+        assert_eq!(
+            state.quests.iter().map(String::capacity).sum::<usize>(),
+            914,
+            "tripwire quest names must use exact capacity"
+        );
+        // 9,786 B leaves 2,502 B of headroom under the 12 KiB tripwire.
         let retained_bytes = state
             .try_shared_retained_bytes()
             .expect("late-profile retained size fits usize");

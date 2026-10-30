@@ -4239,16 +4239,18 @@ pub(crate) fn route_world_state(
 
 /// Attach evidence to a request-owned view without changing the cached base.
 /// An unchanged empty value can share the original backing.
+/// A private-copy allocation failure returns `RouteJobError::Allocation`.
 fn patch_route_quest_evidence(
     state: Arc<WorldState>,
     evidence: Option<nav_planner::quest_gates::QuestEvidence>,
-) -> Arc<WorldState> {
+) -> Result<Arc<WorldState>, RouteJobError> {
     if evidence.is_none() && state.quest_evidence.is_none() {
-        return state;
+        return Ok(state);
     }
-    let mut private = (*state).clone();
+    let mut private =
+        super::try_clone_world_state(&state).map_err(|_| RouteJobError::Allocation)?;
     private.quest_evidence = evidence;
-    Arc::new(private)
+    Ok(Arc::new(private))
 }
 
 fn log_walk_arm(name: &str, build: impl FnOnce() -> String) {
@@ -4482,7 +4484,13 @@ impl ScriptWalkArm {
                 request.required_after,
             )
         });
-        self.state = Some(patch_route_quest_evidence(state, quest_evidence));
+        self.state = match patch_route_quest_evidence(state, quest_evidence) {
+            Ok(state) => Some(state),
+            Err(_) => {
+                refusal("Advisory route allocation failed");
+                return;
+            }
+        };
         let from = WorldTile { x, z, level };
         let radius = i32::from(request.radius);
         let (options, policy, enforce) = super::walk_permissions::native_admission(
@@ -4718,7 +4726,13 @@ impl ScriptWalkArm {
                 )
             });
         let state = self.state.take().expect("request state was captured");
-        self.state = Some(patch_route_quest_evidence(state, evidence));
+        self.state = match patch_route_quest_evidence(state, evidence) {
+            Ok(state) => Some(state),
+            Err(_) => {
+                self.refuse_native(authority);
+                return false;
+            }
+        };
         let exclusions = ScriptRouteExclusions {
             cross: request.cross.to_vec(),
             ..Default::default()
@@ -5235,7 +5249,20 @@ impl ScriptWalkArm {
                         .unwrap_or_else(|| Arc::new(WorldState::from_snapshot(snapshot)));
                     let evidence =
                         captured_route_quests(family, Some(context), snapshot, None, context.stamp);
-                    state = Some(patch_route_quest_evidence(base_state, evidence));
+                    state = match patch_route_quest_evidence(base_state, evidence) {
+                        Ok(state) => Some(state),
+                        Err(_) => {
+                            self.refuse(
+                                to,
+                                radius,
+                                opts.allow_teleports,
+                                request_id,
+                                authority.as_ref(),
+                                None,
+                            );
+                            return false;
+                        }
+                    };
                 }
             }
         }
@@ -5243,10 +5270,20 @@ impl ScriptWalkArm {
             let base_state = state
                 .take()
                 .unwrap_or_else(|| Arc::new(WorldState::empty()));
-            state = Some(patch_route_quest_evidence(
-                base_state,
-                basis.quest_evidence.clone(),
-            ));
+            state = match patch_route_quest_evidence(base_state, basis.quest_evidence.clone()) {
+                Ok(state) => Some(state),
+                Err(_) => {
+                    self.refuse(
+                        to,
+                        radius,
+                        opts.allow_teleports,
+                        request_id,
+                        authority.as_ref(),
+                        None,
+                    );
+                    return false;
+                }
+            };
             (basis.options, exclusions)
         } else {
             let empty = WorldState::empty();
