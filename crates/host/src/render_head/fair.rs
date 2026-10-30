@@ -326,7 +326,7 @@ pub mod test_hooks {
             s_consumer_active_bytes,
             s_consumer,
             s_service,
-            mailbox_per_loaded_bot_bytes: FrameBuf::production_fixed_storage_bytes(),
+            mailbox_per_loaded_bot_bytes: FrameBuf::fixed_storage_bytes(),
             head_inline_bytes,
             head_thread_local_bytes,
             head_wake_arc_allocation_bytes,
@@ -1487,7 +1487,6 @@ mod tests {
     #[cfg(feature = "render-test-hooks")]
     const S_SERVICE_CEILING_BYTES: usize = 24_576; // 2,688 B (12%) above the observed 21,888 B process row.
 
-
     #[cfg(feature = "render-test-hooks")]
     #[test]
     fn scalar_receipt_tripwire_records_disjoint_owner_rows() {
@@ -1519,7 +1518,7 @@ mod tests {
         );
         assert_eq!(
             receipt.mailbox_per_loaded_bot_bytes(),
-            FrameBuf::production_fixed_storage_bytes()
+            FrameBuf::fixed_storage_bytes()
         );
         assert!(
             receipt.s_head() <= S_HEAD_CEILING_BYTES,
@@ -1551,12 +1550,12 @@ mod tests {
             receipt.s_service(),
             S_SERVICE_CEILING_BYTES
         );
+        // 528 B above the observed 1,008 B hook mailbox. Production has its
+        // own no-hooks receipt and stricter ceiling in slot_io::tests.
         assert!(
-            receipt.mailbox_per_loaded_bot_bytes()
-                <= crate::slot_io::PRODUCTION_MAILBOX_FIXED_STORAGE_CEILING_BYTES,
-            "production mailbox={} B exceeds {} B ceiling",
+            receipt.mailbox_per_loaded_bot_bytes() <= 1_536,
+            "instrumented mailbox={} B exceeds 1536 B ceiling",
             receipt.mailbox_per_loaded_bot_bytes(),
-            crate::slot_io::PRODUCTION_MAILBOX_FIXED_STORAGE_CEILING_BYTES
         );
 
         if receipt.process_budget_state_allocation_count() == 0 {
@@ -1575,9 +1574,8 @@ mod tests {
             assert!(receipt.head_budget_arc_allocation_bytes() > 0);
         }
         println!(
-            "T4.4 render scalar receipt tripwire: pointer_bytes={} hook_instrumented_mailbox_bytes={} production_mailbox_bytes={} {receipt:?}",
+            "T4.4 render scalar receipt tripwire: pointer_bytes={} hook_instrumented_mailbox_bytes={} {receipt:?}",
             std::mem::size_of::<usize>(),
-            FrameBuf::fixed_storage_bytes(),
             receipt.mailbox_per_loaded_bot_bytes(),
         );
     }

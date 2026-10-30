@@ -205,9 +205,10 @@ pub struct FrameBuf {
     proof_frames: Option<parking_lot::Mutex<JournalProofQueue>>,
 }
 
-/// The 1,536 B ceiling is 928 B over original d65c6bdd8's 608 B Arc allocation and 528 B over the 1,008 B instrumented receipt.
-#[cfg(any(test, feature = "render-test-hooks"))]
-pub(crate) const PRODUCTION_MAILBOX_FIXED_STORAGE_CEILING_BYTES: usize = 1_536;
+/// One KiB bounds fixed per-loaded-bot storage independently of pixel payloads.
+/// The production receipt reports the measured headroom under this ceiling.
+#[cfg(all(test, not(feature = "render-test-hooks")))]
+const PRODUCTION_MAILBOX_FIXED_STORAGE_CEILING_BYTES: usize = 1_024;
 
 /// Identity and scene authority frozen with one accepted mailbox frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -291,24 +292,6 @@ struct Mailbox {
 }
 
 #[cfg(any(test, feature = "render-test-hooks"))]
-#[allow(dead_code)]
-struct ProductionMailboxLayout {
-    frame: Option<PresentedFrame>,
-    head: Option<HeadIdentity>,
-    refused: Option<RenderRefusal>,
-    render_fault: Option<client::render::backend::RenderFault>,
-}
-
-#[cfg(any(test, feature = "render-test-hooks"))]
-#[allow(dead_code)]
-struct ProductionFrameBufLayout {
-    inner: Mutex<ProductionMailboxLayout>,
-    frame_generation: AtomicU64,
-    #[cfg(feature = "journal-paint-proof")]
-    proof_frames: Option<parking_lot::Mutex<JournalProofQueue>>,
-}
-
-#[cfg(any(test, feature = "render-test-hooks"))]
 fn arc_fixed_storage_bytes<T>() -> usize {
     let header = std::alloc::Layout::new::<(
         std::sync::atomic::AtomicUsize,
@@ -342,16 +325,11 @@ impl FramePaintStatus {
 }
 
 impl FrameBuf {
-    /// Exact fixed Arc allocation for this feature configuration. With render-test-hooks it includes test-only mailbox fields, so use the separate production receipt for product sizing.
+    /// Exact fixed Arc allocation for this feature configuration. Hook builds
+    /// include instrumentation. The no-hook test measures production separately.
     #[cfg(any(test, feature = "render-test-hooks"))]
     pub fn fixed_storage_bytes() -> usize {
         arc_fixed_storage_bytes::<Self>()
-    }
-
-    /// Production layout receipt; the mirror omits fair-stats and draw-profile instrumentation and is checked against the real no-hooks type.
-    #[cfg(any(test, feature = "render-test-hooks"))]
-    pub(crate) fn production_fixed_storage_bytes() -> usize {
-        arc_fixed_storage_bytes::<ProductionFrameBufLayout>()
     }
 
     pub fn new() -> std::sync::Arc<Self> {
@@ -2108,7 +2086,6 @@ mod tests {
     #[test]
     fn production_mailbox_fixed_storage_layout_receipt() {
         let bytes = FrameBuf::fixed_storage_bytes();
-        assert_eq!(bytes, FrameBuf::production_fixed_storage_bytes());
         assert!(
             bytes <= super::PRODUCTION_MAILBOX_FIXED_STORAGE_CEILING_BYTES,
             "production per-loaded-bot mailbox is {bytes} B; ceiling is {} B",
