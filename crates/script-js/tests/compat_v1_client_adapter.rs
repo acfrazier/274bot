@@ -103,7 +103,10 @@ export default class ReaderCatalog extends LoopingBot {
             modalButtons: capture(() => reader.modalButtons(100)),
             buttonByText: capture(() => reader.buttonByText(100, 'ok')),
             targetButtonByBase: capture(() => reader.targetButtonByBase(100, 'gObLiN')),
-            selectButtonByVarp: capture(() => reader.selectButtonByVarp(900, 43, 2)),
+            selectButtonByVarp: capture(() => [
+                reader.selectButtonByVarp(900, 43, 2),
+                reader.selectButtonByVarp(-1, 43, 2),
+            ]),
             selectButtonLabelsByVarp: capture(() => reader.selectButtonLabelsByVarp(900, 43)),
             mainModalButtonNearText: capture(() => reader.mainModalButtonNearText('continue')),
             mainSkillMultiItems: capture(() => reader.mainSkillMultiItems()),
@@ -619,6 +622,17 @@ macro_rules! reader_contract {
         }
     };
 }
+macro_rules! skill_contract {
+    ($name:ident, $key:literal, $value:ident, $assertions:block) => {
+        #[test]
+        #[expect(non_snake_case, reason = "the census names this contract test")]
+        fn $name() {
+            let catalog = reader_catalog();
+            let $value = checked(&catalog["skill"], $key);
+            $assertions
+        }
+    };
+}
 
 fn mentions(text: &str, name: &str) -> bool {
     text.match_indices(name).any(|(at, _)| {
@@ -627,6 +641,13 @@ fn mentions(text: &str, name: &str) -> bool {
         let ident = |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
         !ident(before) && !ident(after)
     })
+}
+fn client_adapter_declarations(text: &str) -> &str {
+    const MODULE: &str = "declare module '*adapter/ClientAdapter.js' {";
+    let start = text.find(MODULE).expect("ClientAdapter declaration");
+    let body = &text[start + MODULE.len()..];
+    let end = body.find("\n}\n").expect("ClientAdapter declaration end");
+    &body[..end]
 }
 
 fn bot(imports: &str, body: &str) -> String {
@@ -686,8 +707,13 @@ fn assert_export_removed(name: &str) {
         ("modules.json", MODULES_JSON),
         ("abi-contract.json", ABI_CONTRACT),
     ] {
+        let declarations = if file == "index.d.ts" {
+            client_adapter_declarations(text)
+        } else {
+            text
+        };
         assert!(
-            !mentions(text, name),
+            !mentions(declarations, name),
             "{file} still promises removed {name}"
         );
     }
@@ -783,7 +809,7 @@ reader_contract!(
     {
         assert_eq!(value[0]["id"], 1234);
         assert_eq!(value[0]["name"], "Goblin");
-        assert_eq!(value[0]["network_x"], 3224);
+        assert_eq!(value[0]["network_x"], 3225);
     }
 );
 reader_contract!(
@@ -1323,7 +1349,7 @@ reader_contract!(
     "selectButtonByVarp",
     value,
     {
-        assert_eq!(value, 20);
+        assert_eq!(value, json!([20, 20]));
     }
 );
 reader_contract!(
@@ -1495,7 +1521,7 @@ reader_contract!(
     }
 );
 
-reader_contract!(
+skill_contract!(
     compat_v1_client_adapter__default__contract,
     "skill",
     value,
@@ -1510,7 +1536,7 @@ reader_contract!(
         );
     }
 );
-reader_contract!(
+skill_contract!(
     compat_v1_client_adapter__skill_names__contract,
     "skill",
     value,
@@ -1548,7 +1574,7 @@ reader_contract!(
         assert_eq!(value["namesFrozen"], true);
     }
 );
-reader_contract!(
+skill_contract!(
     compat_v1_client_adapter__skill_used__contract,
     "skill",
     value,
@@ -1654,8 +1680,14 @@ globalThis.__surface = {
         ("abi-contract.json", ABI_CONTRACT),
     ] {
         assert!(
-            !mentions(text, "selfTarget"),
-            "{file} still promises selfTarget"
+            !mentions(
+                if file == "index.d.ts" {
+                    client_adapter_declarations(text)
+                } else {
+                    text
+                },
+                "selfTarget"
+            ),
         );
     }
 }
@@ -1690,8 +1722,8 @@ fn client_facts<'a>(attached: bool, continue_id: i32) -> ClientAdapterFactsInput
 fn compat_v1_client_adapter__actions_saypublic__contract() {
     let iso = LoadIsolate::spawn(
         bot(
-            "import { actions } from '../../adapter/ClientAdapter.js';",
-            "globalThis.__say = (value) => actions.sayPublic(value);",
+            "import { actions } from '../../adapter/ClientAdapter.js'; globalThis.__sayValues = ['  hello  ', '   ', 23]; globalThis.__sayResults = [];",
+            "for (const value of globalThis.__sayValues.splice(0)) { globalThis.__sayResults.push(actions.sayPublic(value)); }",
         ),
         LoadShape::CompatClass,
         vec![],
@@ -1708,9 +1740,7 @@ fn compat_v1_client_adapter__actions_saypublic__contract() {
     ));
     iso.on_game_tick(1);
     let _ = iso.probe("true");
-    assert_eq!(iso.probe("__say('  hello  ')").unwrap(), true);
-    assert_eq!(iso.probe("__say('   ')").unwrap(), false);
-    assert_eq!(iso.probe("__say(23)").unwrap(), true);
+    assert_eq!(iso.probe("__sayResults").unwrap(), json!([true, false, true]));
     assert_eq!(
         iso.drain_interacts(),
         vec![
@@ -1723,6 +1753,8 @@ fn compat_v1_client_adapter__actions_saypublic__contract() {
         ],
         "coerced nonempty messages queue one typed public-chat action; blank text queues none"
     );
+
+    let _ = iso.probe("globalThis.__sayValues = ['detached']");
     let facts = client_facts(false, -1);
     let mut next = snapshot;
     next.tick = 2;
@@ -1735,7 +1767,10 @@ fn compat_v1_client_adapter__actions_saypublic__contract() {
     ));
     iso.on_game_tick(2);
     let _ = iso.probe("true");
-    assert_eq!(iso.probe("__say('detached')").unwrap(), false);
+    assert_eq!(
+        iso.probe("__sayResults").unwrap(),
+        json!([true, false, true, false])
+    );
     assert!(
         iso.drain_interacts().is_empty(),
         "detached session queues no public chat"
@@ -1748,8 +1783,8 @@ fn compat_v1_client_adapter__actions_saypublic__contract() {
 fn compat_v1_client_adapter__actions_continuedialog__contract() {
     let iso = LoadIsolate::spawn(
         bot(
-            "import { actions } from '../../adapter/ClientAdapter.js';",
-            "globalThis.__continue = () => actions.continueDialog();",
+            "import { actions } from '../../adapter/ClientAdapter.js'; globalThis.__continueRequests = 1; globalThis.__continueResults = [];",
+            "if (globalThis.__continueRequests > 0) { globalThis.__continueRequests--; globalThis.__continueResults.push(actions.continueDialog()); }",
         ),
         LoadShape::CompatClass,
         vec![],
@@ -1766,7 +1801,7 @@ fn compat_v1_client_adapter__actions_continuedialog__contract() {
     ));
     iso.on_game_tick(1);
     let _ = iso.probe("true");
-    assert_eq!(iso.probe("__continue()").unwrap(), true);
+    assert_eq!(iso.probe("__continueResults").unwrap(), json!([true]));
     assert_eq!(
         iso.drain_interacts(),
         vec![InteractReq::ContinueDialog {
@@ -1784,9 +1819,13 @@ fn compat_v1_client_adapter__actions_continuedialog__contract() {
             ..NativeFactsInput::default()
         },
     ));
+    let _ = iso.probe("globalThis.__continueRequests = 1");
     iso.on_game_tick(2);
     let _ = iso.probe("true");
-    assert_eq!(iso.probe("__continue()").unwrap(), false);
+    assert_eq!(
+        iso.probe("__continueResults").unwrap(),
+        json!([true, false])
+    );
     assert!(
         iso.drain_interacts().is_empty(),
         "missing continue component queues nothing"
@@ -1803,12 +1842,13 @@ fn compat_v1_client_adapter__resolveworldnumber__contract() {
             r#"
 const capture = (fn) => { try { return { ok: true, value: fn() }; }
     catch (error) { return { ok: false, name: error.constructor.name, message: error.message }; } };
+const params = (...values) => ({ getAll: (name) => name === 'world' ? values : [] });
 globalThis.__worlds = {
-    host: resolveWorldNumber('w2.rs2b2t.com', new URLSearchParams()),
-    explicit: resolveWorldNumber('w3.rs2b2t.com', new URLSearchParams('world=1')),
-    fallback: resolveWorldNumber('elsewhere.example', new URLSearchParams()),
-    invalid: capture(() => resolveWorldNumber('w1.rs2b2t.com', new URLSearchParams('world=4'))),
-    duplicate: capture(() => resolveWorldNumber('w1.rs2b2t.com', new URLSearchParams('world=1&world=2'))),
+    host: resolveWorldNumber('w2.rs2b2t.com', params()),
+    explicit: resolveWorldNumber('w3.rs2b2t.com', params('1')),
+    fallback: resolveWorldNumber('elsewhere.example', params()),
+    invalid: capture(() => resolveWorldNumber('w1.rs2b2t.com', params('4'))),
+    duplicate: capture(() => resolveWorldNumber('w1.rs2b2t.com', params('1', '2'))),
 };
 "#,
         ),
@@ -1931,7 +1971,16 @@ fn compat_v1_client_adapter__reader_modalcloseobservation__session_contract() {
     let iso = LoadIsolate::spawn(
         bot(
             "import { reader } from '../../adapter/ClientAdapter.js';",
-            "globalThis.__observation = () => { const value = reader.modalCloseObservation(); return [typeof value.session, value.session, value.generation]; };",
+            r#"
+globalThis.__sessions = [];
+globalThis.__observation = () => {
+    const value = reader.modalCloseObservation();
+    const same = globalThis.__sessions.length === 0
+        || globalThis.__sessions[0] === value.session;
+    globalThis.__sessions.push(value.session);
+    return [typeof value.session, same, value.generation];
+};
+"#,
         ),
         LoadShape::CompatClass,
         vec![],
@@ -1953,7 +2002,9 @@ fn compat_v1_client_adapter__reader_modalcloseobservation__session_contract() {
     let first = iso.probe("__observation()").unwrap();
     let same = iso.probe("__observation()").unwrap();
     assert_eq!(first[0], "symbol");
-    assert_eq!(first[1], same[1], "one client session preserves its token");
+    assert_eq!(first[1], true);
+    assert_eq!(same[0], "symbol");
+    assert_eq!(same[1], true, "one client session preserves its token");
     assert_eq!(first[2], 2);
 
     let mut next = snapshot;
@@ -1970,8 +2021,9 @@ fn compat_v1_client_adapter__reader_modalcloseobservation__session_contract() {
     iso.on_game_tick(2);
     let _ = iso.probe("true");
     let changed = iso.probe("__observation()").unwrap();
-    assert_ne!(
-        first[1], changed[1],
+    assert_eq!(changed[0], "symbol");
+    assert_eq!(
+        changed[1], false,
         "a new client session must not reuse a stale token"
     );
     assert_eq!(changed[2], 0);

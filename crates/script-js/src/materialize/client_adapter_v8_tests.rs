@@ -48,6 +48,8 @@ const read = (method, ...args) =>
     __rs2b0t_selected_facts('client-adapter-reader', method, ...args);
 const fast = new Function('value', 'return %HasFastProperties(value)');
 globalThis.__clientAdapterFast = () => {
+    const fastObject = (value) =>
+        value !== null && typeof value === 'object' && fast(value);
     const modals = read('modals');
     const controls = read('runControls');
     const local = read('toLocal', 3201, 3202);
@@ -56,23 +58,57 @@ globalThis.__clientAdapterFast = () => {
     const close = read('modalCloseObservation');
     const iconA = read('itemIconPixels', 999999);
     const iconB = read('itemIconPixels', 999999);
-    return fast(modals)
-        && fast(controls)
-        && fast(local)
-        && fast(close)
-        && quests.length === 1
-        && fast(quests[0])
-        && products.length === 1
-        && fast(products[0])
-        && products[0].buttons.length === 2
-        && products[0].buttons.every(fast)
-        && fast(iconA)
+    const questCount = Array.isArray(quests) ? quests.length : -1;
+    const productCount = Array.isArray(products) ? products.length : -1;
+    const buttons =
+        productCount === 1 && Array.isArray(products[0].buttons)
+            ? products[0].buttons
+            : [];
+    const modalsFast = fastObject(modals);
+    const controlsFast = fastObject(controls);
+    const localFast = fastObject(local);
+    const closeFast = fastObject(close);
+    const questFast = questCount === 1 && fastObject(quests[0]);
+    const productFast = productCount === 1 && fastObject(products[0]);
+    const buttonsFast = buttons.length === 2 && buttons.every(fastObject);
+    const iconFast = fastObject(iconA);
+    const iconData = iconFast && iconA.data instanceof Int32Array
+        ? Array.from(iconA.data).join(',')
+        : null;
+    const ok = modalsFast
+        && controlsFast
+        && localFast
+        && closeFast
+        && questFast
+        && productFast
+        && buttonsFast
+        && iconFast
         && iconA.width === 2
         && iconA.height === 2
         && iconA.data instanceof Int32Array
         && iconB.data instanceof Int32Array
         && iconA.data !== iconB.data
-        && Array.from(iconA.data).join(',') === '11,22,33,44';
+        && iconData === '11,22,33,44';
+    return JSON.stringify({
+        ok,
+        modalsFast,
+        controlsFast,
+        localFast,
+        closeFast,
+        questCount,
+        questFast,
+        productCount,
+        productFast,
+        buttonCount: buttons.length,
+        buttonsFast,
+        iconFast,
+        iconWidth: iconA && iconA.width,
+        iconHeight: iconA && iconA.height,
+        iconDataType: iconA && iconA.data && iconA.data.constructor.name,
+        iconBDataType: iconB && iconB.data && iconB.data.constructor.name,
+        distinctData: iconA && iconB && iconA.data !== iconB.data,
+        iconData,
+    });
 };
 globalThis.__clientAdapterRepeat = (count) => {
     let kept = 0;
@@ -134,9 +170,13 @@ fn materialized_rows_have_fast_properties_and_bounded_v8_heap() {
 
     v8::V8::set_flags_from_string("--allow-natives-syntax");
     let mut runtime = setup();
-    assert!(
-        runtime.eval::<bool>("__clientAdapterFast()").unwrap(),
-        "native modal, scene and product projections have fast properties"
+    let diagnostics: serde_json::Value = serde_json::from_str(
+        &runtime.eval::<String>("__clientAdapterFast()").unwrap(),
+    )
+    .expect("ClientAdapter diagnostics JSON");
+    assert_eq!(
+        diagnostics["ok"], true,
+        "native modal, scene and product projections have fast properties: {diagnostics}"
     );
     runtime
         .eval::<usize>("__clientAdapterRepeat(1000)")

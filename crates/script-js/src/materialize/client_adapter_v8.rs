@@ -11,6 +11,15 @@ pub(super) fn read<'s>(
     arg4: v8::Local<'s, v8::Value>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let method = js_to_string(scope, method)?;
+    match method.as_str() {
+        "skillCount" => {
+            return Ok(v8::Integer::new(scope, api::snapshot::stat_count() as i32).into())
+        }
+        "skillUsed" => return skill_used(scope, arg0),
+        "skillNames" => return skill_names(scope),
+        "skillUsedMask" => return skill_used_mask(scope),
+        _ => {}
+    }
     let snapshot = snapshot(scope)?;
     let facts = property(scope, snapshot, "client_adapter")?;
     match method.as_str() {
@@ -57,10 +66,6 @@ pub(super) fn read<'s>(
         "energy" => number_property(scope, snapshot, "run_energy", 0),
         "varp" => varp(scope, snapshot, arg0),
         "stat" => stat(scope, snapshot, arg0),
-        "skillCount" => Ok(v8::Integer::new(scope, api::snapshot::stat_count() as i32).into()),
-        "skillUsed" => skill_used(scope, arg0),
-        "skillNames" => skill_names(scope),
-        "skillUsedMask" => skill_used_mask(scope),
         "statsReady" => bool_property_value(scope, snapshot, "stats_ready"),
         "weight" => number_property(scope, snapshot, "weight", 0),
         "chat" => chat(scope, snapshot, arg0),
@@ -228,6 +233,9 @@ fn combat_level<'s>(
     scope: &mut v8::HandleScope<'s>,
     snapshot: v8::Local<'s, v8::Value>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
+    if !bool_property(scope, snapshot, "ingame")? {
+        return Ok(v8::Integer::new(scope, 0).into());
+    }
     number_property(scope, snapshot, "combat_level", 0)
 }
 
@@ -462,9 +470,12 @@ fn hint_tile<'s>(
     };
     let here = property(scope, snapshot, "here")?;
     let here_level = object_i32(scope, here, "level")?;
-    let level = object_i32(scope, facts, "hint_tile_level")?
-        .or(here_level)
-        .unwrap_or(0);
+    let facts_level = if facts.is_null() || facts.is_undefined() {
+        None
+    } else {
+        object_i32(scope, facts, "hint_tile_level")?
+    };
+    let level = facts_level.or(here_level).unwrap_or(0);
     tile_object(scope, x, z, level)
 }
 
@@ -597,9 +608,15 @@ fn stat<'s>(
         Some(name) => v8_str(scope, name)?,
         None => v8_str(scope, &format!("#{index_text}"))?,
     };
-    let effective = object_i32(scope, row, "effective")?.unwrap_or(0);
-    let base = object_i32(scope, row, "base")?.unwrap_or(0);
-    let xp = object_i32(scope, row, "xp")?.unwrap_or(0);
+    let (effective, base, xp) = if !row.is_null() && !row.is_undefined() && row.is_object() {
+        (
+            object_i32(scope, row, "effective")?.unwrap_or(0),
+            object_i32(scope, row, "base")?.unwrap_or(0),
+            object_i32(scope, row, "xp")?.unwrap_or(0),
+        )
+    } else {
+        (0, 0, 0)
+    };
     let result = v8::Object::new(scope);
     set_key(scope, result, "name", name);
     set_i32(scope, result, "effective", effective);
@@ -679,6 +696,11 @@ fn chat<'s>(
         }
         let type_ = property(scope, line, "type")?;
         let username = property(scope, line, "username")?;
+        let username = if username.is_null() || username.is_undefined() {
+            v8::null(scope).into()
+        } else {
+            username
+        };
         let result = v8::Object::new(scope);
         set_key(scope, result, "type", type_);
         set_key(scope, result, "username", username);
@@ -864,7 +886,18 @@ fn collision_flags<'s>(
         return Ok(v8::null(scope).into());
     }
     let flags = property(scope, collision, "flags")?;
-    let value = array_value(scope, flags, (lx * height + lz) as u32)?;
+    if flags.is_null() || flags.is_undefined() {
+        return Ok(v8::null(scope).into());
+    }
+    let Some(index) =
+        u32::try_from(i64::from(lx) * i64::from(height) + i64::from(lz)).ok()
+    else {
+        return Ok(v8::null(scope).into());
+    };
+    let flags = flags.to_object(scope).ok_or_else(|| PENDING.to_string())?;
+    let Some(value) = flags.get_index(scope, index) else {
+        return Ok(v8::null(scope).into());
+    };
     if value.is_number() {
         Ok(value)
     } else {
@@ -958,14 +991,11 @@ fn widget_rows_under<'s>(
 ) -> Result<Vec<v8::Local<'s, v8::Value>>, String> {
     let rows = widgets(scope, facts)?;
     let mut result = Vec::new();
-    if root_id < 0 {
-        return Ok(result);
-    }
     for index in 0..rows.length() {
         let row = rows
             .get_index(scope, index)
             .ok_or_else(|| PENDING.to_string())?;
-        if object_i32(scope, row, "root_component_id")? == Some(root_id) {
+        if root_id < 0 || object_i32(scope, row, "root_component_id")? == Some(root_id) {
             result.push(row);
         }
     }
