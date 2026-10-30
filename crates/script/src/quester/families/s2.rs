@@ -670,23 +670,20 @@ pub(super) fn compile_make(
         (None, None) => None,
         _ => return Err(CompileError::code("invalid-make-trigger")),
     };
-    let product = item(cx, &args.product)?;
-    let product_id = product.id;
-    let (menu_item_id, menu_item_name) = match args.menu {
+    let product_id = item(cx, &args.product)?.id;
+    let menu_item_id = match args.menu {
         Some(menu) => {
             if menu.source.trim().is_empty() {
                 return Err(CompileError::code("invalid-make-menu"));
             }
-            let menu_item = item(cx, &menu.obj)?;
-            (menu_item.id, menu_item.name)
+            item(cx, &menu.obj)?.id
         }
-        None => (product_id, product.name),
+        None => product_id,
     };
     Ok(Arc::new(MakePlan {
         trigger,
         product_id,
         menu_item_id,
-        menu_item_name,
         items_per_process: make_items_per_process(&args.product),
         qty,
         make_x: args.make_x,
@@ -718,7 +715,6 @@ struct MakePlan {
     trigger: Option<MakeTrigger>,
     product_id: i32,
     menu_item_id: i32,
-    menu_item_name: Arc<str>,
     items_per_process: i32,
     qty: QuantityPlan,
     make_x: bool,
@@ -730,7 +726,6 @@ impl StepPlan for MakePlan {
         })?;
         Ok(Box::new(MakeRun {
             trigger_plan: self.trigger.clone(),
-            input_item_name: Arc::clone(&self.menu_item_name),
             request: MakeRequest {
                 product_id: self.product_id,
                 menu_id: self.menu_item_id,
@@ -756,7 +751,6 @@ enum MakeTriggerHandle {
 
 struct MakeRun {
     trigger_plan: Option<MakeTrigger>,
-    input_item_name: Arc<str>,
     request: MakeRequest,
     walk: Option<ActionHandle<Walk>>,
     trigger: Option<MakeTriggerHandle>,
@@ -766,10 +760,9 @@ struct MakeRun {
 fn make_use_on_request(
     trigger: &MakeTrigger,
     menu_id: i32,
-    item_name: &str,
     cx: &ActionContext<'_>,
 ) -> Result<crate::shim::InteractReq, ActionError> {
-    let source_item_slot = cx
+    let source_item = cx
         .snapshot()
         .inventory()
         .and_then(|items| {
@@ -777,13 +770,15 @@ fn make_use_on_request(
                 .value
                 .iter()
                 .find(|item| item.def.id == menu_id && item.count > 0)
-                .map(|item| item.slot)
         })
         .ok_or_else(|| {
             ActionError::Unavailable(Arc::from("production trigger item is not held"))
         })?;
+    let item_name = source_item.def.name.as_ref().ok_or_else(|| {
+        ActionError::Unavailable(Arc::from("production trigger item name is unavailable"))
+    })?;
     Ok(crate::shim::InteractReq::UseOn {
-        name: item_name.to_owned(),
+        name: item_name.clone(),
         kind: "loc".to_owned(),
         target_name: Some(trigger.loc_name.to_string()),
         x: trigger.tile.x,
@@ -791,7 +786,7 @@ fn make_use_on_request(
         level: trigger.tile.level,
         index: None,
         source_item_id: Some(menu_id),
-        source_item_slot: Some(source_item_slot),
+        source_item_slot: Some(source_item.slot),
         target_item_id: Some(trigger.loc_id),
         target_item_slot: None,
     })
@@ -860,12 +855,8 @@ impl StepRun for MakeRun {
                         ))
                     )?));
                 } else {
-                    let request = make_use_on_request(
-                        &trigger,
-                        self.request.menu_id,
-                        &self.input_item_name,
-                        &cx.tick.cx,
-                    )?;
+                    let request =
+                        make_use_on_request(&trigger, self.request.menu_id, &cx.tick.cx)?;
                     self.trigger = Some(MakeTriggerHandle::UseOn(std::task::ready!(
                         crate::native::defer_budget(
                             cx.tick
@@ -933,12 +924,8 @@ impl StepRun for MakeRun {
                         "production menu closed before the held target; add a loc trigger to retry",
                     ))));
                 };
-                let request = make_use_on_request(
-                    trigger,
-                    self.request.menu_id,
-                    &self.input_item_name,
-                    &cx.tick.cx,
-                )?;
+                let request =
+                    make_use_on_request(trigger, self.request.menu_id, &cx.tick.cx)?;
                 self.trigger = Some(MakeTriggerHandle::UseOn(std::task::ready!(
                     crate::native::defer_budget(
                         cx.tick
