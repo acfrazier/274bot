@@ -805,6 +805,15 @@ mod tests {
             std::mem::size_of_val(risks.npcs.as_ref()),
             rows * 4,
         );
+        eprintln!(
+            "P1A generated sizes NpcNameRow={} npc_rows={} ItemCombatBonus={} bonus_rows={} WeaponStyleFact={} weapon_styles={}",
+            std::mem::size_of::<NpcNameRow>(),
+            rows,
+            std::mem::size_of::<api::game_data::ItemCombatBonus>(),
+            combat.selected().item_combat_bonus_rows().len(),
+            std::mem::size_of::<api::game_data::WeaponStyleFact>(),
+            combat.selected().weapon_styles().len(),
+        );
     }
 
     #[test]

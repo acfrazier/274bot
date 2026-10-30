@@ -1002,6 +1002,35 @@ mod tests {
     }
 
     #[test]
+    fn capture_active_protect_uses_selected_prayer_facts() {
+        let tables = combat_tables();
+        let stats = [
+            stat(CombatStat::Hitpoints.index(), 90, 99),
+            stat(CombatStat::Defence.index(), 40, 40),
+            stat(CombatStat::Prayer.index(), 10, 10),
+        ];
+        let varps = [VarpView {
+            index: 173,
+            value: 0,
+        }];
+        let input = capture_input(&tables, &stats, &varps, &[], [false; 15]);
+        assert_eq!(input.active_protect, Style::Unknown);
+        for (observed, expected) in [
+            (StyleObs::Melee, Style::Melee),
+            (StyleObs::Ranged, Style::Ranged),
+        ] {
+            let fact = crate::combat::select::protect_fact(&tables, observed).unwrap();
+            let index = usize::try_from(fact.varp - 83).unwrap();
+            let mut prayers = [false; 15];
+            prayers[index] = true;
+            let input = capture_input(&tables, &stats, &varps, &[], prayers);
+            assert_eq!(input.active_protect, expected);
+            assert!(input.other_prayers_on());
+            assert!(!input.missing_facts());
+        }
+    }
+
+    #[test]
     fn default_input_fails_closed_and_stays_compact() {
         let input = RiskInput::default();
         assert!(input.missing_facts());
