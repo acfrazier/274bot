@@ -1487,11 +1487,19 @@ fn wait_for_live_approach(fixture: &LiveFixture) -> (u64, serde_json::Value) {
 }
 
 fn wait_for_chat_steady(fixture: &LiveFixture, before: &ChatWitness) -> ChatWitness {
+    let mut witnessed_after_abort = false;
     wait_for_snapshot(
         fixture,
         "chat page remains unclicked after AbortWalk",
         Duration::from_secs(30),
         |snapshot| {
+            if !witnessed_after_abort && snapshot.tick() >= before.tick.saturating_add(2) {
+                eprintln!(
+                    "[DEBUG-nav-advice-page] before={before:?} after={:?}",
+                    first_chat_witness(snapshot)
+                );
+                witnessed_after_abort = true;
+            }
             let current = first_chat_witness(snapshot)?;
             (snapshot.tick() >= before.tick.saturating_add(2)
                 && current.modal == before.modal
