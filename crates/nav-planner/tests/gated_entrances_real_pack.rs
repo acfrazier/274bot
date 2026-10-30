@@ -582,6 +582,9 @@ fn morytania_sites_compare_proof_unknown_and_false_gate_routes() {
     let world = world();
     let east = tile(3422, 3485);
     let underground = tile(3440, 9887);
+    let east_stand = tile(3423, 3485); // holy_barrier.rs2's outward landing.
+    assert!(!world.collision.standable(east));
+    assert!(world.collision.standable(east_stand));
     assert!(
         world
             .graph
@@ -590,7 +593,10 @@ fn morytania_sites_compare_proof_unknown_and_false_gate_routes() {
             .any(|edge| edge.at == east && edge.to == underground),
         "the east trapdoor must enter the mausoleum"
     );
-    for (start, target) in [(east, underground), (underground, east)] {
+    for (start, target, loc_id) in [
+        (east_stand, underground, 3432),
+        (underground, east_stand, 3443),
+    ] {
         let route = find_with(
             &world.collision,
             &world.graph,
@@ -608,6 +614,9 @@ fn morytania_sites_compare_proof_unknown_and_false_gate_routes() {
             )
         });
         println!("mausoleum access {start:?} -> {target:?}: {route:?}");
+        assert!(route.legs.iter().any(
+            |leg| matches!(leg, Leg::Transport { edge } if edge.loc_id == loc_id)
+        ));
     }
     let mut unknown_routes = Vec::with_capacity(SITES.len());
     let mut false_routes = Vec::with_capacity(SITES.len());
