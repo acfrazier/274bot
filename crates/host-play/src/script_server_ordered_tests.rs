@@ -2139,6 +2139,116 @@ fn ordered_advanced_cheat_without_shared_catalog_refuses_the_whole_request() {
     assert_no_cipher_movement(&rig);
 }
 
+fn knife_npc_request(rig: &mut Rig, type_id: usize, operation: u8) -> ServerOrderedRequest {
+    {
+        let cache = Arc::get_mut(&mut rig.client.cache).unwrap();
+        cache
+            .npcs
+            .resize_with(type_id + 1, client::config::NpcType::default);
+        let mut options = vec![None; 5];
+        options[usize::from(operation - 1)] = Some("Snapshot label is not proof".into());
+        cache.npcs[type_id] = client::config::NpcType {
+            id: i32::try_from(type_id).unwrap(),
+            name: "Fishing spot".into(),
+            op: options,
+            ..Default::default()
+        };
+    }
+    let mut npc = client::dash3d::ClientNpc::default();
+    npc.entity.x = 8 * 128;
+    npc.entity.z = 5 * 128;
+    npc.r#type = Some(type_id);
+    rig.client.npc[7] = Some(Box::new(npc));
+    rig.client.npc_ids = vec![7];
+    rig.client.npc_count = 1;
+    rig.client.gens.npc += 1;
+    let mut request = knife_request(rig, true);
+    let reference =
+        ExactNpcReference::from_snapshot(&rig.snapshot, &rig.snapshot.npcs()[0], operation).unwrap();
+    if let ServerOrderedRequest::KnifeArm { shape, .. } = &mut request {
+        *shape = KnifeArmShape::Continuing {
+            click: ExactLocOrNpcRef::Npc(reference),
+        };
+    }
+    request
+}
+
+#[test]
+fn ordered_knife_continuing_npc_fishing_requires_selected_content_handler_proof() {
+    for (type_id, operation) in [(309, 1), (309, 3), (800, 1)] {
+        let mut rig = Rig::new();
+        let request = knife_npc_request(&mut rig, type_id, operation);
+        rig.start([Emission::Content(request)]);
+        rig.pump(1);
+        rig.pump(2);
+        let receipt = rig.receipt();
+        assert!(receipt.terminal.is_none(), "{type_id}/{operation}: {receipt:?}");
+        assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (3, 4));
+        let packets = rig.decoded();
+        let click = match operation {
+            1 => Send::opnpc1(7).unwrap(),
+            3 => Send::opnpc3(7).unwrap(),
+            _ => unreachable!(),
+        };
+        assert_eq!(packets.len(), 4);
+        assert_eq!(
+            packets[3],
+            (
+                click.validate_for_revision(rig.client.revision()).unwrap().opcode,
+                click.body().to_vec(),
+            ),
+        );
+    }
+}
+
+#[test]
+fn ordered_knife_npc_snapshot_action_without_content_handler_proof_emits_nothing() {
+    for (type_id, operation) in [(309, 2), (316, 1), (9, 2)] {
+        let mut rig = Rig::new();
+        let request = knife_npc_request(&mut rig, type_id, operation);
+        rig.start([Emission::Content(request)]);
+        rig.pump(1);
+        rig.pump(2);
+        let receipt = rig.receipt();
+        assert_eq!(receipt.terminal, Some(ServerOrderedError::ContractUnavailable));
+        assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+        assert_no_cipher_movement(&rig);
+    }
+}
+
+#[test]
+fn ordered_knife_npc_exact_generation_type_tile_and_index_must_match() {
+    for mismatch in ["generation", "type", "tile", "index"] {
+        let mut rig = Rig::new();
+        let mut request = knife_npc_request(&mut rig, 309, 1);
+        let npc = &rig.snapshot.npcs()[0];
+        let mut tile = npc.network;
+        if mismatch == "tile" {
+            tile.x += 1;
+        }
+        let reference = ExactNpcReference::new(
+            if mismatch == "index" { 8 } else { npc.index },
+            if mismatch == "type" { 310 } else { 309 },
+            tile,
+            rig.snapshot.gens().npc_info + u64::from(mismatch == "generation"),
+            1,
+        )
+        .unwrap();
+        if let ServerOrderedRequest::KnifeArm { shape, .. } = &mut request {
+            *shape = KnifeArmShape::Continuing {
+                click: ExactLocOrNpcRef::Npc(reference),
+            };
+        }
+        rig.start([Emission::Content(request)]);
+        rig.pump(1);
+        rig.pump(2);
+        let receipt = rig.receipt();
+        assert_eq!(receipt.terminal, Some(ServerOrderedError::StaleTarget), "{mismatch}");
+        assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+        assert_no_cipher_movement(&rig);
+    }
+}
+
 #[test]
 fn ordered_current_numeric_npc_proofs_refuse_the_whole_knife_request() {
     let mut rig = Rig::new();

@@ -707,6 +707,41 @@ mod tests {
     use crate::snapshot::HitmarkView;
 
     #[test]
+    fn npc_info_generation_requires_a_ready_scene_and_uses_the_packet_generation() {
+        let stamp = EvidenceStamp {
+            run: RunKey {
+                slot: 2,
+                run: 3,
+                session: 4,
+            },
+            tick: 7,
+            sequence: 900,
+        };
+        assert_eq!(SnapshotView::new(None, stamp).npc_info_generation(), None);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.gens.npc_info = 41;
+        assert_eq!(
+            SnapshotView::new(Some(&snapshot), stamp).npc_info_generation(),
+            None,
+        );
+        snapshot.seed_ingame(1);
+        assert_eq!(
+            SnapshotView::new(Some(&snapshot), stamp).npc_info_generation(),
+            None,
+        );
+        snapshot.seed_ingame(2);
+        assert_eq!(
+            SnapshotView::new(Some(&snapshot), stamp).npc_info_generation(),
+            Some(41),
+        );
+        snapshot.gens.npc_info = 42;
+        assert_eq!(
+            SnapshotView::new(Some(&snapshot), stamp).npc_info_generation(),
+            Some(42),
+        );
+    }
+
+    #[test]
     fn ground_collision_generations_follow_content_not_player_info_edges() {
         let mut stamp = EvidenceStamp {
             run: RunKey {
