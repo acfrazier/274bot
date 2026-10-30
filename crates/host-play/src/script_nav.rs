@@ -4396,8 +4396,7 @@ pub(crate) fn manual_route_state(
     let selected = slot
         .compiled_game_data()
         .or_else(|| profile_data.cloned())?;
-    let mut context =
-        route_quest_context_with_data(slot, u64::from(snapshot.tick()), selected)?;
+    let mut context = route_quest_context_with_data(slot, u64::from(snapshot.tick()), selected)?;
     if let Some(run) = slot.manual_route_run().filter(|run| {
         run.slot == context.stamp.run.slot && run.session == context.stamp.run.session
     }) {
