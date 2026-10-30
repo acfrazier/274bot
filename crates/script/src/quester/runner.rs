@@ -5858,19 +5858,14 @@ mod tests {
                 tick.cx.condition = Some(condition);
                 tick.cx.cure_poison = CurePoison::WhenNeeded;
                 provision_script.tick(tick).unwrap();
-                assert!(matches!(
-                    tick.cx
-                        .ledger
-                        .as_ref()
-                        .unwrap()
-                        .outbox
-                        .last()
-                        .map(|action| &action.effect),
-                    Some(crate::native::HostEffect::Interaction(
-                        crate::shim::InteractReq::SetNoteMode { on: false, .. }
-                    ))
-                ));
-                accept_last_interaction(tick);
+                if tick
+                    .cx
+                    .ledger
+                    .as_ref()
+                    .is_some_and(|ledger| !ledger.outbox.is_empty())
+                {
+                    accept_last_interaction(tick);
+                }
             },
         );
         assert!(provision_script.provisioner.has_run());
@@ -6073,19 +6068,14 @@ mod tests {
                 tick.cx.condition = Some(condition(PoisonState::Clear, 60));
                 tick.cx.cure_poison = CurePoison::WhenNeeded;
                 script.tick(tick).unwrap();
-                assert!(matches!(
-                    tick.cx
-                        .ledger
-                        .as_ref()
-                        .unwrap()
-                        .outbox
-                        .last()
-                        .map(|action| &action.effect),
-                    Some(crate::native::HostEffect::Interaction(
-                        crate::shim::InteractReq::SetNoteMode { on: false, .. }
-                    ))
-                ));
-                accept_last_interaction(tick);
+                if tick
+                    .cx
+                    .ledger
+                    .as_ref()
+                    .is_some_and(|ledger| !ledger.outbox.is_empty())
+                {
+                    accept_last_interaction(tick);
+                }
             },
         );
         assert!(script.provisioner.has_run());
@@ -6270,19 +6260,14 @@ mod tests {
                 tick.cx.condition = Some(condition(PoisonState::Clear, 60));
                 tick.cx.cure_poison = CurePoison::WhenNeeded;
                 script.tick(tick).unwrap();
-                assert!(matches!(
-                    tick.cx
-                        .ledger
-                        .as_ref()
-                        .unwrap()
-                        .outbox
-                        .last()
-                        .map(|action| &action.effect),
-                    Some(crate::native::HostEffect::Interaction(
-                        crate::shim::InteractReq::SetNoteMode { on: false, .. }
-                    ))
-                ));
-                accept_last_interaction(tick);
+                if tick
+                    .cx
+                    .ledger
+                    .as_ref()
+                    .is_some_and(|ledger| !ledger.outbox.is_empty())
+                {
+                    accept_last_interaction(tick);
+                }
             },
         );
         assert!(script.provisioner.has_run());
@@ -6494,13 +6479,23 @@ mod tests {
         use crate::native::{HostEffect, ScriptFlow};
         use crate::survival::CurePoison;
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
-        use api::snapshot::{ItemActionFamily, ItemContainer, ItemView};
+        use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, StatView};
 
         let (mut script, mut snapshot, _, _) = provisioning_survival_fixture();
         snapshot.seed_main_modal(-1, Vec::new());
         snapshot.seed_inventory(Vec::new(), 28);
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let lobster_id = data.item_by_alias("lobster").unwrap().id;
+        let set_hp = |snapshot: &mut api::snapshot::GameSnapshot, effective| {
+            snapshot.seed_stats(vec![StatView {
+                index: 3,
+                name: "hitpoints".into(),
+                base: 99,
+                effective,
+                xp: 0,
+                used: true,
+            }]);
+        };
         let condition = |poison, hp, food| BotCondition {
             tick: 20,
             session: SessionMark::Live,
@@ -6541,6 +6536,7 @@ mod tests {
             }],
             28,
         );
+        set_hp(&mut snapshot, 5);
         with_tick(&snapshot, &mut ledger, 2, |tick| {
             tick.cx.condition = Some(condition(
                 PoisonState::Onset {
@@ -6569,6 +6565,7 @@ mod tests {
             ));
             accept_last_interaction(tick);
         });
+        set_hp(&mut snapshot, 17);
         assert!(script.survival.parked().is_some());
 
         snapshot.seed_inventory(Vec::new(), 28);

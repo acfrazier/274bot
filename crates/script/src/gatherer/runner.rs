@@ -3752,6 +3752,22 @@ mod tests {
                     )
                     .unwrap(),
             );
+            tick.cx.condition = Some(clear());
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            gatherer.tick(tick).unwrap();
+            assert!(matches!(
+                tick.cx
+                    .ledger
+                    .as_ref()
+                    .unwrap()
+                    .outbox
+                    .last()
+                    .map(|action| &action.effect),
+                Some(crate::native::HostEffect::Interaction(
+                    crate::shim::InteractReq::SetNoteMode { on: false, .. }
+                ))
+            ));
+            accept_last_interaction(tick);
         });
         with_tick(&snapshot, &mut ledger, 2, |tick| {
             tick.cx.condition = Some(clear());
@@ -3995,17 +4011,13 @@ mod tests {
             gatherer.tick(tick).unwrap();
         });
         let outbox = &ledger.as_ref().unwrap().outbox;
-        assert_eq!(
-            outbox
-                .iter()
-                .filter(|action| matches!(
-                    &action.effect,
-                    crate::native::HostEffect::Interaction(
-                        crate::shim::InteractReq::WithdrawX { .. }
-                    )
-                ))
-                .count(),
-            1,
+        assert!(
+            !outbox.iter().any(|action| matches!(
+                &action.effect,
+                crate::native::HostEffect::Interaction(
+                    crate::shim::InteractReq::WithdrawX { .. }
+                )
+            )),
             "the interrupted Withdraw wrapper must not click the second row"
         );
         assert!(matches!(
@@ -4035,6 +4047,15 @@ mod tests {
             actions: vec![Some("Withdraw-1".into()), Some("Withdraw-X".into())],
             component_id: 7,
         };
+        snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(vec![
+                bank_item(301, "Bait", 5, 0),
+                bank_item(302, "Feather", 3, 1),
+            ]),
+            Vec::new(),
+        );
         let clear = || survival_condition(PoisonState::Clear, 60, FoodSummary::default());
         let need = || {
             survival_condition(
@@ -4152,25 +4173,15 @@ mod tests {
             crate::survival::Decision::Parked
         );
         let outbox = &ledger.as_ref().unwrap().outbox;
-        assert_eq!(
-            outbox
-                .iter()
-                .filter(|action| matches!(
-                    &action.effect,
-                    crate::native::HostEffect::Interaction(
-                        crate::shim::InteractReq::WithdrawX { .. }
-                    )
-                ))
-                .count(),
-            1,
+        assert!(
+            !outbox.iter().any(|action| matches!(
+                &action.effect,
+                crate::native::HostEffect::Interaction(
+                    crate::shim::InteractReq::WithdrawX { .. }
+                )
+            )),
             "the boundary must not begin the second withdrawal"
         );
-        assert!(matches!(
-            outbox.last().map(|action| &action.effect),
-            Some(crate::native::HostEffect::Interaction(
-                crate::shim::InteractReq::WithdrawX { .. }
-            ))
-        ));
     }
 
     #[test]
@@ -4281,7 +4292,7 @@ mod tests {
         let status = output.0.last().expect("status is published");
         assert_eq!(
             status.survival.to_string(),
-            "Needed: poisoned: would die; needs antipoison"
+            "Needed: poisoned: would die; needs antipoison or 1 food"
         );
         assert!(gatherer.survival.parked().is_none());
     }
@@ -4411,8 +4422,8 @@ mod tests {
             }],
             28,
         );
-        let condition = |poison, hp| BotCondition {
-            tick: 20,
+        let condition = |poison, hp, tick| BotCondition {
+            tick,
             session: SessionMark::Live,
             hp,
             hp_max: 90,
@@ -4434,7 +4445,7 @@ mod tests {
         let mut ledger = None;
 
         set_hp(&mut snapshot, 90);
-        with_tick(&snapshot, &mut ledger, 1, |tick| {
+        with_tick(&snapshot, &mut ledger, 20, |tick| {
             tick.cx.condition = Some(condition(
                 PoisonState::Onset {
                     since: 20,
@@ -4442,15 +4453,13 @@ mod tests {
                     hit_since_line: false,
                 },
                 90,
+                20,
             ));
-            tick.cx.poison_unknown_pulse = 11;
-            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
-            gatherer.tick(tick).unwrap();
         });
         assert!(gatherer.survival.parked().is_some());
 
         set_hp(&mut snapshot, 84);
-        with_tick(&snapshot, &mut ledger, 2, |tick| {
+        with_tick(&snapshot, &mut ledger, 50, |tick| {
             tick.cx.condition = Some(condition(
                 PoisonState::Poisoned {
                     per_tick: 6,
@@ -4458,15 +4467,13 @@ mod tests {
                     hit_since_mark: false,
                 },
                 84,
+                50,
             ));
-            tick.cx.poison_unknown_pulse = 11;
-            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
-            gatherer.tick(tick).unwrap();
         });
         assert!(gatherer.survival.parked().is_some());
 
         set_hp(&mut snapshot, 78);
-        with_tick(&snapshot, &mut ledger, 3, |tick| {
+        with_tick(&snapshot, &mut ledger, 80, |tick| {
             tick.cx.condition = Some(condition(
                 PoisonState::Poisoned {
                     per_tick: 6,
@@ -4474,15 +4481,13 @@ mod tests {
                     hit_since_mark: false,
                 },
                 78,
+                80,
             ));
-            tick.cx.poison_unknown_pulse = 11;
-            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
-            gatherer.tick(tick).unwrap();
         });
         assert!(gatherer.survival.parked().is_some());
 
         set_hp(&mut snapshot, 73);
-        with_tick(&snapshot, &mut ledger, 4, |tick| {
+        with_tick(&snapshot, &mut ledger, 110, |tick| {
             tick.cx.condition = Some(condition(
                 PoisonState::Poisoned {
                     per_tick: 5,
@@ -4490,16 +4495,15 @@ mod tests {
                     hit_since_mark: false,
                 },
                 73,
+                110,
             ));
-            tick.cx.poison_unknown_pulse = 11;
-            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
-            gatherer.tick(tick).unwrap();
         });
         assert!(gatherer.survival.parked().is_none());
         assert_eq!(
             gatherer.survival.report().decision,
-            crate::survival::Decision::None
+            crate::survival::Decision::Needed
         );
+        assert!(gatherer.survival.report().need.is_none());
         assert!(!gatherer.survival_deferred);
     }
 

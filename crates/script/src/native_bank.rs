@@ -4973,8 +4973,17 @@ mod tests {
             );
         }
 
-        let cancelled = with_tick(&snapshot, &mut ledger, 10, |tick| {
+        let first_timeout = with_tick(&snapshot, &mut ledger, 10, |tick| {
             tick.cx.active_now = Duration::from_millis(5_400);
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            first_timeout.is_pending(),
+            "the first timeout enters one no-op reconciliation"
+        );
+
+        let cancelled = with_tick(&snapshot, &mut ledger, 11, |tick| {
+            tick.cx.active_now = Duration::from_millis(6_000);
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(matches!(

@@ -116,6 +116,18 @@ fn slot_keeps_parked_native_run_and_resumes_after_dose() {
     let run = slot.native_run().expect("compiled Gatherer run");
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
+    snapshot.seed_local_player(crate::quester::families::tests::local_player(
+        api::WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        },
+    ));
+    snapshot.seed_world(api::snapshot::WorldStateView {
+        map_base_x: 3200,
+        map_base_z: 3200,
+        ..Default::default()
+    });
     snapshot.seed_inventory(Vec::new(), 28);
     snapshot.seed_stats(vec![StatView {
         index: 3,
@@ -125,6 +137,19 @@ fn slot_keeps_parked_native_run_and_resumes_after_dose() {
         xp: 0,
         used: true,
     }]);
+    snapshot.seed_equipment(Vec::new());
+    snapshot.seed_npcs(Vec::new());
+    snapshot.seed_players(Vec::new());
+    snapshot.seed_projectiles(Vec::new());
+    snapshot.seed_hitmarks(api::snapshot::HitmarksView {
+        marks: [api::snapshot::HitmarkView {
+            value: 0,
+            kind: 0,
+            cycle: 0,
+        }; 4],
+        loop_cycle: 0,
+    });
+    snapshot.seed_varps(Vec::new());
     let onset = PoisonState::Onset {
         since: 1,
         q: Some(11),

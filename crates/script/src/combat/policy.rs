@@ -369,8 +369,11 @@ pub(crate) fn eat_choice_with_floor(
 ) -> Option<EatChoice> {
     let lines = select::lines(danger, hp_max).with_poison(poison_fire);
     let eat_line = lines.eat.max(eat_floor);
-    if hp <= 0 || hp >= hp_max || (danger == Some(0) && poison_fire == 0) || hp > eat_line {
-        return None;
+    if hp <= 0
+        || hp >= hp_max
+        || (danger == Some(0) && poison_fire == 0 && eat_floor <= lines.eat)
+        || hp > eat_line
+    {
     }
 
     let ordinary = food_by(
