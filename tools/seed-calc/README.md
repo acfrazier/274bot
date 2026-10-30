@@ -49,11 +49,11 @@ Attack, Strength, Defence, Hitpoints, Magic, and Ranged start at level 40.
 Ranged fights use Ranged 50 and the specified ranged kit.
 The search tests food counts from zero through `food_count`.
 Each food item uses one free inventory slot.
-The tool first selects the smallest count with death probability at most 0.01.
-If no count meets 0.01, it selects the smallest count with death probability at most 0.05.
-It raises Attack, Strength, Defence, and Hitpoints together only when no food count meets 0.05.
-The first accepted level wins.
-The result reports the food count, death bound, probabilities, and the immediately lower level when one exists.
+At the base-40 stats, it selects the smallest count with death probability at most 1%, then tries 5%.
+It raises one of Attack, Strength, Defence, or Hitpoints only if no base-40 count meets 5%.
+Single-stat raises are tried in that order at each level, from 41 upward; the smallest level that meets 5% wins.
+It uses a combined raise only if no single-stat raise through 99 meets 5%.
+The result reports the accepted food count, death bound, policy reason, explored-state maximum, and the best previous candidate.
 An absent food selector means the search has no food.
 An invalid or unwearable kit returns an input error.
 
@@ -66,10 +66,9 @@ The exact hit chance is:
 - A > D: `1 - (D + 2) / (2 * (A + 1))`.
 - A <= D: `A / (2 * (D + 1))`.
 
-A successful hit draws damage uniformly from zero through the maximum, inclusive.
 The dynamic program stores player Hitpoints, NPC Hitpoints, attack phase, queued damage, food, food cooldown, regeneration time, and kills left.
-It eliminates complete zero-damage cycles analytically.
-It has no time cutoff or probability-tail truncation.
+It builds the reachable state graph, then uses value iteration to calculate win probability and expected ticks.
+Zero-damage cycles are handled by value iteration, not by closed-form cycle removal.
 Results use IEEE-754 `f64`, not arbitrary-precision rational arithmetic.
 
 The default opening assumes an aggressive NPC ready at tick zero.
@@ -135,15 +134,19 @@ Rockslides deal 3 damage after a failed roll.
 Rope falls deal `floor(current HP * 15 / 100) + 1`.
 Railings deal `min(floor(base HP * 10 / 100), 3)` damage.
 
-The no-food result represents a run with no eating.
-The future food rule eats between attempts and steps when Hitpoints are at or below the product eat line.
+The no-food result is today's no-eating death risk.
+The live Quester does not eat during these modeled steps, so every food count is conditional: it meets policy C only if the Quester eats at the modeled boundaries.
+The hypothetical food rule eats between attempts and steps when Hitpoints are at or below the product eat line.
 The rule uses the product food line and revision-289 lobster healing and delays.
 It selects the smallest count at 1% death risk, then tries 5%.
 It reports the probability of each named budget stop separately from death.
 
 The model starts the 100-tick Hitpoints timer at phase zero.
 It includes the source delays and the rope setup walk from the guide anchor.
-It excludes travel outside these actions and time for the bot to send the next action.
+Health regenerates only on eligible ticks: not while the player is delayed or has a modal interface.
+Missed intervals do not accumulate into multiple heals; one overdue timer event can fire on the next eligible tick.
+Engine order resumes scripts and processes queues before normal timers, and the normal timer checks `canAccess` (which rejects delayed or modal players).
+The model excludes travel outside these actions and time for the bot to send the next action.
 It does not model unrelated guide steps.
 
 ## Crossing queries
@@ -195,7 +198,8 @@ Tests compare hand-computed hit chances with and without armour.
 They check one product-selected eat and its exact healing and action delay.
 A deterministic Monte Carlo simulation checks the exact food and regeneration solver.
 Two additional simulations check the base fight solver.
-Self-damage tests check a hand-computed chain and the five-attempt rockslide budget.
+Fight tests cover the positive-food-only bound, single-stat-first policy, and state search.
+Self-damage tests check delay/modal regeneration gating, death before a due heal, and live guide attempt limits.
 The unarmed query test preserves the bronze default and selects unarmed mode with `weapon:null`.
 Crossing tests check a product refusal below the first admitted candidate.
 
@@ -217,10 +221,11 @@ Paths below are relative to the lostcity-289 content or engine roots.
 - Product `crates/script/src/combat/guard.rs:470-483`, `policy.rs:333-386`, and `schedule.rs:85-87,118-131`: the food decision and scheduled action.
 - `content/scripts/login_logout/login.rs2:34-38` and `scripts/player/scripts/stat.rs2:58-60`: the 100-tick Hitpoints regeneration timer.
 - `engine/src/engine/World.ts:357-378,665-717`: NPC processing precedes player processing.
+- `engine/src/engine/World.ts:687-709` and `engine/src/engine/entity/Player.ts:816-830,945-959`: scripts and queues run before timers; normal timers require `canAccess`, which rejects delayed or modal players.
 - `content/scripts/quests/quest_upass/scripts/upass_obstacles.rs2:19-31,93-128`: rockslide and rope rolls, damage, and delays.
 - `content/scripts/quests/quest_mcannon/scripts/locs/railings.rs2:64-92`: railing roll, damage, and delays.
 - `content/scripts/skill_agility/scripts/agility.rs2:18-43,93-101,123-139`: per-tile movement, exact movement, and forced movement.
 - `engine/src/engine/script/handlers/PlayerOps.ts:359-379,591-600`: arrival delay, `p_delay`, and `STAT_RANDOM`.
 - `content/scripts/skill_combat/scripts/combat.rs2:14-39,63-71`, `configs/combat.dbrow:140-148`, `content/scripts/player/scripts/equip.rs2:244-285`, and `player_melee.rs2:52-57`: unarmed styles, crush damage, zero worn bonuses, and attack interval.
-- Product `crates/script/src/combat/risk/facts.rs:102-173` and `risk/replay.rs`: crossing assessment.
-- Product `crates/host-play/src/admission.rs:330-407`: crossing admission and refusal.
+- Product `crates/host-play/src/admission.rs:419-420`: crossing admission accepts a survivable assessment.
+- Product `crates/script/src/combat/risk/replay.rs:1124`: a fully granted route returns as survivable.

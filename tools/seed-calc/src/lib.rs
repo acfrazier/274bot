@@ -52,19 +52,23 @@ impl Answer {
     pub fn summary(&self) -> String {
         match self {
             Self::Fight(result) => match &result.minimum {
-                Some(minimum) => format!("fight {} ({} consecutive kills): Attack/Strength/Defence {}, HP {}, win {:.9}, death {:.9}, mean {:.3} ticks", result.npc, result.sequential_kills, minimum.stats.attack, minimum.stats.hitpoints, minimum.outcome.win_probability, minimum.outcome.death_probability, minimum.outcome.expected_ticks),
-                None => format!("fight {}: {}{}", result.npc, result.status, if result.reasons.is_empty() { String::new() } else { format!(": {}", result.reasons.join("; ")) }),
+                Some(minimum) => format!("fight {} ({} consecutive kills): Attack/Strength/Defence {}, HP {}, win {:.9}, death {:.9}, mean {:.3} ticks, max states {}; {}", result.npc, result.sequential_kills, minimum.stats.attack, minimum.stats.hitpoints, minimum.outcome.win_probability, minimum.outcome.death_probability, minimum.outcome.expected_ticks, result.max_explored_states, result.policy_reason),
+                None => format!("fight {}: {}{}; max states {}; {}", result.npc, result.status, if result.reasons.is_empty() { String::new() } else { format!(": {}", result.reasons.join("; ")) }, result.max_explored_states, result.policy_reason),
             },
             Self::Crossing(result) => result.summary(),
             Self::SelfDamage(result) => {
                 let food = match (result.minimum_lobsters, result.accepted_death_bound) {
                     (Some(count), Some(bound)) => {
-                        format!("{count} lobsters at {:.0}% death risk", bound * 100.0)
+                        format!(
+                            "{count} conditional lobsters at {:.0}% death risk ({})",
+                            bound * 100.0,
+                            result.food_result_condition
+                        )
                     }
-                    _ => "no food count meets 5%".into(),
+                    _ => "no conditional food count meets 5%".into(),
                 };
                 format!(
-                    "self-damage {}: no-food death {:.9}, {food}; food death {:.9}, budget stops {:.9}",
+                    "self-damage {}: today's no-eating death risk {:.9}; {food}; conditional food death {:.9}, budget stops {:.9}",
                     result.label,
                     result.no_food_death_probability,
                     result.death_probability_with_policy_food,

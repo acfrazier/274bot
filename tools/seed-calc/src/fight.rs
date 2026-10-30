@@ -16,8 +16,8 @@ pub enum FightError {
     Io(#[from] std::io::Error),
     #[error("cannot decode fight facts: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("{0}")]
-    Input(String),
+    #[error("survival state graph exceeded {limit} states after reaching {states}")]
+    StateLimit { limit: usize, states: usize },
     #[error("{0}")]
     NotModelled(String),
 }
@@ -109,6 +109,15 @@ impl Stats {
             ranged: if style == Style::Ranged { 50 } else { 40 },
         }
     }
+    fn with_raise(mut self, stat: CombatStat, level: u8) -> Self {
+        match stat {
+            CombatStat::Attack => self.attack = level,
+            CombatStat::Strength => self.strength = level,
+            CombatStat::Defence => self.defence = level,
+            CombatStat::Hitpoints => self.hitpoints = level,
+        }
+        self
+    }
     fn valid(self) -> bool {
         [
             self.attack,
@@ -120,6 +129,27 @@ impl Stats {
         ]
         .iter()
         .all(|v| (1..=99).contains(v))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum CombatStat {
+    Attack,
+    Strength,
+    Defence,
+    Hitpoints,
+}
+
+impl CombatStat {
+    const POLICY_ORDER: [Self; 4] = [Self::Attack, Self::Strength, Self::Defence, Self::Hitpoints];
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Attack => "Attack",
+            Self::Strength => "Strength",
+            Self::Defence => "Defence",
+            Self::Hitpoints => "Hitpoints",
+        }
     }
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -258,6 +288,7 @@ pub struct Outcome {
     pub win_probability: f64,
     pub death_probability: f64,
     pub expected_ticks: f64,
+    pub explored_states: usize,
 }
 #[derive(Debug, Serialize)]
 pub struct Evaluation {
@@ -266,7 +297,6 @@ pub struct Evaluation {
     pub outcome: Outcome,
     pub player_hit_chance: f64,
     pub npc_hit_chance: f64,
-    pub player_max_hit: u16,
     pub npc_max_hit: u16,
     pub player_interval: u8,
     pub npc_interval: u8,
@@ -296,7 +326,9 @@ pub struct FightResult {
     pub reasons: Vec<String>,
     pub candidate: Option<Evaluation>,
     pub minimum: Option<Evaluation>,
-    pub previous_level: Option<Evaluation>,
+    pub previous_candidate: Option<Evaluation>,
+    pub max_explored_states: usize,
+    pub policy_reason: String,
     pub sources: Vec<String>,
     pub timing: &'static str,
 }
@@ -593,7 +625,9 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
         reasons: std::mem::take(&mut reasons),
         candidate: None,
         minimum: None,
-        previous_level: None,
+        previous_candidate: None,
+        max_explored_states: 0,
+        policy_reason: "not evaluated because combat is outside the modeled scope".into(),
         sources: vec![
             weapon.source.clone(),
             "content/scripts/skill_combat/scripts/player/player_combat_stat.rs2:62-100".into(),
@@ -670,7 +704,17 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
     if let Some(stats) = query.candidate {
         let candidate_food = None;
         match evaluate(stats, &setup, candidate_food, 0) {
-            Ok(candidate) => result.candidate = Some(candidate),
+            Ok(candidate) => {
+                result.max_explored_states =
+                    result.max_explored_states.max(candidate.outcome.explored_states);
+                result.candidate = Some(candidate);
+            }
+            Err(error @ FightError::StateLimit { states, .. }) => {
+                result.max_explored_states = result.max_explored_states.max(states);
+                result
+                    .reasons
+                    .push(format!("candidate comparison not modelled: {error}"));
+            }
             Err(FightError::NotModelled(reason)) => {
                 result
                     .reasons
@@ -684,61 +728,166 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
     } else {
         0
     };
-    for level in 40..=99 {
-        let stats = Stats::policy(level, query.style);
+    let policy = search_policy(query.style, food_limit, |stats| {
         validate_wear(stats, weapon, &worn)?;
         let food_rule = food_item
             .map(|food| food::build(tables, row, food, stats.hitpoints))
             .transpose()
             .map_err(FightError::Input)?;
-        let mut within_one = None;
-        let mut within_five = None;
-        let mut best = None;
-        for food_count in 0..=food_limit {
-            let evaluation = match evaluate(stats, &setup, food_rule.as_ref(), food_count) {
-                Ok(evaluation) => evaluation,
-                Err(FightError::NotModelled(reason)) => {
-                    result.status = "not_modelled";
-                    result.reasons.push(reason);
-                    return Ok(result);
-                }
-                Err(error) => return Err(error),
-            };
-            let death_probability = evaluation.outcome.death_probability;
-            if death_probability <= 0.01 {
-                within_one = Some(evaluation);
-                break;
-            }
-            if death_probability <= 0.05 {
-                if within_five.is_none() {
-                    within_five = Some(evaluation);
-                }
-                continue;
-            }
-            if best.as_ref().is_none_or(|current: &Evaluation| {
-                death_probability < current.outcome.death_probability
-            }) {
-                best = Some(evaluation);
-            }
+        search_food_candidates(stats, food_limit, |stats, food_count| {
+            evaluate(stats, &setup, food_rule.as_ref(), food_count)
+        })
+    });
+    let policy = match policy {
+        Ok(policy) => policy,
+        Err(error @ FightError::StateLimit { states, .. }) => {
+            result.max_explored_states = result.max_explored_states.max(states);
+            result.status = "not_modelled";
+            result.reasons.push(error.to_string());
+            result.policy_reason = "Policy C search stopped at the survival state limit.".into();
+            return Ok(result);
         }
-        if let Some(evaluation) = within_one {
-            result.selected_food_count = Some(evaluation.food_count);
-            result.accepted_death_bound = Some("1%");
-            result.minimum = Some(evaluation);
-            break;
+        Err(FightError::NotModelled(reason)) => {
+            result.status = "not_modelled";
+            result.reasons.push(reason);
+            result.policy_reason = "Policy C search could not be completed.".into();
+            return Ok(result);
         }
-        if let Some(evaluation) = within_five {
-            result.selected_food_count = Some(evaluation.food_count);
-            result.accepted_death_bound = Some("5%");
-            result.minimum = Some(evaluation);
-            break;
-        }
-        result.previous_level = best;
-    }
-    if result.minimum.is_none() {
+        Err(error) => return Err(error),
+    };
+    result.max_explored_states = result
+        .max_explored_states
+        .max(policy.max_explored_states);
+    result.previous_candidate = policy.previous_candidate;
+    result.policy_reason = policy.reason;
+    if let Some((evaluation, bound)) = policy.accepted {
+        result.selected_food_count = Some(evaluation.food_count);
+        result.accepted_death_bound = Some(bound);
+        result.minimum = Some(evaluation);
+    } else {
         result.status = "no_seed_within_policy";
     }
     Ok(result)
+}
+
+struct FoodSearch {
+    accepted: Option<(Evaluation, &'static str)>,
+    previous_candidate: Option<Evaluation>,
+    max_explored_states: usize,
+}
+
+fn search_food_candidates(
+    stats: Stats,
+    food_limit: u8,
+    mut evaluate: impl FnMut(Stats, u8) -> Result<Evaluation, FightError>,
+) -> Result<FoodSearch, FightError> {
+    let mut within_five = None;
+    let mut previous_candidate: Option<Evaluation> = None;
+    let mut max_explored_states = 0;
+    for food_count in 0..=food_limit {
+        let evaluation = evaluate(stats, food_count)?;
+        max_explored_states =
+            max_explored_states.max(evaluation.outcome.explored_states);
+        let death_probability = evaluation.outcome.death_probability;
+        if death_probability <= 0.01 {
+            return Ok(FoodSearch {
+                accepted: Some((evaluation, "1%")),
+                previous_candidate,
+                max_explored_states,
+            });
+        }
+        if death_probability <= 0.05 {
+            if within_five.is_none() {
+                within_five = Some(evaluation);
+            }
+            continue;
+        }
+        if previous_candidate
+            .as_ref()
+            .is_none_or(|current| death_probability < current.outcome.death_probability)
+        {
+            previous_candidate = Some(evaluation);
+        }
+    }
+    if let Some(evaluation) = within_five {
+        return Ok(FoodSearch {
+            accepted: Some((evaluation, "5%")),
+            previous_candidate,
+            max_explored_states,
+        });
+    }
+    Ok(FoodSearch {
+        accepted: None,
+        previous_candidate,
+        max_explored_states,
+    })
+}
+
+struct PolicySearch {
+    accepted: Option<(Evaluation, &'static str)>,
+    previous_candidate: Option<Evaluation>,
+    max_explored_states: usize,
+    reason: String,
+}
+
+fn search_policy(
+    style: Style,
+    mut search: impl FnMut(Stats) -> Result<FoodSearch, FightError>,
+) -> Result<PolicySearch, FightError> {
+    let base = search(Stats::policy(40, style))?;
+    let mut max_explored_states = base.max_explored_states;
+    let mut previous_candidate = base.previous_candidate;
+    if let Some((evaluation, bound)) = base.accepted {
+        return Ok(PolicySearch {
+            accepted: Some((evaluation, bound)),
+            previous_candidate,
+            max_explored_states,
+            reason: format!("Policy C: base-40 stats meet {bound} without a stat raise."),
+        });
+    }
+
+    for level in 41..=99 {
+        for stat in CombatStat::POLICY_ORDER {
+            let candidate = search(Stats::policy(40, style).with_raise(stat, level))?;
+            max_explored_states = max_explored_states.max(candidate.max_explored_states);
+            previous_candidate = candidate.previous_candidate;
+            if let Some((evaluation, bound)) = candidate.accepted {
+                return Ok(PolicySearch {
+                    accepted: Some((evaluation, bound)),
+                    previous_candidate,
+                    max_explored_states,
+                    reason: format!(
+                        "Policy C: no base-40 food count met 5%; {} alone raised to {level} is the smallest single-stat raise that meets {bound}.",
+                        stat.name()
+                    ),
+                });
+            }
+        }
+    }
+
+    for level in 41..=99 {
+        let candidate = search(Stats::policy(level, style))?;
+        max_explored_states = max_explored_states.max(candidate.max_explored_states);
+        previous_candidate = candidate.previous_candidate;
+        if let Some((evaluation, bound)) = candidate.accepted {
+            return Ok(PolicySearch {
+                accepted: Some((evaluation, bound)),
+                previous_candidate,
+                max_explored_states,
+                reason: format!(
+                    "Policy C: no base-40 or single-stat food search met 5%; the combined combat-stat raise to {level} is the first that meets {bound}."
+                ),
+            });
+        }
+    }
+
+    Ok(PolicySearch {
+        accepted: None,
+        previous_candidate,
+        max_explored_states,
+        reason: "Policy C: no base-40, single-stat, or combined candidate through 99 met 5%."
+            .into(),
+    })
 }
 
 fn validate_weapon(
@@ -1071,7 +1220,7 @@ struct Node {
     edges: Vec<Edge>,
 }
 
-const MAX_SURVIVAL_STATES: usize = 1_000_000;
+const MAX_SURVIVAL_STATES: usize = 2_000_000;
 const MAX_VALUE_ITERATIONS: usize = 100_000;
 
 fn damage_distribution(chance: f64, maximum: u16) -> Vec<(u16, f64)> {
@@ -1296,9 +1445,10 @@ fn solve_survival(model: SurvivalModel<'_>) -> Result<Outcome, FightError> {
     let mut cursor = 0;
     while cursor < nodes.len() {
         if nodes.len() > MAX_SURVIVAL_STATES {
-            return Err(FightError::NotModelled(format!(
-                "survival state graph exceeded {MAX_SURVIVAL_STATES} states"
-            )));
+            return Err(FightError::StateLimit {
+                limit: MAX_SURVIVAL_STATES,
+                states: nodes.len(),
+            });
         }
         let transitions = expand_survival(nodes[cursor].state, model)?;
         let mut edges = Vec::with_capacity(transitions.len());
@@ -1354,6 +1504,7 @@ fn solve_survival(model: SurvivalModel<'_>) -> Result<Outcome, FightError> {
                 win_probability: wins[0].clamp(0.0, 1.0),
                 death_probability: (1.0 - wins[0]).clamp(0.0, 1.0),
                 expected_ticks: lengths[0],
+                explored_states: nodes.len(),
             });
         }
     }
@@ -1532,6 +1683,7 @@ fn solve(model: Model, sequential_kills: u8) -> Result<Outcome, FightError> {
         win_probability: win,
         death_probability: 1.0 - win,
         expected_ticks: lengths[start] + f64::from(events[0].tick),
+        explored_states: cells,
     })
 }
 
@@ -1621,6 +1773,7 @@ mod tests {
             win_probability: win,
             death_probability: 1.0 - win,
             expected_ticks: ticks as f64 / f64::from(TRIALS),
+            explored_states: 0,
         }
     }
     fn product_food_rule(hp_max: u8) -> food::FoodRule {
@@ -1634,6 +1787,71 @@ mod tests {
             .find(|item| item.alias.as_deref() == Some("lobster"))
             .unwrap();
         food::build(&tables, &npc, lobster, hp_max).unwrap()
+    }
+
+    fn test_evaluation(stats: Stats, food_count: u8, death_probability: f64) -> Evaluation {
+        Evaluation {
+            stats,
+            food_count,
+            outcome: Outcome {
+                win_probability: 1.0 - death_probability,
+                death_probability,
+                expected_ticks: 10.0,
+                explored_states: 128,
+            },
+            player_hit_chance: 0.5,
+            npc_hit_chance: 0.5,
+            player_max_hit: 1,
+            npc_max_hit: 1,
+            player_interval: 4,
+            npc_interval: 4,
+            equipment_attack_bonus: [0; 3],
+            equipment_defence_bonus: [0; 3],
+            equipment_strength_bonus: 0,
+            equipment_range_bonus: 0,
+        }
+    }
+
+    #[test]
+    fn only_a_positive_food_count_meets_the_bound() {
+        let stats = Stats::policy(40, Style::Accurate);
+        let search = search_food_candidates(stats, 2, |stats, food_count| {
+            let death_probability = if food_count == 0 { 0.06 } else { 0.04 };
+            Ok(test_evaluation(stats, food_count, death_probability))
+        })
+        .unwrap();
+
+        let (evaluation, bound) = search.accepted.unwrap();
+        assert_eq!(evaluation.food_count, 1);
+        assert_eq!(bound, "5%");
+        assert_eq!(search.previous_candidate.unwrap().food_count, 0);
+    }
+
+    #[test]
+    fn policy_search_prefers_the_smallest_single_stat_raise() {
+        let mut searched = Vec::new();
+        let policy = search_policy(Style::Accurate, |stats| {
+            searched.push(stats);
+            let reaches_bound = stats.attack == 40
+                && stats.strength == 42
+                && stats.defence == 40
+                && stats.hitpoints == 40;
+            Ok(FoodSearch {
+                accepted: reaches_bound.then(|| {
+                    (test_evaluation(stats, 0, 0.04), "5%")
+                }),
+                previous_candidate: Some(test_evaluation(stats, 0, 0.06)),
+                max_explored_states: 128,
+            })
+        })
+        .unwrap();
+        let (evaluation, _) = policy.accepted.unwrap();
+        assert_eq!(evaluation.stats.strength, 42);
+        assert_eq!(evaluation.stats.attack, 40);
+        assert_eq!(evaluation.stats.defence, 40);
+        assert_eq!(evaluation.stats.hitpoints, 40);
+        assert_eq!(searched.len(), 7);
+        assert!(policy.reason.contains("Strength alone raised to 42"));
     }
 
     fn sampled_damage(seed: &mut u64, chance: f64, maximum: u16) -> u16 {
@@ -1722,6 +1940,7 @@ mod tests {
             win_probability,
             death_probability: 1.0 - win_probability,
             expected_ticks: ticks as f64 / f64::from(trials),
+            explored_states: 0,
         })
     }
 

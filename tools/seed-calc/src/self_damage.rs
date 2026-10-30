@@ -11,7 +11,7 @@ use thiserror::Error;
 use script::combat::tables::CombatTables;
 
 const ROLL_BUCKETS: u16 = 256;
-const REGEN_TICKS: u16 = 100;
+const REGEN_TICKS: u8 = 100;
 const INVENTORY_SLOTS: u8 = 28;
 const ROPE_START_TILE: [i64; 2] = [38 * 64 + 30, 151 * 64 + 35];
 const DEATH_BOUND: f64 = 0.01;
@@ -59,6 +59,7 @@ pub struct SelfDamageResult {
     pub hitpoints: u8,
     pub agility: u8,
     pub crafting: u8,
+    pub food_result_condition: &'static str,
     pub seed_lobsters: u8,
     pub eat_line: u8,
     pub lobster_heal: u8,
@@ -93,6 +94,29 @@ pub struct StepModelResult {
     pub failure_damage: String,
     pub attempt_ticks: String,
     pub source: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PreRoll {
+    delay_before_walk: u8,
+    walk_ticks: u8,
+    delay_after_walk: u8,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Timing {
+    first_attempt_before_roll: PreRoll,
+    retry_before_roll: PreRoll,
+    failure_before_damage: u8,
+    after_failure: u8,
+    after_success: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TickAccess {
+    Available,
+    Delayed,
+    Modal,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -144,14 +168,6 @@ impl Damage {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-struct Timing {
-    first_attempt_before_roll: u8,
-    retry_before_roll: u8,
-    failure_before_damage: u8,
-    after_failure: u8,
-    after_success: u8,
-}
 
 #[derive(Clone, Copy, Debug)]
 struct Hazard {
@@ -354,6 +370,8 @@ pub fn calculate(
         agility,
         crafting,
         seed_lobsters: food_facts.seed_count,
+        food_result_condition:
+            "Conditional: the live Quester does not eat during these modeled steps.",
         eat_line: food_facts.policy.line,
         lobster_heal: food_facts.policy.heal,
         no_food_death_probability: no_food.death_probability,
@@ -366,7 +384,7 @@ pub fn calculate(
         budget_stops,
         steps: describe_plan(&plan),
         exact_state_recursion: true,
-        model_limit: "Exact for listed self-damage actions, their authored retry limits, observed p_delay and same-tick arrival delays, per-tile rope setup movement, and the 100-tick health_regen timer from phase zero. It excludes travel outside those actions, controller handoff time, unrelated guide actions, and their elapsed ticks.".into(),
+        model_limit: "Exact for listed self-damage actions, their authored retry limits, observed p_delay and same-tick arrival delays, per-tile rope setup movement, and the 100-tick health_regen timer from phase zero. Delayed and modal ticks do not regenerate health; each eligible tick processes at most one overdue timer event (engine/src/engine/World.ts:687-709, engine/src/engine/entity/Player.ts:816-830,945-959, engine/src/engine/script/handlers/PlayerOps.ts:359-379). It excludes travel outside those actions, controller handoff time, unrelated guide actions, and their elapsed ticks.".into(),
     })
 }
 
@@ -611,14 +629,17 @@ fn rockslide_hazard(level: u8) -> Hazard {
         high: 300,
         damage: Damage::Fixed(3),
         timing: Timing {
-            first_attempt_before_roll: 1,
-            retry_before_roll: 0,
+            first_attempt_before_roll: PreRoll {
+                delay_before_walk: 1,
+                ..PreRoll::default()
+            },
+            retry_before_roll: PreRoll::default(),
             failure_before_damage: 1,
             after_failure: 0,
             after_success: 3,
         },
         source: "content/scripts/quests/quest_upass/scripts/upass_obstacles.rs2:19-31",
-        timing_note: "p_arrivedelay waits one tick only after movement in the current tick. Failure p_delay(0) adds 1 tick before damage; success agility_exactmove movement_delay=2 calls p_delay(2), adding 3 ticks.",
+        timing_note: "p_arrivedelay waits one tick only after movement in the current tick. Failure p_delay(0) adds 1 delayed tick before damage; success agility_exactmove movement_delay=2 calls p_delay(2), adding 3 delayed ticks.",
     }
 }
 fn rope_setup_ticks(swing_step: &Value) -> Result<u8, SelfDamageError> {
@@ -647,7 +668,7 @@ fn rope_setup_ticks(swing_step: &Value) -> Result<u8, SelfDamageError> {
 }
 
 fn rope_hazard(level: u8, setup_ticks: u8) -> Hazard {
-    let before_roll = 5 + setup_ticks;
+    let (delay_before_walk, delay_after_walk) = (1, 4);
     Hazard {
         id: "swing-attempt",
         skill: Skill::Agility,
@@ -659,14 +680,22 @@ fn rope_hazard(level: u8, setup_ticks: u8) -> Hazard {
             plus: 1,
         },
         timing: Timing {
-            first_attempt_before_roll: before_roll,
-            retry_before_roll: before_roll,
+            first_attempt_before_roll: PreRoll {
+                delay_before_walk,
+                walk_ticks: setup_ticks,
+                delay_after_walk,
+            },
+            retry_before_roll: PreRoll {
+                delay_before_walk,
+                walk_ticks: setup_ticks,
+                delay_after_walk,
+            },
             failure_before_damage: 2,
             after_failure: 0,
             after_success: 3,
         },
         source: "content/scripts/quests/quest_upass/scripts/upass_obstacles.rs2:93-128",
-        timing_note: "Five p_delay ticks precede the roll; add one tick per forcemove tile from the guide anchor to the rope start. Failure p_delay(1) adds 2 ticks before damage; success exactmove p_delay(0) plus p_delay(1) adds 3 ticks.",
+        timing_note: "Five p_delay ticks precede the roll, with the guide-anchor walk between the first and later delays. Failure p_delay(1) adds 2 delayed ticks before damage; success adds 3 delayed ticks.",
     }
 }
 
@@ -679,14 +708,20 @@ fn railing_hazard(level: u8) -> Hazard {
         high: 150,
         damage: Damage::BasePercentCapped { percent: 10, cap: 3 },
         timing: Timing {
-            first_attempt_before_roll: 9,
-            retry_before_roll: 9,
+            first_attempt_before_roll: PreRoll {
+                delay_before_walk: 9,
+                ..PreRoll::default()
+            },
+            retry_before_roll: PreRoll {
+                delay_before_walk: 9,
+                ..PreRoll::default()
+            },
             failure_before_damage: 0,
             after_failure: 0,
             after_success: 3,
         },
         source: "content/scripts/quests/quest_mcannon/scripts/locs/railings.rs2:64-92",
-        timing_note: "Three p_delay(2) calls add 9 ticks before each roll. Success p_delay(2) adds 3 ticks; failure damages immediately.",
+        timing_note: "Three p_delay(2) calls add 9 delayed ticks before each roll. Success p_delay(2) adds 3 delayed ticks; failure damages immediately.",
     }
 }
 
@@ -805,11 +840,16 @@ fn run_bounded(run: &mut Run, step: &BoundedStep, base_hp: u8, food_policy: Opti
             } else {
                 step.hazard.timing.retry_before_roll
             };
-            let ready = advance(state, u16::from(before), base_hp);
+            let ready = advance_pre_roll(state, before, base_hp);
             let success_probability = probability * chance;
             if success_probability > 0.0 {
-                let successful =
-                    advance(ready, u16::from(step.hazard.timing.after_success), base_hp);
+                let successful = advance(
+                    ready,
+                    u16::from(step.hazard.timing.after_success),
+                    base_hp,
+                    TickAccess::Delayed,
+                );
+                let successful = apply_due_regen(successful, base_hp);
                 let successful = food_policy
                     .map(|policy| eat_at_boundary(successful, policy, base_hp))
                     .unwrap_or(successful);
@@ -821,20 +861,24 @@ fn run_bounded(run: &mut Run, step: &BoundedStep, base_hp: u8, food_policy: Opti
                     ready,
                     u16::from(step.hazard.timing.failure_before_damage),
                     base_hp,
+                    TickAccess::Delayed,
                 );
                 let damage = step.hazard.damage.amount(before_damage.hp, base_hp);
                 if before_damage.hp <= damage {
                     run.death_probability += failure_probability;
                     continue;
                 }
+                let failed = State {
+                    hp: before_damage.hp - damage,
+                    ..before_damage
+                };
                 let failed = advance(
-                    State {
-                        hp: before_damage.hp - damage,
-                        ..before_damage
-                    },
+                    failed,
                     u16::from(step.hazard.timing.after_failure),
                     base_hp,
+                    TickAccess::Delayed,
                 );
+                let failed = apply_due_regen(failed, base_hp);
                 if attempt + 1 == step.attempts {
                     add_stop(&mut run.budget_stops, &step.stop, failure_probability);
                 } else {
@@ -905,15 +949,20 @@ fn run_once(input: Distribution, hazard: Hazard, base_hp: u8) -> OnceBranches {
     let miss_chance = 1.0 - chance;
     let mut branches = OnceBranches::default();
     for (state, probability) in input {
-        let ready = advance(
-            state,
-            u16::from(hazard.timing.first_attempt_before_roll),
-            base_hp,
-        );
+        let ready = advance_pre_roll(state, hazard.timing.first_attempt_before_roll, base_hp);
         let success_probability = probability * chance;
         if success_probability > 0.0 {
-            let successful = advance(ready, u16::from(hazard.timing.after_success), base_hp);
-            add_state(&mut branches.success, successful, success_probability);
+            let successful = advance(
+                ready,
+                u16::from(hazard.timing.after_success),
+                base_hp,
+                TickAccess::Delayed,
+            );
+            add_state(
+                &mut branches.success,
+                apply_due_regen(successful, base_hp),
+                success_probability,
+            );
         }
         let failure_probability = probability * miss_chance;
         if failure_probability > 0.0 {
@@ -921,6 +970,7 @@ fn run_once(input: Distribution, hazard: Hazard, base_hp: u8) -> OnceBranches {
                 ready,
                 u16::from(hazard.timing.failure_before_damage),
                 base_hp,
+                TickAccess::Delayed,
             );
             let damage = hazard.damage.amount(before_damage.hp, base_hp);
             if before_damage.hp <= damage {
@@ -933,32 +983,68 @@ fn run_once(input: Distribution, hazard: Hazard, base_hp: u8) -> OnceBranches {
                     },
                     u16::from(hazard.timing.after_failure),
                     base_hp,
+                    TickAccess::Delayed,
                 );
-                add_state(&mut branches.failure, failed, failure_probability);
+                add_state(
+                    &mut branches.failure,
+                    apply_due_regen(failed, base_hp),
+                    failure_probability,
+                );
             }
         }
     }
     branches
 }
 
-fn advance(mut state: State, ticks: u16, base_hp: u8) -> State {
-    if ticks == 0 {
-        return state;
+fn advance_pre_roll(state: State, before_roll: PreRoll, base_hp: u8) -> State {
+    let state = advance(
+        state,
+        u16::from(before_roll.delay_before_walk),
+        base_hp,
+        TickAccess::Delayed,
+    );
+    let state = advance(
+        state,
+        u16::from(before_roll.walk_ticks),
+        base_hp,
+        TickAccess::Available,
+    );
+    advance(
+        state,
+        u16::from(before_roll.delay_after_walk),
+        base_hp,
+        TickAccess::Delayed,
+    )
+}
+
+fn advance(mut state: State, ticks: u16, base_hp: u8, access: TickAccess) -> State {
+    for _ in 0..ticks {
+        state.food_cooldown = state.food_cooldown.saturating_sub(1);
+        state.regen_phase = state.regen_phase.saturating_add(1).min(REGEN_TICKS);
+        if access == TickAccess::Available {
+            state = apply_due_regen(state, base_hp);
+        }
     }
-    let elapsed = u16::from(state.regen_phase) + ticks;
-    let heals = elapsed / REGEN_TICKS;
-    state.regen_phase = (elapsed % REGEN_TICKS) as u8;
-    state.hp = (u16::from(state.hp) + heals).min(u16::from(base_hp)) as u8;
-    state.food_cooldown = state
-        .food_cooldown
-        .saturating_sub(ticks.min(u16::from(u8::MAX)) as u8);
+    state
+}
+
+fn apply_due_regen(mut state: State, base_hp: u8) -> State {
+    if state.regen_phase == REGEN_TICKS {
+        state.hp = state.hp.saturating_add(1).min(base_hp);
+        state.regen_phase = 0;
+    }
     state
 }
 
 fn eat_at_boundary(mut state: State, policy: FoodPolicy, base_hp: u8) -> State {
     while state.food > 0 && state.hp <= policy.line {
         if state.food_cooldown > 0 {
-            state = advance(state, u16::from(state.food_cooldown), base_hp);
+            state = advance(
+                state,
+                u16::from(state.food_cooldown),
+                base_hp,
+                TickAccess::Available,
+            );
             if state.hp > policy.line {
                 break;
             }
@@ -971,7 +1057,12 @@ fn eat_at_boundary(mut state: State, policy: FoodPolicy, base_hp: u8) -> State {
         } else {
             policy.skill_delay
         };
-        state = advance(state, u16::from(wait), base_hp);
+        state = advance(
+            state,
+            u16::from(wait),
+            base_hp,
+            TickAccess::Available,
+        );
     }
     state
 }
@@ -1066,8 +1157,8 @@ mod tests {
             high: 0,
             damage,
             timing: Timing {
-                first_attempt_before_roll: 0,
-                retry_before_roll: 0,
+                first_attempt_before_roll: PreRoll::default(),
+                retry_before_roll: PreRoll::default(),
                 failure_before_damage: 0,
                 after_failure: 0,
                 after_success: 0,
@@ -1160,7 +1251,53 @@ mod tests {
     }
 
     #[test]
-    fn swing_recovery_uses_guide_quest_acquire_recipes() {
+    fn delayed_and_modal_ticks_defer_one_due_regeneration() {
+        let initial = State {
+            hp: 10,
+            regen_phase: 99,
+            food: 0,
+            food_cooldown: 0,
+        };
+        let delayed = advance(initial, 300, 20, TickAccess::Delayed);
+        assert_eq!(delayed.hp, 10);
+        assert_eq!(delayed.regen_phase, REGEN_TICKS);
+
+        let modal = advance(delayed, 1, 20, TickAccess::Modal);
+        assert_eq!(modal.hp, 10);
+        assert_eq!(modal.regen_phase, REGEN_TICKS);
+
+        let available = advance(modal, 1, 20, TickAccess::Available);
+        assert_eq!(available.hp, 11);
+        assert_eq!(available.regen_phase, 0);
+    }
+
+    #[test]
+    fn a_due_regen_cannot_prevent_death_after_delay_damage() {
+        let mut hazard = test_hazard(0, Damage::Fixed(1));
+        hazard.timing.failure_before_damage = 1;
+        let step = BoundedStep {
+            id: "delayed-damage".into(),
+            attempts: 1,
+            stop: "attempts-exhausted".into(),
+            hazard,
+            entries_per_parent_pass: 1,
+        };
+        let run = execute(
+            &[Operation::Bounded(step)],
+            State {
+                hp: 1,
+                regen_phase: REGEN_TICKS - 1,
+                food: 0,
+                food_cooldown: 0,
+            },
+            2,
+            None,
+        );
+        assert_eq!(run.death_probability, 1.0);
+    }
+
+    #[test]
+    fn current_upass_attempt_fields_control_the_modeled_budgets() {
         let mut acquire = serde_json::Map::new();
         let mut swing_recipe = vec![serde_json::json!({
             "id": "swing-attempt",
@@ -1173,7 +1310,7 @@ mod tests {
             let recipe_name = format!("recovery-rockslide-{index}");
             swing_recipe.push(serde_json::json!({
                 "id": recipe_name.clone(),
-                "args": { "recipe": recipe_name.clone(), "max_restarts": 4 }
+                "args": { "recipe": recipe_name.clone(), "max_restarts": 7 }
             }));
             acquire.insert(
                 recipe_name,
@@ -1189,7 +1326,7 @@ mod tests {
         let guide = serde_json::json!({ "quest": { "acquire": acquire } });
         let parent = serde_json::json!({
             "id": "swing-rope",
-            "args": { "max_restarts": 2 }
+            "args": { "max_restarts": 11 }
         });
 
         let Operation::SwingAcquire {
@@ -1201,11 +1338,26 @@ mod tests {
         else {
             panic!("swing recipe did not produce a swing acquire operation");
         };
-        assert_eq!(restarts, 2);
+        assert_eq!(restarts, 11);
         assert_eq!(swing.successes_per_256(), 101);
-        assert_eq!(swing.timing.first_attempt_before_roll, 7);
+        assert_eq!(
+            swing.timing.first_attempt_before_roll,
+            PreRoll {
+                delay_before_walk: 1,
+                walk_ticks: 2,
+                delay_after_walk: 4,
+            }
+        );
         assert_eq!(recovery.len(), 8);
-        assert!(recovery.iter().all(|step| step.attempts == 5));
+        assert!(recovery.iter().all(|step| step.attempts == 8));
+
+        let rockslide = serde_json::json!({
+            "id": "cross-rockslide-1",
+            "max_attempts": 8,
+            "stop": "rockslide-1-attempts-exhausted"
+        });
+        let rockslide = parse_bounded_step(&rockslide, rockslide_hazard(1), None, 1).unwrap();
+        assert_eq!(rockslide.attempts, 8);
     }
 
     #[test]
