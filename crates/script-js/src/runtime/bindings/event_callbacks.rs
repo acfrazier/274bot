@@ -444,13 +444,19 @@ globalThis.__frame_duplicate_id = globalThis.__rs2b0t_native_event_on('frame', c
         assert!(duplicate, "duplicate frame callback shares one record");
 
         emit_no_args(&mut runtime, "frame").unwrap();
-        assert_eq!(runtime.eval::<usize>("globalThis.__frame_calls").unwrap(), 1);
+        assert_eq!(
+            runtime.eval::<usize>("globalThis.__frame_calls").unwrap(),
+            1
+        );
         runtime
             .eval::<()>("globalThis.__rs2b0t_native_event_off(globalThis.__frame_id)")
             .unwrap();
         assert_eq!(interest.load(Ordering::Relaxed), 0);
         emit_no_args(&mut runtime, "frame").unwrap();
-        assert_eq!(runtime.eval::<usize>("globalThis.__frame_calls").unwrap(), 1);
+        assert_eq!(
+            runtime.eval::<usize>("globalThis.__frame_calls").unwrap(),
+            1
+        );
         clear_all();
     }
 }
@@ -529,7 +535,9 @@ globalThis.__rs2b0t_native_event_on('skill.xp', payload => {
             &json!({"skill": 5, "name": "prayer", "xp": 1000, "delta": 20}),
         )
         .unwrap();
-        assert!(runtime.eval::<bool>("globalThis.__event_payload_fast").unwrap());
+        assert!(runtime
+            .eval::<bool>("globalThis.__event_payload_fast")
+            .unwrap());
         clear_all();
     }
 
@@ -557,7 +565,9 @@ globalThis.__rs2b0t_native_event_on('skill.xp', payload => {
             emit_json(&mut runtime, "skill.xp", &payload).unwrap();
         }
         let after = collected_used_heap(&mut runtime);
-        let count = runtime.eval::<usize>("globalThis.__event_payload_count").unwrap();
+        let count = runtime
+            .eval::<usize>("globalThis.__event_payload_count")
+            .unwrap();
         let growth = after.saturating_sub(baseline);
         let limit = 16_384;
         println!(

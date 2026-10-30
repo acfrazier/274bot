@@ -89,10 +89,7 @@ fn runtime_settings_rows_and_edits_preserve_the_exact_box_scope() {
     )
     .unwrap();
     assert_eq!(
-        lease
-            .snapshot()
-            .as_script_runtime_settings()
-            .unwrap(),
+        lease.snapshot().as_script_runtime_settings().unwrap(),
         &[row]
     );
     let edit = RuntimeSettingsEdit::try_set(

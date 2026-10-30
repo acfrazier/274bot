@@ -80,10 +80,13 @@ export default class T extends LoopingBot {
     let isolate = LoadIsolate::spawn(source.into(), LoadShape::CompatClass, vec![])
         .expect("events.on source links");
     post_xp_tick(&isolate, 1, 112);
-    assert_eq!(probe(&isolate, "globalThis.__onShape"), json!({
-        "ownOn": true, "ownOff": true, "on": true, "off": true,
-        "unsubscribe": true, "duplicate": true, "instance": true,
-    }));
+    assert_eq!(
+        probe(&isolate, "globalThis.__onShape"),
+        json!({
+            "ownOn": true, "ownOff": true, "on": true, "off": true,
+            "unsubscribe": true, "duplicate": true, "instance": true,
+        })
+    );
 
     post_xp_tick(&isolate, 2, 224);
     assert_eq!(
@@ -137,13 +140,25 @@ export default class T extends LoopingBot {
         .expect("events.off source links");
     post_xp_tick(&isolate, 1, 112);
     post_xp_tick(&isolate, 2, 224);
-    assert_eq!(probe(&isolate, "globalThis.__count"), json!(1), "wrong callback is a no-op");
+    assert_eq!(
+        probe(&isolate, "globalThis.__count"),
+        json!(1),
+        "wrong callback is a no-op"
+    );
     assert_eq!(probe(&isolate, "globalThis.__remove()"), json!(true));
     post_xp_tick(&isolate, 3, 336);
-    assert_eq!(probe(&isolate, "globalThis.__count"), json!(1), "off removes the exact pair");
+    assert_eq!(
+        probe(&isolate, "globalThis.__count"),
+        json!(1),
+        "off removes the exact pair"
+    );
     probe(&isolate, "globalThis.__restore() === undefined");
     post_xp_tick(&isolate, 4, 448);
-    assert_eq!(probe(&isolate, "globalThis.__count"), json!(2), "removed listeners can be re-added");
+    assert_eq!(
+        probe(&isolate, "globalThis.__count"),
+        json!(2),
+        "removed listeners can be re-added"
+    );
     isolate.join();
 }
 
@@ -159,7 +174,10 @@ fn compat_v1_events__eventsignal_ignoredrandoms__removed() {
     assert!(!declaration.contains("ignoredRandoms"));
     assert!(!ABI_CONTRACT.contains("EventSignal.ignoredRandoms"));
     assert!(!ABI_CONTRACT.contains("\"id\": \"event-ignored-randoms\""));
-    assert!(INDEX_DTS.contains("ignoredRandoms(): string[];"), "LoopingBot sibling remains declared");
+    assert!(
+        INDEX_DTS.contains("ignoredRandoms(): string[];"),
+        "LoopingBot sibling remains declared"
+    );
 
     let source = r#"
 import { EventSignal } from '../../api/execution/EventSignal.js';

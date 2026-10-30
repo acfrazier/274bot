@@ -3176,9 +3176,7 @@ fn repeated_script_activity_handles_have_bounded_post_gc_heap() {
     let mut runtime = script_activity_runtime();
     runtime.eval::<()>("__repeatRuntimeHandles(1000)").unwrap();
     let baseline = collected_heap(&mut runtime).0;
-    runtime
-        .eval::<()>("__repeatRuntimeHandles(25000)")
-        .unwrap();
+    runtime.eval::<()>("__repeatRuntimeHandles(25000)").unwrap();
     let after = collected_heap(&mut runtime).0;
     let growth = after.saturating_sub(baseline);
     const LIMIT: usize = 64 * 1024;

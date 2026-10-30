@@ -134,19 +134,33 @@ fn assert_hook_contract(class_name: &str, hook: &str) {
     );
     let result = run_source(hook_source(class_name, hook));
     for route in ["module", "barrel"] {
-        assert_eq!(result[route]["own"], false, "{route} base prototype owns {hook}");
-        assert_eq!(result[route]["instanceOwn"], false, "{route} instance owns {hook}");
-        assert_eq!(result[route]["baseType"], "undefined", "{route} base {hook}");
-        assert_eq!(result[route]["baseError"], "TypeError", "{route} base {hook}");
+        assert_eq!(
+            result[route]["own"], false,
+            "{route} base prototype owns {hook}"
+        );
+        assert_eq!(
+            result[route]["instanceOwn"], false,
+            "{route} instance owns {hook}"
+        );
+        assert_eq!(
+            result[route]["baseType"], "undefined",
+            "{route} base {hook}"
+        );
+        assert_eq!(
+            result[route]["baseError"], "TypeError",
+            "{route} base {hook}"
+        );
         assert_eq!(result[route]["override"], true, "{route} override {hook}");
     }
-    assert_eq!(result["same"], true, "module and barrel retain the same class");
+    assert_eq!(
+        result["same"], true,
+        "module and barrel retain the same class"
+    );
     assert_eq!(
         result["leafRuns"],
         if hook == "execute" { 2 } else { 0 },
         "caller override runs once on each route"
     );
-
 }
 #[test]
 fn compat_v1_bot__branchtask_validate__contract() {
@@ -204,7 +218,10 @@ fn assert_constructor_contract(class_name: &str) {
     assert_eq!(result["same"], true);
     for route in ["module", "barrel"] {
         assert_eq!(result[route]["base"], true, "{route} base constructs");
-        assert_eq!(result[route]["prototype"], true, "{route} prototype identity");
+        assert_eq!(
+            result[route]["prototype"], true,
+            "{route} prototype identity"
+        );
         assert_eq!(result[route]["child"], true, "{route} subclass constructs");
         assert_eq!(result[route]["marker"], "caller", "{route} caller override");
     }
@@ -226,7 +243,9 @@ fn compat_v1_bot__registerscript__contract() {
         "the published registerScript declaration retains its upstream signature"
     );
     assert!(
-        INDEX_DTS.contains("export type { BotManifest, BotManifestInput } from '*runtime/defineBot.js';"),
+        INDEX_DTS.contains(
+            "export type { BotManifest, BotManifestInput } from '*runtime/defineBot.js';"
+        ),
         "the published manifest types remain available"
     );
     let source = r#"

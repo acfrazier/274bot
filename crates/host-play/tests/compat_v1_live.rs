@@ -19,8 +19,8 @@ use host_play::{
     SharedClientTemplate,
 };
 use script_js::LoadShape;
-use serde_json::{Map, Value};
 use serde::Serialize;
+use serde_json::{Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const GAME_PORT: u16 = 47594;
@@ -474,7 +474,10 @@ fn run_and_record(
 ) -> Result<(), String> {
     let evidence_dir = required_path("LIVE_EVIDENCE_DIR")?;
     std::fs::create_dir_all(&evidence_dir).map_err(|error| {
-        format!("create evidence directory {}: {error}", evidence_dir.display())
+        format!(
+            "create evidence directory {}: {error}",
+            evidence_dir.display()
+        )
     })?;
     let mut receipt = Receipt {
         cell: cell.to_owned(),
@@ -497,10 +500,7 @@ fn count_prefix(lines: &[String], prefix: &str) -> usize {
     lines.iter().filter(|line| line.starts_with(prefix)).count()
 }
 
-fn event_payloads(
-    lines: &[String],
-    prefix: &str,
-) -> Result<Vec<serde_json::Value>, String> {
+fn event_payloads(lines: &[String], prefix: &str) -> Result<Vec<serde_json::Value>, String> {
     lines
         .iter()
         .filter_map(|line| line.strip_prefix(prefix))
@@ -606,7 +606,6 @@ export default class CompatEventsProbe extends LoopingBot {
     source.replace("GENERATION", &generation.to_string())
 }
 
-
 fn prepare_catalog_task(root: &Path, temp: &Path) -> Result<PreparedCatalogTask, String> {
     let catalog_commit = git_output(root, &["rev-parse", "--short=10", "HEAD"])?;
     if !catalog_commit.starts_with(CATALOG_SHORT) {
@@ -711,19 +710,25 @@ fn run_tree_cell(receipt: &mut Receipt) -> Result<(), String> {
         "ClueSolver — watching the pack for easy clue scrolls/caskets",
     ) != 1
     {
-        return Err(format!("catalog TaskBot did not construct exactly once: {:?}", session.receipt.logs));
+        return Err(format!(
+            "catalog TaskBot did not construct exactly once: {:?}",
+            session.receipt.logs
+        ));
     }
 
     start_script(&session, tree_bot_source())?;
     wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
         logs.iter().any(|line| line == "TREE:READY")
-            && logs.iter().any(|line| {
-                line == "TREE:DONE:root,validate,success,leaf.start,leaf.end"
-            })
+            && logs
+                .iter()
+                .any(|line| line == "TREE:DONE:root,validate,success,leaf.start,leaf.end")
     })?;
     stop_script(&mut session, "TREE:STOP", true)?;
     if count_prefix(&session.receipt.logs, "TREE:STOP") != 1 {
-        return Err(format!("TreeBot stop was not exactly once: {:?}", session.receipt.logs));
+        return Err(format!(
+            "TreeBot stop was not exactly once: {:?}",
+            session.receipt.logs
+        ));
     }
     Ok(())
 }
@@ -733,9 +738,12 @@ fn wait_for_next_tick_without_restart_event(session: &mut LiveSession<'_>) -> Re
     let deadline = Instant::now() + ACTION_DEADLINE;
     loop {
         drain_logs(session);
-        if session.receipt.logs.iter().any(|line| {
-            line.starts_with("RESTART:CHAT:") || line.starts_with("RESTART:INSTANCE:")
-        }) {
+        if session
+            .receipt
+            .logs
+            .iter()
+            .any(|line| line.starts_with("RESTART:CHAT:") || line.starts_with("RESTART:INSTANCE:"))
+        {
             return Err("new Events generation received a pre-restart chat event".into());
         }
         if let Some(error) = session.play.script_last_error(&session.account) {
@@ -802,8 +810,7 @@ fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
     request_command(&session, "getvar tutorial")?;
     wait_command(&mut session, "getvar tutorial")?;
     wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
-        count_prefix(logs, "RESTART:CHAT:") == 1
-            && count_prefix(logs, "RESTART:INSTANCE:") == 1
+        count_prefix(logs, "RESTART:CHAT:") == 1 && count_prefix(logs, "RESTART:INSTANCE:") == 1
     })?;
     stop_script(&mut session, "EVENTS:STOP:2", false)?;
 
@@ -818,7 +825,10 @@ fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
         || count_prefix(&session.receipt.logs, "EVENTS:STOP:1") != 1
         || count_prefix(&session.receipt.logs, "EVENTS:STOP:2") != 1
     {
-        return Err(format!("native Events contract counts differ: {:?}", session.receipt.logs));
+        return Err(format!(
+            "native Events contract counts differ: {:?}",
+            session.receipt.logs
+        ));
     }
     let logs = &session.receipt.logs;
     let first_chat = event_payloads(logs, "CHAT:FIRST:")?;
@@ -857,7 +867,10 @@ fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
             .as_str()
             .is_some_and(|text| text.starts_with("get tutorial:"))
     {
-        return Err(format!("native event payloads changed: {:?}", session.receipt.logs));
+        return Err(format!(
+            "native event payloads changed: {:?}",
+            session.receipt.logs
+        ));
     }
 
     let first_chat_at = logs
@@ -883,8 +896,14 @@ fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
         .enumerate()
         .filter_map(|(index, line)| line.starts_with("INV:WITNESS:").then_some(index))
         .collect();
-    let stop_first_at = logs.iter().position(|line| line == "EVENTS:STOP:1").unwrap();
-    let ready_second_at = logs.iter().position(|line| line == "EVENTS:READY:2").unwrap();
+    let stop_first_at = logs
+        .iter()
+        .position(|line| line == "EVENTS:STOP:1")
+        .unwrap();
+    let ready_second_at = logs
+        .iter()
+        .position(|line| line == "EVENTS:READY:2")
+        .unwrap();
     let restarted_chat_at = logs
         .iter()
         .position(|line| line.starts_with("RESTART:CHAT:"))
@@ -893,7 +912,10 @@ fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
         .iter()
         .position(|line| line.starts_with("RESTART:INSTANCE:"))
         .unwrap();
-    let stop_second_at = logs.iter().position(|line| line == "EVENTS:STOP:2").unwrap();
+    let stop_second_at = logs
+        .iter()
+        .position(|line| line == "EVENTS:STOP:2")
+        .unwrap();
     if !(first_chat_at < second_chat_at[0]
         && second_chat_at[0] < instance_chat_at[0]
         && instance_chat_at[0] < second_chat_at[1]
@@ -911,18 +933,14 @@ fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
     Ok(())
 }
 
-
 #[test]
 #[ignore = "requires LIVE=1, throwaway HOME, pinned catalog, and real 289 Engine L"]
 fn compat_v1_bot_tree_live() {
-    run_and_record("compat_v1_bot_tree", run_tree_cell)
-        .unwrap_or_else(|error| panic!("{error}"));
+    run_and_record("compat_v1_bot_tree", run_tree_cell).unwrap_or_else(|error| panic!("{error}"));
 }
 
 #[test]
 #[ignore = "requires LIVE=1, throwaway HOME, pinned catalog, and real 289 Engine L"]
 fn compat_v1_events_live() {
-    run_and_record("compat_v1_events", run_events_cell)
-        .unwrap_or_else(|error| panic!("{error}"));
+    run_and_record("compat_v1_events", run_events_cell).unwrap_or_else(|error| panic!("{error}"));
 }
-

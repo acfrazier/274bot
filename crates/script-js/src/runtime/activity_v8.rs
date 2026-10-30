@@ -99,7 +99,10 @@ fn owner_arg<'s>(
     value: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Object>> {
     if value.is_null_or_undefined() {
-        return Err(cb::type_error(scope, "ScriptActivity receiver is not an object"));
+        return Err(cb::type_error(
+            scope,
+            "ScriptActivity receiver is not an object",
+        ));
     }
     v8::Local::<v8::Object>::try_from(value)
         .map_err(|_| cb::type_error(scope, "ScriptActivity receiver is not an object"))
@@ -130,7 +133,10 @@ fn dispatch<'s>(
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let operation = args.get(0);
     if !operation.is_string() {
-        return Err(cb::type_error(scope, "ScriptActivity operation must be a string"));
+        return Err(cb::type_error(
+            scope,
+            "ScriptActivity operation must be a string",
+        ));
     }
     let operation = operation.to_rust_string_lossy(scope);
     let state = state_for_scope(scope)
@@ -155,7 +161,13 @@ fn dispatch<'s>(
 
 fn new_promise<'s>(
     scope: &mut v8::HandleScope<'s>,
-) -> JsResult<'s, (v8::Local<'s, v8::PromiseResolver>, v8::Local<'s, v8::Promise>)> {
+) -> JsResult<
+    's,
+    (
+        v8::Local<'s, v8::PromiseResolver>,
+        v8::Local<'s, v8::Promise>,
+    ),
+> {
     let resolver = v8::PromiseResolver::new(scope)
         .ok_or_else(|| cb::type_error(scope, "could not create ScriptActivity promise"))?;
     let promise = resolver.get_promise(scope);
@@ -217,7 +229,10 @@ fn start_inner<'s>(
     };
     let current = context.snapshot().activity;
     if current.child_id.is_some() || current.in_flight || state.active.borrow().is_some() {
-        return Err(Throw::Value(error_value(scope, "An activity is already running")?));
+        return Err(Throw::Value(error_value(
+            scope,
+            "An activity is already running",
+        )?));
     }
 
     let meta = args.get(3);
@@ -338,7 +353,10 @@ fn start_inner<'s>(
     }
     if !context.begin_activity_start(activity_id) {
         context.clear_activity(activity_id);
-        return Err(Throw::Value(error_value(scope, "An activity is already running")?));
+        return Err(Throw::Value(error_value(
+            scope,
+            "An activity is already running",
+        )?));
     }
     state.next_child_id.set(next_id);
     *state.last_owner.borrow_mut() = Some(v8::Global::new(scope, owner));
@@ -352,8 +370,10 @@ fn start_inner<'s>(
     });
 
     let attached = lineage_v8::enter_activity(scope, ActivityId(activity_id), |scope| {
-        cb::catching(scope, |scope| inner_promise.then2(scope, on_fulfilled, on_rejected))
-            .map(|_| ())
+        cb::catching(scope, |scope| {
+            inner_promise.then2(scope, on_fulfilled, on_rejected)
+        })
+        .map(|_| ())
     });
     let attached = match attached {
         Ok(result) => result,
@@ -414,7 +434,8 @@ fn loop_inner<'s>(
         settle_resolver(scope, outer_resolver, v8::undefined(scope).into(), false)?;
         return Ok(());
     };
-    let Some((activity_id, child, log, meta)) = active_for_owner(scope, &state, generation, owner) else {
+    let Some((activity_id, child, log, meta)) = active_for_owner(scope, &state, generation, owner)
+    else {
         settle_resolver(scope, outer_resolver, v8::undefined(scope).into(), false)?;
         return Ok(());
     };
@@ -424,21 +445,13 @@ fn loop_inner<'s>(
         return Ok(());
     }
     let now = performance_now(scope)?;
-    if cb::lt(
-        scope,
-        now,
-        cb::num(scope, snapshot.activity.next_at_ms),
-    )? {
+    if cb::lt(scope, now, cb::num(scope, snapshot.activity.next_at_ms))? {
         settle_resolver(scope, outer_resolver, v8::undefined(scope).into(), false)?;
         return Ok(());
     }
     let bot_host = args.get(8);
     let tick = cb::get(scope, bot_host, "tickCount")?;
-    if cb::lt(
-        scope,
-        tick,
-        cb::num(scope, snapshot.activity.next_tick),
-    )? {
+    if cb::lt(scope, tick, cb::num(scope, snapshot.activity.next_tick))? {
         settle_resolver(scope, outer_resolver, v8::undefined(scope).into(), false)?;
         return Ok(());
     }
@@ -487,8 +500,10 @@ fn loop_inner<'s>(
         "could not create ScriptActivity rejection callback",
     )?;
     let attached = lineage_v8::enter_activity(scope, ActivityId(activity_id), |scope| {
-        cb::catching(scope, |scope| inner_promise.then2(scope, on_fulfilled, on_rejected))
-            .map(|_| ())
+        cb::catching(scope, |scope| {
+            inner_promise.then2(scope, on_fulfilled, on_rejected)
+        })
+        .map(|_| ())
     });
     let attached = match attached {
         Ok(result) => result,
@@ -538,7 +553,10 @@ fn run_data<'s>(
             ("log", log),
             ("meta", meta),
             ("resolver", resolver.into()),
-            ("generation", v8::BigInt::new_from_u64(scope, generation).into()),
+            (
+                "generation",
+                v8::BigInt::new_from_u64(scope, generation).into(),
+            ),
             ("childId", v8::BigInt::new_from_u64(scope, child_id).into()),
             ("mode", cb::string(scope, mode)),
             ("Sustain", sustain),
@@ -757,7 +775,10 @@ fn classify_run_error<'s>(
     let reason_text = cb::to_string(scope, reason)?;
     let outcome = cb::object(
         scope,
-        &[("kind", cb::string(scope, kind)), ("reason", cb::string(scope, &reason_text))],
+        &[
+            ("kind", cb::string(scope, kind)),
+            ("reason", cb::string(scope, &reason_text)),
+        ],
     )?;
     let context = context.ok_or_else(|| cb::type_error(scope, "Script run has ended"))?;
     context.set_activity_outcome(child_id, kind.to_string(), reason_text.clone(), finished);
@@ -810,7 +831,9 @@ fn settle_loop_result<'s>(
     let state = state_for_scope(scope)
         .ok_or_else(|| cb::type_error(scope, "ScriptActivity state is not installed"))?;
     let generation = generation_arg(cb::get(scope, data, "generation")?);
-    if let Some(context) = generation.and_then(|generation| context_for_generation(&state, generation)) {
+    if let Some(context) =
+        generation.and_then(|generation| context_for_generation(&state, generation))
+    {
         context.settle_activity_loop(
             child_id,
             cb::number(scope, next_at)?,
@@ -840,10 +863,7 @@ fn resolve_cadence<'s>(
             ],
         );
     }
-    cb::object(
-        scope,
-        &[("kind", cb::string(scope, "time")), ("ms", delay)],
-    )
+    cb::object(scope, &[("kind", cb::string(scope, "time")), ("ms", delay)])
 }
 
 fn math_max<'s>(
@@ -856,14 +876,11 @@ fn math_max<'s>(
     cb::call_method(scope, math, "max", &[left, right], "Math.max")
 }
 
-fn performance_now<'s>(
-    scope: &mut v8::HandleScope<'s>,
-) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+fn performance_now<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let global = scope.get_current_context().global(scope);
     let performance = cb::get(scope, global.into(), "performance")?;
     cb::call_method(scope, performance, "now", &[], "performance.now")
 }
-
 
 fn activity_log_callback<'s>(
     scope: &mut v8::HandleScope<'s>,
@@ -871,14 +888,21 @@ fn activity_log_callback<'s>(
     rv: v8::ReturnValue,
 ) {
     let data = args.data();
-    let id = generation_arg(cb::get(scope, data, "childId").unwrap_or_else(|_| v8::undefined(scope).into()));
+    let id = generation_arg(
+        cb::get(scope, data, "childId").unwrap_or_else(|_| v8::undefined(scope).into()),
+    );
     let result = if let Some(id) = id {
-        match lineage_v8::enter_activity(scope, ActivityId(id), |scope| log_child(scope, data, args.get(0), id)) {
+        match lineage_v8::enter_activity(scope, ActivityId(id), |scope| {
+            log_child(scope, data, args.get(0), id)
+        }) {
             Ok(result) => result,
             Err(error) => Err(error),
         }
     } else {
-        Err(cb::type_error(scope, "ScriptActivity child id is unavailable"))
+        Err(cb::type_error(
+            scope,
+            "ScriptActivity child id is unavailable",
+        ))
     };
     cb::finish(scope, rv, result);
 }
@@ -892,7 +916,9 @@ fn log_child<'s>(
     let state = state_for_scope(scope)
         .ok_or_else(|| cb::type_error(scope, "ScriptActivity state is not installed"))?;
     let generation = generation_arg(cb::get(scope, data, "generation")?);
-    let Some(context) = generation.and_then(|generation| context_for_generation(&state, generation)) else {
+    let Some(context) =
+        generation.and_then(|generation| context_for_generation(&state, generation))
+    else {
         return Ok(v8::undefined(scope).into());
     };
     if !context.owns_activity(child_id) {
@@ -913,14 +939,21 @@ fn activity_finish_callback<'s>(
     rv: v8::ReturnValue,
 ) {
     let data = args.data();
-    let id = generation_arg(cb::get(scope, data, "childId").unwrap_or_else(|_| v8::undefined(scope).into()));
+    let id = generation_arg(
+        cb::get(scope, data, "childId").unwrap_or_else(|_| v8::undefined(scope).into()),
+    );
     let result = if let Some(id) = id {
-        match lineage_v8::enter_activity(scope, ActivityId(id), |scope| finish_child(scope, data, args.get(0), id)) {
+        match lineage_v8::enter_activity(scope, ActivityId(id), |scope| {
+            finish_child(scope, data, args.get(0), id)
+        }) {
             Ok(result) => result,
             Err(error) => Err(error),
         }
     } else {
-        Err(cb::type_error(scope, "ScriptActivity child id is unavailable"))
+        Err(cb::type_error(
+            scope,
+            "ScriptActivity child id is unavailable",
+        ))
     };
     cb::finish(scope, rv, result);
 }
@@ -935,10 +968,14 @@ fn finish_child<'s>(
         .ok_or_else(|| cb::type_error(scope, "ScriptActivity state is not installed"))?;
     let generation = generation_arg(cb::get(scope, data, "generation")?);
     let owner = owner_arg(scope, cb::get(scope, data, "owner")?)?;
-    let Some(context) = generation.and_then(|generation| context_for_generation(&state, generation)) else {
+    let Some(context) =
+        generation.and_then(|generation| context_for_generation(&state, generation))
+    else {
         return Ok(v8::undefined(scope).into());
     };
-    if !context.owns_activity(child_id) || !is_active_owner(scope, &state, generation.unwrap_or_default(), owner) {
+    if !context.owns_activity(child_id)
+        || !is_active_owner(scope, &state, generation.unwrap_or_default(), owner)
+    {
         return Ok(v8::undefined(scope).into());
     }
     let reason_text = cb::to_string(scope, reason)?;
@@ -1106,7 +1143,13 @@ fn cleanup_child<'s>(
     run_manager: v8::Local<'s, v8::Value>,
     child: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, ()> {
-    cb::call_method(scope, child, "disposeSubscriptions", &[], "child.disposeSubscriptions")?;
+    cb::call_method(
+        scope,
+        child,
+        "disposeSubscriptions",
+        &[],
+        "child.disposeSubscriptions",
+    )?;
     cb::call_method(
         scope,
         sustain,
@@ -1205,7 +1248,6 @@ fn ignored_randoms<'s>(
     }
 }
 
-
 fn active_for_owner<'s>(
     scope: &mut v8::HandleScope<'s>,
     state: &ActivityState,
@@ -1257,9 +1299,11 @@ fn is_last_owner(
     state: &ActivityState,
     owner: v8::Local<v8::Object>,
 ) -> bool {
-    state.last_owner.borrow().as_ref().is_some_and(|current| {
-        v8::Local::new(scope, current).strict_equals(owner.into())
-    })
+    state
+        .last_owner
+        .borrow()
+        .as_ref()
+        .is_some_and(|current| v8::Local::new(scope, current).strict_equals(owner.into()))
 }
 
 fn clear_active(
@@ -1300,7 +1344,13 @@ fn settings_bag<'s>(
         .ok_or_else(|| cb::type_error(scope, "could not create settings default mapper"))?;
     let mapped = cb::call_method(scope, entries, "map", &[mapper.into()], "entries.map")?;
     let from_entries = cb::get(scope, object_ctor, "fromEntries")?;
-    let defaults = cb::call(scope, from_entries, object_ctor, &[mapped], "Object.fromEntries")?;
+    let defaults = cb::call(
+        scope,
+        from_entries,
+        object_ctor,
+        &[mapped],
+        "Object.fromEntries",
+    )?;
     let values = v8::Object::new(scope);
     spread_copy(scope, values, defaults)?;
     spread_copy(scope, values, overrides)?;
@@ -1321,7 +1371,10 @@ fn settings_default_entry<'s>(
         if !row.set_index(scope, 0, key).unwrap_or(false)
             || !row.set_index(scope, 1, default).unwrap_or(false)
         {
-            return Err(cb::type_error(scope, "could not create settings default entry"));
+            return Err(cb::type_error(
+                scope,
+                "could not create settings default entry",
+            ));
         }
         Ok(row.into())
     })();
@@ -1340,7 +1393,13 @@ fn spread_copy<'s>(
     let global = scope.get_current_context().global(scope);
     let reflect = cb::get(scope, global.into(), "Reflect")?;
     let own_keys = cb::get(scope, reflect, "ownKeys")?;
-    let keys = cb::call(scope, own_keys, reflect, &[source.into()], "Reflect.ownKeys")?;
+    let keys = cb::call(
+        scope,
+        own_keys,
+        reflect,
+        &[source.into()],
+        "Reflect.ownKeys",
+    )?;
     let keys = v8::Local::<v8::Array>::try_from(keys)
         .map_err(|_| cb::type_error(scope, "Reflect.ownKeys did not return an array"))?;
     let object_ctor = cb::get(scope, global.into(), "Object")?;
@@ -1362,7 +1421,9 @@ fn spread_copy<'s>(
             continue;
         }
         let value = cb::catching(scope, |scope| source.get(scope, key))?;
-        let created = cb::catching(scope, |scope| target.create_data_property(scope, key, value))?;
+        let created = cb::catching(scope, |scope| {
+            target.create_data_property(scope, key, value)
+        })?;
         if !created {
             return Err(cb::type_error(scope, "could not copy settings property"));
         }

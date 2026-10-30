@@ -202,14 +202,12 @@ impl StoreKey {
                 content: identity.scope().content().to_string(),
             }),
             LocalStateDomain::Knowledge => None,
-            LocalStateDomain::ScriptRuntimeSettings => {
-                Some(StoreKey::ScriptRuntimeSettings {
-                    profile: identity.account().profile().to_string(),
-                    account: identity.account().account().to_string(),
-                    revision: identity.scope().revision().as_i32(),
-                    content: identity.scope().content().to_string(),
-                })
-            }
+            LocalStateDomain::ScriptRuntimeSettings => Some(StoreKey::ScriptRuntimeSettings {
+                profile: identity.account().profile().to_string(),
+                account: identity.account().account().to_string(),
+                revision: identity.scope().revision().as_i32(),
+                content: identity.scope().content().to_string(),
+            }),
         }
     }
 
@@ -447,7 +445,9 @@ impl ReadError {
     /// file itself: not UTF-8, not JSON, or JSON of the wrong shape.
     pub(super) fn is_malformed(&self) -> bool {
         match self {
-            ReadError::Json(_) | ReadError::NotAnArray | ReadError::NotAnObject
+            ReadError::Json(_)
+            | ReadError::NotAnArray
+            | ReadError::NotAnObject
             | ReadError::NotScriptSettingsObject => true,
             ReadError::Io(error) => error.kind() == io::ErrorKind::InvalidData,
             ReadError::Schema { .. }
@@ -464,7 +464,6 @@ impl ReadError {
         }
     }
 }
-
 
 /// The persisted hint document, schema 1:
 ///
@@ -526,7 +525,8 @@ fn script_runtime_settings_identity(
     revision: i32,
     content: &str,
 ) -> Result<DomainIdentity, ReadError> {
-    let account = AccountKey::try_new(profile, account).map_err(|_| ReadError::ScriptSettingsIdentity)?;
+    let account =
+        AccountKey::try_new(profile, account).map_err(|_| ReadError::ScriptSettingsIdentity)?;
     let revision = match revision {
         274 => client::io::ClientRevision::R274,
         289 => client::io::ClientRevision::R289,
@@ -715,13 +715,9 @@ pub(super) fn read(
                 if !names.insert((row.namespace.clone(), row.key.clone())) {
                     return Err(ReadError::DuplicateScriptSetting);
                 }
-                let row = RuntimeSettingsRow::try_new(
-                    &identity,
-                    &row.namespace,
-                    &row.key,
-                    &row.raw,
-                )
-                .map_err(|_| ReadError::ScriptSettingsRow { index })?;
+                let row =
+                    RuntimeSettingsRow::try_new(&identity, &row.namespace, &row.key, &row.raw)
+                        .map_err(|_| ReadError::ScriptSettingsRow { index })?;
                 rows.push(row);
             }
             rows.sort_by(|left: &RuntimeSettingsRow, right| {
@@ -908,9 +904,7 @@ pub(super) fn corrupt_preferences(path: &Path) -> io::Result<Option<Vec<u8>>> {
 
 /// The bytes of the script runtime settings file when its content is
 /// malformed; the same owner, mode and size checks as the reader apply.
-pub(super) fn corrupt_script_runtime_settings(
-    path: &Path,
-) -> io::Result<Option<Vec<u8>>> {
+pub(super) fn corrupt_script_runtime_settings(path: &Path) -> io::Result<Option<Vec<u8>>> {
     corrupt_json_object(path, MAX_SCRIPT_RUNTIME_SETTINGS_BYTES)
 }
 
@@ -1273,12 +1267,8 @@ pub(super) fn apply_script_runtime_setting(
     rows: &[RuntimeSettingsRow],
     edit: &RuntimeSettingsEdit,
 ) -> Result<Vec<RuntimeSettingsRow>, ErrorCode> {
-    let next = RuntimeSettingsRow::try_new(
-        edit.identity(),
-        edit.namespace(),
-        edit.key(),
-        edit.raw(),
-    )?;
+    let next =
+        RuntimeSettingsRow::try_new(edit.identity(), edit.namespace(), edit.key(), edit.raw())?;
     let existing = rows
         .iter()
         .position(|row| row.namespace() == edit.namespace() && row.key() == edit.key());

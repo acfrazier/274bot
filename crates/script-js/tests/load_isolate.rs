@@ -4254,7 +4254,6 @@ fn malformed_paint_record_keeps_the_ticks_logs() {
     iso.join();
 }
 
-
 // Task 9c — snapshot deltas: host-play posts `tick` every post and only
 // the fields that changed vs the last post (keyframe on Start). The
 // isolate merges the delta onto the last JS snapshot object — an omitted

@@ -23,7 +23,6 @@ pub(crate) enum Lineage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ActivityId(pub(crate) u64);
 
-
 struct CarrierState {
     key: v8::Global<v8::Symbol>,
     activity_key: v8::Global<v8::Symbol>,
@@ -892,14 +891,7 @@ pub(crate) fn enter_activity<'s, R>(
     let machine_key = v8::Local::new(scope, &state.key);
     let activity_key = v8::Local::new(scope, &state.activity_key);
     let mapping = callback_v8::catching(scope, |scope| {
-        copy_context(
-            scope,
-            previous,
-            machine_key,
-            activity_key,
-            None,
-            Some(id),
-        )
+        copy_context(scope, previous, machine_key, activity_key, None, Some(id))
     })?;
     scope.set_continuation_preserved_embedder_data(mapping);
     let result = catch_unwind(AssertUnwindSafe(|| call(scope)));

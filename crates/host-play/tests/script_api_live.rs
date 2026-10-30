@@ -1024,7 +1024,9 @@ fn runtime_compat_cell() {
     wait_for(&play, &account, &fixture, Duration::from_secs(45), |play| {
         take_logs(play, &account, &mut logs);
         play.script_state(&account) == script::RunState::Running
-            && logs.iter().any(|line| line.contains("runtime-compat-pass: "))
+            && logs
+                .iter()
+                .any(|line| line.contains("runtime-compat-pass: "))
     });
     let facts = logged(&logs, "runtime-compat-pass: ");
     assert!(facts["frames"].as_u64().unwrap() >= 8, "{facts}");
@@ -1402,7 +1404,6 @@ fn script_runtime_restart() {
         runtime_restart_cell,
     );
 }
-
 
 #[test]
 #[ignore = "requires LIVE=1, disposable HOME/cache, Engine L and baked R289 WORLD_NAV_PACK"]

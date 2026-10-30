@@ -61,7 +61,8 @@ export default class T extends LoopingBot {
     isolate.on_game_tick(1);
     let probe = isolate.probe("globalThis.__probe");
     let logs = isolate.join();
-    let probe = probe.unwrap_or_else(|error| panic!("Input probe failed: {error}; logs: {logs:#?}"));
+    let probe =
+        probe.unwrap_or_else(|error| panic!("Input probe failed: {error}; logs: {logs:#?}"));
     assert_eq!(
         probe,
         json!({

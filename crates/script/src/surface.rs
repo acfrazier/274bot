@@ -102,7 +102,6 @@ pub trait SurfaceFactory: Send + Sync {
         let _ = local_state;
         self.spawn(start, execution, recovery_hints)
     }
-
 }
 
 /// Receipt returned when the script calls its stop operation.
@@ -333,7 +332,6 @@ impl ScriptRuntimeContext {
         }
     }
 
-
     /// Register the one child after the native factory has created it.
     pub fn start_activity(&self, child_id: u64) -> Result<(), &'static str> {
         let mut current = self.lock();
@@ -374,12 +372,7 @@ impl ScriptRuntimeContext {
     }
 
     /// Record one child loop result and its next native eligibility bounds.
-    pub fn settle_activity_loop(
-        &self,
-        child_id: u64,
-        next_at_ms: f64,
-        next_tick: f64,
-    ) {
+    pub fn settle_activity_loop(&self, child_id: u64, next_at_ms: f64, next_tick: f64) {
         let mut current = self.lock();
         let activity = &mut current.activity;
         if activity.child_id != Some(child_id) {

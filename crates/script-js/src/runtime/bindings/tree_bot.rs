@@ -153,10 +153,7 @@ mod tests {
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         runtime.eval::<()>(crate::shim::PRELUDE).unwrap();
         super::install(&mut runtime).unwrap();
-        let bot = Module::new(
-            crate::shim::BOT_MODULE,
-            include_str!("../../shim/bot.js"),
-        );
+        let bot = Module::new(crate::shim::BOT_MODULE, include_str!("../../shim/bot.js"));
         let main = Module::new(
             "/compat_v1_bot_shape_test.js",
             format!(

@@ -1050,12 +1050,7 @@ fn fire_frame_listeners(
     });
     let interrupt = finish_interruptible_execution(runtime, teardown);
     let was_cut = interrupt.is_some_and(|interrupt| interrupt.consumed);
-    report_interrupted_execution(
-        interrupt,
-        out,
-        super::FRAME_CALLBACK_TICK,
-        generation,
-    );
+    report_interrupted_execution(interrupt, out, super::FRAME_CALLBACK_TICK, generation);
     if !was_cut {
         if let Err(error) = result {
             let _ = out.send(ThreadMsg::Log(format!("frame listener dispatch: {error}")));
@@ -2472,8 +2467,7 @@ fn tick_loop(
             }
             IsolateCmd::ClientFrame => {
                 if frame_interest.load(std::sync::atomic::Ordering::Acquire) > 0 {
-                    let generation =
-                        work_generation.load(std::sync::atomic::Ordering::Acquire);
+                    let generation = work_generation.load(std::sync::atomic::Ordering::Acquire);
                     fire_frame_listeners(
                         &mut runtime,
                         &teardown,

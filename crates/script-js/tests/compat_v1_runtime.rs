@@ -1,4 +1,3 @@
-use script_js::{LoadIsolate, LoadShape};
 use api::identity::{AccountKey, ContentScope, RequestId};
 use api::local_state::{
     DomainEdit, DomainIdentity, DomainLease, ErrorCode, LocalStateDomain, LocalStatePort,
@@ -6,6 +5,7 @@ use api::local_state::{
 };
 use script::local_state::{SlotState, StatePort};
 use script::surface::{RuntimeControlRequest, RuntimeRunState, ScriptRuntimeContext};
+use script_js::{LoadIsolate, LoadShape};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -144,18 +144,10 @@ fn runtime_settings_state() -> Arc<SlotState> {
     ))
 }
 
-fn run_with_local_state(
-    src: &str,
-    expr: &str,
-    state: Arc<SlotState>,
-) -> serde_json::Value {
-    let iso = LoadIsolate::spawn_with_local_state(
-        src.to_string(),
-        LoadShape::CompatClass,
-        vec![],
-        state,
-    )
-    .unwrap();
+fn run_with_local_state(src: &str, expr: &str, state: Arc<SlotState>) -> serde_json::Value {
+    let iso =
+        LoadIsolate::spawn_with_local_state(src.to_string(), LoadShape::CompatClass, vec![], state)
+            .unwrap();
     iso.on_game_tick(1);
     let value = iso.probe(expr).unwrap();
     iso.join();
@@ -301,12 +293,14 @@ globalThis.__registry = {
     );
 }
 
-
 fn assert_export_removed(module: &str, name: &str) {
     for (path, contents) in [
         ("index.d.ts", include_str!("../compat-js/index.d.ts")),
         ("modules.json", include_str!("../compat-js/modules.json")),
-        ("abi-contract.json", include_str!("../compat-js/abi-contract.json")),
+        (
+            "abi-contract.json",
+            include_str!("../compat-js/abi-contract.json"),
+        ),
         ("overlay.json", include_str!("../compat-js/overlay.json")),
         (
             "overlay-not-impl.json",
@@ -343,7 +337,10 @@ fn assert_export_removed(module: &str, name: &str) {
         }
     };
     iso.join();
-    assert!(error.contains(name), "the link error names removed {name}: {error}");
+    assert!(
+        error.contains(name),
+        "the link error names removed {name}: {error}"
+    );
 }
 
 #[test]
@@ -476,7 +473,10 @@ fn compat_v1_runtime__bothost_addframelistener__contract() {
     );
     let mut empty = spawn(&no_listener);
     empty.on_game_tick(1);
-    assert!(!empty.test_client_frame(), "zero listeners do not queue frames");
+    assert!(
+        !empty.test_client_frame(),
+        "zero listeners do not queue frames"
+    );
     assert_eq!(empty.probe("__frames").unwrap(), 0);
     empty.join();
 
@@ -493,8 +493,14 @@ globalThis.__stop = () => ScriptRunner.stop('frame census stop');
     );
     let mut iso = spawn(&src);
     iso.on_game_tick(1);
-    assert!(iso.test_client_frame(), "one listener receives a client frame");
-    assert!(iso.test_client_frame(), "frames are delivered independently");
+    assert!(
+        iso.test_client_frame(),
+        "one listener receives a client frame"
+    );
+    assert!(
+        iso.test_client_frame(),
+        "frames are delivered independently"
+    );
     assert_eq!(iso.probe("__frames").unwrap(), 2);
 
     iso.probe("__unsubscribe()").unwrap();
@@ -517,7 +523,10 @@ globalThis.__stop = () => ScriptRunner.stop('frame census stop');
     iso.probe("__stop()").unwrap();
     iso.on_game_tick(2);
     assert!(iso.script_stop_receipt().is_some());
-    assert!(!iso.test_client_frame(), "stopped isolates receive no frames");
+    assert!(
+        !iso.test_client_frame(),
+        "stopped isolates receive no frames"
+    );
     iso.join();
 }
 #[test]
@@ -698,7 +707,10 @@ globalThis.__metaFacts = {
         serde_json::json!({ "sameMetadata": true, "name": "first" }),
         "meta is the exact registered metadata owned by the current catalog run"
     );
-    assert_eq!(missing, true, "an unregistered run identity has no fabricated metadata");
+    assert_eq!(
+        missing, true,
+        "an unregistered run identity has no fabricated metadata"
+    );
 }
 
 #[test]

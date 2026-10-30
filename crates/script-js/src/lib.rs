@@ -5,6 +5,8 @@
 //! Nothing here embeds a catalog script tree; catalog sources come from the
 //! operator's rs2b0t checkout.
 
+#[path = "runtime/activity_v8.rs"]
+mod activity_v8;
 #[path = "compat/anchor_return.rs"]
 mod anchor_return;
 #[path = "api_v2/api_session.rs"]
@@ -130,6 +132,8 @@ pub mod js_cache;
 pub mod keep_list;
 #[path = "library/library.rs"]
 mod library;
+#[path = "runtime/lifecycle_v8.rs"]
+mod lifecycle_v8;
 #[path = "scene/line_of_sight.rs"]
 pub mod line_of_sight;
 #[path = "materialize/line_of_sight.rs"]
@@ -138,10 +142,6 @@ mod line_of_sight_v8;
 mod lineage_v8;
 #[path = "materialize/loadout_v8.rs"]
 mod loadout_v8;
-#[path = "runtime/lifecycle_v8.rs"]
-mod lifecycle_v8;
-#[path = "runtime/activity_v8.rs"]
-mod activity_v8;
 /// Per-isolate step-machine host: families Rust begins, steps and aborts.
 mod machine;
 #[path = "materialize/machine_v8.rs"]

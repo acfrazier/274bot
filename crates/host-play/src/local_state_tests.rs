@@ -2631,14 +2631,8 @@ fn malformed_runtime_settings_are_kept_and_quarantined_by_a_save() {
             "{case}: {names:?}"
         );
         assert_eq!(std::fs::read(&quarantined).unwrap(), bytes);
-        let lease = service
-            .readback_lease(&identity, WAIT)
-            .unwrap()
-            .unwrap();
-        let rows = lease
-            .snapshot()
-            .as_script_runtime_settings()
-            .unwrap();
+        let lease = service.readback_lease(&identity, WAIT).unwrap().unwrap();
+        let rows = lease.snapshot().as_script_runtime_settings().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].raw(), "false");
         let notices = notices.lock().unwrap();
@@ -2646,11 +2640,9 @@ fn malformed_runtime_settings_are_kept_and_quarantined_by_a_save() {
         assert_eq!(notices[0].0, Level::Warn);
         assert_eq!(notices[1].0, Level::Info);
         assert!(
-            notices[1]
-                .1
-                .starts_with(
-                    "audit domain=script-runtime-settings action=script-runtime-settings-quarantine"
-                ),
+            notices[1].1.starts_with(
+                "audit domain=script-runtime-settings action=script-runtime-settings-quarantine"
+            ),
             "{case}: {notices:?}"
         );
     }

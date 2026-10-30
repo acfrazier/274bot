@@ -62,7 +62,6 @@ pub enum LocalStateDomain {
     ScriptRuntimeSettings,
 }
 
-
 impl LocalStateDomain {
     /// Every domain, for exhaustive checks.
     pub const ALL: [LocalStateDomain; 5] = [
@@ -645,7 +644,7 @@ impl LeaseSnapshot {
             LeaseSnapshot::Knowledge(rows) => Some(rows),
             _ => None,
         }
-}
+    }
 
     /// The raw settings rows, if this is a `script-runtime-settings` snapshot.
     pub fn as_script_runtime_settings(&self) -> Option<&[RuntimeSettingsRow]> {
@@ -871,7 +870,6 @@ pub trait LocalStatePort {
             .find(|row| row.namespace() == namespace && row.key() == key)
             .map(|row| row.raw().to_owned()))
     }
-
 
     /// Submit `edit` without blocking: [`SubmitReceipt::Accepted`] carries
     /// the request to observe, [`SubmitReceipt::Refused`] carries `Busy`
@@ -1105,7 +1103,6 @@ impl RuntimeSettingsEdit {
         &self.raw
     }
 }
-
 
 /// One change of a [`PreferencesEdit`]: set a key (`<member>`, or
 /// `<member>.<nested>` for one member of an object) to a JSON value, or

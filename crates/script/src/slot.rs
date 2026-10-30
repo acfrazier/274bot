@@ -27,8 +27,9 @@ use crate::ctx::ScriptCtx;
 use crate::native::recovery_hints::RecoveryHintsCell;
 use crate::native::seat_rows::{DecodedSeatBatch, SeatStartArgs};
 use crate::surface::{
-    PostedSnapshotFacts, RuntimeControlRequest, RuntimeRunState, ScriptRuntimeContext, SurfaceError,
-    SurfaceFactory, SurfaceFamily, SurfaceKind, SurfaceReady, SurfaceRun, SurfaceStart,
+    PostedSnapshotFacts, RuntimeControlRequest, RuntimeRunState, ScriptRuntimeContext,
+    SurfaceError, SurfaceFactory, SurfaceFamily, SurfaceKind, SurfaceReady, SurfaceRun,
+    SurfaceStart,
 };
 use crate::watchdog::{ProgressWatchdog, Tile as WatchdogTile, WatchdogAction};
 use api::native_input::NativeInputAuthority;
@@ -4298,8 +4299,11 @@ impl SlotScript {
                     tick: receipt.tick,
                     reason: receipt.reason,
                 });
-                self.runtime_context
-                    .set_stop_reason(self.lifecycle_receipt.as_ref().map(|receipt| receipt.reason.clone()));
+                self.runtime_context.set_stop_reason(
+                    self.lifecycle_receipt
+                        .as_ref()
+                        .map(|receipt| receipt.reason.clone()),
+                );
             }
             self.observe_lifecycle();
         }

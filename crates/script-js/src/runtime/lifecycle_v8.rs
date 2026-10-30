@@ -5,17 +5,17 @@
 //! the exact JavaScript metadata object and its original `create` callback.
 
 use crate::callback_v8::{self as cb, JsResult};
-use rustyscript::deno_core::v8;
-use rustyscript::Runtime;
 use crate::lineage_v8;
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
-use std::rc::Rc;
 use api::local_state::{
     DomainEdit, LocalStateDomain, LocalStatePort, RuntimeSettingsEdit, SubmitReceipt,
 };
+use rustyscript::deno_core::v8;
+use rustyscript::Runtime;
 use script::local_state::SlotState;
 use script::surface::{RuntimeRunState, ScriptRuntimeContext};
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 const REGISTRY_DISPATCHER: &str = "__rs2b0t_script_registry";
@@ -44,7 +44,6 @@ struct SettingsState {
     listeners: RefCell<Vec<SettingsListener>>,
     next_order: Cell<u64>,
 }
-
 
 /// Install native registry and local settings dispatchers for one isolate.
 pub(crate) fn install(
@@ -101,7 +100,10 @@ fn dispatch<'s>(
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let op = args.get(0);
     if !op.is_string() {
-        return Err(cb::type_error(scope, "ScriptRegistry operation must be a string"));
+        return Err(cb::type_error(
+            scope,
+            "ScriptRegistry operation must be a string",
+        ));
     }
     let op = op.to_rust_string_lossy(scope);
     let state = state_for_scope(scope)
@@ -122,8 +124,14 @@ fn dispatch<'s>(
             let values = v8::Array::new(scope, length);
             for (index, entry) in entries.iter().enumerate() {
                 let value = v8::Local::new(scope, &entry.metadata);
-                if !values.set_index(scope, index as u32, value.into()).unwrap_or(false) {
-                    return Err(cb::type_error(scope, "ScriptRegistry list could not retain metadata"));
+                if !values
+                    .set_index(scope, index as u32, value.into())
+                    .unwrap_or(false)
+                {
+                    return Err(cb::type_error(
+                        scope,
+                        "ScriptRegistry list could not retain metadata",
+                    ));
                 }
             }
             Ok(values.into())
@@ -131,20 +139,30 @@ fn dispatch<'s>(
         "get" => {
             let name = args.get(1);
             if !name.is_string() {
-                return Err(cb::type_error(scope, "ScriptRegistry name must be a string"));
+                return Err(cb::type_error(
+                    scope,
+                    "ScriptRegistry name must be a string",
+                ));
             }
             let name = name.to_rust_string_lossy(scope);
             let by_name = state.by_name.borrow();
             let index = by_name
                 .get(&name)
-                .or_else(|| (name == "NatureCrafter").then(|| by_name.get("JiveRC")).flatten())
+                .or_else(|| {
+                    (name == "NatureCrafter")
+                        .then(|| by_name.get("JiveRC"))
+                        .flatten()
+                })
                 .copied();
             let Some(index) = index else {
                 return Ok(v8::undefined(scope).into());
             };
             let entries = state.entries.borrow();
             let Some(entry) = entries.get(index) else {
-                return Err(cb::type_error(scope, "ScriptRegistry index is inconsistent"));
+                return Err(cb::type_error(
+                    scope,
+                    "ScriptRegistry index is inconsistent",
+                ));
             };
             let metadata = v8::Local::new(scope, &entry.metadata);
             Ok(metadata.into())
@@ -160,7 +178,10 @@ fn register_metadata<'s>(
 ) -> JsResult<'s, ()> {
     let name = cb::get(scope, metadata.into(), "name")?;
     if !name.is_string() {
-        return Err(cb::type_error(scope, "ScriptRegistry metadata name must be a string"));
+        return Err(cb::type_error(
+            scope,
+            "ScriptRegistry metadata name must be a string",
+        ));
     }
     let name = name.to_rust_string_lossy(scope);
     let entry = RegistryEntry {
@@ -172,7 +193,10 @@ fn register_metadata<'s>(
         let old_origin = {
             let mut entries = state.entries.borrow_mut();
             let Some(current) = entries.get_mut(index) else {
-                return Err(cb::type_error(scope, "ScriptRegistry index is inconsistent"));
+                return Err(cb::type_error(
+                    scope,
+                    "ScriptRegistry index is inconsistent",
+                ));
             };
             let old_origin = current.origin.take();
             *current = entry;
@@ -282,9 +306,8 @@ fn dispatch_runtime<'s>(
         ));
     }
     let operation = operation.to_rust_string_lossy(scope);
-    let state = state_for_scope(scope).ok_or_else(|| {
-        cb::type_error(scope, "ScriptRunner runtime state is not installed")
-    })?;
+    let state = state_for_scope(scope)
+        .ok_or_else(|| cb::type_error(scope, "ScriptRunner runtime state is not installed"))?;
     let context = state.runtime_context.borrow().as_ref().map(Arc::clone);
     let snapshot = context.as_ref().map(|context| context.snapshot());
     let run_state = snapshot
@@ -330,11 +353,7 @@ fn dispatch_runtime<'s>(
                 ),
         )
         .into()),
-        "aborted" => Ok(v8::Boolean::new(
-            scope,
-            !generation_matches || run_state.aborted(),
-        )
-        .into()),
+        "aborted" => Ok(v8::Boolean::new(scope, !generation_matches || run_state.aborted()).into()),
         "stopReason" => match snapshot
             .filter(|_| generation_matches)
             .and_then(|snapshot| snapshot.stop_reason)
@@ -351,9 +370,9 @@ fn dispatch_runtime<'s>(
             None => Ok(v8::null(scope).into()),
         },
         "setWatchdogHold" => {
-            let Some(context) = context.filter(|_| {
-                requested_generation.is_some() && generation_matches
-            }) else {
+            let Some(context) =
+                context.filter(|_| requested_generation.is_some() && generation_matches)
+            else {
                 return Ok(v8::Boolean::new(scope, false).into());
             };
             let value = args.get(2);
@@ -433,15 +452,12 @@ fn abort_waiters<'s>(
     let global = scope.get_current_context().global(scope);
     let queue_reader = cb::get(scope, global.into(), "__rs2b0t_wait_queue")?;
     let undefined = v8::undefined(scope).into();
-    let queue_value = cb::call(
-        scope,
-        queue_reader,
-        undefined,
-        &[],
-        "__rs2b0t_wait_queue",
-    )?;
+    let queue_value = cb::call(scope, queue_reader, undefined, &[], "__rs2b0t_wait_queue")?;
     let Ok(queue) = v8::Local::<v8::Array>::try_from(queue_value) else {
-        return Err(cb::type_error(scope, "Execution wait queue is not an array"));
+        return Err(cb::type_error(
+            scope,
+            "Execution wait queue is not an array",
+        ));
     };
     let make_aborted = cb::get(scope, global.into(), "__rs2b0t_make_script_aborted")?;
     let activity_value: v8::Local<v8::Value> = match target {
@@ -453,7 +469,10 @@ fn abort_waiters<'s>(
     for index in 0..queue.length() {
         let wait = cb::get_index(scope, queue.into(), index)?;
         let Ok(wait) = v8::Local::<v8::Object>::try_from(wait) else {
-            return Err(cb::type_error(scope, "Execution wait queue contains a non-object"));
+            return Err(cb::type_error(
+                scope,
+                "Execution wait queue contains a non-object",
+            ));
         };
         let wait_activity = cb::get(scope, wait.into(), "activityId")?;
         let selected =
@@ -470,9 +489,8 @@ fn abort_waiters<'s>(
             cb::call(scope, reject, undefined, &[reason], "wait.reject")?;
         } else {
             if retained != index {
-                let retained_ok = cb::catching(scope, |scope| {
-                    queue.set_index(scope, retained, wait.into())
-                })?;
+                let retained_ok =
+                    cb::catching(scope, |scope| queue.set_index(scope, retained, wait.into()))?;
                 if !retained_ok {
                     return Err(cb::type_error(
                         scope,
@@ -489,7 +507,10 @@ fn abort_waiters<'s>(
         queue.set(scope, length_key.into(), length.into())
     })?;
     if !compacted {
-        return Err(cb::type_error(scope, "Execution wait queue could not compact"));
+        return Err(cb::type_error(
+            scope,
+            "Execution wait queue could not compact",
+        ));
     }
     Ok(undefined)
 }
@@ -516,8 +537,6 @@ pub(crate) fn abort_activity_waiters<'s>(
     Ok(())
 }
 
-
-
 fn runtime_metadata<'s>(
     scope: &mut v8::HandleScope<'s>,
     state: &RegistryState,
@@ -542,7 +561,6 @@ fn runtime_metadata<'s>(
     };
     Ok(v8::Local::new(scope, &entry.metadata).into())
 }
-
 
 fn settings_state_for_scope(scope: &v8::HandleScope) -> Option<Rc<SettingsState>> {
     scope.get_slot::<Rc<SettingsState>>().cloned()
@@ -569,9 +587,8 @@ fn dispatch_settings<'s>(
         ));
     }
     let operation = operation.to_rust_string_lossy(scope);
-    let state = settings_state_for_scope(scope).ok_or_else(|| {
-        cb::type_error(scope, "SettingsStore native state is not installed")
-    })?;
+    let state = settings_state_for_scope(scope)
+        .ok_or_else(|| cb::type_error(scope, "SettingsStore native state is not installed"))?;
     match operation.as_str() {
         "saved" => {
             let name = settings_string_arg(scope, args.get(1), "SettingsStore name")?;
@@ -602,12 +619,7 @@ fn dispatch_settings<'s>(
             })?;
             let identity = slot.identity(LocalStateDomain::ScriptRuntimeSettings);
             let edit = RuntimeSettingsEdit::try_set(identity, None, &name, &key, &raw).map_err(
-                |error| {
-                    settings_error(
-                        scope,
-                        &format!("SettingsStore save refused: {error:?}"),
-                    )
-                },
+                |error| settings_error(scope, &format!("SettingsStore save refused: {error:?}")),
             )?;
             match slot.port().submit(DomainEdit::ScriptRuntimeSettings(edit)) {
                 SubmitReceipt::Accepted { .. } => {}
@@ -648,7 +660,10 @@ fn dispatch_settings<'s>(
                 }
                 let order = state.next_order.get();
                 let Some(next_order) = order.checked_add(1) else {
-                    return Err(settings_error(scope, "SettingsStore listener order exhausted"));
+                    return Err(settings_error(
+                        scope,
+                        "SettingsStore listener order exhausted",
+                    ));
                 };
                 state.next_order.set(next_order);
                 let listener = SettingsListener {
@@ -683,10 +698,7 @@ fn dispatch_settings<'s>(
             }
             Ok(v8::undefined(scope).into())
         }
-        _ => Err(cb::type_error(
-            scope,
-            "unknown SettingsStore operation",
-        )),
+        _ => Err(cb::type_error(scope, "unknown SettingsStore operation")),
     }
 }
 
@@ -701,10 +713,7 @@ fn settings_string_arg<'s>(
     Ok(value.to_rust_string_lossy(scope))
 }
 
-fn settings_error<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    message: &str,
-) -> cb::Throw<'s> {
+fn settings_error<'s>(scope: &mut v8::HandleScope<'s>, message: &str) -> cb::Throw<'s> {
     let message = v8::String::new(scope, message).unwrap_or_else(|| v8::String::empty(scope));
     cb::Throw::Value(v8::Exception::error(scope, message))
 }
@@ -718,12 +727,12 @@ fn notify_settings_listeners<'s>(
     key: &str,
     raw: &str,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let name = v8::String::new(scope, name)
-        .ok_or_else(|| cb::type_error(scope, "SettingsStore name"))?;
-    let key = v8::String::new(scope, key).ok_or_else(|| cb::type_error(scope, "SettingsStore key"))?;
-    let raw = v8::String::new(scope, raw).ok_or_else(|| {
-        cb::type_error(scope, "SettingsStore raw value")
-    })?;
+    let name =
+        v8::String::new(scope, name).ok_or_else(|| cb::type_error(scope, "SettingsStore name"))?;
+    let key =
+        v8::String::new(scope, key).ok_or_else(|| cb::type_error(scope, "SettingsStore key"))?;
+    let raw = v8::String::new(scope, raw)
+        .ok_or_else(|| cb::type_error(scope, "SettingsStore raw value"))?;
     let callback_args = [name.into(), key.into(), raw.into()];
     let receiver = v8::undefined(scope).into();
     let mut cursor = None;
@@ -733,14 +742,14 @@ fn notify_settings_listeners<'s>(
             listeners
                 .iter()
                 .filter(|listener| {
-                    listener.callback.is_some()
-                        && cursor.is_none_or(|order| listener.order > order)
+                    listener.callback.is_some() && cursor.is_none_or(|order| listener.order > order)
                 })
                 .min_by_key(|listener| listener.order)
                 .and_then(|listener| {
-                    listener.callback.as_ref().map(|callback| {
-                        (listener.order, v8::Local::new(scope, callback))
-                    })
+                    listener
+                        .callback
+                        .as_ref()
+                        .map(|callback| (listener.order, v8::Local::new(scope, callback)))
                 })
         };
         let Some((order, callback)) = next else {

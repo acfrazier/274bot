@@ -449,7 +449,15 @@ impl GameplayFactory {
         execution: Option<api::identity::ExecutionId>,
         local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
     ) -> Result<LoadIsolate, LoadIsolateError> {
-        LoadIsolate::spawn_inner(js, shape, siblings, game_data, named_banks, execution, local_state)
+        LoadIsolate::spawn_inner(
+            js,
+            shape,
+            siblings,
+            game_data,
+            named_banks,
+            execution,
+            local_state,
+        )
     }
 }
 
@@ -725,7 +733,10 @@ impl LoadIsolate {
     /// Deliver one host-owned client-loop frame without queueing another
     /// frame while the isolate is still handling this one.
     pub(crate) fn on_client_frame(&mut self) -> bool {
-        if self.frame_interest.load(std::sync::atomic::Ordering::Acquire) == 0
+        if self
+            .frame_interest
+            .load(std::sync::atomic::Ordering::Acquire)
+            == 0
             || self.stopped.load(std::sync::atomic::Ordering::Acquire)
             || self.teardown_blocks_dispatch()
         {

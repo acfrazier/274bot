@@ -1436,14 +1436,18 @@ impl LocalStatePort for LocalStateService {
         let mut state = self.shared.state.lock();
         let (pending, cached) = {
             let store = state.admit(&store_key)?;
-            let queued = store.queue.iter().rev().find_map(|queued| match &queued.intent {
-                WriteIntent::Port(DomainEdit::ScriptRuntimeSettings(edit))
-                    if edit.namespace() == namespace && edit.key() == key =>
-                {
-                    Some(edit.raw().to_owned())
-                }
-                _ => None,
-            });
+            let queued = store
+                .queue
+                .iter()
+                .rev()
+                .find_map(|queued| match &queued.intent {
+                    WriteIntent::Port(DomainEdit::ScriptRuntimeSettings(edit))
+                        if edit.namespace() == namespace && edit.key() == key =>
+                    {
+                        Some(edit.raw().to_owned())
+                    }
+                    _ => None,
+                });
             let in_flight = store.in_flight.as_ref().and_then(|in_flight| {
                 in_flight.setting.as_ref().and_then(|setting| {
                     (setting.namespace == namespace && setting.key == key)
@@ -1453,13 +1457,12 @@ impl LocalStatePort for LocalStateService {
             let pending = queued.or(in_flight);
             let cached = match &store.file {
                 FileState::Read(cached) => {
-                    let rows = cached
-                        .snapshot
-                        .as_script_runtime_settings()
-                        .ok_or(ErrorCode::Validation {
+                    let rows = cached.snapshot.as_script_runtime_settings().ok_or(
+                        ErrorCode::Validation {
                             domain,
                             reason: ValidationReason::Identity,
-                        })?;
+                        },
+                    )?;
                     Some(Ok(rows
                         .iter()
                         .find(|row| row.namespace() == namespace && row.key() == key)
@@ -1483,7 +1486,6 @@ impl LocalStatePort for LocalStateService {
         self.shared.request_readback(&mut state, &store_key);
         Err(ErrorCode::NotReady { domain })
     }
-
 
     fn submit(&self, edit: DomainEdit) -> SubmitReceipt {
         let domain = edit.identity().domain();
@@ -1755,8 +1757,7 @@ fn gate(key: &StoreKey, store: &Store, edit: &DomainEdit, mut growth: Growth) ->
             });
         }
         if growth.bytes > 0
-            && (cached.written_len + queued.bytes + growth.bytes) as u64
-                > files::MAX_LOADOUTS_BYTES
+            && (cached.written_len + queued.bytes + growth.bytes) as u64 > files::MAX_LOADOUTS_BYTES
         {
             return Gate::Refuse(ErrorCode::Validation {
                 domain,
@@ -1899,9 +1900,9 @@ impl State {
             | StoreKey::ScriptRuntimeSettings {
                 profile, account, ..
             } => (profile, account),
-            StoreKey::Loadouts | StoreKey::Preferences => unreachable!(
-                "only bounded account stores can be evicted"
-            ),
+            StoreKey::Loadouts | StoreKey::Preferences => {
+                unreachable!("only bounded account stores can be evicted")
+            }
         };
         host_log!(
             Category::Lifecycle,
@@ -3856,8 +3857,8 @@ fn decide(
                 .as_ref()
                 .and_then(LeaseSnapshot::as_script_runtime_settings)
                 .unwrap_or(&[]);
-            let next = files::apply_script_runtime_setting(rows, edit)
-                .map_err(Settlement::Failed)?;
+            let next =
+                files::apply_script_runtime_setting(rows, edit).map_err(Settlement::Failed)?;
             let bytes = files::script_runtime_settings_bytes(key, &next)
                 .map_err(|_| schema_failure(domain))?;
             (
@@ -4034,13 +4035,11 @@ fn take_job(state: &mut State) -> Option<Job> {
     let store = state.stores.get_mut(&key).expect("found above");
     let queued = store.queue.pop_front().expect("found above");
     let setting = match &queued.intent {
-        WriteIntent::Port(DomainEdit::ScriptRuntimeSettings(edit)) => {
-            Some(PendingRuntimeSetting {
-                namespace: edit.namespace().to_string(),
-                key: edit.key().to_string(),
-                raw: Arc::from(edit.raw()),
-            })
-        }
+        WriteIntent::Port(DomainEdit::ScriptRuntimeSettings(edit)) => Some(PendingRuntimeSetting {
+            namespace: edit.namespace().to_string(),
+            key: edit.key().to_string(),
+            raw: Arc::from(edit.raw()),
+        }),
         _ => None,
     };
     store.in_flight = Some(InFlight {
@@ -4079,11 +4078,9 @@ fn empty_len(key: &StoreKey) -> usize {
         StoreKey::Loadouts => 2,
         StoreKey::Preferences => 2,
         StoreKey::BankHint { .. } => 0,
-        StoreKey::ScriptRuntimeSettings { .. } => {
-            files::script_runtime_settings_bytes(key, &[])
-                .expect("empty runtime settings are valid")
-                .len()
-        }
+        StoreKey::ScriptRuntimeSettings { .. } => files::script_runtime_settings_bytes(key, &[])
+            .expect("empty runtime settings are valid")
+            .len(),
     }
 }
 

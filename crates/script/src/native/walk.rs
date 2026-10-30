@@ -31,11 +31,7 @@ pub fn step_off_candidates(from: api::WorldTile, away: (i32, i32)) -> [api::Worl
         z: from.z + dz,
         level: from.level,
     });
-    let distance = |tile: api::WorldTile| {
-        tile.x
-            .abs_diff(away.0)
-            .max(tile.z.abs_diff(away.1))
-    };
+    let distance = |tile: api::WorldTile| tile.x.abs_diff(away.0).max(tile.z.abs_diff(away.1));
     for index in 1..candidates.len() {
         let candidate = candidates[index];
         let score = distance(candidate);

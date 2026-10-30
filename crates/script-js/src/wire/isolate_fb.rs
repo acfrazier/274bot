@@ -2312,7 +2312,9 @@ fn encode_snapshot_masked_into(
         None
     };
     let guardian_active_event_off = if mask.guardian_active_event {
-        native.guardian_active_event.map(|event| b.create_string(event))
+        native
+            .guardian_active_event
+            .map(|event| b.create_string(event))
     } else {
         None
     };
