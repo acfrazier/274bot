@@ -1049,6 +1049,10 @@ where
         checkpoint,
     )
     .await?;
+    // Incomplete geometry cannot support numeric risk or no-way-out decisions.
+    if !plan.complete {
+        return Err(UnknownWhy::Overflow);
+    }
 
     let mut unknown = input_problem(&input, context.combat);
     if unknown.is_none()
@@ -1057,9 +1061,6 @@ where
             .is_some_and(|grants| grants.named.pack() != zones.pack())
     {
         unknown = Some(UnknownWhy::NavIdentity);
-    }
-    if !plan.complete {
-        unknown = Some(UnknownWhy::Overflow);
     }
     for row in &plan.intervals {
         if let Some(class) = row.unknown_kind() {
