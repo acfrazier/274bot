@@ -401,9 +401,94 @@ struct EntityPlacement {
     shape: u8,
     rotation: u8,
     amount: u32,
+    model_resolved: bool,
     model_bytes: usize,
     faces: usize,
     points: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TerrainCell {
+    world_x: u16,
+    world_z: u16,
+    faces: u8,
+}
+
+#[derive(Clone, Copy, Default)]
+struct StaticGeometryMaximum {
+    origin_x: usize,
+    origin_z: usize,
+    containing_loaded_origin_x: usize,
+    containing_loaded_origin_z: usize,
+    terrain_cells: usize,
+    terrain_faces: usize,
+    terrain_unclipped_vertex_payload_bytes: usize,
+    terrain_max_clipped_vertex_payload_bytes: usize,
+    entity_rows: usize,
+    resolved_model_rows: usize,
+    unresolved_model_rows: usize,
+    loc_rows: usize,
+    npc_rows: usize,
+    obj_rows: usize,
+    entity_model_retained_bytes: usize,
+    entity_faces: usize,
+    entity_points: usize,
+    entity_unclipped_vertex_payload_bytes: usize,
+    entity_max_clipped_vertex_payload_bytes: usize,
+    total_faces: usize,
+    raw_unclipped_vertex_count: usize,
+    raw_unclipped_vertex_payload_bytes: usize,
+    max_two_triangle_clipped_vertex_count: usize,
+    max_two_triangle_clipped_vertex_payload_bytes: usize,
+    max_triangles_per_face: usize,
+    vertex_bytes: usize,
+}
+
+impl StaticGeometryMaximum {
+    fn json(self) -> Value {
+        json!({
+            "scope": "all source-derived static faces in the maximum co-located 50x50 RenderWorld tile-traversal footprint, before visibility and per-face culling",
+            "submitted_tiles_per_axis": SUBMITTED_SCENE_TILES,
+            "origin_world_tile": [self.origin_x, self.origin_z],
+            "containing_loaded_scene_origin_world_tile": [
+                self.containing_loaded_origin_x,
+                self.containing_loaded_origin_z
+            ],
+            "terrain": {
+                "nonempty_plane_cell_record_count": self.terrain_cells,
+                "faces": self.terrain_faces,
+                "vertex_bytes_per_vertex": self.vertex_bytes,
+                "raw_unclipped_vertex_payload_bytes": self.terrain_unclipped_vertex_payload_bytes,
+                "max_two_triangle_clipped_vertex_payload_bytes": self.terrain_max_clipped_vertex_payload_bytes
+            },
+            "resolved_map_entities": {
+                "placement_rows": self.entity_rows,
+                "resolved_model_rows": self.resolved_model_rows,
+                "unresolved_or_nonrenderable_rows": self.unresolved_model_rows,
+                "loc_rows": self.loc_rows,
+                "npc_rows": self.npc_rows,
+                "obj_rows": self.obj_rows,
+                "model_retained_bytes_not_vertex_payload": self.entity_model_retained_bytes,
+                "faces": self.entity_faces,
+                "points": self.entity_points,
+                "vertex_bytes_per_vertex": self.vertex_bytes,
+                "raw_unclipped_vertex_payload_bytes": self.entity_unclipped_vertex_payload_bytes,
+                "max_two_triangle_clipped_vertex_payload_bytes": self.entity_max_clipped_vertex_payload_bytes
+            },
+            "co_located_static_total": {
+                "faces": self.total_faces,
+                "raw_unclipped_triangle_count": self.total_faces,
+                "raw_unclipped_vertex_count": self.raw_unclipped_vertex_count,
+                "raw_unclipped_vertex_payload_bytes": self.raw_unclipped_vertex_payload_bytes,
+                "max_triangles_per_face": self.max_triangles_per_face,
+                "max_two_triangle_clipped_vertex_count": self.max_two_triangle_clipped_vertex_count,
+                "max_two_triangle_clipped_vertex_payload_bytes": self.max_two_triangle_clipped_vertex_payload_bytes
+            },
+            "binding_limit_bytes": VERTEX_BINDING_LIMIT_BYTES,
+            "raw_unclipped_payload_fits_binding_limit": self.raw_unclipped_vertex_payload_bytes <= VERTEX_BINDING_LIMIT_BYTES,
+            "max_two_triangle_clipped_payload_fits_binding_limit": self.max_two_triangle_clipped_vertex_payload_bytes <= VERTEX_BINDING_LIMIT_BYTES
+        })
+    }
 }
 
 #[derive(Default)]
@@ -517,6 +602,7 @@ fn parse_map_source(
                     shape,
                     rotation,
                     amount: 1,
+                    model_resolved: false,
                     model_bytes: 0,
                     faces: 0,
                     points: 0,
@@ -566,6 +652,7 @@ fn parse_map_source(
                     shape: 0,
                     rotation: 0,
                     amount,
+                    model_resolved: false,
                     model_bytes: 0,
                     faces: 0,
                     points: 0,
@@ -720,20 +807,31 @@ struct SceneMaximum {
     triggering_id: Option<String>,
 }
 
+fn scene_origin_count(
+    scene_size: usize,
+    world_size: usize,
+    origin_stride: usize,
+) -> Result<usize, String> {
+    if scene_size == 0 || scene_size > world_size || origin_stride == 0 {
+        return Err("scene dimensions or origin stride do not fit the world grid".to_string());
+    }
+    Ok((world_size - scene_size) / origin_stride + 1)
+}
+
 fn maximum_scene_metric(
     entities: &[EntityPlacement],
     scene_size: usize,
     world_size: usize,
+    origin_stride: usize,
     kind: Option<EntityKind>,
     metric: impl Fn(&EntityPlacement) -> usize,
 ) -> Result<(usize, usize, usize), String> {
-    if scene_size == 0 || scene_size > world_size {
-        return Err("scene dimensions do not fit the world grid".to_string());
-    }
-    let origin_count = world_size - scene_size + 1;
-    let mut events = (0..origin_count)
+    let x_origin_count = scene_origin_count(scene_size, world_size, origin_stride)?;
+    let z_origin_count = scene_origin_count(scene_size, world_size, origin_stride)?;
+    let mut events = (0..x_origin_count)
         .map(|_| Vec::<(usize, usize, i128)>::new())
         .collect::<Vec<_>>();
+    let max_origin = world_size - scene_size;
     for entity in entities
         .iter()
         .filter(|entity| kind.is_none_or(|expected| expected == entity.kind))
@@ -747,30 +845,37 @@ fn maximum_scene_metric(
                 entity.id
             ));
         }
-        let first_x = x.saturating_sub(scene_size - 1);
-        let last_x = x.min(origin_count - 1);
-        let first_z = z.saturating_sub(scene_size - 1);
-        let last_z = z.min(origin_count - 1);
+        let first_x = x.saturating_sub(scene_size - 1).div_ceil(origin_stride);
+        let last_x = x.min(max_origin) / origin_stride;
+        let first_z = z.saturating_sub(scene_size - 1).div_ceil(origin_stride);
+        let last_z = z.min(max_origin) / origin_stride;
+        if first_x > last_x || first_z > last_z {
+            continue;
+        }
         let delta = i128::try_from(metric(entity))
             .map_err(|_| "scene entity metric exceeds signed accumulator range".to_string())?;
         if delta == 0 {
             continue;
         }
         events[first_x].push((first_z, last_z, delta));
-        if let Some(after_last_x) = last_x.checked_add(1).filter(|&next| next < origin_count) {
+        if let Some(after_last_x) = last_x.checked_add(1).filter(|&next| next < x_origin_count) {
             events[after_last_x].push((first_z, last_z, -delta));
         }
     }
 
-    let mut tree = RangeAddMax::new(origin_count)?;
+    let mut tree = RangeAddMax::new(z_origin_count)?;
     let mut best = (0usize, 0usize, 0usize);
-    for (origin_x, updates) in events.into_iter().enumerate() {
+    for (origin_x_index, updates) in events.into_iter().enumerate() {
         for (first_z, last_z, delta) in updates {
             tree.add(first_z, last_z, delta)?;
         }
-        let (value, origin_z) = tree.maximum()?;
+        let (value, origin_z_index) = tree.maximum()?;
         if value > best.0 {
-            best = (value, origin_x, origin_z);
+            best = (
+                value,
+                origin_x_index * origin_stride,
+                origin_z_index * origin_stride,
+            );
         }
     }
     Ok(best)
@@ -780,20 +885,21 @@ fn maximum_scene_entities(
     entities: &[EntityPlacement],
     scene_size: usize,
     world_size: usize,
+    origin_stride: usize,
     kind: Option<EntityKind>,
 ) -> Result<SceneMaximum, String> {
     let (count, origin_x, origin_z) =
-        maximum_scene_metric(entities, scene_size, world_size, kind, |_| 1)?;
+        maximum_scene_metric(entities, scene_size, world_size, origin_stride, kind, |_| 1)?;
     let (model_bytes, model_origin_x, model_origin_z) =
-        maximum_scene_metric(entities, scene_size, world_size, kind, |entity| {
+        maximum_scene_metric(entities, scene_size, world_size, origin_stride, kind, |entity| {
             entity.model_bytes
         })?;
     let (faces, face_origin_x, face_origin_z) =
-        maximum_scene_metric(entities, scene_size, world_size, kind, |entity| {
+        maximum_scene_metric(entities, scene_size, world_size, origin_stride, kind, |entity| {
             entity.faces
         })?;
     let (points, point_origin_x, point_origin_z) =
-        maximum_scene_metric(entities, scene_size, world_size, kind, |entity| {
+        maximum_scene_metric(entities, scene_size, world_size, origin_stride, kind, |entity| {
             entity.points
         })?;
     let scene_end_x = model_origin_x + scene_size;
@@ -835,6 +941,431 @@ fn maximum_scene_entities(
         point_origin_z,
         triggering_id,
     })
+}
+
+trait ScenePoint {
+    fn world_x(&self) -> usize;
+    fn world_z(&self) -> usize;
+}
+
+impl ScenePoint for TerrainCell {
+    fn world_x(&self) -> usize {
+        usize::from(self.world_x)
+    }
+
+    fn world_z(&self) -> usize {
+        usize::from(self.world_z)
+    }
+}
+
+impl ScenePoint for EntityPlacement {
+    fn world_x(&self) -> usize {
+        usize::from(self.world_x)
+    }
+
+    fn world_z(&self) -> usize {
+        usize::from(self.world_z)
+    }
+}
+
+fn validate_sorted_scene_points<T: ScenePoint>(
+    points: &[T],
+    world_size: usize,
+    label: &str,
+) -> Result<(), String> {
+    let mut previous_x = None;
+    for point in points {
+        let x = point.world_x();
+        let z = point.world_z();
+        if x >= world_size || z >= world_size {
+            return Err(format!(
+                "{label} coordinate ({x},{z}) exceeds {world_size}x{world_size} world"
+            ));
+        }
+        if previous_x.is_some_and(|previous| x < previous) {
+            return Err(format!("{label} points are not sorted by world x"));
+        }
+        previous_x = Some(x);
+    }
+    Ok(())
+}
+
+fn scene_point_origin_range(
+    tile: usize,
+    scene_size: usize,
+    world_size: usize,
+    origin_stride: usize,
+) -> Option<(usize, usize)> {
+    let max_origin = world_size - scene_size;
+    let first = tile.saturating_sub(scene_size - 1).div_ceil(origin_stride);
+    let last = tile.min(max_origin) / origin_stride;
+    (first <= last).then_some((first, last))
+}
+
+fn add_scene_point_to_tree(
+    tree: &mut RangeAddMax,
+    z: usize,
+    metric: usize,
+    add: bool,
+    scene_size: usize,
+    world_size: usize,
+    origin_stride: usize,
+) -> Result<(), String> {
+    if metric == 0 {
+        return Ok(());
+    }
+    let Some((first_z, last_z)) =
+        scene_point_origin_range(z, scene_size, world_size, origin_stride)
+    else {
+        return Ok(());
+    };
+    let amount = i128::try_from(metric)
+        .map_err(|_| "scene point metric exceeds signed accumulator range".to_string())?;
+    tree.add(first_z, last_z, if add { amount } else { -amount })
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The sweep updates one caller-owned window using explicit grid and metric inputs"
+)]
+fn advance_scene_window<T: ScenePoint>(
+    tree: &mut RangeAddMax,
+    points: &[T],
+    active_start: &mut usize,
+    next_add: &mut usize,
+    origin_x: usize,
+    scene_size: usize,
+    world_size: usize,
+    origin_stride: usize,
+    metric: impl Fn(&T) -> usize,
+) -> Result<(), String> {
+    while *active_start < *next_add {
+        let point = &points[*active_start];
+        if point.world_x() >= origin_x {
+            break;
+        }
+        add_scene_point_to_tree(
+            tree,
+            point.world_z(),
+            metric(point),
+            false,
+            scene_size,
+            world_size,
+            origin_stride,
+        )?;
+        *active_start += 1;
+    }
+    let window_end_x = origin_x + scene_size;
+    while *next_add < points.len() {
+        let point = &points[*next_add];
+        if point.world_x() >= window_end_x {
+            break;
+        }
+        if point.world_x() < origin_x {
+            return Err("scene sweep skipped a point before the active window".to_string());
+        }
+        add_scene_point_to_tree(
+            tree,
+            point.world_z(),
+            metric(point),
+            true,
+            scene_size,
+            world_size,
+            origin_stride,
+        )?;
+        *next_add += 1;
+    }
+    Ok(())
+}
+
+fn maximum_sorted_scene_metric<T: ScenePoint>(
+    points: &[T],
+    scene_size: usize,
+    world_size: usize,
+    origin_stride: usize,
+    label: &str,
+    metric: impl Fn(&T) -> usize,
+) -> Result<(usize, usize, usize), String> {
+    validate_sorted_scene_points(points, world_size, label)?;
+    let x_origin_count = scene_origin_count(scene_size, world_size, origin_stride)?;
+    let z_origin_count = scene_origin_count(scene_size, world_size, origin_stride)?;
+    let mut tree = RangeAddMax::new(z_origin_count)?;
+    let mut active_start = 0;
+    let mut next_add = 0;
+    let mut best = (0usize, 0usize, 0usize);
+    for origin_x_index in 0..x_origin_count {
+        let origin_x = origin_x_index * origin_stride;
+        advance_scene_window(
+            &mut tree,
+            points,
+            &mut active_start,
+            &mut next_add,
+            origin_x,
+            scene_size,
+            world_size,
+            origin_stride,
+            &metric,
+        )?;
+        let (value, origin_z_index) = tree.maximum()?;
+        if value > best.0 {
+            best = (
+                value,
+                origin_x,
+                origin_z_index * origin_stride,
+            );
+        }
+    }
+    Ok(best)
+}
+
+fn maximum_combined_scene_faces(
+    terrain: &[TerrainCell],
+    entities: &[EntityPlacement],
+    scene_size: usize,
+    world_size: usize,
+    origin_stride: usize,
+) -> Result<(usize, usize, usize), String> {
+    validate_sorted_scene_points(terrain, world_size, "terrain")?;
+    validate_sorted_scene_points(entities, world_size, "static entity")?;
+    let x_origin_count = scene_origin_count(scene_size, world_size, origin_stride)?;
+    let z_origin_count = scene_origin_count(scene_size, world_size, origin_stride)?;
+    let mut tree = RangeAddMax::new(z_origin_count)?;
+    let mut terrain_start = 0;
+    let mut terrain_next = 0;
+    let mut entity_start = 0;
+    let mut entity_next = 0;
+    let mut best = (0usize, 0usize, 0usize);
+    for origin_x_index in 0..x_origin_count {
+        let origin_x = origin_x_index * origin_stride;
+        advance_scene_window(
+            &mut tree,
+            terrain,
+            &mut terrain_start,
+            &mut terrain_next,
+            origin_x,
+            scene_size,
+            world_size,
+            origin_stride,
+            |cell| usize::from(cell.faces),
+        )?;
+        advance_scene_window(
+            &mut tree,
+            entities,
+            &mut entity_start,
+            &mut entity_next,
+            origin_x,
+            scene_size,
+            world_size,
+            origin_stride,
+            |entity| entity.faces,
+        )?;
+        let (value, origin_z_index) = tree.maximum()?;
+        if value > best.0 {
+            best = (
+                value,
+                origin_x,
+                origin_z_index * origin_stride,
+            );
+        }
+    }
+    Ok(best)
+}
+
+fn geometry_vertex_payload(
+    faces: usize,
+    triangles_per_face: usize,
+    vertex_bytes: usize,
+) -> Result<(usize, usize, usize), String> {
+    let triangles = faces
+        .checked_mul(triangles_per_face)
+        .ok_or_else(|| "scene triangle count overflowed".to_string())?;
+    let vertices = triangles
+        .checked_mul(3)
+        .ok_or_else(|| "scene vertex count overflowed".to_string())?;
+    let bytes = vertices
+        .checked_mul(vertex_bytes)
+        .ok_or_else(|| "scene vertex payload overflowed".to_string())?;
+    Ok((triangles, vertices, bytes))
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The summary needs the exact window coordinates and renderer element layout"
+)]
+fn static_geometry_at_window(
+    terrain: &[TerrainCell],
+    entities: &[EntityPlacement],
+    origin_x: usize,
+    origin_z: usize,
+    scene_size: usize,
+    world_size: usize,
+    max_triangles_per_face: usize,
+    vertex_bytes: usize,
+) -> Result<StaticGeometryMaximum, String> {
+    let end_x = origin_x
+        .checked_add(scene_size)
+        .ok_or_else(|| "static scene x extent overflowed".to_string())?;
+    let end_z = origin_z
+        .checked_add(scene_size)
+        .ok_or_else(|| "static scene z extent overflowed".to_string())?;
+    if end_x > world_size || end_z > world_size {
+        return Err("static geometry window exceeds the world grid".to_string());
+    }
+    let mut maximum = StaticGeometryMaximum {
+        origin_x,
+        origin_z,
+        max_triangles_per_face,
+        vertex_bytes,
+        ..StaticGeometryMaximum::default()
+    };
+    let terrain_start = terrain.partition_point(|cell| usize::from(cell.world_x) < origin_x);
+    let terrain_end = terrain.partition_point(|cell| usize::from(cell.world_x) < end_x);
+    for cell in &terrain[terrain_start..terrain_end] {
+        let z = usize::from(cell.world_z);
+        if (origin_z..end_z).contains(&z) {
+            maximum.terrain_cells = maximum
+                .terrain_cells
+                .checked_add(1)
+                .ok_or_else(|| "static scene terrain cell count overflowed".to_string())?;
+            maximum.terrain_faces = maximum
+                .terrain_faces
+                .checked_add(usize::from(cell.faces))
+                .ok_or_else(|| "static scene terrain face count overflowed".to_string())?;
+        }
+    }
+    let entity_start = entities.partition_point(|entity| usize::from(entity.world_x) < origin_x);
+    let entity_end = entities.partition_point(|entity| usize::from(entity.world_x) < end_x);
+    for entity in &entities[entity_start..entity_end] {
+        let z = usize::from(entity.world_z);
+        if !(origin_z..end_z).contains(&z) {
+            continue;
+        }
+        let resolved_rows = if entity.model_resolved {
+            &mut maximum.resolved_model_rows
+        } else {
+            &mut maximum.unresolved_model_rows
+        };
+        *resolved_rows = (*resolved_rows)
+            .checked_add(1)
+            .ok_or_else(|| "static scene resolved model row count overflowed".to_string())?;
+        maximum.entity_rows = maximum
+            .entity_rows
+            .checked_add(1)
+            .ok_or_else(|| "static scene entity row count overflowed".to_string())?;
+        let row_count = match entity.kind {
+            EntityKind::Loc => &mut maximum.loc_rows,
+            EntityKind::Npc => &mut maximum.npc_rows,
+            EntityKind::Obj => &mut maximum.obj_rows,
+        };
+        *row_count = (*row_count)
+            .checked_add(1)
+            .ok_or_else(|| "static scene entity kind row count overflowed".to_string())?;
+        maximum.entity_model_retained_bytes = maximum
+            .entity_model_retained_bytes
+            .checked_add(entity.model_bytes)
+            .ok_or_else(|| "static scene model retained-byte count overflowed".to_string())?;
+        maximum.entity_faces = maximum
+            .entity_faces
+            .checked_add(entity.faces)
+            .ok_or_else(|| "static scene entity face count overflowed".to_string())?;
+        maximum.entity_points = maximum
+            .entity_points
+            .checked_add(entity.points)
+            .ok_or_else(|| "static scene entity point count overflowed".to_string())?;
+    }
+    maximum.total_faces = maximum
+        .terrain_faces
+        .checked_add(maximum.entity_faces)
+        .ok_or_else(|| "static scene total face count overflowed".to_string())?;
+    let (_, _, terrain_unclipped_payload) =
+        geometry_vertex_payload(maximum.terrain_faces, 1, vertex_bytes)?;
+    maximum.terrain_unclipped_vertex_payload_bytes = terrain_unclipped_payload;
+    let (_, _, terrain_clipped_payload) = geometry_vertex_payload(
+        maximum.terrain_faces,
+        max_triangles_per_face,
+        vertex_bytes,
+    )?;
+    maximum.terrain_max_clipped_vertex_payload_bytes = terrain_clipped_payload;
+    let (_, _, entity_unclipped_payload) =
+        geometry_vertex_payload(maximum.entity_faces, 1, vertex_bytes)?;
+    maximum.entity_unclipped_vertex_payload_bytes = entity_unclipped_payload;
+    let (_, _, entity_clipped_payload) = geometry_vertex_payload(
+        maximum.entity_faces,
+        max_triangles_per_face,
+        vertex_bytes,
+    )?;
+    maximum.entity_max_clipped_vertex_payload_bytes = entity_clipped_payload;
+    let (_, raw_vertices, raw_payload) =
+        geometry_vertex_payload(maximum.total_faces, 1, vertex_bytes)?;
+    maximum.raw_unclipped_vertex_count = raw_vertices;
+    maximum.raw_unclipped_vertex_payload_bytes = raw_payload;
+    let (_, clipped_vertices, clipped_payload) = geometry_vertex_payload(
+        maximum.total_faces,
+        max_triangles_per_face,
+        vertex_bytes,
+    )?;
+    maximum.max_two_triangle_clipped_vertex_count = clipped_vertices;
+    maximum.max_two_triangle_clipped_vertex_payload_bytes = clipped_payload;
+    Ok(maximum)
+}
+
+fn maximum_submitted_static_geometry(
+    terrain: &[TerrainCell],
+    entities: &mut [EntityPlacement],
+    world_size: usize,
+    loaded_scene_size: usize,
+    submitted_scene_size: usize,
+    max_triangles_per_face: usize,
+    vertex_bytes: usize,
+) -> Result<StaticGeometryMaximum, String> {
+    if max_triangles_per_face != 2 {
+        return Err(format!(
+            "expected the renderer's two-triangle clipped-face bound, found {max_triangles_per_face}"
+        ));
+    }
+    scene_origin_count(loaded_scene_size, world_size, MAP_LOAD_ORIGIN_STRIDE)?;
+    if submitted_scene_size > loaded_scene_size {
+        return Err("submitted geometry window exceeds the loaded scene".to_string());
+    }
+    entities.sort_unstable_by_key(|entity| (entity.world_x, entity.world_z));
+    let (maximum_faces, origin_x, origin_z) = maximum_combined_scene_faces(
+        terrain,
+        entities,
+        submitted_scene_size,
+        world_size,
+        1,
+    )?;
+    let max_loaded_origin = (world_size - loaded_scene_size) / MAP_LOAD_ORIGIN_STRIDE
+        * MAP_LOAD_ORIGIN_STRIDE;
+    let containing_loaded_origin_x =
+        (origin_x / MAP_LOAD_ORIGIN_STRIDE * MAP_LOAD_ORIGIN_STRIDE).min(max_loaded_origin);
+    let containing_loaded_origin_z =
+        (origin_z / MAP_LOAD_ORIGIN_STRIDE * MAP_LOAD_ORIGIN_STRIDE).min(max_loaded_origin);
+    let loaded_end_x = containing_loaded_origin_x + loaded_scene_size;
+    let loaded_end_z = containing_loaded_origin_z + loaded_scene_size;
+    if origin_x < containing_loaded_origin_x
+        || origin_z < containing_loaded_origin_z
+        || origin_x + submitted_scene_size > loaded_end_x
+        || origin_z + submitted_scene_size > loaded_end_z
+    {
+        return Err("submitted footprint is not contained by a legal loaded scene".to_string());
+    }
+    let mut maximum = static_geometry_at_window(
+        terrain,
+        entities,
+        origin_x,
+        origin_z,
+        submitted_scene_size,
+        world_size,
+        max_triangles_per_face,
+        vertex_bytes,
+    )?;
+    maximum.containing_loaded_origin_x = containing_loaded_origin_x;
+    maximum.containing_loaded_origin_z = containing_loaded_origin_z;
+    if maximum.total_faces != maximum_faces {
+        return Err("static geometry summary does not match the maximum face sweep".to_string());
+    }
+    Ok(maximum)
 }
 
 fn source_root() -> PathBuf {
@@ -1173,20 +1704,29 @@ fn nav_source_bounds(
 
 #[derive(Default)]
 struct SceneCaptureBounds {
-    terrain_faces: usize,
-    static_entity_faces: usize,
-    dynamic_sprites: usize,
-    dynamic_faces_per_sprite: usize,
-    scene_faces: usize,
-    scene_triangles: usize,
-    capture_payload_bytes: usize,
-    capture_peak_bytes: usize,
+    submitted_static: StaticGeometryMaximum,
+    legal_loaded_terrain_faces: usize,
+    legal_loaded_terrain_origin: Value,
+    legal_loaded_entity_faces: usize,
+    legal_loaded_entity_origin: [usize; 2],
+    conservative_window_terrain_faces_upper: usize,
+    conservative_window_terrain_origin: Value,
+    conservative_window_entity_faces_upper: usize,
+    conservative_window_entity_origin: Value,
+    dynamic_sprite_storage_capacity: usize,
+    dynamic_faces_per_sprite_upper: usize,
+    conservative_dynamic_faces_upper: usize,
+    conservative_scene_faces_upper: usize,
+    conservative_scene_triangles_upper: usize,
+    conservative_capture_payload_bytes_upper: usize,
+    conservative_capture_peak_bytes_upper: usize,
 }
 
 fn scene_capture_bounds(
     families: &BTreeMap<String, FamilyMaximum>,
     scene_maxima: &BTreeMap<String, SceneMaximum>,
     map_stats: &BTreeMap<String, Value>,
+    submitted_static: StaticGeometryMaximum,
 ) -> Result<SceneCaptureBounds, String> {
     let layout = client::render::world::render_test_content_layout();
     let family_faces = |name: &str| {
@@ -1203,12 +1743,36 @@ fn scene_capture_bounds(
     let spot_faces = family_faces("spot_models")?;
     let scene = scene_maxima
         .get("all")
-        .ok_or_else(|| "missing maximum static scene entity record".to_string())?;
-    let terrain_faces = map_stats
-        .get("maximum_terrain_faces_per_scene")
+        .ok_or_else(|| "maximum static loaded-scene entity record is unavailable".to_string())?;
+    let legal_loaded_entity_faces = scene.faces;
+    let legal_loaded_terrain_faces = map_stats
+        .get("maximum_terrain_faces_per_loaded_scene")
         .and_then(Value::as_u64)
         .and_then(|value| usize::try_from(value).ok())
-        .ok_or_else(|| "missing maximum terrain faces per scene".to_string())?;
+        .ok_or_else(|| "missing legal loaded-scene terrain face maximum".to_string())?;
+    let legal_loaded_terrain_origin = map_stats
+        .get("maximum_terrain_loaded_scene_origin")
+        .cloned()
+        .ok_or_else(|| "missing legal loaded-scene terrain origin".to_string())?;
+    let conservative_window_terrain_faces_upper = map_stats
+        .get("conservative_any_tile_window_terrain_face_upper")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| "missing conservative terrain face upper".to_string())?;
+    let conservative_window_entity_faces_upper = map_stats
+        .get("conservative_any_tile_window_entity_face_upper")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| "missing conservative entity face upper".to_string())?;
+    let conservative_window_terrain_origin = map_stats
+        .get("conservative_any_tile_window_terrain_origin")
+        .cloned()
+        .ok_or_else(|| "missing conservative terrain window origin".to_string())?;
+    let conservative_window_entity_origin = map_stats
+        .get("conservative_any_tile_window_entity_origin")
+        .cloned()
+        .ok_or_else(|| "missing conservative entity window origin".to_string())?;
+    let legal_loaded_entity_origin = [scene.face_origin_x, scene.face_origin_z];
     let raw_wear_model_faces = base_faces
         .checked_mul(3)
         .ok_or_else(|| "raw wear-model face bound overflowed".to_string())?;
@@ -1223,40 +1787,50 @@ fn scene_capture_bounds(
     .into_iter()
     .max()
     .unwrap_or_default();
-    let dynamic_faces_per_sprite = component_faces
+    let dynamic_faces_per_sprite_upper = component_faces
         .checked_mul(12)
         .and_then(|faces| faces.checked_add(spot_faces))
         .and_then(|faces| faces.checked_add(loc_faces))
-        .ok_or_else(|| "dynamic sprite face bound overflowed".to_string())?;
-    let dynamic_faces = layout
+        .ok_or_else(|| "dynamic sprite face upper overflowed".to_string())?;
+    let conservative_dynamic_faces_upper = layout
         .max_dynamic_sprites
-        .checked_mul(dynamic_faces_per_sprite)
-        .ok_or_else(|| "dynamic scene face bound overflowed".to_string())?;
-    let scene_faces = terrain_faces
-        .checked_add(scene.faces)
-        .and_then(|faces| faces.checked_add(dynamic_faces))
-        .ok_or_else(|| "complete scene face bound overflowed".to_string())?;
-    let scene_triangles = scene_faces
+        .checked_mul(dynamic_faces_per_sprite_upper)
+        .ok_or_else(|| "conservative dynamic face upper overflowed".to_string())?;
+    let independent_static_faces = conservative_window_terrain_faces_upper
+        .checked_add(conservative_window_entity_faces_upper)
+        .ok_or_else(|| "independent conservative window face maxima overflowed".to_string())?;
+    let conservative_scene_faces_upper = independent_static_faces
+        .checked_add(conservative_dynamic_faces_upper)
+        .ok_or_else(|| "conservative scene face upper overflowed".to_string())?;
+    let conservative_scene_triangles_upper = conservative_scene_faces_upper
         .checked_mul(layout.max_model_triangles_per_face)
-        .ok_or_else(|| "scene triangle bound overflowed".to_string())?;
-    let capture_vertices = scene_triangles
+        .ok_or_else(|| "conservative scene triangle upper overflowed".to_string())?;
+    let capture_vertices = conservative_scene_triangles_upper
         .checked_mul(3)
-        .ok_or_else(|| "capture vertex count overflowed".to_string())?;
-    let capture_payload_bytes = capture_vertices
+        .ok_or_else(|| "conservative capture vertex count overflowed".to_string())?;
+    let conservative_capture_payload_bytes_upper = capture_vertices
         .checked_mul(layout.capture_vertex_bytes)
-        .ok_or_else(|| "capture payload byte bound overflowed".to_string())?;
-    let capture_peak_bytes =
+        .ok_or_else(|| "conservative capture payload upper overflowed".to_string())?;
+    let conservative_capture_peak_bytes_upper =
         vector_replacement_peak_bytes(capture_vertices, layout.capture_vertex_bytes)
-            .ok_or_else(|| "capture replacement peak overflowed".to_string())?;
+            .ok_or_else(|| "conservative capture replacement peak overflowed".to_string())?;
     Ok(SceneCaptureBounds {
-        terrain_faces,
-        static_entity_faces: scene.faces,
-        dynamic_sprites: layout.max_dynamic_sprites,
-        dynamic_faces_per_sprite,
-        scene_faces,
-        scene_triangles,
-        capture_payload_bytes,
-        capture_peak_bytes,
+        submitted_static,
+        legal_loaded_terrain_faces,
+        legal_loaded_terrain_origin,
+        legal_loaded_entity_faces,
+        legal_loaded_entity_origin,
+        conservative_window_terrain_faces_upper,
+        conservative_window_terrain_origin,
+        conservative_window_entity_faces_upper,
+        conservative_window_entity_origin,
+        dynamic_sprite_storage_capacity: layout.max_dynamic_sprites,
+        dynamic_faces_per_sprite_upper,
+        conservative_dynamic_faces_upper,
+        conservative_scene_faces_upper,
+        conservative_scene_triangles_upper,
+        conservative_capture_payload_bytes_upper,
+        conservative_capture_peak_bytes_upper,
     })
 }
 
@@ -1824,13 +2398,14 @@ fn content_owner_bounds(
         head_models: OwnerValue {
             bytes: head_models,
             details: json!({
-                "maximum_static_scene_model_bytes": scene.model_bytes,
-                "maximum_static_scene_entity_count": scene.count,
-                "max_dynamic_sprite_slots": world.max_dynamic_sprites,
+                "maximum_resident_loaded_scene_model_bytes": scene.model_bytes,
+                "maximum_resident_loaded_scene_entity_rows": scene.count,
+                "dynamic_sprite_storage_capacity_slots": world.max_dynamic_sprites,
+                "dynamic_population_bound_established": false,
                 "max_retained_model_family_bytes": model_max,
                 "player_dynamic_model_bytes_upper": player_dynamic_model_bytes,
-                "dynamic_model_bytes_per_slot_upper": dynamic_model_max,
-                "dynamic_model_payload_bytes": dynamic_model_bytes,
+                "dynamic_model_bytes_per_slot_loose_upper": dynamic_model_max,
+                "conservative_all_storage_slots_model_payload_bytes_upper": dynamic_model_bytes,
                 "single_slot_old_new_model_replacement_bytes": head_model_replacement,
             }),
         },
@@ -1849,7 +2424,7 @@ fn content_owner_bounds(
                 },
                 "world_slots": {
                     "tile_cache_slots_per_vector": world.max_tile_cache_slots,
-                    "dynamic_sprite_slots": world.max_dynamic_sprites,
+                    "dynamic_sprite_storage_capacity_slots": world.max_dynamic_sprites,
                     "world_sprite_slots_upper": world_sprite_slots,
                     "overlay_ground_layers": ground_layers,
                     "sprite_model_vector_replacement_peak_bytes": sprite_model_peak,
@@ -1978,8 +2553,14 @@ fn resource_rows(
         .and_then(|family| family.trigger.as_deref());
     let scene_trigger = scene_maxima.get("all").map(|max| {
         format!(
-            "scene-origin:{},{};static-loc-count:{}",
+            "loaded-scene-origin:{},{};entity-rows:{}",
             max.origin_x, max.origin_z, max.count
+        )
+    });
+    let capture_trigger = capture_bounds.map(|capture| {
+        format!(
+            "submitted-static-origin:{},{};conservative-unqualified-dynamic-upper",
+            capture.submitted_static.origin_x, capture.submitted_static.origin_z
         )
     });
     let shared_known = json!({
@@ -2035,31 +2616,67 @@ fn resource_rows(
     });
     let capture_known = capture_bounds.map(|capture| {
         json!({
-            "terrain_faces": capture.terrain_faces,
-            "static_entity_faces": capture.static_entity_faces,
-            "max_dynamic_sprites": capture.dynamic_sprites,
-            "dynamic_faces_per_sprite_upper": capture.dynamic_faces_per_sprite,
-            "scene_faces_upper": capture.scene_faces,
-            "scene_triangles_upper": capture.scene_triangles,
-            "capture_payload_bytes_upper": capture.capture_payload_bytes,
-            "capture_replacement_peak_bytes_upper": capture.capture_peak_bytes,
+            "classification": "conservative_unqualified_upper_not_an_achieved_scene",
+            "exact_maximum_submitted_static_geometry": capture.submitted_static.json(),
+            "legal_loaded_scene_component_maxima": {
+                "loaded_scene_tiles_per_axis": client::dash3d::BuildArea::SIZE,
+                "legal_origin_stride_tiles": MAP_LOAD_ORIGIN_STRIDE,
+                "terrain_face_maximum": capture.legal_loaded_terrain_faces,
+                "terrain_maximum_origin_world_tile": capture.legal_loaded_terrain_origin,
+                "static_entity_face_maximum": capture.legal_loaded_entity_faces,
+                "static_entity_maximum_origin_world_tile": capture.legal_loaded_entity_origin,
+                "components_share_one_origin": false
+            },
+            "conservative_any_tile_window_components": {
+                "window_tiles_per_axis": client::dash3d::BuildArea::SIZE,
+                "origin_stride_tiles": 1,
+                "terrain_face_upper": capture.conservative_window_terrain_faces_upper,
+                "terrain_window_origin_world_tile": capture.conservative_window_terrain_origin,
+                "static_entity_face_upper": capture.conservative_window_entity_faces_upper,
+                "entity_window_origin_world_tile": capture.conservative_window_entity_origin,
+                "components_share_one_window": false,
+                "used_only_for_conservative_upper": true
+            },
+            "dynamic_envelope": {
+                "sprite_arena_storage_capacity_slots": capture.dynamic_sprite_storage_capacity,
+                "legal_population_bound_established": false,
+                "faces_per_sprite_loose_composition_upper": capture.dynamic_faces_per_sprite_upper,
+                "all_storage_slots_times_loose_face_upper": capture.conservative_dynamic_faces_upper
+            },
+            "conservative_scene_faces_upper": capture.conservative_scene_faces_upper,
+            "conservative_scene_triangles_upper": capture.conservative_scene_triangles_upper,
+            "conservative_capture_payload_bytes_upper": capture.conservative_capture_payload_bytes_upper,
+            "conservative_capture_replacement_peak_bytes_upper": capture.conservative_capture_peak_bytes_upper,
+            "binding_limit_bytes": VERTEX_BINDING_LIMIT_BYTES,
+            "conservative_upper_payload_fits_binding_limit": capture.conservative_capture_payload_bytes_upper <= VERTEX_BINDING_LIMIT_BYTES
         })
     });
     let vertex_known = capture_bounds.and_then(|capture| {
         let atlas = atlas_layout?;
-        let final_capacity = capture.capture_payload_bytes.checked_next_power_of_two()?;
+        let final_capacity = capture
+            .conservative_capture_payload_bytes_upper
+            .checked_next_power_of_two()?;
         let previous_capacity = if final_capacity > 1 {
             final_capacity / 2
         } else {
             0
         };
         let replacement_peak = final_capacity.checked_add(previous_capacity)?;
+        let static_payload = capture
+            .submitted_static
+            .max_two_triangle_clipped_vertex_payload_bytes;
+        let static_capacity = static_payload.checked_next_power_of_two()?;
         Some(json!({
-            "required_scene_vertex_payload_bytes": capture.capture_payload_bytes,
-            "next_power_of_two_storage_capacity_bytes": final_capacity,
-            "replacement_peak_bytes": replacement_peak,
+            "classification": "conservative_unqualified_upper_not_an_achieved_scene",
+            "maximum_submitted_static_clipped_vertex_payload_bytes": static_payload,
+            "maximum_submitted_static_next_power_of_two_capacity_bytes": static_capacity,
+            "maximum_submitted_static_payload_fits_binding_limit": static_payload <= VERTEX_BINDING_LIMIT_BYTES,
+            "conservative_unqualified_vertex_payload_bytes_upper": capture.conservative_capture_payload_bytes_upper,
+            "conservative_upper_next_power_of_two_storage_capacity_bytes": final_capacity,
+            "conservative_upper_replacement_peak_bytes": replacement_peak,
+            "binding_limit_bytes": VERTEX_BINDING_LIMIT_BYTES,
             "device_max_storage_buffer_binding_size": atlas.max_storage_buffer_binding_size,
-            "fits_requested_device_storage_limit": final_capacity <= atlas.max_storage_buffer_binding_size as usize,
+            "conservative_upper_fits_requested_device_storage_limit": final_capacity <= atlas.max_storage_buffer_binding_size as usize,
         }))
     });
     let atlas_known = atlas_layout.map(|layout| {
@@ -2130,9 +2747,9 @@ fn resource_rows(
     let rows = [
         (
             RenderResource::Capture,
-            "all terrain, static map, and capped dynamic model faces × maximum clipped model triangles per face × 3 CaptureVertex values; include old/new Vec capacity at replacement peak",
-            scene_trigger.clone(),
-            "The pinned map/entity/model inputs or source-defined dynamic sprite and capture topology limits are unavailable.",
+            "Conservative unqualified upper only: independent 104x104 face maxima over every tile origin (not legal 8-aligned load origins) + all 5000 sprite arena storage slots × loose face-composition upper; × two clipped triangles × 3 vertices × CaptureVertex bytes, with old/new Vec replacement peak. Not an achieved scene or legal dynamic population bound.",
+            capture_trigger.clone(),
+            "A legal dynamic sprite population/topology maximum is not established; only a conservative storage-capacity composition is available.",
         ),
         (
             RenderResource::NavVertices,
@@ -2160,13 +2777,13 @@ fn resource_rows(
         ),
         (
             RenderResource::HeadModels,
-            "sum of retained SceneModel variants admitted by one head: max legal scene static LOC + dynamic actor/object model families, including every nested Model vector and shared handle",
+            "Conservative per-head upper: maximum resident static model bytes in one legal loaded scene + all dynamic sprite storage slots × a loose per-slot model-family upper + single-slot old/new replacement; not proof of a legal dynamic population.",
             loc_trigger.map(str::to_owned),
             "The complete per-head SceneModel composition and old/new replacement overlap are not bounded by current evidence.",
         ),
         (
             RenderResource::HeadMisc,
-            "sum of RenderWorld storage, dynamic sprite slots, overlays, chat/text buffers, nested Pix32 data and other owned per-head payloads; use the maximum old-plus-new replacement peak",
+            "sum of RenderWorld storage, dynamic sprite arena storage capacity, overlays, chat/text buffers, nested Pix32 data and other owned per-head payloads; use the maximum old-plus-new replacement peak",
             scene_trigger.clone(),
             "Per-head overlays, dynamic nested payloads, and replacement overlap are not fully bounded.",
         ),
@@ -2190,9 +2807,9 @@ fn resource_rows(
         ),
         (
             RenderResource::Vertex,
-            "maximum scene vertex payload before checked next-power-of-two GPU storage capacity; report the requested device storage limit and old/new buffer replacement peak",
-            loc_trigger.map(str::to_owned),
-            "The scene topology, capture element layout, or requested device storage limit is unavailable.",
+            "Exact static measurement is the co-located maximum 50x50 submitted footprint; content_upper_bytes remains a conservative unqualified dynamic composition, before next-power-of-two GPU storage and old/new replacement peak.",
+            capture_trigger.clone(),
+            "The submitted static geometry, capture vertex layout, or requested device storage limit is unavailable.",
         ),
         (
             RenderResource::ContextCpu,
@@ -2212,7 +2829,7 @@ fn resource_rows(
         .map(|(resource, formula, trigger, blocker)| {
             let (content_upper, measured, complete) = match resource {
                 RenderResource::Capture => (
-                    capture_bounds.map_or(Value::Null, |capture| json!(capture.capture_peak_bytes)),
+                    capture_bounds.map_or(Value::Null, |capture| json!(capture.conservative_capture_peak_bytes_upper)),
                     capture_known.clone().unwrap_or(Value::Null),
                     capture_bounds.is_some(),
                 ),
@@ -2276,7 +2893,7 @@ fn resource_rows(
                     owner_bounds.is_some(),
                 ),
                 RenderResource::Vertex => (
-                    capture_bounds.map_or(Value::Null, |capture| json!(capture.capture_payload_bytes)),
+                    capture_bounds.map_or(Value::Null, |capture| json!(capture.conservative_capture_payload_bytes_upper)),
                     vertex_known.clone().unwrap_or(Value::Null),
                     vertex_known.is_some(),
                 ),
@@ -2343,8 +2960,11 @@ fn render_budget_content_census() {
     let mut families = BTreeMap::<String, FamilyMaximum>::new();
     let mut map_rows = Vec::<MapIndexEntry>::new();
     let mut map_entities = Vec::<EntityPlacement>::new();
+    let mut terrain_cells = Vec::<TerrainCell>::new();
     let mut map_stats = BTreeMap::<String, Value>::new();
     let mut scene_maxima = BTreeMap::<String, SceneMaximum>::new();
+    let mut submitted_static_geometry = None;
+    let world_layout = client::render::world::render_test_content_layout();
     let mut model_record_count = None;
     let mut model_parts = None;
     let mut item_sprite_ids = None;
@@ -2554,6 +3174,7 @@ fn render_budget_content_census() {
     ) {
         Ok(census) => {
             map_entities = census.entities;
+            terrain_cells = census.terrain_cells;
             map_stats = census.stats;
         }
         Err(error) => inputs.fail("map_source_inventory_failed", error),
@@ -2782,6 +3403,7 @@ fn render_budget_content_census() {
             };
             match measured {
                 Ok(Some(measure)) => {
+                    placement.model_resolved = true;
                     placement.model_bytes = measure.bytes;
                     placement.faces = measure.faces;
                     placement.points = measure.points;
@@ -2796,8 +3418,12 @@ fn render_budget_content_census() {
             "nonrenderable_entity_rows".to_string(),
             json!(nonrenderable_rows),
         );
-        match scene_census(&map_entities) {
-            Ok(maxima) => {
+        match scene_census(&mut map_entities, &mut terrain_cells, world_layout) {
+            Ok(SceneCensus {
+                maxima,
+                submitted_static,
+                conservative_scene_faces,
+            }) => {
                 map_stats.insert(
                     "maximum_scene_entities".to_string(),
                     Value::Object(
@@ -2807,7 +3433,20 @@ fn render_budget_content_census() {
                             .collect(),
                     ),
                 );
+                map_stats.insert(
+                    "conservative_any_tile_window_entity_face_upper".to_string(),
+                    json!(conservative_scene_faces.0),
+                );
+                map_stats.insert(
+                    "conservative_any_tile_window_entity_origin".to_string(),
+                    json!([conservative_scene_faces.1, conservative_scene_faces.2]),
+                );
+                map_stats.insert(
+                    "maximum_submitted_static_geometry".to_string(),
+                    submitted_static.json(),
+                );
                 scene_maxima = maxima;
+                submitted_static_geometry = Some(submitted_static);
             }
             Err(error) => inputs.fail("scene_census_failed", error),
         }
@@ -2828,10 +3467,21 @@ fn render_budget_content_census() {
         },
         None => None,
     };
-    let capture_bounds = match scene_capture_bounds(&families, &scene_maxima, &map_stats) {
-        Ok(bounds) => Some(bounds),
-        Err(error) => {
-            inputs.fail("scene_capture_bound_failed", error);
+    let capture_bounds = match submitted_static_geometry {
+        Some(submitted_static) => {
+            match scene_capture_bounds(&families, &scene_maxima, &map_stats, submitted_static) {
+                Ok(bounds) => Some(bounds),
+                Err(error) => {
+                    inputs.fail("scene_capture_bound_failed", error);
+                    None
+                }
+            }
+        }
+        None => {
+            inputs.fail(
+                "scene_capture_bound_failed",
+                "co-located submitted static geometry is unavailable",
+            );
             None
         }
     };
@@ -2873,7 +3523,6 @@ fn render_budget_content_census() {
             "complete raw/transformed model counts or unique object-type sprite count are unavailable",
         );
     }
-    let world_layout = client::render::world::render_test_content_layout();
     let owner_bounds = match (
         model_cache_layouts,
         model_parts,
@@ -2974,6 +3623,9 @@ fn render_budget_content_census() {
 }
 
 const MAP_WORLD_TILES: usize = 256 * 64;
+const MAP_LOAD_ORIGIN_STRIDE: usize = 8;
+const SUBMITTED_SCENE_TILES: usize = 50;
+const VERTEX_BINDING_LIMIT_BYTES: usize = 134_217_728;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct LocIdentity {
@@ -2998,6 +3650,7 @@ fn loc_identity(entity: &EntityPlacement) -> LocIdentity {
 
 struct MapCensus {
     entities: Vec<EntityPlacement>,
+    terrain_cells: Vec<TerrainCell>,
     stats: BTreeMap<String, Value>,
 }
 
@@ -3041,7 +3694,7 @@ fn load_map_census(
             .ok_or_else(|| format!("maps.bin has no land record {land_id}"))?;
         referenced_record_ids.insert(land_id);
         let mut cells_in_record = 0usize;
-        let mut invalid_shape = None;
+        let mut invalid_face_count = None;
         map_cache::visit_land(land, |cell| {
             cells_in_record += 1;
             let shape = if cell.overlay != 0 {
@@ -3072,21 +3725,25 @@ fn load_map_census(
                     entry.square_x, entry.square_z, cell.plane, cell.x, cell.z, shape
                 ));
             }
-            terrain_cells.push(EntityPlacement {
-                kind: EntityKind::Loc,
-                id: 0,
-                plane: cell.plane,
+            let face_count = match u8::try_from(faces) {
+                Ok(face_count) => face_count,
+                Err(_) => {
+                    invalid_face_count = Some((entry.square_x, entry.square_z, cell.plane, cell.x, cell.z, shape, faces));
+                    return;
+                }
+            };
+            terrain_cells.push(TerrainCell {
                 world_x: u16::from(entry.square_x) * 64 + u16::from(cell.x),
                 world_z: u16::from(entry.square_z) * 64 + u16::from(cell.z),
-                shape: 0,
-                rotation: 0,
-                amount: 1,
-                model_bytes: 0,
-                faces,
-                points: 0,
+                faces: face_count,
             });
         })
         .map_err(|error| format!("land record {land_id}: {error}"))?;
+        if let Some((square_x, square_z, plane, x, z, shape, faces)) = invalid_face_count {
+            return Err(format!(
+                "land record {land_id} at map {square_x},{square_z} has unrepresentable face count {faces} for shape {shape} at {plane}:{x},{z}"
+            ));
+        }
         if let Some((square_x, square_z, plane, x, z, shape)) = invalid_shape {
             return Err(format!(
                 "land record {land_id} at map {square_x},{square_z} has invalid overlay shape {shape} at {plane}:{x},{z}"
@@ -3116,6 +3773,7 @@ fn load_map_census(
                 shape: placement.shape,
                 rotation: placement.rotation,
                 amount: 1,
+                model_resolved: false,
                 model_bytes: 0,
                 faces: 0,
                 points: 0,
@@ -3133,10 +3791,30 @@ fn load_map_census(
 
     let scene_size = usize::try_from(client::dash3d::BuildArea::SIZE)
         .map_err(|_| "client build-area size is negative".to_string())?;
+    if scene_size % MAP_LOAD_ORIGIN_STRIDE != 0 {
+        return Err(format!(
+            "loaded scene size {scene_size} is not aligned to {MAP_LOAD_ORIGIN_STRIDE}-tile zones"
+        ));
+    }
+    terrain_cells.sort_unstable_by_key(|cell| (cell.world_x, cell.world_z));
     let (maximum_terrain_faces, terrain_origin_x, terrain_origin_z) =
-        maximum_scene_metric(&terrain_cells, scene_size, MAP_WORLD_TILES, None, |cell| {
-            cell.faces
-        })?;
+        maximum_sorted_scene_metric(
+            &terrain_cells,
+            scene_size,
+            MAP_WORLD_TILES,
+            MAP_LOAD_ORIGIN_STRIDE,
+            "terrain",
+            |cell| usize::from(cell.faces),
+        )?;
+    let (conservative_terrain_faces_upper, conservative_terrain_origin_x, conservative_terrain_origin_z) =
+        maximum_sorted_scene_metric(
+            &terrain_cells,
+            scene_size,
+            MAP_WORLD_TILES,
+            1,
+            "terrain",
+            |cell| usize::from(cell.faces),
+        )?;
 
     let root = std::env::var_os("ENGINE_DIR")
         .map(PathBuf::from)
@@ -3268,6 +3946,7 @@ fn load_map_census(
     let cache_location_rows = cache_locations.len();
     Ok(MapCensus {
         entities,
+        terrain_cells,
         stats: BTreeMap::from([
             (
                 "source_directory".to_string(),
@@ -3315,21 +3994,54 @@ fn load_map_census(
                 json!(terrain_trigger),
             ),
             (
-                "maximum_terrain_faces_per_scene".to_string(),
+                "maximum_terrain_faces_per_loaded_scene".to_string(),
                 json!(maximum_terrain_faces),
             ),
             (
-                "maximum_terrain_scene_origin".to_string(),
+                "maximum_terrain_loaded_scene_origin".to_string(),
                 json!([terrain_origin_x, terrain_origin_z]),
+            ),
+            (
+                "conservative_any_tile_window_terrain_face_upper".to_string(),
+                json!(conservative_terrain_faces_upper),
+            ),
+            (
+                "conservative_any_tile_window_terrain_origin".to_string(),
+                json!([conservative_terrain_origin_x, conservative_terrain_origin_z]),
             ),
         ]),
     })
 }
 
-fn scene_census(entities: &[EntityPlacement]) -> Result<BTreeMap<String, SceneMaximum>, String> {
+struct SceneCensus {
+    maxima: BTreeMap<String, SceneMaximum>,
+    submitted_static: StaticGeometryMaximum,
+    conservative_scene_faces: (usize, usize, usize),
+}
+
+fn scene_census(
+    entities: &mut [EntityPlacement],
+    terrain: &mut [TerrainCell],
+    world_layout: client::render::world::RenderTestContentLayout,
+) -> Result<SceneCensus, String> {
     let scene_size = usize::try_from(client::dash3d::BuildArea::SIZE)
         .map_err(|_| "client build-area size is negative".to_string())?;
-    [
+    if !scene_size.is_multiple_of(MAP_LOAD_ORIGIN_STRIDE) {
+        return Err(format!(
+            "loaded scene size {scene_size} is not aligned to {MAP_LOAD_ORIGIN_STRIDE}-tile zones"
+        ));
+    }
+    if world_layout.scene_tiles_per_axis != scene_size {
+        return Err(format!(
+            "render layout reports {} scene tiles but BuildArea is {scene_size}",
+            world_layout.scene_tiles_per_axis
+        ));
+    }
+    let conservative_scene_faces =
+        maximum_scene_metric(entities, scene_size, MAP_WORLD_TILES, 1, None, |entity| {
+            entity.faces
+        })?;
+    let maxima = [
         ("all", None),
         ("loc", Some(EntityKind::Loc)),
         ("npc", Some(EntityKind::Npc)),
@@ -3337,22 +4049,118 @@ fn scene_census(entities: &[EntityPlacement]) -> Result<BTreeMap<String, SceneMa
     ]
     .into_iter()
     .map(|(name, kind)| {
-        maximum_scene_entities(entities, scene_size, MAP_WORLD_TILES, kind)
-            .map(|maximum| (name.to_string(), maximum))
+        maximum_scene_entities(
+            entities,
+            scene_size,
+            MAP_WORLD_TILES,
+            MAP_LOAD_ORIGIN_STRIDE,
+            kind,
+        )
+        .map(|maximum| (name.to_string(), maximum))
     })
-    .collect()
+    .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let submitted_static = maximum_submitted_static_geometry(
+        terrain,
+        entities,
+        MAP_WORLD_TILES,
+        scene_size,
+        SUBMITTED_SCENE_TILES,
+        world_layout.max_model_triangles_per_face,
+        world_layout.capture_vertex_bytes,
+    )?;
+    Ok(SceneCensus {
+        maxima,
+        submitted_static,
+        conservative_scene_faces,
+    })
 }
 
 fn scene_maximum_json(maximum: &SceneMaximum) -> Value {
     json!({
-        "maximum_entity_rows": maximum.count,
-        "maximum_entity_scene_origin": [maximum.origin_x, maximum.origin_z],
-        "maximum_model_retained_bytes": maximum.model_bytes,
-        "maximum_model_scene_origin": [maximum.model_origin_x, maximum.model_origin_z],
-        "maximum_model_faces": maximum.faces,
-        "maximum_face_scene_origin": [maximum.face_origin_x, maximum.face_origin_z],
-        "maximum_model_points": maximum.points,
-        "maximum_point_scene_origin": [maximum.point_origin_x, maximum.point_origin_z],
+        "metric_scope": "independent maxima across legal 8-aligned 104x104 loaded-scene origins",
+        "loaded_scene_tiles_per_axis": client::dash3d::BuildArea::SIZE,
+        "legal_loaded_scene_origin_stride_tiles": MAP_LOAD_ORIGIN_STRIDE,
+        "maximum_resident_entity_rows": maximum.count,
+        "maximum_resident_entity_rows_origin": [maximum.origin_x, maximum.origin_z],
+        "maximum_resident_loaded_model_bytes": maximum.model_bytes,
+        "maximum_resident_loaded_model_bytes_origin": [maximum.model_origin_x, maximum.model_origin_z],
+        "maximum_resident_loaded_model_faces": maximum.faces,
+        "maximum_resident_loaded_model_faces_origin": [maximum.face_origin_x, maximum.face_origin_z],
+        "maximum_resident_loaded_model_points": maximum.points,
+        "maximum_resident_loaded_model_points_origin": [maximum.point_origin_x, maximum.point_origin_z],
         "largest_triggering_content_id": maximum.triggering_id,
     })
+}
+
+fn synthetic_entity(x: u16, z: u16, faces: usize) -> EntityPlacement {
+    EntityPlacement {
+        kind: EntityKind::Loc,
+        id: u32::from(x) * 256 + u32::from(z),
+        plane: 0,
+        world_x: x,
+        world_z: z,
+        shape: 10,
+        rotation: 0,
+        amount: 1,
+        model_resolved: true,
+        model_bytes: faces * 8,
+        faces,
+        points: faces * 3,
+    }
+}
+
+#[test]
+fn loaded_scene_metric_uses_eight_tile_aligned_origins() {
+    let entities = [synthetic_entity(7, 3, 1), synthetic_entity(8, 3, 1)];
+    let maximum = maximum_scene_metric(&entities, 8, 32, 8, None, |_| 1).unwrap();
+    assert_eq!(maximum, (1, 0, 0));
+    let any_tile_maximum = maximum_scene_metric(&entities, 8, 32, 1, None, |_| 1).unwrap();
+    assert_eq!(any_tile_maximum, (2, 1, 0));
+    assert!(any_tile_maximum.0 > maximum.0);
+    assert_eq!(maximum.1 % MAP_LOAD_ORIGIN_STRIDE, 0);
+    assert_eq!(maximum.2 % MAP_LOAD_ORIGIN_STRIDE, 0);
+}
+
+#[test]
+fn submitted_static_geometry_sums_only_co_located_components() {
+    let mut terrain = vec![TerrainCell {
+        world_x: 0,
+        world_z: 0,
+        faces: 9,
+    }];
+    let mut entities = vec![synthetic_entity(2, 0, 9)];
+    let terrain_maximum =
+        maximum_sorted_scene_metric(&terrain, 2, 8, 1, "terrain test", |cell| {
+            usize::from(cell.faces)
+        })
+        .unwrap()
+        .0;
+    let entity_maximum =
+        maximum_scene_metric(&entities, 2, 8, 1, None, |entity| entity.faces)
+            .unwrap()
+            .0;
+    let maximum =
+        maximum_submitted_static_geometry(&mut terrain, &mut entities, 8, 4, 2, 2, 24).unwrap();
+    assert_eq!(terrain_maximum, 9);
+    assert_eq!(entity_maximum, 9);
+    assert_eq!(maximum.total_faces, 9);
+    assert_eq!(maximum.terrain_faces + maximum.entity_faces, maximum.total_faces);
+    assert!(terrain_maximum + entity_maximum > maximum.total_faces);
+}
+
+#[test]
+fn submitted_fifty_tile_footprint_is_distinct_from_loaded_104_tile_scene() {
+    let mut terrain = Vec::new();
+    let mut entities = vec![synthetic_entity(0, 2, 3), synthetic_entity(60, 2, 3)];
+    let loaded = maximum_scene_entities(&entities, 104, 120, MAP_LOAD_ORIGIN_STRIDE, None).unwrap();
+    let submitted =
+        maximum_submitted_static_geometry(&mut terrain, &mut entities, 120, 104, 50, 2, 24)
+            .unwrap();
+    assert_eq!(loaded.faces, 6);
+    assert_eq!(submitted.total_faces, 3);
+    assert!(loaded.faces > submitted.total_faces);
+    assert_eq!(
+        [submitted.containing_loaded_origin_x, submitted.containing_loaded_origin_z],
+        [0, 0]
+    );
 }
