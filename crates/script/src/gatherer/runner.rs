@@ -644,11 +644,14 @@ impl Gatherer {
                 }
             }
             TripStep::Access => {
-                if let Some(selected) = &self.selected_bank {
-                    let retrying =
-                        self.begin_walk_retry(WalkRetryTarget::Bank(selected.bank_index));
+                if let Some((bank_index, access_tile)) = self
+                    .selected_bank
+                    .as_ref()
+                    .map(|selected| (selected.bank_index, selected.access_tile))
+                {
+                    let retrying = self.begin_walk_retry(WalkRetryTarget::Bank(bank_index));
                     let submitted =
-                        self.trip_walk(selected.access_tile, 1, ArrivalKind::Reach, None, tick);
+                        self.trip_walk(access_tile, 1, ArrivalKind::Reach, None, tick);
                     if retrying && submitted {
                         self.scratch.return_stall_recovery.action_submitted();
                     }
