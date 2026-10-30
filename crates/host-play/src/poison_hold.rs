@@ -90,3 +90,7 @@ mod tests {
         assert_eq!(wait.waited(12), 18);
     }
 }
+
+#[cfg(test)]
+#[path = "poison_hold_integration_tests.rs"]
+mod integration_tests;
