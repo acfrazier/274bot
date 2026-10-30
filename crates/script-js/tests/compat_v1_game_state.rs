@@ -88,6 +88,9 @@ fn post_native_seat_page<'a>(
     );
     isolate.post_snapshot(bytes);
     isolate.on_game_tick(snapshot.tick);
+    let _ = isolate
+        .probe("true")
+        .expect("posted native page tick completes");
 }
 
 fn mentions(text: &str, name: &str) -> bool {
