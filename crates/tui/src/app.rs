@@ -2003,7 +2003,10 @@ impl TuiApp {
         #[cfg(not(feature = "js"))]
         let load_open = false;
         if !selected_quester
-            || !matches!(self.script_state, ScriptRunState::Idle | ScriptRunState::Error)
+            || !matches!(
+                self.script_state,
+                ScriptRunState::Idle | ScriptRunState::Error
+            )
             || self.script_browse_open
             || load_open
             || self.quester_start_zones.is_none()

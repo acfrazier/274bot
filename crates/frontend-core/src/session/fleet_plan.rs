@@ -283,12 +283,7 @@ impl<Io> OperatorSession<Io> {
             quester_registry_revision = Some(revision);
             let mut disclosed_targets = Vec::with_capacity(targets.len());
             for (identity, name) in std::mem::take(&mut targets) {
-                match scripts.quester_start_zones_for_card(
-                    self,
-                    &name,
-                    card.as_ref(),
-                    &registry,
-                ) {
+                match scripts.quester_start_zones_for_card(self, &name, card.as_ref(), &registry) {
                     Ok(zones) => {
                         quester_start_zones.push(QuesterStartDisclosure {
                             profile: identity,
@@ -462,7 +457,6 @@ impl<Io> OperatorSession<Io> {
         plan.marks
             .mark_all(plan.targets.iter().map(|(identity, _)| *identity));
     }
-
 
     /// After a planned command opened as `request`: keep its result view
     /// (the plan's skips and the profiles gone since the plan included).

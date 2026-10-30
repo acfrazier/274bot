@@ -73,7 +73,7 @@ impl Modal {
             Modal::Palette(_) => "type to filter · Up/Down · Enter run · Esc close",
             Modal::Confirm(_) => {
                 "Up/Down or j/k scroll · PgUp/PgDn faster · Enter/y confirm · Esc/n cancel"
-            },
+            }
             Modal::Context(_) => "Up/Down · Enter run · Esc close",
             Modal::Message { .. } => "Up/Down scroll · Esc close",
             Modal::Manual => "W A S D / arrows step one tile · Esc disarm",
@@ -690,9 +690,7 @@ impl TuiApp {
             .iter()
             .map(|line| wrapped_rows(line, text_width))
             .sum();
-        let height = wrapped
-            .saturating_add(4)
-            .min(usize::from(area.height)) as u16;
+        let height = wrapped.saturating_add(4).min(usize::from(area.height)) as u16;
         let paragraph = Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>())
             .wrap(Wrap { trim: false });
         let popup = centered(area, width, height);
@@ -711,9 +709,7 @@ impl TuiApp {
             .saturating_sub(usize::from(body.height))
             .min(usize::from(u16::MAX)) as u16;
         confirm.scroll = confirm.scroll.min(max_scroll);
-        paragraph
-            .scroll((confirm.scroll, 0))
-            .render(body, buf);
+        paragraph.scroll((confirm.scroll, 0)).render(body, buf);
         self.regions.modal = popup;
         if inner.height == 0 {
             return;

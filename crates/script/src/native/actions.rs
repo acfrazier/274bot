@@ -2713,7 +2713,10 @@ mod tests {
                 panic!("the stage-granted walk must use the native walk path");
             };
             assert_eq!(request.cross.as_ref(), &[Arc::<str>::from("declared-zone")]);
-            assert!(request.food_guard, "a declared crossing must arm the food guard");
+            assert!(
+                request.food_guard,
+                "a declared crossing must arm the food guard"
+            );
             assert!(request.allow.food);
             assert!(!request.protect);
             drop(handle);
@@ -2734,7 +2737,10 @@ mod tests {
                 request.cross.as_ref(),
                 &[Arc::<str>::from("declared-step-zone")]
             );
-            assert!(request.food_guard, "a declared crossing must arm the food guard");
+            assert!(
+                request.food_guard,
+                "a declared crossing must arm the food guard"
+            );
             assert!(request.allow.food);
             assert_eq!(
                 request.options.allow_danger_zones,

@@ -124,7 +124,6 @@ fn smoke_cell(
     Ok(cell)
 }
 
-
 #[test]
 #[ignore = "requires LIVE=1 and an explicitly selected local 289 engine; see common/quester_live.rs"]
 fn live_quester_path_smoke() {
@@ -143,14 +142,8 @@ fn live_quester_path_smoke() {
         .unwrap_or_else(|error| panic!("{error}"));
     let extra_items = seeds.extra_item_refs();
     let seed_vars = seeds.seed_var_refs();
-    let cell = smoke_cell(
-        row,
-        &seeds,
-        loadout,
-        &extra_items,
-        &seed_vars,
-    )
-    .unwrap_or_else(|error| panic!("build {quest} smoke cell from {source}: {error}"));
+    let cell = smoke_cell(row, &seeds, loadout, &extra_items, &seed_vars)
+        .unwrap_or_else(|error| panic!("build {quest} smoke cell from {source}: {error}"));
     let result = quester_live::run_quester_path(cell);
     println!("PATH-SMOKE {quest} ({source}): {:?}", result.is_ok());
     registry::set_source(before);
@@ -244,7 +237,6 @@ mod smoke_tests {
             .iter()
             .any(|step| step.name == "reset authored content stage"));
     }
-
 
     #[test]
     fn smoke_row_rejects_unknown_quests_and_non_base40_profiles() {

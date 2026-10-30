@@ -5736,7 +5736,6 @@ impl Session {
             .advance_quester_paths(&mut self.quester_paths, selected);
     }
 
-
     /// The focused slot's script lifecycle state; `Idle` when nothing is
     /// focused or the slot has no script. The script section's disable
     /// rules key off this.

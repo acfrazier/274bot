@@ -1021,16 +1021,12 @@ impl Scripts {
     }
 
     /// The cached selected queue disclosure, or its explicit failure.
-    pub fn quester_start_zone_view(
-        &self,
-    ) -> Option<Result<&QuesterStartZones, &str>> {
+    pub fn quester_start_zone_view(&self) -> Option<Result<&QuesterStartZones, &str>> {
         self.quester_start_zone_cache.view()
     }
 
     /// Share the immutable versioned disclosure with a front end.
-    pub fn shared_quester_start_zone_view(
-        &self,
-    ) -> Option<Arc<Result<QuesterStartZones, String>>> {
+    pub fn shared_quester_start_zone_view(&self) -> Option<Arc<Result<QuesterStartZones, String>>> {
         self.quester_start_zone_cache.shared_view()
     }
 

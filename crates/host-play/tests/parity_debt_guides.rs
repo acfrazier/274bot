@@ -3,10 +3,7 @@ use api::snapshot::WorldTile;
 use nav_planner::router::{find_with, FindOptions, Leg, RouteError};
 use nav_planner::zones::ZoneExempt;
 
-fn walk_step<'a>(
-    value: &'a serde_json::Value,
-    id: &str,
-) -> Option<&'a serde_json::Value> {
+fn walk_step<'a>(value: &'a serde_json::Value, id: &str) -> Option<&'a serde_json::Value> {
     if value.get("id").and_then(serde_json::Value::as_str) == Some(id) {
         return Some(value);
     }
@@ -47,8 +44,7 @@ fn desert_captain_resume_step_declares_the_same_pack_zones() {
 fn desert_captain_cross_grants_only_required_ugthanki() {
     let document: serde_json::Value =
         serde_json::from_str(include_str!("../../script/paths/289/desertrescue.json")).unwrap();
-    let args = &walk_step(&document, "walk-to-captain").expect("released captain crossing")
-        ["args"];
+    let args = &walk_step(&document, "walk-to-captain").expect("released captain crossing")["args"];
     assert!(args.get("allow_danger_zones").is_none());
     let names: Vec<_> = args["cross"]
         .as_array()
@@ -69,8 +65,7 @@ fn desert_captain_cross_grants_only_required_ugthanki() {
     let (collision, graph, _) = nav_planner::pack::decode(&pack).unwrap();
     let table = graph.zones.as_ref().unwrap();
     let resumed_args =
-        &walk_step(&document, "walk-to-captain-again").expect("released resumed crossing")
-            ["args"];
+        &walk_step(&document, "walk-to-captain-again").expect("released resumed crossing")["args"];
     assert!(resumed_args.get("allow_danger_zones").is_none());
     let resumed_names: Vec<_> = resumed_args["cross"]
         .as_array()

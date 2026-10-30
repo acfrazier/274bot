@@ -3,8 +3,8 @@ use crate::selection::ProfileIdentity;
 use script::quester::path::{PathDocument, StepDocument};
 use script::quester::queue::{Queue, QueueSettings};
 use script::quester::registry::{self, PathRegistry};
-use std::sync::Arc;
 use std::fmt::Write as _;
+use std::sync::Arc;
 #[cfg(test)]
 pub(crate) mod allocation_probe {
     use std::alloc::{GlobalAlloc, Layout, System};
@@ -38,12 +38,7 @@ pub(crate) mod allocation_probe {
             unsafe { System.alloc_zeroed(layout) }
         }
 
-        unsafe fn realloc(
-            &self,
-            ptr: *mut u8,
-            layout: Layout,
-            new_size: usize,
-        ) -> *mut u8 {
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
             record();
             // SAFETY: ptr and layout came from a prior allocation.
             unsafe { System.realloc(ptr, layout, new_size) }
@@ -126,11 +121,7 @@ impl QuesterStartZones {
         for scope in &self.scopes {
             let _ = write!(text, "\n  {}", scope.display_label);
             for zone in &scope.zones {
-                let _ = write!(
-                    text,
-                    "\n    {} — {}",
-                    zone.display_label, zone.reason
-                );
+                let _ = write!(text, "\n    {} — {}", zone.display_label, zone.reason);
             }
         }
     }
@@ -918,7 +909,10 @@ mod tests {
             "Start accepts only these zones. The food guard is armed for the whole walk; protection runs only where a step requests it. Every other danger zone stays avoided."
         );
         assert!(cache.settings_match(identity, 2));
-        assert!(!cache.refresh_registry(), "unchanged registry reuses the cache");
+        assert!(
+            !cache.refresh_registry(),
+            "unchanged registry reuses the cache"
+        );
 
         assert!(update_cache(&mut cache, 3, bag(&["sheep"])));
         assert!(preview(&cache).is_empty());
@@ -946,5 +940,4 @@ mod tests {
             );
         }
     }
-
 }

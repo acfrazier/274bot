@@ -661,9 +661,7 @@ impl<'a> ScriptPane<'a> {
             lines.push(Line::from("load: browse for .ts/.js file"));
         }
         if self.start_zone_disclosure_shown() {
-            lines.push(Line::from(
-                frontend_core::scripts::START_ZONE_SCOPE_TITLE,
-            ));
+            lines.push(Line::from(frontend_core::scripts::START_ZONE_SCOPE_TITLE));
             match self.start_zones {
                 Some(zones) => {
                     lines.push(Line::from(zones.notice()));

@@ -208,27 +208,21 @@ fn warm_quester_script_section_shares_its_zone_text_without_allocating() {
     settings.insert("quests".into(), json!(["desertrescue"]));
     let operation = f
         .scripts
-        .set_compiled_overrides(
-            &mut f.core,
-            "alice",
-            CompiledCardId::QUESTER,
-            settings,
-        )
+        .set_compiled_overrides(&mut f.core, "alice", CompiledCardId::QUESTER, settings)
         .expect("save selected queue");
     f.core.flush_writes();
     assert_eq!(
         f.core.operation(operation).unwrap().outcome("alice"),
         Some(&Outcome::Completed)
     );
-    assert!(f.scripts.refresh_quester_start_zones(&f.core, Some("alice")));
+    assert!(f
+        .scripts
+        .refresh_quester_start_zones(&f.core, Some("alice")));
     let view = f
         .scripts
         .shared_quester_start_zone_view()
         .expect("the selected Quester scope is cached");
-    let zones = view
-        .as_ref()
-        .as_ref()
-        .expect("the queue settings resolve");
+    let zones = view.as_ref().as_ref().expect("the queue settings resolve");
     let notice = zones.notice();
     let label = zones
         .scopes
@@ -239,13 +233,18 @@ fn warm_quester_script_section_shares_its_zone_text_without_allocating() {
 
     super::prestart_zones::allocation_probe::start();
     for _ in 0..256 {
-        assert!(!f.scripts.refresh_quester_start_zones(&f.core, Some("alice")));
+        assert!(!f
+            .scripts
+            .refresh_quester_start_zones(&f.core, Some("alice")));
         let current = f
             .scripts
             .shared_quester_start_zone_view()
             .expect("the cached view stays present");
         assert!(std::sync::Arc::ptr_eq(&view, &current));
-        let current_zones = current.as_ref().as_ref().expect("the same queue stays valid");
+        let current_zones = current
+            .as_ref()
+            .as_ref()
+            .expect("the same queue stays valid");
         assert_eq!(current_zones.notice(), notice);
         assert_eq!(current_zones.scopes[0].display_label, label);
     }

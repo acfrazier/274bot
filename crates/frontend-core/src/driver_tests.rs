@@ -2234,8 +2234,14 @@ fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
     );
     assert_eq!(plan_names(&d), ["alice", "bob"]);
     let prompt = waiting.prompt();
-    assert!(prompt.contains("alice: Start accepts only these zones."), "{prompt}");
-    assert!(prompt.contains("bob: No danger zones are declared."), "{prompt}");
+    assert!(
+        prompt.contains("alice: Start accepts only these zones."),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("bob: No danger zones are declared."),
+        "{prompt}"
+    );
     for id in [
         "ugthanki@3268,3052,0",
         "ugthanki@3281,3056,0",
@@ -2259,7 +2265,9 @@ fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
         result.text()
     );
     assert!(
-        result.text().contains("alice: Start accepts only these zones.")
+        result
+            .text()
+            .contains("alice: Start accepts only these zones.")
             && result.text().contains("bob: No danger zones are declared."),
         "the result retains each confirmed disclosure: {}",
         result.text()

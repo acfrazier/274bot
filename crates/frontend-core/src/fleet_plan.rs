@@ -105,7 +105,10 @@ pub(crate) fn append_quester_start_disclosures(
     text: &mut String,
     disclosures: &[QuesterStartDisclosure],
 ) {
-    if !disclosures.iter().any(|disclosure| disclosure.zones.is_some()) {
+    if !disclosures
+        .iter()
+        .any(|disclosure| disclosure.zones.is_some())
+    {
         return;
     }
     text.push_str("\n\nQuester danger-zone disclosures shown before Start:");
