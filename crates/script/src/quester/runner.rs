@@ -304,8 +304,9 @@ fn quest_gate_evidence_detail(gates: &[api::selected::QuestGate]) -> Arc<str> {
             api::selected::QuestGate::Window(window) => {
                 let _ = write!(
                     detail,
-                    "{}; window; minimum ",
-                    window.quest.0
+                    "{}; signal {}; window; minimum ",
+                    window.quest.0,
+                    window.signal.0
                 );
                 match window.values.min {
                     Some(minimum) => {
@@ -5998,6 +5999,7 @@ mod tests {
         assert_eq!(script.blocked_failure().code.as_ref(), "needs-evidence");
         let detail = script.blocked_failure().message;
         assert!(detail.contains("biohazard"), "{detail}");
+        assert!(detail.contains("signal biohazard"), "{detail}");
         assert!(detail.contains("window"), "{detail}");
         assert!(detail.contains("minimum none"), "{detail}");
         assert!(detail.contains("maximum 9"), "{detail}");
