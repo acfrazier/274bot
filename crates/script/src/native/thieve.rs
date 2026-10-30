@@ -1,7 +1,7 @@
 use super::thieving_core::{
     level_ready, ChatEvidence, Decision, Failure, Observation, ThieveCore, PICKPOCKET, STEAL_FROM,
 };
-use super::{ActionContext, ActionError, NativeMachine, WalkEnd};
+use super::{ActionContext, ActionError, NativeMachine};
 use crate::gatherer::oneop::{OneOp, OneOpArgs};
 use crate::quester::families::reach::{self, Reach, ReachArgs, ReachKind};
 use api::quest_progress::EvidenceStamp;
@@ -39,12 +39,37 @@ pub(crate) struct Thieve {
     modal: Option<OneOp>,
     pending_action: Option<&'static str>,
     pending_target_id: Option<i32>,
+    /// Fresh approach plans spent since the last arrival.
+    walk_failures: u8,
+    /// First observed tick with the player inside the anchor and no target.
+    no_target_since: Option<u64>,
 }
 
 struct PendingWalk {
     request_id: u64,
     required_after: EvidenceStamp,
 }
+
+/// Fresh plans after a failed approach walk. AGENTS.md ("A walk failure is
+/// never terminal until its bounded retries are spent", 2026-10-23) makes one
+/// replan from the observed position the supported recovery, the same single
+/// fresh plan the native return recovery spends
+/// (`MAX_RETURN_RECOVERY_ACTIONS = 1`, `native.rs:1064-1066`).
+const APPROACH_WALK_RETRIES: u8 = 1;
+
+/// Observed game ticks to wait for a matching NPC once inside the anchor.
+/// The selected content's NPC 613 (`digworkman1`) declares no `respawnrate`
+/// (`content/scripts/quests/quest_itexam/configs/quest_itexam.npc`), so the
+/// engine default applies: `respawnrate = 100`, "default to 1-minute"
+/// (`engine/src/cache/config/NpcType.ts:105`), and the engine decrements it
+/// once per world cycle (`engine/src/engine/entity/Npc.ts:121`) after
+/// `npc_del` schedules the respawn (`engine/src/engine/script/handlers/NpcOps.ts:94`).
+/// One more observed tick covers the `PLAYER_INFO` that carries the spawn
+/// (`crates/host/src/slot.rs:22-26`).
+const NO_TARGET_WAIT_TICKS: u64 = 101;
+
+/// Named terminal failure for the empty-anchor wait.
+const NO_TARGET_FAILURE: &str = "no thieving target appeared at the anchor";
 
 impl NativeMachine for Thieve {
     type Args = ThieveActionArgs;
@@ -90,6 +115,8 @@ impl NativeMachine for Thieve {
             modal: None,
             pending_action: None,
             pending_target_id: None,
+            walk_failures: 0,
+            no_target_since: None,
         })
     }
 
@@ -177,7 +204,20 @@ impl NativeMachine for Thieve {
             self.args.radius,
             skill.map(|(effective, _)| effective),
         );
-        let required_level = picked.map(|target| target.required_level);
+        if picked.is_some() {
+            self.no_target_since = None;
+        }
+        // The compiled target already carries the selected content's pickpocket
+        // level (`api::game_data::SelectedGameData::required_thieving_npc`,
+        // `api/src/game_data.rs:2357-2366`, resolved by
+        // `quester/families/thieve.rs:122-125`). With no live match, the least
+        // demanding configured type is the gate: any configured spawn the
+        // account can attempt keeps the approach valid, and a visible NPC still
+        // gates on its own selected level below. A below-level account therefore
+        // refuses before the walk and before any click.
+        let required_level = picked
+            .map(|target| target.required_level)
+            .or_else(|| static_required_level(&self.args.targets));
         let pending_action = if self.core.pending_request_id().is_some() {
             self.pending_action.unwrap_or(PICKPOCKET)
         } else {
@@ -276,6 +316,22 @@ impl NativeMachine for Thieve {
                     return Poll::Pending;
                 }
                 let Some((target_id, display, op)) = dispatch else {
+                    // The approach walk ran above whenever the player was
+                    // outside the anchor. Inside it, wait one full content
+                    // respawn window for a spawn before failing by name.
+                    let inside = self.area_anchor.is_some_and(|center| {
+                        here.is_some_and(|here| {
+                            reach::within(here, center, i32::from(self.args.radius))
+                        })
+                    });
+                    if !inside {
+                        self.no_target_since = None;
+                        return Poll::Pending;
+                    }
+                    let since = *self.no_target_since.get_or_insert(cx.evidence().tick);
+                    if cx.evidence().tick.saturating_sub(since) >= NO_TARGET_WAIT_TICKS {
+                        return Poll::Ready(Err(failed(NO_TARGET_FAILURE)));
+                    }
                     return Poll::Pending;
                 };
                 let action = action_name(&op);
@@ -395,14 +451,31 @@ impl Thieve {
         let request_id = walk.request_id;
         let required_after = walk.required_after;
         if let Some(receipt) = cx.walk_receipt(request_id).cloned() {
-            if receipt.end == WalkEnd::UserInput {
-                self.walk = None;
-                return Err(ActionError::UserInput);
-            }
             if receipt.evidence.meets(required_after) {
                 self.walk = None;
-                receipt.into_arrival()?;
-                return Ok(false);
+                match receipt.into_arrival() {
+                    Ok(_) => {
+                        self.walk_failures = 0;
+                        return Ok(false);
+                    }
+                    // Manual takeover, revocation and a pending evidence gate
+                    // are not walk failures to replan from.
+                    Err(
+                        error @ (ActionError::UserInput
+                        | ActionError::Cancelled
+                        | ActionError::NeedsEvidence(_)),
+                    ) => return Err(error),
+                    // A failed walk is information: plan again from the
+                    // observed position while the bounded budget lasts, then
+                    // end with this last failure's detail.
+                    Err(error) => {
+                        self.walk_failures = self.walk_failures.saturating_add(1);
+                        if self.walk_failures > APPROACH_WALK_RETRIES {
+                            return Err(error);
+                        }
+                        return Ok(false);
+                    }
+                }
             }
         }
         Ok(true)
@@ -554,6 +627,14 @@ fn matches_target(npc: &NpcView, target: &Target) -> bool {
             .any(|action| action.eq_ignore_ascii_case(target.action.as_ref()))
 }
 
+/// Least demanding configured target type. The action cannot know which
+/// configured spawn will appear, so any of them the account can attempt keeps
+/// the approach valid; a visible NPC still gates on its own selected level in
+/// `select_target` and in the core.
+fn static_required_level(targets: &[Target]) -> Option<i32> {
+    targets.iter().map(|target| target.required_level).min()
+}
+
 fn select_target<'a>(
     cx: &ActionContext<'_>,
     targets: &'a [Target],
@@ -591,6 +672,7 @@ fn select_target<'a>(
 mod tests {
     use super::*;
     use crate::native::thieving_core::DEFAULT_ACTION_DEADLINE;
+    use crate::native::WalkEnd;
     use crate::quester::families::tests::{
         def, local_player, post_user_input_walk_receipt, with_tick, with_tick_reach,
     };
@@ -675,14 +757,23 @@ mod tests {
         npcs: Vec<NpcView>,
         inventory: Vec<ItemView>,
     ) -> GameSnapshot {
+        game_snapshot_with_level(here, npcs, inventory, 30)
+    }
+
+    fn game_snapshot_with_level(
+        here: WorldTile,
+        npcs: Vec<NpcView>,
+        inventory: Vec<ItemView>,
+        thieving: i32,
+    ) -> GameSnapshot {
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_inventory(inventory, 28);
         snapshot.seed_stats(vec![StatView {
             index: 17,
             name: "thieving".into(),
-            effective: 30,
-            base: 30,
+            effective: thieving,
+            base: thieving,
             xp: 1_000,
             used: true,
         }]);
@@ -777,6 +868,67 @@ mod tests {
             .count()
     }
 
+    fn walk_request_count(ledger: &Option<Box<crate::native::ledger::Ledger>>) -> usize {
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|action| matches!(&action.effect, crate::native::HostEffect::Walk(_)))
+            .count()
+    }
+
+    /// Publish a terminal receipt for the newest queued walk.
+    fn post_walk_end(
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+        tick: u64,
+        end: WalkEnd,
+        detail: Option<&str>,
+    ) {
+        let (request_id, run) = {
+            let ledger = ledger.as_ref().expect("walk request must be queued");
+            let action = ledger
+                .outbox
+                .iter()
+                .rev()
+                .find(|action| matches!(&action.effect, crate::native::HostEffect::Walk(_)))
+                .expect("walk request must be queued");
+            (action.request_id.get(), action.run())
+        };
+        ledger.as_mut().expect("ledger must remain present").walk =
+            Some(crate::native::WalkReceipt {
+                goal: None,
+                request_id,
+                evidence: api::quest_progress::EvidenceStamp {
+                    run,
+                    tick,
+                    sequence: tick,
+                },
+                end,
+                blocked: None,
+                detail: detail.map(Arc::from),
+                refusal: None,
+                assessment: None,
+                escape: None,
+            });
+    }
+
+    fn args_with_level(
+        anchor: WorldTile,
+        radius: u8,
+        required_level: i32,
+        deadline: Duration,
+    ) -> ThieveActionArgs {
+        ThieveActionArgs {
+            targets: Arc::from([target(1, required_level)]),
+            item_id: 995,
+            goal_qty: 1,
+            anchor: Some(anchor),
+            radius,
+            deadline,
+        }
+    }
+
     #[test]
     fn same_tick_thieve_level_up_defers_modal_and_next_dispatch() {
         use crate::quester::families::tests::with_tick_snapshots;
@@ -868,6 +1020,260 @@ mod tests {
             &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
             crate::native::HostEffect::Walk(request)
                 if request.target == anchor && request.radius == 2
+        ));
+    }
+
+    #[test]
+    fn outside_radius_without_a_visible_target_walks_to_the_anchor_on_the_first_poll() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let snapshot = game_snapshot(
+            WorldTile {
+                x: 30,
+                z: 40,
+                level: 0,
+            },
+            vec![],
+            vec![],
+        );
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let run = tick
+                .actions
+                .begin::<Thieve>(args(anchor, 12), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
+        });
+        assert_eq!(walk_request_count(&ledger), 1);
+        assert!(
+            !ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .any(|action| matches!(&action.effect, crate::native::HostEffect::Interaction(_))),
+            "no click may be sent before the anchor is reached"
+        );
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+            crate::native::HostEffect::Walk(request)
+                if request.target == anchor && request.radius == 12
+        ));
+    }
+
+    #[test]
+    fn failed_approach_walk_replans_once_then_pickpockets() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let outside = game_snapshot(
+            WorldTile {
+                x: 30,
+                z: 40,
+                level: 0,
+            },
+            vec![],
+            vec![],
+        );
+        let inside = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
+        let mut ledger = None;
+        let run = with_tick(&outside, &mut ledger, 1, |tick| {
+            let run = tick
+                .actions
+                .begin::<Thieve>(args(anchor, 12), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
+            run
+        });
+        assert_eq!(walk_request_count(&ledger), 1);
+
+        post_walk_end(
+            &mut ledger,
+            2,
+            WalkEnd::Failed,
+            Some("route fixture failure 1"),
+        );
+        assert!(with_tick(&outside, &mut ledger, 2, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(walk_request_count(&ledger), 2, "one fresh plan is owed");
+
+        post_walk_end(&mut ledger, 3, WalkEnd::Arrived, None);
+        assert!(with_tick(&inside, &mut ledger, 3, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(npc_click_count(&ledger), 1);
+    }
+
+    #[test]
+    fn repeated_approach_walk_failure_ends_after_the_bound_with_the_last_detail() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let outside = game_snapshot(
+            WorldTile {
+                x: 30,
+                z: 40,
+                level: 0,
+            },
+            vec![],
+            vec![],
+        );
+        let mut ledger = None;
+        let run = with_tick(&outside, &mut ledger, 1, |tick| {
+            let run = tick
+                .actions
+                .begin::<Thieve>(args(anchor, 12), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
+            run
+        });
+
+        post_walk_end(
+            &mut ledger,
+            2,
+            WalkEnd::Failed,
+            Some("route fixture failure 1"),
+        );
+        assert!(with_tick(&outside, &mut ledger, 2, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(walk_request_count(&ledger), 2);
+
+        post_walk_end(
+            &mut ledger,
+            3,
+            WalkEnd::Failed,
+            Some("route fixture failure 2"),
+        );
+        assert!(matches!(
+            with_tick(&outside, &mut ledger, 3, |tick| {
+                tick.actions.poll(&run, &mut tick.cx)
+            }),
+            Poll::Ready(Err(ActionError::Blocked(detail)))
+                if detail.as_ref() == "route fixture failure 2"
+        ));
+        assert_eq!(
+            walk_request_count(&ledger),
+            2,
+            "the retry budget is spent after one fresh plan"
+        );
+    }
+
+    #[test]
+    fn empty_anchor_fails_by_name_at_the_respawn_bound() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let snapshot = game_snapshot(anchor, vec![], vec![]);
+        let mut ledger = None;
+        let run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let run = tick
+                .actions
+                .begin::<Thieve>(
+                    args_with_level(anchor, 12, 1, Duration::from_secs(600)),
+                    &mut tick.cx,
+                )
+                .unwrap();
+            assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
+            run
+        });
+        for tick in 2..=101 {
+            assert!(
+                with_tick(&snapshot, &mut ledger, tick, |tick| {
+                    tick.actions.poll(&run, &mut tick.cx)
+                })
+                .is_pending(),
+                "tick {tick} is inside the respawn window"
+            );
+        }
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 102, |tick| {
+                tick.actions.poll(&run, &mut tick.cx)
+            }),
+            Poll::Ready(Err(ActionError::Failed(detail)))
+                if detail.as_ref() == "no thieving target appeared at the anchor"
+        ));
+        assert_eq!(walk_request_count(&ledger), 0);
+        assert_eq!(npc_click_count(&ledger), 0);
+    }
+
+    #[test]
+    fn below_the_static_requirement_refuses_before_any_walk_or_click() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let lowered = game_snapshot_with_level(
+            WorldTile {
+                x: 30,
+                z: 40,
+                level: 0,
+            },
+            vec![],
+            vec![],
+            24,
+        );
+        let mut ledger = None;
+        with_tick(&lowered, &mut ledger, 1, |tick| {
+            let run = tick
+                .actions
+                .begin::<Thieve>(
+                    args_with_level(anchor, 12, 25, Duration::from_secs(60)),
+                    &mut tick.cx,
+                )
+                .unwrap();
+            assert!(matches!(
+                tick.actions.poll(&run, &mut tick.cx),
+                Poll::Ready(Err(ActionError::Failed(detail)))
+                    if detail.as_ref()
+                        == "effective Thieving is below the selected NPC requirement"
+            ));
+        });
+        assert_eq!(walk_request_count(&ledger), 0);
+        assert_eq!(npc_click_count(&ledger), 0);
+    }
+
+    #[test]
+    fn visible_target_from_the_start_keeps_the_existing_pickpocket_path() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let snapshot = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
+        let mut ledger = None;
+        let run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Thieve>(args(anchor, 12), &mut tick.cx)
+                .unwrap()
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(npc_click_count(&ledger), 1);
+        assert_eq!(walk_request_count(&ledger), 0);
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc {
+                index: Some(19),
+                action,
+                ..
+            }) if action == "Pickpocket"
         ));
     }
 

@@ -92,6 +92,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   before opening their dialogue. Damage from a quest dialogue no longer looks
   like an attack when no visible NPC or player targets the bot. A failed walk
   also reports where its route ended.
+- Thieving steps now walk to the guide's anchor while the target NPC is out
+  of sight, instead of waiting beside the anchor for a target that the bot
+  never approached. The required level comes from the selected game content
+  whenever no NPC is visible, so a bot below it refuses before walking or
+  stealing. A failed approach walk is planned again once from where the bot
+  stands, and the second failure ends the step with its detail. Inside the
+  anchor, the bot waits one NPC respawn window for a target and then stops
+  with "no thieving target appeared at the anchor".
 
 ### Scripting
 
