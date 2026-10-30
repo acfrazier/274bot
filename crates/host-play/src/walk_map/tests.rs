@@ -1911,7 +1911,11 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
         crossing.takeoff.z,
         crossing.takeoff.level,
     );
-    let destination = t(crossing.to.x, crossing.to.z, crossing.to.level);
+    let destination = t(
+        crossing.to.x + (crossing.to.x - crossing.takeoff.x).signum(),
+        crossing.to.z + (crossing.to.z - crossing.takeoff.z).signum(),
+        crossing.to.level,
+    );
     let size = crossing
         .takeoff
         .x
@@ -1932,6 +1936,10 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
             (client::dash3d::CollisionFlag::WALK_BLOCK_FLAGS
                 & !client::dash3d::CollisionFlag::SQ_BLOCKED) as u32;
     }
+    // Map clicks require a face-free destination, beyond the transport landing.
+    let x = (destination.x - grid_origin.x) as usize;
+    let z = (destination.z - grid_origin.z) as usize;
+    flags[destination.level as usize * size * size + z * size + x] = 0;
     let (walk, blocked) = pack_walk(&flags);
     let mut gate_edge = edge(TransportKind::Door, crossing.at, crossing.to);
     gate_edge.loc_id = crossing.loc_id;
@@ -1974,7 +1982,7 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
             &nav.collision,
             &nav.graph,
             crossing.takeoff,
-            &[crossing.to],
+            &[world_tile(destination)],
             FindOptions::default(),
             &state,
             &[],

@@ -10,8 +10,7 @@ use api::prereq_knowledge::CatalogRef;
 use api::prereq_steps::PrereqCrossing;
 use api::selected::{ClientRevision, FamilyPreparation};
 use api::snapshot::{
-    ChatLineView, GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView,
-    NpcView,
+    ChatLineView, GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, NpcView,
 };
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -1118,14 +1117,11 @@ fn cancel_at_effect(after_effect: bool) {
             &state,
             &mut budget,
         );
-        page_snapshot(&mut snapshot, branch.terminal.as_deref().unwrap());
-        for _ in 0..=PAGE_TICKS + SEND_SLACK_TICKS {
-            assert!(poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget).is_pending());
-            if !state.prereq_snapshot().facts().is_empty() {
-                break;
-            }
-            tick += 1;
-        }
+        assert_eq!(branch.terminal.as_deref(), branch.effect_page.as_deref());
+        // The advice effect is its terminal page. Only its acknowledged close
+        // proves the effect; showing the identical page again proves nothing.
+        close_snapshot(&mut snapshot);
+        assert!(poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget).is_pending());
         assert_eq!(state.prereq_snapshot().facts()[0].possible, branch.proves);
     } else {
         assert!(state.prereq_snapshot().facts().is_empty());

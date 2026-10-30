@@ -6,8 +6,8 @@ use api::gather_methods::{known_rows, TargetClass};
 use api::named_banks::{NamedBank, NamedBankFacts};
 use api::selected::{EntityId, FamilyPreparation};
 use api::snapshot::{
-    GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView, NpcView, StatView,
-    WorldStateView, WorldTile,
+    GameSnapshot, ItemActionFamily, ItemContainer, ItemView, NpcView, StatView, WorldStateView,
+    WorldTile,
 };
 
 fn fixture() -> (Gatherer, GameSnapshot) {
