@@ -1568,6 +1568,249 @@ fn prerequisite_live_paths_compile_with_provenance_and_one_pass_order() {
     }
 }
 
+struct PrereqFailureOracle {
+    expected: &'static str,
+    messages: Vec<String>,
+    wolfbane: i32,
+    meat_pie: i32,
+    apple_pie: i32,
+    pies: i32,
+    stand: WorldTile,
+}
+
+impl PrereqFailureOracle {
+    fn new(selected: Arc<SelectedGameData>, expected: &'static str, case: &PrereqLiveCase) -> Self {
+        use script::native::{PrereqMissing, PrereqRefusal, PrereqStepIdentity, PrereqSwitch};
+        let wolfbane = item_id(&selected, "dagger_wolfbane");
+        let meat_pie = item_id(&selected, "meat_pie");
+        let apple_pie = item_id(&selected, "apple_pie");
+        let catalog = api::selected::FamilyPreparation::run(move |worker| {
+            selected.prepare_prereq_steps(worker)
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        let id = match expected {
+            "FreeSlots" => "priestperil:drezel-advice",
+            "quest_start is not allowed" => "druidspirit:drezel-start",
+            other => panic!("unsupported negative prerequisite oracle: {other}"),
+        };
+        let row = catalog
+            .iter()
+            .find_map(|(_, row)| (row.id.as_ref() == id).then_some(row))
+            .expect("negative fixture has an authored prerequisite row");
+        let messages = row
+            .crossings
+            .iter()
+            .map(|crossing| {
+                let step = PrereqStepIdentity {
+                    id: Arc::clone(&row.id),
+                    source: Arc::clone(&crossing.source.0),
+                };
+                match expected {
+                    "FreeSlots" => PrereqRefusal::PreconditionMissing {
+                        step,
+                        missing: PrereqMissing::FreeSlots { required: 1 },
+                    },
+                    _ => PrereqRefusal::NotAllowed {
+                        step,
+                        switch: PrereqSwitch::QuestStart,
+                    },
+                }
+                .to_string()
+            })
+            .collect();
+        Self {
+            expected,
+            messages,
+            wolfbane,
+            meat_pie,
+            apple_pie,
+            pies: case.pies,
+            stand: case.stand,
+        }
+    }
+
+    fn observe(
+        &self,
+        snapshot: &GameSnapshot,
+        status: Option<&ScriptStatus>,
+        lifecycle: Option<&script::ScriptLifecycleReceipt>,
+        dialogue_seen: &[String],
+    ) -> Result<Option<Value>, String> {
+        let Some(terminal) =
+            lifecycle.filter(|receipt| receipt.state == script::ScriptTerminalState::Failed)
+        else {
+            return Ok(None);
+        };
+        let failure = status
+            .and_then(|status| status.failure.as_ref())
+            .ok_or("failed prerequisite cell has no native failure")?;
+        if !failure.message.contains(self.expected) && !terminal.reason.contains(self.expected) {
+            return Err(format!(
+                "expected prerequisite failure {:?}, got {failure:?}; {terminal:?}",
+                self.expected
+            ));
+        }
+        if snapshot.modals().chat != -1 || snapshot.modals().main != -1 {
+            return Ok(None);
+        }
+        require_item(snapshot, self.wolfbane, 0, "dagger_wolfbane")?;
+        require_item(snapshot, self.meat_pie, self.pies, "meat_pie")?;
+        require_item(snapshot, self.apple_pie, 0, "apple_pie")?;
+        if snapshot
+            .ground_items()
+            .iter()
+            .any(|item| item.def.id == self.wolfbane)
+        {
+            return Err("failed reclaim dropped Wolfbane on the floor".into());
+        }
+        if saw_text(dialogue_seen, HOLY_ADVICE) || saw_text(dialogue_seen, MORT_FOOD) {
+            return Err(format!(
+                "denied prerequisite performed a repair: {dialogue_seen:?}"
+            ));
+        }
+        if self.expected == "FreeSlots" && !saw_text(dialogue_seen, DAGGER_RECLAIM) {
+            return Err("full-pack refusal did not reach the real reclaim opener".into());
+        }
+        let here = tile(snapshot);
+        if self.expected == "quest_start is not allowed"
+            && (here != Some(self.stand) || !dialogue_seen.is_empty())
+        {
+            return Err(format!(
+                "request-level Forbid began a repair: here={here:?}, pages={dialogue_seen:?}"
+            ));
+        }
+        Ok(Some(json!({"family_step": "prerequisite-walk",
+            "owner": "native Quester Path", "expected_failure": self.expected,
+            "expected_native_failures": self.messages,
+            "request_quest_start": if self.expected == "quest_start is not allowed" { Some(false) } else { None },
+            "final_tile": here, "dialogue_pages": dialogue_seen,
+            "inventory_after": inventory_receipt(snapshot),
+            "native_status": native_status_receipt(status), "lifecycle": lifecycle})))
+    }
+}
+
+#[cfg(test)]
+mod prereq_failure_oracle_tests {
+    use super::*;
+    use api::snapshot::{ItemActionFamily, ItemContainer, ItemView};
+    use script::native::{NativePhase, ScriptFailure, StatusField};
+
+    fn fixture() -> (PrereqFailureOracle, GameSnapshot, ScriptStatus, Vec<String>) {
+        let (selected, _) = live_data();
+        let case = PrereqLiveCase {
+            selector: "negative-oracle-unit",
+            priest: 60,
+            druid: 0,
+            bank_dagger: false,
+            pies: 28,
+            stand: PREREQ_WEST,
+            goal: PREREQ_EAST,
+            holy: true,
+            mort: None,
+            advice: false,
+            reclaim: false,
+            start: false,
+        };
+        let oracle = PrereqFailureOracle::new(selected, "FreeSlots", &case);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_tile(PREREQ_WEST);
+        snapshot.seed_inventory(
+            (0..28)
+                .map(|slot| ItemView {
+                    def: api::ItemDefView {
+                        id: oracle.meat_pie,
+                        name: None,
+                        stackable: false,
+                        members: false,
+                        base_value: 0,
+                        noted: false,
+                        certificate_link: -1,
+                        certificate_template: -1,
+                    },
+                    container: ItemContainer::Inventory,
+                    action_family: ItemActionFamily::Held,
+                    slot,
+                    count: 1,
+                    actions: vec![],
+                    component_id: -1,
+                })
+                .collect(),
+            28,
+        );
+        let status = ScriptStatus {
+            run: RunKey { slot: 1, run: 1, session: 1 },
+            card: script::CompiledId("Quester"),
+            phase: NativePhase::Blocked,
+            active_settings: 1,
+            pending_settings: None,
+            failure: Some(ScriptFailure {
+                code: "parked".into(),
+                message: oracle.messages[0].as_str().into(),
+            }),
+            fields: Arc::from([]),
+        };
+        (oracle, snapshot, status, vec![DAGGER_RECLAIM.into()])
+    }
+
+    #[test]
+    fn prereq_negative_oracle_accepts_exact_native_blocked_refusal() {
+        let (oracle, snapshot, status, pages) = fixture();
+        assert!(oracle.observe(&snapshot, Some(&status), None, &pages).unwrap().is_some());
+    }
+
+    #[test]
+    fn prereq_negative_oracle_rejects_different_failure() {
+        let (oracle, snapshot, mut status, pages) = fixture();
+        status.failure.as_mut().unwrap().message =
+            format!("{} with a different cause", oracle.messages[0]).into();
+        assert!(oracle.observe(&snapshot, Some(&status), None, &pages).is_err());
+    }
+
+    #[test]
+    fn prereq_negative_oracle_rejects_open_modal() {
+        for main in [false, true] {
+            let (oracle, mut snapshot, status, pages) = fixture();
+            if main {
+                snapshot.seed_main_modal(1, vec![]);
+            } else {
+                snapshot.seed_chat_modal(1, vec![]);
+            }
+            assert!(oracle.observe(&snapshot, Some(&status), None, &pages).is_err());
+        }
+    }
+
+    #[test]
+    fn prereq_negative_oracle_rejects_changed_inventory() {
+        let (oracle, mut snapshot, status, pages) = fixture();
+        snapshot.seed_inventory(vec![], 28);
+        assert!(oracle.observe(&snapshot, Some(&status), None, &pages).is_err());
+    }
+
+    #[test]
+    fn prereq_negative_oracle_rejects_repair_attempt() {
+        for repair in [HOLY_ADVICE, MORT_FOOD] {
+            let (oracle, snapshot, status, mut pages) = fixture();
+            pages.push(repair.into());
+            assert!(oracle.observe(&snapshot, Some(&status), None, &pages).is_err());
+        }
+    }
+
+    #[test]
+    fn prereq_negative_oracle_rejects_working_with_block_reason() {
+        let (oracle, snapshot, mut status, pages) = fixture();
+        status.phase = NativePhase::Working;
+        status.fields = Arc::from([StatusField {
+            key: "block_reason",
+            label: "Block",
+            value: StatusValue::Text(status.failure.as_ref().unwrap().message.clone()),
+        }]);
+        assert!(oracle.observe(&snapshot, Some(&status), None, &pages).is_err());
+    }
+}
+
 fn run_quester_prereq_case(case: PrereqLiveCase, expected_failure: Option<&'static str>) {
     let (selected, quests) = live_data();
     let wolfbane = item_id(&selected, "dagger_wolfbane");
@@ -1653,6 +1896,8 @@ fn run_quester_prereq_case(case: PrereqLiveCase, expected_failure: Option<&'stat
         document.prereq.quest_start = Some(false);
     }
     let start = family_start(document, Arc::clone(&selected), quests);
+    let failure_oracle = expected_failure
+        .map(|expected| PrereqFailureOracle::new(Arc::clone(&selected), expected, &case));
     let mut dialogue_seen = Vec::new();
     let mut holy_landing = false;
     let mut mort_landing = false;
@@ -1662,54 +1907,8 @@ fn run_quester_prereq_case(case: PrereqLiveCase, expected_failure: Option<&'stat
         remember_dialogue_texts(snapshot, &mut dialogue_seen);
         let baseline = start_sequence.load(Ordering::Relaxed);
         let here = tile(snapshot);
-        if let Some(expected) = expected_failure {
-            let Some(terminal) =
-                lifecycle.filter(|receipt| receipt.state == script::ScriptTerminalState::Failed)
-            else {
-                return Ok(None);
-            };
-            let failure = status
-                .and_then(|status| status.failure.as_ref())
-                .ok_or("failed prerequisite cell has no native failure")?;
-            if !failure.message.contains(expected) && !terminal.reason.contains(expected) {
-                return Err(format!(
-                    "expected prerequisite failure {expected:?}, got {failure:?}; {terminal:?}"
-                ));
-            }
-            if snapshot.modals().chat != -1 || snapshot.modals().main != -1 {
-                return Ok(None);
-            }
-            require_item(snapshot, wolfbane, 0, "dagger_wolfbane")?;
-            require_item(snapshot, meat_pie, case.pies, "meat_pie")?;
-            require_item(snapshot, apple_pie, 0, "apple_pie")?;
-            if snapshot
-                .ground_items()
-                .iter()
-                .any(|item| item.def.id == wolfbane)
-            {
-                return Err("failed reclaim dropped Wolfbane on the floor".into());
-            }
-            if saw_text(&dialogue_seen, HOLY_ADVICE) || saw_text(&dialogue_seen, MORT_FOOD) {
-                return Err(format!(
-                    "denied prerequisite performed a repair: {dialogue_seen:?}"
-                ));
-            }
-            if expected == "FreeSlots" && !saw_text(&dialogue_seen, DAGGER_RECLAIM) {
-                return Err("full-pack refusal did not reach the real reclaim opener".into());
-            }
-            if expected == "quest_start is not allowed"
-                && (here != Some(case.stand) || !dialogue_seen.is_empty())
-            {
-                return Err(format!(
-                    "request-level Forbid began a repair: here={here:?}, pages={dialogue_seen:?}"
-                ));
-            }
-            return Ok(Some(json!({"family_step": "prerequisite-walk",
-                "owner": "native Quester Path", "expected_failure": expected,
-                "request_quest_start": if expected == "quest_start is not allowed" { Some(false) } else { None },
-                "final_tile": here, "dialogue_pages": dialogue_seen,
-                "inventory_after": inventory_receipt(snapshot),
-                "native_status": native_status_receipt(status), "lifecycle": terminal})));
+        if let Some(oracle) = failure_oracle.as_ref() {
+            return oracle.observe(snapshot, status, lifecycle, &dialogue_seen);
         }
         for (message, required, landings, seen) in [
             (

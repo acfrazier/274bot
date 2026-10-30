@@ -956,6 +956,16 @@ fn append_status(path: &Path, status: &ScriptStatus) -> Result<Value, String> {
     Ok(line["status"].clone())
 }
 
+#[derive(Clone, Copy)]
+enum FamilyBlockedPolicy {
+    Reject,
+    Observe,
+}
+
+fn family_parked_error(status: &ScriptStatus, _policy: FamilyBlockedPolicy) -> Option<String> {
+    parked(status)
+}
+
 pub fn run(cell: Cell) -> Result<Value, String> {
     run_inner(cell, None, None, None, false)
 }
@@ -1838,7 +1848,7 @@ fn run_cells(
                     break 'run Err(format!("{} Quester lifecycle error: {error}", names[index]));
                 }
                 if let Some(status) = observation.status.as_deref() {
-                    if let Some(reason) = parked(status) {
+                    if let Some(reason) = family_parked_error(status, FamilyBlockedPolicy::Reject) {
                         break 'run Err(format!(
                             "{} Quester parked/blocked: {reason}",
                             names[index]
@@ -2856,6 +2866,33 @@ mod tests {
         assert!(!has_native_start(Some("Sherlock"), false));
         assert!(!has_native_start(None, true));
         assert!(!has_native_start(Some(""), true));
+    }
+
+    #[test]
+    fn prereq_negative_oracle_guard_requires_opt_in_and_native_blocked() {
+        let mut status = ScriptStatus {
+            run: api::selected::RunKey { slot: 1, run: 1, session: 1 },
+            card: script::CompiledId("Quester"),
+            phase: NativePhase::Blocked,
+            active_settings: 1,
+            pending_settings: None,
+            failure: Some(script::native::ScriptFailure {
+                code: "parked".into(),
+                message: "expected refusal".into(),
+            }),
+            fields: Arc::from([]),
+        };
+        assert!(family_parked_error(&status, FamilyBlockedPolicy::Reject).is_some());
+        assert!(family_parked_error(&status, FamilyBlockedPolicy::Observe).is_none());
+        status.failure = None;
+        assert!(family_parked_error(&status, FamilyBlockedPolicy::Observe).is_some());
+        status.phase = NativePhase::Working;
+        status.fields = Arc::from([script::native::StatusField {
+            key: "block_reason",
+            label: "Block",
+            value: StatusValue::Text("expected refusal".into()),
+        }]);
+        assert!(family_parked_error(&status, FamilyBlockedPolicy::Observe).is_some());
     }
 
     fn settings(gang: &str) -> Map<String, Value> {
