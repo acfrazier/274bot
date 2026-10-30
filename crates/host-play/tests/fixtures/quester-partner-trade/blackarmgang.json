@@ -110,48 +110,6 @@
       "prelude": [],
       "sequences": [
         {
-          "stage": "p:0",
-          "required": [],
-          "terminal": false,
-          "recovery_entry": null,
-          "steps": []
-        },
-        {
-          "stage": "p:1",
-          "required": [],
-          "terminal": false,
-          "recovery_entry": null,
-          "steps": []
-        },
-        {
-          "stage": "p:2",
-          "required": [],
-          "terminal": false,
-          "recovery_entry": null,
-          "steps": []
-        },
-        {
-          "stage": "p:3",
-          "required": [],
-          "terminal": false,
-          "recovery_entry": null,
-          "steps": []
-        },
-        {
-          "stage": "p:4",
-          "required": [],
-          "terminal": false,
-          "recovery_entry": null,
-          "steps": []
-        },
-        {
-          "stage": "p:8",
-          "required": [],
-          "terminal": false,
-          "recovery_entry": null,
-          "steps": []
-        },
-        {
           "stage": "p:9",
           "required": [],
           "terminal": true,
@@ -260,20 +218,6 @@
       "prelude": [],
       "sequences": [
         {
-          "stage": "b:0",
-          "required": [],
-          "terminal": false,
-          "recovery_entry": null,
-          "steps": []
-        },
-        {
-          "stage": "b:1",
-          "required": [],
-          "terminal": false,
-          "recovery_entry": null,
-          "steps": []
-        },
-        {
           "stage": "b:2",
           "required": [],
           "terminal": true,
@@ -337,14 +281,6 @@
               "comment": "scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2:134-142,154-166; scripts/areas/area_varrock/scripts/curator.rs2:7-22"
             }
           ],
-          "order": "ordered"
-        },
-        {
-          "stage": "b:3",
-          "required": [],
-          "terminal": false,
-          "recovery_entry": null,
-          "steps": [],
           "order": "ordered"
         },
         {
