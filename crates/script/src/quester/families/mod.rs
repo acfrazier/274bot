@@ -45,11 +45,30 @@ pub(super) fn manual_movement_message() -> Arc<str> {
 }
 
 /// Map a native walk receipt to arrival evidence or its typed error.
-/// Only the `walk` step's `WalkRun` retries eligible receipt failures.
+/// Approach owners use the same retry state as the `walk` step.
 fn walk_step_evidence(
     receipt: WalkReceipt,
 ) -> Result<api::quest_progress::EvidenceStamp, ActionError> {
     receipt.into_arrival()
+}
+
+fn begin_approach_walk(
+    retry: &mut crate::native::WalkRetryState,
+    request: crate::native::WalkRequest,
+    cx: &mut StepContext<'_, '_>,
+) -> Poll<Result<ActionHandle<Walk>, ActionError>> {
+    let now = cx.tick.cx.evidence().tick;
+    match crate::native::defer_budget(cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)) {
+        Poll::Pending => {
+            retry.defer_until_next_tick(now);
+            Poll::Pending
+        }
+        Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+        Poll::Ready(Ok(handle)) => {
+            retry.action_submitted();
+            Poll::Ready(Ok(handle))
+        }
+    }
 }
 
 pub fn handlers() -> &'static [super::compile::StepHandler] {
@@ -1193,8 +1212,7 @@ fn parse_walk_plan(arg: WalkArgs) -> Result<WalkPlan, CompileError> {
     })
 }
 
-/// Match the three-request cap of the combat escape pass.
-const WALK_STEP_MAX_ATTEMPTS: u8 = 3;
+/// Walk-step and approach owners share one receipt filter, budget and retry state.
 
 #[derive(Clone)]
 struct WalkPlan {
@@ -1223,8 +1241,7 @@ impl StepPlan for WalkPlan {
         let mut run = WalkRun {
             plan: self.clone(),
             handle: None,
-            recovery: crate::native::ReturnStallRecovery::with_max_attempts(WALK_STEP_MAX_ATTEMPTS),
-            retry_after_tick: None,
+            retry: crate::native::WalkRetryState::default(),
             warning: None,
             trace_event: None,
         };
@@ -1235,8 +1252,7 @@ impl StepPlan for WalkPlan {
 struct WalkRun {
     plan: WalkPlan,
     handle: Option<ActionHandle<Walk>>,
-    recovery: crate::native::ReturnStallRecovery,
-    retry_after_tick: Option<u64>,
+    retry: crate::native::WalkRetryState,
     warning: Option<Arc<str>>,
     trace_event: Option<super::compile::StepTraceEvent>,
 }
@@ -1245,8 +1261,7 @@ impl WalkRun {
         let request = self.plan.request(cx);
         let handle = cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?;
         self.handle = Some(handle);
-        self.recovery.action_submitted();
-        self.retry_after_tick = None;
+        self.retry.action_submitted();
         self.warning = None;
         Ok(())
     }
@@ -1254,13 +1269,13 @@ impl WalkRun {
 impl StepRun for WalkRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         let now = cx.tick.cx.evidence().tick;
-        if let Some(failed_tick) = self.retry_after_tick {
-            if now <= failed_tick {
+        if self.retry.pending() {
+            if self.retry.waiting_for_next_tick(now) {
                 return Poll::Pending;
             }
             match crate::native::defer_budget(self.begin_walk(cx)) {
                 Poll::Pending => {
-                    self.retry_after_tick = Some(now);
+                    self.retry.defer_until_next_tick(now);
                     return Poll::Pending;
                 }
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
@@ -1278,11 +1293,10 @@ impl StepRun for WalkRun {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(receipt)) => {
-                    if self.recovery.observe_receipt(&receipt) {
+                    if self.retry.observe_failure(&receipt, now) {
                         self.handle = None;
-                        self.retry_after_tick = Some(now);
                         self.trace_event = Some(super::compile::StepTraceEvent::WalkRetry {
-                            attempt: self.recovery.retry_attempt_number(),
+                            attempt: self.retry.retry_attempt_number(),
                             failure_detail: receipt.failure_detail_or_fallback(),
                         });
                         return Poll::Pending;
@@ -1573,6 +1587,7 @@ impl StepPlan for TalkPlan {
             options: self.options.clone(),
             expect_combat: self.expect_combat,
             walk: None,
+            walk_retry: crate::native::WalkRetryState::default(),
             dialogue: None,
             started: false,
         }))
@@ -1586,18 +1601,26 @@ struct TalkRun {
     options: dialogue::DialogueOptions,
     expect_combat: Option<i32>,
     walk: Option<ActionHandle<Walk>>,
+    walk_retry: crate::native::WalkRetryState,
     dialogue: Option<ActionHandle<dialogue::Dialogue>>,
     started: bool,
 }
 impl StepRun for TalkRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        let now_tick = cx.tick.cx.evidence().tick;
         if let Some(handle) = &self.walk {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
-                    walk_step_evidence(receipt)?;
                     self.walk = None;
+                    if self.walk_retry.observe_failure(&receipt, now_tick) {
+                        return Poll::Pending;
+                    }
+                    if let Err(error) = walk_step_evidence(receipt) {
+                        return Poll::Ready(Err(error));
+                    }
+                    self.walk_retry.reset();
                 }
             }
         }
@@ -1612,15 +1635,28 @@ impl StepRun for TalkRun {
                 let near =
                     here.is_some_and(|here| reach::within(here, tile, i32::from(self.leash)));
                 if !near {
-                    self.walk = Some(std::task::ready!(crate::native::defer_budget(
+                    if self.walk_retry.waiting_for_next_tick(now_tick) {
+                        return Poll::Pending;
+                    }
+                    let walk = match crate::native::defer_budget(
                         cx.tick.actions.begin::<Walk>(
                             reach::walk_request(tile, self.leash, None, cx.required_after),
                             &mut cx.tick.cx,
                         ),
-                    ))?);
+                    ) {
+                        Poll::Pending => {
+                            self.walk_retry.defer_until_next_tick(now_tick);
+                            return Poll::Pending;
+                        }
+                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                        Poll::Ready(Ok(walk)) => walk,
+                    };
+                    self.walk_retry.action_submitted();
+                    self.walk = Some(walk);
                     return Poll::Pending;
                 }
             }
+            self.walk_retry.reset();
             self.dialogue = Some(std::task::ready!(crate::native::defer_budget(
                 cx.tick.actions.begin::<dialogue::Dialogue>(
                     dialogue::DialogueArgs {
@@ -1931,6 +1967,7 @@ impl StepPlan for InteractPlan {
             missing_deadline: None,
             waiting: None,
             settle_duration: Duration::from_millis(self.settle_ms.unwrap_or(20_000)),
+            walk_retry: crate::native::WalkRetryState::default(),
             walk: None,
             wall_fallback_tile: None,
             wall_fallback_pending: None,
@@ -1976,6 +2013,7 @@ struct InteractRun {
     waiting: Option<&'static str>,
     settle_duration: Duration,
     walk: Option<ActionHandle<Walk>>,
+    walk_retry: crate::native::WalkRetryState,
     /// The wall tile for the one allowed retry of an initial facing-side walk.
     wall_fallback_tile: Option<WorldTile>,
     /// A retry tile whose walk request has not yet obtained budget.
@@ -2022,6 +2060,7 @@ impl InteractRun {
         self.accepted_tick = None;
         self.scene_activity_observed = false;
         self.scene_in_range_at_acceptance = false;
+        self.walk_retry.reset();
     }
 
     /// Only a reachable match may be clicked: authored reachability, or
@@ -2286,12 +2325,17 @@ impl InteractRun {
             }
             self.clear_round();
         }
+        if self
+            .walk_retry
+            .waiting_for_next_tick(cx.tick.cx.evidence().tick)
+        {
+            return Poll::Pending;
+        }
         if let Some(tile) = self.wall_fallback_pending {
-            self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                cx.tick.actions.begin::<Walk>(
-                    reach::walk_request(tile, 1, None, cx.required_after),
-                    &mut cx.tick.cx,
-                ),
+            self.walk = Some(std::task::ready!(begin_approach_walk(
+                &mut self.walk_retry,
+                reach::walk_request(tile, 1, None, cx.required_after),
+                cx,
             ))?);
             self.wall_fallback_pending = None;
             return Poll::Pending;
@@ -2309,16 +2353,21 @@ impl InteractRun {
                 }
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
-                    if let Some(tile) = self.wall_fallback_tile {
-                        if reach::loc_wall_route_failed(&receipt) {
-                            self.walk = None;
-                            self.wall_fallback_tile = None;
-                            self.wall_fallback_pending = Some(tile);
-                            return Poll::Pending;
+                    if self
+                        .walk_retry
+                        .observe_failure(&receipt, cx.tick.cx.evidence().tick)
+                    {
+                        if let Some(tile) = self.wall_fallback_tile.take() {
+                            if reach::loc_wall_route_failed(&receipt) {
+                                self.wall_fallback_pending = Some(tile);
+                            }
                         }
+                        self.walk = None;
+                        return Poll::Pending;
                     }
                     self.wall_fallback_tile = None;
                     walk_step_evidence(receipt)?;
+                    self.walk_retry.reset();
                     self.walk = None;
                 }
             }
@@ -2377,12 +2426,15 @@ impl InteractRun {
                     }
                     if !arrived {
                         self.wall_fallback_tile = fallback_tile;
-                        self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                            cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
+                        self.walk = Some(std::task::ready!(begin_approach_walk(
+                            &mut self.walk_retry,
+                            request,
+                            cx,
                         ))?);
                         return Poll::Pending;
                     }
                     self.wall_fallback_tile = None;
+                    self.walk_retry.reset();
                 }
             }
             if let Some(tile) = self
@@ -2396,16 +2448,15 @@ impl InteractRun {
                     .local_player()
                     .map(|player| player.value.player.network);
                 if !here.is_some_and(|here| reach::within(here, tile, self.radius)) {
-                    self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                        cx.tick.actions.begin::<Walk>(
-                            reach::walk_request(
-                                tile,
-                                self.radius.max(1) as u16,
-                                None,
-                                cx.required_after,
-                            ),
-                            &mut cx.tick.cx,
+                    self.walk = Some(std::task::ready!(begin_approach_walk(
+                        &mut self.walk_retry,
+                        reach::walk_request(
+                            tile,
+                            self.radius.max(1) as u16,
+                            None,
+                            cx.required_after,
                         ),
+                        cx,
                     ))?);
                     return Poll::Pending;
                 }
@@ -2966,6 +3017,7 @@ impl StepPlan for UseOnPlan {
             deadline: None,
             settle_duration: Duration::from_millis(self.settle_ms.unwrap_or(20_000)),
             walk: None,
+            walk_retry: crate::native::WalkRetryState::default(),
             wall_fallback_tile: None,
             wall_fallback_pending: None,
             interaction: None,
@@ -3010,6 +3062,7 @@ struct UseOnRun {
     deadline: Option<Duration>,
     settle_duration: Duration,
     walk: Option<ActionHandle<Walk>>,
+    walk_retry: crate::native::WalkRetryState,
     /// The wall tile for the one allowed retry of an initial facing-side walk.
     wall_fallback_tile: Option<WorldTile>,
     /// A retry tile whose walk request has not yet obtained budget.
@@ -3059,6 +3112,7 @@ impl UseOnRun {
         self.accepted_tick = None;
         self.scene_activity_observed = false;
         self.scene_in_range_at_acceptance = false;
+        self.walk_retry.reset();
         self.dispatched = None;
     }
 
@@ -3195,18 +3249,23 @@ impl StepRun for UseOnRun {
                     Poll::Pending => return Poll::Pending,
                     Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                     Poll::Ready(Ok(receipt)) => {
-                        if let Some(tile) = self.wall_fallback_tile {
-                            if reach::loc_wall_route_failed(&receipt) {
-                                self.walk = None;
-                                self.wall_fallback_tile = None;
-                                self.wall_fallback_pending = Some(tile);
-                                self.chase = None;
-                                self.anchor_walk = false;
-                                return Poll::Pending;
+                        if self
+                            .walk_retry
+                            .observe_failure(&receipt, cx.tick.cx.evidence().tick)
+                        {
+                            if let Some(tile) = self.wall_fallback_tile.take() {
+                                if reach::loc_wall_route_failed(&receipt) {
+                                    self.wall_fallback_pending = Some(tile);
+                                }
                             }
+                            self.walk = None;
+                            self.chase = None;
+                            self.anchor_walk = false;
+                            return Poll::Pending;
                         }
                         self.wall_fallback_tile = None;
                         walk_step_evidence(receipt)?;
+                        self.walk_retry.reset();
                         self.walk = None;
                         self.chase = None;
                         self.anchor_walk = false;
@@ -3216,12 +3275,17 @@ impl StepRun for UseOnRun {
             if timed_out && !reached_at_deadline {
                 return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))));
             }
+            if self
+                .walk_retry
+                .waiting_for_next_tick(cx.tick.cx.evidence().tick)
+            {
+                return Poll::Pending;
+            }
             if let Some(tile) = self.wall_fallback_pending {
-                self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                    cx.tick.actions.begin::<Walk>(
-                        reach::walk_request(tile, 1, None, cx.required_after),
-                        &mut cx.tick.cx,
-                    ),
+                self.walk = Some(std::task::ready!(begin_approach_walk(
+                    &mut self.walk_retry,
+                    reach::walk_request(tile, 1, None, cx.required_after),
+                    cx,
                 ))?);
                 self.wall_fallback_pending = None;
                 return Poll::Pending;
@@ -3287,16 +3351,15 @@ impl StepRun for UseOnRun {
                     if !here.is_some_and(|here| reach::within(here, tile, self.radius))
                         && !target_here
                     {
-                        self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                            cx.tick.actions.begin::<Walk>(
-                                reach::walk_request(
-                                    tile,
-                                    self.radius.max(1) as u16,
-                                    None,
-                                    cx.required_after,
-                                ),
-                                &mut cx.tick.cx,
+                        self.walk = Some(std::task::ready!(begin_approach_walk(
+                            &mut self.walk_retry,
+                            reach::walk_request(
+                                tile,
+                                self.radius.max(1) as u16,
+                                None,
+                                cx.required_after,
                             ),
+                            cx,
                         ))?);
                         self.anchor_walk = true;
                         return Poll::Pending;
@@ -3375,8 +3438,10 @@ impl StepRun for UseOnRun {
                                 );
                                 self.wall_fallback_tile =
                                     reach::loc_wall_fallback_tile(loc, &request);
-                                self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                                    cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
+                                self.walk = Some(std::task::ready!(begin_approach_walk(
+                                    &mut self.walk_retry,
+                                    request,
+                                    cx,
                                 ))?);
                                 return Poll::Pending;
                             }
@@ -3404,11 +3469,10 @@ impl StepRun for UseOnRun {
                         if !adjacent {
                             // Chase the live NPC; the walk is re-checked every
                             // tick and ends as soon as the NPC is beside us.
-                            self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                                cx.tick.actions.begin::<Walk>(
-                                    reach::walk_request(npc_tile, 1, None, cx.required_after),
-                                    &mut cx.tick.cx,
-                                ),
+                            self.walk = Some(std::task::ready!(begin_approach_walk(
+                                &mut self.walk_retry,
+                                reach::walk_request(npc_tile, 1, None, cx.required_after),
+                                cx,
                             ))?);
                             self.chase = Some((npc_index, npc_tile));
                             return Poll::Pending;
@@ -3431,11 +3495,10 @@ impl StepRun for UseOnRun {
                             reach::Pick::None => return Poll::Pending,
                         };
                         if !reachable {
-                            self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                                cx.tick.actions.begin::<Walk>(
-                                    reach::walk_request(target, 1, None, cx.required_after),
-                                    &mut cx.tick.cx,
-                                ),
+                            self.walk = Some(std::task::ready!(begin_approach_walk(
+                                &mut self.walk_retry,
+                                reach::walk_request(target, 1, None, cx.required_after),
+                                cx,
                             ))?);
                             return Poll::Pending;
                         }

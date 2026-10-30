@@ -6,7 +6,10 @@
 //! (`quest_totem.rs2` `tribal_door_combo`: `if_settext(tribal_door2:com_43..46,
 //! enum(alphabet, $stage))`).
 use crate::native::walk::Walk;
-use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, WalkReceipt};
+use crate::native::{
+    ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, WalkReceipt,
+    WalkRetryState,
+};
 use crate::quester::compile::{
     CompileContext, CompileError, StepContext, StepOutcome, StepPlan, StepRun,
 };
@@ -119,6 +122,7 @@ impl StepPlan for Plan {
             tile: self.tile,
             radius: self.radius,
             walk: None,
+            walk_retry: WalkRetryState::default(),
             reach: None,
             combo: None,
             opened: false,
@@ -137,6 +141,7 @@ struct Run {
     tile: WorldTile,
     radius: i32,
     walk: Option<ActionHandle<Walk>>,
+    walk_retry: WalkRetryState,
     reach: Option<ActionHandle<reach::Reach>>,
     combo: Option<ActionHandle<Combo>>,
     opened: bool,
@@ -149,8 +154,15 @@ impl StepRun for Run {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
-                    walk_arrival(receipt)?;
                     self.walk = None;
+                    if self
+                        .walk_retry
+                        .observe_failure(&receipt, cx.tick.cx.evidence().tick)
+                    {
+                        return Poll::Pending;
+                    }
+                    walk_arrival(receipt)?;
+                    self.walk_retry.reset();
                 }
             }
         }
@@ -160,17 +172,33 @@ impl StepRun for Run {
         if !self.opened {
             let here = cx.tick.cx.snapshot().here();
             if !here.is_some_and(|obs| reach::within(obs.value, self.tile, self.radius)) {
-                self.walk = Some(cx.tick.actions.begin::<Walk>(
-                    reach::walk_request(
-                        self.tile,
-                        self.radius.max(1) as u16,
-                        None,
-                        cx.required_after,
-                    ),
+                let tick = cx.tick.cx.evidence().tick;
+                if self.walk_retry.waiting_for_next_tick(tick) {
+                    return Poll::Pending;
+                }
+                let request = reach::walk_request(
+                    self.tile,
+                    self.radius.max(1) as u16,
+                    None,
+                    cx.required_after,
+                );
+                match crate::native::defer_budget(cx.tick.actions.begin::<Walk>(
+                    request,
                     &mut cx.tick.cx,
-                )?);
+                )) {
+                    Poll::Pending => {
+                        self.walk_retry.defer_until_next_tick(tick);
+                        return Poll::Pending;
+                    }
+                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                    Poll::Ready(Ok(handle)) => {
+                        self.walk_retry.action_submitted();
+                        self.walk = Some(handle);
+                    }
+                }
                 return Poll::Pending;
             }
+            self.walk_retry.reset();
             if self.reach.is_none() {
                 self.reach = Some(cx.tick.actions.begin::<reach::Reach>(
                     reach::ReachArgs {

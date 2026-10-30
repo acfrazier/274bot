@@ -731,12 +731,15 @@ impl Provisioner {
             false,
             cx.required_after,
         );
-        self.bank_run = Some(AcquireRun::new(
-            request,
-            crate::acquire::AcquirePlan::authored(),
-            cx.banks,
-            &cx.tick.cx,
-        ));
+        self.bank_run = Some(
+            AcquireRun::new(
+                request,
+                crate::acquire::AcquirePlan::authored(),
+                cx.banks,
+                &cx.tick.cx,
+            )
+            .with_quester_walk_retries(),
+        );
         self.attempts = self.attempts.saturating_add(1);
         self.bank_starts = self.bank_starts.wrapping_add(1);
         self.set_status(phase, item, need, pack, bank, bank_known(cx));

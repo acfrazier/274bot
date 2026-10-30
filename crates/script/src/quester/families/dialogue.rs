@@ -210,6 +210,7 @@ pub struct Dialogue {
     npc_action: Arc<str>,
     deadline_ms: u64,
     walk_request_id: u64,
+    walk_retry: crate::native::WalkRetryState,
     talk_request_id: Option<u64>,
     talk_baseline: Option<PageAcknowledgement>,
     chat_advanced: bool,
@@ -250,6 +251,7 @@ impl NativeMachine for Dialogue {
             npc_action: Arc::from("Talk-to"),
             deadline_ms: cx.active_now().as_millis() as u64 + DIALOGUE_OPEN_MS,
             walk_request_id: 0,
+            walk_retry: crate::native::WalkRetryState::default(),
             surface: Surface::Unselected,
             talk_request_id: None,
             talk_baseline: None,
@@ -372,19 +374,49 @@ impl NativeMachine for Dialogue {
             Phase::Approach => {
                 if let Some(target) = self.npc_id().and_then(|id| nearest_talk(cx, id)) {
                     if target.distance <= 2 && talk_reachable(cx, target.tile) {
+                        self.walk_retry.reset();
                         std::task::ready!(crate::native::defer_budget(self.open(cx)))?;
-                        cx.cancel_request(self.walk_request_id);
+                        if self.walk_request_id != 0 {
+                            cx.cancel_request(self.walk_request_id);
+                        }
                         self.walk_request_id = 0;
                         return Poll::Pending;
                     }
                 }
-                if now >= self.deadline_ms
-                    || (self.walk_request_id != 0
-                        && cx.walk_receipt(self.walk_request_id).is_some())
-                {
-                    cx.cancel_request(self.walk_request_id);
-                    self.walk_request_id = 0;
+                if self.walk_request_id != 0 {
+                    if let Some(receipt) = cx.walk_receipt(self.walk_request_id).cloned() {
+                        self.walk_request_id = 0;
+                        if self
+                            .walk_retry
+                            .observe_failure(&receipt, cx.evidence().tick)
+                        {
+                            return Poll::Pending;
+                        }
+                        return match receipt.into_arrival() {
+                            Ok(_) => Poll::Ready(Ok(DialogueOutcome::Failed)),
+                            Err(error) => Poll::Ready(Err(error)),
+                        };
+                    }
+                }
+                if now >= self.deadline_ms {
+                    if self.walk_request_id != 0 {
+                        cx.cancel_request(self.walk_request_id);
+                        self.walk_request_id = 0;
+                    }
                     return Poll::Ready(Ok(DialogueOutcome::Failed));
+                }
+                if self.walk_retry.pending() {
+                    if self.walk_retry.waiting_for_next_tick(cx.evidence().tick) {
+                        return Poll::Pending;
+                    }
+                    match crate::native::defer_budget(self.begin_approach(cx)) {
+                        Poll::Pending => {
+                            self.walk_retry.defer_until_next_tick(cx.evidence().tick);
+                            return Poll::Pending;
+                        }
+                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                        Poll::Ready(Ok(_)) => {}
+                    }
                 }
                 Poll::Pending
             }
@@ -560,6 +592,25 @@ impl Dialogue {
         }
     }
 
+    fn begin_approach(&mut self, cx: &mut ActionContext<'_>) -> Result<bool, ActionError> {
+        let Some(target) = self.npc_id().and_then(|id| nearest_talk(cx, id)) else {
+            return Ok(false);
+        };
+        let reachable = talk_reachable(cx, target.tile);
+        if target.distance <= 2 && reachable {
+            return Ok(false);
+        }
+        self.walk_request_id = cx.walk(reach::walk_request(
+            target.tile,
+            if reachable { 1 } else { 0 },
+            None,
+            cx.evidence(),
+        ))?;
+        self.walk_retry.action_submitted();
+        self.phase = Phase::Approach;
+        Ok(true)
+    }
+
     fn open(&mut self, cx: &mut ActionContext<'_>) -> Result<(), ActionError> {
         let chat = observe(cx);
         let main = observe_main(cx, self.main_ui);
@@ -588,22 +639,11 @@ impl Dialogue {
             }
             return Ok(());
         }
+        if self.begin_approach(cx)? {
+            self.deadline_ms = cx.active_now().as_millis() as u64 + DIALOGUE_APPROACH_MS;
+            return Ok(());
+        }
         if let Some(target) = self.npc_id().and_then(|id| nearest_talk(cx, id)) {
-            let reachable = talk_reachable(cx, target.tile);
-            if target.distance > 2 || !reachable {
-                // A nearby NPC across a closed wall/door is not ready to
-                // talk. Route to its side instead of accepting a blocked
-                // adjacent tile and cancelling before the door traversal.
-                self.walk_request_id = cx.walk(reach::walk_request(
-                    target.tile,
-                    if reachable { 1 } else { 0 },
-                    None,
-                    cx.evidence(),
-                ))?;
-                self.phase = Phase::Approach;
-                self.deadline_ms = cx.active_now().as_millis() as u64 + DIALOGUE_APPROACH_MS;
-                return Ok(());
-            }
             self.npc_index = target.index;
             self.npc_action = Arc::from(target.action);
         }

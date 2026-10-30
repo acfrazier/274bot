@@ -1061,6 +1061,78 @@ pub enum WalkEnd {
 // from the observed position is the supported recovery.
 const MAX_RETURN_RECOVERY_ATTEMPTS: u8 = 2;
 
+pub(crate) const QUEST_WALK_MAX_ATTEMPTS: u8 = 3;
+
+/// Shares Quester's walk-step retry budget and next-tick recovery state with
+/// every family that owns an approach walk.
+pub(crate) struct WalkRetryState {
+    recovery: ReturnStallRecovery,
+    retry_after_tick: Option<u64>,
+}
+
+impl Default for WalkRetryState {
+    fn default() -> Self {
+        Self {
+            recovery: ReturnStallRecovery::with_max_attempts(QUEST_WALK_MAX_ATTEMPTS),
+            retry_after_tick: None,
+        }
+    }
+}
+
+impl WalkRetryState {
+    pub(crate) fn observe_failure(&mut self, receipt: &WalkReceipt, tick: u64) -> bool {
+        if self.recovery.observe_receipt(receipt) {
+            self.retry_after_tick = Some(tick);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn retryable_receipt(receipt: &WalkReceipt) -> bool {
+        let has_blocked_zones = receipt
+            .blocked
+            .as_deref()
+            .is_some_and(|blocked| !blocked.is_empty());
+        receipt.refusal.is_none()
+            && !has_blocked_zones
+            && matches!(
+                &receipt.end,
+                WalkEnd::NoPath | WalkEnd::RouteEnded | WalkEnd::Stalled(_) | WalkEnd::Failed
+            )
+    }
+
+    pub(crate) fn pending(&self) -> bool {
+        self.recovery.pending()
+    }
+
+    pub(crate) fn waiting_for_next_tick(&self, tick: u64) -> bool {
+        self.pending() && self.retry_after_tick.is_some_and(|failed| tick <= failed)
+    }
+
+    pub(crate) fn defer_until_next_tick(&mut self, tick: u64) {
+        if self.pending() {
+            self.retry_after_tick = Some(tick);
+        }
+    }
+
+    pub(crate) fn action_submitted(&mut self) {
+        self.recovery.action_submitted();
+        self.retry_after_tick = None;
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.recovery.reset();
+        self.retry_after_tick = None;
+    }
+
+    pub(crate) fn retry_attempt_number(&self) -> u8 {
+        self.recovery.retry_attempt_number()
+    }
+}
+
+// USER-0.2.3-GATHERER §1 records a progressed return ending Expired at the
+
 /// Counts recovery submissions separately from the initial action.
 /// `max_attempts` includes that initial action.
 pub(crate) struct ReturnStallRecovery {
@@ -1098,17 +1170,7 @@ impl ReturnStallRecovery {
     }
 
     pub(crate) fn observe_receipt(&mut self, receipt: &WalkReceipt) -> bool {
-        let has_blocked_zones = receipt
-            .blocked
-            .as_deref()
-            .is_some_and(|blocked| !blocked.is_empty());
-        let retryable = receipt.refusal.is_none()
-            && !has_blocked_zones
-            && matches!(
-                &receipt.end,
-                WalkEnd::NoPath | WalkEnd::RouteEnded | WalkEnd::Stalled(_) | WalkEnd::Failed
-            );
-        self.observe_retryable(retryable)
+        self.observe_retryable(WalkRetryState::retryable_receipt(receipt))
     }
 
     fn observe_retryable(&mut self, retryable: bool) -> bool {

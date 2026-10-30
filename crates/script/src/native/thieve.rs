@@ -32,7 +32,7 @@ pub(crate) struct Thieve {
     args: ThieveActionArgs,
     core: ThieveCore,
     area_anchor: Option<WorldTile>,
-    walk: Option<PendingWalk>,
+    walk_retry: super::WalkRetryState,
     reach: Option<Reach>,
     reach_request_id: Option<u64>,
     reach_target: Option<(i32, &'static str)>,
@@ -83,7 +83,7 @@ impl NativeMachine for Thieve {
             args,
             core,
             area_anchor,
-            walk: None,
+            walk_retry: super::WalkRetryState::default(),
             reach: None,
             reach_request_id: None,
             reach_target: None,
@@ -222,11 +222,18 @@ impl NativeMachine for Thieve {
             })
         {
             let center = self.area_anchor.expect("approach anchor was checked");
-            std::task::ready!(super::defer_budget(self.begin_walk(
-                center,
-                u16::from(self.args.radius),
-                cx,
-            )))?;
+            let tick = cx.evidence().tick;
+            if self.walk_retry.waiting_for_next_tick(tick) {
+                return Poll::Pending;
+            }
+            match super::defer_budget(self.begin_walk(center, u16::from(self.args.radius), cx)) {
+                Poll::Pending => {
+                    self.walk_retry.defer_until_next_tick(tick);
+                    return Poll::Pending;
+                }
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(())) => self.walk_retry.action_submitted(),
+            }
             return Poll::Pending;
         }
 
@@ -401,7 +408,14 @@ impl Thieve {
             }
             if receipt.evidence.meets(required_after) {
                 self.walk = None;
+                if self
+                    .walk_retry
+                    .observe_failure(&receipt, cx.evidence().tick)
+                {
+                    return Ok(false);
+                }
                 receipt.into_arrival()?;
+                self.walk_retry.reset();
                 return Ok(false);
             }
         }
@@ -592,7 +606,8 @@ mod tests {
     use super::*;
     use crate::native::thieving_core::DEFAULT_ACTION_DEADLINE;
     use crate::quester::families::tests::{
-        def, local_player, post_user_input_walk_receipt, with_tick, with_tick_reach,
+        def, local_player, post_walk_receipt, post_user_input_walk_receipt, with_tick,
+        with_tick_reach,
     };
     use api::snapshot::{
         ChatLineView, GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView,
@@ -869,6 +884,93 @@ mod tests {
             crate::native::HostEffect::Walk(request)
                 if request.target == anchor && request.radius == 2
         ));
+    }
+
+    #[test]
+    fn thieve_anchor_walk_retries_after_failure_from_the_observed_tile() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let start = WorldTile {
+            x: 30,
+            z: 40,
+            level: 0,
+        };
+        let snapshot = game_snapshot(start, vec![npc(19, 1, 1)], vec![]);
+        let mut ledger = None;
+        let run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let run = tick
+                .actions
+                .begin::<Thieve>(args(anchor, 2), &mut tick.cx)
+                .unwrap();
+            tick.cx.emit(crate::shim::InteractReq::CloseModal).unwrap();
+            for _ in 0..3 {
+                assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
+            }
+            run
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        let first_request = post_walk_receipt(
+            &mut ledger,
+            3,
+            WalkEnd::NoPath,
+            Some("first thieving route failed"),
+        );
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        let walk_count = |ledger: &Option<Box<crate::native::ledger::Ledger>>| {
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .filter(|action| matches!(&action.effect, crate::native::HostEffect::Walk(_)))
+                .count()
+        };
+        assert_eq!(walk_count(&ledger), 1);
+
+        let moved = WorldTile {
+            x: 29,
+            z: 39,
+            level: 0,
+        };
+        let moved_snapshot = game_snapshot(moved, vec![npc(19, 1, 1)], vec![]);
+        assert!(with_tick(&moved_snapshot, &mut ledger, 4, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(walk_count(&ledger), 2);
+        let retry = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .rev()
+            .find(|action| matches!(&action.effect, crate::native::HostEffect::Walk(_)))
+            .unwrap();
+        let crate::native::HostEffect::Walk(request) = &retry.effect else {
+            unreachable!();
+        };
+        assert_eq!(request.target, anchor);
+        assert_eq!(request.required_after.tick, 4);
+
+        let second_request =
+            post_walk_receipt(&mut ledger, 5, WalkEnd::Arrived, None);
+        assert_ne!(second_request, first_request);
+        let arrived = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
+        assert!(with_tick(&arrived, &mut ledger, 5, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(walk_count(&ledger), 2);
+        drop(run);
     }
 
     #[test]

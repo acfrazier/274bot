@@ -1,7 +1,7 @@
 use super::*;
 use crate::bank::{AccessKind, BankPickReceipt, BankStandAccess, PickKind, SelectedBank};
 use crate::native::ledger::{HostEffect, Ledger};
-use crate::native::{ActionError, InteractionReceipt};
+use crate::native::{ActionError, InteractionReceipt, WalkEnd};
 use crate::native_bank::{BankAction, BankItem};
 use api::bank_memory::{BankMemory, Origin};
 use api::named_banks::{BankPreferences, NamedBank};
@@ -335,6 +335,88 @@ fn authored_empty_actions_open_required_bank_and_leave_it_open() {
     assert!(ledger
         .as_ref()
         .is_none_or(|ledger| ledger.outbox.is_empty()));
+}
+
+#[test]
+fn quester_bank_access_retries_a_failed_walk_on_the_next_tick() {
+    let (mut snapshot, bank, banks) = fixture();
+    let start = WorldTile {
+        x: STAND.x + 12,
+        z: STAND.z,
+        level: STAND.level,
+    };
+    snapshot.seed_local_player(crate::quester::families::tests::local_player(start));
+    let mut ledger = None;
+    let mut run = new_run(
+        authored_request(Some(bank), true, Vec::new()),
+        &snapshot,
+        None,
+        &mut ledger,
+        &banks,
+    )
+    .with_quester_walk_retries();
+
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 1, OpenGate::Open).is_pending());
+    assert!(matches!(first_effect(&ledger), HostEffect::BankPick(_)));
+    complete_pick(&mut ledger, bank, 1);
+
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 2, OpenGate::Open).is_pending());
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        HostEffect::Walk(_)
+    ));
+    crate::quester::families::tests::post_walk_receipt(
+        &mut ledger,
+        3,
+        WalkEnd::NoPath,
+        Some("first bank route failed"),
+    );
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 3, OpenGate::Open).is_pending());
+    let walk_count = |ledger: &TestLedger| {
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|action| matches!(&action.effect, HostEffect::Walk(_)))
+            .count()
+    };
+    assert_eq!(walk_count(&ledger), 1);
+
+    let moved = WorldTile {
+        x: start.x - 1,
+        ..start
+    };
+    let mut moved_snapshot = snapshot.clone();
+    moved_snapshot.seed_local_player(crate::quester::families::tests::local_player(moved));
+    assert!(poll_at(&mut run, &moved_snapshot, None, &mut ledger, 4, OpenGate::Open).is_pending());
+    assert_eq!(walk_count(&ledger), 2);
+    let retry = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .rev()
+        .find(|action| matches!(&action.effect, HostEffect::Walk(_)))
+        .unwrap();
+    let HostEffect::Walk(request) = &retry.effect else {
+        unreachable!();
+    };
+    assert_eq!(request.target, STAND);
+    assert_eq!(request.required_after.tick, 4);
+
+    snapshot.seed_local_player(crate::quester::families::tests::local_player(STAND));
+    crate::quester::families::tests::post_walk_receipt(
+        &mut ledger,
+        5,
+        WalkEnd::Arrived,
+        None,
+    );
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 5, OpenGate::Open).is_pending());
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        HostEffect::Interaction(crate::shim::InteractReq::OpenStand { .. })
+    ));
 }
 
 #[test]

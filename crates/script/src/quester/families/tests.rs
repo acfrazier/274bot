@@ -501,7 +501,7 @@ pub(crate) fn post_user_input_walk_receipt(
     });
     request_id
 }
-fn post_walk_receipt(
+pub(crate) fn post_walk_receipt(
     ledger: &mut Option<Box<ledger::Ledger>>,
     tick: u64,
     end: WalkEnd,
@@ -509,7 +509,7 @@ fn post_walk_receipt(
 ) -> u64 {
     post_walk_receipt_with(ledger, tick, end, detail, None, None)
 }
-fn post_walk_receipt_with(
+pub(crate) fn post_walk_receipt_with(
     ledger: &mut Option<Box<ledger::Ledger>>,
     tick: u64,
     end: WalkEnd,
@@ -1810,6 +1810,7 @@ fn talk_and_interact_near_checks_use_network_position() {
         options: dialogue::DialogueOptions::default(),
         expect_combat: None,
         walk: None,
+        walk_retry: crate::native::WalkRetryState::default(),
         dialogue: None,
         started: false,
     };
@@ -2565,6 +2566,7 @@ fn interact_false_is_failure_not_success() {
         waiting: None,
         settle_duration: Duration::from_secs(20),
         walk: None,
+        walk_retry: crate::native::WalkRetryState::default(),
         wall_fallback_tile: None,
         wall_fallback_pending: None,
         reach: Some(handle),
@@ -6463,6 +6465,7 @@ fn talk_walk_user_input_blocks_before_dialogue_interaction() {
         },
         expect_combat: None,
         walk: None,
+        walk_retry: crate::native::WalkRetryState::default(),
         dialogue: None,
         started: false,
     };
@@ -6510,6 +6513,7 @@ fn refused_talk_approach_blocks_without_requeueing_the_walk() {
             },
             expect_combat: None,
             walk: None,
+            walk_retry: crate::native::WalkRetryState::default(),
             dialogue: None,
             started: false,
         };
@@ -6555,6 +6559,7 @@ fn use_on_walk_user_input_blocks_before_interaction() {
         deadline: None,
         settle_duration: Duration::from_secs(20),
         walk: None,
+        walk_retry: crate::native::WalkRetryState::default(),
         wall_fallback_tile: None,
         wall_fallback_pending: None,
         interaction: None,

@@ -612,6 +612,38 @@ fn user_input_walk_receipt(harness: &mut Harness, tick: u64) {
         escape: None,
     });
 }
+fn approach_walk_receipt(
+    harness: &mut Harness,
+    tick: u64,
+    end: crate::native::WalkEnd,
+    detail: Option<&str>,
+) {
+    let request_id = harness
+        .machine
+        .pending_walk
+        .expect("combat walk request was issued")
+        .get();
+    harness.runtime.ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
+        goal: None,
+        request_id,
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick,
+            sequence: tick.saturating_add(1),
+        },
+        end,
+        blocked: None,
+        detail: detail.map(std::sync::Arc::from),
+        refusal: None,
+        assessment: None,
+        escape: None,
+    });
+}
+
 #[test]
 fn combat_machine_cure_row_precedes_eat_row() {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3687,6 +3719,54 @@ fn leash_cancellation_grace_kill_beats_the_exact_budget_boundary() {
 }
 
 #[test]
+fn quester_combat_approach_replans_after_no_path() {
+    let mut scene = Scene::new("imp");
+    let here = scene.local.player.actor.tile;
+    let stand = tile(here.x + 20, here.z);
+    scene.npcs[0].tile = tile(stand.x + 10, stand.z);
+    scene.npcs[0].network = scene.npcs[0].tile;
+    scene.npcs[0].distance = 30;
+    scene.refresh();
+    let mut request = scene.request();
+    request.stand = Some(stand);
+    request.engage_radius = 1;
+    request.retry_approach_walks = true;
+    let mut harness = Harness::new(&scene, request);
+
+    assert!(matches!(
+        harness.pending(&scene, 1),
+        Some(HostEffect::Walk(walk)) if walk.target == stand
+    ));
+    approach_walk_receipt(
+        &mut harness,
+        2,
+        crate::native::WalkEnd::NoPath,
+        Some("first route failed"),
+    );
+    scene.local.player.actor.tile = tile(here.x + 1, here.z);
+    scene.refresh();
+    assert!(harness.pending(&scene, 2).is_none());
+    assert!(harness.machine.pending_walk.is_none());
+
+    assert!(matches!(
+        harness.pending(&scene, 3),
+        Some(HostEffect::Walk(walk))
+            if walk.target == stand && walk.required_after.tick == 3
+    ));
+    approach_walk_receipt(
+        &mut harness,
+        4,
+        crate::native::WalkEnd::Arrived,
+        None,
+    );
+    scene.local.player.actor.tile = stand;
+    scene.refresh();
+    assert!(harness.poll_stamp(&scene.snapshot, 4, 4).is_pending());
+    assert!(harness.machine.pending_walk.is_none());
+    assert_eq!(harness.drain(None).len(), 0);
+}
+
+#[test]
 fn user_input_ends_combat_approach_without_rewalk_or_attack() {
     let mut scene = Scene::new("imp");
     let here = scene.local.player.actor.tile;
@@ -3697,6 +3777,7 @@ fn user_input_ends_combat_approach_without_rewalk_or_attack() {
     let mut request = scene.request();
     request.stand = Some(stand);
     request.engage_radius = 1;
+    request.retry_approach_walks = true;
     let mut harness = Harness::new(&scene, request);
 
     assert!(matches!(

@@ -315,6 +315,12 @@ fn trade_run_retains_args_for_each_transient_begin_error_then_starts() {
         let port = Arc::new(Port::default());
         let mut run = TradeRun {
             walk: None,
+            walk_retry: crate::native::WalkRetryState::default(),
+            tile: api::WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
             trade: None,
             args: Some(trade_args(&port, 40)),
         };
@@ -366,6 +372,12 @@ fn failed_begin_missing_quest_item_declines_existing_trade_screen() {
     let mut run = TradeRun {
         walk: None,
         trade: None,
+        walk_retry: crate::native::WalkRetryState::default(),
+        tile: api::WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
         args: Some(trade_args(&port, 40)),
     };
     let epoch = Instant::now();

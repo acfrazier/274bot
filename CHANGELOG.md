@@ -70,6 +70,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   blocked danger zones and `Blocked` entrance requirements stop at once.
   `Aborted`, `UserInput`, `NeedsEvidence` and `Cancelled` also stop at once.
   The walk stops after three attempts and keeps the last failure detail.
+- Quester now retries approach walks for `interact`, `use_on`, `buy`, `make`,
+  bank access, `talk`, dialogue pre-walks, gathering, partner trades, thieving,
+  the totem security-door handler, shared `Reach` actions, combat approaches
+  and combat return-to-stand. Each retry makes a fresh route from the latest
+  observed tile on a later game tick. The shared three-attempt limit matches
+  `walk`. Danger refusals, blocked zones, user input, cancellation and missing
+  evidence still stop at once. Exhaustion keeps the last failure detail.
 
 ### Scripting
 

@@ -121,6 +121,7 @@ pub struct Reach {
     clicked: Option<AvoidKey>,
     avoid: Avoid,
     walk: Option<Walk>,
+    walk_retry: crate::native::WalkRetryState,
     request_id: u64,
     /// The last emitted target click was within interaction range on the
     /// snapshot that chose it, before the server could transform the loc or
@@ -201,6 +202,7 @@ impl NativeMachine for Reach {
             avoid: Avoid::default(),
             walk: None,
             request_id: 0,
+            walk_retry: crate::native::WalkRetryState::default(),
             in_range_at_click: false,
             ground_attempt: None,
             ground_outcome: None,
@@ -314,14 +316,37 @@ impl NativeMachine for Reach {
                 Poll::Pending
             }
             Phase::WaitWalk { door } => {
+                if self.walk_retry.pending() {
+                    let tick = cx.evidence().tick;
+                    if self.walk_retry.waiting_for_next_tick(tick) {
+                        return Poll::Pending;
+                    }
+                    let retry = match door {
+                        Some((id, tile)) => self.walk_to(tile, None, Some((id, tile)), cx),
+                        None => self.walk_to_target(cx),
+                    };
+                    match defer_budget(retry) {
+                        Poll::Pending => {
+                            self.walk_retry.defer_until_next_tick(tick);
+                            return Poll::Pending;
+                        }
+                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                        Poll::Ready(Ok(())) => return Poll::Pending,
+                    }
+                }
                 match self.walk.as_mut().expect("door recovery walk").poll(cx) {
                     Poll::Pending => Poll::Pending,
                     Poll::Ready(Ok(receipt)) => {
+                        if self.walk_retry.observe_failure(&receipt, cx.evidence().tick) {
+                            self.walk = None;
+                            return Poll::Pending;
+                        }
                         let arrival = receipt.into_arrival();
                         self.walk = None;
                         if let Err(error) = arrival {
                             return Poll::Ready(Err(error));
                         }
+                        self.walk_retry.reset();
                         self.phase = match door {
                             Some((id, tile)) => Phase::OpenDoor { id, tile },
                             None => Phase::Seek,
@@ -830,6 +855,7 @@ impl Reach {
             walk_request(target, 0, None, cx.evidence()),
             cx,
         )?);
+        self.walk_retry.action_submitted();
         self.phase = Phase::WaitWalk { door: None };
         Ok(())
     }
@@ -845,6 +871,7 @@ impl Reach {
             walk_request(target, 1, loc_id, cx.evidence()),
             cx,
         )?);
+        self.walk_retry.action_submitted();
         self.phase = Phase::WaitWalk { door };
         Ok(())
     }
@@ -1718,6 +1745,7 @@ mod tests {
             clicked: None,
             avoid: Avoid::default(),
             walk: None,
+            walk_retry: crate::native::WalkRetryState::default(),
             request_id: 0,
             in_range_at_click: false,
             ground_attempt: None,

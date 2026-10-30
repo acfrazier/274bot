@@ -403,7 +403,8 @@ impl StepPlan for BankPlan {
             cx.required_after,
         );
         Ok(Box::new(BankStepRun {
-            run: AcquireRun::new(request, AcquirePlan::authored(), cx.banks, &cx.tick.cx),
+            run: AcquireRun::new(request, AcquirePlan::authored(), cx.banks, &cx.tick.cx)
+                .with_quester_walk_retries(),
         }))
     }
     fn settle_timeout(&self) -> Duration {
@@ -525,6 +526,7 @@ impl StepPlan for BuyPlan {
                 qty: self.qty,
             },
             walk: None,
+            retry: crate::native::WalkRetryState::default(),
             buy: None,
         }))
     }
@@ -533,17 +535,25 @@ struct BuyRun {
     tile: WorldTile,
     request: BuyRequest,
     walk: Option<ActionHandle<Walk>>,
+    retry: crate::native::WalkRetryState,
     buy: Option<ActionHandle<BuyMachine>>,
 }
 impl StepRun for BuyRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        let now = cx.tick.cx.evidence().tick;
         if let Some(handle) = &self.walk {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
-                    walk_step_evidence(receipt)?;
                     self.walk = None;
+                    if self.retry.observe_failure(&receipt, now) {
+                        return Poll::Pending;
+                    }
+                    if let Err(error) = walk_step_evidence(receipt) {
+                        return Poll::Ready(Err(error));
+                    }
+                    self.retry.reset();
                 }
             }
         }
@@ -555,14 +565,25 @@ impl StepRun for BuyRun {
                 .local_player()
                 .is_some_and(|player| reach::within(player.value.player.network, self.tile, 6));
             if !near {
-                self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                    cx.tick.actions.begin::<Walk>(
-                        reach::walk_request(self.tile, 4, None, cx.required_after),
-                        &mut cx.tick.cx,
-                    ),
-                ))?);
+                if self.retry.waiting_for_next_tick(now) {
+                    return Poll::Pending;
+                }
+                let handle = match crate::native::defer_budget(cx.tick.actions.begin::<Walk>(
+                    reach::walk_request(self.tile, 4, None, cx.required_after),
+                    &mut cx.tick.cx,
+                )) {
+                    Poll::Pending => {
+                        self.retry.defer_until_next_tick(now);
+                        return Poll::Pending;
+                    }
+                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                    Poll::Ready(Ok(handle)) => handle,
+                };
+                self.retry.action_submitted();
+                self.walk = Some(handle);
                 return Poll::Pending;
             }
+            self.retry.reset();
             self.buy = Some(
                 cx.tick
                     .actions
@@ -691,6 +712,7 @@ impl StepPlan for MakePlan {
                 make_x: self.make_x,
             },
             walk: None,
+            retry: crate::native::WalkRetryState::default(),
             trigger: None,
             make: None,
         }))
@@ -706,6 +728,7 @@ struct MakeRun {
     op: Arc<str>,
     request: MakeRequest,
     walk: Option<ActionHandle<Walk>>,
+    retry: crate::native::WalkRetryState,
     trigger: Option<ActionHandle<reach::Reach>>,
     make: Option<ActionHandle<MakeMachine>>,
 }
@@ -714,13 +737,20 @@ impl StepRun for MakeRun {
         if self.request.qty <= 0 {
             return Poll::Ready(Ok(done(cx)));
         }
+        let now = cx.tick.cx.evidence().tick;
         if let Some(handle) = &self.walk {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
-                    walk_step_evidence(receipt)?;
                     self.walk = None;
+                    if self.retry.observe_failure(&receipt, now) {
+                        return Poll::Pending;
+                    }
+                    if let Err(error) = walk_step_evidence(receipt) {
+                        return Poll::Ready(Err(error));
+                    }
+                    self.retry.reset();
                 }
             }
         }
@@ -732,14 +762,25 @@ impl StepRun for MakeRun {
                 .local_player()
                 .is_some_and(|player| reach::within(player.value.player.network, self.tile, 6));
             if !near {
-                self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                    cx.tick.actions.begin::<Walk>(
-                        reach::walk_request(self.tile, 4, None, cx.required_after),
-                        &mut cx.tick.cx,
-                    ),
-                ))?);
+                if self.retry.waiting_for_next_tick(now) {
+                    return Poll::Pending;
+                }
+                let handle = match crate::native::defer_budget(cx.tick.actions.begin::<Walk>(
+                    reach::walk_request(self.tile, 4, None, cx.required_after),
+                    &mut cx.tick.cx,
+                )) {
+                    Poll::Pending => {
+                        self.retry.defer_until_next_tick(now);
+                        return Poll::Pending;
+                    }
+                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                    Poll::Ready(Ok(handle)) => handle,
+                };
+                self.retry.action_submitted();
+                self.walk = Some(handle);
                 return Poll::Pending;
             }
+            self.retry.reset();
             self.trigger = Some(std::task::ready!(crate::native::defer_budget(
                 cx.tick.actions.begin::<reach::Reach>(
                     reach::ReachArgs {
@@ -1157,6 +1198,7 @@ impl LoadoutPlan {
                     cx.banks,
                     &cx.tick.cx,
                 )
+                .with_quester_walk_retries()
             }),
             worn: Arc::from(worn),
             keep_ids: Arc::clone(&self.keep_ids),

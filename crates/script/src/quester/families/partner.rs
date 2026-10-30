@@ -441,13 +441,17 @@ impl StepPlan for TradePlan {
             .partner
             .ok_or(PairError::MissingPartner)
             .map_err(PairError::action)?;
+        let mut walk_retry = crate::native::WalkRetryState::default();
         let walk = cx.tick.actions.begin::<Walk>(
             super::reach::walk_request(self.tile, 1, None, cx.required_after),
             &mut cx.tick.cx,
         )?;
+        walk_retry.action_submitted();
         port.register_action(&token, cx.tick.cx.run(), walk.revoker())
             .map_err(PairError::action)?;
         Ok(Box::new(TradeRun {
+            walk_retry,
+            tile: self.tile,
             walk: Some(walk),
             trade: None,
             args: Some(TradeArgs {
@@ -463,19 +467,50 @@ impl StepPlan for TradePlan {
 }
 struct TradeRun {
     walk: Option<ActionHandle<Walk>>,
+    walk_retry: crate::native::WalkRetryState,
+    tile: WorldTile,
     trade: Option<ActionHandle<TradeMachine>>,
     args: Option<TradeArgs>,
 }
 impl StepRun for TradeRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        if self.walk_retry.pending() {
+            let tick = cx.tick.cx.evidence().tick;
+            if self.walk_retry.waiting_for_next_tick(tick) {
+                return Poll::Pending;
+            }
+            let Some(args) = self.args.as_ref() else {
+                return Poll::Ready(Err(ActionError::Stale));
+            };
+            let port = Arc::clone(&args.port);
+            let token = args.token;
+            let walk = std::task::ready!(super::begin_approach_walk(
+                &mut self.walk_retry,
+                super::reach::walk_request(self.tile, 1, None, cx.required_after),
+                cx,
+            ))?;
+            if let Err(error) = port.register_action(&token, cx.tick.cx.run(), walk.revoker()) {
+                return Poll::Ready(Err(error.action()));
+            }
+            self.walk = Some(walk);
+            return Poll::Pending;
+        }
         if let Some(walk) = &self.walk {
             match cx.tick.actions.poll(walk, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
+                    if self
+                        .walk_retry
+                        .observe_failure(&receipt, cx.tick.cx.evidence().tick)
+                    {
+                        self.walk = None;
+                        return Poll::Pending;
+                    }
                     if let Err(error) = super::walk_step_evidence(receipt) {
                         return Poll::Ready(Err(error));
                     }
+                    self.walk_retry.reset();
                     self.walk = None;
                 }
             }

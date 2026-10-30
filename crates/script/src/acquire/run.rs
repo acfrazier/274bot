@@ -5,7 +5,9 @@ use super::*;
 use crate::bank::{self, BankStandAccess, PickKind};
 use crate::gatherer::oneop::{OneOp, OneOpArgs};
 use crate::native::walk::Walk;
-use crate::native::{ActionContext, ActionHandle, NativeActions, NativeTick, WalkRequest};
+use crate::native::{
+    ActionContext, ActionHandle, NativeActions, NativeTick, WalkRequest, WalkRetryState,
+};
 use crate::native_bank::{BankMachine, BankRequest};
 use api::named_banks::NamedBankFacts;
 use api::selected::RunKey;
@@ -55,6 +57,7 @@ pub struct AcquireRun {
     required_bank_missing: bool,
     access: Option<Arc<BankStandAccess>>,
     target: Option<WorldTile>,
+    walk_retry: Option<WalkRetryState>,
     withdrawals: Option<Arc<[Withdrawal]>>,
     wears: Option<Arc<[i32]>>,
     child: Option<u8>,
@@ -122,6 +125,7 @@ impl AcquireRun {
             required_bank_missing,
             access: None,
             target: None,
+            walk_retry: None,
             withdrawals: None,
             wears: None,
             child: None,
@@ -142,6 +146,12 @@ impl AcquireRun {
         let bank_work = run.install(plan);
         run.start_stage(bank_work, cx);
         run
+    }
+
+    /// Use Quester's shared bounded retry for the bank access walk.
+    pub(crate) fn with_quester_walk_retries(mut self) -> Self {
+        self.walk_retry = Some(WalkRetryState::default());
+        self
     }
 
     pub fn poll(
@@ -200,6 +210,9 @@ impl AcquireRun {
                 }
                 Phase::Walk => {
                     let Some(target) = self.target else {
+                        if let Some(retry) = self.walk_retry.as_mut() {
+                            retry.reset();
+                        }
                         self.phase = Phase::Open;
                         continue;
                     };
@@ -209,13 +222,33 @@ impl AcquireRun {
                         .here()
                         .is_some_and(|here| here.value == target)
                     {
+                        if let Some(retry) = self.walk_retry.as_mut() {
+                            retry.reset();
+                        }
                         self.phase = Phase::Open;
                         continue;
+                    }
+                    let now = tick.cx.evidence().tick;
+                    if self
+                        .walk_retry
+                        .as_ref()
+                        .is_some_and(|retry| retry.waiting_for_next_tick(now))
+                    {
+                        return Poll::Pending;
                     }
                     if !tick.cx.may_continue_this_tick() {
                         return Poll::Pending;
                     }
-                    let handle = tick.actions.begin::<Walk>(
+                    let required_after = if self
+                        .walk_retry
+                        .as_ref()
+                        .is_some_and(|retry| retry.pending())
+                    {
+                        tick.cx.evidence()
+                    } else {
+                        self.request.required_after
+                    };
+                    let handle = match tick.actions.begin::<Walk>(
                         WalkRequest {
                             target,
                             candidate_goals: None,
@@ -223,7 +256,7 @@ impl AcquireRun {
                             radius: 0,
                             arrival: nav_planner::contract::ArrivalKind::Reach,
                             options: self.request.walk,
-                            required_after: self.request.required_after,
+                            required_after,
                             evidence: None,
                             cross: Box::default(),
                             protect: false,
@@ -231,7 +264,20 @@ impl AcquireRun {
                             allow: Default::default(),
                         },
                         &mut tick.cx,
-                    )?;
+                    ) {
+                        Ok(handle) => handle,
+                        Err(ActionError::BudgetExhausted) => {
+                            if let Some(retry) = self.walk_retry.as_mut() {
+                                retry.defer_until_next_tick(now);
+                                return Poll::Pending;
+                            }
+                            return Poll::Ready(Err(ActionError::BudgetExhausted));
+                        }
+                        Err(error) => return Poll::Ready(Err(error)),
+                    };
+                    if let Some(retry) = self.walk_retry.as_mut() {
+                        retry.action_submitted();
+                    }
                     self.active = Active::Walk(handle);
                 }
                 Phase::Open => {
@@ -605,7 +651,16 @@ impl AcquireRun {
                 Poll::Pending => self.active = Active::Walk(handle),
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
+                    if self.walk_retry.as_mut().is_some_and(|retry| {
+                        retry.observe_failure(&receipt, tick.cx.evidence().tick)
+                    }) {
+                        self.phase = Phase::Walk;
+                        return Poll::Ready(Ok(()));
+                    }
                     receipt.into_arrival()?;
+                    if let Some(retry) = self.walk_retry.as_mut() {
+                        retry.reset();
+                    }
                     self.phase = Phase::Open;
                 }
             },
