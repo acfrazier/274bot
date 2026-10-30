@@ -133,8 +133,8 @@ An observed bank without a compatible tool does not block provisioning; the gath
 Closing the bank:
 
 - A bank session ends when provisioning is ready, is blocked, or is about to start a recipe. Then the Provisioner closes the bank, and waits in observed game ticks until the bank window is gone. A Path step does not act before that.
-- The Provisioner closes only a bank that its own trip opened. It records this only when a game frame shows the bank open after a trip began with the bank shut. A bank that was already open when the first trip began stays open.
-- The record names the login session and the bank session. After a relog, or when the bank was closed and opened again by someone else, the record is void and nothing is closed.
+- The Provisioner closes only a bank that its own trip opened. It records this only when the bank kernel sent its own open request, and a game frame then shows a bank session that appeared after that request. A bank that was already open when the first trip began stays open.
+- The record names the login session and the bank session. After a relog, or when the bank was closed and opened again by someone else, the record is void and nothing is closed. This holds also while a close is running and between two trips of one session. A new bank session joins the record only when the bank kernel of the same account opened it with its own request, for example when a trip opens the bank again after the session ended.
 - If a trip fails, or the run is paused and resumed, the open bank is closed as soon as the host allows input again, and before the journal is read. A restart by the watchdog keeps the record, so the new instance does the same.
 - A bank that does not close after the bounded retries is logged and left. Provisioning does not retry without limit.
 - An operator Stop sends no close and discards the record.

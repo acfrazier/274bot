@@ -4420,7 +4420,7 @@ mod tests {
                         complete_open_stand(&mut ledger, tick);
                         snapshot.seed_bank_observation(-1, tick, None, Vec::new());
                     }
-                    Some(other) => panic!("unexpected effect {other:?}"),
+                    Some(_) => panic!("provisioning must not walk or issue another effect"),
                     None => {}
                 }
                 match result {
