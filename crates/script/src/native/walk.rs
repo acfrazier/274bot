@@ -19,11 +19,11 @@ const QUEST_LIST_STATUS_WAIT_TICKS: u64 = 1;
 
 pub struct Walk {
     key: WalkKey,
-    loc_id: Option<i32>,
     arrival: ArrivalKind,
     // Retain only arrival mode. The host retains the goals and reports their tier.
     candidate_goals: bool,
-    request: WalkRequest,
+    // Keep the replay payload outside the inline machine budget.
+    request: Box<WalkRequest>,
     request_id: u64,
     required_after: EvidenceStamp,
     quest_list_wait_since: Option<u64>,
@@ -104,7 +104,7 @@ impl Walk {
         cx: &mut ActionContext<'_>,
     ) -> Result<(), ActionError> {
         let required_after = cx.evidence();
-        let mut request = self.request.clone();
+        let mut request = self.request.as_ref().clone();
         request.required_after = required_after;
         let request_id = cx.walk(request)?;
         self.request.required_after = required_after;
@@ -131,7 +131,6 @@ impl NativeMachine for Walk {
             radius: i32::from(request.radius),
             allow_teleports: request.options.allow_teleports.explicit(),
         };
-        let loc_id = request.loc_id;
         let arrival = request.arrival;
         let required_after = request.required_after;
         let candidate_goals = request.candidate_goals.is_some();
@@ -144,10 +143,9 @@ impl NativeMachine for Walk {
         );
         Ok(Self {
             key,
-            loc_id,
             arrival,
             candidate_goals,
-            request,
+            request: Box::new(request),
             request_id,
             required_after,
             quest_list_wait_since: None,
@@ -231,7 +229,7 @@ impl NativeMachine for Walk {
         let frame = Frame {
             snapshot: cx.snapshot(),
             outcome,
-            loc_id: self.loc_id,
+            loc_id: self.request.loc_id,
             arrival: self.arrival,
             candidate_goals: self.candidate_goals,
             goal: receipt.and_then(|receipt| receipt.goal),
@@ -653,17 +651,43 @@ mod tests {
             Poll::Pending
         ));
 
-        let queued = ledger
-            .as_ref()
-            .expect("ledger remains present")
-            .outbox
-            .last()
-            .expect("fresh route is queued");
-        assert_ne!(queued.request_id.get(), original);
-        let crate::native::HostEffect::Walk(request) = &queued.effect else {
-            panic!("fresh route must retain the walk request");
+        let retried_request_id = {
+            let queued = ledger
+                .as_ref()
+                .expect("ledger remains present")
+                .outbox
+                .last()
+                .expect("fresh route is queued");
+            assert_ne!(queued.request_id.get(), original);
+            let crate::native::HostEffect::Walk(request) = &queued.effect else {
+                panic!("fresh route must retain the walk request");
+            };
+            assert_eq!(request.required_after.tick, 2);
+            assert_eq!(request.target, target);
+            queued.request_id.get()
         };
-        assert_eq!(request.required_after.tick, 2);
-        assert_eq!(request.target, target);
+        let retried = post_needs_evidence_receipt(&mut ledger, 2);
+        assert_eq!(retried, retried_request_id);
+        let Poll::Ready(Ok(receipt)) = with_tick(&observed, &mut ledger, 3, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }) else {
+            panic!("the one permitted replan must settle the second refusal");
+        };
+        assert_eq!(receipt.request_id, retried);
+        assert!(matches!(
+            &receipt.end,
+            WalkEnd::NeedsEvidence(gates) if gates.as_ref() == [biohazard_complete_gate()]
+        ));
+        assert_eq!(
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .filter(|entry| matches!(&entry.effect, crate::native::HostEffect::Walk(_)))
+                .count(),
+            2,
+            "a second unknown result must not start another route retry"
+        );
     }
 }
