@@ -1550,8 +1550,8 @@ mod tests {
             receipt.s_service(),
             S_SERVICE_CEILING_BYTES
         );
-        // 528 B above the observed 1,008 B hook mailbox. Production has its
-        // own no-hooks receipt and stricter ceiling in slot_io::tests.
+        // Hooks plus draw-memory-profile measure 1,512 B, leaving 24 B below
+        // this ceiling. Production has its own no-hooks receipt in slot_io::tests.
         assert!(
             receipt.mailbox_per_loaded_bot_bytes() <= 1_536,
             "instrumented mailbox={} B exceeds 1536 B ceiling",
