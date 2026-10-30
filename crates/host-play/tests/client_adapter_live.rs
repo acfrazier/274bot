@@ -37,8 +37,11 @@ export default class ClientAdapterLiveProbe extends LoopingBot {
     async loop() {
         if (this.complete) return;
         this.complete = true;
-        if (!(await Execution.delayUntil(() => reader.statsReady(), 3000))) {
-            throw new Error('ClientAdapter stats did not become ready after login');
+        if (reader.statsReady()) {
+            throw new Error('ClientAdapter reported readiness without per-skill session receipts');
+        }
+        if (reader.skillCount() !== 25) {
+            throw new Error(`ClientAdapter skill catalog count was ${reader.skillCount()}, expected 25`);
         }
         if (!(await Banking.open())) throw new Error('ClientAdapter probe could not open the seeded Draynor bank');
         if (!(await Execution.delayUntil(

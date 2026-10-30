@@ -68,12 +68,12 @@ impl GameSnapshot {
                 used: Skill::used[i],
             })
             .collect();
-        self.stats_ready = client.gens.session > 0
-            && Skill::used.iter().enumerate().all(|(index, used)| {
-                !used
-                    || (client.stat_base_level[index] > 0
-                        && client.stat_seen_session_generation[index] == client.gens.session)
-            });
+        // The client publishes one generation for skill, energy, and weight
+        // updates. Its packet history is shorter than the packets drained per
+        // cycle, and skill values survive logout, so current values cannot
+        // prove which skills received a stat update in this session.
+        // Preserve the reader's documented no-readiness-signal fallback.
+        self.stats_ready = false;
         true
     }
 

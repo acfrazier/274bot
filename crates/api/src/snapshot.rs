@@ -75,7 +75,8 @@ pub struct GameSnapshot {
     /// Hitmarks and their cycle are refreshed with the local actor every read.
     hitmarks: Option<HitmarksView>,
     stats: Vec<StatView>,
-    /// True once every used skill slot received a stat update in this session.
+    /// True only when each used skill has a per-session stat update receipt.
+    /// The pinned client exposes no exact per-skill receipt, so this is false.
     #[serde(skip)]
     stats_ready: bool,
     runenergy: i32,
@@ -909,7 +910,7 @@ impl GameSnapshot {
         &self.stats
     }
 
-    /// Whether each used skill has a positive level observed in this login.
+    /// Whether every used skill has an exact stat update receipt for this login.
     pub fn stats_ready(&self) -> bool {
         self.stats_ready
     }
