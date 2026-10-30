@@ -262,7 +262,7 @@ struct RoutePreflights {
     missing_route: SearchPreflight,
     blocking: SearchPreflight,
     unresolved: SearchPreflight,
-    actionable: SearchPreflight,
+    actionable: Option<SearchPreflight>,
     entrance: SearchPreflight,
 }
 
@@ -393,12 +393,19 @@ impl RouteSubmission {
             avoid_capacity,
             max_settles,
         })?;
-        let actionable = preflight(SearchRequestShape::ActionableQuestGates {
-            target_capacity: candidate_capacity,
-            options,
-            avoid_capacity,
-            max_settles,
-        })?;
+        let actionable = state
+            .establishable
+            .as_ref()
+            .is_some_and(|windows| !windows.is_empty())
+            .then(|| {
+                preflight(SearchRequestShape::ActionableQuestGates {
+                    target_capacity: candidate_capacity,
+                    options,
+                    avoid_capacity,
+                    max_settles,
+                })
+            })
+            .transpose()?;
         let entrance = preflight(SearchRequestShape::EntranceRequirements {
             target_capacity: candidate_capacity,
             options,
@@ -510,7 +517,9 @@ impl RouteSubmission {
             })
             .ok_or(RouteJobError::Budget)?;
         result_bytes = result_bytes.max(preflights.unresolved.reservation().result_bytes);
-        result_bytes = result_bytes.max(preflights.actionable.reservation().result_bytes);
+        if let Some(actionable) = &preflights.actionable {
+            result_bytes = result_bytes.max(actionable.reservation().result_bytes);
+        }
         result_bytes = result_bytes.max(preflights.entrance.reservation().result_bytes);
         result_bytes = result_bytes
             .checked_add(state.quest_evidence.as_ref().map_or(
@@ -550,9 +559,11 @@ impl RouteSubmission {
             &preflights.missing_route,
             &preflights.blocking,
             &preflights.unresolved,
-            &preflights.actionable,
             &preflights.entrance,
-        ] {
+        ]
+        .into_iter()
+        .chain(preflights.actionable.as_ref())
+        {
             include_peak(
                 search
                     .input_bytes()
@@ -1777,7 +1788,7 @@ impl RouteJob {
                 },
                 self.lease.clone(),
                 Arc::clone(&self.state),
-                self.preflights.actionable,
+                self.preflights.actionable.ok_or(RouteJobError::Search)?,
             )
             .map_err(|_| RouteJobError::Search)?,
             RouteSearchPurpose::Entrance => SearchCursor::new_preflighted(
@@ -1978,7 +1989,11 @@ impl RouteJob {
                     if self.blocked.is_empty() {
                         self.prepare_goal_copy(
                             RouteGoalCopy::Diagnostics,
-                            RouteSearchPurpose::Actionable,
+                            if self.preflights.actionable.is_some() {
+                                RouteSearchPurpose::Actionable
+                            } else {
+                                RouteSearchPurpose::Unresolved
+                            },
                         )?;
                     } else {
                         self.native_failure = Some(script::native::WalkEnd::Refused);
@@ -8158,9 +8173,20 @@ mod diagnostic_tests {
 
     #[test]
     fn compat_no_path_diagnoses_actionable_gates_before_reporting_failure() {
+        let mut request = tiny_stage_request();
+        request.state = Some(WorldState::empty().with_establishable(Arc::from([
+            api::selected::StageWindow {
+                quest: api::selected::FactKey::new("quest"),
+                signal: api::selected::FactKey::new("stage"),
+                values: api::selected::InclusiveRange {
+                    min: Some(1),
+                    max: Some(1),
+                },
+            },
+        ])));
         let mut job = RouteJob::prepare(
             "test",
-            tiny_stage_request(),
+            request,
             RouteDemandKind::Walk { authority: None },
         )
         .unwrap();
@@ -8206,6 +8232,32 @@ mod diagnostic_tests {
             Some(script::native::WalkEnd::NeedsStep(gates)) if gates.as_ref() == [expected]
         ));
         assert_eq!(job.search_purpose, RouteSearchPurpose::MissingCarry);
+    }
+
+    #[test]
+    fn no_establishable_windows_skip_actionable_preflight_and_search() {
+        // Revision 274 has no prerequisite catalog. An empty catalog also
+        // cannot establish a gate, so neither case reserves or runs this pass.
+        for establishable in [None, Some(Arc::from([]))] {
+            let mut request = tiny_stage_request();
+            request.state = Some(WorldState {
+                establishable,
+                ..WorldState::empty()
+            });
+            let mut job =
+                RouteJob::prepare("test", request, RouteDemandKind::Walk { authority: None })
+                    .unwrap();
+            assert!(job.preflights.actionable.is_none());
+            job.search_purpose = RouteSearchPurpose::Blocking;
+            job.handle_search(SearchOutcome::BlockingZones(None))
+                .unwrap();
+            assert_eq!(job.search_purpose, RouteSearchPurpose::Unresolved);
+            assert!(job.native_failure.is_none());
+            job.handle_search(SearchOutcome::UnresolvedQuestGates(Ok(None)))
+                .unwrap();
+            assert_eq!(job.search_purpose, RouteSearchPurpose::MissingCarry);
+            assert_eq!(job.native_failure, Some(script::native::WalkEnd::Failed));
+        }
     }
 
     #[test]

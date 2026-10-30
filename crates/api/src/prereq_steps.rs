@@ -283,6 +283,26 @@ impl PrereqStep {
     }
 }
 
+/// A prerequisite table violates a structural catalog invariant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum PrereqCatalogError {
+    /// Row ordinals cannot represent this many rows.
+    #[error("too many prerequisite rows")]
+    TooManyRows,
+    /// A row has no identity or has an unsupported crossing count.
+    #[error("invalid prerequisite row identity or crossing count")]
+    InvalidRowIdentity,
+    /// Two entries in one row identify the same directed crossing.
+    #[error("duplicate crossing identity in prerequisite row")]
+    DuplicateCrossing,
+    /// A crossing's proved range has reversed bounds.
+    #[error("invalid prerequisite crossing facts")]
+    InvalidCrossingFacts,
+    /// An establishment or preservation range has reversed bounds.
+    #[error("invalid prerequisite stage range")]
+    InvalidStageRange,
+}
+
 /// Immutable, verified table indexed by content row ordinal.
 #[derive(Debug, Clone)]
 pub struct PrereqCatalog {
@@ -291,26 +311,27 @@ pub struct PrereqCatalog {
 }
 
 impl PrereqCatalog {
-    pub fn from_rows(rows: Vec<PrereqStep>) -> Result<Self, &'static str> {
+    /// Validate the row identities, directed crossings, and stage ranges.
+    pub fn from_rows(rows: Vec<PrereqStep>) -> Result<Self, PrereqCatalogError> {
         if rows.len() > usize::from(u16::MAX) {
-            return Err("too many prerequisite rows");
+            return Err(PrereqCatalogError::TooManyRows);
         }
         for row in &rows {
             if row.id.is_empty()
                 || row.crossings.is_empty()
                 || row.crossings.len() > usize::from(u8::MAX) + 1
             {
-                return Err("invalid prerequisite row identity or crossing count");
+                return Err(PrereqCatalogError::InvalidRowIdentity);
             }
             for (index, entry) in row.crossings.iter().enumerate() {
                 if row.crossings[..index]
                     .iter()
                     .any(|previous| previous.crossing == entry.crossing)
                 {
-                    return Err("duplicate crossing identity in prerequisite row");
+                    return Err(PrereqCatalogError::DuplicateCrossing);
                 }
                 if !valid_range(&entry.pass.proves) {
-                    return Err("invalid prerequisite crossing facts");
+                    return Err(PrereqCatalogError::InvalidCrossingFacts);
                 }
             }
             if !valid_range(&row.establishes.values)
@@ -319,7 +340,7 @@ impl PrereqCatalog {
                     .iter()
                     .any(|rule| !valid_range(&rule.proves) || !valid_range(&rule.after))
             {
-                return Err("invalid prerequisite stage range");
+                return Err(PrereqCatalogError::InvalidStageRange);
             }
         }
         let establishable_windows = rows

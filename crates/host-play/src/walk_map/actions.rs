@@ -1039,7 +1039,10 @@ impl MapCommand {
         self.walk_on_with_manual(world, current, name, state, bank, admission, arms, |_| None)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "manual route admission retains the existing inputs and prerequisite context"
+    )]
     pub(crate) fn walk_on_with_manual(
         self,
         world: &NavWorld,
@@ -1435,6 +1438,7 @@ impl Play {
             Err(ActionError::NoPath) => {
                 if handover_enabled
                     && (outer.prereq_allow.dialogue || outer.prereq_allow.quest_start)
+                    && route_state.establishable.as_ref().is_some_and(|windows| !windows.is_empty())
                 {
                     if let (Some(run), Some(catalog)) = (route_run, route_catalog) {
                         if let Ok(Some(gates)) = nav_planner::router::find_actionable_quest_gates(

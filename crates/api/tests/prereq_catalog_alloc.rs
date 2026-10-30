@@ -83,4 +83,23 @@ fn process_catalog_is_bounded_and_warm_preparation_and_queries_allocate_nothing(
         size_of::<CrossingId>(),
         size_of::<ActionableGate>(),
     );
+
+    use api::prereq_steps::PrereqCatalogError;
+    let invalid = |row| PrereqCatalog::from_rows(vec![row]).unwrap_err();
+    let mut malformed = row.clone();
+    malformed.id = Arc::from("");
+    assert_eq!(invalid(malformed), PrereqCatalogError::InvalidRowIdentity);
+    let mut malformed = row.clone();
+    malformed.crossings = Arc::from([row.crossings[0].clone(), row.crossings[0].clone()]);
+    assert_eq!(invalid(malformed), PrereqCatalogError::DuplicateCrossing);
+    let mut malformed = row.clone();
+    let mut crossing = row.crossings[0].clone();
+    crossing.pass.proves.min = Some(i32::MAX);
+    crossing.pass.proves.max = Some(i32::MIN);
+    malformed.crossings = Arc::from([crossing]);
+    assert_eq!(invalid(malformed), PrereqCatalogError::InvalidCrossingFacts);
+    let mut malformed = row.clone();
+    malformed.establishes.values.min = Some(i32::MAX);
+    malformed.establishes.values.max = Some(i32::MIN);
+    assert_eq!(invalid(malformed), PrereqCatalogError::InvalidStageRange);
 }

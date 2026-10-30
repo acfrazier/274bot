@@ -189,7 +189,10 @@ pub fn arm_walk_on(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the shared arm boundary retains the route inputs and optional prerequisite context"
+)]
 pub(crate) fn arm_walk_on_with_prereq(
     world: &NavWorld,
     from: Tile,
@@ -221,15 +224,26 @@ pub(crate) fn arm_walk_on_with_prereq(
     options.essence = focused.and_then(|name| {
         travellers
             .lock()
-            .unwrap()
+            .expect("a panic while holding the walk-arm registry invalidates its route ownership")
             .get(name)
-            .and_then(|arm| arm.lock().unwrap().traveller.essence())
+            .and_then(|arm| {
+                arm.lock()
+                    .expect("a panic while holding a walk arm invalidates its traveller state")
+                    .traveller
+                    .essence()
+            })
     });
     if let Some(escape) = focused
-        .and_then(|name| travellers.lock().unwrap().get(name).cloned())
+        .and_then(|name| {
+            travellers
+                .lock()
+                .expect("a panic while holding the walk-arm registry invalidates its route ownership")
+                .get(name)
+                .cloned()
+        })
         .and_then(|arm| {
             arm.lock()
-                .unwrap()
+                .expect("a panic while holding a walk arm invalidates its admission state")
                 .admission
                 .as_deref()
                 .and_then(|admission| admission.escape)
@@ -350,11 +364,13 @@ pub(crate) fn arm_walk_on_with_prereq(
                 }
                 let arm = travellers
                     .lock()
-                    .unwrap()
+                    .expect("a panic while holding the walk-arm registry invalidates its route ownership")
                     .entry(name.to_string())
                     .or_insert_with(|| Arc::new(Mutex::new(WalkArm::default())))
                     .clone();
-                let mut arm = arm.lock().unwrap();
+                let mut arm = arm
+                    .lock()
+                    .expect("a panic while holding a walk arm invalidates its admission state");
                 if let Some(assessment) = assessment.as_ref() {
                     arm.last_assessment = Some(Arc::clone(assessment));
                 }

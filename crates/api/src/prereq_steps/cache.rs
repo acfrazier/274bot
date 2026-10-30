@@ -116,6 +116,6 @@ fn load(pin: &SelectedPin, manifest: &[u8], family: &[u8]) -> Result<PrereqCatal
             first: 0,
             last: 0,
         },
-        reason: Arc::from(reason),
+        reason: Arc::from(reason.to_string()),
     })
 }

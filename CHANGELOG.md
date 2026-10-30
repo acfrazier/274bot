@@ -65,6 +65,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   the route planner chooses between both legal stands instead of committing
   to a side the account cannot reach. It never walks onto the blocked tile.
   Walks from Morytania can reach the barrier through the east trapdoor.
+  The Brimhaven restaurant kitchen door admits Phoenix Gang members from
+  the Heroes' Quest stage after they speak to Alfonse. It still refuses
+  Black Arm Gang members. Walks without available prerequisite steps skip
+  the extra prerequisite search.
 - Two default-on navigation settings allow prerequisite dialogue and quest
   starts. A global or script grant allows the step. A per-walk `false`
   forbids it. Combat escapes and other safety walks never stop to talk.
