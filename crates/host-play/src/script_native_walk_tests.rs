@@ -6784,3 +6784,20 @@ fn a_stop_between_the_walk_read_and_its_publication_is_not_overwritten() {
         "an in-flight publication restored the retired run's destination"
     );
 }
+
+#[test]
+fn p1c_probability_retained_layouts() {
+    eprintln!(
+        "P1C retained layout NavBot={} SlotCondition={} BotCondition={} PoisonWindow={} PoisonHold={} HoldWait={} OptionalPoisonHold={} WalkArm={} RouteAssessment={} RiskInput={}",
+        std::mem::size_of::<NavBot>(),
+        std::mem::size_of::<crate::slot_condition::SlotCondition>(),
+        std::mem::size_of::<api::condition::BotCondition>(),
+        std::mem::size_of::<api::condition::PoisonWindow>(),
+        std::mem::size_of::<crate::poison_hold::PoisonHold>(),
+        std::mem::size_of::<crate::poison_hold::HoldWait>(),
+        std::mem::size_of::<Option<crate::poison_hold::PoisonHold>>(),
+        std::mem::size_of::<crate::walk_arm::WalkArm>(),
+        std::mem::size_of::<script::combat::risk::RouteAssessment>(),
+        std::mem::size_of::<script::combat::risk::RiskInput>(),
+    );
+}
