@@ -324,8 +324,7 @@ impl NativeMachine for MakeMachine {
                             if now_held.is_some_and(|count| count >= self.request.qty) {
                                 return Poll::Ready(Ok(MakeReceipt { held: current }));
                             }
-                            self.deadline_tick =
-                                tick.saturating_add(MAKE_X_INITIAL_PRODUCT_TICKS);
+                            self.deadline_tick = tick.saturating_add(MAKE_X_INITIAL_PRODUCT_TICKS);
                             continue 'phases;
                         }
                         MakeXStep::TimedOut(phase) => {

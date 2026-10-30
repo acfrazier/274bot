@@ -1920,7 +1920,10 @@ mod production_yield_tests {
             if line.is_empty() {
                 continue;
             }
-            if let Some(name) = line.strip_prefix('[').and_then(|line| line.strip_suffix(']')) {
+            if let Some(name) = line
+                .strip_prefix('[')
+                .and_then(|line| line.strip_suffix(']'))
+            {
                 section = Some(name);
                 product = None;
                 continue;
