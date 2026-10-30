@@ -2852,7 +2852,8 @@ mod tests {
     #[test]
     fn instance_with_widening_stays_inside_the_inline_budget() {
         assert_eq!(size_of::<Walk>(), 136, "Walk inline layout changed");
-        // The 1,216 B budget is the prior 1,024 B bound plus A11's 192 B allowance.
+        // SURVIVAL-DESIGN-1022/design-final.md:A11:745 allows 192 B for
+        // SurvivalStep. The prior 1,024 B bound plus 192 B gives 1,216 B.
         assert!(
             size_of::<Gatherer>() <= 1216,
             "Gatherer={} exceeds its inline budget",

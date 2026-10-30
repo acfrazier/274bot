@@ -615,9 +615,12 @@ mod tests {
             xp: 0,
             used: true,
         }]);
-        // Poison content queues ceil(poison/5) then decrements
-        // (`content/scripts/skill_combat/scripts/poison.rs2:20-30`): R0(54)=319.
-        // At HP 13, p=11 gives line 12 and cap 8, so ceil((319-13+1)/8)=39.
+        // SURVIVAL-DESIGN-1022/design-final.md:A7:642-643 gives the remaining
+        // poison total and the ceiling quantity rule. Content queues
+        // ceil(poison/5) then decrements (`content/scripts/skill_combat/scripts/poison.rs2:20-30`):
+        // R0(54) = 5*(1+...+10) + 4*11 = 319.
+        // With p=11, eat_line=12, cap=20-12=8, and deficit=319-13+1=307.
+        // Therefore ceil(307/8)=39 food.
         assert!(matches!(
             want(
                 &mut SurvivalStep::default(),

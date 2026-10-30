@@ -4953,9 +4953,10 @@ mod tests {
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         });
 
-        // `with_tick` starts tick 1 at 600 ms, and the deposit click is emitted
-        // in that poll. Its 4,800 ms floor reaches 5,400 ms at tick 10.
-        // Tick 9's 5,399 ms sample is 4,799 ms elapsed and remains pending.
+        // SURVIVAL-DESIGN-1022/design-final.md:A2:133,588 sets W to at least
+        // 8 ticks and 4,800 ms active. engine/src/engine/World.ts:120 sets
+        // each tick to 600 ms, so 8*600=4,800 ms. The click starts at tick 1:
+        // 600+4,800=5,400 ms; 5,399-600=4,799 ms elapsed.
         for tick_number in 3..=9 {
             let active_millis = if tick_number == 9 {
                 5_399
