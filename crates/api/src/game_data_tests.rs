@@ -128,6 +128,107 @@ fn unbound_selected_data_refuses_the_gathering_family() {
     );
 }
 
+#[test]
+fn selected_combat_facts_reject_old_rows_before_combat_consumption() {
+    let mut old: serde_json::Value = serde_json::from_slice(RAW_289).unwrap();
+    let npc_names = old["npc_names"].as_object_mut().expect("generated NPC facts");
+    npc_names.remove("combat_facts_version");
+    let rows = npc_names["rows"]
+        .as_array_mut()
+        .expect("generated NPC rows");
+    for row in rows {
+        let fields = row.as_object_mut().expect("generated NPC row");
+        for field in [
+            "attack",
+            "defence",
+            "magic",
+            "attackbonus",
+            "rangeattack",
+            "magicattack",
+            "stabdefence",
+            "slashdefence",
+            "crushdefence",
+            "magicdefence",
+            "rangedefence",
+        ] {
+            fields.remove(field);
+        }
+    }
+    for row in old["weapon_styles"].as_array_mut().unwrap() {
+        let fields = row.as_object_mut().unwrap();
+        for field in ["style_slot", "damagetype", "damagestyle", "style_bonus"] {
+            fields.remove(field);
+        }
+    }
+    for row in old["item_combat_bonus"].as_array_mut().unwrap() {
+        let fields = row.as_object_mut().unwrap();
+        for field in [
+            "stabattack",
+            "slashattack",
+            "crushattack",
+            "magicattack",
+            "rangeattack",
+            "stabdefence",
+            "slashdefence",
+            "crushdefence",
+            "magicdefence",
+            "rangedefence",
+        ] {
+            fields.remove(field);
+        }
+    }
+
+    let old_bytes = serde_json::to_vec(&old).unwrap();
+    let error = preflight_combat_facts_version(old_bytes.as_slice())
+        .expect_err("the streaming preflight rejects an unversioned family");
+    assert!(
+        error.contains("combat facts are missing or outdated"),
+        "{error}"
+    );
+
+    let mut unsupported: serde_json::Value = serde_json::from_slice(RAW_289).unwrap();
+    unsupported["npc_names"]["combat_facts_version"] = serde_json::json!(0);
+    let unversioned: SelectedGameData = serde_json::from_value(unsupported).unwrap();
+    assert_eq!(
+        unversioned.validate_combat_facts(),
+        Err(GameDataError::CombatFacts)
+    );
+
+    let mut incomplete: serde_json::Value = serde_json::from_slice(RAW_289).unwrap();
+    incomplete["npc_names"]["rows"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("attack");
+    let error = SelectedGameData::decode(
+        serde_json::to_vec(&incomplete).unwrap().as_slice(),
+        ClientRevision::R289,
+    )
+    .expect_err("a current-version row cannot omit a required combat fact");
+    assert!(error.contains("missing field `attack`"), "{error}");
+
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected game data");
+        let facts = data.npc_combat_facts().expect("current NPC combat facts");
+        assert_eq!(facts.combat_facts_version, NPC_COMBAT_FACTS_VERSION);
+        assert!(!facts.rows.is_empty());
+        let guard = data.npc_by_config("guard1").expect("guard combat row");
+        assert_eq!((guard.attack, guard.defence, guard.magic), (19, 14, 1));
+        assert_eq!(
+            (
+                guard.attackbonus,
+                guard.rangeattack,
+                guard.magicattack,
+                guard.stabdefence,
+                guard.slashdefence,
+                guard.crushdefence,
+                guard.magicdefence,
+                guard.rangedefence,
+            ),
+            (4, 0, 0, 18, 25, 19, -4, 20)
+        );
+    }
+}
+
 fn minimal_json(tail: &str) -> String {
     format!(
         r#"{{
@@ -140,6 +241,7 @@ fn minimal_json(tail: &str) -> String {
                     "decoder_sources": []
                 }},
                 "items": [],
+                "npc_names": {"combat_facts_version": 1, "rows": []},
                 "consumption": [],
                 "pickpocket": []
                 {tail}
@@ -418,7 +520,9 @@ fn combat_fact_rows_preserve_nullable_delays_stages_and_combat_inputs() {
         r#"{
             "id":17,"config":"test_npc","display":"Test NPC","ops":["Attack"],
             "size":1,"wanderrange":0,"maxrange":1,"attackrange":1,"huntrange":1,
-            "vislevel":0,"hitpoints":44,"damagetype":null,"strength":24,"ranged":3,
+            "vislevel":0,"hitpoints":44,"attack":87,"defence":63,"magic":58,"damagetype":null,"strength":24,"ranged":3,
+            "attackbonus":-12,"rangeattack":-9,"magicattack":4,
+            "stabdefence":-3,"slashdefence":5,"crushdefence":2,"magicdefence":-7,"rangedefence":-8,
             "strengthbonus":8,"rangebonus":4,"undead":1,"ap_attack":true,
             "attack_kind":"mixed","forced_max_hit":24,"dragonfire":"chromatic",
             "headicon":8,
@@ -426,6 +530,20 @@ fn combat_fact_rows_preserve_nullable_delays_stages_and_combat_inputs() {
         }"#,
     )
     .unwrap();
+    assert_eq!((npc.attack, npc.defence, npc.magic), (87, 63, 58));
+    assert_eq!(
+        (
+            npc.attackbonus,
+            npc.rangeattack,
+            npc.magicattack,
+            npc.stabdefence,
+            npc.slashdefence,
+            npc.crushdefence,
+            npc.magicdefence,
+            npc.rangedefence,
+        ),
+        (-12, -9, 4, -3, 5, 2, -7, -8),
+    );
     assert_eq!(npc.strength, Some(24));
     assert_eq!(npc.ranged, Some(3));
     assert_eq!(npc.undead, Some(1));
@@ -438,13 +556,20 @@ fn combat_fact_rows_preserve_nullable_delays_stages_and_combat_inputs() {
     let spotanim: StyleSpotanimFact =
         serde_json::from_str(r#"{"spotanim_id":2,"style":8,"where":"attacker"}"#).unwrap();
     let weapon: WeaponStyleFact =
-        serde_json::from_str(r#"{"obj_id":3,"style":1,"attackrate":5,"category":0,"tab":9}"#)
+        serde_json::from_str(r#"{"obj_id":3,"style":1,"attackrate":5,"category":0,"tab":9,"style_slot":2,"damagetype":1,"damagestyle":3,"style_bonus":[1,0,2]}"#)
             .unwrap();
-    let old_weapon: WeaponStyleFact =
-        serde_json::from_str(r#"{"obj_id":4,"style":1,"attackrate":4,"category":0}"#).unwrap();
-    let unknown_weapon: WeaponStyleFact =
-        serde_json::from_str(r#"{"obj_id":5,"style":1,"attackrate":4,"category":0,"tab":null}"#)
-            .unwrap();
+    let worn: ItemCombatBonus = serde_json::from_str(
+        r#"{"obj_id":42,"strengthbonus":7,"rangebonus":-2,"stabattack":-32768,"slashattack":32767,"crushattack":-11,"magicattack":12,"rangeattack":-13,"stabdefence":-14,"slashdefence":15,"crushdefence":-16,"magicdefence":17,"rangedefence":-18}"#,
+    )
+    .unwrap();
+    let old_weapon: WeaponStyleFact = serde_json::from_str(
+        r#"{"obj_id":4,"style":1,"attackrate":4,"category":0,"style_slot":0,"damagetype":0,"damagestyle":0,"style_bonus":[0,0,0]}"#,
+    )
+    .unwrap();
+    let unknown_weapon: WeaponStyleFact = serde_json::from_str(
+        r#"{"obj_id":5,"style":1,"attackrate":4,"category":0,"tab":null,"style_slot":0,"damagetype":0,"damagestyle":0,"style_bonus":[0,0,0]}"#,
+    )
+    .unwrap();
     let combat_tab: CombatTabFact = serde_json::from_str(r#"{"tab":9,"root_id":903}"#).unwrap();
     assert_eq!((sequence.seq_id, sequence.style), (1, 3));
     assert_eq!((spotanim.spotanim_id, spotanim.style), (2, 8));
@@ -459,6 +584,30 @@ fn combat_fact_rows_preserve_nullable_delays_stages_and_combat_inputs() {
         (3, 1, 5, 0)
     );
     assert_eq!(weapon.tab, Some(9));
+    assert_eq!(
+        (
+            weapon.style_slot,
+            weapon.damagetype,
+            weapon.damagestyle,
+            weapon.style_bonus,
+        ),
+        (2, 1, 3, (1, 0, 2)),
+    );
+    assert_eq!(worn.stabattack, i16::MIN);
+    assert_eq!(worn.slashattack, i16::MAX);
+    assert_eq!(
+        (
+            worn.crushattack,
+            worn.magicattack,
+            worn.rangeattack,
+            worn.stabdefence,
+            worn.slashdefence,
+            worn.crushdefence,
+            worn.magicdefence,
+            worn.rangedefence,
+        ),
+        (-11, 12, -13, -14, 15, -16, 17, -18),
+    );
     assert_eq!(old_weapon.tab, None);
     assert_eq!(unknown_weapon.tab, None);
     assert_eq!((combat_tab.tab, combat_tab.root_id), (9, 903));
@@ -2170,6 +2319,43 @@ fn item_combat_bonus_matches_the_obj_params() {
     let data = pvp_289();
     let dagger = data.item_combat_bonus(1215).expect("dragon dagger");
     assert_eq!((dagger.strengthbonus, dagger.rangebonus), (40, 0));
+    assert_eq!(
+        (
+            dagger.stabattack,
+            dagger.slashattack,
+            dagger.crushattack,
+            dagger.magicattack,
+            dagger.rangeattack,
+            dagger.stabdefence,
+            dagger.slashdefence,
+            dagger.crushdefence,
+            dagger.magicdefence,
+            dagger.rangedefence,
+        ),
+        (40, 25, -4, 1, 0, 0, 0, 0, 1, 0)
+    );
+    let dagger_styles: Vec<_> = data
+        .weapon_styles()
+        .iter()
+        .filter(|style| style.obj_id == 1215)
+        .map(|style| {
+            (
+                style.style_slot,
+                style.damagetype,
+                style.damagestyle,
+                style.style_bonus,
+            )
+        })
+        .collect();
+    assert_eq!(
+        dagger_styles,
+        [
+            (0, 0, 0, (3, 0, 0)),
+            (1, 0, 1, (0, 3, 0)),
+            (2, 1, 1, (0, 3, 0)),
+            (3, 0, 2, (0, 0, 3)),
+        ]
+    );
     let axe = data.item_combat_bonus(805).expect("rune thrownaxe");
     assert_eq!((axe.strengthbonus, axe.rangebonus), (0, 36));
     let scimitar = data.item_combat_bonus(1333).expect("rune scimitar");
@@ -2691,7 +2877,7 @@ fn pvp_shared_facts_have_bounded_layout() {
     // Once-per-process facts carry size tripwires only (no lab A/B for V0).
     // Measured `SpecialWeaponFact` is 52 bytes; the bound allows headroom.
     assert!(std::mem::size_of::<SpecialWeaponFact>() <= 56);
-    assert!(std::mem::size_of::<ItemCombatBonus>() <= 16);
+    assert!(std::mem::size_of::<ItemCombatBonus>() <= 32);
     assert!(std::mem::size_of::<MeleeWeaponTier>() <= 8);
     assert!(std::mem::size_of::<DuelAreaRect>() <= 16);
     assert!(std::mem::size_of::<DuelPenFact>() <= 24);

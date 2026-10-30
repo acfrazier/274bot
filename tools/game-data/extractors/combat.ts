@@ -44,9 +44,20 @@ export type CombatScripts = {
 type CombatObject = {
     id: number;
     category?: number;
+    wearpos?: number;
+    wearpos2?: number;
+    wearpos3?: number;
     params?: ReadonlyMap<number, number | string> | null;
 };
 type CombatDbRow = { name: string; values: Record<string, string[][]> };
+type WeaponStyleMetadata = { obj_id: number; style: number; attackrate: number; category: number; tab: number | null };
+type WeaponStyleFactWire = WeaponStyleMetadata & {
+    style_slot: number;
+    damagetype: number;
+    damagestyle: number;
+    style_bonus: [number, number, number];
+};
+type CombatStyleSlot = Pick<WeaponStyleFactWire, 'style_slot' | 'damagetype' | 'damagestyle' | 'style_bonus'>;
 
 const AI_KINDS = new Set(['ai_applayer2', 'ai_opplayer2', 'ai_queue1']);
 
@@ -502,6 +513,133 @@ function weaponStyleTables(content: string) {
     }
     return { byCategory, fallback: fallbackSeen ? fallback : null };
 }
+function combatConstantCodes(content: string, file: string, label: string) {
+    const source = stripComments(requireGatherText(content, file));
+    const codes = new Map<string, number | null>();
+    for (const match of source.matchAll(/^\s*\^([A-Za-z][A-Za-z0-9_]*)\s*=\s*(-?\d+)\s*$/gm)) {
+        const name = match[1]!;
+        const code = Number(match[2]);
+        const prior = codes.get(name);
+        if (!Number.isInteger(code) || code < 0 || code > 255) {
+            throw new Error(`${label}: constant ^${name} code ${code} is out of range`);
+        }
+        if (prior !== undefined) throw new Error(`${label}: duplicate constant ^${name}`);
+        codes.set(name, code);
+    }
+    return codes;
+}
+
+function combatStyleBonuses(content: string) {
+    const source = stripComments(requireGatherText(content, 'scripts/skill_combat/scripts/combat.rs2'));
+    const procedure = parseSections(source).find((section) => section.kind === 'proc'
+        && section.target?.replace(/^\./, '') === 'combat_get_damagestyle_bonuses');
+    const body = procedure && bracedBody(procedure.body, /\bswitch_int\s*\(\s*\$damagestyle\s*\)\s*\{/);
+    if (body === null || body === undefined) throw new Error('combat styles: missing combat_get_damagestyle_bonuses switch');
+
+    const bonuses = new Map<string, [number, number, number] | null>();
+    let fallback: [number, number, number] | null = null;
+    for (const match of body.matchAll(/^\s*case\s+(default|\^[A-Za-z][A-Za-z0-9_]*(?:\s*,\s*\^[A-Za-z][A-Za-z0-9_]*)*)\s*:\s*return\s*\(([^)]*)\)\s*;/gm)) {
+        const values = match[2]!.split(',').map((value) => Number(value.trim()));
+        if (values.length !== 4 || values.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) {
+            throw new Error(`combat styles: malformed bonus tuple ${match[2]}`);
+        }
+        const bonus: [number, number, number] = [values[0]!, values[1]!, values[2]!];
+        if (match[1] === 'default') {
+            if (fallback !== null) throw new Error('combat styles: duplicate default style bonus');
+            fallback = bonus;
+            continue;
+        }
+        for (const rawName of match[1]!.split(',')) {
+            const name = rawName.trim().replace(/^\^/, '');
+            if (bonuses.has(name)) bonuses.set(name, null);
+            else bonuses.set(name, bonus);
+        }
+    }
+    if (fallback === null) throw new Error('combat styles: missing default style bonus');
+    return { bonuses, fallback };
+}
+
+function combatStyleSlots(content: string) {
+    const schema = parseSections(stripComments(requireGatherText(content, 'scripts/skill_combat/configs/combat.dbtable')))
+        .filter((section) => section.kind === 'combat_style_table' && section.target === null);
+    if (schema.length !== 1
+        || !/^\s*column=damagestyle,int,LIST\s*$/m.test(schema[0]!.body)
+        || !/^\s*column=damagetype,int,LIST\s*$/m.test(schema[0]!.body)) {
+        throw new Error('combat styles: combat_style_table must declare damagestyle and damagetype lists');
+    }
+
+    const modeCodes = combatConstantCodes(content, 'scripts/skill_combat/configs/combat_damagestyles.constant', 'damagestyle');
+    const damageCodes = combatConstantCodes(content, 'scripts/skill_combat/configs/combat_damagetypes.constant', 'damagetype');
+    const bonuses = combatStyleBonuses(content);
+    const dbrowText = requireGatherText(content, 'scripts/skill_combat/configs/combat.dbrow');
+    const rows = new Map<string, CombatDbRow | null>();
+    for (const row of parseRows(dbrowText)) {
+        if (rows.has(row.name)) rows.set(row.name, null);
+        else rows.set(row.name, row);
+    }
+    const sections = new Map<string, ScriptSection | null>();
+    for (const section of parseSections(stripComments(dbrowText))) {
+        if (section.target !== null) continue;
+        if (sections.has(section.kind)) sections.set(section.kind, null);
+        else sections.set(section.kind, section);
+    }
+
+    const slots = new Map<string, CombatStyleSlot[] | null>();
+    for (const [name, row] of rows) {
+        const section = sections.get(name);
+        if (!section || !/^\s*table=combat_style_table\s*$/m.test(section.body)) continue;
+        const styles = row?.values.damagestyle;
+        const damageTypes = row?.values.damagetype;
+        if (!row || !styles || !damageTypes || styles.length === 0 || styles.length > 4
+            || damageTypes.length !== styles.length) {
+            slots.set(name, null);
+            continue;
+        }
+        const styleRows: CombatStyleSlot[] = [];
+        for (let style_slot = 0; style_slot < styles.length; style_slot++) {
+            const damagestyleName = styles[style_slot]?.[0]?.replace(/^\^/, '');
+            const damagetypeName = damageTypes[style_slot]?.[0]?.replace(/^\^/, '');
+            const damagestyle = damagestyleName === undefined ? undefined : modeCodes.get(damagestyleName);
+            const damagetype = damagetypeName === undefined ? undefined : damageCodes.get(damagetypeName);
+            if (damagestyleName === undefined || damagetypeName === undefined
+                || damagestyle === undefined || damagestyle === null
+                || damagetype === undefined || damagetype === null) {
+                throw new Error(`combat styles: ${name} slot ${style_slot} has an unresolved damage type/style`);
+            }
+            const bonus = bonuses.bonuses.get(damagestyleName);
+            if (bonus === null) throw new Error(`combat styles: ${damagestyleName} has conflicting style bonuses`);
+            styleRows.push({
+                style_slot,
+                damagetype,
+                damagestyle,
+                style_bonus: bonus ?? bonuses.fallback,
+            });
+        }
+        slots.set(name, styleRows);
+    }
+    return slots;
+}
+
+function uniqueWeaponStyleMetadata<T extends WeaponStyleMetadata>(rows: readonly T[], label: string): T[] {
+    const byId = new Map<number, T>();
+    for (const row of rows) {
+        const prior = byId.get(row.obj_id);
+        if (prior && (prior.style !== row.style || prior.attackrate !== row.attackrate
+            || prior.category !== row.category || prior.tab !== row.tab)) {
+            throw new Error(`${label}: obj ${row.obj_id} has inconsistent per-slot weapon metadata`);
+        }
+        if (!prior) byId.set(row.obj_id, row);
+    }
+    return [...byId.values()].sort((a, b) => a.obj_id - b.obj_id);
+}
+
+type CombatBonusName = 'stabattack' | 'slashattack' | 'crushattack' | 'magicattack' | 'rangeattack'
+    | 'stabdefence' | 'slashdefence' | 'crushdefence' | 'magicdefence' | 'rangedefence';
+const ITEM_COMBAT_BONUS_NAMES: readonly CombatBonusName[] = [
+    'stabattack', 'slashattack', 'crushattack', 'magicattack', 'rangeattack',
+    'stabdefence', 'slashdefence', 'crushdefence', 'magicdefence', 'rangedefence',
+];
+
 
 function combatModeFacts(
     content: string,
@@ -692,6 +830,8 @@ function rangedObjectFacts(
 }
 
 export function extractCombatStyleFacts(content: string, objects: readonly CombatObject[], npcs: readonly CombatNpcSource[], scripts: CombatScripts) {
+    const styleTablesByCategory = weaponStyleTables(content);
+    const styleSlots = combatStyleSlots(content);
     const seqPack = parsePack(requireGatherText(content, 'pack/seq.pack'));
     const spotanimPack = parsePack(requireGatherText(content, 'pack/spotanim.pack'));
     const categoryPack = parsePack(requireGatherText(content, 'pack/category.pack'));
@@ -704,7 +844,7 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
     const ranged = rangedObjectFacts(content, objects, categoryNames, paramIds);
     const sequences = new Map<number, number>();
     const spotanims = new Map<number, { style: number; where: SpotanimWhere }>();
-    const weaponStyles: { obj_id: number; style: number; attackrate: number; category: number; tab: number | null }[] = [];
+    const weaponStyles: WeaponStyleFactWire[] = [];
     const seqId = (value: string | number | undefined, label: string) => sourceValueId(value, seqPack, label);
     const spotId = (value: string | number | undefined, label: string) => sourceValueId(value, spotanimPack, label);
     const addSpot = (id: number | null, style: number, where: SpotanimWhere, label: string) => {
@@ -736,7 +876,18 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
         const tab = combatTabs.byCategory.has(category)
             ? combatTabs.byCategory.get(category) ?? null
             : combatTabs.fallback;
-        weaponStyles.push({ obj_id: object.id, style, attackrate, category: categoryCode, tab });
+        const table = styleTablesByCategory.byCategory.has(category)
+            ? styleTablesByCategory.byCategory.get(category) ?? null
+            : styleTablesByCategory.fallback;
+        if (table === null) throw new Error(`obj ${object.id}: ${category} has no combat style table`);
+        const styles = styleSlots.get(table);
+        if (!styles || styles.length === 0) throw new Error(`obj ${object.id}: combat style table ${table} has no usable slots`);
+        for (const styleSlot of styles) {
+            weaponStyles.push({
+                obj_id: object.id, style, attackrate, category: categoryCode, tab,
+                ...styleSlot,
+            });
+        }
     }
     for (const npc of npcs) {
         const attackAnim = npc.params.get('attack_anim');
@@ -807,7 +958,7 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
         style_seqs: [...sequences.entries()].sort((a, b) => a[0] - b[0]).map(([seq_id, style]) => ({ seq_id, style })),
         style_spotanims: makeSpotanimRows(spotanims),
         combat_tabs: combatTabs.roots,
-        weapon_styles: weaponStyles.sort((a, b) => a.obj_id - b.obj_id),
+        weapon_styles: weaponStyles.sort((a, b) => a.obj_id - b.obj_id || a.style_slot - b.style_slot),
         melee_modes: meleeModes.rows,
         melee_mode_varp: meleeModes.varp,
         ranged_weapons: ranged.rangedWeapons,
@@ -980,7 +1131,7 @@ const SPECIAL_SPECS: Record<string, SpecialSpec> = {
 export function extractSpecialWeaponFacts(
     content: string,
     objects: readonly CombatObject[],
-    weaponStyles: readonly { obj_id: number; style: number; tab: number | null }[],
+    weaponStyles: readonly WeaponStyleMetadata[],
     aliasToId: ReadonlyMap<string, number>,
 ): SpecialWeaponFactWire[] {
     const paramIds = packParameterIds(content);
@@ -1002,7 +1153,7 @@ export function extractSpecialWeaponFacts(
         throw new Error(`special facts: bad sa_energy default ${paramDefaults.get('sa_energy')?.default}`);
     }
     const byId = new Map(objects.map((object) => [object.id, object]));
-    const styleById = new Map(weaponStyles.map((row) => [row.obj_id, row]));
+    const styleById = new Map(uniqueWeaponStyleMetadata(weaponStyles, 'special facts').map((row) => [row.obj_id, row]));
     const rows: SpecialWeaponFactWire[] = [];
     for (const [alias, id] of [...aliasToId.entries()].sort((a, b) => a[1] - b[1])) {
         const object = byId.get(id);
@@ -1039,24 +1190,44 @@ export function extractSpecialWeaponFacts(
     return rows.sort((a, b) => a.obj_id - b.obj_id);
 }
 
-export type ItemCombatBonusWire = { obj_id: number; strengthbonus: number; rangebonus: number };
+export type ItemCombatBonusWire = { obj_id: number; strengthbonus: number; rangebonus: number } & Record<CombatBonusName, number>;
 
 export function extractItemCombatBonus(
     content: string,
     objects: readonly CombatObject[],
 ): ItemCombatBonusWire[] {
     const paramIds = packParameterIds(content);
+    const definitions = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/combat.param'));
+    const names = [...ITEM_COMBAT_BONUS_NAMES, 'strengthbonus', 'rangebonus'] as const;
+    const defaults = new Map<string, number>();
+    for (const name of names) {
+        if (!paramIds.has(name)) throw new Error(`combat bonus: pack/param.pack is missing ${name}`);
+        const definition = definitions.get(name);
+        if (definition?.type?.toLowerCase() !== 'int') throw new Error(`combat bonus: ${name} is not an integer parameter`);
+        const value = definition.default === undefined ? Number.NaN : Number(definition.default);
+        if (!Number.isSafeInteger(value)) throw new Error(`combat bonus: ${name} has no valid content default`);
+        defaults.set(name, value);
+    }
     const rows: ItemCombatBonusWire[] = [];
     for (const object of objects) {
-        const strength = parameterValue(object.params, paramIds, 'strengthbonus');
-        const range = parameterValue(object.params, paramIds, 'rangebonus');
-        if (strength === undefined && range === undefined) continue;
-        const strengthbonus = strength === undefined ? 0 : Number(strength);
-        const rangebonus = range === undefined ? 0 : Number(range);
-        if (!Number.isInteger(strengthbonus) || !Number.isInteger(rangebonus)) {
-            throw new Error(`combat bonus: obj ${object.id} has non-integer bonus ${strength}/${range}`);
-        }
-        rows.push({ obj_id: object.id, strengthbonus, rangebonus });
+        if (![object.wearpos, object.wearpos2, object.wearpos3].some((position) => position !== undefined && position >= 0)) continue;
+        const read = (name: typeof names[number], signed = false) => {
+            const raw = parameterValue(object.params, paramIds, name);
+            const value = raw === undefined ? defaults.get(name)! : Number(raw);
+            if (!Number.isSafeInteger(value)) throw new Error(`combat bonus: obj ${object.id} has non-integer ${name} ${raw}`);
+            if (signed && (value < -32768 || value > 32767)) {
+                throw new Error(`combat bonus: obj ${object.id} ${name} ${value} is out of i16 range`);
+            }
+            return value;
+        };
+        const bonuses = {} as Record<CombatBonusName, number>;
+        for (const name of ITEM_COMBAT_BONUS_NAMES) bonuses[name] = read(name, true);
+        rows.push({
+            obj_id: object.id,
+            strengthbonus: read('strengthbonus'),
+            rangebonus: read('rangebonus'),
+            ...bonuses,
+        });
     }
     return rows.sort((a, b) => a.obj_id - b.obj_id);
 }
@@ -1116,7 +1287,7 @@ function meleeTierGate(handler: string, args: string): { tier: number; quest_gat
 
 export function extractMeleeWeaponTiers(
     content: string,
-    weaponStyles: readonly { obj_id: number; category: number }[],
+    weaponStyles: readonly WeaponStyleMetadata[],
     idToAlias: ReadonlyMap<number, string>,
 ): MeleeWeaponTierWire[] {
     // `weapon_styles` category 0 is melee; bows, crossbows, thrown, javelins
@@ -1124,8 +1295,9 @@ export function extractMeleeWeaponTiers(
     // Only aliases of melee weapons are gated here; every other wield row
     // (armour, staves, ammo) is out of scope and ignored, while an
     // unexpected attack gate on a melee weapon fails closed.
+    const uniqueWeaponStyles = uniqueWeaponStyleMetadata(weaponStyles, 'melee tier');
     const meleeAliases = new Set<string>();
-    for (const weapon of weaponStyles) {
+    for (const weapon of uniqueWeaponStyles) {
         if (weapon.category !== 0) continue;
         const alias = idToAlias.get(weapon.obj_id);
         if (alias !== undefined) meleeAliases.add(alias);
@@ -1191,7 +1363,7 @@ export function extractMeleeWeaponTiers(
         }
     }
     const rows: MeleeWeaponTierWire[] = [];
-    for (const weapon of weaponStyles) {
+    for (const weapon of uniqueWeaponStyles) {
         if (weapon.category !== 0) continue;
         const alias = idToAlias.get(weapon.obj_id);
         const gate = alias === undefined ? undefined : gates.get(alias);
