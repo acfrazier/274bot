@@ -13639,17 +13639,6 @@
       "nav_consuming": false
     },
     {
-      "id": "scene-players-all",
-      "module": "api/players/Players.js",
-      "selector": "Players.all",
-      "add": true,
-      "reason": "Players.all wraps the original rows paired with the decoded native player page using the exported Player class; it is runtime-only in the frozen query facade (crates/script-js/src/shim/players.js:55-57).",
-      "runtime": "crates/script-js/src/shim/players.js:55",
-      "declaration": "all(): Player[];",
-      "family_id": "entities",
-      "nav_consuming": false
-    },
-    {
       "id": "not-impl:adapter/ClientAdapter.js:reader.chatContinueComId",
       "module": "adapter/ClientAdapter.js",
       "selector": "reader.chatContinueComId",

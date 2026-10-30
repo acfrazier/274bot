@@ -3103,7 +3103,6 @@ import EntityQuery from "*api/query/Query.js";
  */
 export const Players: {
     query(): EntityQuery<Player>;
-    all(): Player[];
 };
 
 }

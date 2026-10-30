@@ -7143,7 +7143,7 @@ export default class T extends LoopingBot {
             tile: Tile.from({ x: 1, z: 2, level: 0 }).toString(),
             npcs: typeof Npcs.nearest,
             locs: typeof Locs.query,
-            players: typeof Players.all,
+            players: typeof Players.query,
             ground: typeof GroundItems.query,
             equip: typeof Equipment.contains,
             task: typeof ContinueDialog,

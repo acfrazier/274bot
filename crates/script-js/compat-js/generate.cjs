@@ -638,7 +638,8 @@ const npcCount: number = npcQuery.count();
 const forEachMatchResult: void = npcQuery.forEachMatch(npc => npc.targetsMe());
 const allNpcs: Npc[] = Npcs.all();
 const nearestNpcs: Npc[] = Npcs.nearest(2);
-const allPlayers: Player[] = Players.all();
+// @ts-expect-error Players.all is removed (COMPAT-FINISH-029, census compat-only:008); use Players.query().
+Players.all();
 const locSnapshot: LocSnapshot = locRows[0];
 const playerSnapshot: PlayerSnapshot = playerRows[0];
 const groundItemSnapshot: GroundItemSnapshot = groundItemRows[0];

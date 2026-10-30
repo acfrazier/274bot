@@ -143,7 +143,7 @@ export default class EntityFamilyBot extends LoopingBot {
         const npcs = Npcs.all();
         const npc = npcs[0];
         const loc = Locs.query().first();
-        const players = Players.all();
+        const players = Players.query().results();
         const player = players[0];
         const item = GroundItems.query().first();
         const stale = new Npc({ index: npc.index, id: npc.id, name: 'changed' });

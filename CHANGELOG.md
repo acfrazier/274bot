@@ -173,8 +173,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - Removed the unused private exports `nearestWalkableBank`,
   `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator` and
   `bankPaceTicks`, which only reported `not impl`, and the 274bot-only
-  `Bank.depositAllExcept` and `Bank.openNearestWorld`. `Banking.depositAllExcept`
-  stays.
+  `Bank.depositAllExcept`, `Bank.openNearestWorld` and `Players.all`.
+  `Banking.depositAllExcept` and `Players.query` stay.
 - rs2b0t scripts can use the mining, woodcutting, gathering, cooking and
   fishing modules. The camp, method, vendor and cook tables, the fishing-gear
   calculations, the radius helpers and the constants come from the game data
