@@ -650,8 +650,7 @@ impl Gatherer {
                     .map(|selected| (selected.bank_index, selected.access_tile))
                 {
                     let retrying = self.begin_walk_retry(WalkRetryTarget::Bank(bank_index));
-                    let submitted =
-                        self.trip_walk(access_tile, 1, ArrivalKind::Reach, None, tick);
+                    let submitted = self.trip_walk(access_tile, 1, ArrivalKind::Reach, None, tick);
                     if retrying && submitted {
                         self.scratch.return_stall_recovery.action_submitted();
                     }
@@ -2385,7 +2384,11 @@ impl Gatherer {
             .last_event
             .as_ref()
             .starts_with("waiting for hazard to clear")
-            && self.scratch.avoid.iter().any(|entry| u64::from(entry.until) > now)
+            && self
+                .scratch
+                .avoid
+                .iter()
+                .any(|entry| u64::from(entry.until) > now)
         {
             return;
         }
@@ -2396,11 +2399,15 @@ impl Gatherer {
             return;
         };
         let Some(target) = hazard_retreat_stand(here, hazard, collision) else {
-            if self.scratch.avoid.iter().any(|entry| u64::from(entry.until) > now) {
+            if self
+                .scratch
+                .avoid
+                .iter()
+                .any(|entry| u64::from(entry.until) > now)
+            {
                 self.set_event(&self.block_context(Some(here), "waiting for hazard to clear"));
             } else {
-                let context =
-                    self.block_context(Some(here), "no reachable stand away from hazard");
+                let context = self.block_context(Some(here), "no reachable stand away from hazard");
                 if self.scratch.last_walk_failure.is_some() {
                     self.fail_last_walk("walk-failed", &context);
                 } else {

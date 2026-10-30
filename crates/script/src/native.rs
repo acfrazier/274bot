@@ -1101,11 +1101,11 @@ impl ReturnStallRecovery {
             && !has_blocked_zones
             && matches!(
                 &receipt.end,
-        WalkEnd::NoPath
-            | WalkEnd::RouteEnded
-            | WalkEnd::Stalled(_)
-            | WalkEnd::Refused
-            | WalkEnd::Failed
+                WalkEnd::NoPath
+                    | WalkEnd::RouteEnded
+                    | WalkEnd::Stalled(_)
+                    | WalkEnd::Refused
+                    | WalkEnd::Failed
             )
     }
 

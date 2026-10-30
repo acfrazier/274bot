@@ -1142,10 +1142,7 @@ fn route_ended_unloaded_tree_schedules_retry() {
     assert_route_ended_tree_reselection(TargetObservation::Gone, false);
 }
 
-fn no_path_receipt(
-    evidence: api::quest_progress::EvidenceStamp,
-    detail: &str,
-) -> WalkReceipt {
+fn no_path_receipt(evidence: api::quest_progress::EvidenceStamp, detail: &str) -> WalkReceipt {
     WalkReceipt {
         goal: None,
         request_id: 19,
@@ -1321,7 +1318,10 @@ fn resource_approach_retries_then_shuns_and_fails_with_last_detail() {
     with_tick(&snapshot, &mut ledger, 10, |tick| {
         gatherer.begin_idle(tick, false);
     });
-    let failure = gatherer.failure.as_ref().expect("no reachable target remains");
+    let failure = gatherer
+        .failure
+        .as_ref()
+        .expect("no reachable target remains");
     assert_eq!(failure.code.as_ref(), "walk-failed");
     assert!(failure.message.contains("last approach route detail"));
 }
@@ -1626,7 +1626,10 @@ fn progressed_return_stall_replans_once_from_the_observed_position() {
     assert!(gatherer.failure.is_none());
     assert_eq!(gatherer.scratch.retry_after_tick, Some(700));
     assert!(gatherer.scratch.return_stall_recovery.pending());
-    assert!(ledger.is_none(), "the retry waits for a later observed tick");
+    assert!(
+        ledger.is_none(),
+        "the retry waits for a later observed tick"
+    );
 
     let mut submitted_at = None;
     with_tick(&snapshot, &mut ledger, 701, |tick| {
