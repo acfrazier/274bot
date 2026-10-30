@@ -3045,6 +3045,30 @@ pub(crate) fn route_prereq_content(
     if gates.is_empty() {
         return None;
     }
+    // Proved crossings need no repair row. They must not discard refusal
+    // metadata for later registered crossings on the same accepted route.
+    let mut registered: Option<Vec<api::prereq_steps::ActionableGate>> = None;
+    for (index, gate) in gates.iter().enumerate() {
+        if catalog.for_gate(&gate.gate, &gate.crossing).is_some() {
+            if let Some(registered) = registered.as_mut() {
+                registered.push(gate.clone());
+            }
+        } else {
+            if gate.truth != Truth::True {
+                return None;
+            }
+            if registered.is_none() {
+                let mut retained = Vec::new();
+                retained.try_reserve_exact(gates.len() - 1).ok()?;
+                retained.extend_from_slice(&gates[..index]);
+                registered = Some(retained);
+            }
+        }
+    }
+    let gates = registered.map_or(gates, Arc::from);
+    if gates.is_empty() {
+        return None;
+    }
 
     let mut grouped = Vec::<(
         u16,
@@ -9730,15 +9754,13 @@ mod route_quest_provider_tests {
             ladder.leg = leg;
             ladder.crossing.loc_id = loc_id;
             ladder.crossing.kind = api::prereq_steps::CrossingKind::Ladder;
-            assert!(catalog
-                .for_gate(&ladder.gate, &ladder.crossing)
-                .is_none());
+            assert!(catalog.for_gate(&ladder.gate, &ladder.crossing).is_none());
             route_gates.push(ladder);
         }
         route_gates.push(barrier.clone());
         let content = route_prereq_content(&catalog, run(), route_gates.into())
             .expect("proved ladders must not discard the registered barrier's refusal content");
-        assert_eq!(content.gates.as_ref(), &[barrier.clone()]);
+        assert_eq!(content.gates.as_ref(), std::slice::from_ref(&barrier));
         assert_eq!(content.gate_groups.len(), 1);
         assert_eq!(content.gate_groups[0].leg, 7);
         assert_eq!(content.crossing_passes.len(), 1);
