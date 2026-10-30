@@ -74,8 +74,8 @@ pub(super) fn player_path_index(
 /// the client's 25-turn cap (`client.rs:5129-5131`) and the engine's
 /// 25-waypoint limits (`MoveClickDecoder.ts:21`, `PathingEntity.ts:42`).
 /// At one tile per tick (`PathingEntity.ts:144-149`), 20 steps plus the
-/// 2-tile click-ahead radius (`walk.rs:122-127`) stay within the 60-tick
-/// hop budget (`traveller.rs:427`).
+/// 2-tile click-ahead radius (`walk.rs:138-143`) stay within the 60-tick
+/// hop budget (`traveller.rs:481,488`).
 pub(super) fn pick_aim(
     tiles: &[WorldTile],
     here_index: Option<usize>,
