@@ -501,3 +501,18 @@ listed = "0.2.8"
 target = "0.2.9"
 severity = "medium"
 owner = "host background work (WorkAdmission)"
+
+[[item]]
+id = "panel-profiles-cannot-close"
+kind = "known-issue"
+area = "Panel"
+text = """The **Profiles** window, and its tab when docked, cannot be closed while
+  no profile is being edited: its ✕ and **Close** do nothing. **Workaround:**
+  press **Edit** on a profile, then press **Close** or the ✕. A fix is planned
+  for 0.2.9."""
+first = "0.2.5"
+listed = "0.2.8"
+target = "0.2.9"
+fixed = "0.2.9"
+severity = "medium"
+owner = "panel"

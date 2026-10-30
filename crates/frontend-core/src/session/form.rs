@@ -176,7 +176,13 @@ impl<Io> OperatorSession<Io> {
             FormRow::Close(close) => {
                 if let Some(editor) = models.editor.as_deref_mut() {
                     if !editor.is_open() {
-                        return not_applicable();
+                        // No form to close, so nothing to confirm. Closing
+                        // Profiles (its Close and its ✕) still goes ahead;
+                        // a form's Cancel has no form to cancel.
+                        return match close {
+                            FormClose::Window => Applied::Done,
+                            FormClose::Form => not_applicable(),
+                        };
                     }
                     let leave = match close {
                         FormClose::Form => FormLeave::CloseForm,
