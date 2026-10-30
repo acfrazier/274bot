@@ -12,7 +12,8 @@ use super::*;
 const SKIP_GATE_SOURCE: &str = "Legends gate source did not match its pinned handler";
 const SKIP_GATE_CONFIG: &str = "Legends gate config, pack id or placement was not unique";
 const SKIP_GATE_QUEST: &str = "Legends gate quest progress identity was not verified";
-const SKIP_JUNGLE_SOURCE: &str = "Legends jungle, axe or coordinate source did not match its pinned handler";
+const SKIP_JUNGLE_SOURCE: &str =
+    "Legends jungle, axe or coordinate source did not match its pinned handler";
 const SKIP_JUNGLE_CONFIG: &str = "Legends jungle loc config, pack id or placement was not verified";
 const SKIP_JUNGLE_GEOMETRY: &str = "Legends jungle crossing had no verified standable landing";
 const SKIP_JUNGLE_TOOLS: &str = "Legends jungle item or tool ids were not verified";
@@ -141,7 +142,6 @@ enum JungleAxeUse {
     Carried(i32),
     Worn,
 }
-
 
 struct LegendsQuest {
     family: QuestFamilyId,
@@ -284,7 +284,6 @@ fn gate_edges(
         gates.push((gate, id, open_loc_id, angle_dir));
     }
 
-
     let mut directions = 0;
     for (gate, id, open_loc_id, angle_dir) in gates {
         let at = WorldTile {
@@ -325,7 +324,11 @@ fn gate_edges(
         }
     }
     if directions != LEGENDS_GATE_LOCATIONS.len() * 2 {
-        bump(skipped, SKIP_GATE_CONFIG, LEGENDS_GATE_LOCATIONS.len() * 2 - directions);
+        bump(
+            skipped,
+            SKIP_GATE_CONFIG,
+            LEGENDS_GATE_LOCATIONS.len() * 2 - directions,
+        );
     }
 }
 
@@ -402,7 +405,9 @@ fn jungle_edges(
         })
         .collect::<Vec<_>>();
     for loc in JUNGLE_LOCS {
-        let Some((_, id)) = loc_ids.iter().find(|(candidate, _)| candidate.name == loc.name)
+        let Some((_, id)) = loc_ids
+            .iter()
+            .find(|(candidate, _)| candidate.name == loc.name)
         else {
             bump(skipped, SKIP_JUNGLE_CONFIG, 1);
             continue;
@@ -411,12 +416,9 @@ fn jungle_edges(
             bump(skipped, SKIP_JUNGLE_CONFIG, 1);
             continue;
         };
-        let Some(next_stage_id) = pinned_pack_id(
-            content_root,
-            "loc.pack",
-            loc.next_stage,
-            loc.next_stage_id,
-        ) else {
+        let Some(next_stage_id) =
+            pinned_pack_id(content_root, "loc.pack", loc.next_stage, loc.next_stage_id)
+        else {
             bump(skipped, SKIP_JUNGLE_CONFIG, 1);
             continue;
         };
@@ -518,19 +520,11 @@ fn emit_jungle_variants(
     quest: Option<&LegendsQuest>,
 ) {
     for &map_id in map_ids {
-        emit_jungle_unlock_variants(
-            graph,
-            crossing,
-            tools,
-            JungleUnlock::Item(map_id),
-        );
+        emit_jungle_unlock_variants(graph, crossing, tools, JungleUnlock::Item(map_id));
     }
     if let Some(quest) = quest {
-        let completed_gate = QuestGates::new(
-            quest.family,
-            [QuestGate::Complete(quest.quest.clone())],
-        )
-        .ok();
+        let completed_gate =
+            QuestGates::new(quest.family, [QuestGate::Complete(quest.quest.clone())]).ok();
         if let Some(completed_gate) = completed_gate.as_ref() {
             emit_jungle_unlock_variants(
                 graph,
@@ -855,10 +849,7 @@ fn source_matches(actual: &str, template: &str) -> bool {
     })
 }
 
-fn source_blocks(
-    text: &str,
-    wanted: Option<&HashSet<(String, String)>>,
-) -> Option<SourceBlocks> {
+fn source_blocks(text: &str, wanted: Option<&HashSet<(String, String)>>) -> Option<SourceBlocks> {
     let headers = text
         .lines()
         .filter_map(|line| {
@@ -903,7 +894,10 @@ fn pinned_engine_proc_closure_matches(content_root: &Path, roots: &[&str]) -> bo
         return false;
     };
     let mut closure = HashSet::new();
-    let mut pending = roots.iter().map(|name| (*name).to_string()).collect::<Vec<_>>();
+    let mut pending = roots
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect::<Vec<_>>();
     while let Some(name) = pending.pop() {
         if !closure.insert(name.clone()) {
             continue;

@@ -1,5 +1,5 @@
-use api::selected::{FactKey, QuestGate};
 use super::*;
+use api::selected::{FactKey, QuestGate};
 
 const GATE_LOC_IDS: [i32; 2] = [2391, 2392];
 const MAP_IDS: [i32; 2] = [714, 715];
@@ -18,10 +18,7 @@ fn legends_gate_requires_started_progress_and_crosses_each_leaf_both_ways() {
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
     let (facts, identity) = selected.quest_identity_for_bake().unwrap();
     let quests = QuestSource {
-        family: nav_planner::quest_gates::QuestFamilyId::new(
-            identity.sha256,
-            identity.schema,
-        ),
+        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
         facts: &facts,
     };
     let collision = open_collision(2724, 3345, 12, 12);
@@ -38,7 +35,11 @@ fn legends_gate_requires_started_progress_and_crosses_each_leaf_both_ways() {
         .iter()
         .filter(|edge| GATE_LOC_IDS.contains(&edge.loc_id) && edge.open_loc_id.is_some())
         .collect::<Vec<_>>();
-    assert_eq!(gate_edges.len(), 4, "expected both directions of both leaves");
+    assert_eq!(
+        gate_edges.len(),
+        4,
+        "expected both directions of both leaves"
+    );
     for (loc_id, x, open_id) in [(2391, 2728, 1562), (2392, 2729, 1563)] {
         let crossings = gate_edges
             .iter()
@@ -55,7 +56,14 @@ fn legends_gate_requires_started_progress_and_crosses_each_leaf_both_ways() {
         );
         for edge in crossings {
             assert_eq!(edge.kind, TransportKind::Door);
-            assert_eq!(edge.at, WorldTile { x, z: 3349, level: 0 });
+            assert_eq!(
+                edge.at,
+                WorldTile {
+                    x,
+                    z: 3349,
+                    level: 0
+                }
+            );
             assert_eq!(edge.open_loc_id, Some(open_id));
             assert_eq!(edge.option, 1);
             assert_eq!(edge.takeoff, None);
@@ -95,10 +103,7 @@ fn every_mature_jungle_loc_has_map_or_completion_tool_and_takeoff_gates() {
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
     let (facts, identity) = selected.quest_identity_for_bake().unwrap();
     let quests = QuestSource {
-        family: nav_planner::quest_gates::QuestFamilyId::new(
-            identity.sha256,
-            identity.schema,
-        ),
+        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
         facts: &facts,
     };
     let defs = loc_defs(&[
@@ -137,7 +142,14 @@ fn every_mature_jungle_loc_has_map_or_completion_tool_and_takeoff_gates() {
                     edge.to.level,
                 ))
                 .or_default() += 1;
-            assert_eq!(edge.at, WorldTile { x: 100 + index as i32 * 6, z: 100, level: 0 });
+            assert_eq!(
+                edge.at,
+                WorldTile {
+                    x: 100 + index as i32 * 6,
+                    z: 100,
+                    level: 0
+                }
+            );
             assert_eq!(edge.option, 1);
             assert_eq!(edge.player_delta, None);
             assert_eq!(edge.open_loc_id, None);
@@ -150,18 +162,27 @@ fn every_mature_jungle_loc_has_map_or_completion_tool_and_takeoff_gates() {
             let has_complete = edge.quest_gates.as_ref().is_some_and(|gates| {
                 gates.gates() == [QuestGate::Complete(FactKey::new("legends"))]
             });
-            assert_ne!(has_map, has_complete, "one map item or complete Legends is required");
+            assert_ne!(
+                has_map, has_complete,
+                "one map item or complete Legends is required"
+            );
 
             let inventory_machette = edge.item_req.contains(&(MACHETTE_ID, 1));
             let worn_machette = edge.worn_all_req == [MACHETTE_ID];
-            assert_ne!(inventory_machette, worn_machette, "machette must be held or worn");
+            assert_ne!(
+                inventory_machette, worn_machette,
+                "machette must be held or worn"
+            );
 
             let inventory_axe = edge
                 .item_req
                 .iter()
                 .any(|(id, count)| AXE_IDS.contains(id) && *count == 1);
             let worn_axe = edge.worn_req == AXE_IDS;
-            assert_ne!(inventory_axe, worn_axe, "an axe may be carried or worn in the right hand");
+            assert_ne!(
+                inventory_axe, worn_axe,
+                "an axe may be carried or worn in the right hand"
+            );
             assert!(
                 !(worn_machette && worn_axe),
                 "machette and axe cannot both occupy the right hand"
@@ -174,9 +195,10 @@ fn every_mature_jungle_loc_has_map_or_completion_tool_and_takeoff_gates() {
                 edge.quest_gates.is_none()
                     && edge.worn_req.is_empty()
                     && edge.worn_all_req.is_empty()
-                    && edge.item_req.iter().any(|(id, count)| {
-                        MAP_IDS.contains(id) && *count == 1
-                    })
+                    && edge
+                        .item_req
+                        .iter()
+                        .any(|(id, count)| MAP_IDS.contains(id) && *count == 1)
                     && edge.item_req.contains(&(MACHETTE_ID, 1))
                     && edge
                         .item_req
@@ -187,16 +209,12 @@ fn every_mature_jungle_loc_has_map_or_completion_tool_and_takeoff_gates() {
         let map_id = carried_tools
             .item_req
             .iter()
-            .find_map(|(id, count)| {
-                (MAP_IDS.contains(id) && *count == 1).then_some(*id)
-            })
+            .find_map(|(id, count)| (MAP_IDS.contains(id) && *count == 1).then_some(*id))
             .expect("map prerequisite");
         let axe_id = carried_tools
             .item_req
             .iter()
-            .find_map(|(id, count)| {
-                (AXE_IDS.contains(id) && *count == 1).then_some(*id)
-            })
+            .find_map(|(id, count)| (AXE_IDS.contains(id) && *count == 1).then_some(*id))
             .expect("axe prerequisite");
         let mut ready = nav_planner::world_state::WorldState::empty();
         ready.map_members = true;
@@ -205,12 +223,11 @@ fn every_mature_jungle_loc_has_map_or_completion_tool_and_takeoff_gates() {
         for &(id, count) in &carried_tools.item_req {
             ready.inv.insert(id, count);
         }
-        assert!(ready.allows(carried_tools), "loc {loc_id} must admit its map route");
-        for (missing_id, label) in [
-            (map_id, "map"),
-            (MACHETTE_ID, "machette"),
-            (axe_id, "axe"),
-        ] {
+        assert!(
+            ready.allows(carried_tools),
+            "loc {loc_id} must admit its map route"
+        );
+        for (missing_id, label) in [(map_id, "map"), (MACHETTE_ID, "machette"), (axe_id, "axe")] {
             let mut missing = ready.clone();
             missing.inv.remove(&missing_id);
             assert!(
@@ -241,7 +258,10 @@ fn every_mature_jungle_loc_has_map_or_completion_tool_and_takeoff_gates() {
             worn_axe_state.inv.insert(id, count);
         }
         worn_axe_state.worn.insert(AXE_IDS[0]);
-        assert!(worn_axe_state.allows(worn_axe), "loc {loc_id} must admit a worn axe");
+        assert!(
+            worn_axe_state.allows(worn_axe),
+            "loc {loc_id} must admit a worn axe"
+        );
 
         let worn_machette = edges
             .iter()
@@ -284,10 +304,7 @@ fn jungle_refuses_to_bake_when_a_required_tool_or_proven_map_is_missing() {
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
     let (facts, identity) = selected.quest_identity_for_bake().unwrap();
     let quests = QuestSource {
-        family: nav_planner::quest_gates::QuestFamilyId::new(
-            identity.sha256,
-            identity.schema,
-        ),
+        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
         facts: &facts,
     };
     let defs = loc_defs(&[(2887, 2, 2)]);

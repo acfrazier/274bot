@@ -565,8 +565,10 @@ fn main() -> Result<(), String> {
             account: "legends_started",
         },
     );
-    refused["zone_witness"] =
-        json!(blockers.iter().map(|key| format!("{key:?}")).collect::<Vec<_>>());
+    refused["zone_witness"] = json!(blockers
+        .iter()
+        .map(|key| format!("{key:?}"))
+        .collect::<Vec<_>>());
     cases.push(refused);
     cases.push(first(
         &world,

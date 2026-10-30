@@ -21,8 +21,8 @@ mod doors;
 mod gates;
 mod gliders;
 mod index;
-mod levers;
 mod legends;
+mod levers;
 mod magic_guild;
 mod membergate;
 mod members_guard;
@@ -59,8 +59,8 @@ pub(crate) use index::{
     loc_ids_by_name, loc_positions, npc_ids_by_name, npc_positions, visit_loc_configs,
     visit_npc_configs, Placement,
 };
-use levers::*;
 use legends::*;
+use levers::*;
 use magic_guild::*;
 use membergate::*;
 pub(crate) use members_guard::require_members_guards;
