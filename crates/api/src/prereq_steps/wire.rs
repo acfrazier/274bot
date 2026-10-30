@@ -80,7 +80,7 @@ pub(super) fn decode(pin: &SelectedPin, bytes: &[u8]) -> Result<Vec<PrereqStep>,
     let family: Family = serde_json::from_slice(bytes)
         .map_err(|error| invalid(format!("prerequisite family: {error}")))?;
     for row in &family.facts.rows {
-        for entry in &row.crossings {
+        for entry in row.crossings.iter() {
             check_tile(&entry.crossing.at, "anchor")?;
             check_tile(&entry.crossing.takeoff, "takeoff")?;
             check_tile(&entry.crossing.to, "destination")?;
