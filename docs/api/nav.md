@@ -576,10 +576,18 @@ is never replaced by a player position. Two directions of one loc have
 distinct identities. The holy barrier also has distinct entries for its two
 legal stands on opposite sides of its blocked anchor.
 
+Conditional edges for the same physical directed crossing share one identity.
+The export retains every distinct requirement array in
+`quest_gate_alternatives`: any alternative can admit the crossing, but all
+requirements within that alternative must hold. An empty array is an
+unconditional alternative. Fully identical edge records collapse only in the
+export and are listed separately with their source paths; exporting never
+changes the pack.
+
 Generate these identities from the actual pack, not an authored coordinate
 table: `nav-pack --export-crossings PACK --out JSON` loads the pack and
-its `navflags` sidecar, checks identity uniqueness over ordinary and teleport
-edges, and records standability and transport admission for each takeoff.
+its `navflags` sidecar, groups alternatives over ordinary and teleport edges,
+and records standability and transport admission for each takeoff.
 The prerequisite generator consumes this projection through
 `GAME_DATA_289_PREREQ_CROSSINGS` and verifies it against
 `GAME_DATA_289_NAV_PACK`. Catalog schema 2 includes the required takeoff.

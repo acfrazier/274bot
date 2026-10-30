@@ -507,11 +507,10 @@ fn probe_walks_to_each_pack_takeoff_and_clicks_the_blocked_barrier_anchor() {
             collision_flags: vec![0; 25],
         };
         scene.collision_flags[12] = client::dash3d::CollisionFlag::SQ_BLOCKED;
-        assert!(api::query::loc_approach::can_operate_from(
-            &loc,
-            &scene,
-            identity.takeoff
-        ));
+        assert_eq!(
+            api::query::loc_approach::can_operate_from(&loc, &scene, identity.takeoff),
+            Some(true)
+        );
         snapshot.seed_locs(vec![loc]);
         snapshot.seed_scene(scene);
         snapshot.seed_local_player(local_player(WorldTile {

@@ -5869,7 +5869,7 @@ impl api::quest_progress::EvidenceProvider for ZonesQuestProfile {
             QuestGate::Complete(key) => key,
             QuestGate::Window(window) => &window.quest,
         };
-        let row = self.facts.rows.iter().find(|row| row.id == key.as_ref())?;
+        let row = self.facts.rows.iter().find(|row| row.id == key.0.as_ref())?;
         let complete = self.complete.contains(&row.display);
         let truth = match gate {
             QuestGate::Complete(_) => {
@@ -5879,7 +5879,7 @@ impl api::quest_progress::EvidenceProvider for ZonesQuestProfile {
                     api::selected::Truth::False
                 }
             }
-            QuestGate::Window(window) if window.signal.as_ref() == row.varp => {
+            QuestGate::Window(window) if window.signal.0.as_ref() == row.varp => {
                 let stage = if complete { row.complete } else { 0 };
                 window.values.test(&gate_range(Some(stage), Some(stage)))
             }
