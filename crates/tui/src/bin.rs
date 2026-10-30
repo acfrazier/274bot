@@ -5062,6 +5062,7 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
 /// on the next pump.
 fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
     match action {
+        AppAction::Quit if session.live_name.is_some() => app.quit = true,
         AppAction::Quit => session.quit(app),
         AppAction::Refused(refusal) => {
             let bot = refusal.bot.as_deref();

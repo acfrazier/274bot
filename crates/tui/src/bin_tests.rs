@@ -4263,6 +4263,22 @@ fn quit_closes_the_play_through_the_quit_command() {
     assert!(!session.core.has_play(), "Quit closed the play session");
 }
 
+#[test]
+fn live_quit_defers_play_shutdown_to_run_loop_cleanup() {
+    let iso = IsolatedStores::enter("tui-live-quit-cleanup");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    session.live_name = Some("quester".into());
+
+    dispatch(&mut session, &mut app, AppAction::Quit);
+
+    assert!(app.quit, "the event loop ends");
+    assert_eq!(app.error, None);
+    assert!(
+        session.core.has_play(),
+        "live shutdown waits for the run-loop logout step"
+    );
+}
+
 /// Nothing loaded is not an error when quitting.
 #[test]
 fn quit_with_nothing_loaded_is_not_an_error() {
