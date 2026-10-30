@@ -643,7 +643,7 @@ impl Sources {
 /// this declaration agrees with the script's slot. Missing, unresolved or
 /// conflicting declarations prove nothing; secondary coverage slots do
 /// not contain the object and are deliberately not admitted.
-fn worn_slot_facts(
+pub(super) fn worn_slot_facts(
     content_root: &Path,
     objs: &HashMap<String, i32>,
     constants: &HashMap<String, i32>,
@@ -732,7 +732,7 @@ fn pinned_procs() -> HashMap<String, (String, Vec<String>)> {
 /// (`[oploc1,herodoor_l] @open_heroes_guild(^left);`) and parameter lists
 /// (`[label,open_legends_door](int $side)`), which `script_blocks` cannot
 /// see. Returns `(kind, name, parameter names, body)`.
-fn header_blocks(text: &str) -> Vec<(String, String, Vec<String>, String)> {
+pub(super) fn header_blocks(text: &str) -> Vec<(String, String, Vec<String>, String)> {
     super::script_text::collect_script_blocks(text, |line| {
         let Some(header) = super::script_text::parse_script_header(
             line,

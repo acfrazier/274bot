@@ -466,6 +466,14 @@ fn main() -> Result<(), String> {
         combat_level: Some(126),
         ..WorldState::empty()
     };
+    let mut legends_started = observed.clone();
+    legends_started.combat_level = Some(40);
+    legends_started.quests.insert("The Grand Tree".into());
+    legends_started.varps.insert(101, 1);
+    let mut legends_ready = complete.clone();
+    legends_ready.inv.insert(714, 1);
+    legends_ready.inv.insert(975, 1);
+    legends_ready.inv.insert(1349, 1);
     for (gate, west, east) in [
         ("fortress", tile(3025, 3511, 1), tile(3026, 3511, 1)),
         ("shipyard_left", tile(2944, 3041, 0), tile(2945, 3041, 0)),
@@ -499,6 +507,141 @@ fn main() -> Result<(), String> {
             }
         }
     }
+    for (name, from, to) in [
+        (
+            "legends_guild_inside_to_outside",
+            tile(2726, 3368, 0),
+            tile(2729, 3348, 0),
+        ),
+        (
+            "legends_guild_outside_to_inside",
+            tile(2729, 3348, 0),
+            tile(2726, 3368, 0),
+        ),
+    ] {
+        let mut row = first(
+            &world,
+            Case {
+                name,
+                from,
+                goals: &[to],
+                options: legacy,
+                state: &legends_started,
+                account: "legends_started",
+            },
+        );
+        row["crossing_edges"] = json!(world
+            .graph
+            .edges
+            .iter()
+            .filter(|edge| [2391, 2392].contains(&edge.loc_id) && legends_started.allows(edge))
+            .map(|edge| json!({"edge": format!("{edge:?}"), "allowed": true}))
+            .collect::<Vec<_>>());
+        cases.push(row);
+    }
+
+    let legends_exit = tile(2729, 3348, 0);
+    let sindarpos = tile(2850, 3497, 0);
+    let blockers = find_blocking_zones(
+        &world.collision,
+        &world.graph,
+        legends_exit,
+        sindarpos,
+        FindOptions::default(),
+        &legends_started,
+        &[],
+    )
+    .ok_or("Legends exit to Sindarpos has no blocking-zone witness")?;
+    let zone_grants = ZoneExempt::named(&blockers)
+        .map_err(|error| format!("too many Legends route zones: {error:?}"))?;
+    let mut refused = first(
+        &world,
+        Case {
+            name: "legends_exit_to_sindarpos_no_zone_grant",
+            from: legends_exit,
+            goals: &[sindarpos],
+            options: FindOptions::default(),
+            state: &legends_started,
+            account: "legends_started",
+        },
+    );
+    refused["zone_witness"] =
+        json!(blockers.iter().map(|key| format!("{key:?}")).collect::<Vec<_>>());
+    cases.push(refused);
+    cases.push(first(
+        &world,
+        Case {
+            name: "legends_exit_to_sindarpos_named_zone_grants",
+            from: legends_exit,
+            goals: &[sindarpos],
+            options: FindOptions {
+                zones: zone_grants,
+                ..FindOptions::default()
+            },
+            state: &legends_started,
+            account: "legends_started_named_zones",
+        },
+    ));
+    cases.push(first(
+        &world,
+        Case {
+            name: "legends_guild_to_sindarpos_named_zone_grants",
+            from: tile(2726, 3368, 0),
+            goals: &[sindarpos],
+            options: FindOptions {
+                zones: zone_grants,
+                ..FindOptions::default()
+            },
+            state: &legends_started,
+            account: "legends_started_named_zones",
+        },
+    ));
+
+    let kharazi_center = tile(2806, 2930, 0);
+    let mut kharazi_goals = Vec::new();
+    for x in kharazi_center.x - 3..=kharazi_center.x + 3 {
+        for z in kharazi_center.z - 3..=kharazi_center.z + 3 {
+            let goal = tile(x, z, kharazi_center.level);
+            if world.collision.standable(goal) {
+                kharazi_goals.push(goal);
+            }
+        }
+    }
+    cases.push(many(
+        &world,
+        Case {
+            name: "legends_gandius_to_kharazi_radius3",
+            from: tile(2971, 2969, 0),
+            goals: &kharazi_goals,
+            options: legacy,
+            state: &legends_ready,
+            account: "legends_complete_tools",
+        },
+    ));
+    cases.push(first(
+        &world,
+        Case {
+            name: "legends_gandius_to_exact_blocked_target",
+            from: tile(2971, 2969, 0),
+            goals: &[kharazi_center],
+            options: legacy,
+            state: &legends_ready,
+            account: "legends_complete_tools",
+        },
+    ));
+    let mut no_machette = legends_ready.clone();
+    no_machette.inv.remove(&975);
+    cases.push(many(
+        &world,
+        Case {
+            name: "legends_gandius_to_kharazi_without_machette",
+            from: tile(2971, 2969, 0),
+            goals: &kharazi_goals,
+            options: legacy,
+            state: &no_machette,
+            account: "legends_complete_no_machette",
+        },
+    ));
     let mut obstacle_row = |name: String,
                             id: i32,
                             from: WorldTile,

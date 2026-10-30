@@ -10,6 +10,8 @@ use client::config::{Cache, LocType};
 use client::io::JagFile;
 use nav_planner::collision::WorldCollision;
 use nav_planner::essence::{ESSENCE_MINE_PORTALS, ESSENCE_MINE_PORTAL_LOC_ID};
+#[path = "transport/legends_tests.rs"]
+mod legends_tests;
 
 const RUNE_JOURNAL_NAME: &str = "Fixture Rune Journal";
 const TREE_JOURNAL_NAME: &str = "Fixture Tree Journal";

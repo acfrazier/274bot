@@ -22,6 +22,7 @@ mod gates;
 mod gliders;
 mod index;
 mod levers;
+mod legends;
 mod magic_guild;
 mod membergate;
 mod members_guard;
@@ -59,6 +60,7 @@ pub(crate) use index::{
     visit_npc_configs, Placement,
 };
 use levers::*;
+use legends::*;
 use magic_guild::*;
 use membergate::*;
 pub(crate) use members_guard::require_members_guards;
@@ -258,6 +260,15 @@ fn derive_transports_with_audit(
         &mut skipped,
     );
     zanaris_door_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
+    legends_edges(
+        content_root,
+        &positions,
+        loc_defs,
+        &mut graph,
+        collision,
+        &mut skipped,
+        quests,
+    );
     // After every other loc-backed producer: a named wall or ladder opener
     // no producer above admitted is evaluated per crossing.
     stage_door_edges(
