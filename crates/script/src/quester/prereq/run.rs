@@ -21,6 +21,7 @@ use api::prereq_steps::{
 };
 use api::quest_progress::{EvidenceProvider, EvidenceStamp};
 use api::selected::{InclusiveRange, QuestGate, Truth};
+use api::snapshot::chat_page_matches;
 use api::WorldTile;
 use std::sync::Arc;
 use std::task::Poll;
@@ -1004,39 +1005,7 @@ fn chat_open(cx: &ActionContext<'_>) -> bool {
 fn contains(cx: &ActionContext<'_>, text: &str) -> bool {
     cx.snapshot()
         .chat_modal()
-        .is_some_and(|chat| page_matches(chat.value.texts, text))
-}
-fn text_matches(line: &str, fragment: &str) -> bool {
-    !fragment.is_empty()
-        && line
-            .as_bytes()
-            .windows(fragment.len())
-            .any(|bytes| bytes.eq_ignore_ascii_case(fragment.as_bytes()))
-}
-// Chat scripts split one speech across adjacent widgets. Match their rendered
-// spaces without allocating a joined string on each observation.
-fn page_matches(texts: &[String], fragment: &str) -> bool {
-    if texts.iter().any(|line| text_matches(line, fragment)) {
-        return true;
-    }
-    let Some((first, rest)) = fragment.as_bytes().split_first() else {
-        return false;
-    };
-    let mut bytes = texts
-        .iter()
-        .flat_map(|line| line.bytes().chain(std::iter::once(b' ')));
-    while let Some(byte) = bytes.next() {
-        if byte.eq_ignore_ascii_case(first) {
-            let mut tail = bytes.clone();
-            if rest.iter().all(|expected| {
-                tail.next()
-                    .is_some_and(|byte| byte.eq_ignore_ascii_case(expected))
-            }) {
-                return true;
-            }
-        }
-    }
-    false
+        .is_some_and(|chat| chat_page_matches(chat.value.texts, text))
 }
 
 fn probe_target(
@@ -1222,7 +1191,7 @@ impl ChatDrive {
                             .iter()
                             .position(|branch| {
                                 branch.opener.as_ref() != "*"
-                                    && page_matches(page.texts, &branch.opener)
+                                    && chat_page_matches(page.texts, &branch.opener)
                             })
                             .or_else(|| {
                                 row.talk

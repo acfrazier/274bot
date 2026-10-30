@@ -357,10 +357,8 @@ fn fresh_refusal_match(
         .filter(|(id, _)| *id == crossing)
         .enumerate()
     {
-        let page_matches = snapshot
-            .chat_modal_texts()
-            .iter()
-            .any(|body| body.contains(text.as_ref()));
+        let page_matches =
+            api::snapshot::chat_page_matches(snapshot.chat_modal_texts(), text.as_ref());
         let matching_line = snapshot
             .chat_lines()
             .iter()

@@ -1422,14 +1422,14 @@ fn branch_and_effect_text_can_span_rendered_chat_widgets_without_allocating() {
         "whenever I fight werewolves.".to_owned(),
     ];
     let fragment = "Okay, I will keep it equipped whenever I fight werewolves.";
-    assert!(page_matches(&texts, fragment));
-    assert!(page_matches(&texts, "EQUIPPED whenever"));
-    assert!(!page_matches(&texts, "werewolves. another page"));
-    assert!(!page_matches(&texts, "equippedwhenever"));
-    assert!(!page_matches(&texts, ""));
+    assert!(chat_page_matches(&texts, fragment));
+    assert!(chat_page_matches(&texts, "EQUIPPED whenever"));
+    assert!(!chat_page_matches(&texts, "werewolves. another page"));
+    assert!(!chat_page_matches(&texts, "equippedwhenever"));
+    assert!(!chat_page_matches(&texts, ""));
     let allocations = allocation_counter::measure(|| {
         for _ in 0..100 {
-            assert!(page_matches(&texts, fragment));
+            assert!(chat_page_matches(&texts, fragment));
         }
     });
     assert_eq!(allocations.count_total, 0);
