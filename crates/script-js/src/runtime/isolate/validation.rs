@@ -214,6 +214,7 @@ fn validate_one(
         None,
         std::sync::Arc::clone(&EMPTY_BANKS),
         None,
+        None,
     )
     .map_err(|error| error.to_string())?;
     let result = match isolate.resolve_setup(Some(Instant::now() + VALIDATION_TIMEOUT)) {

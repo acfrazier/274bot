@@ -6,9 +6,7 @@
 
 use crate::callback_v8::{self as cb, JsResult};
 use crate::lineage_v8;
-use api::local_state::{
-    DomainEdit, LocalStateDomain, LocalStatePort, RuntimeSettingsEdit, SubmitReceipt,
-};
+use api::local_state::{DomainEdit, LocalStateDomain, RuntimeSettingsEdit, SubmitReceipt};
 use rustyscript::deno_core::v8;
 use rustyscript::Runtime;
 use script::local_state::SlotState;
@@ -73,7 +71,7 @@ pub(crate) fn bind_runtime_context(
     runtime: &mut Runtime,
     context: Arc<ScriptRuntimeContext>,
 ) -> Result<(), String> {
-    let mut scope = runtime.deno_runtime().handle_scope();
+    let scope = runtime.deno_runtime().handle_scope();
     let state = scope
         .get_slot::<Rc<RegistryState>>()
         .cloned()
@@ -231,13 +229,8 @@ fn register_script<'s>(
         manifest
     } else {
         let define_bot = args.get(3);
-        cb::call(
-            scope,
-            define_bot,
-            v8::undefined(scope).into(),
-            &[manifest],
-            "defineBot",
-        )?
+        let undefined = v8::undefined(scope).into();
+        cb::call(scope, define_bot, undefined, &[manifest], "defineBot")?
     };
     let name = cb::get(scope, tagged, "name")?;
     let description = cb::get(scope, tagged, "description")?;
@@ -291,7 +284,8 @@ fn runtime_callback<'s>(
     args: v8::FunctionCallbackArguments<'s>,
     rv: v8::ReturnValue,
 ) {
-    cb::finish(scope, rv, dispatch_runtime(scope, args));
+    let result = dispatch_runtime(scope, args);
+    cb::finish(scope, rv, result);
 }
 
 fn dispatch_runtime<'s>(
@@ -326,10 +320,13 @@ fn dispatch_runtime<'s>(
             Ok(v8::Boolean::new(scope, is_manifest).into())
         }
         "hasContext" => Ok(v8::Boolean::new(scope, context.is_some()).into()),
-        "generation" => Ok(snapshot.map_or_else(
-            || v8::null(scope).into(),
-            |snapshot| v8::BigInt::new_from_u64(scope, snapshot.generation).into(),
-        )),
+        "generation" => {
+            let value: v8::Local<'s, v8::Value> = match snapshot {
+                Some(snapshot) => v8::BigInt::new_from_u64(scope, snapshot.generation).into(),
+                None => v8::null(scope).into(),
+            };
+            Ok(value)
+        }
         "isCurrent" => Ok(v8::Boolean::new(
             scope,
             requested_generation.is_some() && generation_matches,
@@ -772,7 +769,7 @@ fn notify_settings_listeners<'s>(
 
 /// Release callback handles and registry metadata before the isolate exits.
 pub(crate) fn clear_all(runtime: &mut Runtime) {
-    let mut scope = runtime.deno_runtime().handle_scope();
+    let scope = runtime.deno_runtime().handle_scope();
     if let Some(registry) = scope.get_slot::<Rc<RegistryState>>().cloned() {
         registry.entries.borrow_mut().clear();
         registry.by_name.borrow_mut().clear();

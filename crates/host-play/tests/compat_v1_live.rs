@@ -944,3 +944,109 @@ fn compat_v1_bot_tree_live() {
 fn compat_v1_events_live() {
     run_and_record("compat_v1_events", run_events_cell).unwrap_or_else(|error| panic!("{error}"));
 }
+
+const RUNTIME_FRAME_SOURCE: &str = r#"
+import { LoopingBot } from '@rs2b0t/api';
+import { BotHost } from '../../runtime/BotHost.js';
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+
+export default class CompatRuntimeFrameProbe extends LoopingBot {
+    frameCount = 0;
+    loopCount = 0;
+    previousFrameCount = 0;
+
+    onStart() {
+        BotHost.addFrameListener(() => {
+            this.frameCount += 1;
+            this.log('RUNTIME:FRAME');
+        });
+        this.log('RUNTIME:READY');
+    }
+
+    async loop() {
+        this.loopCount += 1;
+        if (this.loopCount === 1) {
+            this.previousFrameCount = this.frameCount;
+            return;
+        }
+        const betweenTicks = this.frameCount - this.previousFrameCount;
+        if (betweenTicks > 1) {
+            this.log(`RUNTIME:FRAME_GAP:${betweenTicks}`);
+            ScriptRunner.stop('runtime frame proof complete');
+            return;
+        }
+        this.previousFrameCount = this.frameCount;
+        if (this.loopCount >= 5) {
+            throw new Error(`expected client frames between ticks; saw ${betweenTicks}`);
+        }
+    }
+
+    onStop() {
+        this.log('RUNTIME:STOP');
+    }
+}
+"#;
+
+fn wait_for_game_tick(session: &mut LiveSession<'_>, target: u32) -> Result<(), String> {
+    let deadline = Instant::now() + ACTION_DEADLINE;
+    loop {
+        let tick = lock_state(&session.state).tick;
+        if tick >= target {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("timed out waiting for game tick {target}; last tick {tick}"));
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+fn run_runtime_frame_cell(receipt: &mut Receipt) -> Result<(), String> {
+    let mut session = session("compat-v1-runtime-frame", receipt)?;
+    start_script(&session, RUNTIME_FRAME_SOURCE.to_owned())?;
+    wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
+        logs.iter().any(|line| line == "RUNTIME:READY")
+            && logs.iter().any(|line| line.starts_with("RUNTIME:FRAME_GAP:"))
+            && logs.iter().any(|line| line == "RUNTIME:STOP")
+    })?;
+    wait_idle(&mut session)?;
+
+    let stop_index = session
+        .receipt
+        .logs
+        .iter()
+        .position(|line| line == "RUNTIME:STOP")
+        .ok_or_else(|| "runtime frame probe did not record its stop".to_string())?;
+    let gap = session.receipt.logs[..stop_index]
+        .iter()
+        .find_map(|line| {
+            line.strip_prefix("RUNTIME:FRAME_GAP:")
+                .and_then(|value| value.parse::<usize>().ok())
+        })
+        .ok_or_else(|| "runtime frame probe did not record a frame gap".to_string())?;
+    if gap <= 1 {
+        return Err(format!("expected multiple client frames between ticks, saw {gap}"));
+    }
+    if !session.receipt.logs[..stop_index]
+        .iter()
+        .any(|line| line == "RUNTIME:FRAME")
+    {
+        return Err("no live client-frame callback was observed before stop".into());
+    }
+
+    let stopped_tick = lock_state(&session.state).tick;
+    wait_for_game_tick(&mut session, stopped_tick.saturating_add(2))?;
+    drain_logs(&mut session);
+    session.receipt.logs[stop_index + 1..]
+        .iter()
+        .all(|line| line != "RUNTIME:FRAME")
+        .then_some(())
+        .ok_or_else(|| "frame callback ran after the script stopped".to_string())
+}
+
+#[test]
+#[ignore = "requires LIVE=1, throwaway HOME, pinned catalog, and real 289 Engine L"]
+fn compat_v1_runtime_frame_live() {
+    run_and_record("compat_v1_runtime_frame", run_runtime_frame_cell)
+        .unwrap_or_else(|error| panic!("{error}"));
+}

@@ -572,7 +572,6 @@ pub struct SlotScript {
     /// Bumped on each successful Start and watchdog isolate replacement.
     runtime_generation: u64,
     last_settings_fp: Option<String>,
-    native_input: Arc<NativeInputAuthority>,
     /// Isolate-facing projection for the current Load run; replaced at spawn.
     runtime_context: Arc<ScriptRuntimeContext>,
     /// Recovery hints retained across surface run restarts.
@@ -675,7 +674,6 @@ impl SlotScript {
             source_identity: None,
             runtime_generation: 0,
             last_settings_fp: None,
-            native_input: NativeInputAuthority::new(),
             runtime_context: Arc::new(ScriptRuntimeContext::new(0)),
             recovery_hints: Arc::new(RecoveryHintsCell::new()),
         }
@@ -1187,7 +1185,11 @@ impl SlotScript {
         let factory = self.factories[kind.index()]
             .as_ref()
             .ok_or(SurfaceError::NoFactory(kind))?;
-        let runtime_context = Arc::new(ScriptRuntimeContext::new(run_generation));
+        let native_input = Arc::clone(self.runtime_context.native_input());
+        let runtime_context = Arc::new(ScriptRuntimeContext::with_native_input(
+            run_generation,
+            native_input,
+        ));
         runtime_context.set_source_identity(self.source_identity.clone());
         let mut run = factory.spawn_with_state(
             &start,
@@ -1281,7 +1283,7 @@ impl SlotScript {
                         if self.state == RunState::Starting {
                             if self.want_run {
                                 self.state = RunState::Running;
-                                self.native_input.publish_live();
+                                self.runtime_context.native_input().publish_live();
                             } else {
                                 isolate.pause();
                                 self.state = RunState::Paused;
@@ -1506,7 +1508,7 @@ impl SlotScript {
             } else {
                 RunState::Running
             };
-            self.native_input.resume();
+            self.runtime_context.native_input().resume();
         }
         self.sync_runtime_state();
     }
@@ -1641,7 +1643,7 @@ impl SlotScript {
         if !up {
             self.evidence_wait_run = None;
             self.native_runtime.clear_note_progress();
-            self.native_input.sync_live(false);
+            self.runtime_context.native_input().sync_live(false);
 
             self.discard_mouse_interacts();
             if self.pending_withdraw_x.is_some() {
@@ -1864,7 +1866,7 @@ impl SlotScript {
     }
 
     pub fn native_input(&self) -> Arc<NativeInputAuthority> {
-        Arc::clone(&self.native_input)
+        Arc::clone(self.runtime_context.native_input())
     }
 
     /// Selected-revision facts pinned by a compiled run or a live Load seat.
@@ -1918,7 +1920,15 @@ impl SlotScript {
 
     /// Share the host SlotInput authority. Call on spawn before Start.
     pub fn bind_native_input(&mut self, authority: Arc<NativeInputAuthority>) {
-        self.native_input = authority;
+        if let Err(authority) = self.runtime_context.bind_native_input(authority) {
+            if Arc::ptr_eq(self.runtime_context.native_input(), &authority) {
+                return;
+            }
+            let snapshot = self.runtime_context.snapshot();
+            self.runtime_context = Arc::new(ScriptRuntimeContext::with_snapshot_and_native_input(
+                snapshot, authority,
+            ));
+        }
     }
 
     /// Bind the server profile's world type (members or free-to-play). Call on
@@ -1933,7 +1943,7 @@ impl SlotScript {
     }
 
     fn revoke_native_input(&mut self) {
-        self.native_input.revoke();
+        self.runtime_context.native_input().revoke();
 
         self.discard_mouse_interacts();
     }
@@ -1977,7 +1987,7 @@ impl SlotScript {
 
     pub fn sync_native_input_gate(&self) {
         let live = self.dispatch_open();
-        self.native_input.sync_live(live);
+        self.runtime_context.native_input().sync_live(live);
         if !live {
             self.discard_mouse_interacts();
         }
@@ -3880,7 +3890,7 @@ impl SlotScript {
                 self.stop_blocked(failure, ctx.tick);
                 return;
             }
-            let input_identity = self.native_input.lock().identity();
+            let input_identity = self.runtime_context.native_input().lock().identity();
             isolate.on_snapshot_change_at(ctx.tick, input_identity);
             self.tick_api(ctx);
             self.tick_bank(ctx);
@@ -3917,7 +3927,10 @@ impl SlotScript {
         }
 
         if let Some(isolate) = &self.surface {
-            isolate.on_game_tick_at(ctx.tick, self.native_input.lock().identity());
+            isolate.on_game_tick_at(
+                ctx.tick,
+                self.runtime_context.native_input().lock().identity(),
+            );
             if ctx.compiled.hold {
                 self.seat_held_tick();
                 return;

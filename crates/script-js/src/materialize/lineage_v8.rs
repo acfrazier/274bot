@@ -797,8 +797,8 @@ fn copy_context<'s>(
         }
         for key in [machine_key.into(), activity_key.into()] {
             if previous.has_own_property(scope, key)? {
-                let value = previous.get(scope, key)?;
-                if !mapping.set(scope, key, value)? {
+                let value = previous.get(scope, key.into())?;
+                if !mapping.set(scope, key.into(), value)? {
                     return None;
                 }
             }

@@ -1335,7 +1335,7 @@ impl SlotScript {
             RunState::Paused
         };
         if self.want_run {
-            self.native_input.publish_live();
+            self.runtime_context.native_input().publish_live();
         }
     }
 

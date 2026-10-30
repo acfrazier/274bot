@@ -42,17 +42,20 @@ fn run<'s>(
     let poll = Poll::default();
     let mut node = root;
     let leaf = loop {
-        let iteration_scope = &mut v8::EscapableHandleScope::new(scope);
-        let flow = iterate(
-            iteration_scope,
-            node,
-            constructor,
-            validate_key.into(),
-            success_key.into(),
-            failure_key.into(),
-            &poll,
-        );
-        match cb::iteration(iteration_scope, flow)? {
+        let flow = {
+            let mut iteration_scope = v8::EscapableHandleScope::new(scope);
+            let result = iterate(
+                &mut iteration_scope,
+                node,
+                constructor,
+                validate_key.into(),
+                success_key.into(),
+                failure_key.into(),
+                &poll,
+            );
+            cb::iteration(&mut iteration_scope, result)?
+        };
+        match flow {
             Flow::Continue(Some(next)) => node = next,
             Flow::Break(Some(leaf)) => break leaf,
             Flow::Continue(None) | Flow::Break(None) => {

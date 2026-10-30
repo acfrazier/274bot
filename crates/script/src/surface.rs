@@ -10,11 +10,12 @@ use crate::native::{recovery_hints::RecoveryHintsCell, ActionContext, ActionErro
 use crate::paint::ScriptPaint;
 use api::identity::ExecutionId;
 use api::interact::server_ordered::ServerOrderedRequest;
+use api::native_input::NativeInputAuthority;
 use api::prot::Send as PacketSend;
 use api::selected::RunKey;
 use std::{
     any::Any,
-    sync::{mpsc::Sender, Arc, Mutex, MutexGuard},
+    sync::{mpsc::Sender, Arc, Mutex, MutexGuard, OnceLock},
     time::Instant,
 };
 
@@ -238,6 +239,7 @@ pub struct ScriptRuntimeSnapshot {
 /// lifecycle transitions.
 pub struct ScriptRuntimeContext {
     state: Mutex<ScriptRuntimeSnapshot>,
+    native_input: OnceLock<Arc<NativeInputAuthority>>,
 }
 
 impl ScriptRuntimeContext {
@@ -253,6 +255,7 @@ impl ScriptRuntimeContext {
                 activity: RuntimeActivityState::default(),
                 control_request: None,
             }),
+            native_input: OnceLock::new(),
         }
     }
 
@@ -263,6 +266,38 @@ impl ScriptRuntimeContext {
     /// Copy the current run and child state for an isolate callback.
     pub fn snapshot(&self) -> ScriptRuntimeSnapshot {
         self.lock().clone()
+    }
+    /// The slot-local authority shared with native input consumption.
+    pub(crate) fn native_input(&self) -> &Arc<NativeInputAuthority> {
+        self.native_input.get_or_init(NativeInputAuthority::new)
+    }
+
+    /// Bind the host-owned input authority before a run starts.
+    pub(crate) fn bind_native_input(
+        &self,
+        authority: Arc<NativeInputAuthority>,
+    ) -> Result<(), Arc<NativeInputAuthority>> {
+        self.native_input.set(authority)
+    }
+
+    /// Create a fresh run context carrying the same slot-local input authority.
+    pub(crate) fn with_native_input(generation: u64, authority: Arc<NativeInputAuthority>) -> Self {
+        let context = Self::new(generation);
+        let _ = context.native_input.set(authority);
+        context
+    }
+
+    /// Preserve a context snapshot while replacing its slot-local authority.
+    pub(crate) fn with_snapshot_and_native_input(
+        snapshot: ScriptRuntimeSnapshot,
+        authority: Arc<NativeInputAuthority>,
+    ) -> Self {
+        let context = Self {
+            state: Mutex::new(snapshot),
+            native_input: OnceLock::new(),
+        };
+        let _ = context.native_input.set(authority);
+        context
     }
     /// Read the current state without copying the rest of the context.
     pub fn state(&self) -> RuntimeRunState {
