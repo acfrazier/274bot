@@ -2178,7 +2178,9 @@ fn knife_npc_request(rig: &mut Rig, type_id: usize, operation: u8) -> ServerOrde
 
 #[test]
 fn ordered_knife_continuing_npc_fishing_requires_transform_closure() {
-    for type_id in [309, 310, 311, 314, 315, 317, 318, 328, 329, 800, 927, 1189, 1190] {
+    for type_id in [
+        309, 310, 311, 314, 315, 317, 318, 328, 329, 800, 927, 1189, 1190,
+    ] {
         for operation in [1, 3] {
             if type_id == 800 && operation == 3 {
                 continue;
@@ -2201,30 +2203,29 @@ fn ordered_knife_continuing_npc_fishing_requires_transform_closure() {
 }
 
 #[test]
-fn ordered_knife_transformed_whirlpool_never_arms() {
-    let mut rig = Rig::new();
-    let posted = knife_npc_request(&mut rig, 309, 1);
-    let _transformed = knife_npc_request(&mut rig, 403, 1);
-    rig.start([Emission::Content(posted)]);
-    rig.pump(1);
-    rig.pump(2);
-    let receipt = rig.receipt();
-    assert_eq!(receipt.terminal, Some(ServerOrderedError::StaleTarget));
-    assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
-    assert_no_cipher_movement(&rig);
+fn ordered_knife_transformed_whirlpool_and_big_fish_never_arm() {
+    for transformed_type in [390, 403] {
+        let mut rig = Rig::new();
+        let posted = knife_npc_request(&mut rig, 309, 1);
+        let _transformed = knife_npc_request(&mut rig, transformed_type, 1);
+        rig.start([Emission::Content(posted)]);
+        rig.pump(1);
+        rig.pump(2);
+        let receipt = rig.receipt();
+        assert_eq!(receipt.terminal, Some(ServerOrderedError::StaleTarget));
+        assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+        assert_no_cipher_movement(&rig);
 
-    let mut rig = Rig::new();
-    let observed = knife_npc_request(&mut rig, 403, 1);
-    rig.start([Emission::Content(observed)]);
-    rig.pump(1);
-    rig.pump(2);
-    let receipt = rig.receipt();
-    assert_eq!(
-        receipt.terminal,
-        Some(ServerOrderedError::ContractUnavailable)
-    );
-    assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
-    assert_no_cipher_movement(&rig);
+        let mut rig = Rig::new();
+        let observed = knife_npc_request(&mut rig, transformed_type, 1);
+        rig.start([Emission::Content(observed)]);
+        rig.pump(1);
+        rig.pump(2);
+        let receipt = rig.receipt();
+        assert_eq!(receipt.terminal, Some(ServerOrderedError::ContractUnavailable));
+        assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+        assert_no_cipher_movement(&rig);
+    }
 }
 
 #[test]
