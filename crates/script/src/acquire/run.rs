@@ -192,6 +192,7 @@ impl AcquireRun {
                             preferences: self.request.bank.preferences,
                             options: self.request.walk,
                             explicit: self.explicit.clone(),
+                            excluded_banks: None,
                             allow_air_fallback: false,
                         },
                         &mut tick.cx,

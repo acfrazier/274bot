@@ -78,6 +78,7 @@ pub(super) fn native_pick_action(
                 preferences: BankPreferences::default(),
                 options: script::native::WalkOptions::default(),
                 explicit: explicit.map(Arc::from),
+                excluded_banks: None,
                 allow_air_fallback,
             }),
             handle: None,

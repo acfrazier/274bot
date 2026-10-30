@@ -2245,6 +2245,7 @@ impl SelectorCore {
                 preferences,
                 options,
                 explicit: None,
+                excluded_banks: None,
                 allow_air_fallback,
             },
             cx,

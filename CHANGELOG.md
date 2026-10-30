@@ -5,6 +5,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ## Unreleased
 
+- Gatherer now gives a failed walk a fresh plan from the observed position. If a target or stand
+  remains unreachable, it tries another content candidate and keeps the last route detail if none
+  remains.
+
 ## [0.2.8] — 2026-10-29 — Beta 2
 
 ### Panel and terminal app

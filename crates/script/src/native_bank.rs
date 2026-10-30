@@ -273,6 +273,8 @@ pub struct SelectArgs {
     pub preferences: BankPreferences,
     pub options: WalkOptions,
     pub explicit: Option<Arc<str>>,
+    /// Optional roster indices rejected by a caller's previous access walk.
+    pub excluded_banks: Option<Arc<[u16]>>,
     /// Opt in only for select-only contracts that promise an air fallback.
     pub allow_air_fallback: bool,
 }
@@ -2470,11 +2472,14 @@ impl NativeMachine for Select {
         let stats = snapshot.stats().map_or(&[][..], |rows| rows.value);
         let quests = snapshot.quest_statuses().map_or(&[][..], |rows| rows.value);
         let selector = BankSelector::new(Arc::clone(&args.facts), args.preferences);
+        let excluded_banks = args.excluded_banks.as_deref().unwrap_or_default();
         let mut eligible = selector.eligible_indices(stats, quests);
+        eligible.retain(|index| !excluded_banks.contains(index));
         let explicit_bank = args
             .explicit
             .as_deref()
-            .and_then(|name| selector.named(name, stats, quests));
+            .and_then(|name| selector.named(name, stats, quests))
+            .filter(|index| !excluded_banks.contains(index));
         let explicit_unavailable = args.explicit.is_some() && explicit_bank.is_none();
         if args.allow_air_fallback {
             eligible.sort_by_key(|&index| {
@@ -2728,6 +2733,13 @@ mod tests {
     type PickHandle = crate::native::ActionHandle<Select>;
 
     fn select_waiter(allow_air_fallback: bool) -> (GameSnapshot, PickLedger, PickHandle) {
+        select_waiter_with_exclusions(allow_air_fallback, None)
+    }
+
+    fn select_waiter_with_exclusions(
+        allow_air_fallback: bool,
+        excluded_banks: Option<Arc<[u16]>>,
+    ) -> (GameSnapshot, PickLedger, PickHandle) {
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         let facts = Arc::new(NamedBankFacts::from_banks(vec![
@@ -2775,7 +2787,7 @@ mod tests {
                         },
                         options: WalkOptions::default(),
                         explicit: None,
-                        allow_air_fallback,
+                        excluded_banks: excluded_banks.clone(),
                     },
                     &mut frame.cx,
                 )
@@ -2788,18 +2800,27 @@ mod tests {
         let HostEffect::BankPick(request) = &pending.outbox[0].effect else {
             panic!("Select must emit a real typed pick");
         };
+        let expected_eligible: &[u16] = if excluded_banks.is_some() {
+            &[1, 2]
+        } else if allow_air_fallback {
+            &[1, 2, 0]
+        } else {
+            &[0, 1, 2]
+        };
         assert_eq!(
             request.eligible.as_ref(),
-            if allow_air_fallback {
-                &[1, 2, 0]
-            } else {
-                &[0, 1, 2]
-            },
-            "only select-only requests capture a stable air-ranked eligible roster"
+            expected_eligible,
+            "selection filters rejected banks before applying its ranking"
         );
         // Drop the real action without dispatch or receipt: the host never admits it.
         pending.outbox.clear();
         (snapshot, ledger, handle)
+    }
+
+    #[test]
+    fn select_filters_banks_rejected_by_previous_access_walk() {
+        let (_snapshot, _ledger, _handle) =
+            select_waiter_with_exclusions(false, Some(Arc::from([0u16])));
     }
 
     fn poll_select_waiter(
