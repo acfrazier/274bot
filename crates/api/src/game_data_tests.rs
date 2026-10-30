@@ -2111,29 +2111,27 @@ fn special_button_resolves_one_component_per_tab() {
 }
 
 #[test]
-fn duel_rule_buttons_equal_the_select_type_components() {
+fn duel_rule_buttons_match_both_pinned_sources() {
     // Content: the 14 `[if_button,duel_select_type:<rule>]` toggles of
     // C`duel_arena_settings.rs2:1-85`, indexed by the bits of
     // C`duelarena.constant:1-14` (NoForfeit = 0 through NoSpecs = 13).
-    let data = pvp_289();
-    let controls = data.duel_controls().expect("duel controls");
-    assert_eq!(
-        controls.rule_buttons,
-        [6721, 6722, 6723, 6724, 6725, 6726, 6727, 6728, 6729, 6730, 6732, 671, 670, 7816],
-    );
-    for (bit, component) in controls.rule_buttons.iter().enumerate() {
-        assert_eq!(
-            controls.rule_button(bit as u8),
-            Some(*component),
-            "rule_button({bit})"
-        );
+    const EXPECTED: [i32; 14] = [
+        6721, 6722, 6723, 6724, 6725, 6726, 6727, 6728, 6729, 6730, 6732, 671, 670, 7816,
+    ];
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).unwrap();
+        let controls = data.duel_controls().expect("duel controls");
+        assert_eq!(controls.rule_buttons, EXPECTED, "{revision:?} rule buttons");
+        for (bit, component) in EXPECTED.iter().enumerate() {
+            assert_eq!(
+                controls.rule_button(bit as u8),
+                Some(*component),
+                "{revision:?} rule_button({bit})"
+            );
+        }
+        assert_eq!(controls.rule_button(14), None, "{revision:?} out-of-range bit");
+        assert_eq!(controls.rule_button(u8::MAX), None, "{revision:?} invalid bit");
     }
-    assert_eq!(controls.rule_button(14), None);
-    assert_eq!(
-        data.duel_controls()
-            .and_then(|controls| controls.rule_button(13)),
-        Some(7816)
-    );
 }
 
 #[test]

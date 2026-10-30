@@ -109,8 +109,8 @@ op1=Attack
 param=npc_forcemulti,1
 `;
 const bespokeScript = `[ai_applayer2,bespoke_attacker]
-~npc_changetype(plain_attacker, 1000);
-~npc_setmode(opplayer2);
+npc_changetype(plain_attacker, 1000);
+npc_setmode(opplayer2);
 [ai_applayer2,plain_attacker]
 ~npc_default_attack();
 [ai_opplayer2,ordinary_melee]
