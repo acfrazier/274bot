@@ -1202,6 +1202,21 @@ mod tests {
             consumes: Knowledge::Known(Arc::from([])),
             requirements: Knowledge::Known(Arc::from([])),
             spots: Knowledge::Known(Arc::from([])),
+            tick_arm: api::gather_methods::TickArm {
+                kind: api::gather_methods::TickArmKind::None,
+                roll_signal: api::gather_methods::TickRollSignal::Never,
+                delay_drop: false,
+                depletes: false,
+                native_arm: None,
+                act_min_d: 0,
+                act_silent: false,
+                no_gain: None,
+                skill_anim: None,
+                roll_anim: None,
+                cast_anim: None,
+                fletch_anim: Some(1),
+                tool_facts: Arc::from([]),
+            },
         };
         method.targets = Knowledge::Partial {
             known: Arc::from([complete, incomplete]),
