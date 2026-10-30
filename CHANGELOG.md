@@ -64,6 +64,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   sees that the attacker is gone. If every route fails, the quest stops with
   the last route failure. The bot does not promise that an escape exists.
 
+- When combat walks to a configured stand, it starts the 15-tick no-target
+  search after it reaches the stand. A failed walk returns its route detail
+  after the walk layer spends its bounded retries. The caller's combat budget
+  still limits the full run.
+
+
 ### Survival
 
 - After a bot eats a Strange fruit, it now counts its poison as cured even

@@ -427,12 +427,20 @@ impl NativeMachine for Combat {
         }
         self.flags |= OBSERVED;
         self.counters.ticks = self.counters.ticks.saturating_add(1);
-        if self.phase != Phase::Escape
-            && self
+        if self.phase != Phase::Escape {
+            if let Some(receipt) = self
                 .pending_walk
-                .is_some_and(|id| cx.walk_receipt(id.get()).is_some())
-        {
-            self.pending_walk = None;
+                .and_then(|id| cx.walk_receipt(id.get()))
+            {
+                if self.engaged.is_none()
+                    && self.request.stand.is_some_and(|stand| distance(frame.here, stand) > 1)
+                {
+                    if let Err(error) = receipt.clone().into_arrival() {
+                        return Poll::Ready(Err(error));
+                    }
+                }
+                self.pending_walk = None;
+            }
         }
         let events = self.threats.observe(&frame, &self.tables, tick);
         self.counters.damage = self.counters.damage.saturating_add(events.damage);
@@ -1229,7 +1237,14 @@ impl Combat {
             self.flags &= !(LOST | LEASH_WALKED);
         }
         if self.engaged.is_none() {
-            if self.flags & LOST == 0 {
+            let away_from_stand = self.phase != Phase::Escape
+                && self
+                    .request
+                    .stand
+                    .is_some_and(|stand| distance(frame.here, stand) > 1);
+            if away_from_stand {
+                self.flags &= !LOST;
+            } else if self.flags & LOST == 0 {
                 self.lost_since = tick;
                 self.flags |= LOST;
             } else if elapsed(tick, self.lost_since) >= 15 {
