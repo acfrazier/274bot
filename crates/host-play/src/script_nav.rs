@@ -9340,6 +9340,51 @@ mod route_quest_provider_tests {
     }
 
     #[test]
+    fn compat_route_context_keeps_actual_session_after_scene_only_down_observation() {
+        let selected = selected_r289();
+        let mut slot = script::SlotScript::new();
+        slot.bind_incarnation(44);
+        let factory = Arc::new(script::surface::test_support::StubSurfaceFactory::new());
+        slot.bind_surface_factory(factory.clone());
+        slot.start_surface(script::surface::SurfaceStart {
+            card: Arc::new(script::surface::test_support::StubSurfaceCard),
+            settings_bag: None,
+            game_data: Some(selected),
+            named_banks: Arc::default(),
+            loadouts: Arc::default(),
+        })
+        .expect("start the real compatibility surface owner");
+        factory
+            .last_run()
+            .expect("stub surface run")
+            .set_readiness(script::surface::SurfaceReady::Ready);
+        assert_eq!(
+            slot.poll_start(),
+            script::StartPoll::Settled(script::StartOutcome::Ready)
+        );
+        slot.on_is_up(true);
+        let before = route_quest_context(&slot, 1)
+            .expect("active compatibility route context")
+            .stamp
+            .run;
+        slot.on_is_up(false);
+        slot.on_is_up(false);
+        slot.on_is_up(true);
+        assert_ne!(slot.work_epoch(), before.session);
+        assert_eq!(
+            route_quest_context(&slot, 2).expect("same live owner").stamp.run,
+            before
+        );
+        slot.reset_session_work();
+        assert_ne!(
+            route_quest_context(&slot, 3).map(|context| context.stamp.run),
+            Some(before),
+            "an actual connection boundary must revoke the old route identity"
+        );
+        slot.stop();
+    }
+
+    #[test]
     fn idle_manual_route_uses_profile_data_and_same_run_memory() {
         let selected = selected_r289();
         let mut slot = script::SlotScript::new();
