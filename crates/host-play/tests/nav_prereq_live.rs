@@ -1426,6 +1426,12 @@ fn wait_for_drezel_advice_page(fixture: &LiveFixture) -> (ChatWitness, String, V
                 return None;
             }
             let page = first_chat_witness(&snapshot)?;
+            if !page
+                .text
+                .contains("I cannot let you pass without warning you.")
+            {
+                return None;
+            }
             Some((page, w3, logs))
         },
     )
@@ -1824,11 +1830,12 @@ fn live_compat_prereq_holy_barrier_abort_approach() {
 #[test]
 #[ignore = "requires LIVE=1 and the explicitly configured local Engine L on 47594/3080"]
 fn live_compat_prereq_holy_barrier_abort_advice_page() {
-    let fixture = make_fixture(
+    let fixture = make_fixture_with_seed_commands(
         PREREQ_WEST,
         &[("priestperil", 60), ("druidspirit", 0)],
         true,
         true,
+        &["givebank dagger_wolfbane 1".to_owned()],
     );
     let run = start_compat(
         &fixture,

@@ -325,6 +325,18 @@ impl SlotScript {
         Some((owner.run, owner.request_id, result.clone()))
     }
 
+    /// The current logical outer walk, including its Approach and Talk phases.
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub fn api_live_compat_walk_request_id(&self) -> Option<u64> {
+        let CompatWalkSeat::Owned(owner) = &self.api.as_ref()?.compat_walk else {
+            return None;
+        };
+        (matches!(&owner.state, CompatWalkState::Walking(_))
+            && self.compat_walk_run_is_current(owner.run))
+        .then_some(owner.request_id.get())
+    }
+
     /// Cancel only the exact compatibility walk seat that the host owns.
     pub fn abort_compat_walk(&mut self, request_id: u64) -> bool {
         let Ok(request_id) = RequestId::isolate(request_id) else {

@@ -2434,16 +2434,20 @@ mod api_gather_seat {
             entry: crate::native::HandoverEntry::GateRefused(Arc::clone(&observation)),
             here: crossing.crossing.at,
         };
+        assert_eq!(slot.api_live_compat_walk_request_id(), None);
         slot.accept_compat_walk_handover(run, handover)
             .expect("live compat request accepts its refusal owner");
+        assert_eq!(slot.api_live_compat_walk_request_id(), Some(token));
         if scene_only_down {
             slot.on_is_up(false);
             slot.on_is_up(true);
             assert_ne!(slot.work_epoch, run.session);
             assert_eq!(slot.seat.as_ref().unwrap().run(), run);
         }
+        assert_eq!(slot.api_live_compat_walk_request_id(), Some(token));
 
         tick(&mut slot);
+        assert_eq!(slot.api_live_compat_walk_request_id(), None);
         let (terminal_run, terminal_request, result) = slot
             .take_compat_walk_terminal()
             .expect("denial publishes one outer terminal");
@@ -2468,6 +2472,7 @@ mod api_gather_seat {
             "consent precedes every native handle"
         );
         assert!(slot.finish_compat_walk(token));
+        assert_eq!(slot.api_live_compat_walk_request_id(), None);
         assert!(slot.take_compat_walk_terminal().is_none());
         assert_eq!(slot.seat.as_ref().unwrap().reserved_releases(), 0);
     }
