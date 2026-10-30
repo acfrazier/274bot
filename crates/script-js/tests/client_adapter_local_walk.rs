@@ -145,12 +145,7 @@ fn client_adapter_native(attached: bool, base_x: i32, base_z: i32) -> NativeFact
     }
 }
 
-fn post_with_client_adapter(
-    iso: &LoadIsolate,
-    snap: &SnapshotInput<'_>,
-    base_x: i32,
-    base_z: i32,
-) {
+fn post_with_client_adapter(iso: &LoadIsolate, snap: &SnapshotInput<'_>, base_x: i32, base_z: i32) {
     iso.post_snapshot(script_js::wire::encode_snapshot_with_native(
         snap,
         client_adapter_native(true, base_x, base_z),

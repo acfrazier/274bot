@@ -171,10 +171,9 @@ fn materialized_rows_have_fast_properties_and_bounded_v8_heap() {
 
     v8::V8::set_flags_from_string("--allow-natives-syntax");
     let mut runtime = setup();
-    let diagnostics: serde_json::Value = serde_json::from_str(
-        &runtime.eval::<String>("__clientAdapterFast()").unwrap(),
-    )
-    .expect("ClientAdapter diagnostics JSON");
+    let diagnostics: serde_json::Value =
+        serde_json::from_str(&runtime.eval::<String>("__clientAdapterFast()").unwrap())
+            .expect("ClientAdapter diagnostics JSON");
     assert_eq!(
         diagnostics["ok"], true,
         "native modal, scene and product projections have fast properties: {diagnostics}"

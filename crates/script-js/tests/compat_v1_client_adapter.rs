@@ -1696,16 +1696,14 @@ globalThis.__surface = {
         ("modules.json", MODULES_JSON),
         ("abi-contract.json", ABI_CONTRACT),
     ] {
-        assert!(
-            !mentions(
-                if file == "index.d.ts" {
-                    client_adapter_declarations(text)
-                } else {
-                    text
-                },
-                "selfTarget"
-            ),
-        );
+        assert!(!mentions(
+            if file == "index.d.ts" {
+                client_adapter_declarations(text)
+            } else {
+                text
+            },
+            "selfTarget"
+        ),);
     }
 }
 
@@ -1757,7 +1755,10 @@ fn compat_v1_client_adapter__actions_saypublic__contract() {
     ));
     iso.on_game_tick(1);
     let _ = iso.probe("true");
-    assert_eq!(iso.probe("__sayResults").unwrap(), json!([true, false, true]));
+    assert_eq!(
+        iso.probe("__sayResults").unwrap(),
+        json!([true, false, true])
+    );
     assert_eq!(
         iso.drain_interacts(),
         vec![
@@ -2061,9 +2062,6 @@ globalThis.__observation = () => {
     ));
     iso.on_game_tick(3);
     let _ = iso.probe("true");
-    assert_eq!(
-        iso.probe("__observation()").unwrap(),
-        Value::Null
-    );
+    assert_eq!(iso.probe("__observation()").unwrap(), Value::Null);
     iso.join();
 }

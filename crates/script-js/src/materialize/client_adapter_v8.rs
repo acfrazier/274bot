@@ -889,9 +889,7 @@ fn collision_flags<'s>(
     if flags.is_null() || flags.is_undefined() {
         return Ok(v8::null(scope).into());
     }
-    let Some(index) =
-        u32::try_from(i64::from(lx) * i64::from(height) + i64::from(lz)).ok()
-    else {
+    let Some(index) = u32::try_from(i64::from(lx) * i64::from(height) + i64::from(lz)).ok() else {
         return Ok(v8::null(scope).into());
     };
     let at = property(scope, flags, "at")?;

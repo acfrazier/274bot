@@ -4676,11 +4676,7 @@ export default class T extends LoopingBot {
         com_id: 2468,
     }];
     snap.chat_options = &opts;
-    post_snapshot_with_client_adapter(
-        &iso,
-        &snap,
-        client_adapter_facts(None, -1, -1, &[]),
-    );
+    post_snapshot_with_client_adapter(&iso, &snap, client_adapter_facts(None, -1, -1, &[]));
     iso.on_game_tick(1);
     let _ = iso.probe("__rs_bot");
     let logs = iso.drain_logs();
