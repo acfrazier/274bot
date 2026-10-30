@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 use crate::selected::{FactError, SelectedPin};
 
 const SCHEMA_VERSION: u16 = 5;
-pub const NPC_COMBAT_FACTS_VERSION: u32 = 1;
+pub const NPC_COMBAT_FACTS_VERSION: u32 = 2;
 
 /// A selected game-data family does not contain facts in the current combat schema.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1247,6 +1247,19 @@ where
     i32::deserialize(deserializer).map(Some)
 }
 
+/// A source-proven NPC awakening that changes which combat facts apply.
+///
+/// This metadata affects combat interpretation only. It does not rename the
+/// selected NPC kind or change its navigation geometry.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum NpcCombatTransform {
+    /// The NPC awakens as another selected NPC type.
+    Known { npc_id: i32 },
+    /// The content indicates an awakening but its combat target is unsupported.
+    Unknown,
+}
+
 /// Pack-joined NPC identity for Path compile (`npc:cook`).
 #[derive(Debug, Deserialize, Clone)]
 pub struct NpcNameRow {
@@ -1327,6 +1340,10 @@ pub struct NpcNameRow {
     /// Selected `npc_forcemulti` content parameter.
     #[serde(default)]
     pub forcemulti: bool,
+    /// Source-proven awakening target for combat facts; absent when no
+    /// awakening is known. `Unknown` fails closed during risk assessment.
+    #[serde(default)]
+    pub combat_transform: Option<NpcCombatTransform>,
 }
 
 /// The family version is checked before strict selected-data decoding.

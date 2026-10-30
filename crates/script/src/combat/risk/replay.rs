@@ -449,9 +449,13 @@ fn exposure(path: RoutePath<'_>, row: &ZoneInterval) -> Result<(i32, i32), Unkno
     Ok((start, end))
 }
 fn origin_duration(live: &LiveRow, tables: &CombatTables) -> Result<i32, UnknownWhy> {
-    let npc = tables.npc(live.ident).ok_or(UnknownWhy::AlreadyEngaged)?;
-    let r = super::facts::npc_envelope_radius(npc).ok_or(UnknownWhy::Overflow)?;
-    add(mul(i32::from(r), 2)?, LAG)
+    let npc = super::facts::effective_npc_row(live.ident, tables)
+        .ok_or(UnknownWhy::AlreadyEngaged)?;
+    let kind = KindRisk::from_npc(npc, tables);
+    if kind.r == 0 {
+        return Err(UnknownWhy::Overflow);
+    }
+    add(mul(i32::from(kind.r), 2)?, LAG)
 }
 
 async fn hits<F, U>(
@@ -548,9 +552,9 @@ fn input_problem(input: &RiskInput, tables: &CombatTables) -> Option<UnknownWhy>
             .any(|live| {
                 live.actor.kind != crate::combat::ActorKind::Npc
                     || live.rate == 0
-                    || tables
-                        .npc(live.ident)
-                        .is_none_or(|row| KindRisk::from_npc(row, tables).unknown_for().is_some())
+                    || super::facts::effective_npc_row(live.ident, tables).is_none_or(|row| {
+                        KindRisk::from_npc(row, tables).unknown_for().is_some()
+                    })
             })
     {
         return Some(UnknownWhy::AlreadyEngaged);

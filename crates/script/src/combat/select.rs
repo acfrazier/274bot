@@ -575,6 +575,7 @@ mod tests {
             counter_protect: false,
             poison_severity: None,
             forcemulti: false,
+            combat_transform: None,
         }
     }
 

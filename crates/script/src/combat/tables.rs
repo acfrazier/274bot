@@ -973,7 +973,7 @@ mod tests {
         }
         let item_rows = items;
         let npc_names = json!({
-            "combat_facts_version":1,
+            "combat_facts_version":2,
             "rows":[
                 {
                     "id":7,"config":"test_npc","display":"Test NPC","ops":["Attack"],

@@ -277,7 +277,7 @@ fn minimal_json(tail: &str) -> String {
                 }},
                 "items": [],
                 "npc_names": {{
-                    "combat_facts_version": 1,
+                    "combat_facts_version": 2,
                     "rows": [{{
                         "id": 1, "config": "test_npc", "ops": [], "size": 1,
                         "wanderrange": 5, "maxrange": 7, "attackrange": 0, "huntrange": 0, "vislevel": 0,
