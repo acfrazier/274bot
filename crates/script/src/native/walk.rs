@@ -143,7 +143,10 @@ impl Walk {
         cx: &mut ActionContext<'_>,
     ) -> Result<(), ActionError> {
         let required_after = cx.evidence();
-        let (_, key) = self.wait.request().expect("walk correlation remains active");
+        let (_, key) = self
+            .wait
+            .request()
+            .expect("walk correlation remains active");
         let request = WalkRequest {
             target: key.tile,
             radius: u16::try_from(key.radius).expect("walk radius originated as u16"),
@@ -206,7 +209,10 @@ impl NativeMachine for Walk {
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
-        let (request_id, key) = self.wait.request().expect("walk correlation remains active");
+        let (request_id, key) = self
+            .wait
+            .request()
+            .expect("walk correlation remains active");
         if let Some(receipt) = cx
             .walk_receipt(request_id)
             .filter(|receipt| receipt.end == WalkEnd::UserInput)
