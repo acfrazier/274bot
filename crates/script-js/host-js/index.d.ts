@@ -955,6 +955,8 @@ export interface GatherSettings {
   fishingMethod?: string;
   /** default "Best tier", only when its card show-if holds */
   targetPreference?: 'Best tier' | 'Nearest';
+  /** default "Off", only when its card show-if holds */
+  tickMethod?: 'Off' | 'Knife';
   /** default "Start" */
   location?: 'Start' | 'Site' | 'Auto' | 'Custom';
   /** default "", only when its card show-if holds */
