@@ -1694,7 +1694,7 @@ impl PrereqFailureOracle {
                 "denied prerequisite performed a repair: {dialogue_seen:?}"
             ));
         }
-        if self.expected == "FreeSlots" && !saw_text(dialogue_seen, DAGGER_RECLAIM) {
+        if self.expected == "FreeSlots" && !saw_text(dialogue_seen, DAGGER_RECLAIM_OPENER) {
             return Err("full-pack refusal did not reach the real reclaim opener".into());
         }
         let here = tile(snapshot);
