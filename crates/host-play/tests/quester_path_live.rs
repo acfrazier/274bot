@@ -2354,7 +2354,7 @@ mod campaign_gap_tests {
             .unwrap();
         let actor = &packet["receipt"];
         let account = actor["account"].as_str().unwrap();
-        let state = no_step_state_proof(&gap, "sheepherder", account, actor)
+        let state = no_step_state_proof(&gap, "sheepherder", account, actor, &[])
             .expect("the real uncapped statuses and worn prod establish the boundary");
         assert_eq!(state["prior_steps"].as_array().unwrap().len(), 7);
         assert_eq!(
@@ -2390,7 +2390,7 @@ mod campaign_gap_tests {
         assert!(messages[account]
             .iter()
             .any(|message| message.contains("begin (repeated")));
-        assert!(no_step_state_proof(&gap, "murder", account, actor).is_none());
+        assert!(no_step_state_proof(&gap, "murder", account, actor, &[]).is_none());
         assert!(prove_actor_gap(&gap, "murder", account, &messages[account], actor).is_none());
     }
 }
