@@ -1654,6 +1654,7 @@ fn set_card(d: &mut HeadlessDriver, card: crate::FleetCard) {
 }
 
 fn set_quester_queue(d: &mut HeadlessDriver, profile: &str, quests: &[&str]) {
+    let registry_before = script::quester::registry::revision();
     let values = serde_json::json!({"quests": quests})
         .as_object()
         .expect("quest queue settings are an object")
@@ -1668,7 +1669,16 @@ fn set_quester_queue(d: &mut HeadlessDriver, profile: &str, quests: &[&str]) {
             values,
         )
         .expect("save Quester queue settings");
+    eprintln!(
+        "registry after saving {profile} queue: {} -> {}",
+        registry_before,
+        script::quester::registry::revision()
+    );
     d.session.flush_writes();
+    eprintln!(
+        "registry after flushing {profile} queue: {}",
+        script::quester::registry::revision()
+    );
     assert_eq!(
         d.session
             .operation(operation)
