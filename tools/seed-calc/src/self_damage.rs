@@ -281,7 +281,7 @@ pub fn calculate(
     }
     let agility = seed_level(&seed, "agility")?;
     let crafting = seed_level(&seed, "crafting")?;
-    let plan = extract_plan(role_value, agility, crafting)?;
+    let plan = extract_plan(&guide, role_value, agility, crafting)?;
     if plan.is_empty() {
         return Err(SelfDamageError::NotModelled(
             "the selected guide role has no supported self-damaging steps".into(),
@@ -423,6 +423,7 @@ fn select_role<'a>(
 }
 
 fn extract_plan(
+    guide: &Value,
     role: &Value,
     agility: u8,
     crafting: u8,
@@ -459,7 +460,7 @@ fn extract_plan(
                 }
             }
             if step.pointer("/args/recipe").and_then(Value::as_str) == Some("swing-and-recover") {
-                plan.push(parse_swing_acquire(step, role, agility)?);
+                plan.push(parse_swing_acquire(step, guide, agility)?);
             }
         }
     }
@@ -507,7 +508,7 @@ fn parse_bounded_step(
 
 fn parse_swing_acquire(
     parent: &Value,
-    role: &Value,
+    guide: &Value,
     agility: u8,
 ) -> Result<Operation, SelfDamageError> {
     let id = parent
@@ -518,9 +519,14 @@ fn parse_swing_acquire(
     let restarts = value_u8(parent.pointer("/args/max_restarts")).ok_or_else(|| {
         SelfDamageError::NotModelled(format!("{id} does not declare max_restarts"))
     })?;
-    let recipe = role
-        .get("acquire")
-        .and_then(|recipes| recipes.get("swing-and-recover"))
+    let acquire = guide
+        .pointer("/quest/acquire")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            SelfDamageError::NotModelled(format!("{id} has no quest acquire map"))
+        })?;
+    let recipe = acquire
+        .get("swing-and-recover")
         .and_then(Value::as_array)
         .ok_or_else(|| {
             SelfDamageError::NotModelled(format!("{id} has no swing-and-recover recipe"))
@@ -552,9 +558,8 @@ fn parse_swing_acquire(
         let max_restarts = value_u8(child.pointer("/args/max_restarts")).ok_or_else(|| {
             SelfDamageError::NotModelled(format!("{child_id} has no max_restarts"))
         })?;
-        let child_recipe = role
-            .get("acquire")
-            .and_then(|recipes| recipes.get(recipe_name))
+        let child_recipe = acquire
+            .get(recipe_name)
             .and_then(Value::as_array)
             .ok_or_else(|| {
                 SelfDamageError::NotModelled(format!("{child_id} has no {recipe_name} recipe"))
@@ -1154,6 +1159,52 @@ mod tests {
             .copied()
             .unwrap_or_default();
         assert!((actual_after_four_fails - expected_after_four_fails).abs() < 1e-12);
+    }
+
+    #[test]
+    fn swing_recovery_uses_guide_quest_acquire_recipes() {
+        let mut acquire = serde_json::Map::new();
+        let mut swing_recipe = vec![serde_json::json!({
+            "id": "swing-attempt",
+            "args": {
+                "item": "rope",
+                "anchor": { "tile": [2460, 9699, 0] }
+            }
+        })];
+        for index in 1..=8 {
+            let recipe_name = format!("recovery-rockslide-{index}");
+            swing_recipe.push(serde_json::json!({
+                "id": recipe_name.clone(),
+                "args": { "recipe": recipe_name.clone(), "max_restarts": 4 }
+            }));
+            acquire.insert(
+                recipe_name,
+                serde_json::json!([{
+                    "args": { "target": { "loc": "rockslide2_obstacle_upass" } }
+                }]),
+            );
+        }
+        acquire.insert("swing-and-recover".into(), serde_json::Value::Array(swing_recipe));
+        let guide = serde_json::json!({ "quest": { "acquire": acquire } });
+        let parent = serde_json::json!({
+            "id": "swing-rope",
+            "args": { "max_restarts": 2 }
+        });
+
+        let Operation::SwingAcquire {
+            restarts,
+            swing,
+            recovery,
+            ..
+        } = parse_swing_acquire(&parent, &guide, 1).unwrap()
+        else {
+            panic!("swing recipe did not produce a swing acquire operation");
+        };
+        assert_eq!(restarts, 2);
+        assert_eq!(swing.successes_per_256(), 101);
+        assert_eq!(swing.timing.first_attempt_before_roll, 7);
+        assert_eq!(recovery.len(), 8);
+        assert!(recovery.iter().all(|step| step.attempts == 5));
     }
 
     #[test]
