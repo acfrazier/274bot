@@ -925,11 +925,9 @@ pub(super) fn materialize_snapshot(
             set(&mut scope, obj, "main_modal_texts", modal.into())?;
         }
     }
-    if snap.has_client_adapter() {
-        if let Some(facts) = snap.client_adapter() {
-            let facts = client_adapter_facts_object(&mut scope, facts)?;
-            set(&mut scope, obj, "client_adapter", facts)?;
-        }
+    if let Some(facts) = snap.client_adapter() {
+        let facts = client_adapter_facts_object(&mut scope, facts)?;
+        set(&mut scope, obj, "client_adapter", facts)?;
     }
     // The open puzzle board. A present table is the observation — including
     // the closed `{-1, 0, []}` object, which is NOT an omitted slot. An
@@ -1549,7 +1547,7 @@ fn client_adapter_facts_object<'s>(
     let last_walk_path_local =
         v8::Array::new(scope, path.as_ref().map_or(0, |path| path.len()) as i32);
     for (index, point) in path.into_iter().flat_map(|path| path.iter()).enumerate() {
-        let point = num(scope, *point as f64);
+        let point = num(scope, point as f64);
         last_walk_path_local
             .set_index(scope, index as u32, point)
             .ok_or_else(|| "v8 array set failed".to_string())?;
@@ -1769,7 +1767,7 @@ fn uint8_array_view<'s, 'a>(
             let Some(ptr) = backing.data() else {
                 return Err("projection link backing store".to_string());
             };
-            let dest = ptr.as_ptr();
+            let dest = ptr.as_ptr() as *mut u8;
             for (index, value) in values.iter().enumerate() {
                 // SAFETY: the backing store has exactly `len` bytes and the
                 // verified vector provides exactly that many scalar values.

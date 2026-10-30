@@ -101,6 +101,7 @@ fn run_selected_facts<'s>(
             args.get(5),
             args.get(6),
         ),
+        _ => Err(format!("unsupported selected facts operation: {op}")),
     }
 }
 fn world_number<'s>(

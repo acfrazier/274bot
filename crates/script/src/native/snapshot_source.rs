@@ -3,7 +3,7 @@ use crate::native::WalkCancelReason;
 use api::snapshot::ProjectileView;
 
 /// A game tile `{x, z, level}`.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct TileInput {
     pub x: i32,
     pub z: i32,
