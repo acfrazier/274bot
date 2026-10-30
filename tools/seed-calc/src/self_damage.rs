@@ -1039,25 +1039,6 @@ fn describe_step(step: &BoundedStep) -> StepModelResult {
     }
 }
 
-fn candidate_run(
-    plan: &[Operation],
-    hitpoints: u8,
-    lobster_count: u8,
-    food_policy: FoodPolicy,
-) -> Run {
-    execute(
-        plan,
-        State {
-            hp: hitpoints,
-            regen_phase: 0,
-            food: lobster_count,
-            food_cooldown: 0,
-        },
-        hitpoints,
-        Some(food_policy),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
