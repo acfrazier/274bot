@@ -1145,7 +1145,7 @@ export default class PrereqHolyCompat extends LoopingBot {{
         globalThis.__nav_prereq_terminal_count += 1;
         globalThis.__nav_prereq_first_result = first;
         {second_call}
-        console.log("NAV_PREREQ_RESULT " + JSON.stringify({{
+        this.log("NAV_PREREQ_RESULT " + JSON.stringify({{
             terminal_count: globalThis.__nav_prereq_terminal_count,
             first: globalThis.__nav_prereq_first_result,
             second: globalThis.__nav_prereq_second_result ?? null
