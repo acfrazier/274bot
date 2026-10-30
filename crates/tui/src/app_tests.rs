@@ -1950,17 +1950,25 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
         let inner = ratatui::widgets::Block::default()
             .borders(ratatui::widgets::Borders::ALL)
             .inner(area);
-        rows.iter()
+        let mut zone_text = Vec::new();
+        let mut in_zone_list = false;
+        for row in rows
+            .iter()
             .skip(usize::from(inner.y))
             .take(usize::from(inner.height))
-            .map(|row| {
-                row.chars()
-                    .skip(usize::from(inner.x))
-                    .take(usize::from(inner.width))
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+        {
+            let line = row
+                .chars()
+                .skip(usize::from(inner.x))
+                .take(usize::from(inner.width))
+                .collect::<String>();
+            if !in_zone_list {
+                in_zone_list = line.contains("PgUp/PgDn.");
+                continue;
+            }
+            zone_text.push(line);
+        }
+        zone_text.join("\n")
     }
 
     let evidence_root =
