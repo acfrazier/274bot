@@ -559,6 +559,7 @@ impl<'a> Snapshot<'a> {
         has_chat_page_fingerprint => VT_CHAT_PAGE_FINGERPRINT,
         has_side_modal_id => VT_SIDE_MODAL_ID,
         has_local_player_motion => VT_LOCAL_PLAYER_MOTION,
+        has_guardian_active_event => VT_GUARDIAN_ACTIVE_EVENT,
     }
 
     pub fn bank_selection(&self) -> Option<BankSelectionInput> {
@@ -1083,6 +1084,8 @@ pub struct SnapshotFingerprint {
     pub chat_page_fingerprint: u64,
     pub side_modal_id: Option<i32>,
     seat_page: Option<SeatPageFingerprint>,
+    /// Current guardian-owned or handled event; an empty string clears it.
+    pub guardian_active_event: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -1383,6 +1386,7 @@ impl SnapshotFingerprint {
             chat_page_fingerprint: native.chat_page_fingerprint,
             side_modal_id: native.side_modal_id,
             seat_page: native.seat_page.map(SeatPageFingerprint::from),
+            guardian_active_event: native.guardian_active_event.map(str::to_string),
         }
     }
 }
@@ -1552,6 +1556,8 @@ pub struct DeltaMask {
     pub side_modal_id: bool,
     /// One bit for the seat live and retained-result pages, posted together.
     pub seat_page: bool,
+    /// The guardian-owned or currently handled event. Empty clears it.
+    pub guardian_active_event: bool,
 }
 
 impl DeltaMask {
@@ -1654,6 +1660,7 @@ impl DeltaMask {
             chat_page_fingerprint: true,
             side_modal_id: true,
             seat_page: true,
+            guardian_active_event: true,
         }
     }
 
@@ -1782,6 +1789,7 @@ impl DeltaMask {
             chat_page_fingerprint: next.chat_page_fingerprint != last.chat_page_fingerprint,
             side_modal_id: next.side_modal_id != last.side_modal_id,
             seat_page: next.seat_page != last.seat_page,
+            guardian_active_event: next.guardian_active_event != last.guardian_active_event,
         }
     }
     /// Whether this delta carries an actual evidence change. The tick and
@@ -1879,6 +1887,7 @@ impl DeltaMask {
             || self.chat_page_fingerprint
             || self.side_modal_id
             || self.seat_page
+            || self.guardian_active_event
             || (self.banks && next.banks != last.banks)
             || (self.hold && next.hold != last.hold)
     }
@@ -2299,6 +2308,11 @@ fn encode_snapshot_masked_into(
     };
     let trade_partner_off = if mask.trade_partner {
         Some(b.create_string(input.trade_partner.unwrap_or("")))
+    } else {
+        None
+    };
+    let guardian_active_event_off = if mask.guardian_active_event {
+        native.guardian_active_event.map(|event| b.create_string(event))
     } else {
         None
     };
@@ -2931,6 +2945,9 @@ fn encode_snapshot_masked_into(
     }
     if mask.local_player_motion {
         table.add_local_player_motion(local_player_motion_code(native.local_player_moving));
+    }
+    if let Some(off) = guardian_active_event_off {
+        table.add_guardian_active_event(off);
     }
     table.add_canvas_width(SNAPSHOT_CANVAS_W);
     table.add_canvas_height(SNAPSHOT_CANVAS_H);

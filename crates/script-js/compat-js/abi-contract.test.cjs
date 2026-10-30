@@ -568,7 +568,6 @@ test('refusal debt is unique and names each missing notImplValue export', () => 
         assert.equal(selectors.filter(value => value === selector).length, 1, selector);
     }
     const newRefusals = [
-        ['runtime/Settings.js', ['GLOBAL_SETTINGS_CORE', 'NAV_SETTINGS', 'GLOBAL_SETTINGS', 'MAP_PICKER_SETTINGS_NS', 'MAP_PICKER_SETTINGS', 'LOADOUT_SETTINGS_NS', 'LOADOUT_SETTINGS', 'PRICE_BOOK_SETTINGS_NS', 'PRICE_BOOK_SETTINGS']],
         ['api/ai/quests/defs/murder/areas.js', ['ARHEIN', 'GUARD_START', 'GUARD_HANDIN', 'SALESMAN', 'SUSPECTS', 'MURDER_EVIDENCE']],
         ['api/ai/clues/data/toolAcquire.js', ['SPADE_SPAWNS', 'PROFESSOR', 'MURPHY', 'KOJO', 'KOJO_EXIT']],
         ['api/ai/quests/engine/QuestEngine.js', ['COIN_FLOAT', 'PROVISION_BANK', 'QuestEngine']],
@@ -582,8 +581,8 @@ test('refusal debt is unique and names each missing notImplValue export', () => 
             assert.ok(row.source.includes('crates/script-js/src/shim/'), `${member} names its source file`);
         }
     }
-    assert.equal(newRefusals.reduce((count, [, members]) => count + members.length, 0), 26);
-    assert.equal(collectModuleNotImplValueExports(registry, shimSources, navFamilies).length, 26);
+    assert.equal(newRefusals.reduce((count, [, members]) => count + members.length, 0), 17);
+    assert.equal(collectModuleNotImplValueExports(registry, shimSources, navFamilies).length, 17);
 });
 
 test('an unclassified source module fails closed', () => {

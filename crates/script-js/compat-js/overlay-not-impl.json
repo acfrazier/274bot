@@ -388,51 +388,6 @@
     "async": false
   },
   {
-    "id": "not-impl:runtime/RunManager.js:resolveRunPolicy",
-    "module": "runtime/RunManager.js",
-    "selector": "resolveRunPolicy",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: run policy has no native state adapter.",
-    "runtime": "crates/script-js/src/shim/run_manager.js:9",
-    "async": false
-  },
-  {
-    "id": "not-impl:runtime/RunManager.js:shouldEnableRun",
-    "module": "runtime/RunManager.js",
-    "selector": "shouldEnableRun",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: run policy has no native state adapter.",
-    "runtime": "crates/script-js/src/shim/run_manager.js:13",
-    "async": false
-  },
-  {
-    "id": "not-impl:runtime/ScriptRunner.js:loopReadyOrDetached",
-    "module": "runtime/ScriptRunner.js",
-    "selector": "loopReadyOrDetached",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
-    "runtime": "crates/script-js/src/shim/script_runner.js:22",
-    "async": false
-  },
-  {
-    "id": "not-impl:runtime/ScriptRunner.js:stopReasonOf",
-    "module": "runtime/ScriptRunner.js",
-    "selector": "stopReasonOf",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
-    "runtime": "crates/script-js/src/shim/script_runner.js:26",
-    "async": false
-  },
-  {
-    "id": "not-impl:runtime/Settings.js:settingOptionLabel",
-    "module": "runtime/Settings.js",
-    "selector": "settingOptionLabel",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: settings option labels have no native resolver.",
-    "runtime": "crates/script-js/src/shim/settings.js:78",
-    "async": false
-  },
-  {
     "id": "not-impl:api/ai/quests/defs/murder/areas.js:suspectOrder",
     "module": "api/ai/quests/defs/murder/areas.js",
     "selector": "suspectOrder",

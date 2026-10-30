@@ -6823,6 +6823,7 @@ impl<'a> Snapshot<'a> {
   pub const VT_MIRROR_REVOKES_CONSUMED: ::flatbuffers::VOffsetT = 296;
   pub const VT_INV_READY: ::flatbuffers::VOffsetT = 298;
   pub const VT_BANK_SIDE_READY: ::flatbuffers::VOffsetT = 300;
+  pub const VT_GUARDIAN_ACTIVE_EVENT: ::flatbuffers::VOffsetT = 302;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -6865,6 +6866,7 @@ impl<'a> Snapshot<'a> {
     builder.add_withdraw_x_result_seq(args.withdraw_x_result_seq);
     builder.add_bank_generation(args.bank_generation);
     builder.add_tick(args.tick);
+    if let Some(x) = args.guardian_active_event { builder.add_guardian_active_event(x); }
     if let Some(x) = args.seat_results { builder.add_seat_results(x); }
     if let Some(x) = args.seat_live { builder.add_seat_live(x); }
     if let Some(x) = args.api_combat_outcome { builder.add_api_combat_outcome(x); }
@@ -8015,6 +8017,13 @@ impl<'a> Snapshot<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<bool>(Snapshot::VT_BANK_SIDE_READY, Some(false)).unwrap()}
   }
+  #[inline]
+  pub fn guardian_active_event(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(Snapshot::VT_GUARDIAN_ACTIVE_EVENT, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Snapshot<'_> {
@@ -8170,6 +8179,7 @@ impl ::flatbuffers::Verifiable for Snapshot<'_> {
      .visit_field::<u64>("mirror_revokes_consumed", Self::VT_MIRROR_REVOKES_CONSUMED, false)?
      .visit_field::<bool>("inv_ready", Self::VT_INV_READY, false)?
      .visit_field::<bool>("bank_side_ready", Self::VT_BANK_SIDE_READY, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("guardian_active_event", Self::VT_GUARDIAN_ACTIVE_EVENT, false)?
      .finish();
     Ok(())
   }
@@ -8322,6 +8332,7 @@ pub struct SnapshotArgs<'a> {
     pub mirror_revokes_consumed: Option<u64>,
     pub inv_ready: bool,
     pub bank_side_ready: bool,
+    pub guardian_active_event: Option<::flatbuffers::WIPOffset<&'a str>>,
 }
 impl<'a> Default for SnapshotArgs<'a> {
   #[inline]
@@ -8474,6 +8485,7 @@ impl<'a> Default for SnapshotArgs<'a> {
       mirror_revokes_consumed: None,
       inv_ready: false,
       bank_side_ready: false,
+      guardian_active_event: None,
     }
   }
 }
@@ -9072,6 +9084,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SnapshotBuilder<'a, 'b, A> {
     self.fbb_.push_slot::<bool>(Snapshot::VT_BANK_SIDE_READY, bank_side_ready, false);
   }
   #[inline]
+  pub fn add_guardian_active_event(&mut self, guardian_active_event: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Snapshot::VT_GUARDIAN_ACTIVE_EVENT, guardian_active_event);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SnapshotBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SnapshotBuilder {
@@ -9236,6 +9252,7 @@ impl ::core::fmt::Debug for Snapshot<'_> {
       ds.field("mirror_revokes_consumed", &self.mirror_revokes_consumed());
       ds.field("inv_ready", &self.inv_ready());
       ds.field("bank_side_ready", &self.bank_side_ready());
+      ds.field("guardian_active_event", &self.guardian_active_event());
       ds.finish()
   }
 }

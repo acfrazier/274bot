@@ -203,6 +203,8 @@ pub(super) fn wire_runtime(
     siblings: &[(String, String)],
     game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
     named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
+    _frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 ) -> Result<(), String> {
     if shape == LoadShape::Reject {
         return Err("not a bot shape".to_string());
@@ -485,6 +487,30 @@ pub(super) fn wire_runtime(
             Ok(serde_json::json!(facing_player(args.first())))
         })
         .map_err(|e| format!("register player face helper: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_step_off_candidates", |args: &[serde_json::Value]| {
+            let from = json_tile(args.first()).ok_or_else(|| {
+                rustyscript::Error::Runtime("stepOffCandidates: invalid origin".into())
+            })?;
+            let away = args
+                .get(1)
+                .and_then(serde_json::Value::as_object)
+                .ok_or_else(|| {
+                    rustyscript::Error::Runtime("stepOffCandidates: invalid threat".into())
+                })?;
+            let away_x = json_i32(away.get("x")).ok_or_else(|| {
+                rustyscript::Error::Runtime("stepOffCandidates: invalid threat x".into())
+            })?;
+            let away_z = json_i32(away.get("z")).ok_or_else(|| {
+                rustyscript::Error::Runtime("stepOffCandidates: invalid threat z".into())
+            })?;
+            serde_json::to_value(script::native::walk::step_off_candidates(
+                from,
+                (away_x, away_z),
+            ))
+            .map_err(|error| rustyscript::Error::Runtime(error.to_string()))
+        })
+        .map_err(|error| format!("register step-off candidates: {error}"))?;
     runtime
         .register_function(
             "__rs2b0t_parse_interface_combat_style",
@@ -777,6 +803,9 @@ pub(super) fn wire_runtime(
     super::bank_quest_junk_v8::install(runtime).map_err(|e| format!("bank quest junk v8: {e}"))?;
     super::hunt_v8::install(runtime).map_err(|e| format!("hunt v8: {e}"))?;
     super::dialog_v8::install(runtime).map_err(|e| format!("dialog v8: {e}"))?;
+    super::lifecycle_v8::install(runtime, local_state)
+        .map_err(|e| format!("runtime lifecycle v8: {e}"))?;
+    super::activity_v8::install(runtime).map_err(|e| format!("activity v8: {e}"))?;
     let content = format!(
         "globalThis.__rs2b0t_host.content = {};",
         crate::shim::content_json(game_data.as_deref())
@@ -1639,6 +1668,16 @@ const __rs2b0t_invoke = async (method) => {
         return String((e && e.message) || e);
     }
 };
+const __rs2b0t_invoke_sync = (method) => {
+    try {
+        if (inst && typeof inst[method] === 'function') inst[method]();
+        return null;
+    } catch (e) {
+        return String((e && e.message) || e);
+    }
+};
 globalThis.__rs2b0t_compat_on_start = () => __rs2b0t_invoke('onStart');
 globalThis.__rs2b0t_compat_loop = () => __rs2b0t_invoke('loop');
+globalThis.__rs2b0t_compat_on_pause = () => __rs2b0t_invoke_sync('onPause');
+globalThis.__rs2b0t_compat_on_resume = () => __rs2b0t_invoke_sync('onResume');
 "#;

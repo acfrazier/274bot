@@ -601,6 +601,9 @@ table Snapshot {
   // Open bank side pack carries this session's full update
   // (`bankSideSnapshotReady`).
   bank_side_ready: bool;
+  // Slot 302: the guardian-owned or currently handled event. Empty clears it;
+  // an unowned detection is never posted as active.
+  guardian_active_event: string;
 }
 
 table Collision {

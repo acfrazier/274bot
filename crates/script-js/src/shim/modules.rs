@@ -116,7 +116,14 @@ globalThis.LoopingBot = class LoopingBot {
                 const key = String(event);
                 (this._subs[key] || (this._subs[key] = [])).push(cb);
             }
+    bindLog(sink) {
+        this._logSink = typeof sink === 'function' ? sink : null;
+    }
     log(message) {
+        if (this._logSink) {
+            this._logSink(String(message));
+            return;
+        }
         const h = globalThis.__rs2b0t_host;
         h.log = h.log || [];
         h.log.push(String(message));
@@ -138,9 +145,13 @@ globalThis.LoopingBot = class LoopingBot {
         this._finishSink = typeof sink === 'function' ? sink : null;
     }
     get delegated() { return !!this._finishSink; }
+    disposeSubscriptions() {
+        for (const unsubscribe of this.subscriptions || []) unsubscribe();
+        this.subscriptions = [];
+    }
     get settings() {
+        if (this._settings !== undefined) return this._settings;
         const bag = globalThis.__rs2b0t_host.settingsBag || {};
-        // One view per bag: the accessors read the bag at call time, so the
         // view is rebuilt only when the host posts a new bag.
         const cached = globalThis.__rs2b0t_settings_view;
         if (cached !== undefined && cached.bag === bag) return cached.view;
@@ -174,6 +185,9 @@ globalThis.LoopingBot = class LoopingBot {
         };
         globalThis.__rs2b0t_settings_view = { bag, view };
         return view;
+    }
+    set settings(value) {
+        this._settings = value;
     }
 };
 globalThis.__rs2b0t_dispatch_native_events = (evs) => {
@@ -849,6 +863,14 @@ pub fn shim_modules() -> Vec<Module> {
             include_str!("settings.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/runtime/ScriptRegistry.js",
+            include_str!("script_registry.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/runtime/randomevents/eventEvade.js",
+            include_str!("event_evade.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/api/ai/quests/engine/QuestEngine.js",
             include_str!("quest_engine.js"),
         ),
@@ -927,8 +949,20 @@ pub fn shim_modules() -> Vec<Module> {
             include_str!("script_runner.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/runtime/ScriptRegistry.js",
+            include_str!("script_registry.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/runtime/BotHost.js",
             include_str!("bot_host.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/runtime/Scheduler.js",
+            include_str!("scheduler.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/runtime/ScriptActivity.js",
+            include_str!("script_activity.js"),
         ),
         Module::new(
             "/rs2b0t/bot/scripts/bot/declared_surface.js",

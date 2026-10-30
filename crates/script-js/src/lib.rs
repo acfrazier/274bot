@@ -138,6 +138,10 @@ mod line_of_sight_v8;
 mod lineage_v8;
 #[path = "materialize/loadout_v8.rs"]
 mod loadout_v8;
+#[path = "runtime/lifecycle_v8.rs"]
+mod lifecycle_v8;
+#[path = "runtime/activity_v8.rs"]
+mod activity_v8;
 /// Per-isolate step-machine host: families Rust begins, steps and aborts.
 mod machine;
 #[path = "materialize/machine_v8.rs"]
