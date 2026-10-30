@@ -5,7 +5,7 @@ use crate::native::walk::Walk;
 use crate::native::{
     ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, OuterWalk, PrereqAllow,
     PrereqFailure, PrereqMissing, PrereqRefusal, PrereqStepIdentity, PrereqSwitch, PrereqWaitName,
-    WalkAllow, WalkEnd, WalkOptions, WalkRequest,
+    WalkAllow, WalkEnd, WalkGoals, WalkOptions, WalkRequest,
 };
 use crate::quester::families::dialogue::{
     Dialogue, DialogueArgs, DialogueOptions, DialogueSend, DialogueSendKind, DialogueTarget,
@@ -136,6 +136,17 @@ impl<'a> RepairWalk<'a> {
         request.cross = self.cross.into();
         request.avoid = self.avoid.into();
         request.evidence = self.evidence.cloned();
+        request
+    }
+    fn request_goals(
+        self,
+        target: WorldTile,
+        goals: WalkGoals,
+        observed: EvidenceStamp,
+    ) -> WalkRequest {
+        let mut request = self.request(target, 0, observed);
+        request.candidate_goals = Some(goals);
+        request.arrival = nav_planner::contract::ArrivalKind::Area;
         request
     }
 }
@@ -276,6 +287,9 @@ impl PrereqRun {
             _ => None,
         }
     }
+    fn step(&self, row: &PrereqStep) -> PrereqStepIdentity {
+        step_identity(row, &self.gate.crossing)
+    }
 
     pub(crate) fn revoker(&self) -> Option<crate::native::ActionRevoker> {
         match &self.phase {
@@ -326,7 +340,6 @@ impl PrereqRun {
                 gate: self.gate.gate.clone(),
             }));
         };
-        let step = || step_identity(row, &self.gate.crossing);
         self.required_after.get_or_insert(cx.evidence());
         loop {
             let phase = std::mem::replace(&mut self.phase, Phase::Complete);
@@ -342,7 +355,7 @@ impl PrereqRun {
                         PrereqSwitch::QuestStart => self.allow.quest_start,
                     }) {
                         return Poll::Ready(Err(PrereqRefusal::NotAllowed {
-                            step: step(),
+                            step: self.step(row),
                             switch,
                         }));
                     }
@@ -368,19 +381,38 @@ impl PrereqRun {
                 Phase::ProbeApproach(mut handle) => {
                     if budget.probes >= 2 {
                         return Poll::Ready(Err(failed(
-                            step(),
+                            self.step(row),
                             PrereqFailure::ProbeUnacknowledged,
                         )));
                     }
-                    if cx
-                        .snapshot()
-                        .here()
-                        .is_some_and(|here| here.value == self.gate.crossing.takeoff)
-                    {
+                    let alternatives = self.depth > 0
+                        && row
+                            .crossings
+                            .iter()
+                            .any(|entry| entry.crossing.takeoff != self.gate.crossing.takeoff);
+                    let here = cx.snapshot().here().map(|here| here.value);
+                    // Settle an in-flight candidate walk before binding its receipt goal.
+                    let crossing = if alternatives && handle.is_none() {
+                        here.and_then(|here| {
+                            row.crossings
+                                .iter()
+                                .find(|entry| entry.crossing.takeoff == here)
+                        })
+                    } else if alternatives {
+                        None
+                    } else {
+                        here.filter(|here| *here == self.gate.crossing.takeoff)
+                            .and_then(|_| {
+                                row.crossing(&self.gate.crossing)
+                                    .map(|(_, crossing)| crossing)
+                            })
+                    };
+                    if let Some(crossing) = crossing {
                         drop(handle);
+                        self.gate.crossing = crossing.crossing;
                         let Some((tile, op)) = probe_target(cx, &self.gate.crossing) else {
                             return Poll::Ready(Err(failed(
-                                step(),
+                                self.step(row),
                                 PrereqFailure::Action(
                                     "the crossing loc or its authored option was not observed"
                                         .into(),
@@ -399,17 +431,37 @@ impl PrereqRun {
                             self.phase = Phase::ProbeApproach(handle);
                             return Poll::Pending;
                         }
-                        match actions.begin::<Walk>(
-                            repair.request(self.gate.crossing.takeoff, 0, cx.evidence()),
-                            cx,
-                        ) {
+                        let request = if alternatives {
+                            let mut goals = Vec::with_capacity(row.crossings.len());
+                            goals.extend(
+                                row.crossings
+                                    .iter()
+                                    .map(|crossing| crossing.crossing.takeoff),
+                            );
+                            let goals = match WalkGoals::new(goals) {
+                                Ok(goals) => goals,
+                                Err(error) => {
+                                    return Poll::Ready(Err(failed(
+                                        self.step(row),
+                                        action_failure(ActionError::WalkGoals(error)),
+                                    )))
+                                }
+                            };
+                            repair.request_goals(self.gate.crossing.takeoff, goals, cx.evidence())
+                        } else {
+                            repair.request(self.gate.crossing.takeoff, 0, cx.evidence())
+                        };
+                        match actions.begin::<Walk>(request, cx) {
                             Ok(walk) => handle = Some(walk),
                             Err(ActionError::BudgetExhausted) => {
                                 self.phase = Phase::ProbeApproach(handle);
                                 return Poll::Pending;
                             }
                             Err(error) => {
-                                return Poll::Ready(Err(failed(step(), action_failure(error))))
+                                return Poll::Ready(Err(failed(
+                                    self.step(row),
+                                    action_failure(error),
+                                )))
                             }
                         }
                     }
@@ -419,16 +471,41 @@ impl PrereqRun {
                             return Poll::Pending;
                         }
                         Poll::Ready(Ok(receipt)) if receipt.end == WalkEnd::Arrived => {
+                            if alternatives {
+                                let Some(goal) = receipt.goal else {
+                                    return Poll::Ready(Err(failed(
+                                        self.step(row),
+                                        PrereqFailure::Action(
+                                            "candidate walk arrived without reporting its chosen goal"
+                                                .into(),
+                                        ),
+                                    )));
+                                };
+                                let Some(crossing) = row
+                                    .crossings
+                                    .iter()
+                                    .find(|entry| entry.crossing.takeoff == goal)
+                                else {
+                                    return Poll::Ready(Err(failed(
+                                        self.step(row),
+                                        PrereqFailure::Action(
+                                            "candidate walk selected a tile outside the prerequisite row"
+                                                .into(),
+                                        ),
+                                    )));
+                                };
+                                self.gate.crossing = crossing.crossing;
+                            }
                             self.phase = Phase::ProbeApproach(None)
                         }
                         Poll::Ready(Ok(receipt)) => {
                             return Poll::Ready(Err(PrereqRefusal::NoRouteToStep {
-                                step: step(),
+                                step: self.step(row),
                                 end: receipt.end,
                             }))
                         }
                         Poll::Ready(Err(error)) => {
-                            return Poll::Ready(Err(failed(step(), action_failure(error))))
+                            return Poll::Ready(Err(failed(self.step(row), action_failure(error))))
                         }
                     }
                 }
@@ -443,7 +520,10 @@ impl PrereqRun {
                                 return Poll::Pending;
                             }
                             Poll::Ready(Err(error)) => {
-                                return Poll::Ready(Err(failed(step(), action_failure(error))))
+                                return Poll::Ready(Err(failed(
+                                    self.step(row),
+                                    action_failure(error),
+                                )))
                             }
                             Poll::Ready(Ok(())) => {
                                 wait = Some(
@@ -461,14 +541,14 @@ impl PrereqRun {
                     let mut current = wait.expect("probe send has a wait");
                     let Some((_, receipt)) = run.prereq_send(cx) else {
                         return Poll::Ready(Err(failed(
-                            step(),
+                            self.step(row),
                             PrereqFailure::ProbeUnacknowledged,
                         )));
                     };
                     let accepted = if let Some(receipt) = receipt {
                         if !receipt.accepted {
                             return Poll::Ready(Err(failed(
-                                step(),
+                                self.step(row),
                                 PrereqFailure::ProbeUnacknowledged,
                             )));
                         }
@@ -519,7 +599,7 @@ impl PrereqRun {
                                 cx.evidence(),
                             );
                             return Poll::Ready(Err(failed(
-                                step(),
+                                self.step(row),
                                 PrereqFailure::ProbeDirection {
                                     expected: Arc::clone(&crossing.pass.message),
                                     seen: Arc::clone(&other.pass.message),
@@ -528,7 +608,7 @@ impl PrereqRun {
                         }
                         if reach::saw_cant_reach(cx, current.chat_mark) {
                             return Poll::Ready(Err(failed(
-                                step(),
+                                self.step(row),
                                 PrereqFailure::ProbeUnacknowledged,
                             )));
                         }
@@ -543,7 +623,10 @@ impl PrereqRun {
                                     return Poll::Pending;
                                 }
                                 Err(error) => {
-                                    return Poll::Ready(Err(failed(step(), action_failure(error))))
+                                    return Poll::Ready(Err(failed(
+                                        self.step(row),
+                                        action_failure(error),
+                                    )))
                                 }
                             }
                             continue;
@@ -557,7 +640,7 @@ impl PrereqRun {
                             "unacknowledged",
                         );
                         return Poll::Ready(Err(failed(
-                            step(),
+                            self.step(row),
                             PrereqFailure::ProbeUnacknowledged,
                         )));
                     }
@@ -574,7 +657,9 @@ impl PrereqRun {
                             self.phase = Phase::ProbeDrain(drive);
                             return Poll::Pending;
                         }
-                        Poll::Ready(Err(why)) => return Poll::Ready(Err(failed(step(), why))),
+                        Poll::Ready(Err(why)) => {
+                            return Poll::Ready(Err(failed(self.step(row), why)))
+                        }
                         Poll::Ready(Ok(ChatDone::Drained {
                             refusal: Some(index),
                             ..
@@ -582,14 +667,14 @@ impl PrereqRun {
                             RefusalThen::Talk => self.phase = Phase::Preconditions(0),
                             RefusalThen::Precondition(gate) => {
                                 return Poll::Ready(Err(PrereqRefusal::PreconditionMissing {
-                                    step: step(),
+                                    step: self.step(row),
                                     missing: PrereqMissing::Quest(gate.clone()),
                                 }))
                             }
                         },
                         Poll::Ready(Ok(_)) => {
                             return Poll::Ready(Err(PrereqRefusal::StepUnwitnessed {
-                                step: step(),
+                                step: self.step(row),
                             }))
                         }
                     }
@@ -607,6 +692,8 @@ impl PrereqRun {
                                 .find(|(_, row)| api::prereq_steps::proves(&row.establishes, gate));
                             if truth != Truth::True && self.depth < 2 {
                                 if let Some((_, child_row)) = child {
+                                    // This identity locates the child row; its approach
+                                    // selects among all authored takeoffs in ProbeApproach.
                                     if let Some(crossing) = child_row.crossings.first() {
                                         let mut run = Self::begin(
                                             ActionableGate {
@@ -631,7 +718,7 @@ impl PrereqRun {
                             }
                             if truth == Truth::False || (child.is_some() && truth != Truth::True) {
                                 return Poll::Ready(Err(PrereqRefusal::PreconditionMissing {
-                                    step: step(),
+                                    step: self.step(row),
                                     missing: PrereqMissing::Quest(gate.clone()),
                                 }));
                             }
@@ -668,7 +755,10 @@ impl PrereqRun {
                                 return Poll::Pending;
                             }
                             Err(error) => {
-                                return Poll::Ready(Err(failed(step(), action_failure(error))))
+                                return Poll::Ready(Err(failed(
+                                    self.step(row),
+                                    action_failure(error),
+                                )))
                             }
                         }
                     }
@@ -682,18 +772,21 @@ impl PrereqRun {
                         }
                         Poll::Ready(Ok(receipt)) => {
                             return Poll::Ready(Err(PrereqRefusal::NoRouteToStep {
-                                step: step(),
+                                step: self.step(row),
                                 end: receipt.end,
                             }))
                         }
                         Poll::Ready(Err(error)) => {
-                            return Poll::Ready(Err(failed(step(), action_failure(error))))
+                            return Poll::Ready(Err(failed(self.step(row), action_failure(error))))
                         }
                     }
                 }
                 Phase::TalkStart => {
                     if budget.talks >= 4 {
-                        return Poll::Ready(Err(failed(step(), PrereqFailure::ReclaimLoop)));
+                        return Poll::Ready(Err(failed(
+                            self.step(row),
+                            PrereqFailure::ReclaimLoop,
+                        )));
                     }
                     match ChatDrive::begin(actions, cx, row, false) {
                         Ok(drive) => {
@@ -705,7 +798,7 @@ impl PrereqRun {
                             return Poll::Pending;
                         }
                         Err(error) => {
-                            return Poll::Ready(Err(failed(step(), action_failure(error))))
+                            return Poll::Ready(Err(failed(self.step(row), action_failure(error))))
                         }
                     }
                 }
@@ -715,19 +808,21 @@ impl PrereqRun {
                             self.phase = Phase::Talk(drive);
                             return Poll::Pending;
                         }
-                        Poll::Ready(Err(why)) => return Poll::Ready(Err(failed(step(), why))),
+                        Poll::Ready(Err(why)) => {
+                            return Poll::Ready(Err(failed(self.step(row), why)))
+                        }
                         Poll::Ready(Ok(ChatDone::Close { missing, witnessed })) => {
                             drop(drive);
                             let result = if let Some(required) = missing {
                                 CloseResult::Refusal(PrereqRefusal::PreconditionMissing {
-                                    step: step(),
+                                    step: self.step(row),
                                     missing: PrereqMissing::FreeSlots { required },
                                 })
                             } else if witnessed {
                                 CloseResult::Done
                             } else {
                                 CloseResult::Refusal(PrereqRefusal::StepUnwitnessed {
-                                    step: step(),
+                                    step: self.step(row),
                                 })
                             };
                             self.phase = Phase::CloseStart(result);
@@ -741,7 +836,7 @@ impl PrereqRun {
                                     self.repeats_left.as_mut().expect("resolved repeat bound");
                                 if *left == 0 {
                                     return Poll::Ready(Err(failed(
-                                        step(),
+                                        self.step(row),
                                         PrereqFailure::ReclaimLoop,
                                     )));
                                 }
@@ -753,7 +848,7 @@ impl PrereqRun {
                         }
                         Poll::Ready(Ok(_)) => {
                             return Poll::Ready(Err(PrereqRefusal::StepUnwitnessed {
-                                step: step(),
+                                step: self.step(row),
                             }))
                         }
                     }
@@ -764,7 +859,9 @@ impl PrereqRun {
                         self.phase = Phase::CloseStart(result);
                         return Poll::Pending;
                     }
-                    Err(error) => return Poll::Ready(Err(failed(step(), action_failure(error)))),
+                    Err(error) => {
+                        return Poll::Ready(Err(failed(self.step(row), action_failure(error))))
+                    }
                 },
                 Phase::Close { handle, result } => match actions.poll(&handle, cx) {
                     Poll::Pending => {
@@ -777,14 +874,16 @@ impl PrereqRun {
                             CloseResult::Refusal(refusal) => Err(refusal),
                         })
                     }
-                    Poll::Ready(Ok(Err(why))) => return Poll::Ready(Err(failed(step(), why))),
+                    Poll::Ready(Ok(Err(why))) => {
+                        return Poll::Ready(Err(failed(self.step(row), why)))
+                    }
                     Poll::Ready(Err(error)) => {
-                        return Poll::Ready(Err(failed(step(), action_failure(error))))
+                        return Poll::Ready(Err(failed(self.step(row), action_failure(error))))
                     }
                 },
                 Phase::Complete => {
                     return Poll::Ready(Err(failed(
-                        step(),
+                        self.step(row),
                         PrereqFailure::Action("prerequisite was already completed".into()),
                     )))
                 }

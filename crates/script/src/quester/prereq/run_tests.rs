@@ -196,20 +196,31 @@ fn last_interaction(ledger: &Option<Box<ledger::Ledger>>) -> &InteractReq {
     }
 }
 fn arrive(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64) {
+    set_walk_result(ledger, tick, WalkEnd::Arrived, None);
+}
+fn arrive_at_goal(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64, goal: WorldTile) {
+    set_walk_result(ledger, tick, WalkEnd::Arrived, Some(goal));
+}
+fn set_walk_result(
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    end: WalkEnd,
+    goal: Option<WorldTile>,
+) {
     let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
     assert!(matches!(
         ledger.as_ref().unwrap().outbox.last().unwrap().effect,
         HostEffect::Walk(_)
     ));
     ledger.as_mut().unwrap().walk = Some(WalkReceipt {
-        goal: None,
+        goal,
         request_id: authority.request_id().get(),
         evidence: EvidenceStamp {
             run: authority.run(),
             tick,
             sequence: tick,
         },
-        end: WalkEnd::Arrived,
+        end,
         blocked: None,
         detail: None,
         refusal: None,
@@ -382,6 +393,30 @@ fn needs_step_entry_with_denied_consent_returns_not_allowed_before_probe() {
     ));
     assert!(ledger.is_none());
     assert_eq!(budget.probes, 0);
+}
+
+#[test]
+fn nested_child_consent_is_checked_before_candidate_walk() {
+    let (_, parent) = row(ConsentSwitch::QuestStart);
+    let state = state();
+    let snapshot = snapshot(parent.crossings[0].crossing.to);
+    let mut run = runner(parent, &parent.crossings[0], Truth::False);
+    run.allow = PrereqAllow {
+        dialogue: false,
+        quest_start: true,
+    };
+    let mut ledger = None;
+    let mut budget = PrereqBudget::default();
+    assert!(matches!(
+        poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget),
+        Poll::Ready(Err(PrereqRefusal::NotAllowed {
+            switch: PrereqSwitch::Dialogue,
+            ..
+        }))
+    ));
+    assert!(ledger.is_none());
+    assert_eq!(budget.probes, 0);
+    assert_eq!(budget.rows_run, 1);
 }
 
 #[test]
@@ -976,34 +1011,79 @@ fn reclaim_retalks_once_with_the_same_row_and_budget() {
 }
 
 #[test]
-fn a2_child_probe_and_parent_talk_share_the_same_budget() {
+fn a2_child_probe_selects_reachable_crossing_and_parent_talk_share_the_same_budget() {
     let (holy_ordinal, holy) = row(ConsentSwitch::PrereqDialogue);
     let (mort_ordinal, mort) = row(ConsentSwitch::QuestStart);
-    let crossing = &holy.crossings[0];
+    let north = &holy.crossings[0];
+    let south = &holy.crossings[1];
     let state = state();
-    let mut snapshot = crossing_snapshot(crossing);
+    let mut snapshot = snapshot(north.crossing.to);
     let mut run = runner(mort, &mort.crossings[0], Truth::False);
     let mut budget = PrereqBudget::default();
     let mut ledger = None;
     assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
-    assert!(matches!(last_interaction(&ledger), InteractReq::Loc { .. }));
+    let HostEffect::Walk(request) = &ledger.as_ref().unwrap().outbox.last().unwrap().effect else {
+        panic!("the nested probe must request reachability over all authored stands");
+    };
+    assert_eq!(request.target, north.crossing.takeoff);
+    assert_eq!(
+        request.candidate_goals.as_ref().unwrap().as_slice(),
+        &[north.crossing.takeoff, south.crossing.takeoff]
+    );
+    assert_eq!(budget.probes, 0);
     assert_eq!(
         &budget.visited[..usize::from(budget.visited_len)],
         &[mort_ordinal, holy_ordinal]
     );
     assert_eq!(budget.rows_run, 2);
+    arrive_at_goal(&mut ledger, 1, south.crossing.takeoff);
+    snapshot.seed_local_player(local_player(south.crossing.takeoff));
+    crate::quester::families::tests::seed_prereq_crossing(&mut snapshot, holy, &south.crossing);
+    let probe_tick = (2..=5)
+        .find(|tick| {
+            assert!(
+                poll(&mut run, &snapshot, &mut ledger, *tick, &state, &mut budget).is_pending()
+            );
+            matches!(
+                ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+                HostEffect::Interaction(_)
+            )
+        })
+        .expect("the selected stand must start its authored probe");
+    let Phase::Child { run: child, .. } = &run.phase else {
+        panic!("the parent must retain its running prerequisite child");
+    };
+    assert_eq!(child.gate.crossing, south.crossing);
+    assert!(matches!(last_interaction(&ledger), InteractReq::Loc { .. }));
     assert_eq!(budget.probes, 1);
-    accept_last(&mut ledger, 1, 10);
-    snapshot.seed_local_player(local_player(crossing.pass.landing));
-    message(&mut snapshot, 11, &crossing.pass.message);
-    assert!(poll(&mut run, &snapshot, &mut ledger, 2, &state, &mut budget).is_pending());
+    accept_last(&mut ledger, probe_tick, 10);
+    snapshot.seed_local_player(local_player(south.pass.landing));
+    message(&mut snapshot, 11, &south.pass.message);
+    let parent_walk_tick = probe_tick + 1;
+    assert!(poll(
+        &mut run,
+        &snapshot,
+        &mut ledger,
+        parent_walk_tick,
+        &state,
+        &mut budget
+    )
+    .is_pending());
     assert!(matches!(
         ledger.as_ref().unwrap().outbox.last().unwrap().effect,
         HostEffect::Walk(_)
     ));
-    arrive(&mut ledger, 2);
+    arrive(&mut ledger, parent_walk_tick);
     snapshot = npc_snapshot(mort);
-    assert!(poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget).is_pending());
+    assert!(poll(
+        &mut run,
+        &snapshot,
+        &mut ledger,
+        parent_walk_tick + 1,
+        &state,
+        &mut budget
+    )
+    .is_pending());
     assert!(matches!(last_interaction(&ledger), InteractReq::Npc { .. }));
     assert_eq!(budget.rows_run, 2);
     assert_eq!(budget.probes, 1);
@@ -1014,6 +1094,51 @@ fn a2_child_probe_and_parent_talk_share_the_same_budget() {
         holy.establishes.values
     );
     drop(run);
+    assert!(!ledger.as_ref().unwrap().test_owner_live());
+}
+
+#[test]
+fn nested_candidate_no_path_remains_a_typed_prerequisite_refusal() {
+    let (_, holy) = row(ConsentSwitch::PrereqDialogue);
+    let (_, mort) = row(ConsentSwitch::QuestStart);
+    let state = state();
+    let before = state.prereq_snapshot();
+    let snapshot = snapshot(holy.crossings[0].crossing.to);
+    let mut run = runner(mort, &mort.crossings[0], Truth::False);
+    let mut budget = PrereqBudget::default();
+    let mut ledger = None;
+    assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
+    let HostEffect::Walk(request) = &ledger.as_ref().unwrap().outbox.last().unwrap().effect else {
+        panic!("the nested probe must submit its candidate stands");
+    };
+    assert_eq!(
+        request.candidate_goals.as_ref().unwrap().as_slice(),
+        &[
+            holy.crossings[0].crossing.takeoff,
+            holy.crossings[1].crossing.takeoff
+        ]
+    );
+    set_walk_result(&mut ledger, 1, WalkEnd::NoPath, None);
+    assert!(matches!(
+        poll(&mut run, &snapshot, &mut ledger, 2, &state, &mut budget),
+        Poll::Ready(Err(PrereqRefusal::NoRouteToStep {
+            end: WalkEnd::NoPath,
+            ..
+        }))
+    ));
+    assert_eq!(state.prereq_snapshot(), before);
+    assert_eq!(budget.probes, 0);
+    assert_eq!(budget.talks, 0);
+    assert_eq!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|effect| matches!(effect.effect, HostEffect::Walk(_)))
+            .count(),
+        1
+    );
     assert!(!ledger.as_ref().unwrap().test_owner_live());
 }
 

@@ -55,8 +55,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   dialogue effects and refusals for the current run, then resumes the
   original walk. Stop cancels the current walk or conversation.
   Bank choices use the same remembered crossing state.
-  The crossing check uses the packed legal interaction stand, including
-  either side of the holy barrier, rather than walking onto its blocked tile.
+  The crossing check uses the packed legal interaction stand. For the barrier,
+  the route planner chooses between both legal stands instead of committing
+  to a side the account cannot reach. It never walks onto the blocked tile.
   Walks from Morytania can reach the barrier through the east trapdoor.
 - Two default-on navigation settings allow prerequisite dialogue and quest
   starts. A global or script grant allows the step. A per-walk `false`
