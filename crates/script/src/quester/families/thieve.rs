@@ -71,7 +71,7 @@ pub(super) fn compile(
         return Err(CompileError::code("invalid-args"));
     }
 
-    let targets = selected_targets(cx.selected, args.target.npc.trim())?;
+    let (targets, no_target_wait_ticks) = selected_targets(cx.selected, args.target.npc.trim())?;
     let item_id = args.until.obj.id(cx.selected)?;
     let qty = super::s2::compile_quantity(args.until.qty, cx)?;
     let anchor = super::anchor_tile(args.anchor.as_ref())?;
@@ -85,13 +85,14 @@ pub(super) fn compile(
         anchor,
         radius,
         duration,
+        no_target_wait_ticks,
     }))
 }
 
 fn selected_targets(
     selected: &SelectedGameData,
     selector: &str,
-) -> Result<Arc<[Target]>, CompileError> {
+) -> Result<(Arc<[Target]>, u64), CompileError> {
     let names = selected
         .npc_names()
         .ok_or_else(|| CompileError::code("thieving-npc-facts-unavailable"))?;
@@ -123,6 +124,9 @@ fn selected_targets(
             .required_thieving_npc(row.id)
             .filter(|level| *level >= 1)
             .ok_or_else(|| CompileError::code("unknown-thieving-level"))?;
+        let respawn_ticks = selected
+            .thieving_npc_respawn_ticks(row.id)
+            .ok_or_else(|| CompileError::code("unknown-thieving-respawn"))?;
         let display = row
             .display
             .as_deref()
@@ -134,13 +138,22 @@ fn selected_targets(
                 display: Arc::from(display),
                 action: Arc::from(action),
                 required_level,
+                respawn_ticks,
             });
         }
     }
     if targets.is_empty() {
         return Err(CompileError::code("unresolved-thieving-npc"));
     }
-    Ok(Arc::from(targets))
+    // The empty-anchor wait covers the longest selected respawn window plus
+    // one observed tick for the `PLAYER_INFO` that carries the spawn.
+    let no_target_wait_ticks = targets
+        .iter()
+        .map(|target| u64::from(target.respawn_ticks))
+        .max()
+        .unwrap_or_default()
+        .saturating_add(1);
+    Ok((Arc::from(targets), no_target_wait_ticks))
 }
 
 struct Plan {
@@ -150,6 +163,7 @@ struct Plan {
     anchor: Option<WorldTile>,
     radius: u8,
     duration: Duration,
+    no_target_wait_ticks: u64,
 }
 
 impl StepPlan for Plan {
@@ -165,6 +179,7 @@ impl StepPlan for Plan {
                 anchor: self.anchor,
                 radius: self.radius,
                 deadline: self.duration,
+                no_target_wait_ticks: self.no_target_wait_ticks,
             },
             &mut cx.tick.cx,
         )?;

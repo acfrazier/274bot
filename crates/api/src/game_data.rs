@@ -212,9 +212,23 @@ fn ascii_fold_hash(value: &str) -> u64 {
     hash
 }
 
+/// One selected pickpocket spawn target.
+///
+/// [`NamedFact`] is the shared item/object reference shape; this row also
+/// carries the NPC config's own respawn window so a caller waits the selected
+/// content's rate instead of a fixed constant.
+#[derive(Debug, Deserialize)]
+struct PickpocketNpc {
+    id: i32,
+    name: String,
+    /// `NpcType.respawnrate` in game ticks. The generator writes the engine
+    /// default 100 when the config declares none (`NpcType.ts:105`).
+    respawn_ticks: u32,
+}
+
 #[derive(Debug, Deserialize)]
 struct PickpocketFact {
-    npcs: Vec<NamedFact>,
+    npcs: Vec<PickpocketNpc>,
     level: i32,
 }
 
@@ -2362,6 +2376,24 @@ impl SelectedGameData {
             .filter(|fact| fact.npcs.iter().any(|npc| npc.id == id));
         let level = facts.next()?.level;
         facts.all(|fact| fact.level == level).then_some(level)
+    }
+
+    /// Selected NPC config's respawn window, in game ticks, for a generated
+    /// pickpocket NPC id.
+    ///
+    /// The generator writes the config's `respawnrate`, or the engine default
+    /// 100 when the config declares none (`engine/src/cache/config/NpcType.ts:105`).
+    /// Conflicting selected rows are unknown, so a caller never waits a value
+    /// one row does not declare.
+    pub fn thieving_npc_respawn_ticks(&self, id: i32) -> Option<u32> {
+        let mut rates = self
+            .pickpocket
+            .iter()
+            .flat_map(|fact| fact.npcs.iter())
+            .filter(|npc| npc.id == id)
+            .map(|npc| npc.respawn_ticks);
+        let rate = rates.next()?;
+        rates.all(|other| other == rate).then_some(rate)
     }
 
     pub fn spells(&self) -> &[SpellFact] {

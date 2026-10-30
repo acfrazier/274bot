@@ -17,6 +17,9 @@ pub(crate) struct Target {
     pub display: Arc<str>,
     pub action: Arc<str>,
     pub required_level: i32,
+    /// The selected NPC config's `respawnrate`, in game ticks, from
+    /// `api::game_data::SelectedGameData::thieving_npc_respawn_ticks`.
+    pub respawn_ticks: u32,
 }
 
 pub(crate) struct ThieveActionArgs {
@@ -26,6 +29,11 @@ pub(crate) struct ThieveActionArgs {
     pub anchor: Option<WorldTile>,
     pub radius: u8,
     pub deadline: Duration,
+    /// Observed game ticks to wait for one of the step's selectable spawns
+    /// once the player is inside the anchor. The compile step sets this to
+    /// the largest `Target::respawn_ticks` plus one observed tick; the
+    /// compiled target refuses when any selected id has no respawn fact.
+    pub no_target_wait_ticks: u64,
 }
 
 pub(crate) struct Thieve {
@@ -43,6 +51,12 @@ pub(crate) struct Thieve {
     walk_failures: u8,
     /// First observed tick with the player inside the anchor and no target.
     no_target_since: Option<u64>,
+    /// Set when the empty-anchor wait ends by dispatching the spawn it saw.
+    ///
+    /// That attempt began on the tick the content spawned the target, which
+    /// can be after the action's wall-clock deadline. The deadline must not
+    /// kill it; it still ends the approach walk and later attempts.
+    anchor_spawn_attempt: bool,
 }
 
 struct PendingWalk {
@@ -57,17 +71,6 @@ struct PendingWalk {
 /// (`MAX_RETURN_RECOVERY_ACTIONS = 1`, `native.rs:1064-1066`).
 const APPROACH_WALK_RETRIES: u8 = 1;
 
-/// Observed game ticks to wait for a matching NPC once inside the anchor.
-/// The selected content's NPC 613 (`digworkman1`) declares no `respawnrate`
-/// (`content/scripts/quests/quest_itexam/configs/quest_itexam.npc`), so the
-/// engine default applies: `respawnrate = 100`, "default to 1-minute"
-/// (`engine/src/cache/config/NpcType.ts:105`), and the engine decrements it
-/// once per world cycle (`engine/src/engine/entity/Npc.ts:121`) after
-/// `npc_del` schedules the respawn (`engine/src/engine/script/handlers/NpcOps.ts:94`).
-/// One more observed tick covers the `PLAYER_INFO` that carries the spawn
-/// (`crates/host/src/slot.rs:22-26`).
-const NO_TARGET_WAIT_TICKS: u64 = 101;
-
 /// Named terminal failure for the empty-anchor wait.
 const NO_TARGET_FAILURE: &str = "no thieving target appeared at the anchor";
 
@@ -81,6 +84,7 @@ impl NativeMachine for Thieve {
             || args.goal_qty < 0
             || !(1..=32).contains(&args.radius)
             || args.deadline.is_zero()
+            || args.no_target_wait_ticks == 0
             || args.targets.iter().any(|target| {
                 target.id < 0
                     || target.display.is_empty()
@@ -117,6 +121,7 @@ impl NativeMachine for Thieve {
             pending_target_id: None,
             walk_failures: 0,
             no_target_since: None,
+            anchor_spawn_attempt: false,
         })
     }
 
@@ -204,6 +209,11 @@ impl NativeMachine for Thieve {
             self.args.radius,
             skill.map(|(effective, _)| effective),
         );
+        // The wall-clock deadline stays out of the empty-anchor wait and the
+        // one attempt that wait produces: the wait is a content wait, bounded
+        // by the selected spawns' own `respawn_ticks`
+        // (`self.args.no_target_wait_ticks`).
+        let entered_waiting = self.no_target_since.is_some();
         if picked.is_some() {
             self.no_target_since = None;
         }
@@ -252,7 +262,16 @@ impl NativeMachine for Thieve {
         let mut core_observation = observation;
         core_observation.inventory_ready &=
             !walk_pending && self.reach.is_none() && !chat_dialog_open;
-        let decision = self.core.poll(now, core_observation);
+        let suspend_deadline = entered_waiting
+            || (self.anchor_spawn_attempt && self.core.has_pending_attempt());
+        let decision = if suspend_deadline {
+            self.core.poll_without_deadline(now, core_observation)
+        } else {
+            self.core.poll(now, core_observation)
+        };
+        if self.anchor_spawn_attempt && !self.core.has_pending_attempt() {
+            self.anchor_spawn_attempt = false;
+        }
 
         if decision == Decision::Dispatch
             && !walk_pending
@@ -329,11 +348,15 @@ impl NativeMachine for Thieve {
                         return Poll::Pending;
                     }
                     let since = *self.no_target_since.get_or_insert(cx.evidence().tick);
-                    if cx.evidence().tick.saturating_sub(since) >= NO_TARGET_WAIT_TICKS {
+                    if cx.evidence().tick.saturating_sub(since) >= self.args.no_target_wait_ticks
+                    {
                         return Poll::Ready(Err(failed(NO_TARGET_FAILURE)));
                     }
                     return Poll::Pending;
                 };
+                // The attempt this wait produced began after the action's
+                // deadline may have elapsed; keep it alive to its resolution.
+                self.anchor_spawn_attempt = entered_waiting;
                 let action = action_name(&op);
                 let reach = std::task::ready!(super::defer_budget(Reach::begin(
                     ReachArgs {
@@ -388,21 +411,27 @@ impl NativeMachine for Thieve {
 impl Thieve {
     fn poll_core_during_modal(&mut self, now: Duration) -> Result<(), ActionError> {
         // Keep action and receipt deadlines live without advancing the attempt
-        // observation while OneOp owns the modal.
-        let decision = self.core.poll(
-            now,
-            Observation {
-                effective_thieving: None,
-                required_level: None,
-                experience: None,
-                inventory_used: None,
-                target_count: None,
-                inventory_ready: false,
-                chat: ChatEvidence::default(),
-                chat_dialog_open: false,
-                chat_dialog_fingerprint: None,
-            },
-        );
+        // observation while OneOp owns the modal. The one attempt the
+        // empty-anchor wait produced keeps its deadline suspension.
+        let observation = Observation {
+            effective_thieving: None,
+            required_level: None,
+            experience: None,
+            inventory_used: None,
+            target_count: None,
+            inventory_ready: false,
+            chat: ChatEvidence::default(),
+            chat_dialog_open: false,
+            chat_dialog_fingerprint: None,
+        };
+        let decision = if self.anchor_spawn_attempt && self.core.has_pending_attempt() {
+            self.core.poll_without_deadline(now, observation)
+        } else {
+            self.core.poll(now, observation)
+        };
+        if self.anchor_spawn_attempt && !self.core.has_pending_attempt() {
+            self.anchor_spawn_attempt = false;
+        }
         match decision {
             Decision::Failed(reason) => Err(action_failure(reason)),
             Decision::AttemptFailed if self.pending_target_id.is_some_and(is_troll_guard) => Err(
@@ -686,6 +715,7 @@ mod tests {
             display: Arc::from("Man"),
             action: Arc::from("Pickpocket"),
             required_level,
+            respawn_ticks: 100,
         }
     }
 
@@ -737,6 +767,7 @@ mod tests {
             anchor: Some(anchor),
             radius,
             deadline: Duration::from_secs(60),
+            no_target_wait_ticks: 101,
         }
     }
 
@@ -926,6 +957,29 @@ mod tests {
             anchor: Some(anchor),
             radius,
             deadline,
+            no_target_wait_ticks: 101,
+        }
+    }
+
+    /// A step compiled for one target whose selected NPC config declares
+    /// `respawn_ticks`; the empty-anchor bound is that rate plus one tick.
+    fn anchor_wait_args(
+        anchor: WorldTile,
+        required_level: i32,
+        respawn_ticks: u32,
+        deadline: Duration,
+    ) -> ThieveActionArgs {
+        ThieveActionArgs {
+            targets: Arc::from([Target {
+                respawn_ticks,
+                ..target(1, required_level)
+            }]),
+            item_id: 995,
+            goal_qty: 1,
+            anchor: Some(anchor),
+            radius: 12,
+            deadline,
+            no_target_wait_ticks: u64::from(respawn_ticks) + 1,
         }
     }
 
@@ -1208,6 +1262,136 @@ mod tests {
         ));
         assert_eq!(walk_request_count(&ledger), 0);
         assert_eq!(npc_click_count(&ledger), 0);
+    }
+
+    #[test]
+    fn anchor_wait_follows_the_selected_spawns_own_respawn_window() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let snapshot = game_snapshot(anchor, vec![], vec![]);
+        let mut ledger = None;
+        let run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let run = tick
+                .actions
+                .begin::<Thieve>(
+                    anchor_wait_args(anchor, 1, 120, Duration::from_secs(600)),
+                    &mut tick.cx,
+                )
+                .unwrap();
+            assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
+            run
+        });
+        for tick in 2..=121 {
+            assert!(
+                with_tick(&snapshot, &mut ledger, tick, |tick| {
+                    tick.actions.poll(&run, &mut tick.cx)
+                })
+                .is_pending(),
+                "tick {tick} is still inside the 120-tick respawn window"
+            );
+        }
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 122, |tick| {
+                tick.actions.poll(&run, &mut tick.cx)
+            }),
+            Poll::Ready(Err(ActionError::Failed(detail)))
+                if detail.as_ref() == "no thieving target appeared at the anchor"
+        ));
+        assert_eq!(walk_request_count(&ledger), 0);
+        assert_eq!(npc_click_count(&ledger), 0);
+    }
+
+    #[test]
+    fn anchor_spawn_at_the_deadline_is_clicked_and_its_first_attempt_survives() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let empty = game_snapshot(anchor, vec![], vec![]);
+        let spawned = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
+        let mut ledger = None;
+        let run = with_tick(&empty, &mut ledger, 1, |tick| {
+            let run = tick
+                .actions
+                .begin::<Thieve>(
+                    anchor_wait_args(anchor, 1, 100, Duration::from_secs(60)),
+                    &mut tick.cx,
+                )
+                .unwrap();
+            assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
+            run
+        });
+        for tick in 2..100 {
+            assert!(
+                with_tick(&empty, &mut ledger, tick, |tick| {
+                    tick.actions.poll(&run, &mut tick.cx)
+                })
+                .is_pending(),
+                "tick {tick} is before the deadline"
+            );
+        }
+        // 600 ms ticks put tick 100 exactly on the 60 s deadline. The target
+        // appears on that tick, inside the respawn bound.
+        assert!(with_tick(&spawned, &mut ledger, 100, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(
+            npc_click_count(&ledger),
+            1,
+            "a spawn that appears on the deadline tick is still clicked"
+        );
+        for tick in 101..=102 {
+            assert!(
+                with_tick(&spawned, &mut ledger, tick, |tick| {
+                    tick.actions.poll(&run, &mut tick.cx)
+                })
+                .is_pending(),
+                "tick {tick}: the first anchor attempt must not be killed by the deadline"
+            );
+        }
+    }
+
+    #[test]
+    fn anchor_wait_does_not_end_on_the_deadline() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let snapshot = game_snapshot(anchor, vec![], vec![]);
+        let mut ledger = None;
+        let run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let run = tick
+                .actions
+                .begin::<Thieve>(
+                    anchor_wait_args(anchor, 1, 100, Duration::from_secs(60)),
+                    &mut tick.cx,
+                )
+                .unwrap();
+            assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
+            run
+        });
+        for tick in 2..=101 {
+            assert!(
+                with_tick(&snapshot, &mut ledger, tick, |tick| {
+                    tick.actions.poll(&run, &mut tick.cx)
+                })
+                .is_pending(),
+                "tick {tick} is inside the respawn bound, past the 60 s deadline"
+            );
+        }
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 102, |tick| {
+                tick.actions.poll(&run, &mut tick.cx)
+            }),
+            Poll::Ready(Err(ActionError::Failed(detail)))
+                if detail.as_ref() == "no thieving target appeared at the anchor"
+        ));
     }
 
     #[test]
