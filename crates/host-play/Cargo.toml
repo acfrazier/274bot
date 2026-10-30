@@ -93,6 +93,10 @@ required-features = ["live-harness", "test-support", "live-probe"]
 [[test]]
 name = "seat_live"
 required-features = ["live-harness", "test-support", "live-probe"]
+[[test]]
+name = "tick_engine"
+required-features = ["live-harness", "test-support"]
+
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

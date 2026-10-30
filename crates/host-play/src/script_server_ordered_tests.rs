@@ -2,6 +2,7 @@
 use super::*;
 use api::interact::server_ordered::*;
 use api::interact::Driver;
+use api::interact::{ActionSpec, Interactions, OpTarget, SendResult};
 use api::prot::Send;
 use script::native::{
     ActionContext, ActionError, ActionHandle, NativeMachine, NativeTick, Script, ScriptFailure,
@@ -15,6 +16,7 @@ const CIPHER_SEED: [i32; 4] = [17, 29, 41, 53];
 enum Emission {
     Content(ServerOrderedRequest),
     ContentThenDrop(ServerOrderedRequest),
+    DoubleContent(ServerOrderedRequest, ServerOrderedRequest),
     Advanced {
         operations: Vec<Send>,
         debug: Option<Arc<api::debug_commands::DebugCatalog>>,
@@ -25,28 +27,41 @@ struct OrderedMachine {
     request_id: u64,
     follow_drop: bool,
     drop_request: Option<u64>,
+    second_emission: Option<Result<u64, ActionError>>,
+}
+
+struct OrderedOutput {
+    receipt: ServerOrderedDispatch,
+    second_emission: Option<Result<u64, ActionError>>,
 }
 
 impl NativeMachine for OrderedMachine {
     type Args = Emission;
-    type Output = ServerOrderedDispatch;
-
+    type Output = OrderedOutput;
     fn begin(request: Emission, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
         let follow_drop = matches!(&request, Emission::ContentThenDrop(_));
-        let request_id = match request {
+        let (request_id, second_emission) = match request {
             Emission::Content(request) | Emission::ContentThenDrop(request) => {
-                cx.emit_server_ordered(request)?
+                (cx.emit_server_ordered(request)?, None)
             }
-            Emission::Advanced { operations, debug } => match debug {
-                Some(debug) => script::surface::packet_context_for_test_with_debug(cx, debug)
-                    .send_batch(operations)?,
-                None => script::surface::packet_context_for_test(cx).send_batch(operations)?,
-            },
+            Emission::DoubleContent(first, second) => {
+                let request_id = cx.emit_server_ordered(first)?;
+                (request_id, Some(cx.emit_server_ordered(second)))
+            }
+            Emission::Advanced { operations, debug } => {
+                let request_id = match debug {
+                    Some(debug) => script::surface::packet_context_for_test_with_debug(cx, debug)
+                        .send_batch(operations)?,
+                    None => script::surface::packet_context_for_test(cx).send_batch(operations)?,
+                };
+                (request_id, None)
+            }
         };
         Ok(Self {
             request_id,
             follow_drop,
             drop_request: None,
+            second_emission,
         })
     }
 
@@ -68,18 +83,19 @@ impl NativeMachine for OrderedMachine {
                 return Poll::Pending;
             }
         }
-        Poll::Ready(Ok(receipt))
+        Poll::Ready(Ok(OrderedOutput {
+            receipt,
+            second_emission: self.second_emission.take(),
+        }))
     }
-
-    fn cancel(&mut self) {}
 }
 
 #[derive(Default)]
 struct Results {
     receipts: Vec<ServerOrderedDispatch>,
     errors: Vec<ActionError>,
+    second_emissions: Vec<Result<u64, ActionError>>,
 }
-
 struct OrderedScript {
     pending: VecDeque<Emission>,
     handle: Option<ActionHandle<OrderedMachine>>,
@@ -98,7 +114,13 @@ impl Script for OrderedScript {
         if let Some(handle) = self.handle.as_ref() {
             if let Poll::Ready(result) = tick.actions.poll(handle, &mut tick.cx) {
                 match result {
-                    Ok(receipt) => self.results.lock().unwrap().receipts.push(receipt),
+                    Ok(output) => {
+                        let mut results = self.results.lock().unwrap();
+                        results.receipts.push(output.receipt);
+                        if let Some(second) = output.second_emission {
+                            results.second_emissions.push(second);
+                        }
+                    }
                     Err(error) => self.results.lock().unwrap().errors.push(error),
                 }
                 self.handle = None;
@@ -1393,9 +1415,15 @@ fn ordered_knife_last_row_static_failure_has_zero_prefix_bytes_and_cipher_moveme
     rig.pump(2);
     let receipt = rig.receipt();
     assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+    assert_eq!(receipt.terminal, Some(ServerOrderedError::StaleTarget));
     assert_eq!(receipt.rows[0], RowDispatch::NotAttempted);
     assert_eq!(receipt.rows[1], RowDispatch::NotAttempted);
-    assert!(matches!(receipt.rows[2], RowDispatch::Refused { .. }));
+    assert_eq!(
+        receipt.rows[2],
+        RowDispatch::Refused {
+            reason: ServerOrderedError::StaleTarget
+        }
+    );
     assert!(rig.decoded().is_empty());
     let mut after = rig.client.out.random.clone().unwrap();
     assert_eq!(before.next_int(), after.next_int());
@@ -1625,6 +1653,95 @@ fn ordered_delayed_request_counts_later_foreign_traffic_without_rate_admission()
     assert!(decoded[..3].iter().all(|packet| packet.0 == opcode));
     rig.input.with_server_ordered_input(|state| {
         assert_eq!(state.snapshot().packet_count(), 7);
+    });
+}
+
+fn checked_loc_click(rig: &mut Rig) -> u64 {
+    let before = rig.client.out.committed_packet_count().unwrap();
+    let loc = rig.snapshot.locs()[0].clone();
+    assert!(matches!(
+        Interactions::new(&rig.snapshot, &mut rig.client)
+            .interact(OpTarget::Loc(&loc), ActionSpec::Operation(1)),
+        SendResult::Sent { .. }
+    ));
+    rig.client
+        .out
+        .committed_packet_count()
+        .unwrap()
+        .checked_sub(before)
+        .unwrap()
+}
+
+#[test]
+fn ordered_knife_and_checked_click_have_no_host_rate_rule_across_adjacent_and_same_drain_ticks() {
+    let mut adjacent = Rig::new();
+    let request = knife_request(&mut adjacent, true);
+    adjacent.start([Emission::Content(request)]);
+    adjacent.pump(1);
+    adjacent.input.with_server_ordered_input(|state| {
+        assert_eq!(state.snapshot().category_counts(), [4, 0, 0]);
+        assert_eq!(state.snapshot().packet_count(), 4);
+    });
+    adjacent.input.observe_input_tick(
+        adjacent.client.revision(),
+        2,
+        adjacent.client.gens.session,
+    );
+    assert_eq!(checked_loc_click(&mut adjacent), 2);
+    adjacent.pump(2);
+    let receipt = adjacent.receipt();
+    assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (3, 4));
+    assert!(receipt.terminal.is_none());
+    adjacent.input.with_server_ordered_input(|state| {
+        assert_eq!(state.snapshot().category_counts(), [2, 0, 0]);
+        assert_eq!(state.snapshot().packet_count(), 6);
+    });
+    assert_eq!(adjacent.decoded().len(), 6);
+
+    let mut same_drain = Rig::new();
+    let request = knife_request(&mut same_drain, true);
+    same_drain.start([Emission::Content(request)]);
+    same_drain.input.observe_input_tick(
+        same_drain.client.revision(),
+        1,
+        same_drain.client.gens.session,
+    );
+    assert_eq!(checked_loc_click(&mut same_drain), 2);
+    same_drain.pump(1);
+    same_drain.input.with_server_ordered_input(|state| {
+        assert_eq!(state.snapshot().category_counts(), [6, 0, 0]);
+        assert_eq!(state.snapshot().packet_count(), 6);
+        assert_eq!(state.snapshot().input_epoch(), 6);
+    });
+    same_drain.pump(2);
+    let receipt = same_drain.receipt();
+    assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (3, 4));
+    assert!(receipt.terminal.is_none());
+    assert_eq!(same_drain.decoded().len(), 6);
+}
+
+#[test]
+fn ordered_native_budget_rejects_second_same_window_emission_before_dispatch() {
+    let mut rig = Rig::new();
+    let request = knife_request(&mut rig, true);
+    rig.start([Emission::DoubleContent(request, close_request())]);
+    rig.pump(1);
+    rig.pump(2);
+
+    let receipt = rig.receipt();
+    assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (3, 4));
+    assert!(receipt.terminal.is_none());
+    let results = rig.results.lock().unwrap();
+    assert!(matches!(
+        results.second_emissions.as_slice(),
+        [Err(ActionError::BudgetExhausted)]
+    ));
+    assert_eq!(results.receipts.len(), 1);
+    drop(results);
+    assert_eq!(rig.decoded().len(), 4);
+    rig.input.with_server_ordered_input(|state| {
+        assert_eq!(state.snapshot().packet_count(), 4);
+        assert_eq!(state.snapshot().category_counts(), [4, 0, 0]);
     });
 }
 

@@ -1524,6 +1524,14 @@ fn spawn_slot_thread(
                         // observe; its hold freezes script tick and nav follow.
                         move |c, _ignored, run_sends, status: &RandomStatus, run_policy| {
                             let name = &obs_name;
+                            #[cfg(feature = "test-support")]
+                            if let Some(test_hook) =
+                                crate::tick_engine_test_support::TickEngineTestHook::bind_current_for_account(name)
+                            {
+                                test_hook.bind_client(c, name, Arc::clone(&slot_input));
+                            }
+                            #[cfg(feature = "test-support")]
+                            let mut tick_engine_suppressed_openchat = false;
                             if !c.ingame {
                                 // The live title pump owns offline script/latch
                                 // synchronization. A hosted title click is only
@@ -1607,6 +1615,11 @@ fn spawn_slot_thread(
                                 last_nav_step = None;
                             }
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
+                            #[cfg(feature = "test-support")]
+                            if let Some(test_hook) = crate::tick_engine_test_support::current() {
+                                tick_engine_suppressed_openchat =
+                                    test_hook.before_snapshot_observe(name, &mut nav_snapshot);
+                            }
                             if session_boundary && c.ingame {
                                 slot_navs.lock().unwrap().entry(name.to_owned()).or_default()
                                     .condition.session_started(nav_snapshot.tick(), c.chat_seq as i32, slot_world.as_deref().and_then(crate::admission::condition_tables));
@@ -1933,6 +1946,16 @@ fn spawn_slot_thread(
                                 script_evidence_dirty(drain.dirty),
                                 nav_state,
                             );
+                            #[cfg(feature = "test-support")]
+                            if let Some(test_hook) = crate::tick_engine_test_support::current() {
+                                test_hook.after_frame(
+                                    c,
+                                    name,
+                                    &nav_snapshot,
+                                    tick_edge,
+                                    tick_engine_suppressed_openchat,
+                                );
+                            }
                             #[cfg(feature = "test-support")]
                             if let Some(observer) = &post_host_frame {
                                 observer(c, name);

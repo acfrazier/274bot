@@ -27,6 +27,8 @@ pub mod public_worlds;
 pub mod quest_pair;
 pub mod servers;
 pub mod walk_map;
+#[cfg(feature = "test-support")]
+pub mod tick_engine_test_support;
 pub use client::Transport;
 pub use nav_identity::{
     bundled_nav_identities, install_resource_root, BundledNavIdentity, NavFlagsOrigin,
