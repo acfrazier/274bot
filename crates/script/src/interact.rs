@@ -281,6 +281,10 @@ pub enum InteractReq {
         #[serde(default)]
         component_id: Option<i32>,
     },
+    /// Send a public message through the API's typed MESSAGE_PUBLIC builder
+    /// (`api::prot::Send::message_public`, colour/effect 0) and normal Driver dispatch.
+    #[serde(rename = "say-public")]
+    SayPublic { text: String },
     /// Answer the chat modal's `option`-th choice (1-based).
     #[serde(rename = "answer")]
     Answer { option: i32 },

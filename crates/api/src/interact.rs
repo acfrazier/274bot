@@ -91,6 +91,10 @@ pub enum WireCommand<'a> {
         target_slot: i32,
         insert: bool,
     },
+    /// A public `MESSAGE_PUBLIC` packet built by `prot::Send::message_public`.
+    PublicMessage {
+        text: String,
+    },
 }
 
 /// Why a wire interaction was refused before dispatch. Every variant is one
@@ -729,6 +733,22 @@ impl<'a> Interactions<'a> {
             snapshot.tick() as u64,
         )
     }
+    /// Send a bounded public message through the normal encrypted packet
+    /// driver. The client protocol builder rejects text it cannot pack.
+    pub fn say_public<'t>(&mut self, text: &str) -> SendResult<'t> {
+        let snapshot = self.snapshot;
+        if !snapshot.attached() {
+            return refuse(snapshot, SendReason::NotAttached);
+        }
+        let message: String = text.trim().chars().take(80).collect();
+        if message.is_empty() {
+            return refuse(snapshot, SendReason::InvalidAction);
+        }
+        self.dispatch(
+            WireCommand::PublicMessage { text: message },
+            snapshot.tick() as u64,
+        )
+    }
 
     /// Open the nearest scene loc whose actions include `Use-quickly` on
     /// the player's plane. None → fail closed. Never a Banker Talk-to/Bank.
@@ -1261,6 +1281,7 @@ impl<'a> Interactions<'a> {
             WireCommand::WalkNearest { tile } => {
                 driver::walk_nearest(&mut *self.driver, tile.x, tile.z)
             }
+            WireCommand::PublicMessage { text } => self.driver.send_public_message(text),
             WireCommand::DoorStep { tile } => Send::move_gameclick(false, tile.x, tile.z, &[])
                 .and_then(|send| self.driver.send_packet(&send))
                 .is_ok(),
@@ -1363,6 +1384,7 @@ fn counts_as_input_activity(command: &WireCommand<'_>) -> bool {
         | WireCommand::Walk { .. }
         | WireCommand::WalkNearest { .. }
         | WireCommand::DoorStep { .. }
+        | WireCommand::PublicMessage { .. }
         | WireCommand::Drag { .. } => true,
         WireCommand::SideTab { .. } | WireCommand::Login { .. } => false,
     }

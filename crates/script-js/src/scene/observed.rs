@@ -1217,7 +1217,7 @@ impl Scene {
             p.chat_modal_id(snap.chat_modal_id());
         }
         if snap.has_side_modal_id() {
-            p.side_modal_id(snap.side_modal_id());
+            p.side_modal_id(snap.side_modal_id().unwrap_or(-1));
         }
         if snap.has_chat_open() {
             p.chat_open(snap.chat_open());

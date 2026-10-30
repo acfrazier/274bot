@@ -10,6 +10,11 @@ use client::dash3d::client_entity::ClientEntity;
 use serde::Serialize;
 mod views;
 pub use views::*;
+mod client_adapter_cache;
+#[doc(hidden)]
+pub use client_adapter_cache::{client_adapter_cache, ClientAdapterCache, ItemIconPixels};
+#[cfg(feature = "test-support")]
+pub use client_adapter_cache::set_client_adapter_cache_for_tests;
 mod native;
 pub use native::{
     chat_page_fingerprint, ChatLines, ChatModalView, CombatView, JournalModalView, Observed,
@@ -70,6 +75,9 @@ pub struct GameSnapshot {
     /// Hitmarks and their cycle are refreshed with the local actor every read.
     hitmarks: Option<HitmarksView>,
     stats: Vec<StatView>,
+    /// True once every used skill slot received a stat update in this session.
+    #[serde(skip)]
+    stats_ready: bool,
     runenergy: i32,
     /// The scene origin (`map_build_base_x/z`); `None` before a world
     /// build. The mainland-seed gate reads it (the tutorial island build
@@ -79,6 +87,10 @@ pub struct GameSnapshot {
     /// first `PLAYER_INFO`. Tile level is not decoded on the body yet
     /// (gaps.md), so this is always level 0.
     tile: Option<(i32, i32, i32)>,
+    /// Last non-empty scene-local path observed from the client pathfinder.
+    /// It remains available after arrival until another successful path.
+    #[serde(skip)]
+    last_walk_path_local: Vec<(i32, i32)>,
     /// The local player's slot (`Client.self_slot`, -1 before `UPDATE_PID`).
     self_slot: i32,
     /// The host game-tick count this snapshot reflects: one bump per
@@ -102,6 +114,9 @@ pub struct GameSnapshot {
     ground_item: Vec<GroundItemView>,
     /// The built scene's collision grid from the last scene rebuild.
     scene: SceneView,
+    /// Native-only bounded camera/height/loc data for synchronous projection.
+    #[serde(skip)]
+    projection_scene: ProjectionSceneView,
     /// The client's world scalars from the last world rebuild.
     world: WorldStateView,
     /// The camera state from the last camera rebuild.
@@ -328,9 +343,11 @@ impl Default for GameSnapshot {
             projectiles: Vec::with_capacity(MAX_PROJECTILES_PER_SNAPSHOT),
             hitmarks: None,
             stats: Vec::new(),
+            stats_ready: false,
             runenergy: 0,
             base: None,
             tile: None,
+            last_walk_path_local: Vec::new(),
             self_slot: -1,
             tick: 0,
             inv: Vec::new(),
@@ -341,8 +358,8 @@ impl Default for GameSnapshot {
             loc: Vec::new(),
             ground_item: Vec::new(),
             scene: SceneView::default(),
+            projection_scene: ProjectionSceneView::default(),
             world: WorldStateView::default(),
-            camera: CameraView::default(),
             map_flag: None,
             hint_tile: None,
             loc_gen: 0,
@@ -792,6 +809,7 @@ impl GameSnapshot {
     /// gate and the cheap scalar reads that can change without a packet.
     /// Only a real PLAYER_INFO observation advances the host tick.
     pub fn rebuild_from_drain(&mut self, client: &Client, player_info: bool) -> bool {
+        client_adapter_cache::publish(&client.cache);
         let player_info_ticks = if player_info {
             client.gens.player_info.wrapping_sub(self.gens.player_info)
         } else {
@@ -890,6 +908,11 @@ impl GameSnapshot {
         &self.stats
     }
 
+    /// Whether each used skill has a positive level observed in this login.
+    pub fn stats_ready(&self) -> bool {
+        self.stats_ready
+    }
+
     /// The client's varp table from the last varp rebuild, one view per
     /// definition (unset values read 0).
     pub fn varps(&self) -> &[VarpView] {
@@ -905,6 +928,10 @@ impl GameSnapshot {
     /// rebuild; `None` before any world built.
     pub fn base(&self) -> Option<(i32, i32)> {
         self.base
+    }
+    /// Last non-empty local path captured from the client pathfinder.
+    pub fn last_walk_path_local(&self) -> &[(i32, i32)] {
+        &self.last_walk_path_local
     }
 
     /// The local player's world tile `(x, z, level)` from the last
@@ -1003,6 +1030,10 @@ impl GameSnapshot {
     /// rebuild; the default is "no scene available".
     pub fn scene(&self) -> &SceneView {
         &self.scene
+    }
+    /// Bounded native-only projection inputs for ClientAdapter readers.
+    pub fn projection_scene(&self) -> &ProjectionSceneView {
+        &self.projection_scene
     }
 
     /// The client's world scalars from the last world rebuild.
