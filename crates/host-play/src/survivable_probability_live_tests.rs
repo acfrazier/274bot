@@ -502,7 +502,7 @@ fn poison_start(
                         "start": [origin.x, origin.z, origin.level],
                         "retreat_index": crossing.retreat, "env_first": crossing.env_first,
                         "zones": rows.iter().map(|row| json!({
-                            "name": zones.name(row.zone), "a": row.a, "e": row.e, "f": row.f,
+                            "name": zones.name(row.zone).unwrap(), "a": row.a, "e": row.e, "f": row.f,
                         })).collect::<Vec<_>>(),
                     }));
                 }
