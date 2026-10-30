@@ -578,7 +578,7 @@ fn reader_catalog() -> &'static Value {
             taking_damage: true,
             ..NativeFactsInput::default()
         };
-        let mut isolate = LoadIsolate::spawn(
+        let isolate = LoadIsolate::spawn(
             READER_CATALOG_SCRIPT.to_string(),
             LoadShape::CompatClass,
             vec![],
@@ -609,12 +609,12 @@ fn checked<'a>(value: &'a Value, label: &str) -> &'a Value {
 }
 
 macro_rules! reader_contract {
-    ($name:ident, $key:literal, $assertions:block) => {
+    ($name:ident, $key:literal, $value:ident, $assertions:block) => {
         #[test]
         #[expect(non_snake_case, reason = "the census names this contract test")]
         fn $name() {
             let catalog = reader_catalog();
-            let value = checked(&catalog["reader"][$key], $key);
+            let $value = checked(&catalog["reader"][$key], $key);
             $assertions
         }
     };
@@ -704,253 +704,133 @@ macro_rules! removed_export {
     };
 }
 
-reader_contract!(
-    compat_v1_client_adapter__reader_worldtile__contract,
-    "worldTile",
-    {
-        assert_eq!(value, &json!({"x": 3222, "z": 3222, "level": 0}));
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_servertile__contract,
-    "serverTile",
-    {
-        assert_eq!(value, &json!({"x": 3111, "z": 3222, "level": 1}));
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_selfslot__contract,
-    "selfSlot",
-    {
-        assert_eq!(value, 7);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_inventorysize__contract,
-    "inventorySize",
-    {
-        assert_eq!(value, 28);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_inventory__contract,
-    "inventory",
-    {
-        assert_eq!(value[0]["slot"], 0);
-        assert_eq!(value[0]["id"], 995);
-        assert_eq!(value[0]["name"], "Coins");
-        assert_eq!(value[0]["count"], 17);
-        assert_eq!(value[0]["comId"], 3214);
-        assert_eq!(value[0]["ops"], json!(["Use"]));
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_banksideitems__contract,
-    "bankSideItems",
-    {
-        assert_eq!(value[0]["id"], 995);
-        assert_eq!(value[0]["name"], "Token");
-        assert_eq!(value[0]["count"], 2);
-        assert_eq!(value[0]["slot"], 1);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_scenestate__contract,
-    "sceneState",
-    {
-        assert_eq!(value, 2);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_ingame__contract,
-    "ingame",
-    {
-        assert_eq!(value, true);
-    }
-);
-reader_contract!(compat_v1_client_adapter__reader_npcs__contract, "npcs", {
+reader_contract!(compat_v1_client_adapter__reader_worldtile__contract, "worldTile", value, {
+    assert_eq!(value, &json!({"x": 3222, "z": 3222, "level": 0}));
+});
+reader_contract!(compat_v1_client_adapter__reader_servertile__contract, "serverTile", value, {
+    assert_eq!(value, &json!({"x": 3111, "z": 3222, "level": 1}));
+});
+reader_contract!(compat_v1_client_adapter__reader_selfslot__contract, "selfSlot", value, {
+    assert_eq!(value, 7);
+});
+reader_contract!(compat_v1_client_adapter__reader_inventorysize__contract, "inventorySize", value, {
+    assert_eq!(value, 28);
+});
+reader_contract!(compat_v1_client_adapter__reader_inventory__contract, "inventory", value, {
+    assert_eq!(value[0]["slot"], 0);
+    assert_eq!(value[0]["id"], 995);
+    assert_eq!(value[0]["name"], "Coins");
+    assert_eq!(value[0]["count"], 17);
+    assert_eq!(value[0]["comId"], 3214);
+    assert_eq!(value[0]["ops"], json!(["Use"]));
+});
+reader_contract!(compat_v1_client_adapter__reader_banksideitems__contract, "bankSideItems", value, {
+    assert_eq!(value[0]["id"], 995);
+    assert_eq!(value[0]["name"], "Token");
+    assert_eq!(value[0]["count"], 2);
+    assert_eq!(value[0]["slot"], 1);
+});
+reader_contract!(compat_v1_client_adapter__reader_scenestate__contract, "sceneState", value, {
+    assert_eq!(value, 2);
+});
+reader_contract!(compat_v1_client_adapter__reader_ingame__contract, "ingame", value, {
+    assert_eq!(value, true);
+});
+reader_contract!(compat_v1_client_adapter__reader_npcs__contract, "npcs", value, {
     assert_eq!(value[0]["id"], 1234);
     assert_eq!(value[0]["name"], "Goblin");
     assert_eq!(value[0]["network_x"], 3224);
 });
-reader_contract!(compat_v1_client_adapter__reader_locs__contract, "locs", {
+reader_contract!(compat_v1_client_adapter__reader_locs__contract, "locs", value, {
     assert_eq!(value[0]["id"], 900);
     assert_eq!(value[0]["name"], "Tree");
     assert_eq!(value[0]["actions"], json!(["Chop down"]));
 });
-reader_contract!(
-    compat_v1_client_adapter__reader_players__contract,
-    "players",
-    {
-        assert_eq!(value[0]["index"], 3);
-        assert_eq!(value[0]["name"], "Friend");
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_grounditems__contract,
-    "groundItems",
-    {
-        assert_eq!(value[0]["id"], 995);
-        assert_eq!(value[0]["name"], "Coins");
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_equipment__contract,
-    "equipment",
-    {
-        assert_eq!(value[0]["id"], 1277);
-        assert_eq!(value[0]["name"], "Bronze sword");
-        assert_eq!(value[0]["slot"], 3);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_modals__contract,
-    "modals",
-    {
-        assert_eq!(value, &json!({"main": 100, "chat": 200, "side": 300}));
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_chatcontinuecomid__contract,
-    "chatContinueComId",
-    {
-        assert_eq!(value, 3012);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_chatoptions__contract,
-    "chatOptions",
-    {
-        assert_eq!(
-            value,
-            &json!([{"text": "Yes", "comId": 401}, {"text": "No", "comId": 402}])
-        );
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_chatmodaltexts__contract,
-    "chatModalTexts",
-    {
-        assert_eq!(value, &json!(["Continue dialog", "Pick a choice"]));
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_activesidetab__contract,
-    "activeSideTab",
-    {
-        assert_eq!(value, 3);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_localplayername__contract,
-    "localPlayerName",
-    {
-        assert_eq!(value, "Runner");
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_combatlevel__contract,
-    "combatLevel",
-    {
-        assert_eq!(value, 15);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_selfchat__contract,
-    "selfChat",
-    {
-        assert_eq!(value, "hello");
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_hinttile__contract,
-    "hintTile",
-    {
-        assert_eq!(value, &json!({"x": 3224, "z": 3225, "level": 0}));
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_npcbox__contract,
-    "npcBox",
-    {
-        assert_eq!(value.as_array().map(Vec::len), Some(8));
-        assert_eq!(value[0], json!({"x": 1, "y": 2}));
-        assert_eq!(value[7], json!({"x": 15, "y": 16}));
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_retaliatecontrols__contract,
-    "retaliateControls",
-    {
-        assert_eq!(value, &json!({"onComId": 51, "offComId": 52}));
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_incombat__contract,
-    "inCombat",
-    {
-        assert_eq!(value, true);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_selfanim__contract,
-    "selfAnim",
-    {
-        assert_eq!(value, -1, "missing posted animation is the absent sentinel");
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_selffaceentity__contract,
-    "selfFaceEntity",
-    {
-        assert_eq!(value, 32771);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_energy__contract,
-    "energy",
-    {
-        assert_eq!(value, 42);
-    }
-);
-reader_contract!(compat_v1_client_adapter__reader_varp__contract, "varp", {
+reader_contract!(compat_v1_client_adapter__reader_players__contract, "players", value, {
+    assert_eq!(value[0]["index"], 3);
+    assert_eq!(value[0]["name"], "Friend");
+});
+reader_contract!(compat_v1_client_adapter__reader_grounditems__contract, "groundItems", value, {
+    assert_eq!(value[0]["id"], 995);
+    assert_eq!(value[0]["name"], "Coins");
+});
+reader_contract!(compat_v1_client_adapter__reader_equipment__contract, "equipment", value, {
+    assert_eq!(value[0]["id"], 1277);
+    assert_eq!(value[0]["name"], "Bronze sword");
+    assert_eq!(value[0]["slot"], 3);
+});
+reader_contract!(compat_v1_client_adapter__reader_modals__contract, "modals", value, {
+    assert_eq!(value, &json!({"main": 100, "chat": 200, "side": 300}));
+});
+reader_contract!(compat_v1_client_adapter__reader_chatcontinuecomid__contract, "chatContinueComId", value, {
+    assert_eq!(value, 3012);
+});
+reader_contract!(compat_v1_client_adapter__reader_chatoptions__contract, "chatOptions", value, {
+    assert_eq!(
+        value,
+        &json!([{"text": "Yes", "comId": 401}, {"text": "No", "comId": 402}])
+    );
+});
+reader_contract!(compat_v1_client_adapter__reader_chatmodaltexts__contract, "chatModalTexts", value, {
+    assert_eq!(value, &json!(["Continue dialog", "Pick a choice"]));
+});
+reader_contract!(compat_v1_client_adapter__reader_activesidetab__contract, "activeSideTab", value, {
+    assert_eq!(value, 3);
+});
+reader_contract!(compat_v1_client_adapter__reader_localplayername__contract, "localPlayerName", value, {
+    assert_eq!(value, "Runner");
+});
+reader_contract!(compat_v1_client_adapter__reader_combatlevel__contract, "combatLevel", value, {
+    assert_eq!(value, 15);
+});
+reader_contract!(compat_v1_client_adapter__reader_selfchat__contract, "selfChat", value, {
+    assert_eq!(value, "hello");
+});
+reader_contract!(compat_v1_client_adapter__reader_hinttile__contract, "hintTile", value, {
+    assert_eq!(value, &json!({"x": 3224, "z": 3225, "level": 0}));
+});
+reader_contract!(compat_v1_client_adapter__reader_npcbox__contract, "npcBox", value, {
+    assert_eq!(value.as_array().map(Vec::len), Some(8));
+    assert_eq!(value[0], json!({"x": 1, "y": 2}));
+    assert_eq!(value[7], json!({"x": 15, "y": 16}));
+});
+reader_contract!(compat_v1_client_adapter__reader_retaliatecontrols__contract, "retaliateControls", value, {
+    assert_eq!(value, &json!({"onComId": 51, "offComId": 52}));
+});
+reader_contract!(compat_v1_client_adapter__reader_incombat__contract, "inCombat", value, {
+    assert_eq!(value, true);
+});
+reader_contract!(compat_v1_client_adapter__reader_selfanim__contract, "selfAnim", value, {
+    assert_eq!(value, -1, "missing posted animation is the absent sentinel");
+});
+reader_contract!(compat_v1_client_adapter__reader_selffaceentity__contract, "selfFaceEntity", value, {
+    assert_eq!(value, 32771);
+});
+reader_contract!(compat_v1_client_adapter__reader_energy__contract, "energy", value, {
+    assert_eq!(value, 42);
+});
+reader_contract!(compat_v1_client_adapter__reader_varp__contract, "varp", value, {
     assert_eq!(value, 17);
 });
-reader_contract!(compat_v1_client_adapter__reader_stat__contract, "stat", {
+reader_contract!(compat_v1_client_adapter__reader_stat__contract, "stat", value, {
     assert_eq!(
         value,
         &json!({"name": "#25", "effective": 0, "base": 0, "xp": 0})
     );
 });
-reader_contract!(
-    compat_v1_client_adapter__reader_skillcount__contract,
-    "skillCount",
-    {
-        assert_eq!(value, 25);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_skillused__contract,
-    "skillUsed",
-    {
-        assert_eq!(value, false);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_statsready__contract,
-    "statsReady",
-    {
-        assert_eq!(value, true);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_weight__contract,
-    "weight",
-    {
-        assert_eq!(value, 12);
-    }
-);
-reader_contract!(compat_v1_client_adapter__reader_chat__contract, "chat", {
+reader_contract!(compat_v1_client_adapter__reader_skillcount__contract, "skillCount", value, {
+    assert_eq!(value, 25);
+});
+reader_contract!(compat_v1_client_adapter__reader_skillused__contract, "skillUsed", value, {
+    assert_eq!(value, false);
+});
+reader_contract!(compat_v1_client_adapter__reader_statsready__contract, "statsReady", value, {
+    assert_eq!(value, true);
+});
+reader_contract!(compat_v1_client_adapter__reader_weight__contract, "weight", value, {
+    assert_eq!(value, 12);
+});
+reader_contract!(compat_v1_client_adapter__reader_chat__contract, "chat", value, {
     assert_eq!(value.as_array().map(Vec::len), Some(2));
     assert_eq!(
         value[0],
@@ -961,434 +841,226 @@ reader_contract!(compat_v1_client_adapter__reader_chat__contract, "chat", {
         json!({"type": 2, "username": null, "text": "You found Coins"})
     );
 });
-reader_contract!(
-    compat_v1_client_adapter__reader_playercount__contract,
-    "playerCount",
-    {
-        assert_eq!(value, 2);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_npccount__contract,
-    "npcCount",
-    {
-        assert_eq!(value, 1);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_camerayaw__contract,
-    "cameraYaw",
-    {
-        assert_eq!(value, 1);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_camerapitch__contract,
-    "cameraPitch",
-    {
-        assert_eq!(value, 512);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_takingdamage__contract,
-    "takingDamage",
-    {
-        assert_eq!(value, true);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_inventorysnapshotready__contract,
-    "inventorySnapshotReady",
-    {
-        assert_eq!(value, true);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_bankcomid__contract,
-    "bankComId",
-    {
-        assert_eq!(value, 5382);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_banksnapshotready__contract,
-    "bankSnapshotReady",
-    {
-        assert_eq!(value, true);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_banksidesnapshotready__contract,
-    "bankSideSnapshotReady",
-    {
-        assert_eq!(value, true);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_banksnapshotgeneration__contract,
-    "bankSnapshotGeneration",
-    {
-        assert_eq!(value, 9);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_runcontrols__contract,
-    "runControls",
-    {
-        assert_eq!(value, &json!({"onComId": 91, "offComId": 92}));
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_toworld__contract,
-    "toWorld",
-    {
-        assert_eq!(value, &json!({"x": 3201, "z": 3202, "level": 0}));
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_collisionflags__contract,
-    "collisionFlags",
-    {
-        assert_eq!(value, 3);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_lastwalkpathworld__contract,
-    "lastWalkPathWorld",
-    {
-        assert_eq!(
-            value,
-            &json!([
-                {"x": 3201, "z": 3202, "level": 1},
-                {"x": 3202, "z": 3202, "level": 1}
-            ])
-        );
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_loginmessage__contract,
-    "loginMessage",
-    {
-        assert_eq!(value, "Welcome back");
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_menuentries__contract,
-    "menuEntries",
-    {
-        assert_eq!(value, &json!(["Walk here", "Examine"]));
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_shopinv__contract,
-    "shopInv",
-    {
-        assert_eq!(value[0]["id"], 954);
-        assert_eq!(value[0]["name"], "Rope");
-        assert_eq!(value[0]["count"], 5);
-        let missing = checked(
-            &reader_catalog()["reader"]["shopInvMissing"],
-            "shopInvMissing",
-        );
-        assert_eq!(missing, &json!([]));
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_puzzleboardcomid__contract,
-    "puzzleBoardComId",
-    {
-        assert_eq!(value, 7000);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_puzzleboard__contract,
-    "puzzleBoard",
-    {
-        assert_eq!(value[0]["id"], 1470);
-        assert_eq!(value[0]["name"], "Red bead");
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_puzzleboardsize__contract,
-    "puzzleBoardSize",
-    {
-        assert_eq!(value, 5);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_dueloffers__contract,
-    "duelOffers",
-    {
-        assert_eq!(value, &json!({"ready": false, "mine": [], "theirs": []}));
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_tradeofferopen__contract,
-    "tradeOfferOpen",
-    {
-        assert_eq!(value, true);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_tradeconfirmopen__contract,
-    "tradeConfirmOpen",
-    {
-        assert_eq!(value, true);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_trademyoffer__contract,
-    "tradeMyOffer",
-    {
-        assert_eq!(value[0]["id"], 995);
-        assert_eq!(value[0]["count"], 10);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_tradetheiroffer__contract,
-    "tradeTheirOffer",
-    {
-        assert_eq!(value[0]["id"], 314);
-        assert_eq!(value[0]["count"], 4);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_tradesidepack__contract,
-    "tradeSidePack",
-    {
-        assert_eq!(value[0]["id"], 556);
-        assert_eq!(value[0]["name"], "Air rune");
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_tradepartner__contract,
-    "tradePartner",
-    {
-        assert_eq!(value, "Alice");
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_tradeconfirmoffers__contract,
-    "tradeConfirmOffers",
-    {
-        assert_eq!(value["mine"][0]["id"], 1470);
-        assert_eq!(value["mine"][1]["id"], 995);
-        assert_eq!(value["theirs"][0]["id"], 314);
-        assert_eq!(value["theirs"][1]["id"], 556);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_closebuttoncomid__contract,
-    "closeButtonComId",
-    {
-        assert_eq!(value, 14);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_mainmodaltexts__contract,
-    "mainModalTexts",
-    {
-        assert_eq!(
-            value,
-            &json!(["Would you like to Continue?", "Choose an option"])
-        );
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_ifmodelobjid__contract,
-    "ifModelObjId",
-    {
-        assert_eq!(value, 415);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_modalbuttons__contract,
-    "modalButtons",
-    {
-        let buttons = value.as_array().expect("button array");
-        assert!(buttons
-            .iter()
-            .any(|button| button["comId"] == 13 && button["menu"] == "OK"));
-        assert!(
-            !buttons.iter().any(|button| button["comId"] == 14),
-            "close is not a modal action button"
-        );
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_buttonbytext__contract,
-    "buttonByText",
-    {
-        assert_eq!(value, 13);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_targetbuttonbybase__contract,
-    "targetButtonByBase",
-    {
-        assert_eq!(value, 12);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_selectbuttonbyvarp__contract,
-    "selectButtonByVarp",
-    {
-        assert_eq!(value, 20);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_selectbuttonlabelsbyvarp__contract,
-    "selectButtonLabelsByVarp",
-    {
-        assert_eq!(
-            value,
-            &json!([{"mode": 1, "label": "Accurate"}, {"mode": 2, "label": "Aggressive"}])
-        );
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_mainmodalbuttonneartext__contract,
-    "mainModalButtonNearText",
-    {
-        assert_eq!(value, 13);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_mainskillmultiitems__contract,
-    "mainSkillMultiItems",
-    {
-        assert_eq!(value[0]["id"], 2353);
-        assert_eq!(value[0]["name"], "Steel bar");
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_queststatuses__contract,
-    "questStatuses",
-    {
-        assert_eq!(
-            value,
-            &json!([{"comId": 50, "name": "Dragon Slayer", "colour": 0x55ff55}])
-        );
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_sidetabinterface__contract,
-    "sideTabInterface",
-    {
-        assert_eq!(value, 6600);
-        let missing = checked(
-            &reader_catalog()["reader"]["sideTabInterfaceMissing"],
-            "sideTabInterfaceMissing",
-        );
-        assert_eq!(missing, -1);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_attached__contract,
-    "attached",
-    {
-        assert_eq!(value, true);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_mapbuildbase__contract,
-    "mapBuildBase",
-    {
-        assert_eq!(value, &json!({"x": 3200, "z": 3200}));
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_modalcloseobservation__contract,
-    "modalCloseObservation",
-    {
-        assert_eq!(
-            value,
-            &json!({"sessionType": "symbol", "sameSession": true, "generation": 3})
-        );
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_iftext__contract,
-    "ifText",
-    {
-        assert_eq!(value, "Would you like to Continue?");
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_countdialogopen__contract,
-    "countDialogOpen",
-    {
-        assert_eq!(value, true);
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_makeproducts__contract,
-    "makeProducts",
-    {
-        assert_eq!(
-            value,
-            &json!([{"obj": 2353, "name": "Steel bar", "buttons": [
-                {"qty": 1, "comId": 501}, {"qty": 5, "comId": 502},
-                {"qty": 10, "comId": 503}, {"qty": 0, "comId": 504}
-            ]}])
-        );
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_tolocal__contract,
-    "toLocal",
-    {
-        assert_eq!(value, &json!({"lx": 1, "lz": 2}));
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_overlayposworld__contract,
-    "overlayPosWorld",
-    {
-        assert_eq!(value, &json!({"x": 772, "y": 171}));
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_projectareagameworld__contract,
-    "projectAreaGameWorld",
-    {
-        assert_eq!(value, &json!({"x": 768, "y": 167}));
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_locbox__contract,
-    "locBox",
-    {
-        assert_eq!(value.as_array().map(Vec::len), Some(8));
-        assert!(checked(
-            &reader_catalog()["reader"]["locBoxOutside"],
-            "locBoxOutside"
-        )
-        .is_null());
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_itemiconpixels__contract,
-    "itemIconPixels",
-    {
-        assert!(
-            value.is_null(),
-            "unknown item icon has no fabricated pixel data"
-        );
-    }
-);
-reader_contract!(
-    compat_v1_client_adapter__reader_objcatalog__contract,
-    "objCatalog",
-    {
-        assert!(
-            value.is_array(),
-            "object catalog is a synchronous array result"
-        );
-    }
-);
+reader_contract!(compat_v1_client_adapter__reader_playercount__contract, "playerCount", value, {
+    assert_eq!(value, 2);
+});
+reader_contract!(compat_v1_client_adapter__reader_npccount__contract, "npcCount", value, {
+    assert_eq!(value, 1);
+});
+reader_contract!(compat_v1_client_adapter__reader_camerayaw__contract, "cameraYaw", value, {
+    assert_eq!(value, 1);
+});
+reader_contract!(compat_v1_client_adapter__reader_camerapitch__contract, "cameraPitch", value, {
+    assert_eq!(value, 512);
+});
+reader_contract!(compat_v1_client_adapter__reader_takingdamage__contract, "takingDamage", value, {
+    assert_eq!(value, true);
+});
+reader_contract!(compat_v1_client_adapter__reader_inventorysnapshotready__contract, "inventorySnapshotReady", value, {
+    assert_eq!(value, true);
+});
+reader_contract!(compat_v1_client_adapter__reader_bankcomid__contract, "bankComId", value, {
+    assert_eq!(value, 5382);
+});
+reader_contract!(compat_v1_client_adapter__reader_banksnapshotready__contract, "bankSnapshotReady", value, {
+    assert_eq!(value, true);
+});
+reader_contract!(compat_v1_client_adapter__reader_banksidesnapshotready__contract, "bankSideSnapshotReady", value, {
+    assert_eq!(value, true);
+});
+reader_contract!(compat_v1_client_adapter__reader_banksnapshotgeneration__contract, "bankSnapshotGeneration", value, {
+    assert_eq!(value, 9);
+});
+reader_contract!(compat_v1_client_adapter__reader_runcontrols__contract, "runControls", value, {
+    assert_eq!(value, &json!({"onComId": 91, "offComId": 92}));
+});
+reader_contract!(compat_v1_client_adapter__reader_toworld__contract, "toWorld", value, {
+    assert_eq!(value, &json!({"x": 3201, "z": 3202, "level": 0}));
+});
+reader_contract!(compat_v1_client_adapter__reader_collisionflags__contract, "collisionFlags", value, {
+    assert_eq!(value, 3);
+});
+reader_contract!(compat_v1_client_adapter__reader_lastwalkpathworld__contract, "lastWalkPathWorld", value, {
+    assert_eq!(
+        value,
+        &json!([
+            {"x": 3201, "z": 3202, "level": 1},
+            {"x": 3202, "z": 3202, "level": 1}
+        ])
+    );
+});
+reader_contract!(compat_v1_client_adapter__reader_loginmessage__contract, "loginMessage", value, {
+    assert_eq!(value, "Welcome back");
+});
+reader_contract!(compat_v1_client_adapter__reader_menuentries__contract, "menuEntries", value, {
+    assert_eq!(value, &json!(["Walk here", "Examine"]));
+});
+reader_contract!(compat_v1_client_adapter__reader_shopinv__contract, "shopInv", value, {
+    assert_eq!(value[0]["id"], 954);
+    assert_eq!(value[0]["name"], "Rope");
+    assert_eq!(value[0]["count"], 5);
+    let missing = checked(
+        &reader_catalog()["reader"]["shopInvMissing"],
+        "shopInvMissing",
+    );
+    assert_eq!(missing, &json!([]));
+});
+reader_contract!(compat_v1_client_adapter__reader_puzzleboardcomid__contract, "puzzleBoardComId", value, {
+    assert_eq!(value, 7000);
+});
+reader_contract!(compat_v1_client_adapter__reader_puzzleboard__contract, "puzzleBoard", value, {
+    assert_eq!(value[0]["id"], 1470);
+    assert_eq!(value[0]["name"], "Red bead");
+});
+reader_contract!(compat_v1_client_adapter__reader_puzzleboardsize__contract, "puzzleBoardSize", value, {
+    assert_eq!(value, 5);
+});
+reader_contract!(compat_v1_client_adapter__reader_dueloffers__contract, "duelOffers", value, {
+    assert_eq!(value, &json!({"ready": false, "mine": [], "theirs": []}));
+});
+reader_contract!(compat_v1_client_adapter__reader_tradeofferopen__contract, "tradeOfferOpen", value, {
+    assert_eq!(value, true);
+});
+reader_contract!(compat_v1_client_adapter__reader_tradeconfirmopen__contract, "tradeConfirmOpen", value, {
+    assert_eq!(value, true);
+});
+reader_contract!(compat_v1_client_adapter__reader_trademyoffer__contract, "tradeMyOffer", value, {
+    assert_eq!(value[0]["id"], 995);
+    assert_eq!(value[0]["count"], 10);
+});
+reader_contract!(compat_v1_client_adapter__reader_tradetheiroffer__contract, "tradeTheirOffer", value, {
+    assert_eq!(value[0]["id"], 314);
+    assert_eq!(value[0]["count"], 4);
+});
+reader_contract!(compat_v1_client_adapter__reader_tradesidepack__contract, "tradeSidePack", value, {
+    assert_eq!(value[0]["id"], 556);
+    assert_eq!(value[0]["name"], "Air rune");
+});
+reader_contract!(compat_v1_client_adapter__reader_tradepartner__contract, "tradePartner", value, {
+    assert_eq!(value, "Alice");
+});
+reader_contract!(compat_v1_client_adapter__reader_tradeconfirmoffers__contract, "tradeConfirmOffers", value, {
+    assert_eq!(value["mine"][0]["id"], 1470);
+    assert_eq!(value["mine"][1]["id"], 995);
+    assert_eq!(value["theirs"][0]["id"], 314);
+    assert_eq!(value["theirs"][1]["id"], 556);
+});
+reader_contract!(compat_v1_client_adapter__reader_closebuttoncomid__contract, "closeButtonComId", value, {
+    assert_eq!(value, 14);
+});
+reader_contract!(compat_v1_client_adapter__reader_mainmodaltexts__contract, "mainModalTexts", value, {
+    assert_eq!(
+        value,
+        &json!(["Would you like to Continue?", "Choose an option"])
+    );
+});
+reader_contract!(compat_v1_client_adapter__reader_ifmodelobjid__contract, "ifModelObjId", value, {
+    assert_eq!(value, 415);
+});
+reader_contract!(compat_v1_client_adapter__reader_modalbuttons__contract, "modalButtons", value, {
+    let buttons = value.as_array().expect("button array");
+    assert!(buttons
+        .iter()
+        .any(|button| button["comId"] == 13 && button["menu"] == "OK"));
+    assert!(
+        !buttons.iter().any(|button| button["comId"] == 14),
+        "close is not a modal action button"
+    );
+});
+reader_contract!(compat_v1_client_adapter__reader_buttonbytext__contract, "buttonByText", value, {
+    assert_eq!(value, 13);
+});
+reader_contract!(compat_v1_client_adapter__reader_targetbuttonbybase__contract, "targetButtonByBase", value, {
+    assert_eq!(value, 12);
+});
+reader_contract!(compat_v1_client_adapter__reader_selectbuttonbyvarp__contract, "selectButtonByVarp", value, {
+    assert_eq!(value, 20);
+});
+reader_contract!(compat_v1_client_adapter__reader_selectbuttonlabelsbyvarp__contract, "selectButtonLabelsByVarp", value, {
+    assert_eq!(
+        value,
+        &json!([{"mode": 1, "label": "Accurate"}, {"mode": 2, "label": "Aggressive"}])
+    );
+});
+reader_contract!(compat_v1_client_adapter__reader_mainmodalbuttonneartext__contract, "mainModalButtonNearText", value, {
+    assert_eq!(value, 13);
+});
+reader_contract!(compat_v1_client_adapter__reader_mainskillmultiitems__contract, "mainSkillMultiItems", value, {
+    assert_eq!(value[0]["id"], 2353);
+    assert_eq!(value[0]["name"], "Steel bar");
+});
+reader_contract!(compat_v1_client_adapter__reader_queststatuses__contract, "questStatuses", value, {
+    assert_eq!(
+        value,
+        &json!([{"comId": 50, "name": "Dragon Slayer", "colour": 0x55ff55}])
+    );
+});
+reader_contract!(compat_v1_client_adapter__reader_sidetabinterface__contract, "sideTabInterface", value, {
+    assert_eq!(value, 6600);
+    let missing = checked(
+        &reader_catalog()["reader"]["sideTabInterfaceMissing"],
+        "sideTabInterfaceMissing",
+    );
+    assert_eq!(missing, -1);
+});
+reader_contract!(compat_v1_client_adapter__reader_attached__contract, "attached", value, {
+    assert_eq!(value, true);
+});
+reader_contract!(compat_v1_client_adapter__reader_mapbuildbase__contract, "mapBuildBase", value, {
+    assert_eq!(value, &json!({"x": 3200, "z": 3200}));
+});
+reader_contract!(compat_v1_client_adapter__reader_modalcloseobservation__contract, "modalCloseObservation", value, {
+    assert_eq!(
+        value,
+        &json!({"sessionType": "symbol", "sameSession": true, "generation": 3})
+    );
+});
+reader_contract!(compat_v1_client_adapter__reader_iftext__contract, "ifText", value, {
+    assert_eq!(value, "Would you like to Continue?");
+});
+reader_contract!(compat_v1_client_adapter__reader_countdialogopen__contract, "countDialogOpen", value, {
+    assert_eq!(value, true);
+});
+reader_contract!(compat_v1_client_adapter__reader_makeproducts__contract, "makeProducts", value, {
+    assert_eq!(
+        value,
+        &json!([{"obj": 2353, "name": "Steel bar", "buttons": [
+            {"qty": 1, "comId": 501}, {"qty": 5, "comId": 502},
+            {"qty": 10, "comId": 503}, {"qty": 0, "comId": 504}
+        ]}])
+    );
+});
+reader_contract!(compat_v1_client_adapter__reader_tolocal__contract, "toLocal", value, {
+    assert_eq!(value, &json!({"lx": 1, "lz": 2}));
+});
+reader_contract!(compat_v1_client_adapter__reader_overlayposworld__contract, "overlayPosWorld", value, {
+    assert_eq!(value, &json!({"x": 772, "y": 171}));
+});
+reader_contract!(compat_v1_client_adapter__reader_projectareagameworld__contract, "projectAreaGameWorld", value, {
+    assert_eq!(value, &json!({"x": 768, "y": 167}));
+});
+reader_contract!(compat_v1_client_adapter__reader_locbox__contract, "locBox", value, {
+    assert_eq!(value.as_array().map(Vec::len), Some(8));
+    assert!(checked(
+        &reader_catalog()["reader"]["locBoxOutside"],
+        "locBoxOutside"
+    )
+    .is_null());
+});
+reader_contract!(compat_v1_client_adapter__reader_itemiconpixels__contract, "itemIconPixels", value, {
+    assert!(
+        value.is_null(),
+        "unknown item icon has no fabricated pixel data"
+    );
+});
+reader_contract!(compat_v1_client_adapter__reader_objcatalog__contract, "objCatalog", value, {
+    assert!(
+        value.is_array(),
+        "object catalog is a synchronous array result"
+    );
+});
 
-reader_contract!(compat_v1_client_adapter__default__contract, "skill", {
+reader_contract!(compat_v1_client_adapter__default__contract, "skill", value, {
     assert_eq!(value["kind"], "function");
     assert_eq!(value["name"], "Skill");
     assert_eq!(value["names"].as_array().map(Vec::len), Some(25));
@@ -1398,7 +1070,7 @@ reader_contract!(compat_v1_client_adapter__default__contract, "skill", {
         "uncalled Skill.count is not exported"
     );
 });
-reader_contract!(compat_v1_client_adapter__skill_names__contract, "skill", {
+reader_contract!(compat_v1_client_adapter__skill_names__contract, "skill", value, {
     assert_eq!(
         value["names"],
         json!([
@@ -1431,7 +1103,7 @@ reader_contract!(compat_v1_client_adapter__skill_names__contract, "skill", {
     );
     assert_eq!(value["namesFrozen"], true);
 });
-reader_contract!(compat_v1_client_adapter__skill_used__contract, "skill", {
+reader_contract!(compat_v1_client_adapter__skill_used__contract, "skill", value, {
     assert_eq!(
         value["used"],
         json!([
