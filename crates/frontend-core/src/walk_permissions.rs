@@ -160,7 +160,7 @@ impl WalkGlobals {
 pub const SCRIPT_SCOPE_NOTICE: &str = "Teleports and wilderness in Nav config now apply to every walk, including scripts. Bank fetch still applies only to manual WalkTo. rs2b0t-compatible scripts always allow wilderness and bank fetch.";
 
 /// The explanatory copy for the `When survivable` danger-routing level.
-pub const SURVIVABLE_ROUTING_TOOLTIP: &str = "The host applies the active survivability policy to danger routes. Scripts and the map control can still override.";
+pub const SURVIVABLE_ROUTING_TOOLTIP: &str = "Checks a death-probability upper bound of 1% for the whole route, without eating, prayer or escape. Named danger zones still count in the check. Always and rs2b0t-compatible walks proceed without this check.";
 
 /// Explanatory copy while the middle level is held behind the unavailable
 /// runtime net.

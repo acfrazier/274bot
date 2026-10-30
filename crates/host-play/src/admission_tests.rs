@@ -2746,3 +2746,33 @@ mod compact_final_route_tests {
         assert_eq!(bot.route_destination(), None);
     }
 }
+
+#[test]
+fn poison_deadline_without_world_preserves_the_typed_refusal() {
+    let world = known_corridor(&[12]);
+    let route = nav_planner::router::find_with(
+        &world.collision,
+        &world.graph,
+        tile(0, 1),
+        tile(23, 1),
+        FindOptions { zones: ZoneExempt::all(), ..FindOptions::default() },
+        &WorldState::default(),
+    ).unwrap();
+    let admission = make_admission(RiskPolicy::Inherit, input(99));
+    let assessment = assess(&route, &world, &admission);
+    let mut bot = crate::script_runtime::NavBot {
+        route: Some(Arc::new(route)),
+        assessment: Some(Arc::clone(&assessment)),
+        walk_request_id: 19,
+        ..Default::default()
+    };
+    let refusal = WalkRefusal::PoisonUnsettled {
+        waited: 18,
+        cause: api::condition::WindowReset::FrameGap,
+    };
+    refuse(&mut bot, None, tile(23, 1), refusal);
+    assert!(bot.route.is_none());
+    assert_eq!(bot.risk_refusal.as_deref(), Some(&(19, refusal)));
+    assert!(Arc::ptr_eq(bot.last_assessment.as_ref().unwrap(), &assessment));
+    assert_eq!(bot.walk_outcome_detail.as_deref(), Some(refusal.to_string().as_str()));
+}

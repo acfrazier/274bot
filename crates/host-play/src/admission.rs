@@ -638,7 +638,7 @@ pub(crate) fn publish(
         let destination = bot
             .requested_route
             .map_or(route.destination(), |request| request.0);
-        refuse(bot, world, destination, WalkRefusal::EscapeInProgress);
+        refuse(bot, Some(world), destination, WalkRefusal::EscapeInProgress);
         if let Some(end) = bot.native_end_risk.as_deref_mut() {
             end.escape = Some(escape);
         }
@@ -683,7 +683,7 @@ pub(crate) fn publish(
         return;
     }
     let refusal = verdict_refusal(assessment.verdict);
-    refuse(bot, world, destination, refusal);
+    refuse(bot, Some(world), destination, refusal);
 }
 
 pub fn escape_live(escape: script::combat::guard::Escape) -> bool {
@@ -722,7 +722,7 @@ pub(crate) fn assessment_keys(world: &NavWorld, assessment: &RouteAssessment) ->
 
 pub(crate) fn refuse(
     bot: &mut crate::script_runtime::NavBot,
-    world: &NavWorld,
+    world: Option<&NavWorld>,
     destination: api::snapshot::WorldTile,
     refusal: WalkRefusal,
 ) {
@@ -740,7 +740,7 @@ pub(crate) fn refuse(
     .unwrap_or_else(|| Arc::from(refusal.to_string()));
     if let Some(assessment) = bot.assessment.as_ref() {
         bot.last_assessment = Some(Arc::clone(assessment));
-        let keys = assessment_keys(world, assessment);
+        let keys = world.map_or_else(Vec::new, |world| assessment_keys(world, assessment));
         bot.native_walk_blocked = (!keys.is_empty()).then(|| (request_id, Arc::from(keys)));
     }
     let (radius, teleports) = bot

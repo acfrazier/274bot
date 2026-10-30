@@ -351,12 +351,27 @@ fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
             receipt["poison_seed_tick"] = json!(rig.snapshot.tick());
         }
         if let Some(refusal) = refusal {
+            receipt["refusal_tick"] = json!(rig.snapshot.tick());
             receipt["refusal"] = json!(format!("{refusal:?}"));
             if matches!(cell.mode, Mode::PoisonDuringHold) {
                 assert!(seeded_poison);
                 assert_eq!(refusal, WalkRefusal::Unsurvivable);
-                assert!(matches!(poison, PoisonState::Poisoned { .. }), "{poison:?}");
-                receipt["observed_poison"] = json!(format!("{poison:?}"));
+                receipt["refusal_poison"] = json!(format!("{poison:?}"));
+                if let PoisonState::Onset { since, .. } = poison {
+                    receipt["poison_chat_tick"] = json!(since);
+                    receipt["poison_chat_sequence"] = json!(rig.snapshot.chat_lines().iter()
+                        .find(|line| line.text == "You have been poisoned!")
+                        .map(|line| line.sequence));
+                }
+                // The content's onset line is already sufficient to refuse.
+                // Observe the first mark only after the route is unarmed.
+                assert!(rig.navs.lock().unwrap()[&rig.name].route.is_none());
+                rig.until(40, false, |rig| matches!(
+                    rig.navs.lock().unwrap()[&rig.name].condition.published().poison,
+                    PoisonState::Poisoned { .. }));
+                let observed = rig.navs.lock().unwrap()[&rig.name].condition.published().poison;
+                receipt["first_poison_hitmark_tick"] = json!(rig.snapshot.tick());
+                receipt["observed_poison"] = json!(format!("{observed:?}"));
                 break;
             }
             panic!("unexpected live refusal {refusal:?}");
