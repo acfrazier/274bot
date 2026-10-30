@@ -265,9 +265,11 @@ Do not hide a whole production file in `not_live` for such a change.
 `script.work-admission-headless` controls a native step and the monotonic clock.
 It proves that a slow returned step permits later work, that shutdown reports
 an unreturned worker, and that panic and start failure keep their conditions.
-It also checks retained resource custody. These states cannot be created by
-game content. `panel.headed-nav-script` complements this proof with real profile
-and cache preparation before the live script starts.
+It also consumes a completed terminal before an uncontained cleanup panic,
+then checks that the worker exits and releases its retained resource custody.
+These states cannot be created by game content. `panel.headed-nav-script`
+complements this proof with real profile and cache preparation before the live
+script starts.
 
 ## Add a cell
 
