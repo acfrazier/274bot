@@ -168,8 +168,6 @@ pub struct Combat {
     identity_kind: EngagementKind,
     deadline: Duration,
     pending_walk: Option<NonZeroU64>,
-    pending_walk_approach: bool,
-    approach_recovery: ReturnStallRecovery,
     threats: ThreatSet,
     schedule: Schedule,
     sweep: PrayerSweep,
@@ -191,7 +189,8 @@ pub struct Combat {
     food_total: u16,
 
     // Fourteen wear slots: two failure bits and one Prep-origin bit each.
-    // The remaining bits hold Prep-origin and skipped boost-family masks.
+    // Bits 42–55 hold Prep-origin and skipped boost-family masks. Bits 56–59
+    // hold the bounded Quester approach recovery and in-flight marker.
     prep_failures: u64,
     sequence: u64,
     rhand_pick: i32,
@@ -226,6 +225,9 @@ const SKIP_RETALIATE: u16 = 16384;
 const LEASH_WALKED: u16 = 32768;
 const POTION_PREP_SHIFT: u32 = 42;
 const POTION_SKIP_SHIFT: u32 = 49;
+const APPROACH_RETRY_SHIFT: u32 = 56;
+const APPROACH_RETRY_MASK: u64 = 0b111 << APPROACH_RETRY_SHIFT;
+const APPROACH_WALK_PENDING_BIT: u64 = 1 << 59;
 const _: () = assert!(std::mem::size_of::<Combat>() <= 512);
 const BASELINE_READY: u16 = 1 << api::prayer::PRAYER_COUNT;
 
@@ -323,8 +325,6 @@ impl NativeMachine for Combat {
                 .active_now()
                 .saturating_add(Duration::from_millis(u64::from(ticks) * 600)),
             pending_walk: None,
-            pending_walk_approach: false,
-            approach_recovery: ReturnStallRecovery::with_max_attempts(QUEST_WALK_MAX_ATTEMPTS),
             threats: ThreatSet::default(),
             schedule: Schedule::default(),
             sweep: PrayerSweep::new(),
@@ -422,17 +422,17 @@ impl NativeMachine for Combat {
             self.schedule.cycle.known = false;
         }
         self.flags |= OBSERVED;
-        if self.pending_walk_approach {
+        if self.approach_walk_pending() {
             if let Some(receipt) = self
                 .pending_walk
                 .and_then(|id| cx.walk_receipt(id.get()))
             {
                 match receipt.clone().into_arrival() {
-                    Ok(_) => self.approach_recovery.reset(),
+                    Ok(_) => self.reset_approach_recovery(),
                     Err(error) => {
-                        if self.approach_recovery.observe_receipt(receipt) {
+                        if self.observe_approach_failure(receipt) {
                             self.pending_walk = None;
-                            self.pending_walk_approach = false;
+                            self.set_approach_walk_pending(false);
                             return Poll::Pending;
                         }
                         return Poll::Ready(Err(error));
@@ -447,7 +447,7 @@ impl NativeMachine for Combat {
                 .is_some_and(|id| cx.walk_receipt(id.get()).is_some())
         {
             self.pending_walk = None;
-            self.pending_walk_approach = false;
+            self.set_approach_walk_pending(false);
         }
         let events = self.threats.observe(&frame, &self.tables, tick);
         self.counters.damage = self.counters.damage.saturating_add(events.damage);
@@ -3057,6 +3057,49 @@ impl Combat {
         })
         .or(Some(stand))
     }
+    fn approach_recovery(&self) -> ReturnStallRecovery {
+        let state = ((self.prep_failures >> APPROACH_RETRY_SHIFT) & 0b111) as u8;
+        ReturnStallRecovery::from_compact_state(QUEST_WALK_MAX_ATTEMPTS, state)
+    }
+
+    fn store_approach_recovery(&mut self, recovery: &ReturnStallRecovery) {
+        self.prep_failures = (self.prep_failures & !APPROACH_RETRY_MASK)
+            | (u64::from(recovery.compact_state()) << APPROACH_RETRY_SHIFT);
+    }
+
+    fn approach_walk_pending(&self) -> bool {
+        self.prep_failures & APPROACH_WALK_PENDING_BIT != 0
+    }
+
+    fn set_approach_walk_pending(&mut self, pending: bool) {
+        if pending {
+            self.prep_failures |= APPROACH_WALK_PENDING_BIT;
+        } else {
+            self.prep_failures &= !APPROACH_WALK_PENDING_BIT;
+        }
+    }
+
+    fn observe_approach_failure(&mut self, receipt: &crate::native::WalkReceipt) -> bool {
+        let mut recovery = self.approach_recovery();
+        let retry = recovery.observe_receipt(receipt);
+        self.store_approach_recovery(&recovery);
+        retry
+    }
+
+    fn approach_action_submitted(&mut self) {
+        let mut recovery = self.approach_recovery();
+        recovery.action_submitted();
+        self.store_approach_recovery(&recovery);
+        self.set_approach_walk_pending(true);
+    }
+
+    fn reset_approach_recovery(&mut self) {
+        let mut recovery = self.approach_recovery();
+        recovery.reset();
+        self.store_approach_recovery(&recovery);
+        self.set_approach_walk_pending(false);
+    }
+
     fn walk(
         &mut self,
         tile: api::WorldTile,
@@ -3079,11 +3122,10 @@ impl Combat {
             allow: Default::default(),
         })?;
         self.pending_walk = NonZeroU64::new(id);
-        self.pending_walk_approach = approach;
         if approach {
-            self.approach_recovery.action_submitted();
+            self.approach_action_submitted();
         } else {
-            self.approach_recovery.reset();
+            self.reset_approach_recovery();
         }
         self.schedule.clear(tick, 1, false);
         self.flags |= EMITTED;

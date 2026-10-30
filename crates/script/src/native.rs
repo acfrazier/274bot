@@ -1161,6 +1161,22 @@ impl ReturnStallRecovery {
         }
     }
 
+    /// Build a recovery state from an owner-packed byte. The request limit
+    /// bounds the action count to seven bits; the low bit records pending.
+    pub(crate) fn from_compact_state(max_attempts: u8, state: u8) -> Self {
+        debug_assert!(max_attempts <= 128);
+        Self {
+            actions: state >> 1,
+            max_attempts: max_attempts.max(1),
+            pending: state & 1 != 0,
+        }
+    }
+
+    pub(crate) fn compact_state(&self) -> u8 {
+        debug_assert!(self.actions <= u8::MAX >> 1);
+        (self.actions << 1) | u8::from(self.pending)
+    }
+
     pub(crate) fn observe(&mut self, end: &WalkEnd) -> bool {
         let transient = matches!(
             end,
