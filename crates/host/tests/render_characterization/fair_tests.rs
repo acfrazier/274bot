@@ -359,9 +359,6 @@ fn isolate_test_child(test_name: &str, marker: &str) -> bool {
 
 fn gpu_budget_fixture() -> Option<MutexGuard<'static, ()>> {
     let guard = serial();
-    if !gpu_available() {
-        return None;
-    }
     let unlimited = usize::MAX;
     render_head::test_hooks::configure_render_budgets(
         client::render::budget::RenderBudgetLimits::new(
@@ -372,7 +369,16 @@ fn gpu_budget_fixture() -> Option<MutexGuard<'static, ()>> {
     .expect("the isolated GPU fixture configures its explicit render budgets before PROCESS");
     render_head::pump(Instant::now())
         .expect("the configured fair pump is live before the first slot tick");
-    Some(guard)
+    // A bare GpuBackend probe would initialize the process context outside
+    // its budget, and a later real head must reject that uncharged context.
+    let probe = render_head::test_hooks::CaptureFixture::new(slot_key(), false, false)
+        .expect("the GPU probe attaches through the real process budget scope");
+    let available = probe.backend_kind() == BackendKind::Gpu;
+    assert!(
+        !required("T4_REQUIRE_GPU") || available,
+        "T4_REQUIRE_GPU=1 but the budget-scoped fixture selected no GPU head"
+    );
+    available.then_some(guard)
 }
 
 #[test]
@@ -816,8 +822,8 @@ fn client_scene_lock_holder_blocks_only_the_try_lock_attempt() {
     slot.event(RenderTestPoint::OverlayEntry);
     let before = render_head::workspace_stats().faults().totals();
     let holder = client::render::backend::gpu::test_hooks::hold_scene_lock();
-    assert!(slot.event(RenderTestPoint::AfterConsume).event.owns_lease);
     slot.tick(now + Duration::from_secs(1));
+    assert!(slot.event(RenderTestPoint::AfterConsume).event.owns_lease);
     assert!(
         slot.event(RenderTestPoint::BeforeLeaseRelease)
             .event
@@ -877,7 +883,16 @@ fn resource_failure_releases_before_overlay_and_retains_the_scene() {
             .owns_lease
     );
     assert!(!slot.event(RenderTestPoint::OverlayEntry).event.owns_lease);
-    let failed = slot.painted(first.generation);
+    let failed = receive(&slot.completed, |completed| {
+        completed
+            .stats
+            .is_some_and(|stats| stats.scene_consumes() == 2)
+    });
+    assert_eq!(failed.generation, first.generation);
+    assert!(matches!(
+        slot.output.refusal(),
+        Some(client::render::backend::RenderFault::Budget(_))
+    ));
     assert!(failed.stats.unwrap().has_valid_scene());
     assert_eq!(
         failed.stats.unwrap().scene_progress(),
@@ -1054,7 +1069,12 @@ fn equal_due_game_pane_head_wins_with_sidecar_full_rate() {
     sidecar.event(RenderTestPoint::BeforeLeaseRelease);
     sidecar.event(RenderTestPoint::AfterLeaseRelease);
     sidecar.event(RenderTestPoint::OverlayEntry);
-    let sidecar_painted = sidecar.painted(sidecar_busy.generation);
+    let sidecar_painted = receive(&sidecar.completed, |completed| {
+        completed.generation > sidecar_busy.generation
+            && completed
+                .stats
+                .is_some_and(|stats| stats.scene_consumes() == 1)
+    });
     assert_eq!(sidecar_painted.stats.unwrap().scene_consumes(), 1);
 }
 
