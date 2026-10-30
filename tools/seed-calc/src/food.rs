@@ -5,9 +5,9 @@ use api::game_data::NpcNameRow;
 use api::quest_progress::EvidenceStamp;
 use api::selected::RunKey;
 use api::snapshot::{
-    ActorKind, ActorTargetView, ActorView, GameSnapshot, HitmarkView, HitmarksView, ItemActionFamily,
-    ItemContainer, ItemView, LocalPlayerView, NpcView, PlayerView, StatView, WorldStateView,
-    WorldTile,
+    ActorKind, ActorTargetView, ActorView, GameSnapshot, HitmarkView, HitmarksView,
+    ItemActionFamily, ItemContainer, ItemView, LocalPlayerView, NpcView, PlayerView, StatView,
+    WorldStateView, WorldTile,
 };
 use api::{game_data::SelectedGameData, obj_names::ItemDefView};
 use script::combat::guard::{GuardOp, WalkGuard};
@@ -39,9 +39,12 @@ pub fn build(
     food: &api::game_data::GameItem,
     hp_max: u8,
 ) -> Result<FoodRule, String> {
-    let selected_food = tables
-        .food(food.id)
-        .ok_or_else(|| format!("{} is not recognized as product food", food.alias.as_deref().unwrap_or("food")))?;
+    let selected_food = tables.food(food.id).ok_or_else(|| {
+        format!(
+            "{} is not recognized as product food",
+            food.alias.as_deref().unwrap_or("food")
+        )
+    })?;
     let fact = selected_food;
     if fact.message_delay.is_some() {
         return Err(format!(
@@ -89,15 +92,7 @@ pub fn build(
             if cooldown != 0 {
                 let age = eat_delay - cooldown;
                 let previous_tick = tick.wrapping_sub(u16::from(age));
-                let previous = snapshot(
-                    tables.selected(),
-                    npc,
-                    food,
-                    hp,
-                    hp_max,
-                    2,
-                    previous_tick,
-                );
+                let previous = snapshot(tables.selected(), npc, food, hp, hp_max, 2, previous_tick);
                 let previous_view = view(&previous, previous_tick);
                 let admitted = GuardOp::Eat {
                     name: Arc::from(name.as_str()),
@@ -123,7 +118,11 @@ fn request(tick: u16) -> WalkRequest {
         ..WalkAllow::default()
     };
     WalkRequest {
-        target: WorldTile { x: 2600, z: 3200, level: 0 },
+        target: WorldTile {
+            x: 2600,
+            z: 3200,
+            level: 0,
+        },
         candidate_goals: None,
         loc_id: None,
         radius: 1,
@@ -147,7 +146,11 @@ fn snapshot(
     food_count: i32,
     tick: u16,
 ) -> GameSnapshot {
-    let tile = WorldTile { x: 2600, z: 3200, level: 0 };
+    let tile = WorldTile {
+        x: 2600,
+        z: 3200,
+        level: 0,
+    };
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_world(WorldStateView {
@@ -161,8 +164,20 @@ fn snapshot(
             .map(|index| StatView {
                 index,
                 name: api::snapshot::stat_name(index as usize).to_owned(),
-                effective: if index == 3 { i32::from(hp) } else if index == 5 { 1 } else { 40 },
-                base: if index == 3 { i32::from(hp_max) } else if index == 5 { 1 } else { 40 },
+                effective: if index == 3 {
+                    i32::from(hp)
+                } else if index == 5 {
+                    1
+                } else {
+                    40
+                },
+                base: if index == 3 {
+                    i32::from(hp_max)
+                } else if index == 5 {
+                    1
+                } else {
+                    40
+                },
                 xp: 0,
                 used: api::snapshot::stat_used(index as usize),
             })
@@ -199,7 +214,11 @@ fn snapshot(
         r#type: Some(npc.id as usize),
         name: npc.display.clone(),
         actions: vec![Some("Attack".into())],
-        tile: WorldTile { x: tile.x + 1, z: tile.z, level: 0 },
+        tile: WorldTile {
+            x: tile.x + 1,
+            z: tile.z,
+            level: 0,
+        },
         distance: 1,
         animation: -1,
         animation_frame: -1,
@@ -212,13 +231,20 @@ fn snapshot(
         health: npc.hitpoints,
         total_health: npc.hitpoints,
         face_entity: -1,
-        target: Some(ActorTargetView { kind: ActorKind::Player, index: 1 }),
+        target: Some(ActorTargetView {
+            kind: ActorKind::Player,
+            index: 1,
+        }),
         moving: false,
         running: false,
         in_combat: true,
         level: 1,
         size: npc.size.max(1),
-        network: WorldTile { x: tile.x + 1, z: tile.z, level: 0 },
+        network: WorldTile {
+            x: tile.x + 1,
+            z: tile.z,
+            level: 0,
+        },
         x: 0,
         z: 0,
         yaw: 0,
@@ -260,7 +286,11 @@ fn snapshot(
         animation_update: None,
     });
     snapshot.seed_hitmarks(HitmarksView {
-        marks: [HitmarkView { value: 0, kind: 0, cycle: 0 }; 4],
+        marks: [HitmarkView {
+            value: 0,
+            kind: 0,
+            cycle: 0,
+        }; 4],
         loop_cycle: i32::from(tick),
     });
     snapshot
@@ -272,7 +302,11 @@ fn view(snapshot: &GameSnapshot, tick: u16) -> api::snapshot::SnapshotView<'_> {
 
 fn stamp(tick: u16) -> EvidenceStamp {
     EvidenceStamp {
-        run: RunKey { slot: 0, run: 0, session: 0 },
+        run: RunKey {
+            slot: 0,
+            run: 0,
+            session: 0,
+        },
         tick: u64::from(tick),
         sequence: 0,
     }

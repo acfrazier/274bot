@@ -408,7 +408,6 @@ fn calculate_food_in_world(
     consent: bool,
     requested_limit: u8,
 ) -> Result<CrossThreshold, CrossError> {
-
     let missing_item = MELEE_KIT
         .iter()
         .find(|&&id| !query.route_state.worn.contains(&id));

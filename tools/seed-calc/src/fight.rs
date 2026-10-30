@@ -1,7 +1,7 @@
 //! Finite-state absorbing fight model with product-backed food decisions.
+use crate::food;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use crate::food;
 
 use api::game_data::{NpcNameRow, SelectedGameData};
 use script::combat::risk::KindRisk;
@@ -110,9 +110,16 @@ impl Stats {
         }
     }
     fn valid(self) -> bool {
-        [self.attack, self.strength, self.defence, self.hitpoints, self.magic, self.ranged]
-            .iter()
-            .all(|v| (1..=99).contains(v))
+        [
+            self.attack,
+            self.strength,
+            self.defence,
+            self.hitpoints,
+            self.magic,
+            self.ranged,
+        ]
+        .iter()
+        .all(|v| (1..=99).contains(v))
     }
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -301,7 +308,10 @@ fn unsupported(
         reasons.push("special attack needs calibration".into());
     }
     if row.attack_kind.is_some() {
-        reasons.push("ranged projectile flight/posthumous hits or magic spell effects are not modelled".into());
+        reasons.push(
+            "ranged projectile flight/posthumous hits or magic spell effects are not modelled"
+                .into(),
+        );
     }
     if style == Style::Ranged || weapon.kind == WeaponKind::Ranged {
         reasons.push("player ranged projectile flight and queued damage are not modelled".into());
@@ -586,11 +596,22 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
         if let Some(source) = food_source {
             result.sources.push(source.source.clone());
         }
-        result.sources.push("content/scripts/player/scripts/consumption/consume.rs2:114-134".into());
-        result.sources.push("content/scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2:39-74".into());
-        result.sources.push("crates/script/src/combat/guard.rs:470-483".into());
-        result.sources.push("crates/script/src/combat/policy.rs:333-386".into());
-        result.sources.push("crates/script/src/combat/schedule.rs:85-87,118-131".into());
+        result
+            .sources
+            .push("content/scripts/player/scripts/consumption/consume.rs2:114-134".into());
+        result.sources.push(
+            "content/scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2:39-74"
+                .into(),
+        );
+        result
+            .sources
+            .push("crates/script/src/combat/guard.rs:470-483".into());
+        result
+            .sources
+            .push("crates/script/src/combat/policy.rs:333-386".into());
+        result
+            .sources
+            .push("crates/script/src/combat/schedule.rs:85-87,118-131".into());
     }
     let npc = facts
         .npcs
@@ -631,7 +652,11 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
             Err(error) => return Err(error),
         }
     }
-    let food_limit = if food_item.is_some() { query.food_count } else { 0 };
+    let food_limit = if food_item.is_some() {
+        query.food_count
+    } else {
+        0
+    };
     for level in 40..=99 {
         let stats = Stats::policy(level, query.style);
         validate_wear(stats, weapon, &worn)?;
@@ -767,8 +792,7 @@ fn validate_weapon(
                 .iter()
                 .find(|fact| fact.obj_id == weapon.id && fact.category == 1)
                 .ok_or_else(|| FightError::Input("selected ranged weapon style missing".into()))?;
-            if fact.levelrequire != weapon.required_ranged
-                || style.attackrate != weapon.attackrate
+            if fact.levelrequire != weapon.required_ranged || style.attackrate != weapon.attackrate
             {
                 return Err(FightError::Input(
                     "ranged weapon requirement or interval disagrees with selected facts".into(),
@@ -781,7 +805,9 @@ fn validate_weapon(
 
 fn validate_wear(stats: Stats, weapon: &Weapon, worn: &[&ItemFact]) -> Result<(), FightError> {
     if !stats.valid() {
-        return Err(FightError::Input("combat stats must be between 1 and 99".into()));
+        return Err(FightError::Input(
+            "combat stats must be between 1 and 99".into(),
+        ));
     }
     if stats.attack < weapon.required_attack || stats.ranged < weapon.required_ranged {
         return Err(FightError::Input(format!(
@@ -1035,10 +1061,7 @@ fn next_food_delay(rule: &food::FoodRule, hp: u8, remaining: u16) -> Option<u16>
 }
 
 fn advance(state: &mut SurvivalState, model: SurvivalModel<'_>) -> Result<u16, FightError> {
-    let mut delay = state
-        .player_wait
-        .min(state.npc_wait)
-        .min(state.regen_wait);
+    let mut delay = state.player_wait.min(state.npc_wait).min(state.regen_wait);
     if state.pending_damage > 0 {
         delay = delay.min(u16::from(state.pending_wait));
     }
@@ -1060,9 +1083,9 @@ fn advance(state: &mut SurvivalState, model: SurvivalModel<'_>) -> Result<u16, F
     state.regen_wait -= delay;
     state.food_wait = state.food_wait.saturating_sub(delay);
     if state.pending_damage > 0 {
-        state.pending_wait = state.pending_wait.saturating_sub(
-            u8::try_from(delay).unwrap_or(u8::MAX),
-        );
+        state.pending_wait = state
+            .pending_wait
+            .saturating_sub(u8::try_from(delay).unwrap_or(u8::MAX));
     }
     Ok(delay)
 }
@@ -1103,9 +1126,10 @@ fn expand_survival(
         }
         for (damage, probability) in damage_distribution(model.npc_chance, model.npc_max) {
             let mut next = branch;
-            next.state.player_hp = next.state.player_hp.saturating_sub(
-                u8::try_from(damage).unwrap_or(u8::MAX),
-            );
+            next.state.player_hp = next
+                .state
+                .player_hp
+                .saturating_sub(u8::try_from(damage).unwrap_or(u8::MAX));
             next.state.npc_wait = u16::from(model.npc_interval);
             next.probability *= probability;
             if next.state.player_hp == 0 {
@@ -1118,7 +1142,11 @@ fn expand_survival(
     let mut after_regen = Vec::with_capacity(after_npc.len());
     for mut branch in after_npc {
         if branch.terminal.is_none() && branch.state.regen_wait == 0 {
-            branch.state.player_hp = branch.state.player_hp.saturating_add(1).min(model.player_hp);
+            branch.state.player_hp = branch
+                .state
+                .player_hp
+                .saturating_add(1)
+                .min(model.player_hp);
             branch.state.regen_wait = 100;
         }
         after_regen.push(branch);
@@ -1128,10 +1156,9 @@ fn expand_survival(
     for mut branch in after_regen {
         if branch.terminal.is_none()
             && branch.state.food > 0
-            && model.food_rule
-                .is_some_and(|rule| {
-                    rule.should_eat(branch.state.player_hp, branch.state.food_wait as u8)
-                })
+            && model.food_rule.is_some_and(|rule| {
+                rule.should_eat(branch.state.player_hp, branch.state.food_wait as u8)
+            })
         {
             let rule = model.food_rule.expect("food choice needs its rule");
             branch.state.food -= 1;
@@ -1141,8 +1168,10 @@ fn expand_survival(
                 .saturating_add(rule.heal)
                 .min(model.player_hp);
             branch.state.food_wait = u16::from(rule.eat_delay);
-            branch.state.player_wait =
-                branch.state.player_wait.saturating_add(u16::from(rule.skill_delay));
+            branch.state.player_wait = branch
+                .state
+                .player_wait
+                .saturating_add(u16::from(rule.skill_delay));
             branch.ate = true;
         }
         after_food.push(branch);
@@ -1577,10 +1606,7 @@ mod tests {
         }
     }
 
-    fn monte_carlo_survival(
-        model: SurvivalModel<'_>,
-        trials: u32,
-    ) -> Result<Outcome, FightError> {
+    fn monte_carlo_survival(model: SurvivalModel<'_>, trials: u32) -> Result<Outcome, FightError> {
         let initial = SurvivalState {
             player_hp: model.player_hp,
             npc_hp: model.npc_hp,
@@ -1611,11 +1637,10 @@ mod tests {
                     }
                 }
                 if state.npc_wait == 0 {
-                    let damage =
-                        sampled_damage(&mut seed, model.npc_chance, model.npc_max);
-                    state.player_hp = state.player_hp.saturating_sub(
-                        u8::try_from(damage).unwrap_or(u8::MAX),
-                    );
+                    let damage = sampled_damage(&mut seed, model.npc_chance, model.npc_max);
+                    state.player_hp = state
+                        .player_hp
+                        .saturating_sub(u8::try_from(damage).unwrap_or(u8::MAX));
                     state.npc_wait = u16::from(model.npc_interval);
                     if state.player_hp == 0 {
                         break false;
@@ -1632,14 +1657,16 @@ mod tests {
                 if ate {
                     let rule = model.food_rule.expect("food choice needs its rule");
                     state.food -= 1;
-                    state.player_hp = state.player_hp.saturating_add(rule.heal).min(model.player_hp);
+                    state.player_hp = state
+                        .player_hp
+                        .saturating_add(rule.heal)
+                        .min(model.player_hp);
                     state.food_wait = u16::from(rule.eat_delay);
                     state.player_wait = state
                         .player_wait
                         .saturating_add(u16::from(rule.skill_delay));
                 } else if state.player_wait == 0 {
-                    let damage =
-                        sampled_damage(&mut seed, model.player_chance, model.player_max);
+                    let damage = sampled_damage(&mut seed, model.player_chance, model.player_max);
                     state.player_wait = u16::from(model.player_interval);
                     if damage > 0 {
                         state.pending_damage = damage.min(state.npc_hp);
@@ -1734,7 +1761,8 @@ mod tests {
             "{exact:?} {sampled:?}"
         );
         assert!(
-            (exact.expected_ticks - sampled.expected_ticks).abs() < exact.expected_ticks * 0.08 + 2.0,
+            (exact.expected_ticks - sampled.expected_ticks).abs()
+                < exact.expected_ticks * 0.08 + 2.0,
             "{exact:?} {sampled:?}"
         );
     }

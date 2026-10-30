@@ -1,8 +1,8 @@
 //! Offline developer calculator for minimum quest-campaign combat seeds.
 //! See the tool README for assumptions, source formulas and JSON examples.
 pub mod crossing;
-mod food;
 pub mod fight;
+mod food;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
