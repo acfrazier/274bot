@@ -387,7 +387,6 @@ fn jungle_crossing_accepts_blocked_jungle_landing_only() {
     );
 }
 
-
 #[test]
 fn jungle_refuses_to_bake_when_a_required_tool_or_proven_map_is_missing() {
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
@@ -460,7 +459,10 @@ fn legends_gate_engine_closure_follows_helpers_into_general_scripts() {
     write_legends_content(&fx);
     let engine_procs = super::super::stage_doors::ENGINE_DOOR_PROCS;
     let door_procs = engine_procs.replace(MULTIPLY2_BLOCK, "");
-    assert_ne!(door_procs, engine_procs, "multiply2 must be moved to its source tree");
+    assert_ne!(
+        door_procs, engine_procs,
+        "multiply2 must be moved to its source tree"
+    );
     fx.write(
         "scripts/doors/scripts/open_and_close_double_doors.rs2",
         &door_procs,

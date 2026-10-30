@@ -89,6 +89,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   Legends unlocks each crossing. The player must also have a machete and an
   axe. Both tools can be carried. The player can also wear one tool in the right
   hand and carry the other.
+  The script also uses a Woodcutting roll and a tree-depletion roll. The pack
+  records a successful crossing, but it does not model the chance of either
+  roll.
 
 
 ### Scripting
