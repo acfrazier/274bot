@@ -24,9 +24,15 @@ const MENU_PACKET_ORDER_TICKS: u64 = 1;
 // opens the input dialog and suspends the script (`engine/src/engine/script/handlers/PlayerOps.ts:369-371`).
 // Allow two observed game ticks for the button and count-dialog signals.
 const MAKE_X_SIGNAL_TICKS: u64 = 2;
-// Make-X spinning queues the first product after three ticks and repeats after
-// two (`content/scripts/skill_crafting/scripts/spinning/spinning.rs2:87-110`).
-// R4 still hit the held-target timeout with four ticks, so allow five ticks.
+// Make-X spinning adds one product every three game ticks, the first one
+// included. The content queues the first spin with delay 3 and each later spin
+// with delay 2 (`content/scripts/skill_crafting/scripts/spinning/spinning.rs2:87-110`).
+// The engine runs a weak-queue entry when its old delay is 0 or less
+// (`engine/src/engine/entity/Player.ts:916-925`), and a queue pass does not
+// visit an entry added during that pass (`engine/src/datastruct/LinkList.ts:97-110`),
+// so the delay-2 entry also takes three ticks. The wait is that interval, plus
+// the one-tick packet-order margin, plus one tick because the deadline check
+// uses `>=`: 3 + 1 + 1 = 5.
 const MAKE_X_PRODUCT_PROGRESS_TICKS: u64 = 5;
 // Smithing posts the product after its delay, then waits three ticks before it
 // returns or starts its next item. Fletching and pottery use two-tick queues.
@@ -991,7 +997,8 @@ mod tests {
         })
         .is_pending());
 
-        // The initial queue takes three ticks. Allow two observations for its output.
+        // No product is seen for four ticks. The first one arrives on the fifth
+        // tick after the count answer, the latest that the five-tick wait accepts.
         assert!(with_tick(&menu_closed, &mut ledger, 8, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })
@@ -1005,7 +1012,8 @@ mod tests {
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
-        // Repeated queues take two ticks, then need two observations.
+        // Later products arrive four ticks apart: the three-tick spin interval
+        // plus one packet-order tick.
         assert!(with_tick(&first_product, &mut ledger, 12, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })

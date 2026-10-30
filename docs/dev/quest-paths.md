@@ -119,8 +119,8 @@ parses `production_yields.r289.fixture` and checks each listed product against
 its content yield. Products without a listed yield use one item per process.
 
 When a loc-triggered step starts more than six tiles from its anchor, it walks
-to the anchor before it waits for an unseen loc. A failed walk uses the
-Quester's existing bounded step retry.
+to the anchor before it waits for an unseen loc. A failed walk to the anchor
+blocks the step, and the Quester parks; it is not retried.
 
 On a `skill_multi3` chat menu, a fixed button must match the remaining process
 count; `make_x: true` allows the Make-X count dialog when there is no exact
