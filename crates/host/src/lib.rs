@@ -619,12 +619,21 @@ impl Host {
                     .as_ref()
                     .is_some_and(|head| head.backend_kind() == BackendKind::Gpu),
         );
+        let had_nav_debug_paint = client.nav_debug_paint().is_some();
         let t_obs = Instant::now();
         let busy = {
             #[cfg(feature = "render-test-hooks")]
             let _budget_scope = slot.head.as_ref().and_then(Head::budget_scope);
             observe(client, username, *run_sends, &status, &mut slot.run_policy)
         };
+        let nav_paint_removed = had_nav_debug_paint && client.nav_debug_paint().is_none();
+        if nav_paint_removed {
+            if let Some(head) = slot.head.as_mut() {
+                if head.backend_kind() == BackendKind::Gpu {
+                    head.release_nav_debug_overlay();
+                }
+            }
+        }
         let observe_ns = t_obs.elapsed().as_nanos() as u64;
         slot.observe_ns = slot.observe_ns.wrapping_add(observe_ns);
         if observe_ns > slot.observe_max_ns {
@@ -675,6 +684,12 @@ impl Host {
             && slot.head.as_ref().is_some_and(|head| {
                 head.prefer_cpu() != want_cpu || head.lowmem() != client.config.lowmem
             });
+        let nav_overlay_refresh = nav_overlay_refresh_due(
+            nav_paint_removed,
+            client.draw,
+            backend_flip,
+            slot.head.as_ref().map(Head::backend_kind),
+        );
         if !client.draw || backend_flip {
             // Retire the head, then drop any GPU `FrameOutput::Texture`
             // *before* the backend: the handle's view aliases
@@ -719,7 +734,7 @@ impl Host {
                 paced_at,
             );
         }
-        let paint = if client.ingame {
+        let cadence_paint = if client.ingame {
             raster_this_tick(
                 client.draw,
                 zap || full_rate,
@@ -746,6 +761,7 @@ impl Host {
                 &mut slot.raster_was_on,
             )
         };
+        let paint = nav_overlay_refresh || cadence_paint;
         #[cfg(feature = "render-test-hooks")]
         let ordinary_paint = paint;
         #[cfg(feature = "render-test-hooks")]
@@ -1262,6 +1278,18 @@ fn raster_this_tick(
         *last_paint = Some(now);
     }
     due
+}
+
+/// A GPU nav overlay is retained outside the ordinary scene. Clearing its
+/// input needs one normal head paint so the clean scene replaces the old
+/// composite; CPU rendering keeps its existing cadence.
+fn nav_overlay_refresh_due(
+    nav_paint_removed: bool,
+    draw: bool,
+    backend_flip: bool,
+    backend_kind: Option<BackendKind>,
+) -> bool {
+    nav_paint_removed && draw && !backend_flip && backend_kind == Some(BackendKind::Gpu)
 }
 
 /// Per-login post-drain state: snapshot, auto-run echo, the full-rate switch,

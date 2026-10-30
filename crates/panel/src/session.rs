@@ -1782,7 +1782,7 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
                 let base_z = c.map_build_base_z;
                 let flags_owner = is_focused || focused.is_none();
                 update_nav_debug_flags(flags_owner, active, &layers);
-                let (facts, changed, camera_yaw, candidate) =
+                let (facts, camera_yaw, candidate) =
                     live_runner.with_route_for(name, |driven, live_route, live_aim| {
                         frame.with_script_route(|script_route| {
                             let (route, click) = live_or_walk_paint(
@@ -1820,30 +1820,14 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
                             } else {
                                 None
                             };
-                            (facts, changed, camera_yaw, candidate)
+                            (facts, camera_yaw, candidate)
                         })
                     });
                 // The route borrow and the process-wide navs lock end above.
                 if camera {
                     apply_path_camera(c, camera_yaw);
                 }
-                if changed {
-                    let published = if active {
-                        candidate.is_some_and(|candidate| {
-                            c.set_budgeted_nav_debug_paint(candidate).is_ok()
-                        })
-                    } else {
-                        c.set_nav_debug_paint(None);
-                        true
-                    };
-                    if published {
-                        let recorded = crate::nav_paint_cache::Facts {
-                            trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
-                            ..facts
-                        };
-                        nav_paint_cache.lock().unwrap().record(name, recorded);
-                    }
-                }
+                publish_nav_debug_paint(c, name, focus, nav_paint_cache, facts, candidate);
             }
             None => {
                 nav_paint_cache.lock().unwrap().invalidate(name);
@@ -1900,6 +1884,57 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
                 slot_log(name, Level::Info, "mainland hop queued");
             }
         }
+    }
+}
+
+/// Commit a candidate only if this slot still owns focused GPU nav paint.
+///
+/// Candidate construction does not hold the focus lock. Recheck the owner
+/// while publishing so an old frame cannot restore paint after focus moves.
+fn publish_nav_debug_paint(
+    client: &mut Client,
+    name: &str,
+    focus: &Mutex<crate::focus::Focus>,
+    nav_paint_cache: &Mutex<crate::nav_paint_cache::Cache>,
+    facts: crate::nav_paint_cache::Facts,
+    candidate: Option<Result<(NavDebugPaint, Option<BudgetCharge>), RenderLimit>>,
+) {
+    let focus = focus.lock().unwrap();
+    let active = focus.focused.as_deref() == Some(name)
+        && draw_for_slot(&focus, name)
+        && client.nav_debug_drawable();
+    let facts = crate::nav_paint_cache::Facts { active, ..facts };
+    let changed = nav_paint_cache.lock().unwrap().last_frame(name) != Some(facts);
+
+    if !active {
+        if changed || client.nav_debug_paint().is_some() {
+            client.set_nav_debug_paint(None);
+        }
+        nav_paint_cache.lock().unwrap().record(
+            name,
+            crate::nav_paint_cache::Facts {
+                trail: crate::nav_paint_cache::trail_fingerprint(&client.try_move_path),
+                ..facts
+            },
+        );
+        return;
+    }
+    if !changed {
+        return;
+    }
+    let Some(candidate) = candidate else {
+        client.set_nav_debug_paint(None);
+        nav_paint_cache.lock().unwrap().invalidate(name);
+        return;
+    };
+    if client.set_budgeted_nav_debug_paint(candidate).is_ok() {
+        nav_paint_cache.lock().unwrap().record(
+            name,
+            crate::nav_paint_cache::Facts {
+                trail: crate::nav_paint_cache::trail_fingerprint(&client.try_move_path),
+                ..facts
+            },
+        );
     }
 }
 
@@ -4499,10 +4534,9 @@ impl Session {
             let _ =
                 self.persist_panel_member(&["last_focus"], Some(serde_json::Value::String(focus)));
         }
-        // The core owns the selection (and mirrors it onto the play, waking
-        // the outgoing and incoming slots); `focus.focused` is the render
-        // mirror the slot threads read. Destination is not a bot: switching
-        // focus keeps the pending tile.
+        // The core owns selection and mirrors it onto the play;
+        // `focus.focused` is the render mirror the slot threads read.
+        // Destination is not a bot: switching focus keeps the pending tile.
         let (old, capture) = {
             let focus = self.focus.lock().unwrap();
             if focus.focused.as_deref() == Some(name) {
@@ -4516,6 +4550,12 @@ impl Session {
         let mut focus = self.focus.lock().unwrap();
         focus.focused = Some(name.to_string());
         drop(focus);
+        // Wake the outgoing slot first even when its render-focus bit was
+        // already off. Its frame hook must clear nav input without a paint.
+        if let Some(old) = old.as_deref() {
+            self.core.wake_slot(old);
+        }
+        self.core.wake_slot(name);
         self.sync_render_focus();
         // The overlay follows the focused traveller: switching focus may
         // show a different (or no) route, so force a rebuild.
@@ -5431,6 +5471,7 @@ impl Session {
             {
                 self.focus.lock().unwrap().focused = None;
             }
+            self.core.wake_slot(name);
             self.sync_render_focus();
             self.map_desk.set_input_sender(None);
             // Last focused slot gone and no neighbour: no remaining drawer

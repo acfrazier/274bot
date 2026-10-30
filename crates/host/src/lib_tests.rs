@@ -2491,6 +2491,40 @@ fn raster_this_tick_watch_is_wall_clock_one_fps_capture_is_every_tick() {
 }
 
 #[test]
+fn clearing_gpu_nav_input_forces_one_head_paint_without_changing_cpu_cadence() {
+    assert!(nav_overlay_refresh_due(
+        true,
+        true,
+        false,
+        Some(BackendKind::Gpu),
+    ));
+    assert!(!nav_overlay_refresh_due(
+        false,
+        true,
+        false,
+        Some(BackendKind::Gpu),
+    ));
+    assert!(!nav_overlay_refresh_due(
+        true,
+        true,
+        false,
+        Some(BackendKind::Cpu),
+    ));
+    assert!(!nav_overlay_refresh_due(
+        true,
+        false,
+        false,
+        Some(BackendKind::Gpu),
+    ));
+    assert!(!nav_overlay_refresh_due(
+        true,
+        true,
+        true,
+        Some(BackendKind::Gpu),
+    ));
+}
+
+#[test]
 fn captured_title_paints_only_on_flame_deadline() {
     let t0 = Instant::now();
     let mut last = None;

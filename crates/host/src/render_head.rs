@@ -418,6 +418,11 @@ impl Head {
         self.renderer.backend_kind()
     }
 
+    /// Release retained GPU nav resources after the client input clears.
+    pub(crate) fn release_nav_debug_overlay(&mut self) {
+        self.renderer.release_nav_debug_overlay();
+    }
+
     #[cfg(feature = "render-test-hooks")]
     pub(crate) fn budget_scope(&self) -> Option<client::render::budget::RenderBudgetScope> {
         self.budget

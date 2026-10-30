@@ -1,9 +1,10 @@
 use super::{
     combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, live_or_walk_paint,
-    null_raster_live_entries, parse_getvar_line, retire_client_trail, script_active,
-    script_pause_enabled, script_stop_enabled, seed_on_first_world, stress_live_entries,
-    temp_live_vault_from, try_build_nav_debug_paint, update_nav_debug_flags, FeedbackOwner,
-    PanelPreferenceMember, PreparationCompletion, Session, SlotIo, PANEL_SETTING_EVENTS_CAP,
+    null_raster_live_entries, parse_getvar_line, publish_nav_debug_paint, retire_client_trail,
+    script_active, script_pause_enabled, script_stop_enabled, seed_on_first_world,
+    stress_live_entries, temp_live_vault_from, try_build_nav_debug_paint, update_nav_debug_flags,
+    FeedbackOwner, PanelPreferenceMember, PreparationCompletion, Session, SlotIo,
+    PANEL_SETTING_EVENTS_CAP,
 };
 use crate::focus::draw_for_slot;
 use crate::picker::{
@@ -2127,6 +2128,144 @@ fn unfocused_slot_clears_nav_debug_paint() {
 }
 
 #[test]
+fn focus_move_discards_stale_nav_candidate_and_clears_outgoing_paint() {
+    let _guard = crate::picker::lock_nav_statics();
+    let mut client = paint_client();
+    client.set_nav_debug_drawable(true);
+    let world = walled_world();
+    let layers = effective(&NavSettings::default(), true);
+    set_budgeted_nav_paint(&mut client, &world, None, None, &[], false, None, &layers);
+    assert!(client.nav_debug_paint().is_some());
+
+    let focus = Mutex::new(crate::focus::Focus {
+        focused: Some("alice".into()),
+        renderer: true,
+        game_pane_open: true,
+        capture: false,
+        only_render_selected: true,
+        sidecar_50: false,
+        live_full_rate: false,
+        focused_50: false,
+        wall_open: false,
+        wall: Vec::new(),
+        renderer_by: std::collections::HashMap::new(),
+    });
+    let stale_candidate = try_build_nav_debug_paint(
+        &world,
+        None,
+        None,
+        &[],
+        false,
+        None,
+        &layers,
+        client.map_build_base_x,
+        client.map_build_base_z,
+    );
+    assert!(stale_candidate.is_ok());
+    focus.lock().unwrap().focused = Some("bob".into());
+    let nav_paint_cache = Mutex::new(crate::nav_paint_cache::Cache::default());
+    let facts = crate::nav_paint_cache::Facts {
+        settings_generation: 1,
+        active: true,
+        base_x: client.map_build_base_x,
+        base_z: client.map_build_base_z,
+        here: None,
+        route: 0,
+        click: None,
+        trail: crate::nav_paint_cache::trail_fingerprint(&client.try_move_path),
+        run_on: false,
+    };
+
+    publish_nav_debug_paint(
+        &mut client,
+        "alice",
+        &focus,
+        &nav_paint_cache,
+        facts,
+        Some(stale_candidate),
+    );
+
+    assert!(
+        client.nav_debug_paint().is_none(),
+        "an outgoing slot clears its existing paint and cannot publish a stale candidate"
+    );
+    assert_eq!(
+        nav_paint_cache
+            .lock()
+            .unwrap()
+            .last_frame("alice")
+            .map(|facts| facts.active),
+        Some(false)
+    );
+
+    focus.lock().unwrap().focused = Some("alice".into());
+    let fresh_candidate = try_build_nav_debug_paint(
+        &world,
+        None,
+        None,
+        &[],
+        false,
+        None,
+        &layers,
+        client.map_build_base_x,
+        client.map_build_base_z,
+    );
+    assert!(fresh_candidate.is_ok());
+    publish_nav_debug_paint(
+        &mut client,
+        "alice",
+        &focus,
+        &nav_paint_cache,
+        facts,
+        Some(fresh_candidate),
+    );
+    assert!(
+        client.nav_debug_paint().is_some(),
+        "the newly focused slot may publish its current candidate"
+    );
+    update_nav_debug_flags(true, false, &layers);
+}
+
+#[test]
+fn panel_frame_hook_clears_unfocused_client_nav_input() {
+    let _guard = crate::picker::lock_nav_statics();
+    let mut session = Session::new();
+    session.persist_ui = false;
+    session.focus.lock().unwrap().game_pane_open = true;
+    session.apply_focus("bob");
+    let hook = session.panel_frame_hook();
+    let world = Arc::new(walled_world());
+    crate::picker::set_pack(Some(Arc::clone(&world)));
+    let layers = effective(&NavSettings::default(), true);
+    let mut client = paint_client();
+    client.ingame = true;
+    client.scene_state = 2;
+    client.set_nav_debug_drawable(true);
+    set_budgeted_nav_paint(&mut client, &world, None, None, &[], false, None, &layers);
+    assert!(client.nav_debug_paint().is_some());
+
+    frontend_core::frames::run_frame_for_test(
+        &mut client,
+        "alice",
+        hook,
+        host_play::SlotFrameInput::default(),
+        (
+            host_play::player_here_tile,
+            host_play::Host::publish_frontend_snapshot,
+            host_play::step_walk_arm_follow,
+            |client: &_| client.gens.player,
+        ),
+    );
+
+    assert!(
+        client.nav_debug_paint().is_none(),
+        "a nonfocused frame hook must clear its prior GPU input"
+    );
+    crate::picker::set_pack(None);
+    update_nav_debug_flags(true, false, &layers);
+}
+
+#[test]
 fn saved_collision_prefs_without_drawing_do_not_load_navflags() {
     // Saved collision/NSEW paint preferences must not pull the flags
     // sidecar until a surface actually draws them.
@@ -2832,6 +2971,7 @@ fn sidecar_cadence_sync_raises_members_not_focus() {
 #[test]
 fn sidecar_and_live_full_rate_do_not_write_render_focus() {
     let mut session = Session::new();
+    session.persist_ui = false;
     let a_input = SlotInput::new();
     let b_input = SlotInput::new();
     for (name, input) in [("a", &a_input), ("b", &b_input)] {
@@ -2856,7 +2996,7 @@ fn sidecar_and_live_full_rate_do_not_write_render_focus() {
         focus.renderer_by =
             std::collections::HashMap::from([("a".into(), true), ("b".into(), true)]);
     }
-    session.set_focus_for_test("a");
+    session.apply_focus("a");
     assert!(a_input.render_focused());
     assert!(!b_input.render_focused());
 
@@ -2885,7 +3025,7 @@ fn sidecar_and_live_full_rate_do_not_write_render_focus() {
         "live full-rate changes cadence, not the selected render owner"
     );
 
-    session.set_focus_for_test("b");
+    session.apply_focus("b");
     assert!(!a_input.render_focused());
     assert!(b_input.render_focused());
     {
