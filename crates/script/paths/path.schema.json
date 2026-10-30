@@ -3025,7 +3025,7 @@
               "type": "null"
             }
           ],
-          "description": "Optional location action used to start production. When omitted, select\nfrom a production menu opened by an earlier `use_on` step."
+          "description": "Optional loc trigger. With `op`, click that operation; without `op`,\nuse the menu item on the loc. When omitted, the menu must already be open."
         },
         "anchor": {
           "anyOf": [
@@ -3077,13 +3077,16 @@
           "description": "Symbolic location config name."
         },
         "op": {
-          "type": "string",
-          "description": "Location operation used to start production."
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional loc operation. Omit it to use the menu item on this loc.",
+          "default": null
         }
       },
       "required": [
-        "name",
-        "op"
+        "name"
       ]
     },
     "MakeMenu": {
@@ -3096,7 +3099,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Source citation for the menu option."
+          "description": "Source citation for the menu option.",
+          "pattern": "\\S"
         }
       },
       "required": [
@@ -3901,7 +3905,8 @@
         "stop": {
           "type": "string",
           "description": "Authored stop name reported when the kill budget is spent without the item.",
-          "minLength": 1
+          "minLength": 1,
+          "pattern": "\\S"
         }
       },
       "required": [
