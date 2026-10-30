@@ -3069,7 +3069,7 @@ mod tests {
     }
 
     #[test]
-    fn bank_return_failure_preserves_walk_receipt_detail() {
+    fn bank_return_failure_preserves_walk_receipt_detail_for_retry() {
         use crate::quester::families::tests::with_tick;
         use api::snapshot::GameSnapshot;
 
@@ -3123,12 +3123,13 @@ mod tests {
                 tick,
             );
         });
-        let failure = gatherer.failure.as_ref().unwrap();
-        assert_eq!(failure.code.as_ref(), "return-failed");
-        assert!(failure.message.contains("Dropped"));
-        assert!(failure.message.contains("2809,3441,0"));
-        assert!(failure.message.contains("2848,3426,0"));
-        assert_eq!(gatherer.phase(), ("blocked", NativePhase::Blocked));
+        assert!(gatherer.failure.is_none());
+        assert_eq!(gatherer.scratch.retry_after_tick, Some(1));
+        assert!(gatherer.scratch.return_stall_recovery.pending());
+        assert_eq!(
+            gatherer.scratch.last_walk_failure.as_deref(),
+            Some("Dropped: stuck at (2809,3441,0), aiming (2848,3426,0)")
+        );
         assert_eq!(gatherer.trips, 0);
     }
 
@@ -3790,14 +3791,14 @@ mod tests {
 
         let mut gatherer = draynor_net_gatherer();
         gatherer.trip = TripStep::Return;
-        gatherer.scratch.avoid[0] = AvoidedTile {
-            tile: WorldTile {
+        gatherer.avoid(
+            WorldTile {
                 x: 3085,
                 z: 3231,
                 level: 0,
             },
-            until: 167,
-        };
+            167,
+        );
         let bank = WorldTile {
             x: 3092,
             z: 3243,
@@ -3871,14 +3872,14 @@ mod tests {
 
         let mut gatherer = draynor_net_gatherer();
         gatherer.retained.recovery = RecoveryState::Pending { step: 5 };
-        gatherer.scratch.avoid[0] = AvoidedTile {
-            tile: WorldTile {
+        gatherer.avoid(
+            WorldTile {
                 x: 3085,
                 z: 3231,
                 level: 0,
             },
-            until: 167,
-        };
+            167,
+        );
         let bank = WorldTile {
             x: 3092,
             z: 3243,
@@ -4101,10 +4102,7 @@ mod tests {
 
         let mut gatherer = draynor_net_gatherer();
         gatherer.hazard_escape = Some(hazard);
-        gatherer.scratch.avoid[0] = AvoidedTile {
-            tile: hazard,
-            until: 180,
-        };
+        gatherer.avoid(hazard, 180);
         let snapshot = bank_snapshot(here);
         let mut ledger = None;
         with_tick(&snapshot, &mut ledger, 120, |tick| {
@@ -4174,10 +4172,7 @@ mod tests {
 
         let mut gatherer = draynor_net_gatherer();
         gatherer.hazard_escape = Some(hazard);
-        gatherer.scratch.avoid[0] = AvoidedTile {
-            tile: hazard,
-            until: 180,
-        };
+        gatherer.avoid(hazard, 180);
         let snapshot = bank_snapshot(here);
         let mut ledger = None;
         with_tick(&snapshot, &mut ledger, 120, |tick| {

@@ -2788,7 +2788,7 @@ mod tests {
                         options: WalkOptions::default(),
                         explicit: None,
                         excluded_banks: excluded_banks.clone(),
-                        allow_air_fallback: false,
+                        allow_air_fallback,
                     },
                     &mut frame.cx,
                 )
