@@ -1108,8 +1108,7 @@ impl FrameBuf {
     ) {
         let (pending, registration) = {
             let mut queue = queue.lock();
-            let matches_head =
-                |candidate: HeadIdentity| head.is_none_or(|head| candidate == head);
+            let matches_head = |candidate: HeadIdentity| head.is_none_or(|head| candidate == head);
             let pending = if queue
                 .pending
                 .as_ref()
