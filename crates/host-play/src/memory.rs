@@ -615,14 +615,15 @@ fn q4_accountleveler_source(
             let removal_after_ms = Q4_REMOVAL_DELAY.as_millis();
             let listener_replacement = format!(
                 concat!(
-                    "        const memabRemovalAt = Date.now() + {removal_after_ms};\n",
+                    "        const memabRemovalAt = Date.now() + {};\n",
                     "        this.stopObserving = BotHost.addFrameListener(() => {{\n",
                     "            if (Date.now() >= memabRemovalAt) {{\n",
                     "                this.stopObserving?.();\n",
                     "                this.log(\"MEMAB_LISTENER_REMOVED\");\n",
                     "                return;\n",
                     "            }}\n",
-                )
+                ),
+                removal_after_ms
             );
             transformed = transformed.replacen(listener_start, &listener_replacement, 1);
         }
@@ -3760,7 +3761,13 @@ mod tests {
 
     #[test]
     fn q4_bank_state_counts_nonempty_rows_in_the_withdraw_grid() {
-        let mut client = Client::default();
+        let mut client = Client::new(client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
         client.main_modal_id = 600;
         client.set_iface(
             600,
