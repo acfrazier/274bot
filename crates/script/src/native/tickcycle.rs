@@ -17,15 +17,7 @@ pub(crate) enum Shape {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RollSignal {
     Always,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Wave 3 (S4) maps the selected Never roll fact")
-    )]
     Never,
-    #[expect(
-        dead_code,
-        reason = "Wave 3 (S4) maps the selected Sometimes roll fact"
-    )]
     Sometimes,
 }
 
@@ -36,10 +28,6 @@ pub(crate) enum AnimClass {
     Roll,
     Cast,
     Null,
-    #[expect(
-        dead_code,
-        reason = "Wave 3 (S4) classifies unrelated observed animations"
-    )]
     Other,
 }
 
@@ -47,26 +35,25 @@ pub(crate) enum AnimClass {
 pub(crate) enum OffReason {
     UnstableTiming,
     ContentRefusal,
-    #[expect(
-        dead_code,
-        reason = "Wave 3 (S4) translates the members-only arm refusal"
-    )]
     MembersOnlyArm,
-    #[expect(
-        dead_code,
-        reason = "Wave 3 (S4) publishes missing optional arm supply"
-    )]
     NoArmSupply,
-    #[expect(
-        dead_code,
-        reason = "Wave 3 (S4) publishes tool-specific no-gain applicability"
-    )]
     NoGain,
-    #[expect(
-        dead_code,
-        reason = "Wave 3 (S4) publishes unsupported delay-variable applicability"
-    )]
     NoDelayVariable,
+    NotInRelease,
+}
+
+impl OffReason {
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::UnstableTiming => "unstable-timing",
+            Self::ContentRefusal => "content-refusal",
+            Self::MembersOnlyArm => "members-only-arm",
+            Self::NoArmSupply => "no-arm-supply",
+            Self::NoGain => "no-gain",
+            Self::NoDelayVariable => "no-delay-variable",
+            Self::NotInRelease => "not-in-release",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,16 +93,16 @@ pub(crate) struct CycleDiagnostic {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct CycleStats {
-    pub(crate) verified: u32,
-    pub(crate) slipped: u32,
-    pub(crate) lost: u32,
-    pub(crate) unobserved: u32,
-    pub(crate) delayed: u32,
-    pub(crate) paused: u32,
-    pub(crate) wire_events: u32,
-    pub(crate) fallback_clicks: u32,
-    pub(crate) fallback_failed: u32,
+pub struct CycleStats {
+    pub verified: u32,
+    pub slipped: u32,
+    pub lost: u32,
+    pub unobserved: u32,
+    pub delayed: u32,
+    pub paused: u32,
+    pub wire_events: u32,
+    pub fallback_clicks: u32,
+    pub fallback_failed: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,13 +124,6 @@ pub(crate) struct TickPolicy {
 }
 
 impl TickPolicy {
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Wave 3 (S4) publishes the run-level timing counters"
-        )
-    )]
     pub(crate) fn stats(&self) -> CycleStats {
         self.stats
     }
@@ -165,13 +145,6 @@ impl TickPolicy {
         self.verdict_count
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Wave 3 (S4) publishes the current timing off reason"
-        )
-    )]
     pub(crate) const fn off_reason(&self) -> Option<OffReason> {
         match self.off_until {
             Some(off) => Some(off.reason),
@@ -179,13 +152,6 @@ impl TickPolicy {
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Wave 3 (S4) publishes the timing cooldown deadline"
-        )
-    )]
     pub(crate) const fn off_until(&self) -> Option<u64> {
         match self.off_until {
             Some(off) => Some(off.tick),
@@ -299,13 +265,6 @@ pub(crate) struct CycleSpec {
 }
 
 impl CycleSpec {
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Wave 3 (S4) builds a cycle from selected timing facts"
-        )
-    )]
     pub(crate) const fn new(
         shape: Shape,
         roll_signal: RollSignal,
@@ -352,6 +311,8 @@ pub(crate) struct CycleSignals<'a> {
     pub(crate) menu_open: bool,
     pub(crate) product_rose: bool,
     pub(crate) target_ready: bool,
+    /// The consumer can admit a complete batch now, without spending its budget first.
+    pub(crate) batch_permitted: bool,
     pub(crate) receipt: Option<&'a ServerOrderedDispatch>,
     pub(crate) checked_receipt: Option<(u64, bool)>,
 }
@@ -521,6 +482,8 @@ enum Phase {
     },
     Idle {
         since: u64,
+        fallback: Option<Obligation>,
+        pending: Option<Obligation>,
     },
     Sent {
         sent: u64,
@@ -552,13 +515,6 @@ pub(crate) struct TickCycle {
 
 impl TickCycle {
     /// The current animation is a baseline, not a fresh event.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Wave 3 (S4) starts and parks the per-target timing cycle"
-        )
-    )]
     pub(crate) const fn new(
         spec: CycleSpec,
         tick: u64,
@@ -588,26 +544,16 @@ impl TickCycle {
     }
 
     /// Advance the consumer's chat cursor after it has read all newer chat rows.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Wave 3 (S4) advances the observed content-chat cursor"
-        )
-    )]
     pub(crate) const fn set_chat_cursor(&mut self, cursor: i32) {
         self.chat_cursor = cursor;
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Wave 3 (S4) retains the content-chat cursor across targets"
-        )
-    )]
     pub(crate) const fn chat_cursor(&self) -> i32 {
         self.chat_cursor
+    }
+
+    pub(crate) fn fresh_animation_at(&self, tick: u64, serial: u32) -> bool {
+        tick == self.last_tick.saturating_add(1) && serial != self.anim_serial
     }
 
     pub(crate) fn allows_native_begin(&self) -> bool {
@@ -637,6 +583,9 @@ impl TickCycle {
             } => obligation.request_id.map(NonZeroU64::get),
             Phase::Native {
                 fallback, pending, ..
+            }
+            | Phase::Idle {
+                fallback, pending, ..
             } => match pending.and_then(|obligation| obligation.request_id) {
                 Some(request_id) => Some(request_id.get()),
                 None => fallback
@@ -645,6 +594,27 @@ impl TickCycle {
             },
             _ => None,
         }
+    }
+
+    pub(crate) fn click_kind(&self) -> Option<&'static str> {
+        let kind = match self.phase {
+            Phase::Armed {
+                act: ActState::Owed(obligation),
+                ..
+            } => obligation.kind,
+            Phase::Native {
+                fallback, pending, ..
+            }
+            | Phase::Idle {
+                fallback, pending, ..
+            } => pending.or(fallback)?.kind,
+            _ => return None,
+        };
+        Some(match kind {
+            ObligationKind::Act => "Act",
+            ObligationKind::EndingClick => "EndingClick",
+            ObligationKind::Fallback => "Fallback",
+        })
     }
 
     pub(crate) fn has_unresolved_requests(&self) -> bool {
@@ -656,15 +626,7 @@ impl TickCycle {
         self.phase
     }
 
-
     /// Drive one edge or wake without allocation.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Wave 3 (S4) drives the timing cycle from GatherRun polls"
-        )
-    )]
     pub(crate) fn drive(
         &mut self,
         signals: &CycleSignals<'_>,
@@ -744,13 +706,6 @@ impl TickCycle {
     }
 
     /// The consumer calls this only after its emission succeeds.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Wave 3 (S4) binds successful emissions to request ids"
-        )
-    )]
     pub(crate) fn note_emit(&mut self, tick: u64, step: CycleStep, request_id: u64) {
         let Some(request_id) = NonZeroU64::new(request_id) else {
             return;
@@ -784,16 +739,17 @@ impl TickCycle {
     }
 
     /// Pause a live cycle for the consumer's existing eat path.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Wave 3 (S4) pauses a live cycle for Gatherer eating"
-        )
-    )]
     pub(crate) fn pause(&mut self, policy: &mut TickPolicy) {
         let old = self.phase;
-        let mut pending = None;
+        let (mut pending, fallback) = match old {
+            Phase::Native {
+                pending, fallback, ..
+            }
+            | Phase::Idle {
+                pending, fallback, ..
+            } => (pending, fallback.filter(Obligation::asked)),
+            _ => (None, None),
+        };
         if matches!(old, Phase::Sent { .. } | Phase::Armed { .. }) {
             self.record_cycle(policy, Verdict::Paused, CycleReason::Paused, self.last_tick);
             if let Phase::Armed {
@@ -805,15 +761,10 @@ impl TickCycle {
                     pending = Some(obligation);
                 }
             }
-        } else if let Phase::Native {
-            pending: existing, ..
-        } = old
-        {
-            pending = existing;
         }
         self.phase = Phase::Native {
             roll_due: None,
-            fallback: None,
+            fallback,
             pending,
         };
     }
@@ -825,6 +776,9 @@ impl TickCycle {
         let count = delta as u8;
         match &mut self.phase {
             Phase::Native {
+                fallback, pending, ..
+            }
+            | Phase::Idle {
                 fallback, pending, ..
             } => {
                 for obligation in [fallback, pending].into_iter().flatten() {
@@ -895,7 +849,12 @@ impl TickCycle {
                     };
                     None
                 } else {
-                    self.end_cycle(Verdict::Lost, CycleReason::ActFailed, self.last_tick, policy);
+                    self.end_cycle(
+                        Verdict::Lost,
+                        CycleReason::ActFailed,
+                        self.last_tick,
+                        policy,
+                    );
                     if let Phase::Native { pending, .. } = &mut self.phase {
                         *pending = None;
                     }
@@ -904,9 +863,12 @@ impl TickCycle {
                 }
             }
             Phase::Native {
-                roll_due,
                 fallback: Some(obligation),
-                pending,
+                ..
+            }
+            | Phase::Idle {
+                fallback: Some(obligation),
+                ..
             } if obligation.request_id == Some(request_id) => {
                 if obligation.kind == ObligationKind::Fallback {
                     if accepted {
@@ -918,29 +880,27 @@ impl TickCycle {
                             policy.stats.fallback_failed.saturating_add(1);
                     }
                 }
-                self.phase = Phase::Native {
-                    roll_due,
-                    fallback: None,
-                    pending,
-                };
-                Some(match policy.refresh_off(self.last_tick) {
-                    Some(reason) => CycleStep::Native(reason),
-                    None => CycleStep::Wait,
-                })
+                match &mut self.phase {
+                    Phase::Native { fallback, .. } | Phase::Idle { fallback, .. } => *fallback = None,
+                    _ => unreachable!(),
+                }
+                None
             }
             Phase::Native {
-                roll_due,
-                fallback,
                 pending: Some(obligation),
+                ..
+            }
+            | Phase::Idle {
+                pending: Some(obligation),
+                ..
             } if obligation.request_id == Some(request_id) => {
                 if accepted {
                     policy.add_wire_events(2);
                 }
-                self.phase = Phase::Native {
-                    roll_due,
-                    fallback,
-                    pending: None,
-                };
+                match &mut self.phase {
+                    Phase::Native { pending, .. } | Phase::Idle { pending, .. } => *pending = None,
+                    _ => unreachable!(),
+                }
                 None
             }
             _ => None,
@@ -953,12 +913,12 @@ impl TickCycle {
         if live {
             self.end_cycle(Verdict::Lost, CycleReason::ContentRefusal, tick, policy);
             self.start_fallback(tick);
-        } else {
-            self.phase = Phase::Native {
-                roll_due: None,
-                fallback: None,
-                pending: None,
-            };
+        } else if let Phase::Native {
+            roll_due, fallback, ..
+        } = &mut self.phase
+        {
+            *roll_due = None;
+            *fallback = fallback.filter(Obligation::asked);
         }
         policy.disable(OffReason::ContentRefusal);
         self.off_step(tick, OffReason::ContentRefusal, policy)
@@ -1009,11 +969,13 @@ impl TickCycle {
                     pending,
                 };
             }
-            Phase::Idle { .. } => {
+            Phase::Idle {
+                fallback, pending, ..
+            } => {
                 self.phase = Phase::Native {
                     roll_due: None,
-                    fallback: None,
-                    pending: None,
+                    fallback,
+                    pending,
                 };
             }
         }
@@ -1028,22 +990,7 @@ impl TickCycle {
     }
 
     fn has_asked_obligation(&self) -> bool {
-        matches!(
-            self.phase,
-            Phase::Native {
-                fallback: Some(Obligation {
-                    request_id: Some(_),
-                    ..
-                }),
-                ..
-            } | Phase::Native {
-                pending: Some(Obligation {
-                    request_id: Some(_),
-                    ..
-                }),
-                ..
-            }
-        )
+        self.checked_request_id().is_some()
     }
 
     fn off_step(&mut self, tick: u64, reason: OffReason, policy: &mut TickPolicy) -> CycleStep {
@@ -1067,13 +1014,7 @@ impl TickCycle {
                 fallback,
                 pending,
             } => self.drive_native(signals, fresh, edge, roll_due, fallback, pending, policy),
-            Phase::Idle { .. } => {
-                if signals.target_ready && !signals.menu_open {
-                    self.start_batch(tick, false, policy)
-                } else {
-                    CycleStep::Wait
-                }
-            }
+            Phase::Idle { .. } => self.drive_idle(signals, policy),
             Phase::Sent {
                 sent,
                 blind,
@@ -1086,7 +1027,7 @@ impl TickCycle {
                     && self.evidence.success(tick, tick)
                 {
                     self.record_cycle(policy, Verdict::Delayed, CycleReason::Delayed, tick);
-                    self.phase = Phase::Idle { since: tick };
+                    self.phase = Phase::Idle { since: tick, fallback: None, pending: None };
                     return self.drive_idle(signals, policy);
                 }
                 if edge && tick == sent.saturating_add(1) {
@@ -1122,7 +1063,7 @@ impl TickCycle {
                     if self.spec.delay_drop && fresh == Some(AnimClass::Null) {
                         if self.evidence.success(tick, tick) {
                             self.record_cycle(policy, Verdict::Delayed, CycleReason::Delayed, tick);
-                            self.phase = Phase::Idle { since: tick };
+                            self.phase = Phase::Idle { since: tick, fallback: None, pending: None };
                             return self.drive_idle(signals, policy);
                         }
                         null_edge = true;
@@ -1174,8 +1115,8 @@ impl TickCycle {
     }
 
     fn drive_idle(&mut self, signals: &CycleSignals<'_>, policy: &mut TickPolicy) -> CycleStep {
-        if signals.target_ready && !signals.menu_open {
-            self.start_batch(signals.tick, false, policy)
+        if signals.target_ready && !signals.menu_open && self.checked_request_id().is_none() {
+            self.start_batch(signals, false, policy)
         } else {
             CycleStep::Wait
         }
@@ -1211,7 +1152,11 @@ impl TickCycle {
             if let Some(due) = roll_due {
                 if rolled && tick <= due {
                     if self.spec.depletes && success {
-                        self.phase = Phase::Idle { since: tick };
+                        self.phase = Phase::Idle {
+                            since: tick,
+                            fallback: fallback.filter(Obligation::asked),
+                            pending,
+                        };
                         return self.drive_idle(signals, policy);
                     }
                     if !signals.menu_open && !pending_asked {
@@ -1223,7 +1168,7 @@ impl TickCycle {
                         if fallback.is_some_and(|obligation| obligation.is_due_now()) {
                             return self.fallback_step(tick);
                         }
-                        return self.start_batch(tick, false, policy);
+                        return self.start_batch(signals, false, policy);
                     }
                     self.phase = Phase::Native {
                         roll_due: None,
@@ -1248,7 +1193,7 @@ impl TickCycle {
                     if fallback.is_some_and(|obligation| obligation.is_due_now()) {
                         return self.fallback_step(tick);
                     }
-                    return self.start_batch(tick, true, policy);
+                    return self.start_batch(signals, true, policy);
                 }
                 if tick == due && !rolled && self.spec.roll_signal == RollSignal::Always {
                     roll_due = None;
@@ -1258,7 +1203,11 @@ impl TickCycle {
                 }
             } else if rolled {
                 if self.spec.depletes && success {
-                    self.phase = Phase::Idle { since: tick };
+                    self.phase = Phase::Idle {
+                        since: tick,
+                        fallback: fallback.filter(Obligation::asked),
+                        pending,
+                    };
                     return self.drive_idle(signals, policy);
                 }
                 if !signals.menu_open && !pending_asked {
@@ -1270,7 +1219,7 @@ impl TickCycle {
                     if fallback.is_some_and(|obligation| obligation.is_due_now()) {
                         return self.fallback_step(tick);
                     }
-                    return self.start_batch(tick, false, policy);
+                    return self.start_batch(signals, false, policy);
                 }
             }
 
@@ -1371,7 +1320,7 @@ impl TickCycle {
                     fallback: None,
                     pending: self.asked_act(act),
                 };
-                return self.start_batch(tick, true, policy);
+                return self.start_batch(signals, true, policy);
             }
         }
 
@@ -1451,7 +1400,11 @@ impl TickCycle {
     ) -> CycleStep {
         self.record_cycle(
             policy,
-            if late { Verdict::Slip } else { Verdict::Unobserved },
+            if late {
+                Verdict::Slip
+            } else {
+                Verdict::Unobserved
+            },
             if late {
                 CycleReason::LateBatch
             } else {
@@ -1468,7 +1421,11 @@ impl TickCycle {
             return CycleStep::Native(OffReason::UnstableTiming);
         }
         if self.spec.depletes && self.evidence.success(tick, tick) {
-            self.phase = Phase::Idle { since: tick };
+            self.phase = Phase::Idle {
+                since: tick,
+                fallback: None,
+                pending: self.asked_act(act),
+            };
             return self.drive_idle(signals, policy);
         }
         if !signals.menu_open {
@@ -1477,7 +1434,7 @@ impl TickCycle {
                 fallback: None,
                 pending: self.asked_act(act),
             };
-            return self.start_batch(tick, true, policy);
+            return self.start_batch(signals, true, policy);
         }
         self.phase = Phase::Native {
             roll_due: None,
@@ -1498,7 +1455,11 @@ impl TickCycle {
     ) -> CycleStep {
         self.record_cycle(
             policy,
-            if late { Verdict::Slip } else { Verdict::Verified },
+            if late {
+                Verdict::Slip
+            } else {
+                Verdict::Verified
+            },
             reason,
             tick,
         );
@@ -1511,7 +1472,7 @@ impl TickCycle {
             return CycleStep::Native(reason);
         }
         if self.spec.depletes && success {
-            self.phase = Phase::Idle { since: tick };
+            self.phase = Phase::Idle { since: tick, fallback: None, pending: None };
             return self.drive_idle(signals, policy);
         }
         if signals.menu_open {
@@ -1522,7 +1483,7 @@ impl TickCycle {
             };
             CycleStep::Wait
         } else {
-            self.start_batch(tick, false, policy)
+            self.start_batch(signals, false, policy)
         }
     }
 
@@ -1575,7 +1536,16 @@ impl TickCycle {
         None
     }
 
-    fn start_batch(&mut self, tick: u64, blind: bool, policy: &mut TickPolicy) -> CycleStep {
+    fn start_batch(
+        &mut self,
+        signals: &CycleSignals<'_>,
+        blind: bool,
+        policy: &mut TickPolicy,
+    ) -> CycleStep {
+        if !signals.batch_permitted {
+            return CycleStep::Wait;
+        }
+        let tick = signals.tick;
         self.evidence = Evidence::default();
         self.cycle_started_tick = None;
         self.phase = Phase::Sent {
@@ -1590,6 +1560,9 @@ impl TickCycle {
     fn start_fallback(&mut self, tick: u64) {
         let (pending, existing) = match self.phase {
             Phase::Native {
+                fallback, pending, ..
+            }
+            | Phase::Idle {
                 fallback, pending, ..
             } => (pending, fallback),
             Phase::Armed {
@@ -1640,9 +1613,7 @@ impl TickCycle {
         let cycle_ticks = if matches!(verdict, Verdict::Verified | Verdict::Unobserved) {
             self.cycle_started_tick
                 .and_then(|started| tick.checked_sub(started))
-                .and_then(|duration| {
-                    (duration <= u64::from(u32::MAX)).then_some(duration as u32)
-                })
+                .and_then(|duration| (duration <= u64::from(u32::MAX)).then_some(duration as u32))
         } else {
             None
         };
@@ -1784,6 +1755,7 @@ mod tests {
                 menu_open,
                 product_rose,
                 target_ready,
+                batch_permitted: true,
                 receipt,
                 checked_receipt,
             };
@@ -2074,6 +2046,7 @@ mod tests {
             menu_open: false,
             product_rose: false,
             target_ready: false,
+            batch_permitted: true,
             receipt: None,
             checked_receipt: None,
         };
@@ -2107,6 +2080,7 @@ mod tests {
             menu_open: false,
             product_rose: false,
             target_ready: false,
+            batch_permitted: true,
             receipt: None,
             checked_receipt: None,
         };
@@ -3424,6 +3398,7 @@ mod tests {
             menu_open: false,
             product_rose: false,
             target_ready: false,
+            batch_permitted: true,
             receipt: None,
             checked_receipt: None,
         };
@@ -3490,6 +3465,7 @@ mod tests {
             menu_open: false,
             product_rose: false,
             target_ready: false,
+            batch_permitted: true,
             receipt: None,
             checked_receipt: None,
         };
@@ -3497,7 +3473,7 @@ mod tests {
             armed.cycle.drive(&skip_fletch, &mut armed.policy),
             CycleStep::Click
         );
-        assert_eq!(armed.cycle.pending_obligation_id(), Some(asked));
+        assert_eq!(armed.cycle.checked_request_id(), Some(asked));
         armed.poll_receipts(
             104,
             None,
@@ -3516,7 +3492,11 @@ mod tests {
             2,
             "a retained Asked receipt still contributes its packets"
         );
-        assert_eq!(armed.cycle.pending_obligation_id(), None);
+        assert_eq!(
+            armed.cycle.checked_request_id(),
+            Some(asked + 1),
+            "the old Asked receipt is consumed and the new fallback remains owned"
+        );
         assert_eq!(armed.policy.stats().unobserved, 1);
         assert_eq!(armed.policy.stats().slipped, 0);
         assert_ring(&armed, 0);
@@ -3600,7 +3580,11 @@ mod tests {
         assert_eq!(policy.verdict_count(), 12);
         assert_eq!(policy.off_reason(), None);
         policy.record(Verdict::Slip, CycleReason::LateBatch, 15, None);
-        assert_eq!(policy.off_reason(), None, "the first slip has left the ring");
+        assert_eq!(
+            policy.off_reason(),
+            None,
+            "the first slip has left the ring"
+        );
         policy.record(Verdict::Slip, CycleReason::LateBatch, 16, None);
         assert_eq!(policy.off_until(), Some(96));
         assert_eq!(policy.verdict_count(), 0);
@@ -3703,7 +3687,7 @@ mod tests {
         assert_ring(&armed, 0);
 
         let mut idle = replay(continuing());
-        idle.cycle.phase = Phase::Idle { since: 100 };
+        idle.cycle.phase = Phase::Idle { since: 100, fallback: None, pending: None };
         idle.cycle.pause(&mut idle.policy);
         assert_eq!(idle.policy.stats().paused, 0);
         assert_ring(&idle, 0);
@@ -3876,6 +3860,7 @@ mod tests {
             menu_open: false,
             product_rose: false,
             target_ready: false,
+            batch_permitted: true,
             receipt: None,
             checked_receipt: Some((asked, false)),
         };
@@ -3903,9 +3888,114 @@ mod tests {
                     product_rose: false,
                     target_ready: false,
                     receipt: None,
+                    batch_permitted: true,
                     checked_receipt: None,
                 };
                 std::hint::black_box(cycle.drive(&signals, &mut policy));
+            }
+        });
+        assert_eq!(allocations, allocation_counter::AllocationInfo::default());
+    }
+
+    #[test]
+    fn unadmitted_batch_never_starts_or_spends_a_cycle() {
+        let mut cycle = TickCycle::new(continuing(), 100, 50, 0);
+        let mut policy = TickPolicy::default();
+        let signals = CycleSignals {
+            tick: 101,
+            anim: Some(AnimInstruction {
+                serial: 51,
+                class: AnimClass::Roll,
+            }),
+            act_line: false,
+            success_line: false,
+            fletch: false,
+            content_refusal: false,
+            menu_open: false,
+            product_rose: false,
+            target_ready: true,
+            batch_permitted: false,
+            receipt: None,
+            checked_receipt: None,
+        };
+        assert_eq!(cycle.drive(&signals, &mut policy), CycleStep::Wait);
+        assert_eq!(policy.cycles(), 0);
+        assert_eq!(cycle.batch_request_id(), None);
+        assert!(cycle.allows_native_begin());
+        let wake = CycleSignals {
+            batch_permitted: true,
+            ..signals
+        };
+        assert_eq!(cycle.drive(&wake, &mut policy), CycleStep::Wait);
+        assert_eq!(policy.cycles(), 0, "a wake cannot reuse the consumed roll");
+        let next = CycleSignals {
+            tick: 102,
+            anim: Some(AnimInstruction {
+                serial: 52,
+                class: AnimClass::Roll,
+            }),
+            ..wake
+        };
+        assert_eq!(cycle.drive(&next, &mut policy), CycleStep::Batch);
+        assert_eq!(policy.cycles(), 1);
+    }
+
+    #[test]
+    fn armed_path_has_no_allocation_over_ten_thousand_polls() {
+        let allocations = allocation_counter::measure(|| {
+            for _ in 0..2_000 {
+                let mut run = replay(continuing());
+                let id = run.batch(101, AnimClass::Roll);
+                let receipt = dispatch_receipt(id, 101, Shape::Continuing, 3);
+                assert_eq!(
+                    run.poll_receipts(
+                        101,
+                        None,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        true,
+                        Some(&receipt),
+                        None
+                    ),
+                    CycleStep::Wait
+                );
+                assert_eq!(
+                    run.poll(
+                        102,
+                        Some(AnimClass::Fletching),
+                        true,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        true
+                    ),
+                    CycleStep::Wait
+                );
+                assert_eq!(
+                    run.poll(103, None, false, false, false, false, false, false, true),
+                    CycleStep::Wait
+                );
+                assert_eq!(
+                    run.poll(
+                        104,
+                        Some(AnimClass::Roll),
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        true
+                    ),
+                    CycleStep::Batch
+                );
+                assert_eq!(run.policy.stats().verified, 1);
             }
         });
         assert_eq!(allocations, allocation_counter::AllocationInfo::default());

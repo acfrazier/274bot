@@ -1882,6 +1882,10 @@ fn spawn_slot_thread(
                                 super::script_channels::BrokerWorld::Local
                             };
                             let inv = observe_script_inv(running, tick_edge, &nav_snapshot);
+                            #[cfg(feature = "test-support")]
+                            let test_inv = inv.map(<[_]>::to_vec);
+                            #[cfg(feature = "test-support")]
+                            let inv = test_inv.as_deref();
                             let nav_state = nav_world_state_for_observe(
                                 here,
                                 &nav_snapshot,
@@ -1910,6 +1914,9 @@ fn spawn_slot_thread(
                                 here,
                                 inv,
                                 state,
+                                #[cfg(feature = "test-support")]
+                                &mut nav_snapshot,
+                                #[cfg(not(feature = "test-support"))]
                                 Some(&nav_snapshot),
                                 Some(slot_bank.memory()),
                                 #[cfg(feature = "js")]

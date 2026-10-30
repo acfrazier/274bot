@@ -665,13 +665,6 @@ impl SupplyPlan {
 
     /// The optional technique kit cannot reach one held knife and log.
     /// It never becomes a gating missing item or a trip by itself.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Wave 3 (S4) publishes optional tick-kit unavailability"
-        )
-    )]
     pub fn kit_missing(&self) -> bool {
         self.kit_missing
     }
@@ -745,7 +738,7 @@ impl SupplyPlan {
     /// The withdrawal batch over posted pack and worn pages and a bank that
     /// holds `banked(id)` of each id: the live rows at an open bank, or the
     /// bank memory before the walk.
-    fn build(
+    pub(super) fn build(
         prepared: &Prepared,
         stats: &[StatView],
         stock: Stock<'_>,

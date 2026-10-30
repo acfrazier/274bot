@@ -252,6 +252,8 @@ pub(crate) struct OrderedDispatchContext<'a> {
     pub selected: Option<&'a api::game_data::SelectedGameData>,
     pub tick: u64,
     pub input: Option<&'a host::SlotInput>,
+    /// Derived by the host from the exact active compiled Gatherer run, never the payload.
+    pub builtin_gatherer_knife: bool,
 }
 
 /// Dispatch both sealed modes through the same API planner and encrypted sink.
@@ -322,20 +324,37 @@ pub(crate) fn dispatch_native_server_ordered(
                 );
             };
             let _lineage = input.input_lineage(InputLineage::ContentRequest(request_id));
-            ServerOrderedInputs::dispatch(
-                catalog,
-                &pin,
-                context.snapshot,
-                driver,
-                request,
-                ServerOrderedDispatchContext {
-                    request_id,
-                    dispatch_tick: context.tick,
-                    input: observed,
-                    debug: None,
-                    authority: &mut live,
-                },
-            )
+            let dispatch_context = ServerOrderedDispatchContext {
+                request_id,
+                dispatch_tick: context.tick,
+                input: observed,
+                debug: None,
+                authority: &mut live,
+            };
+            if context.builtin_gatherer_knife
+                && matches!(
+                    request,
+                    api::interact::server_ordered::ServerOrderedRequest::KnifeArm { .. }
+                )
+            {
+                ServerOrderedInputs::dispatch_builtin_gatherer_knife(
+                    catalog,
+                    &pin,
+                    context.snapshot,
+                    driver,
+                    request,
+                    dispatch_context,
+                )
+            } else {
+                ServerOrderedInputs::dispatch(
+                    catalog,
+                    &pin,
+                    context.snapshot,
+                    driver,
+                    request,
+                    dispatch_context,
+                )
+            }
         }
         ServerOrderedPayload::Advanced(operations) => {
             let _lineage = input.input_lineage(InputLineage::AdvancedRequest(request_id));

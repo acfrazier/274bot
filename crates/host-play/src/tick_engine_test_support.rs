@@ -342,7 +342,6 @@ impl TickEngineTestHook {
             .next_host_frame
     }
 
-
     /// Start evidence capture after per-account setup. Existing chat sequences
     /// remain the watermark, so setup messages are never reported as proof.
     pub fn arm_measurement(&self, log_id: i32, inventory_ids: &[i32]) {
@@ -446,7 +445,9 @@ impl TickEngineTestHook {
                     .iter()
                     .map(|stat| (stat.index, stat.xp))
                     .collect();
-                let player_tile = snapshot.tile().map(|(x, z, level)| WorldTile { x, z, level });
+                let player_tile = snapshot
+                    .tile()
+                    .map(|(x, z, level)| WorldTile { x, z, level });
                 let log_count = snapshot.inv_count(state.log_id);
                 let modal_packets = client.main_modal_packet_state();
                 let chat_modal_root = snapshot.modals().chat;
@@ -472,11 +473,8 @@ impl TickEngineTestHook {
                     main_modal_closed_observation: modal_packets.closed_observation,
                     suppressed_openchat,
                 });
-            } else if let Some(latest) = snapshot
-                .chat_lines()
-                .iter()
-                .map(|line| line.sequence)
-                .max()
+            } else if let Some(latest) =
+                snapshot.chat_lines().iter().map(|line| line.sequence).max()
             {
                 state.last_chat_sequence = state.last_chat_sequence.max(latest);
             }
@@ -711,4 +709,3 @@ impl PacketObserver for ObservedPackets {
         PacketObserver::committed_packet_count(self.input.as_ref())
     }
 }
-

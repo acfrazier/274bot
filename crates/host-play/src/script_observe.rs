@@ -426,6 +426,7 @@ fn retire_run_status(statuses: Option<&Arc<Mutex<Vec<crate::SlotStatus>>>>, name
 /// only by the live tick-engine test hook at the ordered-dispatch boundary.
 pub(crate) enum SnapshotArgument<'a> {
     ReadOnly(Option<&'a GameSnapshot>),
+    #[cfg(feature = "test-support")]
     Mutable(&'a mut GameSnapshot),
 }
 
@@ -435,6 +436,7 @@ impl<'a> From<Option<&'a GameSnapshot>> for SnapshotArgument<'a> {
     }
 }
 
+#[cfg(feature = "test-support")]
 impl<'a> From<&'a mut GameSnapshot> for SnapshotArgument<'a> {
     fn from(snapshot: &'a mut GameSnapshot) -> Self {
         Self::Mutable(snapshot)
@@ -445,10 +447,12 @@ impl SnapshotArgument<'_> {
     fn read(&self) -> Option<&GameSnapshot> {
         match self {
             Self::ReadOnly(snapshot) => *snapshot,
+            #[cfg(feature = "test-support")]
             Self::Mutable(snapshot) => Some(snapshot),
         }
     }
 
+    #[cfg(feature = "test-support")]
     fn write(&mut self) -> Option<&mut GameSnapshot> {
         match self {
             Self::Mutable(snapshot) => Some(*snapshot),
@@ -471,7 +475,6 @@ impl Deref for SnapshotArgument<'_> {
     reason = "the shared observer preserves its established host call surface"
 )]
 pub(crate) fn script_observe_cached_with_channels<'a, S>(
-
     driver: &mut dyn Driver,
     name: &str,
     up: bool,
@@ -506,7 +509,9 @@ pub(crate) fn script_observe_cached_with_channels<'a, S>(
 where
     S: Into<SnapshotArgument<'a>>,
 {
-    let mut snapshot = snapshot.into();
+    let snapshot = snapshot.into();
+    #[cfg(feature = "test-support")]
+    let mut snapshot = snapshot;
     if let Some(inp) = slot_input {
         inp.set_host_consume_allowed(up && !hold);
         if let Some(snapshot) = snapshot.read() {
@@ -641,7 +646,9 @@ where
         slot.sync_compiled_clue(
             hold || ours
                 || !up
-                || !snapshot.read().is_some_and(|snap| snap.ingame() && snap.scene_state() == 2),
+                || !snapshot
+                    .read()
+                    .is_some_and(|snap| snap.ingame() && snap.scene_state() == 2),
         );
         // Deliver only the terminal belonging to this still-live native owner.
         // The slot repeats the run/action fence before accepting the receipt.
@@ -1145,7 +1152,9 @@ where
             }
             let ready = up
                 && here.is_some()
-                && snapshot.read().is_some_and(|snap| snap.ingame() && snap.scene_state() == 2);
+                && snapshot
+                    .read()
+                    .is_some_and(|snap| snap.ingame() && snap.scene_state() == 2);
             let frozen = hold || !ready || slot.state() == script::RunState::Paused;
             if ready {
                 if let Some(snapshot) = snapshot.read() {
@@ -1291,7 +1300,8 @@ where
                     let queued = take_script_interacts(reqs, slot_input);
                     let resumed =
                         resumed_walk(carried, queued.iter().map(|q| &q.req), |dest, radius| {
-                            let (Some((x, z, level)), Some(snapshot)) = (here, snapshot.read()) else {
+                            let (Some((x, z, level)), Some(snapshot)) = (here, snapshot.read())
+                            else {
                                 return false;
                             };
                             let view = pack_cached_reach(
@@ -1519,6 +1529,8 @@ where
                                         selected: selected.as_deref(),
                                         tick,
                                         input: slot_input,
+                                        builtin_gatherer_knife: slot
+                                            .is_builtin_gatherer_run(authority.run()),
                                     },
                                     &authority,
                                     &envelope,

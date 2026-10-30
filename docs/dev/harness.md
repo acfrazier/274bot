@@ -707,6 +707,55 @@ Gatherer cells live in `crates/host-play/tests/gatherer_live.rs`. Each uses an
 isolated `HOME` plus absolute `GATHERER_ENGINE_DIR`, `GATHERER_NAV_PACK` and
 `GATHERER_CATALOG_ROOT`, and the `BOT_LIVE_NAME_PREFIX` namespace.
 
+### Knife-arm engine cases
+
+`crates/host-play/tests/tick_engine.rs` runs the native Gatherer through Play's
+operator Start path and the real encrypted Client driver. It requires both
+`live-harness` and `test-support`. These bounded cases are assigned Engine T on
+aubaine, game `127.0.0.1:48594`, assets `127.0.0.1:4080`, with the exact account
+prefix `tmx`. They do not use Engine L. Main alone starts, stops or patches T.
+
+Set `LIVE=1`, `BOT_LIVE_NAME_PREFIX=tmx`, absolute `GATHERER_ENGINE_DIR`,
+`GATHERER_NAV_PACK`, `GATHERER_CATALOG_ROOT`, `LIVE_EVIDENCE_DIR` and
+`TICK_ENGINE_PACKET_LOG`. The packet log is
+`/Volumes/dev-scratch/engines/lostcity-289-t/runtime/logs/packet-outcomes.jsonl`.
+Use a disposable HOME and the normal isolated-home runner. For example, after
+setting those inputs:
+
+```sh
+cargo test -p host-play --features live-harness,test-support --test tick_engine \
+  tick_engine_clean_continuing_river -- --ignored --exact --test-threads=1 --nocapture
+```
+
+The cases cover clean continuing and ending arms, the three distinct late
+histories, two copper histories, preflight target removal, Make without its
+click, two lone-opener histories, and members-only refusal on a free world.
+The ending-net case observes twenty cycles. The free-world case requires
+Engine T's real `engine/data/config/world.json` to set `node.members=false`.
+The selected local profile must bind that guarded file; a client-side override
+cannot replace the engine mode. Only Main may prepare and restore that phase.
+
+The test-only hooks hold or split encoded transport, cancel a real request
+after an encoded prefix, remove a target from the dispatch snapshot, or suppress
+the snapshot's open-chat observation. They do not inject products, XP, animation
+signals or successful receipts. Non-`test-support` builds have neither the
+mutable snapshot variant nor these dispatch hooks.
+
+Each case writes the receipt and actual-wire streams, per-frame signals,
+status, transport history and account-filtered engine packet outcomes to its
+own evidence directory. The engine log's decoded relevant opcode order must
+match the Client's encoded stream. Missing, incomplete or gapped engine records
+fail the case. The engine tick and Client observation tick are separate clocks.
+`handler_accepted` and `charged_user_event` report handler and event accounting;
+`outcome` separately records script acceptance, suspension or refusal. A true
+handler result can still have a refused script outcome. The printed accepted
+event counts use `charged_user_event`, not the outcome string. An
+`ENGINE_PACKET_LOG_FAILED` sink error invalidates the run.
+
+All fixtures seed only the tested account before Start. Shared spots, rocks and
+trees remain real content. Each case stops the script and logs out its account,
+including on assertion failure.
+
 ### Target switching
 
 `gatherer_live::gatherer_mine_tier_power` supports a single selected ore through

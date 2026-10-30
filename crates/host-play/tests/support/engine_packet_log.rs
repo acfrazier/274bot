@@ -43,8 +43,8 @@ impl EnginePacketLog {
     }
 
     pub fn read(&self, account: &str) -> Result<Vec<EnginePacket>, String> {
-        let mut file = File::open(&self.path)
-            .map_err(|error| format!("open Engine T packet log: {error}"))?;
+        let mut file =
+            File::open(&self.path).map_err(|error| format!("open Engine T packet log: {error}"))?;
         let end = file
             .metadata()
             .map_err(|error| format!("stat Engine T packet log: {error}"))?
@@ -53,7 +53,9 @@ impl EnginePacketLog {
             .checked_sub(self.start)
             .ok_or("Engine T packet log was truncated during the case")?;
         if size > MAX_CASE_BYTES {
-            return Err(format!("Engine T case packet log exceeds {MAX_CASE_BYTES} bytes"));
+            return Err(format!(
+                "Engine T case packet log exceeds {MAX_CASE_BYTES} bytes"
+            ));
         }
         file.seek(SeekFrom::Start(self.start))
             .map_err(|error| format!("seek Engine T packet log: {error}"))?;
@@ -74,9 +76,9 @@ fn parse(text: &str, account: &str) -> Result<Vec<EnginePacket>, String> {
     for (index, line) in text.lines().enumerate() {
         let packet: EnginePacket = serde_json::from_str(line)
             .map_err(|error| format!("Engine T packet record {}: {error}", index + 1))?;
-        if previous_sequence.is_some_and(|previous: u64| {
-            previous.checked_add(1) != Some(packet.sequence)
-        }) {
+        if previous_sequence
+            .is_some_and(|previous: u64| previous.checked_add(1) != Some(packet.sequence))
+        {
             return Err(format!(
                 "Engine T packet sequence gap before {}",
                 packet.sequence

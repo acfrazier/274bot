@@ -14,6 +14,21 @@ pub struct ServerOrderedCompletion {
 }
 
 impl ActionContext<'_> {
+    /// Preflight the native reservation without mutating the cycle or its budget.
+    pub(crate) fn server_ordered_available(&self) -> bool {
+        let Ok(owner) = self.owner() else {
+            return false;
+        };
+        let Some(ledger) = self.ledger.as_ref() else {
+            return false;
+        };
+        self.budget.events == 0
+            && ledger.outbox.len() < ledger.outbox.capacity()
+            && owner.batch_free() != 0
+            && !ledger
+                .server_ordered_request
+                .is_some_and(|request| owner.batch_live(request))
+    }
     /// Admit named native content, without an external-script declaration.
     /// The host revalidates the complete request against its drain snapshot.
     pub fn emit_server_ordered(
@@ -32,13 +47,7 @@ impl ActionContext<'_> {
         let ledger = self.ledger.as_ref().expect("owner checked");
         // Only this native runtime's emissions charge this observed tick.
         // Foreign packet observations never enter TickBudget.
-        if self.budget.events != 0
-            || ledger.outbox.len() == ledger.outbox.capacity()
-            || owner.batch_free() == 0
-            || ledger
-                .server_ordered_request
-                .is_some_and(|request| owner.batch_live(request))
-        {
+        if !self.server_ordered_available() {
             return Err(ActionError::BudgetExhausted);
         }
         let request_id = ledger.id_range(1)?;

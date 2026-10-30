@@ -16,7 +16,8 @@ use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
 use client::io::ClientProt289;
 use host_play::tick_engine_test_support::{
-    ChatObservation, DispatchObservation, FrameObservation, PollKind, TickEngineTestHook, WireObservation,
+    ChatObservation, DispatchObservation, FrameObservation, PollKind, TickEngineTestHook,
+    WireObservation,
 };
 use host_play::WorldMembersFact;
 use script::native::{ScriptStatus, StatusValue};
@@ -41,10 +42,26 @@ const RUNE_PICK_ID: i32 = 1_275;
 const IRON_AXE_ID: i32 = 1_349;
 const OAK_LOC_ID: i32 = 1_281;
 const RIVER_LOC_ID: i32 = 2_027;
-const OAK_TILE: WorldTile = WorldTile { x: 3_017, z: 3_170, level: 0 };
-const RIVER_TILE: WorldTile = WorldTile { x: 2_501, z: 3_506, level: 0 };
-const NET_TILE: WorldTile = WorldTile { x: 3_267, z: 3_148, level: 0 };
-const IRON_TILE: WorldTile = WorldTile { x: 3_253, z: 3_420, level: 0 };
+const OAK_TILE: WorldTile = WorldTile {
+    x: 3_017,
+    z: 3_170,
+    level: 0,
+};
+const RIVER_TILE: WorldTile = WorldTile {
+    x: 2_501,
+    z: 3_506,
+    level: 0,
+};
+const NET_TILE: WorldTile = WorldTile {
+    x: 3_267,
+    z: 3_148,
+    level: 0,
+};
+const IRON_TILE: WorldTile = WorldTile {
+    x: 3_253,
+    z: 3_420,
+    level: 0,
+};
 const MINING_IRON_ROCKS: &[i32] = &[2_092, 2_093];
 const REQUIRED_CYCLES: u32 = 60;
 const PROBE_CYCLES: u32 = 300;
@@ -188,11 +205,19 @@ impl Case {
         settings.insert("tickMethod".into(), json!("Knife"));
         settings.insert(
             "woodcuttingResources".into(),
-            json!(if self == Self::Oak { vec!["oak"] } else { Vec::<&str>::new() }),
+            json!(if self == Self::Oak {
+                vec!["oak"]
+            } else {
+                Vec::<&str>::new()
+            }),
         );
         settings.insert(
             "miningResources".into(),
-            json!(if self.is_mining() { vec!["iron"] } else { Vec::<&str>::new() }),
+            json!(if self.is_mining() {
+                vec!["iron"]
+            } else {
+                Vec::<&str>::new()
+            }),
         );
         if matches!(self, Self::Probe | Self::Fly | Self::Net) {
             settings.insert(
@@ -206,7 +231,11 @@ impl Case {
         }
         settings.insert(
             "targetPreference".into(),
-            json!(if self.is_mining() { "Best tier" } else { "Nearest" }),
+            json!(if self.is_mining() {
+                "Best tier"
+            } else {
+                "Nearest"
+            }),
         );
         settings.insert("location".into(), json!("Start"));
         settings.insert("radius".into(), json!(12));
@@ -276,7 +305,11 @@ impl SetupState {
     }
 
     fn frame(&mut self, client: &mut Client, account: &str, hold: bool) {
-        if account != self.account || hold || self.error.is_some() || self.phase == SetupPhase::Ready {
+        if account != self.account
+            || hold
+            || self.error.is_some()
+            || self.phase == SetupPhase::Ready
+        {
             return;
         }
         let mut snapshot = GameSnapshot::new();
@@ -332,7 +365,9 @@ impl SetupState {
                             self.phase = SetupPhase::Verify;
                         }
                     } else {
-                        self.error = Some(format!("engine refused own-account setup cheat {command:?}"));
+                        self.error = Some(format!(
+                            "engine refused own-account setup cheat {command:?}"
+                        ));
                     }
                 }
             }
@@ -347,18 +382,30 @@ impl SetupState {
 
     fn ready_in_snapshot(&self, snapshot: &GameSnapshot) -> bool {
         let target = self.case.target();
-        let at_target = snapshot.tile().is_some_and(|(x, z, level)| (x, z, level) == (target.x, target.z, target.level));
+        let at_target = snapshot
+            .tile()
+            .is_some_and(|(x, z, level)| (x, z, level) == (target.x, target.z, target.level));
         let level_ready = snapshot
             .stats()
             .iter()
             .find(|stat| stat.index == self.case.skill_index())
             .is_some_and(|stat| stat.base >= self.case.level());
-        let items_ready = self.case.seeds().iter().all(|(_, id, count)| snapshot.inv_count(*id) >= *count);
+        let items_ready = self
+            .case
+            .seeds()
+            .iter()
+            .all(|(_, id, count)| snapshot.inv_count(*id) >= *count);
         let loc_ready = self.case.target_loc().is_none_or(|(id, tile)| {
-            snapshot.locs().iter().any(|loc| loc.id == id && loc.tile == tile)
+            snapshot
+                .locs()
+                .iter()
+                .any(|loc| loc.id == id && loc.tile == tile)
         });
         let iron_rocks_present = !self.case.is_mining()
-            || snapshot.locs().iter().any(|loc| MINING_IRON_ROCKS.contains(&loc.id));
+            || snapshot
+                .locs()
+                .iter()
+                .any(|loc| MINING_IRON_ROCKS.contains(&loc.id));
         at_target && level_ready && items_ready && loc_ready && iron_rocks_present
     }
 }
@@ -409,9 +456,14 @@ impl StatusObservation {
 
     fn completed_cycles(&self) -> Result<u32, String> {
         VERDICT_COUNTERS.iter().try_fold(0_u32, |total, (_, key)| {
-            let count = self.counter(key).ok_or_else(|| format!("Gatherer status missing required integer field {key}"))?;
-            let count = u32::try_from(count).map_err(|_| format!("Gatherer status {key} was negative"))?;
-            total.checked_add(count).ok_or_else(|| "Gatherer verdict counter overflow".to_owned())
+            let count = self
+                .counter(key)
+                .ok_or_else(|| format!("Gatherer status missing required integer field {key}"))?;
+            let count =
+                u32::try_from(count).map_err(|_| format!("Gatherer status {key} was negative"))?;
+            total
+                .checked_add(count)
+                .ok_or_else(|| "Gatherer verdict counter overflow".to_owned())
         })
     }
 
@@ -430,17 +482,25 @@ impl StatusObservation {
 }
 
 fn text_field(status: &ScriptStatus, key: &str) -> Option<String> {
-    status.fields.iter().find(|field| field.key == key).and_then(|field| match &field.value {
-        StatusValue::Text(value) => Some(value.to_string()),
-        _ => None,
-    })
+    status
+        .fields
+        .iter()
+        .find(|field| field.key == key)
+        .and_then(|field| match &field.value {
+            StatusValue::Text(value) => Some(value.to_string()),
+            _ => None,
+        })
 }
 
 fn integer_field(status: &ScriptStatus, key: &str) -> Option<i64> {
-    status.fields.iter().find(|field| field.key == key).and_then(|field| match &field.value {
-        StatusValue::Integer(value) => Some(*value),
-        _ => None,
-    })
+    status
+        .fields
+        .iter()
+        .find(|field| field.key == key)
+        .and_then(|field| match &field.value {
+            StatusValue::Integer(value) => Some(*value),
+            _ => None,
+        })
 }
 
 struct LiveRun {
@@ -486,11 +546,20 @@ impl LiveRun {
             return Err("GATHERER_TICK_EVIDENCE must be an absolute path".into());
         }
         if output.exists() {
-            return Err(format!("refusing to overwrite tick evidence {}", output.display()));
+            return Err(format!(
+                "refusing to overwrite tick evidence {}",
+                output.display()
+            ));
         }
-        let output_parent = output.parent().ok_or("GATHERER_TICK_EVIDENCE has no parent directory")?;
-        std::fs::create_dir_all(output_parent)
-            .map_err(|error| format!("create evidence directory {}: {error}", output_parent.display()))?;
+        let output_parent = output
+            .parent()
+            .ok_or("GATHERER_TICK_EVIDENCE has no parent directory")?;
+        std::fs::create_dir_all(output_parent).map_err(|error| {
+            format!(
+                "create evidence directory {}: {error}",
+                output_parent.display()
+            )
+        })?;
         let _isolated_home = script::IsolatedEnv::enter(case.name());
         let _temp = TempRoot::new(case.name())?;
         let nav_pack = absolute_path("GATHERER_NAV_PACK")?;
@@ -529,7 +598,10 @@ impl LiveRun {
         );
         let world_members = format!("{:?}", server_profile.world_members());
         let names = host_play::mint_live_names(1);
-        let account = names.first().cloned().ok_or("live account mint returned no name")?;
+        let account = names
+            .first()
+            .cloned()
+            .ok_or("live account mint returned no name")?;
         if !account.starts_with(&prefix) {
             return Err("minted live account did not retain BOT_LIVE_NAME_PREFIX".into());
         }
@@ -606,11 +678,17 @@ impl LiveRun {
         self.play_mut().focus(&self.account);
         self.wait_setup_ready()?;
         let after = self.hook.observed_host_frame();
-        self.hook.arm_measurement(LOG_ID, &self.case.inventory_ids());
+        self.hook
+            .arm_measurement(LOG_ID, &self.case.inventory_ids());
         if self.hook.wait_for_frame(after, FRAME_HANG_GUARD).is_none() {
             return Err("no host frame after arming live tick evidence".into());
         }
-        let baseline = self.hook.trace().frames.last().cloned()
+        let baseline = self
+            .hook
+            .trace()
+            .frames
+            .last()
+            .cloned()
             .ok_or("live tick hook did not capture its pre-Start baseline")?;
         self.started_tick = Some(baseline.game_tick);
         self.baseline = Some(baseline.clone());
@@ -619,7 +697,12 @@ impl LiveRun {
             self.case.name(), self.account, self.profile_identity, self.world_members,
             baseline.game_tick, self.case.target(), self.case.seeds()
         );
-        self.play_mut().script_start(&self.account, script::CompiledId("Gatherer"), self.case.settings())
+        self.play_mut()
+            .script_start(
+                &self.account,
+                script::CompiledId("Gatherer"),
+                self.case.settings(),
+            )
             .map_err(|error| format!("Gatherer operator Start failed: {error}"))?;
         self.wait_started()
     }
@@ -630,18 +713,30 @@ impl LiveRun {
         loop {
             {
                 let setup = self.setup.lock().map_err(|_| "live tick setup poisoned")?;
-                if let Some(error) = &setup.error { return Err(error.clone()); }
-                if setup.phase == SetupPhase::Ready { return Ok(()); }
+                if let Some(error) = &setup.error {
+                    return Err(error.clone());
+                }
+                if setup.phase == SetupPhase::Ready {
+                    return Ok(());
+                }
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() { return Err("per-account tutorial/seed setup missed its fixed 180s deadline".into()); }
-            after = self.hook.wait_for_frame(after, remaining.min(FRAME_HANG_GUARD))
+            if remaining.is_zero() {
+                return Err(
+                    "per-account tutorial/seed setup missed its fixed 180s deadline".into(),
+                );
+            }
+            after = self
+                .hook
+                .wait_for_frame(after, remaining.min(FRAME_HANG_GUARD))
                 .ok_or_else(|| "live slot stopped producing frames during setup".to_owned())?;
         }
     }
 
     fn wait_started(&mut self) -> Result<(), String> {
-        let origin = self.started_tick.ok_or("Gatherer Start has no baseline tick")?;
+        let origin = self
+            .started_tick
+            .ok_or("Gatherer Start has no baseline tick")?;
         let mut after = self.hook.observed_host_frame();
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
@@ -653,12 +748,19 @@ impl LiveRun {
                         && status.observed_tick.wrapping_sub(origin) <= 1
                 }) {
                     if trace.dispatches.iter().any(is_knife_arm) {
-                        return Err("no-gain Rune cell emitted a KnifeArm instead of refusing it".into());
+                        return Err(
+                            "no-gain Rune cell emitted a KnifeArm instead of refusing it".into(),
+                        );
                     }
                     if self.play().script_state(&self.account) != script::RunState::Running {
-                        return Err("Gatherer did not remain Running during the Rune no-gain check".into());
+                        return Err(
+                            "Gatherer did not remain Running during the Rune no-gain check".into(),
+                        );
                     }
-                    println!("TICK-MANIP rune_no_gain tick={} tick_method={:?}", status.observed_tick, status.tick_method);
+                    println!(
+                        "TICK-MANIP rune_no_gain tick={} tick_method={:?}",
+                        status.observed_tick, status.tick_method
+                    );
                     return Ok(());
                 }
             } else if trace.dispatches.iter().any(is_knife_arm) {
@@ -671,9 +773,15 @@ impl LiveRun {
             if current.wrapping_sub(origin) > STARTUP_TICK_BUDGET {
                 return Err(format!("Gatherer Start did not reach the expected tick path within {STARTUP_TICK_BUDGET} ticks"));
             }
-            if Instant::now() >= deadline { return Err("Gatherer Start exceeded its bounded 30s startup deadline".into()); }
-            after = self.hook.wait_for_frame(after, FRAME_HANG_GUARD)
-                .ok_or_else(|| "live slot stopped producing frames while waiting for Gatherer Start".to_owned())?;
+            if Instant::now() >= deadline {
+                return Err("Gatherer Start exceeded its bounded 30s startup deadline".into());
+            }
+            after = self
+                .hook
+                .wait_for_frame(after, FRAME_HANG_GUARD)
+                .ok_or_else(|| {
+                    "live slot stopped producing frames while waiting for Gatherer Start".to_owned()
+                })?;
         }
     }
 
@@ -699,34 +807,72 @@ impl LiveRun {
             }
             let elapsed_ticks = self.hook.observed_game_tick().wrapping_sub(start_tick);
             if elapsed_ticks > self.case.tick_budget() {
-                return Err(format!("{} did not reach its required cycles/XP by tick {} (budget {})", self.case.name(), self.hook.observed_game_tick(), self.case.tick_budget()));
+                return Err(format!(
+                    "{} did not reach its required cycles/XP by tick {} (budget {})",
+                    self.case.name(),
+                    self.hook.observed_game_tick(),
+                    self.case.tick_budget()
+                ));
             }
             if Instant::now() >= deadline {
-                return Err(format!("{} exceeded its fixed bounded 1800s deadline", self.case.name()));
+                return Err(format!(
+                    "{} exceeded its fixed bounded 1800s deadline",
+                    self.case.name()
+                ));
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
-            after = self.hook.wait_for_frame(after, remaining.min(FRAME_HANG_GUARD))
-                .ok_or_else(|| format!("{} stopped producing live frames before its bounded deadline", self.case.name()))?;
+            after = self
+                .hook
+                .wait_for_frame(after, remaining.min(FRAME_HANG_GUARD))
+                .ok_or_else(|| {
+                    format!(
+                        "{} stopped producing live frames before its bounded deadline",
+                        self.case.name()
+                    )
+                })?;
         }
     }
 
     fn capture_status(&mut self) {
-        let Some(status) = self.play().script_native_status(&self.account) else { return; };
+        let Some(status) = self.play().script_native_status(&self.account) else {
+            return;
+        };
         let host_frame = self.hook.observed_host_frame();
-        if self.statuses.last().is_some_and(|previous| previous.host_frame == host_frame) { return; }
-        self.statuses.push(StatusObservation::capture(&status, host_frame, self.hook.observed_game_tick()));
+        if self
+            .statuses
+            .last()
+            .is_some_and(|previous| previous.host_frame == host_frame)
+        {
+            return;
+        }
+        self.statuses.push(StatusObservation::capture(
+            &status,
+            host_frame,
+            self.hook.observed_game_tick(),
+        ));
     }
 
     fn xp_gain(&self) -> i64 {
-        let Some(baseline) = &self.baseline else { return 0; };
+        let Some(baseline) = &self.baseline else {
+            return 0;
+        };
         let baseline_xp = skill_xp(baseline, self.case.skill_index()).unwrap_or(0);
-        self.hook.trace().frames.last()
+        self.hook
+            .trace()
+            .frames
+            .last()
             .and_then(|frame| skill_xp(frame, self.case.skill_index()))
-            .unwrap_or(baseline_xp) - baseline_xp
+            .unwrap_or(baseline_xp)
+            - baseline_xp
     }
 
     fn write_evidence(&self) -> Result<(), String> {
-        if self.output.exists() { return Err(format!("refusing to overwrite tick evidence {}", self.output.display())); }
+        if self.output.exists() {
+            return Err(format!(
+                "refusing to overwrite tick evidence {}",
+                self.output.display()
+            ));
+        }
         let trace = self.hook.trace();
         let frames: Vec<Value> = trace.frames.iter().map(frame_json).collect();
         let dispatches: Vec<Value> = trace.dispatches.iter().map(dispatch_json).collect();
@@ -744,17 +890,47 @@ impl LiveRun {
             "timeline": {"frames": frames, "dispatches": dispatches, "wire": wire, "statuses": statuses},
             "server_acceptance": {"observed": false, "accepted_events": null, "reason": "Engine L has no independent accepted-event history in this live hook; HostQueued receipts and outbound Client packets are not acceptance evidence."}
         });
-        let bytes = serde_json::to_vec_pretty(&value).map_err(|error| format!("serialize live tick evidence: {error}"))?;
-        let mut file = OpenOptions::new().write(true).create_new(true).open(&self.output)
-            .map_err(|error| format!("create live tick evidence {}: {error}", self.output.display()))?;
-        file.write_all(&bytes).map_err(|error| format!("write live tick evidence {}: {error}", self.output.display()))?;
-        file.write_all(b"\n").map_err(|error| format!("finish live tick evidence {}: {error}", self.output.display()))?;
-        println!("TICK-MANIP evidence={} case={} cycles={} xp_gain={}", self.output.display(), self.case.name(), self.statuses.last().and_then(|status| status.completed_cycles().ok()).unwrap_or(0), self.xp_gain());
+        let bytes = serde_json::to_vec_pretty(&value)
+            .map_err(|error| format!("serialize live tick evidence: {error}"))?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&self.output)
+            .map_err(|error| {
+                format!(
+                    "create live tick evidence {}: {error}",
+                    self.output.display()
+                )
+            })?;
+        file.write_all(&bytes).map_err(|error| {
+            format!(
+                "write live tick evidence {}: {error}",
+                self.output.display()
+            )
+        })?;
+        file.write_all(b"\n").map_err(|error| {
+            format!(
+                "finish live tick evidence {}: {error}",
+                self.output.display()
+            )
+        })?;
+        println!(
+            "TICK-MANIP evidence={} case={} cycles={} xp_gain={}",
+            self.output.display(),
+            self.case.name(),
+            self.statuses
+                .last()
+                .and_then(|status| status.completed_cycles().ok())
+                .unwrap_or(0),
+            self.xp_gain()
+        );
         Ok(())
     }
 
     fn shutdown(&mut self) -> Result<(), String> {
-        if self.shutdown { return Ok(()); }
+        if self.shutdown {
+            return Ok(());
+        }
         let Some(play) = self.play.as_mut() else {
             self.hook.uninstall();
             self.shutdown = true;
@@ -770,7 +946,10 @@ impl LiveRun {
         let mut after = self.hook.observed_host_frame();
         while play.slot_connected(&self.account) && Instant::now() < deadline {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            match self.hook.wait_for_frame(after, remaining.min(FRAME_HANG_GUARD)) {
+            match self
+                .hook
+                .wait_for_frame(after, remaining.min(FRAME_HANG_GUARD))
+            {
                 Some(frame) => after = frame,
                 None => break,
             }
@@ -782,18 +961,25 @@ impl LiveRun {
         self.play.take();
         self.shutdown = true;
         if still_connected {
-            return Err(format!("account {} did not log out within the fixed {LOGOUT_DEADLINE:?} deadline", self.account));
+            return Err(format!(
+                "account {} did not log out within the fixed {LOGOUT_DEADLINE:?} deadline",
+                self.account
+            ));
         }
         Ok(())
     }
 }
 
 impl Drop for LiveRun {
-    fn drop(&mut self) { let _ = self.shutdown(); }
+    fn drop(&mut self) {
+        let _ = self.shutdown();
+    }
 }
 
 fn run_live(case: Case) -> Result<(), String> {
-    let _serial = LIVE_RUN_LOCK.lock().map_err(|_| "live tick-run lock poisoned")?;
+    let _serial = LIVE_RUN_LOCK
+        .lock()
+        .map_err(|_| "live tick-run lock poisoned")?;
     let mut run = LiveRun::new(case)?;
     let operation = run.start().and_then(|()| run.measure());
     let shutdown = run.shutdown();
@@ -802,30 +988,52 @@ fn run_live(case: Case) -> Result<(), String> {
         (Ok(()), Ok(()), Ok(())) => Ok(()),
         (operation, shutdown, evidence) => Err(format!(
             "live tick cell {} failed: operation={:?}; logout={:?}; evidence={:?}",
-            case.name(), operation.err(), shutdown.err(), evidence.err()
+            case.name(),
+            operation.err(),
+            shutdown.err(),
+            evidence.err()
         )),
     }
 }
 
 fn absolute_path(name: &str) -> Result<PathBuf, String> {
     let value = PathBuf::from(required(name)?);
-    if !value.is_absolute() { return Err(format!("{name} must be an absolute path")); }
+    if !value.is_absolute() {
+        return Err(format!("{name} must be an absolute path"));
+    }
     Ok(value)
 }
 
 fn is_knife_arm(dispatch: &DispatchObservation) -> bool {
-    dispatch.request_debug.as_deref().is_some_and(|request| request.contains("KnifeArm"))
+    dispatch
+        .request_debug
+        .as_deref()
+        .is_some_and(|request| request.contains("KnifeArm"))
 }
 
 fn skill_xp(frame: &FrameObservation, skill: i32) -> Option<i64> {
-    frame.skill_xp.iter().find(|(index, _)| *index == skill).map(|(_, xp)| i64::from(*xp))
+    frame
+        .skill_xp
+        .iter()
+        .find(|(index, _)| *index == skill)
+        .map(|(_, xp)| i64::from(*xp))
 }
 
 fn frame_json(frame: &FrameObservation) -> Value {
-    let animation = frame.animation.map(|animation| json!({"sequence": animation.sequence, "serial": animation.serial}));
+    let animation = frame
+        .animation
+        .map(|animation| json!({"sequence": animation.sequence, "serial": animation.serial}));
     let chat: Vec<Value> = frame.chat.iter().map(chat_json).collect();
-    let inventory: Vec<Value> = frame.inventory_counts.iter().map(|(id, count)| json!({"id": id, "count": count})).collect();
-    let xp: Vec<Value> = frame.skill_xp.iter().map(|(index, xp)| json!({"skill_index": index, "xp": xp})).collect();
+    let inventory: Vec<Value> = frame
+        .inventory_counts
+        .iter()
+        .map(|(id, count)| json!({"id": id, "count": count}))
+        .collect();
+    let xp: Vec<Value> = frame
+        .skill_xp
+        .iter()
+        .map(|(index, xp)| json!({"skill_index": index, "xp": xp}))
+        .collect();
     json!({
         "host_frame": frame.host_frame,
         "observed_tick": frame.game_tick,
@@ -848,7 +1056,10 @@ fn frame_json(frame: &FrameObservation) -> Value {
 fn chat_json(chat: &ChatObservation) -> Value {
     let interval = match chat.poll {
         PollKind::Edge => json!([chat.game_tick, chat.game_tick.wrapping_add(1)]),
-        PollKind::Wake => json!([chat.game_tick.wrapping_add(1), chat.game_tick.wrapping_add(1)]),
+        PollKind::Wake => json!([
+            chat.game_tick.wrapping_add(1),
+            chat.game_tick.wrapping_add(1)
+        ]),
     };
     json!({
         "observed_tick": chat.game_tick,
@@ -919,7 +1130,10 @@ fn opcode_name(opcode: u8) -> &'static str {
         (ClientProt289::CLIENT_CHEAT.id, "CLIENT_CHEAT"),
         (ClientProt289::MOVE_GAMECLICK.id, "MOVE_GAMECLICK"),
     ];
-    candidates.iter().find_map(|(id, name)| (*id == opcode).then_some(*name)).unwrap_or("OTHER")
+    candidates
+        .iter()
+        .find_map(|(id, name)| (*id == opcode).then_some(*name))
+        .unwrap_or("OTHER")
 }
 
 #[cfg(test)]
@@ -929,11 +1143,23 @@ mod tests {
     #[test]
     fn completed_cycles_adds_all_six_verdict_families() {
         let status = StatusObservation {
-            host_frame: 1, observed_tick: 1, phase: String::new(), method: None,
-            tick_method: None, last_event: None, tick_cycle: Some(3), tick_verified: Some(20),
-            tick_unobserved: Some(5), tick_slips: Some(2), tick_lost: Some(1), tick_delayed: Some(3),
-            tick_paused: Some(1), tick_fallbacks: Some(0), tick_fallback_failed: Some(0),
-            tick_events: Some(0), xp: Some(0),
+            host_frame: 1,
+            observed_tick: 1,
+            phase: String::new(),
+            method: None,
+            tick_method: None,
+            last_event: None,
+            tick_cycle: Some(3),
+            tick_verified: Some(20),
+            tick_unobserved: Some(5),
+            tick_slips: Some(2),
+            tick_lost: Some(1),
+            tick_delayed: Some(3),
+            tick_paused: Some(1),
+            tick_fallbacks: Some(0),
+            tick_fallback_failed: Some(0),
+            tick_events: Some(0),
+            xp: Some(0),
         };
         assert_eq!(status.completed_cycles().unwrap(), 32);
     }
@@ -941,11 +1167,23 @@ mod tests {
     #[test]
     fn completed_cycles_rejects_missing_or_negative_counter() {
         let mut status = StatusObservation {
-            host_frame: 1, observed_tick: 1, phase: String::new(), method: None,
-            tick_method: None, last_event: None, tick_cycle: Some(-1), tick_verified: Some(0),
-            tick_unobserved: Some(0), tick_slips: Some(0), tick_lost: Some(0), tick_delayed: Some(0),
-            tick_paused: Some(0), tick_fallbacks: Some(0), tick_fallback_failed: Some(0),
-            tick_events: Some(0), xp: Some(0),
+            host_frame: 1,
+            observed_tick: 1,
+            phase: String::new(),
+            method: None,
+            tick_method: None,
+            last_event: None,
+            tick_cycle: Some(-1),
+            tick_verified: Some(0),
+            tick_unobserved: Some(0),
+            tick_slips: Some(0),
+            tick_lost: Some(0),
+            tick_delayed: Some(0),
+            tick_paused: Some(0),
+            tick_fallbacks: Some(0),
+            tick_fallback_failed: Some(0),
+            tick_events: Some(0),
+            xp: Some(0),
         };
         assert!(status.completed_cycles().is_ok());
         status.tick_lost = None;

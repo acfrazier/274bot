@@ -195,7 +195,10 @@ impl OrderedTransportController for LoopbackProxy {
             ));
             return;
         }
-        let gate = state.gate.as_mut().expect("gate ownership was just checked");
+        let gate = state
+            .gate
+            .as_mut()
+            .expect("gate ownership was just checked");
         gate.request_packets.insert(request_id, packet_index);
         gate.expected_bytes = gate.expected_bytes.saturating_add(encoded_length);
         gate.observation
@@ -413,18 +416,16 @@ fn flush_upstream(
         };
         match action {
             UpstreamAction::Wait => return Ok(activity),
-            UpstreamAction::Pass => {
-                match server.write(buffer) {
-                    Ok(0) => return Ok(activity),
-                    Ok(written) => {
-                        buffer.drain(..written);
-                        activity = true;
-                    }
-                    Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(activity),
-                    Err(error) if error.kind() == ErrorKind::Interrupted => continue,
-                    Err(error) => return Err(error),
+            UpstreamAction::Pass => match server.write(buffer) {
+                Ok(0) => return Ok(activity),
+                Ok(written) => {
+                    buffer.drain(..written);
+                    activity = true;
                 }
-            }
+                Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(activity),
+                Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            },
             UpstreamAction::Forward(length) => {
                 if length == 0 {
                     return Ok(activity);
@@ -453,9 +454,9 @@ fn flush_upstream(
                     return Ok(activity);
                 }
                 buffer.drain(..length);
-                let mut state = state
-                    .lock()
-                    .map_err(|_| io::Error::new(ErrorKind::Other, "loopback proxy state poisoned"))?;
+                let mut state = state.lock().map_err(|_| {
+                    io::Error::new(ErrorKind::Other, "loopback proxy state poisoned")
+                })?;
                 if let Some(gate) = state.gate.as_mut() {
                     gate.processed_bytes = gate.processed_bytes.saturating_add(length);
                     gate.observation.dropped_bytes =

@@ -35,6 +35,12 @@ impl OneOpArgs {
     /// Shared Gatherer policy for a stray skill/unlock page or main modal.
     pub(crate) fn stray_modal(snapshot: api::snapshot::SnapshotView<'_>) -> Option<Self> {
         if snapshot
+            .chat_modal()
+            .is_some_and(|modal| modal.value.root == 8880)
+        {
+            return Some(Self::close_modal());
+        }
+        if snapshot
             .chat_continue()
             .is_some_and(|button| button.value >= 0)
         {
@@ -146,10 +152,15 @@ impl NativeMachine for OneOp {
                         .any(|stat| stat.index == 3 && stat.effective > before_hp)
                 })
             }
-            OneOpKind::CloseModal => cx
-                .snapshot()
-                .main_modal()
-                .is_some_and(|modal| modal.value.root < 0),
+            OneOpKind::CloseModal => {
+                let snapshot = cx.snapshot();
+                snapshot
+                    .main_modal()
+                    .is_some_and(|modal| modal.value.root < 0)
+                    && snapshot
+                        .chat_modal()
+                        .is_none_or(|modal| modal.value.root != 8880)
+            }
             OneOpKind::ContinueDialog => cx.snapshot().chat_modal().is_some_and(|modal| {
                 // A chained unlock page acknowledges this page; the runner must
                 // issue a separate continue for the new modal.

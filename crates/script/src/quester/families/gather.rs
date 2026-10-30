@@ -447,6 +447,7 @@ impl StepRun for Run {
                     catalog: Arc::clone(&self.catalog),
                     stall_ticks: DEFAULT_STALL_TICKS,
                     quest_owned: true,
+                    timing: None,
                 },
                 &mut cx.tick.cx,
             ),
@@ -945,6 +946,7 @@ mod tests {
                         catalog: Arc::clone(&plan.catalog),
                         stall_ticks: DEFAULT_STALL_TICKS,
                         quest_owned: false,
+                        timing: None,
                     },
                     &mut tick.cx,
                 )

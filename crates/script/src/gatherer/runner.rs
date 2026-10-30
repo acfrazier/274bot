@@ -35,6 +35,8 @@ use std::task::Poll;
 
 #[path = "recover.rs"]
 mod recover;
+#[path = "runner_timing.rs"]
+mod timing;
 
 const MAX_AVOID: usize = 8;
 const MAX_BANK_OPEN_ATTEMPTS: u8 = 3;
@@ -261,6 +263,11 @@ pub struct Gatherer {
     area: Option<WorkArea>,
     target: Option<TargetPlan>,
     active: Active,
+    tick_policy: crate::native::tickcycle::TickPolicy,
+    parked_cycle: Option<crate::native::tickcycle::TickCycle>,
+    tick_applicability: Option<crate::native::tickcycle::OffReason>,
+    tick_last_off: Option<crate::native::tickcycle::OffReason>,
+    tick_last_sequence: u32,
     tool: ToolState,
     avoid: [AvoidedTile; MAX_AVOID],
     scratch: Box<GatherScratch>,
@@ -316,6 +323,11 @@ impl Gatherer {
             area: None,
             target: None,
             active: Active::None,
+            tick_policy: Default::default(),
+            parked_cycle: None,
+            tick_applicability: None,
+            tick_last_off: None,
+            tick_last_sequence: 0,
             tool: ToolState {
                 id: -1,
                 worn: false,
@@ -386,6 +398,8 @@ impl Gatherer {
     }
 
     fn start_trip(&mut self) {
+        self.capture_live_timing();
+        self.parked_cycle = None;
         api::host_log!(
             api::hostlog::Category::NavTrace,
             api::hostlog::Level::Debug,
@@ -821,6 +835,8 @@ impl Gatherer {
     }
 
     fn cancel_active(&mut self) {
+        self.capture_live_timing();
+        self.parked_cycle = None;
         api::host_log!(
             api::hostlog::Category::NavTrace,
             api::hostlog::Level::Debug,
@@ -1196,6 +1212,7 @@ impl Gatherer {
     }
 
     fn start_drop(&mut self, tick: &mut NativeTick<'_>) {
+        self.parked_cycle = None;
         let snapshot = tick.cx.snapshot();
         let Some(inventory) = snapshot.inventory() else {
             return;
@@ -1323,12 +1340,14 @@ impl Gatherer {
         let Some(plan) = self.target.clone() else {
             return;
         };
+        let timing = self.timing_for_target(&plan, &tick.cx);
         match tick.actions.begin::<GatherRun>(
             GatherRunArgs {
                 target: plan,
                 stall_ticks: DEFAULT_STALL_TICKS,
                 catalog: Arc::clone(&self.prepared.catalog),
                 quest_owned: false,
+                timing,
             },
             &mut tick.cx,
         ) {
@@ -1402,6 +1421,10 @@ impl Gatherer {
     }
 
     fn handle_gather(&mut self, result: GatherResult, tick: &mut NativeTick<'_>) {
+        if let Some(timing) = result.timing {
+            self.tick_policy = timing.policy;
+            self.parked_cycle = Some(timing.cycle);
+        }
         self.needs_validate = true;
         if result.gained > 0 || result.xp > 0 {
             self.last_gameplay_tick = tick.cx.evidence().tick;
@@ -1874,6 +1897,9 @@ impl Gatherer {
         let args = OneOpArgs::eat(&food.name, food.id, held, hp.effective);
         match tick.actions.begin::<OneOp>(args, &mut tick.cx) {
             Ok(handle) => {
+                if let Some(cycle) = &mut self.parked_cycle {
+                    cycle.pause(&mut self.tick_policy);
+                }
                 self.active = Active::Tend(handle);
                 self.set_event("eating at boundary");
             }
@@ -2371,6 +2397,9 @@ impl Gatherer {
             zone_gated: self.zone_gated,
             excluded_targets: Arc::clone(&self.prepared.excluded_targets),
             last_event: Arc::clone(&self.last_event),
+            tick_method: self.tick_method_status(),
+            tick_cycle: self.tick_policy.last_cycle_ticks().map_or(-1, i64::from),
+            tick_stats: self.tick_policy.stats(),
         }
     }
 
@@ -2399,6 +2428,7 @@ impl Gatherer {
     }
 
     fn publish(&mut self, tick: &mut NativeTick<'_>) {
+        self.refresh_tick_status();
         if !self.dirty {
             return;
         }
@@ -2434,6 +2464,10 @@ impl Script for Gatherer {
             self.run = tick.cx.run();
             self.observed_progress = None;
             self.cancel_active();
+            self.tick_policy = Default::default();
+            self.tick_applicability = None;
+            self.tick_last_off = None;
+            self.tick_last_sequence = 0;
             self.needs_validate = true;
             self.rebaseline_gameplay = true;
             self.death = crate::native::death::DeathLatch::from_watermark(self.retained.death_seq);
@@ -2623,6 +2657,17 @@ mod tests {
         let protected = supply::protected_ids(&prepared, tool);
         assert_eq!(protected.as_slice().len(), 9);
         let kit = prepared.supply.tick_kit.as_ref().unwrap();
+        let ordered = prepared
+            .selected
+            .server_ordered_catalog(prepared.catalog.pin())
+            .unwrap();
+        assert_eq!(kit.knife.id, ordered.knife().knife().id());
+        assert!(ordered
+            .knife()
+            .logs()
+            .iter()
+            .any(|logs| logs.id() == kit.logs.id));
+        assert_eq!((kit.knife.id, kit.logs.id), (946, 1511));
         assert!(protected.as_slice().contains(&kit.knife.id));
         assert!(protected.as_slice().contains(&kit.logs.id));
         let row = |id, count, container| ItemView {
@@ -2785,13 +2830,6 @@ mod tests {
 
     #[test]
     fn instance_with_widening_stays_inside_the_inline_budget() {
-        assert_eq!(size_of::<Walk>(), 136, "Walk inline layout changed");
-        assert!(
-            size_of::<Gatherer>() <= 1024,
-            "Gatherer={} exceeds its inline budget",
-            size_of::<Gatherer>()
-        );
-        assert!(size_of::<GatherRetained>() <= 80);
         println!(
             "Gatherer={} Active={} GatherRun={} DropBatch={} OneOp={} GatherRetained={} GatherScratch={} TargetPlan={} Walk={} WalkGoals={} WalkRequest={} WalkReceipt={}",
             size_of::<Gatherer>(),
@@ -2806,6 +2844,22 @@ mod tests {
             size_of::<crate::native::WalkGoals>(),
             size_of::<crate::native::WalkRequest>(),
             size_of::<crate::native::WalkReceipt>()
+        );
+        assert_eq!(size_of::<Walk>(), 136, "Walk inline layout changed");
+        // Measured 1416 B on the 64-bit runner (was 1024 B): the parked cycle,
+        // run policy and live GatherRun timing stay inline, without heap owners.
+        assert!(
+            size_of::<Gatherer>() <= 1416,
+            "Gatherer={} exceeds its inline budget",
+            size_of::<Gatherer>()
+        );
+        assert!(size_of::<GatherRetained>() <= 80);
+        println!(
+            "TickPolicy={} ParkedCycle={} GatherTiming={} TickStats={}",
+            size_of::<crate::native::tickcycle::TickPolicy>(),
+            size_of::<Option<crate::native::tickcycle::TickCycle>>(),
+            size_of::<crate::gatherer::gather::GatherTiming>(),
+            size_of::<crate::gatherer::status::TickStats>(),
         );
     }
     #[test]

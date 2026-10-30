@@ -68,7 +68,6 @@ impl BuiltinGathererFishingOperation {
     }
 }
 
-
 #[derive(Deserialize)]
 #[serde(remote = "NpcTransformAction", deny_unknown_fields)]
 struct ActionWire {
@@ -176,8 +175,7 @@ impl NpcTransformEvidence {
                 .builtin_gatherer_fishing_operations
                 .windows(2)
                 .any(|rows| {
-                    (rows[0].npc_type_id, rows[0].slot)
-                        >= (rows[1].npc_type_id, rows[1].slot)
+                    (rows[0].npc_type_id, rows[0].slot) >= (rows[1].npc_type_id, rows[1].slot)
                 })
             || self
                 .builtin_gatherer_fishing_operations

@@ -8,6 +8,11 @@ use api::selected::{EntityId, Knowledge};
 use std::sync::Arc;
 use std::task::Poll;
 
+#[path = "gather_timing.rs"]
+mod timing;
+pub(super) use timing::item_count as timing_item_count;
+pub(crate) use timing::GatherTiming;
+
 pub const DEFAULT_STALL_TICKS: u64 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +30,7 @@ pub struct GatherResult {
     pub end: GatherEnd,
     pub gained: u32,
     pub xp: i32,
+    pub(crate) timing: Option<GatherTiming>,
 }
 
 pub struct GatherRunArgs {
@@ -33,6 +39,8 @@ pub struct GatherRunArgs {
     pub stall_ticks: u64,
     /// Stage gates are enforced by an enclosing quest Path, not Gatherer.
     pub quest_owned: bool,
+    /// Built-in Gatherer timing only. Quest-owned gathering stays at native cadence.
+    pub(crate) timing: Option<GatherTiming>,
 }
 
 pub struct GatherRun {
@@ -48,6 +56,10 @@ pub struct GatherRun {
     last_quiet_tick: u64,
     retried: bool,
     tend: Option<OneOp>,
+    previous_logs: i32,
+    previous_fletch_xp: i32,
+    waiting_target_change: bool,
+    pending_end: Option<GatherEnd>,
 }
 
 impl NativeMachine for GatherRun {
@@ -102,6 +114,10 @@ impl NativeMachine for GatherRun {
         let baseline_products = product_count(inventory.value, &args.target);
         let baseline_xp = stat_xp(stats.value, args.target.skill_stat);
         let chat_since = latest_chat(snapshot).unwrap_or(0);
+        let previous_logs = args.timing.as_ref().map_or(0, |timing| {
+            timing::item_count(inventory.value, timing.kit[1])
+        });
+        let previous_fletch_xp = stat_xp(stats.value, 9);
         let mut machine = Self {
             args,
             request_id: None,
@@ -115,11 +131,25 @@ impl NativeMachine for GatherRun {
             last_quiet_tick: cx.evidence().tick,
             retried: false,
             tend: None,
+            previous_logs,
+            previous_fletch_xp,
+            pending_end: None,
+            waiting_target_change: false,
         };
-        if let Some(args) = OneOpArgs::stray_modal(snapshot) {
+        let may_tend = machine.args.timing.as_ref().is_none_or(|timing| {
+            timing.cycle.allows_stray_tend() && !timing.cycle.has_unresolved_requests()
+        });
+        if let Some(args) = may_tend.then(|| OneOpArgs::stray_modal(snapshot)).flatten() {
             machine.tend = Some(OneOp::begin(args, cx)?);
-        } else {
+        } else if machine
+            .args
+            .timing
+            .as_ref()
+            .is_none_or(|timing| timing.cycle.allows_native_begin())
+        {
             machine.emit_click(cx)?;
+        } else {
+            machine.drive_timing(cx, false)?;
         }
         Ok(machine)
     }
@@ -132,19 +162,11 @@ impl NativeMachine for GatherRun {
                 Poll::Ready(Ok(_)) => {
                     self.tend = None;
                     // Re-select and revalidate after a skill/unlock page.
-                    return Poll::Ready(Ok(GatherResult {
-                        end: GatherEnd::Refused,
-                        gained: self.gained,
-                        xp: self.xp_gain,
-                    }));
+                    return self.finish(GatherEnd::Refused);
                 }
             }
         }
         let snapshot = cx.snapshot();
-        if let Some(args) = OneOpArgs::stray_modal(snapshot) {
-            self.tend = Some(std::task::ready!(defer_budget(OneOp::begin(args, cx)))?);
-            return Poll::Pending;
-        }
         let refused = self
             .request_id
             .and_then(|request_id| cx.interaction_receipt(request_id))
@@ -169,23 +191,34 @@ impl NativeMachine for GatherRun {
             .try_into()
             .unwrap_or(u32::MAX);
         self.xp_gain = current_xp.saturating_sub(self.baseline_xp);
+        let progressed = self.gained > previous_gained || self.xp_gain > previous_xp_gain;
+        let timed_progress = self.drive_timing(cx, progressed)?;
+        if let Some(end) = self.pending_end {
+            return self.finish(end);
+        }
+        let may_tend = self.args.timing.as_ref().is_none_or(|timing| {
+            timing.cycle.allows_stray_tend() && !timing.cycle.has_unresolved_requests()
+        });
+        if may_tend {
+            if let Some(args) = OneOpArgs::stray_modal(snapshot) {
+                self.tend = Some(std::task::ready!(defer_budget(OneOp::begin(args, cx)))?);
+                return Poll::Pending;
+            }
+        }
 
         let Some(capacity) = snapshot.inventory_capacity() else {
             return Poll::Pending;
         };
         if inventory.value.len() as i32 >= i32::from(capacity.value) {
-            return Poll::Ready(Ok(GatherResult {
-                end: GatherEnd::Full,
-                gained: self.gained,
-                xp: self.xp_gain,
-            }));
+            return self.finish(GatherEnd::Full);
         }
-        if let Some(reason) = refusal(snapshot, &mut self.chat_since) {
-            return Poll::Ready(Ok(GatherResult {
-                end: reason,
-                gained: self.gained,
-                xp: self.xp_gain,
-            }));
+        // A live arm owns its Make menu and its content-refusal disposition.
+        if self.args.timing.as_ref().is_none_or(|timing| {
+            timing.cycle.allows_stray_tend() && !timing.cycle.has_unresolved_requests()
+        }) {
+            if let Some(reason) = refusal(snapshot, &mut self.chat_since) {
+                return self.finish(reason);
+            }
         }
 
         let Some(target_state) = observe_target(snapshot, &self.args.catalog, &self.args.target)
@@ -193,26 +226,17 @@ impl NativeMachine for GatherRun {
             return Poll::Pending;
         };
         if target_state != TargetObservation::Active {
-            return Poll::Ready(Ok(GatherResult {
-                end: target_state.end(),
-                gained: self.gained,
-                xp: self.xp_gain,
-            }));
+            return self.finish(target_state.end());
         }
         if refused {
-            return Poll::Ready(Ok(GatherResult {
-                end: GatherEnd::Refused,
-                gained: self.gained,
-                xp: self.xp_gain,
-            }));
+            return self.finish(GatherEnd::Refused);
         }
 
         let animated = snapshot
             .local_player()
             .is_some_and(|player| player.value.player.actor.animation != -1);
         let tick = cx.evidence().tick;
-        let progressed = self.gained > previous_gained || self.xp_gain > previous_xp_gain;
-        if progressed || animated {
+        if progressed || timed_progress || animated {
             self.quiet_ticks = 0;
             self.last_quiet_tick = tick;
         } else if self.last_quiet_tick != tick {
@@ -222,7 +246,11 @@ impl NativeMachine for GatherRun {
         if self.quiet_ticks < self.args.stall_ticks {
             return Poll::Pending;
         }
-        if !self.retried {
+        if !self.retried
+            && self.args.timing.as_ref().is_none_or(|timing| {
+                timing.cycle.allows_native_begin() && !timing.cycle.has_unresolved_requests()
+            })
+        {
             if cx.evidence().tick > self.last_emit_tick {
                 std::task::ready!(defer_budget(self.emit_click(cx)))?;
             }
@@ -230,17 +258,35 @@ impl NativeMachine for GatherRun {
             self.quiet_ticks = 0;
             return Poll::Pending;
         }
-        Poll::Ready(Ok(GatherResult {
-            end: GatherEnd::Idle,
-            gained: self.gained,
-            xp: self.xp_gain,
-        }))
+        self.finish(GatherEnd::Idle)
     }
 
     fn cancel(&mut self) {}
 }
 
 impl GatherRun {
+    pub(super) fn timing(&self) -> Option<GatherTiming> {
+        self.args.timing
+    }
+
+    fn finish(&mut self, end: GatherEnd) -> Poll<Result<GatherResult, ActionError>> {
+        if self
+            .args
+            .timing
+            .as_ref()
+            .is_some_and(|timing| timing.cycle.has_unresolved_requests())
+        {
+            // Complete Asked requests while their real ActionHandle owner is live.
+            self.pending_end = Some(end);
+            return Poll::Pending;
+        }
+        Poll::Ready(Ok(GatherResult {
+            end,
+            gained: self.gained,
+            xp: self.xp_gain,
+            timing: self.args.timing.take(),
+        }))
+    }
     fn emit_click(&mut self, cx: &mut ActionContext<'_>) -> Result<(), ActionError> {
         if cx.evidence().tick == self.last_emit_tick {
             return Ok(());
@@ -471,7 +517,7 @@ mod tests {
     use api::gather_methods::{GatherSkill, GatherTarget};
     use api::snapshot::{LocLayer, LocView, NpcView, WorldTile};
 
-    fn prepared_catalog() -> Arc<GatherCatalog> {
+    pub(super) fn prepared_catalog() -> Arc<GatherCatalog> {
         api::selected::FamilyPreparation::run(|worker| {
             let selected =
                 api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
@@ -507,7 +553,7 @@ mod tests {
         }
     }
 
-    fn supply_snapshot(level: i32, items: &[i32]) -> api::snapshot::GameSnapshot {
+    pub(super) fn supply_snapshot(level: i32, items: &[i32]) -> api::snapshot::GameSnapshot {
         use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView, StatView};
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -678,6 +724,7 @@ mod tests {
                         catalog: Arc::clone(&catalog),
                         stall_ticks: 1,
                         quest_owned: false,
+                        timing: None,
                     },
                     &mut tick.cx,
                 )
@@ -739,6 +786,7 @@ mod tests {
                         catalog: Arc::clone(&catalog),
                         stall_ticks: 8,
                         quest_owned: false,
+                        timing: None,
                     },
                     &mut tick.cx,
                 )
@@ -794,6 +842,7 @@ mod tests {
                     end: GatherEnd::Refused,
                     gained: 0,
                     xp: 0,
+                    timing: None,
                 }))
             ),
             "after the page closes, GatherRun returns Refused so the runner revalidates: {continuation:?}"
@@ -846,6 +895,7 @@ mod tests {
                             catalog: Arc::clone(&catalog),
                             stall_ticks: DEFAULT_STALL_TICKS,
                             quest_owned: false,
+                            timing: None,
                         },
                         &mut tick.cx,
                     )
@@ -941,7 +991,7 @@ mod tests {
         }
     }
 
-    fn target(entity: EntityId, npc_index: i32, tile: WorldTile) -> TargetPlan {
+    pub(super) fn target(entity: EntityId, npc_index: i32, tile: WorldTile) -> TargetPlan {
         TargetPlan {
             entity,
             tile,
@@ -955,7 +1005,7 @@ mod tests {
         }
     }
 
-    fn loc(id: i32, tile: WorldTile) -> LocView {
+    pub(super) fn loc(id: i32, tile: WorldTile) -> LocView {
         LocView {
             typecode: 0,
             info: 0,
@@ -982,7 +1032,7 @@ mod tests {
         }
     }
 
-    fn npc(index: usize, type_id: usize, tile: WorldTile) -> NpcView {
+    pub(super) fn npc(index: usize, type_id: usize, tile: WorldTile) -> NpcView {
         NpcView {
             index,
             r#type: Some(type_id),
@@ -1085,3 +1135,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "gather_tick_tests.rs"]
+mod tick_tests;

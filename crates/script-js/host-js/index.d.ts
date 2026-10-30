@@ -1,5 +1,5 @@
 // Generated from host verb tables — do not edit by hand.
-// Regen: cargo test -p script --test host_js regen_host_js -- --ignored
+// Regen: cargo test -p script-js --test host_js regen_host_js -- --ignored
 // NativeTick Load is planned for a later release. JS API v2 is NativeApi (explicit export const apiVersion = 2).
 // Not a clone of rs2b0t-api.
 
@@ -1007,6 +1007,17 @@ export interface GatherStatus {
   area: string;
   target: string;
   tool: string;
+  tick_method: string;
+  tick_cycle: number;
+  tick_verified: number;
+  tick_unobserved: number;
+  tick_slips: number;
+  tick_lost: number;
+  tick_delayed: number;
+  tick_paused: number;
+  tick_fallbacks: number;
+  tick_fallback_failed: number;
+  tick_events: number;
   bait: number;
   food: number;
   coins: number;

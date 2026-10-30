@@ -1682,11 +1682,9 @@ fn ordered_knife_and_checked_click_have_no_host_rate_rule_across_adjacent_and_sa
         assert_eq!(state.snapshot().category_counts(), [4, 0, 0]);
         assert_eq!(state.snapshot().packet_count(), 4);
     });
-    adjacent.input.observe_input_tick(
-        adjacent.client.revision(),
-        2,
-        adjacent.client.gens.session,
-    );
+    adjacent
+        .input
+        .observe_input_tick(adjacent.client.revision(), 2, adjacent.client.gens.session);
     assert_eq!(checked_loc_click(&mut adjacent), 2);
     adjacent.pump(2);
     let receipt = adjacent.receipt();

@@ -77,6 +77,8 @@ pub fn test_site_anchor_selected(
 #[cfg(test)]
 pub(crate) fn test_full_pack_fixture(
     cx: &mut crate::native::PrepareContext<'_>,
+    resource: &str,
+    level: i32,
 ) -> Result<
     (
         std::sync::Arc<crate::native::PreparedConfig>,
@@ -110,7 +112,7 @@ pub(crate) fn test_full_pack_fixture(
         level: 0,
     };
     let mut chosen = None;
-    for method in prepared.catalog.methods_for_resource("normal") {
+    for method in prepared.catalog.methods_for_resource(resource) {
         let Some(target_id) = known_rows(&method.targets).iter().find_map(|target| {
             (target.class == api::gather_methods::TargetClass::Resource)
                 .then_some(target.entity)
@@ -132,7 +134,7 @@ pub(crate) fn test_full_pack_fixture(
     }
     let Some((tree_id, tree_tile)) = chosen else {
         return Err(crate::native::StartError::Unavailable(
-            "Gatherer fixture has no complete normal-tree placement".into(),
+            format!("Gatherer fixture has no complete {resource}-tree placement").into(),
         ));
     };
 
@@ -232,8 +234,8 @@ pub(crate) fn test_full_pack_fixture(
     snapshot.seed_stats(vec![StatView {
         index: 8,
         name: "woodcutting".into(),
-        effective: 1,
-        base: 1,
+        effective: level,
+        base: level,
         xp: 0,
         used: true,
     }]);

@@ -15,8 +15,8 @@ use host_play::tick_engine_test_support::{
 use host_play::{
     ProfileClass, ProfileOptions, SharedClientTemplate, WorldMembersFact, WorldMembersSource,
 };
-use serde_json::{json, Map, Value};
 use script::native::{ScriptStatus, StatusValue};
+use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 #[path = "support/loopback_proxy.rs"]
@@ -278,11 +278,13 @@ impl Scenario {
         }
         settings.insert(
             "targetPreference".into(),
-            json!(if matches!(self.resource, ResourceKind::Copper | ResourceKind::Iron) {
-                "Best tier"
-            } else {
-                "Nearest"
-            }),
+            json!(
+                if matches!(self.resource, ResourceKind::Copper | ResourceKind::Iron) {
+                    "Best tier"
+                } else {
+                    "Nearest"
+                }
+            ),
         );
         settings.insert("location".into(), json!("Start"));
         settings.insert("radius".into(), json!(12));
@@ -335,7 +337,11 @@ impl SetupState {
             "setstat attack 1".to_owned(),
             "setstat defence 99".to_owned(),
             "setstat hitpoints 99".to_owned(),
-            format!("setstat {} {}", scenario.skill.to_ascii_lowercase(), scenario.level),
+            format!(
+                "setstat {} {}",
+                scenario.skill.to_ascii_lowercase(),
+                scenario.level
+            ),
         ];
         commands.extend(
             scenario
@@ -359,7 +365,11 @@ impl SetupState {
     }
 
     fn frame(&mut self, client: &mut Client, account: &str, hold: bool) {
-        if account != self.account || hold || self.error.is_some() || self.phase == SetupPhase::Ready {
+        if account != self.account
+            || hold
+            || self.error.is_some()
+            || self.phase == SetupPhase::Ready
+        {
             return;
         }
         let mut snapshot = GameSnapshot::new();
@@ -550,7 +560,9 @@ fn send_pre_batch_user_events(
         return;
     }
     if {
-        let state = state.lock().expect("tick-engine foreign event state poisoned");
+        let state = state
+            .lock()
+            .expect("tick-engine foreign event state poisoned");
         !state.armed || state.sent || state.error.is_some()
     } {
         return;
@@ -566,7 +578,9 @@ fn send_pre_batch_user_events(
     let client_tick = snapshot.tick();
     let host_frame = hook.observed_host_frame();
     let requested = {
-        let mut state = state.lock().expect("tick-engine foreign event state poisoned");
+        let mut state = state
+            .lock()
+            .expect("tick-engine foreign event state poisoned");
         if !state.armed || state.sent || state.error.is_some() {
             return;
         }
@@ -581,7 +595,9 @@ fn send_pre_batch_user_events(
             .base()
             .map(|(base_x, base_z)| (world_x - base_x, world_z - base_z))
     }) else {
-        let mut state = state.lock().expect("tick-engine foreign event state poisoned");
+        let mut state = state
+            .lock()
+            .expect("tick-engine foreign event state poisoned");
         state.client_tick = Some(client_tick);
         state.host_frame = Some(host_frame);
         state.error = Some("real edge had no local-player tile or scene base".into());
@@ -608,7 +624,9 @@ fn send_pre_batch_user_events(
                 && wire.opcode == ClientProt289::MOVE_GAMECLICK.id
         })
         .count();
-    let mut state = state.lock().expect("tick-engine foreign event state poisoned");
+    let mut state = state
+        .lock()
+        .expect("tick-engine foreign event state poisoned");
     state.client_tick = Some(client_tick);
     state.host_frame = Some(host_frame);
     state.emitted = observed_moves;
@@ -817,7 +835,10 @@ impl LiveRun {
         if self.start_tick.is_some() {
             return Err("Gatherer Start was already submitted".into());
         }
-        let password = self.password.take().ok_or("live password was already consumed")?;
+        let password = self
+            .password
+            .take()
+            .ok_or("live password was already consumed")?;
         let uid = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| format!("uid clock: {error}"))?
@@ -833,7 +854,9 @@ impl LiveRun {
             .map_err(|error| format!("spawn Engine T account: {error}"))?;
         self.play_mut().focus(&self.account);
         self.wait_setup_ready()?;
-        self.engine_log = Some(EnginePacketLog::capture(required_file("TICK_ENGINE_PACKET_LOG")?)?);
+        self.engine_log = Some(EnginePacketLog::capture(required_file(
+            "TICK_ENGINE_PACKET_LOG",
+        )?)?);
         let after = self.hook.observed_host_frame();
         self.hook.arm_measurement(LOG_ID, &self.scenario.products);
         if self.hook.wait_for_frame(after, FRAME_HANG_GUARD).is_none() {
@@ -911,7 +934,10 @@ impl LiveRun {
         let mut after = self.hook.observed_host_frame();
         loop {
             {
-                let setup = self.setup.lock().map_err(|_| "tick-engine setup poisoned")?;
+                let setup = self
+                    .setup
+                    .lock()
+                    .map_err(|_| "tick-engine setup poisoned")?;
                 if let Some(error) = &setup.error {
                     return Err(error.clone());
                 }
@@ -1008,13 +1034,9 @@ impl LiveRun {
                 .proxy
                 .as_ref()
                 .map_or_else(Vec::new, |proxy| proxy.observations()),
-            engine_packets: self
-                .engine_log
-                .as_ref()
-                .map(|log| log.read(&self.account)),
+            engine_packets: self.engine_log.as_ref().map(|log| log.read(&self.account)),
         }
     }
-
 
     fn failure(&self, message: impl std::fmt::Display) -> String {
         format!(
@@ -1226,7 +1248,9 @@ fn correlate_engine_packets(evidence: &RunEvidence) -> Result<(), String> {
             || forwarded_count == 0
             || forwarded_count == observation.packet_lengths.len()
             || observation.dropped_bytes
-                != observation.packet_lengths[forwarded_count..].iter().sum::<usize>()
+                != observation.packet_lengths[forwarded_count..]
+                    .iter()
+                    .sum::<usize>()
             || observation.forwarded_bytes + observation.dropped_bytes != total_bytes
         {
             return Err(format!(
@@ -1287,12 +1311,14 @@ fn correlate_engine_packets(evidence: &RunEvidence) -> Result<(), String> {
     if evidence.pre_batch_user_events.requested > 0 {
         assert_deferred_terminal_row(evidence, packets)?;
     }
-    if matches!(evidence.case, "tick-make-without-click" | "tick-make-proxy-drop") {
+    if matches!(
+        evidence.case,
+        "tick-make-without-click" | "tick-make-proxy-drop"
+    ) {
         assert_engine_accepted_make_prefix(packets)?;
     }
     Ok(())
 }
-
 
 fn engine_accepted_user_event(packet: &EnginePacket) -> bool {
     packet.outcome == "accepted" && packet.handler_accepted && packet.charged_user_event
@@ -1320,9 +1346,7 @@ fn assert_engine_accepted_make_prefix(packets: &[EnginePacket]) -> Result<(), St
             "Engine T did not accept the Make prefix in one tick: opener={opener:?} make={make:?}"
         ));
     }
-    println!(
-        "TICK-MANIP Engine T accepted Knife opener and Make before the absent terminal click"
-    );
+    println!("TICK-MANIP Engine T accepted Knife opener and Make before the absent terminal click");
     Ok(())
 }
 fn assert_deferred_terminal_row(
@@ -1381,7 +1405,9 @@ fn assert_deferred_terminal_row(
                 .filter(|packet| packet.charged_user_event)
                 .count()
                 != 5
-            || movement.iter().any(|packet| packet.sequence >= opener[0].sequence)
+            || movement
+                .iter()
+                .any(|packet| packet.sequence >= opener[0].sequence)
             || opener[0].sequence >= make[0].sequence
             || make[0].sequence >= deferred_move[0].sequence
             || deferred_move[0].sequence >= deferred_loc[0].sequence
@@ -1464,7 +1490,12 @@ fn evidence_json(evidence: &RunEvidence) -> Value {
             },
         })
     };
-    let frames = evidence.trace.frames.iter().map(&frame_json).collect::<Vec<_>>();
+    let frames = evidence
+        .trace
+        .frames
+        .iter()
+        .map(&frame_json)
+        .collect::<Vec<_>>();
     let baseline = evidence.baseline.as_ref().map(frame_json);
     let dispatches = evidence
         .trace
@@ -1624,7 +1655,9 @@ fn persist_evidence(evidence: &RunEvidence) -> Result<PathBuf, String> {
 
 fn require_live_config() -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
-        return Err("tick-engine live tests require LIVE=1; opted-in cases never silently skip".into());
+        return Err(
+            "tick-engine live tests require LIVE=1; opted-in cases never silently skip".into(),
+        );
     }
     let prefix = std::env::var("BOT_LIVE_NAME_PREFIX")
         .map_err(|_| "BOT_LIVE_NAME_PREFIX=tmx is required for Engine T accounts".to_owned())?;
@@ -1658,7 +1691,8 @@ fn required_dir(name: &str) -> Result<PathBuf, String> {
 }
 
 fn required_path(name: &str) -> Result<PathBuf, String> {
-    let value = std::env::var(name).map_err(|_| format!("{name} is required for tick-engine live qualification"))?;
+    let value = std::env::var(name)
+        .map_err(|_| format!("{name} is required for tick-engine live qualification"))?;
     let path = PathBuf::from(value);
     if !path.is_absolute() {
         return Err(format!("{name} must be absolute: {}", path.display()));
@@ -1850,11 +1884,7 @@ fn has_act_line(trace: &TickEngineTrace, tick: u64) -> bool {
     })
 }
 
-fn has_fletching_members_line(
-    trace: &TickEngineTrace,
-    from_tick: u64,
-    through_tick: u64,
-) -> bool {
+fn has_fletching_members_line(trace: &TickEngineTrace, from_tick: u64, through_tick: u64) -> bool {
     trace
         .frames
         .iter()
@@ -2008,26 +2038,29 @@ fn assert_proxy_drop_after_make(run: &LiveRun, request_id: u64) -> Result<(), St
     Ok(())
 }
 
-fn assert_make_without_click_outcome(
-    run: &mut LiveRun,
-    origin: u64,
-) -> Result<(), String> {
-    run.wait_until(origin as u32, MAKE_WITHOUT_CLICK_BUDGET, |trace, statuses| {
-        fresh_animation_on_edge(trace, origin + 1)
-            .is_some_and(|(sequence, _)| sequence == FLETCHING_ANIMATION)
-            && !has_act_line(trace, origin + 1)
-            && click_dispatches_at(trace, origin + 1).len() == 1
-            && fresh_animation_on_edge(trace, origin + 3)
-                .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
-            && statuses
-                .last()
-                .is_some_and(|status| status.tick_cycle == Some(3))
-    })?;
+fn assert_make_without_click_outcome(run: &mut LiveRun, origin: u64) -> Result<(), String> {
+    run.wait_until(
+        origin as u32,
+        MAKE_WITHOUT_CLICK_BUDGET,
+        |trace, statuses| {
+            fresh_animation_on_edge(trace, origin + 1)
+                .is_some_and(|(sequence, _)| sequence == FLETCHING_ANIMATION)
+                && !has_act_line(trace, origin + 1)
+                && click_dispatches_at(trace, origin + 1).len() == 1
+                && fresh_animation_on_edge(trace, origin + 3)
+                    .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
+                && statuses
+                    .last()
+                    .is_some_and(|status| status.tick_cycle == Some(3))
+        },
+    )?;
     let trace = run.hook.trace();
     assert_click(run, &trace, origin + 1)?;
     assert_roll(run, origin + 3)?;
     if has_act_line(&trace, origin + 1) {
-        return Err(run.failure("accepted Make without the click unexpectedly produced the act line"));
+        return Err(
+            run.failure("accepted Make without the click unexpectedly produced the act line")
+        );
     }
     assert_log_unchanged(run)?;
     assert_running(run)
@@ -2124,7 +2157,8 @@ fn assert_click_target(
 
 fn assert_roll(run: &LiveRun, tick: u64) -> Result<(), String> {
     let trace = run.hook.trace();
-    if fresh_animation_on_edge(&trace, tick).is_none_or(|(sequence, _)| sequence != ROLL_ANIMATION) {
+    if fresh_animation_on_edge(&trace, tick).is_none_or(|(sequence, _)| sequence != ROLL_ANIMATION)
+    {
         return Err(run.failure(format!(
             "expected fresh roll animation {ROLL_ANIMATION} at edge {tick}"
         )));
@@ -2157,7 +2191,9 @@ fn assert_running(run: &LiveRun) -> Result<(), String> {
     let status = run
         .play()
         .script_native_status(&run.account)
-        .ok_or_else(|| run.failure("native Gatherer status disappeared before the case completed"))?;
+        .ok_or_else(|| {
+            run.failure("native Gatherer status disappeared before the case completed")
+        })?;
     for key in ["method", "tick_method", "target", "last_event"] {
         if text_field(&status, key).is_none() {
             return Err(run.failure(format!(
@@ -2183,7 +2219,11 @@ fn assert_running(run: &LiveRun) -> Result<(), String> {
             )));
         }
     }
-    if status.fields.iter().any(|field| field.key == "tick_refused") {
+    if status
+        .fields
+        .iter()
+        .any(|field| field.key == "tick_refused")
+    {
         return Err(run.failure("native status must not add a tick_refused counter"));
     }
     Ok(())
@@ -2248,7 +2288,8 @@ struct PrefixStatus {
 }
 
 fn normalized_prefix(evidence: &RunEvidence, end_offset: u32) -> PrefixTrace {
-    let (Some(baseline), Some(_start_tick)) = (evidence.baseline.as_ref(), evidence.start_tick) else {
+    let (Some(baseline), Some(_start_tick)) = (evidence.baseline.as_ref(), evidence.start_tick)
+    else {
         return PrefixTrace::default();
     };
     let Some(origin) = evidence
@@ -2310,10 +2351,13 @@ fn normalized_prefix(evidence: &RunEvidence, end_offset: u32) -> PrefixTrace {
             let offset = (dispatch.receipt.dispatch_tick as u32).wrapping_sub(origin);
             (offset < end_offset).then(|| PrefixDispatch {
                 offset,
-                request: dispatch
-                    .request_debug
-                    .as_deref()
-                    .map(|request| request.split([' ', '{']).next().unwrap_or(request).to_owned()),
+                request: dispatch.request_debug.as_deref().map(|request| {
+                    request
+                        .split([' ', '{'])
+                        .next()
+                        .unwrap_or(request)
+                        .to_owned()
+                }),
                 prefix: dispatch.receipt.dispatched_prefix,
                 wire_events: dispatch.receipt.wire_events,
                 terminal: format!("{:?}", dispatch.receipt.terminal),
@@ -2393,7 +2437,11 @@ fn tick_engine_clean_continuing_river() {
         }) {
             return Err(run.failure("clean continuing request was not the actual loc_2027 target"));
         }
-        let close_baseline = run.baseline.as_ref().expect("started run has baseline").clone();
+        let close_baseline = run
+            .baseline
+            .as_ref()
+            .expect("started run has baseline")
+            .clone();
         run.wait_until(origin as u32, CLEAN_RIVER_BUDGET, |trace, statuses| {
             fresh_animation_on_edge(trace, origin + 1)
                 .is_some_and(|(sequence, _)| sequence == FLETCHING_ANIMATION)
@@ -2416,7 +2464,9 @@ fn tick_engine_clean_continuing_river() {
         if fresh_animation_on_edge(&trace, origin + 1)
             .is_some_and(|(sequence, _)| sequence == CAST_ANIMATION)
         {
-            return Err(run.failure("clean river accepted Cast animation 622 instead of a landed arm"));
+            return Err(
+                run.failure("clean river accepted Cast animation 622 instead of a landed arm")
+            );
         }
         assert_log_unchanged(run)?;
         assert_running(run)
@@ -2481,7 +2531,11 @@ fn tick_engine_stale_menu_guard_late_case_two() {
         let origin = first.receipt.dispatch_tick;
         assert_batch(run, &first, 1, 1)?;
         assert_knife_wire_order(run, &trace, &first, &[ClientProt289::OPHELDU.id])?;
-        let baseline = run.baseline.as_ref().expect("started run has baseline").clone();
+        let baseline = run
+            .baseline
+            .as_ref()
+            .expect("started run has baseline")
+            .clone();
         run.wait_until(origin as u32, STALE_MENU_BUDGET, |trace, statuses| {
             let batches = knife_dispatches(trace);
             batches.len() >= 2
@@ -2495,7 +2549,9 @@ fn tick_engine_stale_menu_guard_late_case_two() {
                 && has_act_line(trace, origin + 2)
                 && fresh_animation_on_edge(trace, origin + 4)
                     .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
-                && statuses.last().is_some_and(|status| status.tick_slips.unwrap_or(0) >= 1)
+                && statuses
+                    .last()
+                    .is_some_and(|status| status.tick_slips.unwrap_or(0) >= 1)
         })?;
         let trace = run.hook.trace();
         let batches = knife_dispatches(&trace);
@@ -2518,7 +2574,9 @@ fn tick_engine_stale_menu_guard_late_case_two() {
             .iter()
             .any(|frame| frame.suppressed_openchat && frame.actual_chat_modal_root == 8_880)
         {
-            return Err(run.failure("stale-menu guard did not filter the real 8880 root before script polling"));
+            return Err(run.failure(
+                "stale-menu guard did not filter the real 8880 root before script polling",
+            ));
         }
         assert_click(run, &trace, origin + 2)?;
         require_verdict_duration(run, "tick_slips", 4)?;
@@ -2531,8 +2589,9 @@ fn tick_engine_stale_menu_guard_late_case_two() {
 #[test]
 #[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine T 127.0.0.1:48594/4080"]
 fn tick_engine_split_opener_late_case_one() {
-    let scenario = Scenario::river("tick-split-opener")
-        .with_mutation(DispatchMutation::Transport(TransportMutation::SplitAfterFirstPacket));
+    let scenario = Scenario::river("tick-split-opener").with_mutation(DispatchMutation::Transport(
+        TransportMutation::SplitAfterFirstPacket,
+    ));
     run_case(scenario, |run| {
         let trace = run.hook.trace();
         let first = first_knife(&trace).map_err(|error| run.failure(error))?;
@@ -2546,7 +2605,9 @@ fn tick_engine_split_opener_late_case_one() {
                 && click_dispatches_at(trace, origin + 2).len() == 1
                 && fresh_animation_on_edge(trace, origin + 4)
                     .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
-                && statuses.last().is_some_and(|status| status.tick_slips.unwrap_or(0) >= 1)
+                && statuses
+                    .last()
+                    .is_some_and(|status| status.tick_slips.unwrap_or(0) >= 1)
         })?;
         let trace = run.hook.trace();
         assert_click(run, &trace, origin + 2)?;
@@ -2579,8 +2640,9 @@ fn tick_engine_split_opener_late_case_one() {
 #[test]
 #[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine T 127.0.0.1:48594/4080"]
 fn tick_engine_plain_late_river_and_mithril_iron() {
-    let river = Scenario::river("tick-late-river")
-        .with_mutation(DispatchMutation::Transport(TransportMutation::HoldThroughNextEdge));
+    let river = Scenario::river("tick-late-river").with_mutation(DispatchMutation::Transport(
+        TransportMutation::HoldThroughNextEdge,
+    ));
     run_case(river, |run| {
         let first = first_knife(&run.hook.trace()).map_err(|error| run.failure(error))?;
         let origin = first.receipt.dispatch_tick;
@@ -2592,10 +2654,12 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
             }) && click_dispatches_at(trace, origin + 2).len() == 1
                 && fresh_animation_on_edge(trace, origin + 5)
                     .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
-                && knife_dispatches(trace).iter().any(|dispatch| {
-                    dispatch.receipt.dispatch_tick == origin + 5
-                })
-                && statuses.last().is_some_and(|status| status.tick_slips.unwrap_or(0) >= 1)
+                && knife_dispatches(trace)
+                    .iter()
+                    .any(|dispatch| dispatch.receipt.dispatch_tick == origin + 5)
+                && statuses
+                    .last()
+                    .is_some_and(|status| status.tick_slips.unwrap_or(0) >= 1)
         })?;
         let trace = run.hook.trace();
         assert_click(run, &trace, origin + 2)?;
@@ -2627,7 +2691,9 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
 
     let iron = Scenario::iron("tick-late-iron")
         .unwrap_or_else(|error| panic!("{error}"))
-        .with_mutation(DispatchMutation::Transport(TransportMutation::HoldThroughNextEdge));
+        .with_mutation(DispatchMutation::Transport(
+            TransportMutation::HoldThroughNextEdge,
+        ));
     run_case(iron, |run| {
         let first = first_knife(&run.hook.trace()).map_err(|error| run.failure(error))?;
         let origin = first.receipt.dispatch_tick;
@@ -2636,20 +2702,22 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
             fresh_animation_on_edge(trace, origin + 2).is_some_and(|(sequence, _)| {
                 sequence == MITHRIL_PICK_ANIMATION || sequence == FLETCHING_ANIMATION
             }) && has_chat_in_tick(trace, origin + 2, |line| {
-                line.to_ascii_lowercase().contains("swing your pick at the rock")
+                line.to_ascii_lowercase()
+                    .contains("swing your pick at the rock")
             }) && click_dispatches_at(trace, origin + 2).len() == 1
                 && fresh_animation_on_edge(trace, origin + 5)
                     .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
-                && statuses.last().is_some_and(|status| status.tick_slips.unwrap_or(0) >= 1)
+                && statuses
+                    .last()
+                    .is_some_and(|status| status.tick_slips.unwrap_or(0) >= 1)
         })?;
         let trace = run.hook.trace();
         assert_click(run, &trace, origin + 2)?;
         assert_roll(run, origin + 5)?;
         require_verdict_duration(run, "tick_slips", 5)?;
-        if knife_dispatches(&trace)
-            .iter()
-            .any(|dispatch| dispatch.receipt.dispatch_tick < origin + 5 && dispatch.receipt.dispatch_tick != origin)
-        {
+        if knife_dispatches(&trace).iter().any(|dispatch| {
+            dispatch.receipt.dispatch_tick < origin + 5 && dispatch.receipt.dispatch_tick != origin
+        }) {
             return Err(run.failure("iron/mithril branch emitted a second batch before R+1+4"));
         }
         assert_held_batch(
@@ -2669,10 +2737,7 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
     .unwrap_or_else(|error| panic!("{error}"));
 }
 
-fn copper_history(
-    scenario: Scenario,
-    expect_held_join: bool,
-) -> Result<RunEvidence, String> {
+fn copper_history(scenario: Scenario, expect_held_join: bool) -> Result<RunEvidence, String> {
     run_case(scenario, |run| {
         let initial_trace = run.hook.trace();
         let first = first_knife(&initial_trace).map_err(|error| run.failure(error))?;
@@ -2690,8 +2755,7 @@ fn copper_history(
             ],
         )?;
         run.wait_until(origin as u32, COPPER_BUDGET, |trace, statuses| {
-            fresh_animation_on_edge(trace, origin + 1)
-                .is_some_and(|(sequence, _)| sequence == -1)
+            fresh_animation_on_edge(trace, origin + 1).is_some_and(|(sequence, _)| sequence == -1)
                 && has_copper_success(trace, origin, origin + 1)
                 && knife_dispatches(trace).iter().any(|dispatch| {
                     dispatch.receipt.dispatch_tick == origin + 4
@@ -2706,7 +2770,9 @@ fn copper_history(
         let trace = run.hook.trace();
         let batches = knife_dispatches(&trace);
         if batches.len() < 2 || batches[1].receipt.dispatch_tick != origin + 4 {
-            return Err(run.failure("copper delayed cycle did not emit its second-rock batch at R+4"));
+            return Err(
+                run.failure("copper delayed cycle did not emit its second-rock batch at R+4")
+            );
         }
         assert_batch(run, &batches[1], 3, 4)?;
         assert_knife_wire_order(
@@ -2723,7 +2789,10 @@ fn copper_history(
         if run.product_gain(&trace) <= 0 && run.skill_xp_gain(&trace) <= 0 {
             return Err(run.failure("copper case showed no real ore or Mining XP"));
         }
-        if batches.iter().any(|dispatch| dispatch.receipt.terminal.is_some()) {
+        if batches
+            .iter()
+            .any(|dispatch| dispatch.receipt.terminal.is_some())
+        {
             return Err(run.failure("copper host receipt recorded a refused KnifeArm"));
         }
         if expect_held_join {
@@ -2740,10 +2809,7 @@ fn copper_history(
             let complete = observations.first().is_some_and(|observation| {
                 let expected_bytes: usize = observation.packet_lengths.iter().sum();
                 observation.request_ids
-                    == vec![
-                        batches[0].receipt.request_id,
-                        batches[1].receipt.request_id,
-                    ]
+                    == vec![batches[0].receipt.request_id, batches[1].receipt.request_id]
                     && observation.packet_opcodes == expected_opcodes.repeat(2)
                     && observation.release_edge_tick.is_none()
                     && observation.release_trigger_tick == Some(origin as u32 + 4)
@@ -2767,15 +2833,14 @@ fn copper_history(
 fn tick_engine_copper_success_and_delayed_first_batch_history() {
     let normal = copper_history(Scenario::copper("tick-copper-normal").unwrap(), false)
         .unwrap_or_else(|error| panic!("{error}"));
-    let held = copper_history(
-        Scenario::copper("tick-copper-held")
-            .unwrap()
-            .with_mutation(DispatchMutation::Transport(
-                TransportMutation::HoldUntilNextDispatch,
-            )),
-        true,
-    )
-    .unwrap_or_else(|error| panic!("{error}"));
+    let held =
+        copper_history(
+            Scenario::copper("tick-copper-held").unwrap().with_mutation(
+                DispatchMutation::Transport(TransportMutation::HoldUntilNextDispatch),
+            ),
+            true,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
     let normal_prefix = normalized_prefix(&normal, 2);
     let held_prefix = normalized_prefix(&held, 2);
     if normal_prefix != held_prefix {
@@ -2788,12 +2853,11 @@ fn tick_engine_copper_success_and_delayed_first_batch_history() {
 #[test]
 #[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine T 127.0.0.1:48594/4080"]
 fn tick_engine_removed_target_refuses_prefix_zero_and_continues() {
-    let scenario = Scenario::river("tick-target-removed").with_mutation(
-        DispatchMutation::RemoveLoc {
+    let scenario =
+        Scenario::river("tick-target-removed").with_mutation(DispatchMutation::RemoveLoc {
             id: RIVER_LOC_ID,
             tile: tile(2_501, 3_506, 0),
-        },
-    );
+        });
     run_case(scenario, |run| {
         let first = first_knife(&run.hook.trace()).map_err(|error| run.failure(error))?;
         let origin = first.receipt.dispatch_tick;
@@ -2806,7 +2870,9 @@ fn tick_engine_removed_target_refuses_prefix_zero_and_continues() {
                     && dispatch.receipt.wire_events == 0
                     && format!("{:?}", dispatch.receipt.terminal).contains("StaleTarget")
             }) && click_dispatches_at(trace, origin + 1).len() == 1
-                && statuses.last().is_some_and(|status| status.tick_lost.unwrap_or(0) >= 1)
+                && statuses
+                    .last()
+                    .is_some_and(|status| status.tick_lost.unwrap_or(0) >= 1)
         })?;
         let trace = run.hook.trace();
         let refused = trace
@@ -2932,10 +2998,9 @@ fn tick_engine_deferred_terminal_row_is_a_slip_after_three_foreign_events() {
 #[test]
 #[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine T 127.0.0.1:48594/4080"]
 fn tick_engine_proxy_drop_after_make_keeps_full_host_receipt() {
-    let scenario = Scenario::river("tick-make-proxy-drop")
-        .with_mutation(DispatchMutation::Transport(
-            TransportMutation::DropSuffixAfterPacket(2),
-        ));
+    let scenario = Scenario::river("tick-make-proxy-drop").with_mutation(
+        DispatchMutation::Transport(TransportMutation::DropSuffixAfterPacket(2)),
+    );
     run_case(scenario, |run| {
         let first = first_knife(&run.hook.trace()).map_err(|error| run.failure(error))?;
         let origin = first.receipt.dispatch_tick;
@@ -2966,13 +3031,12 @@ fn lone_opener_history(name: &'static str, suppress: bool) -> Result<RunEvidence
         let first = first_knife(&run.hook.trace()).map_err(|error| run.failure(error))?;
         let origin = first.receipt.dispatch_tick;
         assert_batch(run, &first, 1, 1)?;
-        assert_knife_wire_order(
-            run,
-            &run.hook.trace(),
-            &first,
-            &[ClientProt289::OPHELDU.id],
-        )?;
-        let baseline = run.baseline.as_ref().expect("started run has baseline").clone();
+        assert_knife_wire_order(run, &run.hook.trace(), &first, &[ClientProt289::OPHELDU.id])?;
+        let baseline = run
+            .baseline
+            .as_ref()
+            .expect("started run has baseline")
+            .clone();
         run.wait_until(origin as u32, LONE_OPENER_BUDGET, |trace, statuses| {
             click_dispatches_at(trace, origin + 1).len() == 1
                 && close_packet_seen(trace, origin + 1, &baseline)
@@ -2984,7 +3048,8 @@ fn lone_opener_history(name: &'static str, suppress: bool) -> Result<RunEvidence
         let trace = run.hook.trace();
         assert_click(run, &trace, origin + 1)?;
         if trace.wire.iter().any(|wire| {
-            wire.opcode == ClientProt289::IF_BUTTON.id || wire.opcode == ClientProt289::CLOSE_MODAL.id
+            wire.opcode == ClientProt289::IF_BUTTON.id
+                || wire.opcode == ClientProt289::CLOSE_MODAL.id
         }) {
             return Err(run.failure("lone opener emitted IF_BUTTON or host CLOSE_MODAL"));
         }
@@ -2993,7 +3058,9 @@ fn lone_opener_history(name: &'static str, suppress: bool) -> Result<RunEvidence
                 .iter()
                 .any(|frame| frame.suppressed_openchat && frame.actual_chat_modal_root == 8_880)
             {
-                return Err(run.failure("suppressed history did not filter a real IF_OPENCHAT snapshot"));
+                return Err(
+                    run.failure("suppressed history did not filter a real IF_OPENCHAT snapshot")
+                );
             }
         } else if !edge_has_openchat(&trace, origin + 1) {
             return Err(run.failure("unsuppressed lone opener never exposed the real 8880 root"));
@@ -3006,8 +3073,8 @@ fn lone_opener_history(name: &'static str, suppress: bool) -> Result<RunEvidence
 #[test]
 #[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine T 127.0.0.1:48594/4080"]
 fn tick_engine_lone_opener_with_and_without_snapshot_suppression() {
-    let visible = lone_opener_history("tick-lone-opener", false)
-        .unwrap_or_else(|error| panic!("{error}"));
+    let visible =
+        lone_opener_history("tick-lone-opener", false).unwrap_or_else(|error| panic!("{error}"));
     let hidden = lone_opener_history("tick-lone-opener-hidden", true)
         .unwrap_or_else(|error| panic!("{error}"));
     let visible_prefix = normalized_prefix(&visible, 3);
@@ -3207,12 +3274,9 @@ mod packet_oracle_tests {
             10,
             12,
         )];
-        assert!(correlate_engine_packets(&evidence(
-            wire_packets,
-            transport,
-            engine_packets,
-        ))
-        .is_ok());
+        assert!(
+            correlate_engine_packets(&evidence(wire_packets, transport, engine_packets,)).is_ok()
+        );
     }
 
     #[test]
@@ -3236,12 +3300,9 @@ mod packet_oracle_tests {
             .map(|(index, opcode)| packet(*opcode, index as u64 + 1))
             .collect();
         let transport = vec![drop_observation(request, opcodes, lengths, 10, 12)];
-        assert!(correlate_engine_packets(&evidence(
-            wire_packets,
-            transport,
-            engine_packets,
-        ))
-        .is_err());
+        assert!(
+            correlate_engine_packets(&evidence(wire_packets, transport, engine_packets,)).is_err()
+        );
     }
 
     #[test]
@@ -3261,11 +3322,8 @@ mod packet_oracle_tests {
             .collect();
         let engine_packets = vec![packet(opcodes[0], 1), packet(opcodes[1], 2)];
         let transport = vec![drop_observation(request, opcodes, lengths, 11, 11)];
-        assert!(correlate_engine_packets(&evidence(
-            wire_packets,
-            transport,
-            engine_packets,
-        ))
-        .is_err());
+        assert!(
+            correlate_engine_packets(&evidence(wire_packets, transport, engine_packets,)).is_err()
+        );
     }
 }
