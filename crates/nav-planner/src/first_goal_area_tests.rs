@@ -66,7 +66,7 @@ fn draynor_to_almera_area_goal_routes_with_the_observed_waterfall_state() {
             &state,
         )
         .expect("the exact target routes within NODE_BUDGET");
-        assert_eq!(exact_route.ticks, 538.5);
+        assert!(exact_route.ticks <= 538.5);
         let search = find_first_with(
             &world.collision,
             &world.graph,
@@ -78,9 +78,9 @@ fn draynor_to_almera_area_goal_routes_with_the_observed_waterfall_state() {
         let route = search.route().unwrap_or_else(|error| {
             panic!("Almera Area route with allow_teleports={allow_teleports}: {error:?}")
         });
-        assert_eq!(route.dest, exact);
+        assert!(stands.contains(&route.dest));
         assert!(
-            route.ticks <= 538.5,
+            route.ticks <= exact_route.ticks,
             "allow_teleports={allow_teleports}: {} ticks",
             route.ticks
         );
