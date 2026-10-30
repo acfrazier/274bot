@@ -2438,11 +2438,11 @@ fn u9_assessment_allocation_and_cpu_measurement() {
     let mut wwm_risks = RiskTables::build(&tables);
     for ident in &wwm_ids {
         let fact = *wwm_risks.npc(*ident).expect("selected NPC fact");
-        // Keep the 19-kind synthetic workload above the 100-attack floor.
+        // Extend each synthetic exposure, keeping the rate-4 cadence.
         *wwm_risks.npc_mut(*ident).expect("selected NPC fact") = KindRisk::new(
             6,
-            3,
-            9,
+            4,
+            11,
             1,
             Style::Melee,
             UnknownKind::Known,
