@@ -360,6 +360,7 @@ impl Default for GameSnapshot {
             scene: SceneView::default(),
             projection_scene: ProjectionSceneView::default(),
             world: WorldStateView::default(),
+            camera: CameraView::default(),
             map_flag: None,
             hint_tile: None,
             loc_gen: 0,

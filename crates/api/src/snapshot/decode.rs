@@ -1142,7 +1142,7 @@ impl GameSnapshot {
             self.projection_scene = ProjectionSceneView::default();
             return;
         }
-        self.projection_scene = projection_scene_view(client).unwrap_or_default();
+        self.projection_scene = Self::projection_scene_view(client).unwrap_or_default();
         let level = client.minusedlevel;
         match client.collision.get(level as usize) {
             Some(cmap) => {
