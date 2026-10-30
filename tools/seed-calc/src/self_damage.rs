@@ -98,8 +98,12 @@ pub struct StepModelResult {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct PreRoll {
+    /// Delayed ticks from `p_delay` calls before the setup walk.
     delay_before_walk: u8,
+    /// Teleport steps of a forced walk. Each step ends in `p_delay(0)` inside `agility_walk`
+    /// (`content/scripts/skill_agility/scripts/agility.rs2:40-41`), so its tick is delayed.
     walk_ticks: u8,
+    /// Delayed ticks from `p_delay` calls after the setup walk.
     delay_after_walk: u8,
 }
 
@@ -383,7 +387,7 @@ pub fn calculate(
         budget_stops,
         steps: describe_plan(&plan),
         exact_state_recursion: true,
-        model_limit: "Exact for listed self-damage actions, their authored retry limits, observed p_delay and same-tick arrival delays, per-tile rope setup movement, and the 100-tick health_regen timer from phase zero. Delayed and modal ticks do not regenerate health; each eligible tick processes at most one overdue timer event (engine/src/engine/World.ts:687-709, engine/src/engine/entity/Player.ts:816-830,945-959, engine/src/engine/script/handlers/PlayerOps.ts:359-379). It excludes travel outside those actions, controller handoff time, unrelated guide actions, and their elapsed ticks.".into(),
+        model_limit: "Exact for listed self-damage actions, their authored retry limits, observed p_delay and same-tick arrival delays, per-tile rope setup movement (each forcemove tile ends in p_delay(0)), and the 100-tick health_regen timer from phase zero. Delayed and modal ticks, including every p_delay(0) and rope setup walk tick, do not regenerate health; each eligible tick processes at most one overdue timer event (engine/src/engine/World.ts:687-709, engine/src/engine/entity/Player.ts:816-830,945-959, engine/src/engine/script/handlers/PlayerOps.ts:359-380). It excludes travel outside those actions, controller handoff time, unrelated guide actions, and their elapsed ticks.".into(),
     })
 }
 
@@ -694,7 +698,7 @@ fn rope_hazard(level: u8, setup_ticks: u8) -> Hazard {
             after_success: 3,
         },
         source: "content/scripts/quests/quest_upass/scripts/upass_obstacles.rs2:93-128",
-        timing_note: "Five p_delay ticks precede the roll, with the guide-anchor walk between the first and later delays. Failure p_delay(1) adds 2 delayed ticks before damage; success adds 3 delayed ticks.",
+        timing_note: "Five p_delay ticks precede the roll, with the guide-anchor forcemove walk between the first and later delays. Each walk step is a p_delay(0) inside agility_walk (content/scripts/skill_agility/scripts/agility.rs2:38-43), so every walk tick is delayed and cannot regenerate. Failure p_delay(1) adds 2 delayed ticks before damage; success adds 3 delayed ticks.",
     }
 }
 
@@ -996,6 +1000,15 @@ fn run_once(input: Distribution, hazard: Hazard, base_hp: u8) -> OnceBranches {
 }
 
 fn advance_pre_roll(state: State, before_roll: PreRoll, base_hp: u8) -> State {
+    // Every pre-roll tick is delayed. `P_DELAY` sets `delayed` and suspends the script through
+    // the following tick even with a zero argument (`engine/src/engine/script/handlers/PlayerOps.ts:376-380`),
+    // and normal timers require `canAccess`, which rejects a delayed player
+    // (`engine/src/engine/entity/Player.ts:821-831,945-955`).
+    // A forced walk is a chain of `p_delay(0)` steps inside `agility_walk`
+    // (`content/scripts/skill_agility/scripts/agility.rs2:18-43`), reached from `forcemove`
+    // (`agility.rs2:125-128`, `content/scripts/quests/quest_upass/scripts/upass_obstacles.rs2:102`).
+    // The resumed script delays again before timers run (`engine/src/engine/World.ts:692-704`),
+    // so the walk ticks cannot regenerate health either.
     let state = advance(
         state,
         u16::from(before_roll.delay_before_walk),
@@ -1006,7 +1019,7 @@ fn advance_pre_roll(state: State, before_roll: PreRoll, base_hp: u8) -> State {
         state,
         u16::from(before_roll.walk_ticks),
         base_hp,
-        TickAccess::Available,
+        TickAccess::Blocked,
     );
     advance(
         state,
