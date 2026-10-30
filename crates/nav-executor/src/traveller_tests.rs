@@ -8,10 +8,11 @@ use client::config::{IfType, IfTypeMut, LocType, NpcType, ObjType};
 use client::dash3d::ClientNpc;
 use client::io::{ClientRevision, ClientStream, PacketObserver, ServerProt};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use crate::traveller::{
     door_tile, BlockedWhy, FollowRun, HopFailure, LegPhase, NpcHopBlockReason, Poll, TransportHop,
-    TravelOptions, TravelOutcome, Traveller, WebCutFailure,
+    TravelOptions, TravelOutcome, Traveller, WalkPacketBudget, WebCutFailure,
 };
 use nav_planner::essence::essence_session_for_wizard;
 use nav_planner::executor_adapter::{CELLAR_SHIFT, SHANTAY_HENGE_LOC_ID};
