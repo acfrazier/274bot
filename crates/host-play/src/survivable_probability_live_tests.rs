@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use api::condition::PoisonState;
 use api::interact::{self, Interactions};
 use api::snapshot::{GameSnapshot, WorldTile};
-use client::client::Client;
+use client::client::{Client, SessionExitReason};
 use nav_planner::router::{FindOptions, Leg, Route};
 use nav_planner::world::NavWorld;
 use nav_planner::zones::ZoneExempt;
@@ -50,6 +50,8 @@ struct Rig {
     was_ingame: bool,
     frames: Vec<Value>,
     last_recorded: u32,
+    setup_path: PathBuf,
+    setup_events: Vec<Value>,
 }
 impl Drop for Rig {
     fn drop(&mut self) {
@@ -193,11 +195,54 @@ impl Rig {
         self.until(150, false, |rig| !rig.snapshot.ingame());
     }
 
+    fn record_setup(&mut self, event: Value) {
+        eprintln!("P1C_SETUP {event}");
+        self.setup_events.push(event);
+        let setup = json!({"account": self.name, "events": self.setup_events});
+        std::fs::write(&self.setup_path, serde_json::to_vec_pretty(&setup).unwrap()).unwrap();
+    }
+
     fn relog(&mut self) {
+        let request_tick = self.snapshot.tick();
         self.logout_clean();
-        self.client
-            .login(&self.name, &self.name, false)
-            .expect("log in after acknowledged protocol logout");
+        let logout_tick = self.snapshot.tick();
+        let exit = self.client.take_session_exit_reason();
+        self.record_setup(json!({
+            "phase": "logout_observed", "request_tick": request_tick,
+            "tick": logout_tick, "exit": format!("{exit:?}"),
+        }));
+        assert!(
+            matches!(exit, Some(SessionExitReason::ServerLogout { .. })),
+            "relog requires a server logout acknowledgement, not a local disconnect"
+        );
+        // World.ts sends Logout before its asynchronous save completes. Reuse
+        // nav_gated_entrances_live's fixture-only code-5 release policy.
+        let started = Instant::now();
+        let budget = Duration::from_secs(30);
+        let cadence = Duration::from_secs(5);
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            let result = self.client.login(&self.name, &self.name, false);
+            self.record_setup(json!({
+                "phase": "login_after_logout", "logout_tick": logout_tick,
+                "attempt": attempt, "elapsed_ms": started.elapsed().as_millis(),
+                "accepted": result.is_ok(),
+                "response_code": result.as_ref().err().map(|error| error.code),
+            }));
+            match result {
+                Ok(()) => break,
+                Err(error) => {
+                    assert_eq!(error.code, 5, "relog refused: {error:?}");
+                    assert!(
+                        started.elapsed() + cadence < budget,
+                        "account ownership was not released within {budget:?}"
+                    );
+                    let retry_at = Instant::now() + cadence;
+                    self.until(150, false, |_| Instant::now() >= retry_at);
+                }
+            }
+        }
         self.until(150, false, |rig| {
             rig.snapshot.ingame()
                 && rig.snapshot.attached()
@@ -284,6 +329,7 @@ fn prepare(
     template: &SharedClientTemplate,
     name: &str,
     hp: u8,
+    setup_path: PathBuf,
 ) -> Rig {
     let serial = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -311,6 +357,8 @@ fn prepare(
         was_ingame: false,
         frames: Vec::new(),
         last_recorded: 0,
+        setup_path,
+        setup_events: Vec::new(),
     };
     rig.until(150, false, |rig| {
         rig.snapshot.ingame() && rig.snapshot.attached() && rig.snapshot.scene_state() == 2
@@ -845,6 +893,7 @@ fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
 fn save(directory: &Path, rig: &Rig, receipt: &mut Value, log_start: usize) {
     receipt["frames"] = json!(rig.frames);
     receipt["nav_logs"] = json!(LOGS.0.lock().unwrap()[log_start..].to_vec());
+    receipt["setup_events"] = json!(rig.setup_events);
     std::fs::write(
         directory.join("receipt.json"),
         serde_json::to_vec_pretty(receipt).unwrap(),
@@ -1005,7 +1054,7 @@ fn probability_admission_engine_l() {
         std::fs::create_dir_all(&cell_dir).unwrap();
         let log_start = LOGS.0.lock().unwrap().len();
         let name = &names[usize::from(matches!(cell.mode, Mode::PoisonDuringHold))];
-        let mut rig = prepare(&profile, &template, name, cell.hp);
+        let mut rig = prepare(&profile, &template, name, cell.hp, cell_dir.join("setup.json"));
         let mut receipt = json!({"cell":cell.name, "account":name});
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             exercise(&mut rig, cell, &mut receipt)
