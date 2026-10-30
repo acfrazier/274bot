@@ -79,5 +79,22 @@ pub(super) fn decode(pin: &SelectedPin, bytes: &[u8]) -> Result<Vec<PrereqStep>,
     check_header(pin, &header)?;
     let family: Family = serde_json::from_slice(bytes)
         .map_err(|error| invalid(format!("prerequisite family: {error}")))?;
+    for row in &family.facts.rows {
+        for entry in &row.crossings {
+            check_tile(&entry.crossing.at, "anchor")?;
+            check_tile(&entry.crossing.takeoff, "takeoff")?;
+            check_tile(&entry.crossing.to, "destination")?;
+            check_tile(&entry.pass.landing, "landing")?;
+        }
+    }
     Ok(family.facts.rows)
+}
+
+/// Schema-2 tile bounds: world coordinates are non-negative and the plane is
+/// a game level. The required takeoff is validated wherever at/to are.
+fn check_tile(tile: &crate::WorldTile, role: &str) -> Result<(), FactError> {
+    if tile.x < 0 || tile.z < 0 || !(0..=3).contains(&tile.level) {
+        return Err(invalid(format!("prerequisite {role} tile is out of range")));
+    }
+    Ok(())
 }
