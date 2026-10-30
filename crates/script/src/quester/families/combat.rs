@@ -661,7 +661,7 @@ fn content_reengagement_budget(budget_ticks: u16) -> u32 {
         u32::from(budget_ticks)
     };
     let shortest_end_ticks = attempt_ticks.min(TARGET_GONE_TICKS);
-    (MAX_CONTENT_NPC_RESPAWN_TICKS + shortest_end_ticks - 1) / shortest_end_ticks - 1
+    MAX_CONTENT_NPC_RESPAWN_TICKS.div_ceil(shortest_end_ticks) - 1
 }
 
 fn compile_finish(
