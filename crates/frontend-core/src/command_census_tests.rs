@@ -417,6 +417,10 @@ const CORE: &[(&str, Decision)] = &[
         Excluded(PROJECTION),
     ),
     (
+        "scripts/prestart_zones.rs::QuesterStartZones::append_plan_disclosure",
+        Excluded(PROJECTION),
+    ),
+    (
         "scripts/prestart_zones.rs::QuesterStartZoneCache::update_unavailable",
         Excluded(PROJECTION),
     ),
