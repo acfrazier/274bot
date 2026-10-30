@@ -13,6 +13,9 @@ use std::time::Duration;
 /// this is the machine's backstop, measured on the active clock so pause,
 /// hold, not-ready and Blocked intervals do not spend it.
 pub const WALK_DEADLINE: Duration = Duration::from_secs(10 * 60);
+/// Login's `initalltabs` sends the quest tab and all row colours together.
+/// One later observed game tick is enough for the client snapshot to catch up.
+const QUEST_LIST_STATUS_WAIT_TICKS: u64 = 1;
 
 pub struct Walk {
     key: WalkKey,
@@ -20,8 +23,11 @@ pub struct Walk {
     arrival: ArrivalKind,
     // Retain only arrival mode. The host retains the goals and reports their tier.
     candidate_goals: bool,
+    request: WalkRequest,
     request_id: u64,
     required_after: EvidenceStamp,
+    quest_list_wait_since: Option<u64>,
+    quest_list_retry_used: bool,
     deadline: Duration,
     wait: WalkSlot,
 }
@@ -33,6 +39,14 @@ struct Frame<'a> {
     arrival: ArrivalKind,
     candidate_goals: bool,
     goal: Option<api::WorldTile>,
+}
+
+fn quest_list_status_observed(snapshot: SnapshotView<'_>) -> bool {
+    snapshot.quest_statuses().is_some_and(|statuses| {
+        statuses.value.iter().any(|status| {
+            status.status() != api::snapshot::QuestListStatus::Unknown
+        })
+    })
 }
 
 impl Observation for Frame<'_> {
@@ -84,6 +98,29 @@ impl Observation for Frame<'_> {
     }
 }
 
+impl Walk {
+    fn replan_with_current_quest_list(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+    ) -> Result<(), ActionError> {
+        let required_after = cx.evidence();
+        let mut request = self.request.clone();
+        request.required_after = required_after;
+        let request_id = cx.walk(request)?;
+        self.request.required_after = required_after;
+        self.required_after = required_after;
+        self.request_id = request_id;
+        self.quest_list_wait_since = None;
+        self.quest_list_retry_used = true;
+        self.wait.begin(
+            NonZeroU64::new(request_id).expect("host request is nonzero"),
+            self.key,
+            HostOutcome::empty(),
+        );
+        Ok(())
+    }
+}
+
 impl NativeMachine for Walk {
     type Args = WalkRequest;
     type Output = WalkReceipt;
@@ -98,7 +135,7 @@ impl NativeMachine for Walk {
         let arrival = request.arrival;
         let required_after = request.required_after;
         let candidate_goals = request.candidate_goals.is_some();
-        let request_id = cx.walk(request)?;
+        let request_id = cx.walk(request.clone())?;
         let mut wait = WalkSlot::new();
         wait.begin(
             NonZeroU64::new(request_id).expect("host request is nonzero"),
@@ -110,8 +147,11 @@ impl NativeMachine for Walk {
             loc_id,
             arrival,
             candidate_goals,
+            request,
             request_id,
             required_after,
+            quest_list_wait_since: None,
+            quest_list_retry_used: false,
             deadline: cx.active_now().saturating_add(WALK_DEADLINE),
             wait,
         })
@@ -140,6 +180,39 @@ impl NativeMachine for Walk {
         }
         if !cx.evidence().meets(self.required_after) {
             return Poll::Pending;
+        }
+
+        let needs_quest_evidence = cx
+            .walk_receipt(self.request_id)
+            .is_some_and(|receipt| {
+                receipt.evidence.meets(self.required_after)
+                    && matches!(&receipt.end, WalkEnd::NeedsEvidence(_))
+            });
+        if needs_quest_evidence {
+            let receipt = cx
+                .walk_receipt(self.request_id)
+                .expect("quest-evidence receipt remains correlated")
+                .clone();
+            if self.quest_list_retry_used {
+                return Poll::Ready(Ok(receipt));
+            }
+            let started = self
+                .quest_list_wait_since
+                .get_or_insert_with(|| cx.evidence().tick);
+            if cx.evidence().tick.saturating_sub(*started) < QUEST_LIST_STATUS_WAIT_TICKS {
+                return Poll::Pending;
+            }
+            if quest_list_status_observed(cx.snapshot()) {
+                if let Err(error) = self.replan_with_current_quest_list(cx) {
+                    return Poll::Ready(Err(error));
+                }
+                return Poll::Pending;
+            }
+            let mut refused = receipt;
+            refused.detail = Some(std::sync::Arc::from(
+                "quest-list status was not observed after one game tick",
+            ));
+            return Poll::Ready(Ok(refused));
         }
         let receipt = cx
             .walk_receipt(self.request_id)
@@ -566,13 +639,13 @@ mod tests {
         });
         let original = post_needs_evidence_receipt(&mut ledger, 1);
 
-
         assert!(matches!(
             with_tick(&initial, &mut ledger, 1, |tick| tick
                 .actions
                 .poll(&handle, &mut tick.cx)),
             Poll::Pending
         ));
+
         assert!(matches!(
             with_tick(&observed, &mut ledger, 2, |tick| tick
                 .actions

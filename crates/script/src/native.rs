@@ -936,6 +936,7 @@ impl WalkGoals {
     }
 }
 
+#[derive(Clone)]
 pub struct WalkRequest {
     pub target: WorldTile,
     /// Exact alternatives for a native Area walk with radius zero and no loc.
