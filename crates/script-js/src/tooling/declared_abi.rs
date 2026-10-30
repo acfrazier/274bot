@@ -492,8 +492,8 @@ const REEXPORTS: &[Reexport] = &[
         line: "export { Execution } from '../../api/execution/Execution.js';",
     },
     Reexport {
-        names: &["LoopingBot", "TaskBot", "TreeBot", "AbstractBot"],
-        line: "export { LoopingBot, TaskBot, TreeBot, AbstractBot } from '../../api/bot/Bot.js';",
+        names: &["LoopingBot", "TaskBot", "TreeBot", "AbstractBot", "BranchTask", "LeafTask"],
+        line: "export { LoopingBot, TaskBot, TreeBot, AbstractBot, BranchTask, LeafTask } from '../../api/bot/Bot.js';",
     },
     Reexport {
         names: &["Paint"],
@@ -679,6 +679,10 @@ pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
     );
     out.push_str("export const defineBot = globalThis.defineBot;\n\n");
     covered.insert("defineBot");
+    if wanted.contains("registerScript") {
+        out.push_str("export { registerScript } from '../../runtime/ScriptRegistry.js';\n\n");
+        covered.insert("registerScript");
+    }
 
     for re in REEXPORTS {
         if re.names.iter().any(|n| wanted.contains(n)) {
@@ -713,6 +717,24 @@ pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
                     exp.name, exp.name
                 ));
             }
+            DeclaredKind::Object if exp.name == "events" => {
+                out.push_str("export const events = proxy('events', {\n");
+                for member in &exp.members {
+                    match member.as_str() {
+                        "off" => out.push_str(
+                            "    off(event, cb) { globalThis.__rs2b0t_native_event_off(event, cb); },\n",
+                        ),
+                        "on" => out.push_str(
+                            "    on(event, cb) { const id = globalThis.__rs2b0t_native_event_on(event, cb); return () => globalThis.__rs2b0t_native_event_off(id); },\n",
+                        ),
+                        _ => out.push_str(&format!(
+                            "    {}() {{ throw notImpl('events.{}'); }},\n",
+                            member, member
+                        )),
+                    }
+                }
+                out.push_str("});\n");
+            }
             DeclaredKind::Object => {
                 out.push_str(&format!(
                     "export const {} = proxy('{}', {{\n",
@@ -742,6 +764,13 @@ pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
                             "    static {}() {{ throw notImpl('{}.{}'); }}\n",
                             m, exp.name, m
                         ));
+                        continue;
+                    }
+                    if matches!(
+                        (exp.name.as_str(), m.as_str()),
+                        ("BranchTask", "validate" | "success" | "failure")
+                            | ("LeafTask", "execute")
+                    ) {
                         continue;
                     }
                     out.push_str(&format!(

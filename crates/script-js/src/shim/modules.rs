@@ -8,11 +8,10 @@ pub const BOT_MODULE: &str = "/rs2b0t/bot/scripts/bot/bot.js";
 /// Canonical path of the shape wrapper that imports `./bot.js`.
 pub const MAIN_MODULE: &str = "/rs2b0t/bot/scripts/bot/main.js";
 
-/// The prelude eval'd into every isolate before any module loads: the host
-/// handle, the bot base classes, `defineBot`, and a recording canvas ctx for
-/// `onPaint`. The compat shapes and the shim modules rely on these
-/// globals. The classes live here (not in a module) so `extends` and
-/// `instanceof` agree with the tick wrapper; `Bot.js` re-exports them.
+/// The prelude eval'd into every isolate before any module loads: host state,
+/// bot base classes, `defineBot`, and the recording canvas ctx for `onPaint`.
+/// TaskBot sequencing stays in the prelude; TreeBot delegates its traversal
+/// to a native binding. Abstract task classes live in `bot.js`.
 pub const PRELUDE: &str = r#"
 globalThis.__rs2b0t_host = {};
 globalThis.__rs2b0t_channel_next = 1;
@@ -101,6 +100,7 @@ globalThis.defineBot = (manifest) => {
 globalThis.LoopingBot = class LoopingBot {
             loopDelay = 600;
             loopCadence = null;
+            subscriptions = [];
             onStart() {}
             onStop() {}
             onPause() {}
@@ -112,9 +112,8 @@ globalThis.LoopingBot = class LoopingBot {
             ignoredRandoms() { return []; }
             on(event, cb) {
                 if (typeof cb !== 'function') return;
-                this._subs = this._subs || Object.create(null);
-                const key = String(event);
-                (this._subs[key] || (this._subs[key] = [])).push(cb);
+                const id = globalThis.__rs2b0t_native_event_on(event, cb);
+                this.subscriptions.push(() => globalThis.__rs2b0t_native_event_off(id));
             }
     bindLog(sink) {
         this._logSink = typeof sink === 'function' ? sink : null;
@@ -190,27 +189,19 @@ globalThis.LoopingBot = class LoopingBot {
         this._settings = value;
     }
 };
-globalThis.__rs2b0t_dispatch_native_events = (evs) => {
-    const inst = globalThis.__rs_bot;
-    const subs = inst && inst._subs;
-    if (!subs || !evs) return;
-    for (let i = 0; i < evs.length; i++) {
-        const e = evs[i];
-        const cbs = subs[e.type];
-        if (!cbs) continue;
-        const payload = e.payload;
-        for (let j = 0; j < cbs.length; j++) {
-            try {
-                const r = cbs[j](payload);
-                if (r && typeof r.then === 'function') {
-                    r.then(() => {}, (err) => {
-                        const h = globalThis.__rs2b0t_host;
-                        if (h) h.lastError = String((err && err.message) || err);
-                    });
-                }
-            } catch (_) {}
+globalThis.__rs2b0t_dispatch_native_events = (events) => {
+    globalThis.__rs2b0t_native_event_batch_dispatch(events);
+};
+globalThis.__rs2b0t_invoke_native_event_listener = (callback, payload, hasPayload) => {
+    try {
+        const result = hasPayload ? callback(payload) : callback();
+        if (result && typeof result.then === 'function') {
+            result.then(() => {}, (err) => {
+                const h = globalThis.__rs2b0t_host;
+                if (h) h.lastError = String((err && err.message) || err);
+            });
         }
-    }
+    } catch (_) {}
 };
 globalThis.TaskBot = class TaskBot extends globalThis.LoopingBot {
     constructor() {
@@ -234,8 +225,9 @@ globalThis.TaskBot = class TaskBot extends globalThis.LoopingBot {
     }
 };
 globalThis.TreeBot = class TreeBot extends globalThis.LoopingBot {
-    root() {
-        throw new Error('not impl: TreeBot.root');
+    lastSceneWaitLogAt = 0;
+    async loop() {
+        await globalThis.__rs2b0t_tree_loop(this);
     }
 };
 // Paint ctx: records its calls into a Float64Array op tape plus a
@@ -795,6 +787,10 @@ pub fn shim_modules() -> Vec<Module> {
             include_str!("game_messages.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/runtime/defineBot.js",
+            include_str!("define_bot.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/runtime/RecoveryHints.js",
             include_str!("recovery_hints.js"),
         ),
@@ -861,10 +857,6 @@ pub fn shim_modules() -> Vec<Module> {
         Module::new(
             "/rs2b0t/bot/runtime/Settings.js",
             include_str!("settings.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/runtime/ScriptRegistry.js",
-            include_str!("script_registry.js"),
         ),
         Module::new(
             "/rs2b0t/bot/runtime/randomevents/eventEvade.js",

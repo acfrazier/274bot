@@ -207,6 +207,7 @@ pub(super) fn wire_runtime(
     named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     local_state: Option<std::sync::Arc<script::local_state::SlotState>>,
     frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 ) -> Result<(), String> {
     if shape == LoadShape::Reject {
         return Err("not a bot shape".to_string());

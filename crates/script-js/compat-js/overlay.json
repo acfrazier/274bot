@@ -91,9 +91,27 @@
     "id": "prelude-treebot",
     "module": "api/bot/Bot.js",
     "selector": "TreeBot",
-    "reason": "Prelude TreeBot inherits LoopingBot.loop unchanged; its concrete root throws unless overridden.",
-    "runtime": "crates/script-js/src/shim/modules.rs:222",
+    "reason": "Native TreeBot.loop traverses BranchTask decisions and awaits the selected LeafTask; subclasses provide root.",
+    "runtime": "crates/script-js/src/runtime/bindings/tree_bot.rs:22",
     "declaration": "export class TreeBot extends LoopingBot { root(): TreeNode; }"
+  },
+  {
+    "id": "abstract-branch-task-contract",
+    "module": "api/bot/Bot.js",
+    "selector": "BranchTask",
+    "preserveMembers": true,
+    "reason": "Native BranchTask bases intentionally omit abstract hooks; retain their published subclass contract.",
+    "runtime": "crates/script-js/src/shim/bot.js:9",
+    "declaration": "export abstract class BranchTask { abstract validate(): boolean; abstract success(): TreeNode; abstract failure(): TreeNode; }"
+  },
+  {
+    "id": "abstract-leaf-task-contract",
+    "module": "api/bot/Bot.js",
+    "selector": "LeafTask",
+    "preserveMembers": true,
+    "reason": "Native LeafTask bases intentionally omit abstract hooks; retain their published subclass contract.",
+    "runtime": "crates/script-js/src/shim/bot.js:12",
+    "declaration": "export abstract class LeafTask { abstract execute(): void | Promise<void>; }"
   },
   {
     "id": "runtime-bot-host-refusal",
