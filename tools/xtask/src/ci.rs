@@ -178,9 +178,7 @@ pub fn run(args: Vec<String>) -> Result<u8, String> {
         let step = steps
             .iter()
             .find(|step| step.name == *name)
-            .ok_or_else(|| {
-                format!("unknown CI step `{name}`; use `--list` to list valid steps")
-            })?;
+            .ok_or_else(|| format!("unknown CI step `{name}`; use `--list` to list valid steps"))?;
         selected_steps.push(step);
     }
 
@@ -861,17 +859,23 @@ fn parse_run_steps(contents: &str) -> Vec<RunStep> {
         let line = lines[index];
         let indent = line.chars().take_while(|ch| *ch == ' ').count();
         let trimmed = line.trim();
-        if indent == 6 && trimmed.starts_with("- ") {
-            current_name = trimmed
-                .strip_prefix("- name: ")
-                .map(|name| name.trim().to_owned());
+        let run = if indent == 6 && trimmed.starts_with("- run:") {
+            current_name = None;
+            Some(("<unnamed run step>".to_owned(), trimmed[6..].trim()))
         } else if indent == 8 && trimmed.starts_with("run:") {
-            let name = current_name
-                .take()
-                .unwrap_or_else(|| "<unnamed run step>".to_owned());
-            let value = trimmed[4..].trim();
+            Some((
+                current_name
+                    .take()
+                    .unwrap_or_else(|| "<unnamed run step>".to_owned()),
+                trimmed[4..].trim(),
+            ))
+        } else {
+            None
+        };
+
+        if let Some((name, value)) = run {
             let mut commands = Vec::new();
-            if value == "|" || value == ">" || value == "|-" || value == ">-" {
+            if matches!(value, "|" | ">" | "|-" | ">-") {
                 index += 1;
                 while index < lines.len() {
                     let body = lines[index];
@@ -890,6 +894,10 @@ fn parse_run_steps(contents: &str) -> Vec<RunStep> {
             }
             commands.push(value.to_owned());
             results.push(RunStep { name, commands });
+        } else if indent == 6 && trimmed.starts_with("- ") {
+            current_name = trimmed
+                .strip_prefix("- name: ")
+                .map(|name| name.trim().to_owned());
         }
         index += 1;
     }
