@@ -1771,10 +1771,7 @@ mod tests {
             .iter()
             .rposition(|step| matches!(step.kind, StepKind::Relog))
             .unwrap();
-        assert_eq!(
-            fixture.scenario.steps[relog].wait.arm,
-            Proof::IngameScene2
-        );
+        assert_eq!(fixture.scenario.steps[relog].wait.arm, Proof::IngameScene2);
         assert!(matches!(
             fixture.scenario.steps[relog + 1].kind,
             StepKind::Repeat { .. }
@@ -2070,7 +2067,7 @@ mod tests {
             .rposition(|step| matches!(step.kind, StepKind::Relog))
             .unwrap();
         assert_eq!(
-            fixture.scenario.steps[relog + 1].wait.arm,
+            fixture.scenario.steps[relog + 2].wait.arm,
             Proof::Arrived {
                 x: 3209,
                 z: 3215,
@@ -2177,7 +2174,7 @@ mod tests {
             .unwrap();
         assert!(setup < relog);
         assert_eq!(
-            fixture.scenario.steps[relog + 1].wait.arm,
+            fixture.scenario.steps[relog + 2].wait.arm,
             Proof::Arrived {
                 x: stand.x,
                 z: stand.z,

@@ -3815,10 +3815,7 @@ mod tests {
                     matches!(
                         &action.effect,
                         crate::native::HostEffect::Interaction(
-                            crate::shim::InteractReq::InvButton {
-                                id: 201..=203,
-                                ..
-                            }
+                            crate::shim::InteractReq::InvButton { id: 201..=203, .. }
                         )
                     )
                 })
