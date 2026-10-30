@@ -395,7 +395,7 @@ fn jungle_edges(
             bump(skipped, SKIP_JUNGLE_CONFIG, 1);
             continue;
         }
-        let Some(def) = loc_defs.get(id) else {
+        let Some(def) = loc_defs.loc(*id) else {
             bump(skipped, SKIP_JUNGLE_CONFIG, 1);
             continue;
         };
@@ -561,7 +561,7 @@ fn emit_jungle_unlock_variants(
                 machette,
                 machette_worn,
                 Some(axe),
-                false,
+                &[],
                 unlock,
                 quest_gates,
             );
@@ -576,7 +576,7 @@ fn emit_jungle_unlock_variants(
                 machette,
                 machette_worn,
                 None,
-                true,
+                worn_axes,
                 unlock,
                 quest_gates,
             );
@@ -593,7 +593,7 @@ fn push_jungle_edge(
     machette: i32,
     machette_worn: bool,
     inventory_axe: Option<i32>,
-    axe_worn: bool,
+    worn_axes: &[i32],
     unlock: JungleUnlock,
     quest_gates: Option<&QuestGates>,
 ) {
@@ -613,11 +613,7 @@ fn push_jungle_edge(
     } else {
         Vec::new()
     };
-    let worn_req = if axe_worn {
-        worn_axes.to_vec()
-    } else {
-        Vec::new()
-    };
+    let worn_req = worn_axes.to_vec();
     graph.edges.push(TransportEdge {
         kind: TransportKind::AgilityShortcut,
         at,
