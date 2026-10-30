@@ -449,6 +449,12 @@ fn run_fixture() -> Result<(), String> {
     let result = with_process_render_budget(|| panel::run_panel_render_fixture(args, redraw))
         .map_err(|error| error.to_string());
     let evidence = control.validate();
+    let mut record_log = frontend_core::log::LogView::new(frontend_core::log::LogScope::Process);
+    record_log.edit_filter(|filter| filter.set_text("headed record"));
+    frontend_core::log::global().refresh(&mut record_log);
+    for row in record_log.rows() {
+        eprintln!("t44_headed_record_diagnostic: {}", row.message());
+    }
     let shutdown =
         frontend_core::process::shutdown_background_work().map_err(|error| error.to_string());
     result?;
