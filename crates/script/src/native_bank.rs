@@ -1587,6 +1587,7 @@ impl NativeMachine for BankMachine {
                             ActionError::BankDeposit(reason)
                         }));
                     }
+                    return Poll::Pending;
                 }
                 Phase::AwaitTransfer {
                     before,
