@@ -1358,9 +1358,9 @@ mod tests {
         });
         let rockslide = parse_bounded_step(&rockslide, rockslide_hazard(1), None, 1).unwrap();
         assert_eq!(rockslide.attempts, 8);
-        let mut altered_parent = parent.clone();
+        let mut altered_parent = parent;
         altered_parent["args"]["max_restarts"] = serde_json::json!(3);
-        let mut altered_guide = guide.clone();
+        let mut altered_guide = guide;
         altered_guide["quest"]["acquire"]["swing-and-recover"][1]["args"]["max_restarts"] =
             serde_json::json!(2);
         let Operation::SwingAcquire {
