@@ -3683,6 +3683,21 @@ const synRespawn = {
 };
 const synTarget = (id: number, respawn: TargetWire['respawn'] = synRespawn): TargetWire => ({ kind: 'loc', id, op: 1, class: 'resource', respawn });
 
+const synTickArm = (): MethodWire['tick_arm'] => ({
+    kind: 'none',
+    roll_signal: 'never',
+    delay_drop: false,
+    depletes: false,
+    native_arm: null,
+    act_min_d: 0,
+    act_silent: false,
+    no_gain: false,
+    skill_anim: null,
+    roll_anim: null,
+    cast_anim: null,
+    fletch_anim: 1,
+    tool_facts: [],
+});
 function synMethod(
     id: string,
     skill: MethodWire['skill'],
@@ -3701,6 +3716,7 @@ function synMethod(
         products,
         tools: knownEmpty,
         consumes: knownEmpty,
+        tick_arm: synTickArm(),
         requirements,
         spots: { state: 'known' as const, value: null },
         sources: [],

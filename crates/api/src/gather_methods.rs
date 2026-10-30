@@ -13,7 +13,8 @@ pub use cache::{cached, prepare};
 pub use catalog::{
     first_gap, known_rows, AccessPolicy, GatherCatalog, GatherMethod, GatherSkill, GatherSpot,
     GatherTarget, GatherYield, LooseClass, LooseEntity, Nearest, RespawnFact, RespawnScale,
-    RockFact, SpotId, SpotPage, TargetClass, ToolUse, ZoneEffect, ZoneRule,
+    RockFact, SpotId, SpotPage, TargetClass, TickArm, TickArmKind, TickArmTool, TickRollSignal,
+    ToolUse, ZoneEffect, ZoneRule,
 };
 
 pub const FAMILY_UNAVAILABLE: &str = "family-unavailable:gather_methods";

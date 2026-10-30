@@ -6,9 +6,10 @@
 //! `line plane lx lz {l|n}id angle` grouped by map file.
 
 use super::catalog::{
-    entity_key, Bucket, EntityKey, GatherCatalog, GatherMethod, GatherSkill, GatherSpot,
+    entity_key, known_rows, Bucket, EntityKey, GatherCatalog, GatherMethod, GatherSkill, GatherSpot,
     GatherTarget, GatherYield, LooseClass, LooseEntity, MethodExtra, RespawnFact, RespawnScale,
-    RockEntry, SpotId, TargetClass, ToolUse, ZoneEffect, ZoneRule, KIND_LOC, KIND_NPC, KIND_OBJ,
+    RockEntry, SpotId, TargetClass, TickArm, TickArmKind, TickArmTool, TickRollSignal, ToolUse,
+    ZoneEffect, ZoneRule, KIND_LOC, KIND_NPC, KIND_OBJ,
 };
 use super::SceneRegionInput;
 use crate::game_data::GatherForbiddenState;
@@ -23,7 +24,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// The extractor schema this decoder reads. The manifest descriptor and the family header must both carry it.
-pub(super) const SCHEMA: u16 = 3;
+pub(super) const SCHEMA: u16 = 4;
 
 /// Identity fields every family file leads with; read before any fact so a stale or foreign file is refused with
 /// its typed cause even if a newer schema changed the fact layout.
@@ -184,6 +185,49 @@ struct ToolWire {
     wield_gate: Option<GateWire>,
 }
 
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum TickArmKindWire {
+    Continuing,
+    Ending,
+    None,
+}
+
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum TickRollSignalWire {
+    Always,
+    Sometimes,
+    Never,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TickArmToolWire {
+    item: i32,
+    native_arm: u8,
+    no_gain: bool,
+    skill_anim: i32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TickArmWire {
+    kind: TickArmKindWire,
+    roll_signal: TickRollSignalWire,
+    delay_drop: bool,
+    depletes: bool,
+    native_arm: Option<u8>,
+    act_min_d: u8,
+    act_silent: bool,
+    no_gain: Option<bool>,
+    skill_anim: Option<i32>,
+    roll_anim: Option<i32>,
+    cast_anim: Option<i32>,
+    fletch_anim: i32,
+    tool_facts: Vec<TickArmToolWire>,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AmountWire {
@@ -213,6 +257,8 @@ struct MethodWire {
     targets: Know<Vec<TargetWire>>,
     products: Know<Vec<YieldWire>>,
     tools: Know<Vec<ToolWire>>,
+
+    tick_arm: TickArmWire,
     consumes: Know<Vec<AmountWire>>,
     requirements: Know<Vec<RequirementWire>>,
     spots: Know<()>,
@@ -488,6 +534,99 @@ impl Decoder {
                     wield_gate: gate(row.wield_gate),
                 })
             })?;
+            let TickArmWire {
+                kind,
+                roll_signal,
+                delay_drop,
+                depletes,
+                native_arm,
+                act_min_d,
+                act_silent,
+                no_gain,
+                skill_anim,
+                roll_anim,
+                cast_anim,
+                fletch_anim,
+                tool_facts: tool_facts_wire,
+            } = wire.tick_arm;
+            if act_min_d > 1
+                || native_arm == Some(0)
+                || fletch_anim <= 0
+                || [skill_anim, roll_anim, cast_anim]
+                    .into_iter()
+                    .flatten()
+                    .any(|animation| animation <= 0)
+            {
+                return Err(invalid(format!(
+                    "method {} has invalid tick-arm timing or animation",
+                    wire.id
+                )));
+            }
+            let mut previous_item = None;
+            let mut tool_facts = Vec::with_capacity(tool_facts_wire.len());
+            for tool in tool_facts_wire {
+                if previous_item.is_some_and(|previous| previous >= tool.item)
+                    || tool.native_arm == 0
+                    || tool.skill_anim <= 0
+                {
+                    return Err(invalid(format!(
+                        "method {} has unsorted or invalid tick-arm tool facts",
+                        wire.id
+                    )));
+                }
+                item(tool.item, "tick-arm tool")?;
+                previous_item = Some(tool.item);
+                tool_facts.push(TickArmTool {
+                    item: tool.item,
+                    native_arm: tool.native_arm,
+                    no_gain: tool.no_gain,
+                    skill_anim: tool.skill_anim,
+                });
+            }
+            let tool_facts: Arc<[TickArmTool]> = tool_facts.into();
+            let tick_arm = TickArm {
+                kind: match kind {
+                    TickArmKindWire::Continuing => TickArmKind::Continuing,
+                    TickArmKindWire::Ending => TickArmKind::Ending,
+                    TickArmKindWire::None => TickArmKind::None,
+                },
+                roll_signal: match roll_signal {
+                    TickRollSignalWire::Always => TickRollSignal::Always,
+                    TickRollSignalWire::Sometimes => TickRollSignal::Sometimes,
+                    TickRollSignalWire::Never => TickRollSignal::Never,
+                },
+                delay_drop,
+                depletes,
+                native_arm,
+                act_min_d,
+                act_silent,
+                no_gain,
+                skill_anim,
+                roll_anim,
+                cast_anim,
+                fletch_anim: Some(fletch_anim),
+                tool_facts,
+            };
+            if skill == GatherSkill::Fishing {
+                if !tick_arm.tool_facts.is_empty() {
+                    return Err(invalid(format!(
+                        "fishing method {} has tick-arm tool facts",
+                        wire.id
+                    )));
+                }
+            } else {
+                let method_tools = known_rows(&tools);
+                if method_tools.len() != tick_arm.tool_facts.len()
+                    || method_tools
+                        .iter()
+                        .any(|tool| tick_arm.for_tool(tool.item).is_none())
+                {
+                    return Err(invalid(format!(
+                        "method {} tick-arm tool facts do not cover its tools",
+                        wire.id
+                    )));
+                }
+            }
             let consumes = self.cells(wire.consumes, |_, row| {
                 Ok(ItemAmount {
                     item: item(row.item, "consumed item")?,
@@ -519,6 +658,7 @@ impl Decoder {
                 targets,
                 products,
                 tools,
+                tick_arm,
                 consumes,
                 requirements,
                 spots: placeholder,
