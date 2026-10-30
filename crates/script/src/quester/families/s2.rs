@@ -861,6 +861,7 @@ impl StepRun for MakeRun {
                                 },
                                 op: Arc::clone(op),
                                 anchor: Some(trigger.anchor),
+                                radius: 8,
                                 wait_if_missing: true,
                                 target_tile: None,
                                 reachable_only: false,
