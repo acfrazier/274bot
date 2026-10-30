@@ -8358,6 +8358,39 @@ mod route_quest_provider_tests {
     }
 
     #[test]
+    fn observed_red_quest_row_decides_route_completion_and_window() {
+        use api::selected::{FactKey, InclusiveRange, StageWindow};
+
+        let selected = selected_r289();
+        let family = family(&selected);
+        let observed = stamp(run(), 126, 126);
+        let context = context(Arc::clone(&selected), observed);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                component_id: 7352,
+                name: "Biohazard".to_owned(),
+                colour: 0xF80000,
+            }],
+            true,
+        );
+        let evidence = captured_route_quests(family, Some(&context), &snapshot, None, observed)
+            .expect("route captures the observed quest-list row");
+        assert_eq!(
+            (
+                evidence.test(&QuestGate::Complete(FactKey::new("biohazard"))),
+                evidence.test(&QuestGate::Window(StageWindow {
+                    quest: FactKey::new("biohazard"),
+                    signal: FactKey::new("biohazard"),
+                    values: InclusiveRange { min: None, max: Some(9) },
+                })),
+            ),
+            (Truth::False, Truth::True),
+        );
+    }
+
+    #[test]
     fn explicit_real_evidence_wins_when_known_and_unknown_falls_back() {
         let selected = selected_r289();
         let (quest, name) = selected_quest(&selected);
