@@ -9375,7 +9375,10 @@ mod route_quest_provider_tests {
         slot.on_is_up(true);
         assert_ne!(slot.work_epoch(), before.session);
         assert_eq!(
-            route_quest_context(&slot, 2).expect("same live owner").stamp.run,
+            route_quest_context(&slot, 2)
+                .expect("same live owner")
+                .stamp
+                .run,
             before
         );
         slot.reset_session_work();

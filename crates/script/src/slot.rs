@@ -787,14 +787,14 @@ impl SlotScript {
         run: api::selected::RunKey,
         observation: &api::prereq_knowledge::RefusalObservation,
     ) -> bool {
-        let current = self
-            .native_run()
-            .or_else(|| self.seat_run())
-            .unwrap_or(api::selected::RunKey {
-                slot: self.incarnation,
-                run: self.runtime_generation,
-                session: self.work_epoch,
-            });
+        let current =
+            self.native_run()
+                .or_else(|| self.seat_run())
+                .unwrap_or(api::selected::RunKey {
+                    slot: self.incarnation,
+                    run: self.runtime_generation,
+                    session: self.work_epoch,
+                });
         // A scene-only down observation advances the work epoch, not this
         // logical route. Actual owner boundaries clear the retained run.
         let manual_current = self.manual_route_run() == Some(run) && current.slot == run.slot;
