@@ -21,7 +21,7 @@ text = """Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk
   report `not impl`; moving existing banking into the native seat does not
   implement them."""
 first = "0.2.4"
-target = "0.3.0"
+target = "0.2.9"
 severity = "low"
 owner = "scripts-misc"
 
@@ -472,6 +472,22 @@ listed = "0.2.8"
 target = "0.2.9"
 severity = "low"
 owner = "upstream rs2b0t GnomeMagicChopper (rs2b2t/rs2b0t#897)"
+
+[[item]]
+id = "compat-catalog-members-missing"
+kind = "known-issue"
+area = "Scripts"
+text = """Some rs2b0t catalog scripts call script API members that 274bot does
+  not implement yet: `SettingsStore.save` and `onChange`, `Bank.backpackReady`
+  and `normalBackpackSnapshot`, `Reachability.probeable`, `ScriptRunner.pause`,
+  `resume`, `state` and `ctx`, and `BotHost.addFrameListener`. Such a script
+  stops with "not implemented" when it reaches that call; for example, the
+  current AutoFighter cannot start fighting. Support is planned for 0.2.9."""
+first = "0.2.0"
+listed = "0.2.8"
+target = "0.2.9"
+severity = "medium"
+owner = "compat (UPSTREAM-MEMBERS-1023 census)"
 
 [[item]]
 id = "background-work-stops-after-slow-disk"
