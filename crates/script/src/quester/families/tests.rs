@@ -6037,7 +6037,10 @@ fn dialogue_door_detour_approach_budget_is_the_routers_route_length() {
     }
     // Tick 16 ends the route with the NPC still: a fresh plan, one tick later.
     assert!(poll_at(&mut ledger, 16).is_pending());
-    assert!(matches!(last_route_effect(&ledger), HostEffect::Walk(_)));
+    assert!(
+        ledger.as_ref().unwrap().outbox.is_empty(),
+        "the ended route leaves no request queued until the fresh plan"
+    );
     assert!(poll_at(&mut ledger, 17).is_pending());
     assert!(matches!(
         last_route_effect(&ledger),

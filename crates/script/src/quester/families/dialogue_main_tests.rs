@@ -256,6 +256,26 @@ fn last_assessment_id(ledger: &Option<Box<ledger::Ledger>>) -> u64 {
         .get()
 }
 
+/// Distinct walk requests the machine has queued, counted across ticks: a
+/// cancelled request leaves the outbox, so one look at the end is not enough.
+#[derive(Default)]
+struct WalkTally(Vec<u64>);
+
+impl WalkTally {
+    fn observe(&mut self, ledger: &Option<Box<ledger::Ledger>>) {
+        for entry in &ledger.as_ref().unwrap().outbox {
+            if matches!(&entry.effect, HostEffect::Walk(_)) && !self.0.contains(&entry.request_id.get())
+            {
+                self.0.push(entry.request_id.get());
+            }
+        }
+    }
+
+    fn count(&self) -> usize {
+        self.0.len()
+    }
+}
+
 fn complete_talk(
     ledger: &mut Option<Box<ledger::Ledger>>,
     evidence_tick: u64,
@@ -1337,7 +1357,9 @@ fn dialogue_stationary_cook_approach_uses_router_route_ticks_at_fixed_ticks() {
         super::tests::last_route_effect(&ledger),
         HostEffect::AssessWalk(request) if request.target == cook_tile
     ));
-    assert_eq!(walks_requested(&ledger), 0);
+    let mut walks = WalkTally::default();
+    walks.observe(&ledger);
+    assert_eq!(walks.count(), 0);
     super::tests::post_assess_receipt(&mut ledger, 1, 15, None);
 
     let mut six_tiles_away = snapshot();
@@ -1357,6 +1379,7 @@ fn dialogue_stationary_cook_approach_uses_router_route_ticks_at_fixed_ticks() {
             "the Cook is still out of reach at tick {observed}"
         );
         assert_eq!(live_walk_target(&ledger), Some(cook_tile));
+        walks.observe(&ledger);
     }
     // Tick 19 ends the route with the Cook still in place: one fresh plan.
     assert!(with_tick(&six_tiles_away, &mut ledger, 19, |tick| {
@@ -1376,7 +1399,8 @@ fn dialogue_stationary_cook_approach_uses_router_route_ticks_at_fixed_ticks() {
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
-    assert_eq!(walks_requested(&ledger), 2);
+    walks.observe(&ledger);
+    assert_eq!(walks.count(), 2);
     assert!(with_tick(&six_tiles_away, &mut ledger, 31, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })
@@ -1424,9 +1448,13 @@ fn dialogue_no_route_is_a_named_walk_failure_after_one_fresh_plan() {
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
-    assert_eq!(
-        last_assessment_id(&ledger),
-        first,
+    assert!(
+        !ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .any(|entry| matches!(&entry.effect, HostEffect::AssessWalk(_))),
         "the fresh plan waits for the next observed tick"
     );
     assert!(with_tick(&before, &mut ledger, 3, |tick| {
@@ -1488,7 +1516,9 @@ fn dialogue_route_ending_short_with_a_still_npc_is_a_walk_failure_not_a_replan()
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
-    assert_eq!(walks_requested(&ledger), 1);
+    let mut walks = WalkTally::default();
+    walks.observe(&ledger);
+    assert_eq!(walks.count(), 1);
 
     // The route ends short and Brundt has not moved: no replan, one fresh plan.
     super::tests::post_user_input_walk_receipt(&mut ledger, 3);
@@ -1497,7 +1527,10 @@ fn dialogue_route_ending_short_with_a_still_npc_is_a_walk_failure_not_a_replan()
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
-    assert_eq!(walks_requested(&ledger), 1, "a still NPC is not replanned");
+    assert!(
+        ledger.as_ref().unwrap().outbox.is_empty(),
+        "a still NPC is not replanned: no walk and no assessment is queued"
+    );
     assert!(with_tick(&before, &mut ledger, 4, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })
@@ -1507,7 +1540,8 @@ fn dialogue_route_ending_short_with_a_still_npc_is_a_walk_failure_not_a_replan()
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
-    assert_eq!(walks_requested(&ledger), 2);
+    walks.observe(&ledger);
+    assert_eq!(walks.count(), 2);
 
     super::tests::post_user_input_walk_receipt(&mut ledger, 6);
     ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
@@ -1520,7 +1554,7 @@ fn dialogue_route_ending_short_with_a_still_npc_is_a_walk_failure_not_a_replan()
                 == "dialogue approach failed: the walk ended before the NPC was in reach: Arrived"
     ));
     assert_eq!(
-        walks_requested(&ledger),
+        walks.count(),
         2,
         "the 24-replan cap was not spent on a still NPC"
     );
@@ -2374,10 +2408,10 @@ fn dialogue_approach_timeout_counts_observed_ticks_not_wall_time() {
             "the five-tile route plus two slack ticks, counted from the walk at tick 2, ends at tick 9 with a fresh plan, not a failure"
         );
     }
-    assert!(matches!(
-        super::tests::last_route_effect(&ledger),
-        HostEffect::Walk(_)
-    ));
+    assert!(
+        ledger.as_ref().unwrap().outbox.is_empty(),
+        "the ended route leaves no request queued until the fresh plan"
+    );
     assert!(with_tick(&before, &mut ledger, 10, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })
