@@ -194,6 +194,7 @@ import type { InvItemSnapshot } from '#/bot/adapter/ClientAdapter.js';
 import type { Loc } from '#/bot/api/model/Loc.js';
 import type { Npc } from '#/bot/api/model/Npc.js';
 import type { Player } from '#/bot/api/model/Player.js';
+import type { GroundItem } from '#/bot/api/grounditems/GroundItems.js';
 import type { BotManifestInput } from '#/bot/runtime/defineBot.js';
 
 declare const row: InvItemSnapshot;
