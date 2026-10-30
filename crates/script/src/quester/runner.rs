@@ -6268,10 +6268,7 @@ mod tests {
         let respond_bank_pick = |tick: &mut crate::native::NativeTick<'_>| {
             let Some(action) = tick.cx.ledger.as_mut().and_then(|ledger| {
                 let index = ledger.outbox.iter().position(|action| {
-                    matches!(
-                        &action.effect,
-                        crate::native::HostEffect::BankPick(_)
-                    )
+                    matches!(&action.effect, crate::native::HostEffect::BankPick(_))
                 })?;
                 Some(ledger.outbox.remove(index))
             }) else {
@@ -6333,24 +6330,18 @@ mod tests {
                 respond_bank_pick(tick);
                 respond_open_stand(tick);
                 let (withdraw, interaction) =
-                    tick.cx
-                        .ledger
-                        .as_ref()
-                        .map_or((false, false), |ledger| {
-                            let last = ledger.outbox.last().map(|action| &action.effect);
-                            (
-                                matches!(
-                                    last,
-                                    Some(crate::native::HostEffect::Interaction(
-                                        crate::shim::InteractReq::WithdrawX { .. }
-                                    ))
-                                ),
-                                matches!(
-                                    last,
-                                    Some(crate::native::HostEffect::Interaction(_))
-                                ),
-                            )
-                        });
+                    tick.cx.ledger.as_ref().map_or((false, false), |ledger| {
+                        let last = ledger.outbox.last().map(|action| &action.effect);
+                        (
+                            matches!(
+                                last,
+                                Some(crate::native::HostEffect::Interaction(
+                                    crate::shim::InteractReq::WithdrawX { .. }
+                                ))
+                            ),
+                            matches!(last, Some(crate::native::HostEffect::Interaction(_))),
+                        )
+                    });
                 saw_withdraw |= withdraw;
                 if interaction {
                     accept_last_interaction(tick);

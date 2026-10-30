@@ -13,9 +13,8 @@ const CHEST_REGION: WorldTile = WorldTile {
 };
 const CHEST_LOC_ID: i32 = 377;
 const SINISTER_KEY_ID: i32 = 993;
-const RUNE_AXE_ID: i32 = 1359;
+const BRONZE_AXE_ID: i32 = 1351;
 const YEW_LOC_ID: i32 = 1309;
-const ATTACK_STAT_ID: i32 = 0;
 const WOODCUTTING_STAT_ID: i32 = 8;
 const HITPOINTS_STAT_ID: i32 = 3;
 const SURVIVAL_GATHERER_INJECT: &[ScriptSettingInject] = &[
@@ -47,15 +46,8 @@ pub(crate) fn survival_need_scenario() -> Scenario {
     let mut steps = script_live_seed_steps();
     // `setstat` and `give` mutate the player in ClientCheatHandler.ts:340-354
     // and :472-485; two observed ticks allow dispatch and the next PLAYER_INFO.
+    // Use the real bronze axe, which has no Attack requirement.
     for (name, command, arm) in [
-        (
-            "seed Attack 40 before equipping the rune axe",
-            "setstat attack 40",
-            Proof::Stat {
-                id: ATTACK_STAT_ID,
-                min: 40,
-            },
-        ),
         (
             "seed Woodcutting 99 before Start",
             "setstat woodcutting 99",
@@ -73,10 +65,10 @@ pub(crate) fn survival_need_scenario() -> Scenario {
             },
         ),
         (
-            "give the account-owned rune axe before Start",
-            "give rune_axe 1",
+            "give the account-owned bronze axe before Start",
+            "give bronze_axe 1",
             Proof::ItemId {
-                id: RUNE_AXE_ID,
+                id: BRONZE_AXE_ID,
                 count: 1,
             },
         ),
@@ -101,17 +93,17 @@ pub(crate) fn survival_need_scenario() -> Scenario {
         });
     }
     steps.push(Step {
-        name: "equip the account-owned rune axe before Start",
+        name: "equip the account-owned bronze axe before Start",
         kind: StepKind::Perform {
             send: Box::new(|client, snapshot| {
                 matches!(
-                    Interactions::new(snapshot, client).wear(RUNE_AXE_ID),
+                    Interactions::new(snapshot, client).wear(BRONZE_AXE_ID),
                     SendResult::Sent { .. }
                 )
             }),
         },
         wait: Wait {
-            arm: Proof::EquipmentId { id: RUNE_AXE_ID },
+            arm: Proof::EquipmentId { id: BRONZE_AXE_ID },
             budget_ticks: 40,
         },
     });

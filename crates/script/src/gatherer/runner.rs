@@ -3765,7 +3765,13 @@ mod tests {
             tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
             gatherer.tick(tick).unwrap();
             assert!(matches!(
-                tick.cx.ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+                tick.cx
+                    .ledger
+                    .as_ref()
+                    .unwrap()
+                    .outbox
+                    .last()
+                    .map(|action| &action.effect),
                 Some(crate::native::HostEffect::Interaction(
                     crate::shim::InteractReq::InvButton { id: 201, .. }
                 ))
@@ -3799,17 +3805,23 @@ mod tests {
         });
         assert!(gatherer.survival_interrupting);
         assert!(gatherer.active_transfer_in_flight());
-        let outbox = &ledger.as_ref().unwrap().outbox;
         assert_eq!(
-            outbox
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
                 .iter()
-                .filter(|action| matches!(
-                    &action.effect,
-                    crate::native::HostEffect::Interaction(crate::shim::InteractReq::InvButton {
-                        id: 201..=203,
-                        ..
-                    })
-                ))
+                .filter(|action| {
+                    matches!(
+                        &action.effect,
+                        crate::native::HostEffect::Interaction(
+                            crate::shim::InteractReq::InvButton {
+                                id: 201..=203,
+                                ..
+                            }
+                        )
+                    )
+                })
                 .count(),
             1,
             "the interrupted Deposit wrapper must not click another product before settling"
@@ -3850,6 +3862,7 @@ mod tests {
             gatherer.tick(tick).unwrap();
         });
 
+        let outbox = &ledger.as_ref().unwrap().outbox;
         assert!(matches!(
             outbox.last().map(|action| &action.effect),
             Some(crate::native::HostEffect::Interaction(
@@ -3981,10 +3994,14 @@ mod tests {
             .unwrap()
             .outbox
             .iter()
-            .filter(|action| matches!(
-                &action.effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::WithdrawX { .. })
-            ))
+            .filter(|action| {
+                matches!(
+                    &action.effect,
+                    crate::native::HostEffect::Interaction(
+                        crate::shim::InteractReq::WithdrawX { .. }
+                    )
+                )
+            })
             .count();
         assert_eq!(
             withdraw_clicks, 1,
