@@ -4014,9 +4014,7 @@ mod tests {
         assert!(
             !outbox.iter().any(|action| matches!(
                 &action.effect,
-                crate::native::HostEffect::Interaction(
-                    crate::shim::InteractReq::WithdrawX { .. }
-                )
+                crate::native::HostEffect::Interaction(crate::shim::InteractReq::WithdrawX { .. })
             )),
             "the interrupted Withdraw wrapper must not click the second row"
         );
@@ -4176,9 +4174,7 @@ mod tests {
         assert!(
             !outbox.iter().any(|action| matches!(
                 &action.effect,
-                crate::native::HostEffect::Interaction(
-                    crate::shim::InteractReq::WithdrawX { .. }
-                )
+                crate::native::HostEffect::Interaction(crate::shim::InteractReq::WithdrawX { .. })
             )),
             "the boundary must not begin the second withdrawal"
         );
@@ -4408,7 +4404,7 @@ mod tests {
         use api::snapshot::StatView;
 
         let fixture = BaitFixture::new();
-        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        let gatherer = fixture.gatherer(GatherRetained::default());
         let mut snapshot = fixture.snapshot;
         snapshot.seed_inventory(
             vec![ItemView {

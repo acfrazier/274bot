@@ -374,6 +374,7 @@ pub(crate) fn eat_choice_with_floor(
         || (danger == Some(0) && poison_fire == 0 && eat_floor <= lines.eat)
         || hp > eat_line
     {
+        return None;
     }
 
     let ordinary = food_by(
