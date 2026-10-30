@@ -185,11 +185,20 @@ impl NativeMachine for GatherRun {
             })
             .unwrap_or(false);
 
-        let Some(inventory) = snapshot.inventory() else {
-            return Poll::Pending;
-        };
-        let Some(stats) = snapshot.stats() else {
-            return Poll::Pending;
+        let (inventory, stats) = match (snapshot.inventory(), snapshot.stats()) {
+            (Some(inventory), Some(stats)) => (inventory, stats),
+            _ => {
+                // An unlock page can arrive before mapzoneexit restores the inventory.
+                let may_tend = self.args.timing.as_ref().is_none_or(|timing| {
+                    timing.cycle.allows_stray_tend() && !timing.cycle.has_unresolved_requests()
+                });
+                if may_tend {
+                    if let Some(args) = OneOpArgs::stray_modal(snapshot) {
+                        self.tend = Some(std::task::ready!(defer_budget(OneOp::begin(args, cx)))?);
+                    }
+                }
+                return Poll::Pending;
+            }
         };
         let current_products = product_count(inventory.value, &self.args.target);
         let current_xp = stat_xp(stats.value, self.args.target.skill_stat);
