@@ -449,7 +449,7 @@ fn legends_gate_engine_closure_follows_helpers_into_general_scripts() {
         "scripts/general/scripts/misc/math_procs.rs2",
         MULTIPLY2_BLOCK,
     );
-    assert!(super::pinned_engine_proc_closure_matches(
+    assert!(super::super::legends::pinned_engine_proc_closure_matches(
         fx.path(),
         &["open_and_close_double_door2", "open_and_close_double_door3"],
     ));

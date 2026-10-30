@@ -891,7 +891,7 @@ fn source_blocks(text: &str, wanted: Option<&HashSet<(String, String)>>) -> Opti
     Some(out)
 }
 
-fn pinned_engine_proc_closure_matches(content_root: &Path, roots: &[&str]) -> bool {
+pub(super) fn pinned_engine_proc_closure_matches(content_root: &Path, roots: &[&str]) -> bool {
     let Some(template) = source_blocks(stage_doors::ENGINE_DOOR_PROCS, None) else {
         return false;
     };
