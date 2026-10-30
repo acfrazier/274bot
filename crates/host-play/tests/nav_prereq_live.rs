@@ -384,7 +384,7 @@ fn make_fixture_with_seed_commands(
     let seed_errors = Arc::new(Mutex::new(Vec::<String>::new()));
     let frame_errors = Arc::clone(&seed_errors);
     let frame_phase = Mutex::new(FixtureSeedPhase::InitialReady);
-    let play = host_play::run_with_template(
+    let mut play = host_play::run_with_template(
         Arc::clone(&template),
         false,
         vec![account],
@@ -474,6 +474,7 @@ fn make_fixture_with_seed_commands(
         },
     )
     .expect("start isolated local-289 Play");
+    play.focus(&seed_name);
     play.set_walk_globals(live_globals(dialogue, quest_start));
 
     wait_for(
