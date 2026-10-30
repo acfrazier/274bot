@@ -30,6 +30,10 @@ mod door_expire_tests;
 mod entrance_exclusion_tests;
 #[path = "traveller/occupied_tests.rs"]
 mod occupied_tests;
+#[path = "traveller/open_door_approach_tests.rs"]
+mod open_door_approach_tests;
+#[path = "traveller/walk_budget_tests.rs"]
+mod walk_budget_tests;
 
 // --- Task 14: pollable high-level follow (drive legs via interact+settle) ---
 
@@ -7333,9 +7337,9 @@ fn follow_cancelled_walk_idle_ignores_duplicate_snapshot_ticks() {
         1,
         "duplicate snapshot polls must not trigger recovery"
     );
-    // The send-tick polls already credited one distinct idle tick.
-    // Three fresh ticks → idle 4; still under the threshold of 5.
-    for _ in 0..3 {
+    // Send-tick polls credit no elapsed ticks.
+    // Four fresh ticks remain under the recovery threshold of five.
+    for _ in 0..4 {
         bump_rebuild(&mut c, &mut snap);
         assert!(t
             .follow(&mut rec, &snap, route.clone(), &mut options)
@@ -7600,7 +7604,7 @@ fn follow_partial_progress_cancel_still_exhausts_original_budget() {
 }
 
 #[test]
-fn follow_stalls_expired_when_progress_stalls() {
+fn follow_does_not_expire_while_the_player_progresses() {
     let mut c = scene_client();
     let mut snap = snap_at(&mut c, 0, 0);
     let mut rec = FollowRec {
@@ -7630,9 +7634,8 @@ fn follow_stalls_expired_when_progress_stalls() {
         budget_ticks_per_hop: 3,
         ..TravelOptions::default()
     };
-    // The player creeps one tile per tick toward the far leg end but
-    // never arrives within the tiny hop budget: the hop lapses as
-    // Expired (progress was made).
+    // The planned walk takes seven walking ticks, despite the configured
+    // three-tick minimum. Continuing progress must reach the destination.
     let mut z = 0;
     let outcome = drive(
         &mut t,
@@ -7648,10 +7651,7 @@ fn follow_stalls_expired_when_progress_stalls() {
     );
     assert!(matches!(
         outcome,
-        TravelOutcome::Stalled {
-            why: HopFailure::Expired,
-            ..
-        }
+        TravelOutcome::Arrived { at } if at == route.dest
     ));
 }
 
@@ -8481,8 +8481,9 @@ fn executor_state_size_pins() {
     // +32 B: the transport hop's distinct-tick clock (`TickCount`) and the
     // occupied-crossing retry (`OccupiedRetry`): a refused ledge or rope
     // swing is retried within the hop budget instead of ending the follow.
-    assert_eq!(std::mem::size_of::<Traveller>(), 848);
-    assert_eq!(std::mem::size_of::<FollowRun>(), 808);
+    // +8 B: the walk budget reuses TickCount, including its observed tick.
+    assert_eq!(std::mem::size_of::<Traveller>(), 856);
+    assert_eq!(std::mem::size_of::<FollowRun>(), 816);
 }
 const BLOCKED_DISPLAY_TILE: WorldTile = WorldTile {
     x: 12,
