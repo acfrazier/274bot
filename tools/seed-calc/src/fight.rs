@@ -708,8 +708,9 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
         let candidate_food = None;
         match evaluate(stats, &setup, candidate_food, 0) {
             Ok(candidate) => {
-                result.max_explored_states =
-                    result.max_explored_states.max(candidate.outcome.explored_states);
+                result.max_explored_states = result
+                    .max_explored_states
+                    .max(candidate.outcome.explored_states);
                 result.candidate = Some(candidate);
             }
             Err(error @ FightError::StateLimit { states, .. }) => {
@@ -758,9 +759,7 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
         }
         Err(error) => return Err(error),
     };
-    result.max_explored_states = result
-        .max_explored_states
-        .max(policy.max_explored_states);
+    result.max_explored_states = result.max_explored_states.max(policy.max_explored_states);
     result.previous_candidate = policy.previous_candidate;
     result.policy_reason = policy.reason;
     if let Some((evaluation, bound)) = policy.accepted {
@@ -789,8 +788,7 @@ fn search_food_candidates(
     let mut max_explored_states = 0;
     for food_count in 0..=food_limit {
         let evaluation = evaluate(stats, food_count)?;
-        max_explored_states =
-            max_explored_states.max(evaluation.outcome.explored_states);
+        max_explored_states = max_explored_states.max(evaluation.outcome.explored_states);
         let death_probability = evaluation.outcome.death_probability;
         if death_probability <= 0.01 {
             return Ok(FoodSearch {
@@ -1840,9 +1838,7 @@ mod tests {
                 && stats.defence == 40
                 && stats.hitpoints == 40;
             Ok(FoodSearch {
-                accepted: reaches_bound.then(|| {
-                    (test_evaluation(stats, 0, 0.04), "5%")
-                }),
+                accepted: reaches_bound.then(|| (test_evaluation(stats, 0, 0.04), "5%")),
                 previous_candidate: Some(test_evaluation(stats, 0, 0.06)),
                 max_explored_states: 128,
             })

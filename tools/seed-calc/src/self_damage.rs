@@ -168,7 +168,6 @@ impl Damage {
     }
 }
 
-
 #[derive(Clone, Copy, Debug)]
 struct Hazard {
     id: &'static str,
@@ -1057,12 +1056,7 @@ fn eat_at_boundary(mut state: State, policy: FoodPolicy, base_hp: u8) -> State {
         } else {
             policy.skill_delay
         };
-        state = advance(
-            state,
-            u16::from(wait),
-            base_hp,
-            TickAccess::Available,
-        );
+        state = advance(state, u16::from(wait), base_hp, TickAccess::Available);
     }
     state
 }
@@ -1364,9 +1358,7 @@ mod tests {
         altered_guide["quest"]["acquire"]["swing-and-recover"][1]["args"]["max_restarts"] =
             serde_json::json!(2);
         let Operation::SwingAcquire {
-            restarts,
-            recovery,
-            ..
+            restarts, recovery, ..
         } = parse_swing_acquire(&altered_parent, &altered_guide, 1).unwrap()
         else {
             panic!("altered swing recipe did not produce a swing acquire operation");
