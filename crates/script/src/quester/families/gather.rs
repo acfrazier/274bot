@@ -866,7 +866,7 @@ mod tests {
     #[test]
     fn gather_arrival_clears_authored_approach_before_stale_tile_can_rewalk() {
         let mut plan = plan("mining.copper", 1);
-        let mut snapshot = snapshot(&plan, 1);
+        let snapshot = snapshot(&plan, 1);
         let here = snapshot.local_player().unwrap().player.actor.tile;
         let anchor = WorldTile {
             x: here.x + 20,

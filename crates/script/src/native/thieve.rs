@@ -984,7 +984,7 @@ mod tests {
     }
 
     #[test]
-    fn reaching_the_thieve_area_without_a_walk_clears_the_old_retry() {
+    fn thieve_area_entry_resets_retry_before_a_separate_approach() {
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -1009,19 +1009,51 @@ mod tests {
             &mut ledger,
             2,
             WalkEnd::NoPath,
-            Some("old approach failed"),
+            Some("first approach failed"),
         );
         assert!(with_tick(&outside, &mut ledger, 2, |tick| {
             run.poll(&mut tick.cx).is_pending()
         }));
         assert!(run.walk_retry.pending());
 
+        assert!(with_tick(&outside, &mut ledger, 3, |tick| {
+            run.poll(&mut tick.cx).is_pending()
+        }));
+        assert_eq!(walk_count(&ledger), 2, "the first retry is submitted");
+        post_walk_receipt(
+            &mut ledger,
+            4,
+            WalkEnd::NoPath,
+            Some("first retry failed"),
+        );
+        assert!(with_tick(&outside, &mut ledger, 4, |tick| {
+            run.poll(&mut tick.cx).is_pending()
+        }));
+        assert!(run.walk_retry.pending());
+
         let inside = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
-        assert!(with_tick(&inside, &mut ledger, 3, |tick| {
+        assert!(with_tick(&inside, &mut ledger, 5, |tick| {
             run.poll(&mut tick.cx).is_pending()
         }));
         assert!(!run.walk_retry.pending());
-        assert_eq!(run.walk_retry.actions(), 0);
+
+        with_tick(&outside, &mut ledger, 6, |tick| {
+            run.begin_walk(anchor, 2, &mut tick.cx).unwrap();
+            run.walk_retry.action_submitted();
+        });
+        post_walk_receipt(
+            &mut ledger,
+            7,
+            WalkEnd::NoPath,
+            Some("separate approach failed"),
+        );
+        assert!(with_tick(&outside, &mut ledger, 7, |tick| {
+            run.poll(&mut tick.cx).is_pending()
+        }));
+        assert!(
+            run.walk_retry.pending(),
+            "a separate approach receives a fresh retry allowance"
+        );
     }
 
 

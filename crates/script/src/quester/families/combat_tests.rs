@@ -5658,7 +5658,7 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
         .get();
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-        crate::native::HostEffect::Walk(request) if request.target == door
+        crate::native::HostEffect::Walk(request) if request.target == first_tile
     ));
     ledger.as_mut().unwrap().outbox.clear();
     ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
@@ -5675,7 +5675,7 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
         },
         end: WalkEnd::Failed,
         blocked: None,
-        detail: Some(Arc::from("second door recovery route failed")),
+        detail: Some(Arc::from("first item route retry failed")),
         refusal: None,
         assessment: None,
         escape: None,
@@ -5694,7 +5694,7 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
         .get();
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-        crate::native::HostEffect::Walk(request) if request.target == door
+        crate::native::HostEffect::Walk(request) if request.target == first_tile
     ));
     ledger.as_mut().unwrap().outbox.clear();
     ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
@@ -5711,7 +5711,7 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
         },
         end: WalkEnd::Failed,
         blocked: None,
-        detail: Some(Arc::from("door recovery retry budget exhausted")),
+        detail: Some(Arc::from("first item route retry budget exhausted")),
         refusal: None,
         assessment: None,
         escape: None,
