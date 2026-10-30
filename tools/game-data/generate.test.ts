@@ -3400,7 +3400,7 @@ function gatheringFixture(mutate?: (rootDir: string) => void) {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gathering-fixture-'));
     fs.cpSync(path.join(realGathering, 'scripts'), path.join(rootDir, 'scripts'), { recursive: true });
     fs.mkdirSync(path.join(rootDir, 'pack'));
-    for (const pack of ['loc', 'npc', 'obj']) fs.copyFileSync(path.join(realGathering, `pack/${pack}.pack`), path.join(rootDir, `pack/${pack}.pack`));
+    for (const pack of ['loc', 'npc', 'obj', 'seq']) fs.copyFileSync(path.join(realGathering, `pack/${pack}.pack`), path.join(rootDir, `pack/${pack}.pack`));
     const loc = parsePack(fs.readFileSync(path.join(rootDir, 'pack/loc.pack'), 'utf8'));
     const npc = parsePack(fs.readFileSync(path.join(rootDir, 'pack/npc.pack'), 'utf8'));
     fs.mkdirSync(path.join(rootDir, 'maps'));
@@ -3430,6 +3430,19 @@ assert.equal(family289Rows(baseline, 'fishing.freshfish.op1'), 1);
 assert.equal(family289Rows(baseline, 'fishing.freshfish.op3'), 1);
 assert.equal(baseline.payload.placements.length, 1);
 assert.equal(baseline.payload.methods.some((method) => method.id === hemensterCarpMethod), true, 'the anchored direct-yield extractor admits the selected quest handler');
+const waterfallScript = 'scripts/skill_fishing/scripts/fishing_spots/waterfall.rs2';
+for (const [from, to] of [
+    ['p_oploc(2);\n        return;', 'p_oploc(2);'],
+    ['p_oploc(2);\n        return;', 'p_oploc(1);\n        return;'],
+    ['if (random(5) = 0)', 'if (random(6) = 0)'],
+]) {
+    assert.throws(
+        () => extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, waterfallScript, from, to))),
+        /waterfall recast no longer suppresses one roll animation/,
+        'the Sometimes roll signal requires the authored early return and recast operation',
+    );
+}
+
 const changedContestYield = extractGatheringFamily(gatheringFixture((rootDir) =>
     replaceIn(rootDir, hemensterFishingScript, 'inv_add(inv, raw_giant_carp, 1);', 'inv_add(inv, raw_sardine, 1);')));
 assert.equal(changedContestYield.payload.methods.some((method) => method.id === hemensterCarpMethod), false, 'a changed direct yield is not promoted');

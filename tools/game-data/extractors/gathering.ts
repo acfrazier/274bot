@@ -1510,9 +1510,20 @@ function fishingTickArm(ctx: Ctx, id: string, start: Rs2Block): TickArmWire {
         if (spec.rollSignal === 'never' && (spec.rollAnim !== null || d0Animations.length > 0)) throw new Error(`${id}: unexpected animation at the roll step`);
         if (spec.rollSignal === 'sometimes') {
             const recast = 'random(5) = 0';
-            if (!rollAnimation
-                || !rollAnimation.path.some((each) => !each.polarity && each.cond === recast)
-                || !rollShape.flat.some(({ stmt, path }) => stmt.text === 'p_oploc(2)' && path.some((each) => each.polarity && each.cond === recast))) {
+            const suppressesAnimation = (nodes: Node[]): boolean => nodes.some((node) => {
+                if (node.kind === 'while') return suppressesAnimation(node.body);
+                if (node.kind !== 'if') return false;
+                if (node.cond !== d0) return suppressesAnimation(node.then) || suppressesAnimation(node.els);
+                const [roll, branch, animation] = node.then;
+                return node.then.length === 3
+                    && roll?.kind === 'stmt' && roll.text === '~fish_roll_loc(raw_pike, null, fishing_bait)'
+                    && branch?.kind === 'if' && branch.cond === recast && branch.els.length === 0
+                    && branch.then.length === 2
+                    && branch.then[0]?.kind === 'stmt' && branch.then[0].text === 'p_oploc(2)'
+                    && branch.then[1]?.kind === 'stmt' && branch.then[1].text === 'return'
+                    && animation?.kind === 'stmt' && animation.text === expectedAnimation;
+            });
+            if (!rollAnimation || !suppressesAnimation(rollShape.nodes)) {
                 throw new Error(`${id}: waterfall recast no longer suppresses one roll animation`);
             }
         }
