@@ -9410,6 +9410,125 @@ mod route_quest_provider_tests {
     }
 
     #[test]
+    fn manual_route_refusal_survives_scene_reload_but_not_owner_boundaries() {
+        use api::prereq_knowledge::{CatalogRef, Fact, FactSource, RefusalObservation};
+        use api::prereq_steps::ActionableGate;
+
+        let selected = selected_r289();
+        let catalog = selected.try_prereq_steps().expect("prepared prerequisites");
+        let (row_index, row) = catalog
+            .iter()
+            .find(|(_, row)| {
+                row.establishes.quest.0.as_ref() == "priestperil"
+                    && row.establishes.values.min == Some(61)
+                    && row.establishes.values.max == Some(61)
+            })
+            .expect("holy barrier prerequisite");
+        let crossing = row.crossings[0].crossing;
+        let mut world = tiny_world();
+        Arc::get_mut(&mut world).unwrap().graph.quest_family = Some(family(&selected));
+
+        for boundary in ["reset", "reconnect", "stop"] {
+            let mut slot = script::SlotScript::new();
+            slot.bind_incarnation(43);
+            let run = RunKey {
+                slot: 43,
+                run: slot.runtime_generation(),
+                session: slot.work_epoch(),
+            };
+            let state = state_with_fact(Fact {
+                quest: row.establishes.quest.clone(),
+                signal: row.establishes.signal.clone(),
+                possible: row.establishes.values,
+                after: row.establishes.values,
+                refused: None,
+                source: FactSource::Page { row: 0, line: 0 },
+                observed: stamp(run, 0, 0),
+            });
+            slot.bind_local_state(Arc::clone(&state));
+            let snapshot = GameSnapshot::new();
+            let (captured_run, _, _) = manual_route_state(
+                &mut slot,
+                &snapshot,
+                &WorldState::empty(),
+                &world,
+                Some(&selected),
+            )
+            .expect("capture idle manual route");
+            assert_eq!(captured_run, run);
+
+            slot.on_is_up(false);
+            slot.on_is_up(false);
+            slot.on_is_up(true);
+            assert_ne!(slot.work_epoch(), run.session);
+            let refusal = row.probe.refuse.first().expect("barrier refusal");
+            let mut observation = RefusalObservation {
+                crossing,
+                leg: 7,
+                gates: vec![ActionableGate {
+                    gate: QuestGate::Window(row.establishes.clone()),
+                    truth: Truth::True,
+                    leg: 7,
+                    crossing,
+                }]
+                .into(),
+                matched: CatalogRef {
+                    row: row_index,
+                    entry: 0,
+                },
+                fact: Fact {
+                    quest: row.establishes.quest.clone(),
+                    signal: row.establishes.signal.clone(),
+                    possible: refusal.proves,
+                    after: row.after_for(refusal.proves).unwrap(),
+                    refused: Some(row.establishes.values),
+                    source: FactSource::Refusal {
+                        row: row_index,
+                        entry: 0,
+                    },
+                    observed: stamp(captured_run, 61, 12),
+                },
+            };
+            assert!(
+                slot.record_gate_refusal(captured_run, &observation),
+                "a scene reload must not revoke the route's real refusal"
+            );
+            let before = state.prereq_snapshot();
+            let (later_run, _, later_state) = manual_route_state(
+                &mut slot,
+                &snapshot,
+                &WorldState::empty(),
+                &world,
+                Some(&selected),
+            )
+            .expect("same manual route session");
+            assert_eq!(later_run, captured_run);
+            assert_eq!(
+                later_state
+                    .quest_evidence
+                    .unwrap()
+                    .test(&QuestGate::Window(row.establishes.clone())),
+                Truth::False
+            );
+
+            match boundary {
+                "reset" => slot.reset_session_work(),
+                "reconnect" => {
+                    slot.reconnect_session_work();
+                }
+                "stop" => slot.stop(),
+                _ => unreachable!(),
+            }
+            observation.fact.observed.tick += 1;
+            assert!(
+                !slot.record_gate_refusal(captured_run, &observation),
+                "{boundary} must revoke the captured route"
+            );
+            assert_eq!(state.prereq_snapshot(), before);
+        }
+    }
+
+    #[test]
     fn explicit_real_evidence_wins_when_known_and_unknown_falls_back() {
         let selected = selected_r289();
         let (quest, name) = selected_quest(&selected);
