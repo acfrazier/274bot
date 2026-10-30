@@ -4588,7 +4588,11 @@ mod tests {
                     );
                     assert_eq!(name, "Banker");
                     if start == TellerStart::KernelOpensAfterWait {
-                        assert_eq!(talk_due, Some(tick), "the talk goes out as the banker shows");
+                        assert_eq!(
+                            talk_due,
+                            Some(tick),
+                            "the talk goes out as the banker shows"
+                        );
                     }
                     complete_open_stand(&mut ledger, tick);
                     snapshot.seed_bank_observation(1, tick, Some(Vec::new()), Vec::new());
@@ -4678,7 +4682,11 @@ mod tests {
     fn assert_the_players_bank(start: TellerStart) {
         let (mark, lease, closes) = teller_trip(start);
         assert_eq!(
-            (mark.is_some_and(|mark| mark.opened_by_machine), lease, closes),
+            (
+                mark.is_some_and(|mark| mark.opened_by_machine),
+                lease,
+                closes
+            ),
             (false, None, 0),
             "{start:?}: (marked as the kernel's, lease, closes); mark {mark:?}"
         );
@@ -4703,7 +4711,10 @@ mod tests {
             let mark = mark.expect("the kernel's open is marked");
             assert!(mark.opened_by_machine, "{start:?}");
             assert_eq!(lease, Some(BankLease::new(1, mark.generation)), "{start:?}");
-            assert_eq!(closes, 1, "{start:?}: the kernel's teller bank is closed once");
+            assert_eq!(
+                closes, 1,
+                "{start:?}: the kernel's teller bank is closed once"
+            );
         }
     }
 }
