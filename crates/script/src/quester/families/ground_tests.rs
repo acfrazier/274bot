@@ -693,12 +693,7 @@ fn failed_exact_ground_retry_keeps_walk_detail_when_item_disappears() {
     let mut ledger = None;
     let handle = begin(1959, target, &snapshot, &reach, &mut ledger);
 
-    post_walk_receipt(
-        &mut ledger,
-        2,
-        WalkEnd::NoPath,
-        Some("last route failure"),
-    );
+    post_walk_receipt(&mut ledger, 2, WalkEnd::NoPath, Some("last route failure"));
     assert!(with_tick_reach(&snapshot, &reach, &mut ledger, 2, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })

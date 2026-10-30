@@ -3111,7 +3111,6 @@ impl Combat {
         self.set_approach_walk_pending(false);
     }
 
-
     fn walk(
         &mut self,
         tile: api::WorldTile,

@@ -373,12 +373,7 @@ fn trade_run_retries_a_failed_approach_on_the_next_tick() {
     let first_walk = with_tick(&snapshot, &mut ledger, 1, |tick| {
         tick.actions
             .begin::<crate::native::walk::Walk>(
-                crate::quester::families::reach::walk_request(
-                    tile,
-                    1,
-                    None,
-                    tick.cx.evidence(),
-                ),
+                crate::quester::families::reach::walk_request(tile, 1, None, tick.cx.evidence()),
                 &mut tick.cx,
             )
             .unwrap()
@@ -409,7 +404,6 @@ fn trade_run_retries_a_failed_approach_on_the_next_tick() {
     assert_eq!(request.target, tile);
     assert_eq!(request.required_after.tick, 3);
 }
-
 
 #[test]
 fn failed_begin_missing_quest_item_declines_existing_trade_screen() {

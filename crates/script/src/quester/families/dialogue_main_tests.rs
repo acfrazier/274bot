@@ -2177,8 +2177,9 @@ fn dialogue_refusal_approach_failure_keeps_refusal_detail() {
 
 #[test]
 fn dialogue_terminal_walk_receipts_keep_typed_user_input_evidence_and_danger_errors() {
-    let gates: Arc<[api::selected::QuestGate]> =
-        Arc::from([api::selected::QuestGate::Complete(FactKey::new("walk-gate"))]);
+    let gates: Arc<[api::selected::QuestGate]> = Arc::from([api::selected::QuestGate::Complete(
+        FactKey::new("walk-gate"),
+    )]);
     let cases = [
         (crate::native::WalkEnd::UserInput, None, None),
         (
@@ -2229,9 +2230,12 @@ fn dialogue_terminal_walk_receipts_keep_typed_user_input_evidence_and_danger_err
         walks.observe(&ledger);
         assert_eq!(walks.count(), 1, "terminal receipts must not retry");
         assert!(
-            !ledger.as_ref().unwrap().outbox.iter().any(
-                |entry| matches!(&entry.effect, HostEffect::AssessWalk(_))
-            ),
+            !ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .any(|entry| matches!(&entry.effect, HostEffect::AssessWalk(_))),
             "terminal walk receipts must not start a fresh route assessment"
         );
     }
@@ -2270,7 +2274,10 @@ fn dialogue_approach_exhaustion_keeps_the_last_walk_failure_detail() {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         if attempt < 3 {
-            assert!(result.is_pending(), "attempt {attempt} should schedule a retry");
+            assert!(
+                result.is_pending(),
+                "attempt {attempt} should schedule a retry"
+            );
         } else {
             assert!(matches!(
                 result,
@@ -2817,12 +2824,7 @@ fn dialogue_approach_unseen_npc_fails_with_its_name_and_last_seen_tile() {
     .is_pending());
     walks.observe(&ledger);
     assert_eq!(walks.count(), 2);
-    super::tests::post_walk_receipt(
-        &mut ledger,
-        11,
-        crate::native::WalkEnd::Arrived,
-        None,
-    );
+    super::tests::post_walk_receipt(&mut ledger, 11, crate::native::WalkEnd::Arrived, None);
     assert!(with_tick(&arrived, &mut ledger, 11, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })

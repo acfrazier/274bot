@@ -1180,7 +1180,6 @@ impl ReturnStallRecovery {
         }
     }
 
-
     pub(crate) fn observe(&mut self, end: &WalkEnd) -> bool {
         let transient = matches!(
             end,

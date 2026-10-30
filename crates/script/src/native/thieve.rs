@@ -216,9 +216,7 @@ impl NativeMachine for Thieve {
             !walk_pending && self.reach.is_none() && !chat_dialog_open;
         if !walk_pending
             && self.area_anchor.is_some_and(|center| {
-                here.is_some_and(|here| {
-                    reach::within(here, center, i32::from(self.args.radius))
-                })
+                here.is_some_and(|here| reach::within(here, center, i32::from(self.args.radius)))
             })
         {
             self.walk_retry.reset();
@@ -1042,12 +1040,7 @@ mod tests {
                 .count()
         };
         assert_eq!(walk_count(&ledger), 2, "the first retry is submitted");
-        post_walk_receipt(
-            &mut ledger,
-            5,
-            WalkEnd::NoPath,
-            Some("first retry failed"),
-        );
+        post_walk_receipt(&mut ledger, 5, WalkEnd::NoPath, Some("first retry failed"));
         assert!(with_tick(&outside, &mut ledger, 5, |tick| {
             tick.actions.poll(&run, &mut tick.cx)
         })
@@ -1084,7 +1077,6 @@ mod tests {
         );
         assert_eq!(walk_count(&ledger), 3);
     }
-
 
     #[test]
     fn effective_level_not_base_controls_the_selected_requirement() {

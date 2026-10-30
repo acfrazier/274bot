@@ -350,8 +350,7 @@ impl NativeMachine for Reach {
                             .walk_retry
                             .observe_approach_failure(&receipt, cx.evidence().tick)
                         {
-                            self.last_walk_failure =
-                                Some(receipt.failure_detail_or_fallback());
+                            self.last_walk_failure = Some(receipt.failure_detail_or_fallback());
                             self.walk = None;
                             return Poll::Pending;
                         }
@@ -1937,7 +1936,15 @@ mod tests {
                     .begin::<Reach>(seek_args(), &mut tick.cx)
                     .unwrap();
                 assert!(matches!(
-                    &tick.cx.ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+                    &tick
+                        .cx
+                        .ledger
+                        .as_ref()
+                        .unwrap()
+                        .outbox
+                        .last()
+                        .unwrap()
+                        .effect,
                     HostEffect::Walk(_)
                 ));
                 handle
@@ -1978,7 +1985,6 @@ mod tests {
                 if detail.as_ref() == "the specific first route failure"
         ));
     }
-
 }
 
 #[cfg(test)]

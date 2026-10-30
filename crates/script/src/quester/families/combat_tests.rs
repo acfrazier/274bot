@@ -5637,31 +5637,40 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
     assert_eq!(run.loot_index, 0);
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
 
-    post_walk_end(&mut ledger, 14, WalkEnd::Failed, Some("first route failure"));
-    assert!(
-        with_step_context_reach(&snapshot, &reach, &mut ledger, 14, |cx| run.poll(cx))
-            .is_pending()
+    post_walk_end(
+        &mut ledger,
+        14,
+        WalkEnd::Failed,
+        Some("first route failure"),
     );
-    assert_eq!(run.loot_index, 0, "the first route failure keeps the item active");
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 14, |cx| run.poll(cx)).is_pending()
+    );
+    assert_eq!(
+        run.loot_index, 0,
+        "the first route failure keeps the item active"
+    );
 
     assert!(
-        with_step_context_reach(&snapshot, &reach, &mut ledger, 15, |cx| run.poll(cx))
-            .is_pending()
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 15, |cx| run.poll(cx)).is_pending()
     );
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
         crate::native::HostEffect::Walk(_)
     ));
-    post_walk_end(&mut ledger, 16, WalkEnd::Failed, Some("second route failure"));
+    post_walk_end(
+        &mut ledger,
+        16,
+        WalkEnd::Failed,
+        Some("second route failure"),
+    );
     assert!(
-        with_step_context_reach(&snapshot, &reach, &mut ledger, 16, |cx| run.poll(cx))
-            .is_pending()
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 16, |cx| run.poll(cx)).is_pending()
     );
     assert_eq!(run.loot_index, 0, "the second route failure still retries");
 
     assert!(
-        with_step_context_reach(&snapshot, &reach, &mut ledger, 17, |cx| run.poll(cx))
-            .is_pending()
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 17, |cx| run.poll(cx)).is_pending()
     );
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
@@ -5669,8 +5678,7 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
     ));
     post_walk_end(&mut ledger, 18, WalkEnd::Failed, Some("last route failure"));
     assert!(
-        with_step_context_reach(&snapshot, &reach, &mut ledger, 18, |cx| run.poll(cx))
-            .is_pending()
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 18, |cx| run.poll(cx)).is_pending()
     );
     assert_eq!(
         run.loot_index, 1,

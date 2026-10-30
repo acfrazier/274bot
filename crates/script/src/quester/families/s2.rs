@@ -779,10 +779,9 @@ impl StepRun for MakeRun {
                         return Poll::Pending;
                     }
                     let request = reach::walk_request(trigger.tile, 4, None, cx.required_after);
-                    match crate::native::defer_budget(cx.tick.actions.begin::<Walk>(
-                        request,
-                        &mut cx.tick.cx,
-                    )) {
+                    match crate::native::defer_budget(
+                        cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
+                    ) {
                         Poll::Pending => {
                             self.retry.defer_until_next_tick(now);
                             return Poll::Pending;
@@ -1846,7 +1845,10 @@ mod make_retry_tests {
             with_step(tick, |cx| run.poll(cx))
         })
         .is_pending());
-        for (failure_tick, detail) in [(2, "first make route failed"), (4, "second make route failed")] {
+        for (failure_tick, detail) in [
+            (2, "first make route failed"),
+            (4, "second make route failed"),
+        ] {
             post_walk_receipt(
                 &mut ledger,
                 failure_tick,

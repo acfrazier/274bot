@@ -481,9 +481,7 @@ impl StepRun for Run {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::quester::families::tests::{
-        def, local_player, post_walk_receipt, with_tick,
-    };
+    use crate::quester::families::tests::{def, local_player, post_walk_receipt, with_tick};
     use api::snapshot::{
         GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView, StatView,
         WorldStateView,
@@ -905,7 +903,6 @@ mod tests {
             "arrival clears the authored approach even if the snapshot tile lags"
         );
     }
-
 
     #[test]
     fn gather_uses_native_resource_action_and_finishes_only_at_exact_goal() {
