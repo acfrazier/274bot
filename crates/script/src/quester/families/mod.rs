@@ -2358,7 +2358,7 @@ impl InteractRun {
                         .observe_failure(&receipt, cx.tick.cx.evidence().tick)
                     {
                         if reach::loc_wall_route_failed(&receipt) {
-                            self.wall_fallback_pending = self.wall_fallback_tile.clone();
+                            self.wall_fallback_pending = self.wall_fallback_tile;
                         }
                         self.walk = None;
                         return Poll::Pending;
@@ -3252,7 +3252,7 @@ impl StepRun for UseOnRun {
                             .observe_failure(&receipt, cx.tick.cx.evidence().tick)
                         {
                             if reach::loc_wall_route_failed(&receipt) {
-                                self.wall_fallback_pending = self.wall_fallback_tile.clone();
+                                self.wall_fallback_pending = self.wall_fallback_tile;
                             }
                             self.walk = None;
                             self.chase = None;
