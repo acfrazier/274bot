@@ -3,9 +3,9 @@
 use std::collections::{HashMap, HashSet};
 
 use api::snapshot::WorldTile;
-use nav_planner::router::{find_first_with, find_with, missing_item_reqs, FindOptions, RouteError};
-use nav_planner::world::NavWorld;
-use nav_planner::WorldState;
+use crate::router::{find_first_with, find_with, missing_item_reqs, FindOptions, RouteError};
+use crate::world::NavWorld;
+use crate::WorldState;
 
 fn tile(x: i32, z: i32) -> WorldTile {
     WorldTile { x, z, level: 0 }

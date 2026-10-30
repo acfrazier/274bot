@@ -38,6 +38,9 @@ use crate::transport::{
 use crate::world_state::WorldState;
 use crate::zones::{Zone, ZoneClass, ZoneExempt, ZoneFilterOwned, ZoneKey, ZoneKind, ZoneTable};
 
+#[path = "first_goal_area_tests.rs"]
+mod first_goal_area;
+
 #[test]
 fn synchronous_driver_skips_suspension_and_restores_cooperative_mode() {
     fn unit_is_ready() -> bool {
