@@ -1479,6 +1479,91 @@ fn run_quester_prereq_cell(case: PrereqLiveCase) {
     run_quester_prereq_case(case, None);
 }
 
+fn prerequisite_path(goal: WorldTile, recipe: bool) -> PathDocument {
+    let mut document = family_path(
+        "cook",
+        "Native prerequisite-aware Quester Path",
+        "cook:0",
+        vec![step(
+            "prerequisite-walk",
+            if recipe { "acquire" } else { "walk" },
+            if recipe {
+                json!({"recipe": "open:morytania"})
+            } else {
+                json!({
+                    "tile": [goal.x, goal.z, goal.level],
+                    "source": "C maps/m53_54.jm2:5089,5096; scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:9-23; fixture destination beyond the generated crossing"
+                })
+            },
+            false,
+            empty_any(),
+            empty_all(),
+        )],
+        true,
+    );
+    // This fixture owns one walk, not an authored rule that repeats until a
+    // changing skip predicate excludes it after the fresh pass has settled.
+    document.roles[0].sequences[0].order = script::quester::path::SequenceOrder::Ordered;
+    if recipe {
+        let mut released: PathDocument =
+            serde_json::from_str(include_str!("../../script/paths/289/priestperil.json"))
+                .expect("released Priest in Peril Path");
+        let steps = released
+            .quest
+            .as_mut()
+            .expect("Priest in Peril quest header")
+            .acquire
+            .remove("open:morytania")
+            .expect("released Morytania recipe");
+        document
+            .quest
+            .as_mut()
+            .expect("live Path quest header")
+            .acquire
+            .insert("open:morytania".into(), steps);
+    }
+    document
+}
+
+#[test]
+fn prerequisite_live_paths_compile_with_provenance_and_one_pass_order() {
+    let (selected, quests) = live_data();
+    for (goal, recipe) in [
+        (PREREQ_EAST, true),
+        (PREREQ_SWAMP, false),
+        (
+            WorldTile {
+                x: 3443,
+                z: 3458,
+                level: 0,
+            },
+            false,
+        ),
+    ] {
+        let document = prerequisite_path(goal, recipe);
+        assert_eq!(
+            document.roles[0].sequences[0].order,
+            script::quester::path::SequenceOrder::Ordered
+        );
+        let bytes = serde_json::to_vec(&document).unwrap();
+        let selected = Arc::clone(&selected);
+        let quests = Arc::clone(&quests);
+        let compiled = api::selected::FamilyPreparation::run(move |worker| {
+            compile_path(
+                &bytes,
+                &selected,
+                &quests,
+                worker,
+                &script::local_state::OperatorLoadouts::absent(),
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+        assert!(compiled.is_ok(), "goal={goal:?} recipe={recipe}: {:?}", compiled.err());
+    }
+}
+
 fn run_quester_prereq_case(case: PrereqLiveCase, expected_failure: Option<&'static str>) {
     let (selected, quests) = live_data();
     let wolfbane = item_id(&selected, "dagger_wolfbane");
@@ -1559,45 +1644,7 @@ fn run_quester_prereq_case(case: PrereqLiveCase, expected_failure: Option<&'stat
             "bank_memory": "unknown; no bank interface was opened"}))
     }));
     let recipe = case.holy && case.mort.is_none();
-    let mut document = family_path(
-        "cook",
-        "Native prerequisite-aware Quester Path",
-        "cook:0",
-        vec![step(
-            "prerequisite-walk",
-            if recipe { "acquire" } else { "walk" },
-            if recipe {
-                json!({"recipe": "open:morytania"})
-            } else {
-                json!({"tile": [case.goal.x, case.goal.z, case.goal.level]})
-            },
-            false,
-            empty_any(),
-            empty_all(),
-        )],
-        true,
-    );
-    // This fixture owns one walk, not an authored rule that repeats until a
-    // changing skip predicate excludes it after the fresh pass has settled.
-    document.roles[0].sequences[0].order = script::quester::path::SequenceOrder::Ordered;
-    if recipe {
-        let mut released: PathDocument =
-            serde_json::from_str(include_str!("../../script/paths/289/priestperil.json"))
-                .expect("released Priest in Peril Path");
-        let steps = released
-            .quest
-            .as_mut()
-            .expect("Priest in Peril quest header")
-            .acquire
-            .remove("open:morytania")
-            .expect("released Morytania recipe");
-        document
-            .quest
-            .as_mut()
-            .expect("live Path quest header")
-            .acquire
-            .insert("open:morytania".into(), steps);
-    }
+    let mut document = prerequisite_path(case.goal, recipe);
     if expected_failure == Some("quest_start is not allowed") {
         document.prereq.quest_start = Some(false);
     }
