@@ -1978,7 +1978,12 @@ globalThis.__observation = () => {
     const same = globalThis.__sessions.length === 0
         || globalThis.__sessions[0] === value.session;
     globalThis.__sessions.push(value.session);
-    return [typeof value.session, same, value.generation];
+    return [
+        typeof value.session,
+        same,
+        value.generation,
+        globalThis.__rs2b0t_host.snapshot.client_adapter.session_generation,
+    ];
 };
 "#,
         ),
@@ -2005,6 +2010,7 @@ globalThis.__observation = () => {
     assert_eq!(first[1], true);
     assert_eq!(same[0], "symbol");
     assert_eq!(same[1], true, "one client session preserves its token");
+    assert_eq!(first[3], 10);
     assert_eq!(first[2], 2);
 
     let mut next = snapshot;
@@ -2027,6 +2033,7 @@ globalThis.__observation = () => {
         "a new client session must not reuse a stale token"
     );
     assert_eq!(changed[2], 0);
+    assert_eq!(changed[3], 11);
 
     facts.attached = false;
     next.tick = 3;

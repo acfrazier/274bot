@@ -894,9 +894,13 @@ fn collision_flags<'s>(
     else {
         return Ok(v8::null(scope).into());
     };
-    let flags = flags.to_object(scope).ok_or_else(|| PENDING.to_string())?;
-    let Some(value) = flags.get_index(scope, index) else {
+    let at = property(scope, flags, "at")?;
+    let Ok(at) = v8::Local::<v8::Function>::try_from(at) else {
         return Ok(v8::null(scope).into());
+    };
+    let index = v8::Integer::new_from_unsigned(scope, index);
+    let Some(value) = at.call(scope, flags, &[index.into()]) else {
+        return Err(PENDING.to_string());
     };
     if value.is_number() {
         Ok(value)
