@@ -510,6 +510,9 @@ pub struct BankMachine {
     object_dialogue: ObjectDialogue,
     /// The until-empty side-view bound is armed.
     view_armed: bool,
+    /// The session generation when this machine sent its own bank-open request
+    /// (stand, booth, bank object or teller). It is set only after that
+    /// request was emitted. It stays empty while no such request went out.
     opened_from: Option<u64>,
     /// Re-opens taken after a lost session (`MAX_BANK_REOPENS`).
     reopens: u8,
@@ -738,7 +741,9 @@ impl NativeMachine for BankMachine {
                     // A transfer verb re-opening through a teller goes to
                     // the dialogue only while the table is down.
                     if teller && (is_open_stand || cx.snapshot().bank().is_none()) {
-                        self.opened_from = Some(open_generation(cx));
+                        // The teller attempt counts only once its core sends a
+                        // request (`NpcAccess` phase below), not when it starts.
+                        self.opened_from = None;
                         self.deadline = None;
                         self.phase = Phase::NpcAccess {
                             core: npc::NpcAccess::new(),
@@ -844,7 +849,8 @@ impl NativeMachine for BankMachine {
                                 },
                             )))?;
                         }
-                        self.opened_from = Some(open_generation(cx));
+                        // The opener's click (a chest lid) does not open the bank.
+                        self.opened_from = first_target.is_none().then(|| open_generation(cx));
                         self.reopen_pending = false;
                         self.phase = Phase::AwaitOpen { first_target };
                         return Poll::Pending;
@@ -900,13 +906,24 @@ impl NativeMachine for BankMachine {
                         },
                     };
                     let deadline = self.deadline;
-                    let step = match crate::native::defer_budget(core.step(
-                        intent,
-                        &mut NativeNpcContext {
-                            cx,
-                            deadline: &mut self.deadline,
-                        },
-                    )) {
+                    let mut npc_cx = NativeNpcContext {
+                        cx,
+                        deadline: &mut self.deadline,
+                        sent: false,
+                    };
+                    let polled = crate::native::defer_budget(core.step(intent, &mut npc_cx));
+                    // A request that the teller core actually emitted is this
+                    // machine's open attempt. A wait without a banker or a
+                    // budget denial sends nothing and records nothing. An
+                    // object's dialogue follows a click that already recorded
+                    // (or, for a chest lid, must not record) the attempt.
+                    if npc_cx.sent
+                        && dialogue == AccessDialogue::Teller
+                        && self.opened_from.is_none()
+                    {
+                        self.opened_from = Some(open_generation(cx));
+                    }
+                    let step = match polled {
                         Poll::Pending => {
                             self.deadline = deadline;
                             return Poll::Pending;
@@ -1759,6 +1776,8 @@ impl NativeMachine for BankMachine {
 struct NativeNpcContext<'a, 'frame> {
     cx: &'a mut ActionContext<'frame>,
     deadline: &'a mut Option<BankDeadline>,
+    /// The core emitted a request in this step.
+    sent: bool,
 }
 
 impl npc::Context for NativeNpcContext<'_, '_> {
@@ -1826,7 +1845,9 @@ impl npc::Context for NativeNpcContext<'_, '_> {
             .is_some_and(|deadline| deadline.reached(self.cx.evidence().tick, self.cx.active_now()))
     }
     fn emit(&mut self, request: InteractReq) -> Result<(), Self::Error> {
-        self.cx.emit(request).map(|_| ())
+        self.cx.emit(request)?;
+        self.sent = true;
+        Ok(())
     }
 }
 
@@ -3462,6 +3483,77 @@ mod tests {
         });
         assert!(matches!(result, Poll::Ready(Ok(receipt)) if receipt.complete));
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        assert!(
+            ledger
+                .as_ref()
+                .unwrap()
+                .bank_session
+                .is_some_and(|mark| mark.opened_by_machine),
+            "the chest's Bank click is this machine's open"
+        );
+    }
+
+    /// The chest lid click is not a bank-open request. A bank that opens
+    /// after it (the player's) is not marked as this machine's open.
+    #[test]
+    fn a_bank_the_player_opens_after_the_chest_lid_click_is_not_marked() {
+        let bank = catalog_bank("Duel Arena");
+        let loc_tile = WorldTile {
+            x: bank.tile.x - 1,
+            z: bank.tile.z,
+            level: bank.tile.level,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(bank.tile));
+        snapshot.seed_locs(vec![bank_object_loc(
+            4001,
+            "Closed chest",
+            "Open",
+            loc_tile,
+            1,
+        )]);
+        let reach = object_reach_view(bank.tile, loc_tile);
+        let access = Arc::new(BankStandAccess {
+            bank,
+            stand_tile: bank.tile,
+            kind: AccessKind::Booth,
+            stand_op: 0,
+            name: Some(Arc::from("Open chest")),
+            choose: None,
+        });
+        let mut ledger = None;
+        let handle = with_tick_reach(&snapshot, &reach, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<BankMachine>(open_request(access), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::Loc {
+                action,
+                id: Some(4001),
+                ..
+            }) if action == "Open"
+        ));
+        // The lid stays shut. The player opens a bank.
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        let result = with_tick_reach(&snapshot, &reach, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(result, Poll::Ready(Ok(_))), "{result:?}");
+        assert!(
+            !ledger
+                .as_ref()
+                .unwrap()
+                .bank_session
+                .is_some_and(|mark| mark.opened_by_machine),
+            "{:?}",
+            ledger.as_ref().unwrap().bank_session
+        );
     }
 
     #[test]

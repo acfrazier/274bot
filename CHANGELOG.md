@@ -79,7 +79,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   Stop does not send a close.
 - A bank that you close and open again while the bot is closing its own bank,
   or between two bank trips, is no longer closed by the bot. The bot closes a
-  new bank window only when its own bank trip opened it.
+  new bank window only when its own bank trip opened it. A bank that you open
+  while the bot waits for a banker, or before the bot could send its click, is
+  also yours: the bot does not close it.
 - When a quest starts without something the bot only wanted to carry (for
   example the coins it keeps for buying things), the log now has one line that
   names the item and how many are missing. The bot does the same as before.

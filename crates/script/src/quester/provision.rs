@@ -4451,4 +4451,189 @@ mod tests {
             }
         }
     }
+
+    /// What happens before a bank opens on a teller trip.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum TellerStart {
+        /// No banker is in the scene. The kernel waits and sends nothing.
+        NoBanker,
+        /// The tick's interaction budget is spent. The kernel's talk is denied.
+        BudgetDenied,
+        /// The kernel talks to the banker, and that request opens the bank.
+        KernelOpens,
+    }
+
+    fn teller_npc(stand: WorldTile) -> api::snapshot::NpcView {
+        api::snapshot::NpcView {
+            index: 7,
+            r#type: None,
+            name: Some("Banker".into()),
+            actions: vec![Some("Talk-to".into()), Some("Bank".into())],
+            tile: stand,
+            distance: 1,
+            animation: -1,
+            animation_frame: 0,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: -1,
+            health: 0,
+            total_health: 0,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+            level: 0,
+            size: 1,
+            network: stand,
+            x: stand.x,
+            z: stand.z,
+            yaw: 0,
+        }
+    }
+
+    /// Drive one teller trip to its receipt, then end the session. Returns the
+    /// ledger's bank mark after the trip, the lease after the trip, and the
+    /// number of closes that ending the session sent.
+    fn teller_trip(start: TellerStart) -> (Option<ledger::BankSessionMark>, Option<BankLease>, usize) {
+        let (mut snapshot, bank, banks) = openable_bank_fixture();
+        if start != TellerStart::NoBanker {
+            snapshot.seed_npcs(vec![teller_npc(bank.tile)]);
+        }
+        let plan = scan_plan(bank);
+        let quests = quest_catalog();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let mut memory = BankMemory::default();
+        let mut picked = false;
+        let mut kernel_waited = false;
+        let mut receipt = false;
+        let mut tick = 0;
+        while tick < 20 && !receipt {
+            tick += 1;
+            memory.track(&snapshot, tick);
+            let deny = start == TellerStart::BudgetDenied && picked && !kernel_waited;
+            let result = with_tick_bank(&snapshot, Some(&memory), &mut ledger, tick, |native| {
+                if deny {
+                    assert!(native.cx.budget.event(false), "the tick's one event");
+                }
+                let required_after = native.cx.evidence();
+                let mut cx = StepContext {
+                    tick: native,
+                    quests: &quests,
+                    progress: &[],
+                    required_after,
+                    banks: &banks,
+                    choices: &crate::quester::choices::QuestChoices::default(),
+                };
+                provisioner.poll(&mut cx, &plan, None, None)
+            });
+            match ledger
+                .as_ref()
+                .and_then(|ledger| ledger.outbox.first())
+                .map(|action| &action.effect)
+            {
+                Some(HostEffect::BankPick(_)) => {
+                    let ledger = ledger.as_mut().unwrap();
+                    let action = ledger.outbox.remove(0);
+                    let authority = action.authority();
+                    ledger.complete_bank_pick(
+                        &authority,
+                        crate::bank::BankPickReceipt {
+                            request_id: authority.request_id().get(),
+                            evidence: api::quest_progress::EvidenceStamp {
+                                run: authority.run(),
+                                tick,
+                                sequence: tick,
+                            },
+                            selected: crate::bank::SelectedBank {
+                                bank_index: 0,
+                                access_tile: bank.tile,
+                                kind: crate::bank::PickKind::Reachable,
+                                access: Some(Arc::new(crate::bank::BankStandAccess {
+                                    bank,
+                                    stand_tile: bank.tile,
+                                    kind: crate::bank::AccessKind::Teller,
+                                    stand_op: 2,
+                                    name: Some(Arc::from("Banker")),
+                                    choose: None,
+                                })),
+                            },
+                        },
+                    );
+                    picked = true;
+                }
+                Some(HostEffect::Interaction(crate::shim::InteractReq::Npc { name, .. })) => {
+                    assert_eq!(start, TellerStart::KernelOpens, "no talk goes out");
+                    assert_eq!(name, "Banker");
+                    complete_open_stand(&mut ledger, tick);
+                    snapshot.seed_bank_observation(1, tick, Some(Vec::new()), Vec::new());
+                }
+                Some(other) => panic!("unexpected teller trip effect: {other:?}"),
+                None if picked && !kernel_waited && start != TellerStart::KernelOpens => {
+                    // The kernel waited (no banker) or was denied (budget)
+                    // without a request. The player now opens a bank.
+                    kernel_waited = true;
+                    assert_eq!(
+                        ledger.as_ref().unwrap().bank_session,
+                        None,
+                        "{start:?}: nothing is marked before any bank opens"
+                    );
+                    snapshot.seed_bank_observation(1, tick, Some(Vec::new()), Vec::new());
+                }
+                None => {}
+            }
+            match result {
+                Poll::Ready(Ok(ProvisionEvent::BankReceipt(_))) => receipt = true,
+                Poll::Pending => {}
+                other => panic!("{start:?}: teller trip did not reach its receipt: {other:?}"),
+            }
+        }
+        assert!(receipt, "{start:?}: teller trip reached its receipt");
+        assert_eq!(
+            kernel_waited,
+            start != TellerStart::KernelOpens,
+            "{start:?}: the player open happened only after the kernel waited"
+        );
+        let mark = ledger.as_ref().unwrap().bank_session;
+        let lease = provisioner.bank_lease();
+        ledger.as_mut().unwrap().outbox.clear();
+        poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            tick + 1,
+            &owned_plan(),
+            None,
+            &memory,
+            &banks,
+            &quests,
+        );
+        (mark, lease, closes_sent(&ledger))
+    }
+
+    #[test]
+    fn a_bank_the_player_opens_while_the_teller_kernel_waits_is_not_its_own() {
+        for start in [TellerStart::NoBanker, TellerStart::BudgetDenied] {
+            let (mark, lease, closes) = teller_trip(start);
+            assert!(
+                !mark.is_some_and(|mark| mark.opened_by_machine),
+                "{start:?}: the player's bank is not marked as the kernel's: {mark:?}"
+            );
+            assert_eq!(lease, None, "{start:?}: the player's bank is not leased");
+            assert_eq!(closes, 0, "{start:?}: the player's bank is not closed");
+        }
+    }
+
+    #[test]
+    fn a_bank_the_teller_kernel_opens_is_its_own_and_closed() {
+        let (mark, lease, closes) = teller_trip(TellerStart::KernelOpens);
+        let mark = mark.expect("the kernel's open is marked");
+        assert!(mark.opened_by_machine);
+        assert_eq!(lease, Some(BankLease::new(1, mark.generation)));
+        assert_eq!(closes, 1, "the kernel's teller bank is closed once");
+    }
 }
