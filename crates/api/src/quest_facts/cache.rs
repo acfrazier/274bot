@@ -131,6 +131,12 @@ pub(crate) fn cached_identity(data: &SelectedGameData) -> Option<QuestFamilyIden
     CACHE.lookup_identity(&Key::of(&pin))
 }
 
+/// Verify the selected family's binding without decoding the quest catalog.
+pub(crate) fn verify_identity(data: &SelectedGameData) -> Result<QuestFamilyIdentity, FactError> {
+    let pin = data.selected_pin()?;
+    family_identity(&pin, MANIFEST, embedded(pin.revision))
+}
+
 fn load(
     pin: &SelectedPin,
     manifest: &[u8],
@@ -156,20 +162,25 @@ fn verified_identity(
     manifest: &[u8],
     family: &[u8],
 ) -> Result<(crate::game_data::QuestIdentityFacts, QuestFamilyIdentity), FactError> {
+    let identity = family_identity(pin, manifest, family)?;
+    Ok((wire::decode(pin, family)?, identity))
+}
+
+fn family_identity(
+    pin: &SelectedPin,
+    manifest: &[u8],
+    family: &[u8],
+) -> Result<QuestFamilyIdentity, FactError> {
     let verified =
         family_asset::verify_family(pin, manifest, &QUESTS_FAMILY, wire::SCHEMA, family)?;
     let schema = NonZeroU16::new(verified.schema).ok_or(FactError::Schema {
         expected: wire::SCHEMA,
         actual: verified.schema,
     })?;
-    let facts = wire::decode(pin, family)?;
-    Ok((
-        facts,
-        QuestFamilyIdentity {
-            sha256: verified.sha256,
-            schema,
-        },
-    ))
+    Ok(QuestFamilyIdentity {
+        sha256: verified.sha256,
+        schema,
+    })
 }
 
 #[cfg(test)]
@@ -179,6 +190,15 @@ mod tests {
     use crate::selected::Knowledge;
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
+
+    #[test]
+    fn profile_identity_verification_matches_the_bake_without_a_catalog() {
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            let selected = crate::game_data::for_revision(revision).unwrap();
+            let (_, expected) = for_bake(&selected).unwrap();
+            assert_eq!(verify_identity(&selected).unwrap(), expected);
+        }
+    }
 
     fn pin(revision: ClientRevision) -> Arc<SelectedPin> {
         crate::game_data::for_revision(revision)

@@ -78,12 +78,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   a window only when the full in-progress value range lies inside it. A walk
   reports the quest, window bounds and unknown evidence state.
 
-- A walk that needs `Complete(biohazard)` waits at most one observed game tick
-  for a usable Biohazard quest-list row, not just any coloured row. If the row
-  arrives, the walk sends a fresh route. If it stays unavailable, or the fresh
-  route still cannot prove the gate, the walk marks only that Biohazard gate
-  closed for route choice. The planner can avoid the unprovable edge instead
-  of waiting on missing evidence.
+- Navigation now rejects a pack built from different quest data before a bot
+  starts walking. The error identifies the mismatch and asks you to rebuild
+  or replace the pack, instead of reporting missing quest evidence.
 
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
