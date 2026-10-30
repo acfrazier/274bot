@@ -6671,10 +6671,9 @@ mod s2b_admission_contract {
                     last: None
                 })
             );
-            assert!(receipt
-                .detail
-                .as_deref()
-                .is_some_and(|detail| detail.contains("cancelled")));
+            assert!(receipt.detail.as_deref().is_some_and(|detail| {
+                detail.contains("cancelled") && detail.contains("may ask again")
+            }));
         }
     }
 

@@ -6306,30 +6306,34 @@ impl NavBot {
     /// correlated refusal receipt; work whose owner is revoked is dropped
     /// without one. The caller must not clear `assess_result` afterwards.
     pub(crate) fn cancel_advisory_route_work(&mut self, detail: &str) {
-        let mut cancelled = Vec::new();
-        if self
+        let from_ticket = if self
             .route_ticket
             .as_ref()
             .is_some_and(|owner| matches!(owner.kind, RouteDemandKind::Advisory { .. }))
         {
-            if let Some(mut owner) = self.route_ticket.take() {
+            self.route_ticket.take().map(|mut owner| {
                 owner.abandon(Cancellation::ScopeInvalidated);
-                cancelled.push(owner.kind.clone());
-            }
-        }
-        if self
+                owner.kind.clone()
+            })
+        } else {
+            None
+        };
+        let from_pending = if self
             .pending_route
             .as_ref()
             .and_then(|demand| demand.kind())
             .is_some_and(|kind| matches!(kind, RouteDemandKind::Advisory { .. }))
         {
-            if let Some(demand) = self.pending_route.take() {
-                cancelled.extend(demand.kind());
+            self.pending_route.take().and_then(|demand| {
+                let kind = demand.kind();
                 (*demand).signal_completion();
-            }
-        }
+                kind
+            })
+        } else {
+            None
+        };
         // At most one advisory is current: the one the slot last queued.
-        for kind in cancelled {
+        for kind in [from_ticket, from_pending].into_iter().flatten() {
             if let RouteDemandKind::Advisory {
                 authority,
                 evidence,
@@ -7193,7 +7197,9 @@ fn end_route_follow(nav: &mut NavBot) {
     nav.route_generation = nav.route_generation.wrapping_add(1);
     // The host ends the slot's follow and its advisory work together. A live
     // advisory is answered with one refusal; a revoked one is dropped.
-    nav.cancel_advisory_route_work("Advisory route was cancelled when the host ended route work");
+    nav.cancel_advisory_route_work(
+        "Advisory route was cancelled when the host ended route work; the script may ask again",
+    );
     nav.requested_route = None;
     nav.traveller.clear();
     nav.clear_route();
