@@ -3,7 +3,7 @@
 use api::game_data::for_revision;
 use api::identity::Deadline;
 use api::prereq_steps::{ActionableGate, CrossingId, PrereqCatalog, PrereqStep};
-use api::selected::{ClientRevision, FamilyPreparation, QuestGate};
+use api::selected::{ClientRevision, FactKey, FamilyPreparation, InclusiveRange, QuestGate, StageWindow};
 use api::work::{PreparationPhase, SharedCancellation, SliceBudget, StepContext, SystemClock};
 use std::mem::size_of;
 use std::num::NonZeroU32;
@@ -49,11 +49,17 @@ fn process_catalog_is_bounded_and_warm_preparation_and_queries_allocate_nothing(
         cold.bytes_current > 0,
         "the process cache retains its table"
     );
-    assert_eq!(catalog.len(), 2, "this release contains only A1 and A2");
+    assert_eq!(catalog.len(), 4, "two dialogue rows and two journal sources");
     let (ordinal, row) = catalog.iter().next().expect("A1 exists");
     let crossing = row.crossings[0].crossing;
     let gate = QuestGate::Window(row.establishes.clone());
     let windows = catalog.establishable_windows();
+    let journal_gate = QuestGate::Window(StageWindow {
+        quest: FactKey::new("blackarmgang"),
+        signal: FactKey::new("phoenixgang"),
+        values: InclusiveRange { min: Some(10), max: Some(10) },
+    });
+    let (journal_ordinal, journal) = catalog.for_journal(&journal_gate).expect("gang journal source");
 
     let warm = allocation_counter::measure(|| {
         for _ in 0..1_000 {
@@ -69,6 +75,7 @@ fn process_catalog_is_bounded_and_warm_preparation_and_queries_allocate_nothing(
             assert_eq!(found, ordinal);
             assert!(catalog.reference(ordinal, 0).is_some());
             assert!(Arc::ptr_eq(&windows, &catalog.establishable_windows()));
+            assert_eq!(catalog.for_journal(&journal_gate).unwrap().0, journal_ordinal);
         }
     });
     assert_eq!(
@@ -102,4 +109,16 @@ fn process_catalog_is_bounded_and_warm_preparation_and_queries_allocate_nothing(
     malformed.establishes.values.min = Some(i32::MAX);
     malformed.establishes.values.max = Some(i32::MIN);
     assert_eq!(invalid(malformed), PrereqCatalogError::InvalidStageRange);
+    let mut malformed = journal.clone();
+    malformed.rules = Arc::from([]);
+    assert_eq!(
+        PrereqCatalog::from_entries(Vec::new(), vec![malformed]).unwrap_err(),
+        PrereqCatalogError::InvalidJournalFacts,
+    );
+    let mut malformed = journal.clone();
+    malformed.after = Arc::from([]);
+    assert_eq!(
+        PrereqCatalog::from_entries(Vec::new(), vec![malformed]).unwrap_err(),
+        PrereqCatalogError::InvalidJournalFacts,
+    );
 }

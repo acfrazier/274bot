@@ -2,6 +2,7 @@
 use crate::dialogue_outcome::DialogueOutcome;
 use crate::local_state::SlotState;
 use crate::native::walk::Walk;
+use crate::quest_journal::{JournalMachine, JournalRequest};
 use crate::native::{
     ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, OuterWalk, PrereqAllow,
     PrereqFailure, PrereqMissing, PrereqRefusal, PrereqStepIdentity, PrereqSwitch, PrereqWaitName,
@@ -17,7 +18,7 @@ use api::prereq_knowledge::Observation;
 use api::prereq_knowledge::{Fact, FactSource, RefusalObservation, SessionMemory};
 use api::prereq_steps::{
     ActionableGate, BranchOutcome, ConsentSwitch, OpenerRequirement, PrereqCatalog,
-    PrereqPrecondition, PrereqStep, RefusalThen,
+    PrereqJournal, PrereqPrecondition, PrereqStep, RefusalThen,
 };
 use api::quest_progress::{EvidenceProvider, EvidenceStamp};
 use api::selected::{InclusiveRange, QuestGate, Truth};
@@ -184,6 +185,7 @@ pub struct Done {
 
 enum Phase {
     Resolve,
+    Journal(Option<ActionHandle<JournalMachine>>),
     ProbeApproach(Option<ActionHandle<Walk>>),
     Probe {
         run: Box<InteractRun>,
@@ -248,7 +250,10 @@ impl PrereqRun {
         match entry {
             RunEntry::NeedsStep => gates
                 .iter()
-                .find(|gate| catalog.for_gate(&gate.gate, &gate.crossing).is_some())
+                .find(|gate| {
+                    catalog.for_journal(&gate.gate).is_some()
+                        || catalog.for_gate(&gate.gate, &gate.crossing).is_some()
+                })
                 .cloned(),
             RunEntry::GateRefused(observation) => {
                 let (_, crossing) =
@@ -276,6 +281,9 @@ impl PrereqRun {
         let catalog = catalog(cx).ok_or_else(|| {
             ActionError::Unavailable("prerequisite facts are not prepared".into())
         })?;
+        if let Some((_, journal)) = catalog.for_journal(&gate.gate) {
+            return Ok(journal_identity(journal));
+        }
         let (_, row) = catalog
             .for_gate(&gate.gate, &gate.crossing)
             .ok_or_else(|| ActionError::Unavailable("no matching prerequisite row".into()))?;
@@ -303,6 +311,7 @@ impl PrereqRun {
             }
             Phase::Child { run, .. } => run.revoker(),
             Phase::Close { handle, .. } => Some(handle.revoker()),
+            Phase::Journal(handle) => handle.as_ref().map(ActionHandle::revoker),
             _ => None,
         }
     }
@@ -336,6 +345,95 @@ impl PrereqRun {
                 gate: self.gate.gate.clone(),
             }));
         };
+        if let Some((ordinal, journal)) = catalog.for_journal(&self.gate.gate) {
+            let step = journal_identity(journal);
+            let floor = *self.required_after.get_or_insert(cx.evidence());
+            if matches!(self.phase, Phase::Resolve) {
+                if !budget.row(ordinal) {
+                    return Poll::Ready(Err(PrereqRefusal::StepRepeated {
+                        gate: self.gate.gate.clone(),
+                    }));
+                }
+                self.phase = Phase::Journal(None);
+            }
+            let Phase::Journal(handle) = &mut self.phase else {
+                return Poll::Ready(Err(PrereqRefusal::StepUnwitnessed { step }));
+            };
+            if handle.is_none() {
+                if !cx.may_begin_this_tick() {
+                    return Poll::Pending;
+                }
+                let data = api::game_data::for_revision(cx.pin().revision)
+                    .expect("catalog revision was validated");
+                let Some(facts) = data.try_quests() else {
+                    return Poll::Ready(Err(failed(step, PrereqFailure::Action(
+                        Arc::from("journal facts are not prepared"),
+                    ))));
+                };
+                match actions.begin::<JournalMachine>(JournalRequest {
+                    quest: journal.quest.clone(),
+                    facts,
+                }, cx) {
+                    Ok(read) => *handle = Some(read),
+                    Err(ActionError::BudgetExhausted) => return Poll::Pending,
+                    Err(error) => return Poll::Ready(Err(failed(step, action_failure(error)))),
+                }
+            }
+            let read = match actions.poll(handle.as_ref().expect("journal owner"), cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => {
+                    self.phase = Phase::Complete;
+                    return Poll::Ready(Err(failed(step, action_failure(error))));
+                }
+                Poll::Ready(Ok(read)) => read,
+            };
+            self.phase = Phase::Complete;
+            if read.quest != journal.quest
+                || read.pin.as_ref() != cx.pin()
+                || !read.acquired.meets(floor)
+                || !read.closed.meets(read.acquired)
+                || !cx.evidence().meets(read.closed)
+            {
+                return Poll::Ready(Err(PrereqRefusal::StepUnwitnessed { step }));
+            }
+            let text = super::super::progress::normalize_journal(&read.lines);
+            let mut matched = journal.rules.iter().enumerate().filter(|(_, rule)| {
+                rule.all.iter().all(|needle| text.contains(needle.as_ref()))
+            });
+            let Some((line, rule)) = matched.next() else {
+                return Poll::Ready(Err(PrereqRefusal::StepUnwitnessed { step }));
+            };
+            if matched.next().is_some() {
+                return Poll::Ready(Err(PrereqRefusal::StepUnwitnessed { step }));
+            }
+            let after = journal.after.iter().find(|after| after.proves == rule.proves)
+                .expect("journal preservation was validated").after;
+            if let Some(state) = state {
+                state.record_prereq_fact(Fact {
+                    quest: journal.establishes.quest.clone(),
+                    signal: journal.establishes.signal.clone(),
+                    possible: rule.proves,
+                    after,
+                    refused: None,
+                    source: FactSource::Page {
+                        row: ordinal,
+                        line: u16::try_from(line).expect("journal rule count was checked"),
+                    },
+                    observed: read.acquired,
+                });
+            }
+            let QuestGate::Window(window) = &self.gate.gate else {
+                return Poll::Ready(Err(PrereqRefusal::StepUnwitnessed { step }));
+            };
+            return Poll::Ready(if window.values.test(&rule.proves) == Truth::True {
+                Ok(Done { crossed: false })
+            } else {
+                Err(PrereqRefusal::PreconditionMissing {
+                    step,
+                    missing: PrereqMissing::Quest(self.gate.gate.clone()),
+                })
+            });
+        }
         let Some((ordinal, row)) = catalog.for_gate(&self.gate.gate, &self.gate.crossing) else {
             return Poll::Ready(Err(PrereqRefusal::NoRow {
                 gate: self.gate.gate.clone(),
@@ -882,6 +980,11 @@ impl PrereqRun {
                         return Poll::Ready(Err(failed(self.step(row), action_failure(error))))
                     }
                 },
+                Phase::Journal(_) => {
+                    return Poll::Ready(Err(PrereqRefusal::StepUnwitnessed {
+                        step: self.step(row),
+                    }));
+                }
                 Phase::Complete => {
                     return Poll::Ready(Err(failed(
                         self.step(row),
@@ -917,6 +1020,12 @@ fn step_identity(row: &PrereqStep, crossing: &api::prereq_steps::CrossingId) -> 
     PrereqStepIdentity {
         id: Arc::clone(&row.id),
         source: Arc::clone(&row.crossing(crossing).expect("matched crossing").1.source.0),
+    }
+}
+fn journal_identity(journal: &PrereqJournal) -> PrereqStepIdentity {
+    PrereqStepIdentity {
+        id: Arc::clone(&journal.id),
+        source: Arc::clone(&journal.source.0),
     }
 }
 fn failed(step: PrereqStepIdentity, why: PrereqFailure) -> PrereqRefusal {

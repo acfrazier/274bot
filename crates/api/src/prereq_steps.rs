@@ -283,6 +283,28 @@ impl PrereqStep {
     }
 }
 
+/// A source-pinned journal page that establishes one account signal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrereqJournal {
+    pub id: Arc<str>,
+    /// Canonical quest whose page the native journal owner reads.
+    pub quest: FactKey,
+    pub establishes: StageWindow,
+    pub after: Arc<[AfterRule]>,
+    pub rules: Arc<[JournalRule]>,
+    pub source: PrereqSource,
+}
+
+/// Every normalized substring must occur in the same acquired journal page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JournalRule {
+    pub all: Arc<[Arc<str>]>,
+    pub proves: InclusiveRange,
+    pub source: PrereqSource,
+}
+
 /// A prerequisite table violates a structural catalog invariant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum PrereqCatalogError {
@@ -301,19 +323,36 @@ pub enum PrereqCatalogError {
     /// An establishment or preservation range has reversed bounds.
     #[error("invalid prerequisite stage range")]
     InvalidStageRange,
+    /// A journal row lacks a nonempty rule or an exact preservation rule.
+    #[error("invalid prerequisite journal facts")]
+    InvalidJournalFacts,
 }
 
 /// Immutable, verified table indexed by content row ordinal.
 #[derive(Debug, Clone)]
 pub struct PrereqCatalog {
-    rows: Arc<[PrereqStep]>,
+    entries: Arc<PrereqEntries>,
+}
+
+#[derive(Debug)]
+struct PrereqEntries {
+    rows: Box<[PrereqStep]>,
+    journals: Box<[PrereqJournal]>,
     establishable_windows: Arc<[StageWindow]>,
 }
 
 impl PrereqCatalog {
     /// Validate the row identities, directed crossings, and stage ranges.
     pub fn from_rows(rows: Vec<PrereqStep>) -> Result<Self, PrereqCatalogError> {
-        if rows.len() > usize::from(u16::MAX) {
+        Self::from_entries(rows, Vec::new())
+    }
+
+    /// Validate dialogue and journal evidence in one ordinal space.
+    pub fn from_entries(
+        rows: Vec<PrereqStep>,
+        journals: Vec<PrereqJournal>,
+    ) -> Result<Self, PrereqCatalogError> {
+        if rows.len().saturating_add(journals.len()) > usize::from(u16::MAX) {
             return Err(PrereqCatalogError::TooManyRows);
         }
         for row in &rows {
@@ -343,20 +382,41 @@ impl PrereqCatalog {
                 return Err(PrereqCatalogError::InvalidStageRange);
             }
         }
+        for journal in &journals {
+            if journal.id.is_empty()
+                || journal.quest.0.is_empty()
+                || journal.rules.is_empty()
+                || journal.rules.len() > usize::from(u16::MAX)
+                || !valid_range(&journal.establishes.values)
+                || journal.rules.iter().any(|rule| {
+                    rule.all.is_empty()
+                        || rule.all.iter().any(|text| text.trim().is_empty())
+                        || !valid_range(&rule.proves)
+                        || journal.after.iter().filter(|after| after.proves == rule.proves).count() != 1
+                })
+                || journal.after.iter().any(|rule| !valid_range(&rule.proves) || !valid_range(&rule.after))
+            {
+                return Err(PrereqCatalogError::InvalidJournalFacts);
+            }
+        }
         let establishable_windows = rows
             .iter()
             .map(|row| row.establishes.clone())
+            .chain(journals.iter().map(|journal| journal.establishes.clone()))
             .collect::<Vec<_>>()
             .into();
         Ok(Self {
-            rows: rows.into(),
-            establishable_windows,
+            entries: Arc::new(PrereqEntries {
+                rows: rows.into_boxed_slice(),
+                journals: journals.into_boxed_slice(),
+                establishable_windows,
+            }),
         })
     }
 
     /// Match both the established window and the exact directed crossing.
     pub fn for_gate(&self, gate: &QuestGate, crossing: &CrossingId) -> Option<(u16, &PrereqStep)> {
-        self.rows.iter().enumerate().find_map(|(index, row)| {
+        self.entries.rows.iter().enumerate().find_map(|(index, row)| {
             if proves(&row.establishes, gate) && row.crossing(crossing).is_some() {
                 Some((
                     u16::try_from(index).expect("catalog row count was checked"),
@@ -368,9 +428,19 @@ impl PrereqCatalog {
         })
     }
 
+    /// Find a page that can establish this signal without a world interaction.
+    pub fn for_journal(&self, gate: &QuestGate) -> Option<(u16, &PrereqJournal)> {
+        self.entries.journals.iter().enumerate().find_map(|(index, journal)| {
+            proves(&journal.establishes, gate).then(|| (
+                u16::try_from(self.entries.rows.len() + index).expect("catalog row count was checked"),
+                journal,
+            ))
+        })
+    }
+
     /// Iterate rows with their stable ordinal for refusal and page facts.
     pub fn iter(&self) -> impl Iterator<Item = (u16, &PrereqStep)> {
-        self.rows.iter().enumerate().map(|(index, row)| {
+        self.entries.rows.iter().enumerate().map(|(index, row)| {
             (
                 u16::try_from(index).expect("catalog row count was checked"),
                 row,
@@ -379,20 +449,20 @@ impl PrereqCatalog {
     }
 
     pub fn len(&self) -> usize {
-        self.rows.len()
+        self.entries.rows.len() + self.entries.journals.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.rows.is_empty()
+        self.entries.rows.is_empty() && self.entries.journals.is_empty()
     }
 
     /// Allocation-free clone of the precomputed establishment set.
     pub fn establishable_windows(&self) -> Arc<[StageWindow]> {
-        Arc::clone(&self.establishable_windows)
+        Arc::clone(&self.entries.establishable_windows)
     }
 
     pub fn reference(&self, row: u16, entry: u8) -> Option<(&PrereqStep, &PrereqCrossing)> {
-        let step = self.rows.get(usize::from(row))?;
+        let step = self.entries.rows.get(usize::from(row))?;
         let crossing = step.crossings.get(usize::from(entry))?;
         Some((step, crossing))
     }

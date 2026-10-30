@@ -1,12 +1,12 @@
 //! Wire format for the source-pinned `prereq_steps.json` family.
 
-use super::PrereqStep;
+use super::{PrereqCatalog, PrereqJournal, PrereqStep};
 use crate::selected::{FactError, SelectedPin, SourceSpan};
 use serde::de::IgnoredAny;
 use serde::Deserialize;
 use std::sync::Arc;
 
-pub(super) const SCHEMA: u16 = 2;
+pub(super) const SCHEMA: u16 = 3;
 
 #[derive(Deserialize)]
 struct Header<'a> {
@@ -42,6 +42,7 @@ struct Family {
 #[serde(deny_unknown_fields)]
 struct Facts {
     rows: Vec<PrereqStep>,
+    journals: Vec<PrereqJournal>,
 }
 
 fn invalid(reason: impl Into<String>) -> FactError {
@@ -73,7 +74,7 @@ fn check_header(pin: &SelectedPin, header: &Header<'_>) -> Result<(), FactError>
     Ok(())
 }
 
-pub(super) fn decode(pin: &SelectedPin, bytes: &[u8]) -> Result<Vec<PrereqStep>, FactError> {
+pub(super) fn decode(pin: &SelectedPin, bytes: &[u8]) -> Result<PrereqCatalog, FactError> {
     let header: Header<'_> = serde_json::from_slice(bytes)
         .map_err(|error| invalid(format!("prerequisite family header: {error}")))?;
     check_header(pin, &header)?;
@@ -87,11 +88,12 @@ pub(super) fn decode(pin: &SelectedPin, bytes: &[u8]) -> Result<Vec<PrereqStep>,
             check_tile(&entry.pass.landing, "landing")?;
         }
     }
-    Ok(family.facts.rows)
+    PrereqCatalog::from_entries(family.facts.rows, family.facts.journals)
+        .map_err(|reason| invalid(reason.to_string()))
 }
 
-/// Schema-2 tile bounds: world coordinates are non-negative and the plane is
-/// a game level. The required takeoff is validated wherever at/to are.
+/// World coordinates are non-negative and the plane is a game level.
+/// The required takeoff is validated wherever at/to are.
 fn check_tile(tile: &crate::WorldTile, role: &str) -> Result<(), FactError> {
     if tile.x < 0 || tile.z < 0 || !(0..=3).contains(&tile.level) {
         return Err(invalid(format!("prerequisite {role} tile is out of range")));

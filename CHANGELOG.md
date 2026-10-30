@@ -69,6 +69,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   the Heroes' Quest stage after they speak to Alfonse. It still refuses
   Black Arm Gang members. Walks without available prerequisite steps skip
   the extra prerequisite search.
+- Walks can now read the Shield of Arrav journal once to identify completed
+  Phoenix Gang membership for the Brimhaven kitchen door. A shared green
+  quest-list row alone remains insufficient. Black Arm members stay refused.
+  An on-demand Heroes' Quest page also proves eligibility after Alfonse,
+  before quest completion, without starting dialogue or a quest.
 - Two default-on navigation settings allow prerequisite dialogue and quest
   starts. A global or script grant allows the step. A per-walk `false`
   forbids it. Combat escapes and other safety walks never stop to talk.

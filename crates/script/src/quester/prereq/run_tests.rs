@@ -19,6 +19,10 @@ static CATALOG: LazyLock<Arc<PrereqCatalog>> = LazyLock::new(|| {
     FamilyPreparation::run(|worker| {
         api::game_data::for_revision(ClientRevision::R289)
             .unwrap()
+            .prepare_quests(worker)
+            .unwrap();
+        api::game_data::for_revision(ClientRevision::R289)
+            .unwrap()
             .prepare_prereq_steps(worker)
             .unwrap()
     })
@@ -2089,25 +2093,28 @@ fn kitchen_journal_gate() -> ActionableGate {
     }
 }
 
-fn kitchen_journal_observation(lines: &[&str], expected: Truth) {
+fn kitchen_journal_observation(lines: &[&str], expected: Option<Truth>) {
+    journal_observation(kitchen_journal_gate(), "Shield of Arrav", 0x00f800, lines, expected);
+}
+
+fn journal_observation(gate: ActionableGate, title: &str, colour: i32, lines: &[&str], expected: Option<Truth>) {
     use api::snapshot::QuestStatusView;
-    let gate = kitchen_journal_gate();
     let state = state();
     let _ = &*CATALOG;
     let mut snapshot = snapshot(gate.crossing.takeoff);
     snapshot.seed_quest_statuses(vec![QuestStatusView {
-        name: "Shield of Arrav".into(),
+        name: title.into(),
         component_id: 42,
-        colour: 0x00f800,
+        colour,
     }], true);
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 1, |native| {
         assert!(PrereqRun::first_supported(
             std::slice::from_ref(&gate), &RunEntry::NeedsStep, &native.cx
-        ).is_some(), "the shared green row needs an authoritative gang evidence source");
+        ).is_some(), "an unknown gate needs an authoritative journal evidence source");
     });
     let mut run = PrereqRun::begin(gate.clone(), RunEntry::NeedsStep, PrereqAllow {
-        dialogue: true, quest_start: false,
+        dialogue: false, quest_start: false,
     });
     let mut budget = PrereqBudget::default();
     assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
@@ -2116,8 +2123,10 @@ fn kitchen_journal_observation(lines: &[&str], expected: Truth) {
     // A causal journal frame is required. Neither a green row nor the send
     // receipt is membership evidence.
     assert!(state.prereq_snapshot().facts().is_empty());
+    assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1, "polling never repeats the page request");
     let mut widgets = vec![crate::quest_journal::test_widget(
-        crate::quest_journal::TITLE_289, "@dre@Shield of Arrav"
+        crate::quest_journal::TITLE_289, &format!("@dre@{title}")
     )];
     widgets.extend(lines.iter().enumerate().map(|(index, line)|
         crate::quest_journal::test_widget(8145 + index as i32, line)));
@@ -2128,9 +2137,18 @@ fn kitchen_journal_observation(lines: &[&str], expected: Truth) {
     assert!(state.prereq_snapshot().facts().is_empty(), "wait for the observed close");
     snapshot.seed_main_modal(-1, vec![]);
     let result = poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget);
-    assert_eq!(result.is_ready(), true);
+    match expected {
+        Some(Truth::True) => assert!(matches!(result, Poll::Ready(Ok(Done { crossed: false })))),
+        Some(Truth::False) => assert!(matches!(result, Poll::Ready(Err(PrereqRefusal::PreconditionMissing { .. })))),
+        _ => assert!(matches!(result, Poll::Ready(Err(PrereqRefusal::StepUnwitnessed { .. })))),
+    }
     with_tick(&snapshot, &mut ledger, 3, |native| {
-        assert_eq!(state.prereq_snapshot().observe(&gate.gate, native.cx.evidence()).unwrap().truth, expected);
+        let acquired = EvidenceStamp { tick: 2, sequence: 2, ..native.cx.evidence() };
+        assert_eq!(state.prereq_snapshot().observe(&gate.gate, acquired).map(|fact| fact.truth), expected);
+        if expected == Some(Truth::False) {
+            assert_eq!(state.prereq_snapshot().observe(&gate.gate, native.cx.evidence()).unwrap().truth, Truth::Unknown,
+                "a negative rule does not overclaim future Phoenix progress");
+        }
     });
     assert_eq!(ledger.as_ref().unwrap().outbox.len(), 2, "one page request and one close, never a door or NPC probe");
 }
@@ -2142,7 +2160,7 @@ fn kitchen_journal_phoenix_completion_establishes_membership() {
         "@str@I searched the Phoenix Gang Headquarters and found",
         "@str@half of the Shield of Arrav.",
         "@red@QUEST COMPLETE!",
-    ], Truth::True);
+    ], Some(Truth::True));
 }
 
 #[test]
@@ -2153,5 +2171,36 @@ fn kitchen_journal_black_arm_completion_refuses_phoenix_membership() {
         "@str@I searched the Black Arm Gang Headquarters and found",
         "@str@half of the Shield of Arrav.",
         "@red@QUEST COMPLETE!",
-    ], Truth::False);
+    ], Some(Truth::False));
+}
+
+#[test]
+fn kitchen_journal_green_row_without_distinctive_page_never_proves_membership() {
+    kitchen_journal_observation(&["@red@QUEST COMPLETE!"], None);
+}
+
+#[test]
+fn kitchen_journal_conflicting_gang_pages_leave_no_fact() {
+    kitchen_journal_observation(&[
+        "@str@I searched the Phoenix Gang Headquarters and found",
+        "@str@I searched the Black Arm Gang Headquarters and found",
+        "@str@allowed me to join the Black Arm Gang.",
+        "@str@half of the Shield of Arrav.",
+        "@red@QUEST COMPLETE!",
+    ], None);
+}
+
+#[test]
+fn kitchen_journal_hero_password_establishes_pre_completion_eligibility() {
+    use api::selected::{FactKey, StageWindow};
+    let mut gate = kitchen_journal_gate();
+    gate.gate = QuestGate::Window(StageWindow {
+        quest: FactKey::new("heroquest"),
+        signal: FactKey::new("heroquest"),
+        values: InclusiveRange { min: Some(3), max: Some(15) },
+    });
+    journal_observation(gate, "Heroes' Quest", 0xffff00, &[
+        "@str@I spoke to Straven about the Master Thieves Armband.",
+        "@str@Then I told Alfonse the password 'Gherkin'.",
+    ], Some(Truth::True));
 }

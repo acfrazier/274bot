@@ -3064,7 +3064,9 @@ pub(crate) fn route_prereq_content(
     // metadata for later registered crossings on the same accepted route.
     let mut registered: Option<Vec<api::prereq_steps::ActionableGate>> = None;
     for (index, gate) in gates.iter().enumerate() {
-        if catalog.for_gate(&gate.gate, &gate.crossing).is_some() {
+        if catalog.for_journal(&gate.gate).is_some()
+            || catalog.for_gate(&gate.gate, &gate.crossing).is_some()
+        {
             if let Some(registered) = registered.as_mut() {
                 registered.push(gate.clone());
             }
@@ -3128,6 +3130,11 @@ pub(crate) fn route_prereq_content(
 
     for group in &gate_groups {
         for gate in group.gates.iter() {
+            // Journal evidence is acquired before route acceptance. It does
+            // not invent a server crossing message or refusal classifier.
+            if catalog.for_journal(&gate.gate).is_some() {
+                continue;
+            }
             let (row_index, row) = catalog.for_gate(&gate.gate, &gate.crossing)?;
             let (crossing_entry, entry) = row.crossing(&gate.crossing)?;
             let pass = nav_executor::CrossingPass {
@@ -9948,6 +9955,37 @@ mod route_quest_provider_tests {
             crossing: row.crossings[0].crossing,
         }]);
         (catalog, gates)
+    }
+
+    #[test]
+    fn journal_prerequisite_metadata_does_not_invent_crossing_messages() {
+        use api::prereq_steps::{ActionableGate, CrossingId, CrossingKind};
+        use api::selected::{FactKey, InclusiveRange, StageWindow};
+        let catalog = selected_r289().try_prereq_steps().unwrap();
+        let gate = ActionableGate {
+            gate: QuestGate::Window(StageWindow {
+                quest: FactKey::new("blackarmgang"),
+                signal: FactKey::new("phoenixgang"),
+                values: InclusiveRange { min: Some(10), max: Some(10) },
+            }),
+            truth: Truth::Unknown,
+            leg: 0,
+            crossing: CrossingId {
+                loc_id: 2628,
+                option: 1,
+                at: WorldTile { x: 2788, z: 3190, level: 0 },
+                takeoff: WorldTile { x: 2788, z: 3190, level: 0 },
+                to: WorldTile { x: 2788, z: 3189, level: 0 },
+                kind: CrossingKind::Door,
+            },
+        };
+        let content = route_prereq_content(&catalog, run(), Arc::from([gate.clone()]))
+            .expect("an unknown journal-backed gate must reach the native prerequisite owner");
+        assert_eq!(content.gates.as_ref(), &[gate]);
+        assert_eq!(content.gate_groups.len(), 1);
+        assert!(content.crossing_passes.is_empty());
+        assert!(content.refusal_texts.is_empty());
+        assert!(content.refusal_candidates.is_empty());
     }
 
     #[test]

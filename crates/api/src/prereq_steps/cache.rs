@@ -109,13 +109,5 @@ pub(crate) fn cached(data: &SelectedGameData) -> Option<Arc<PrereqCatalog>> {
 
 fn load(pin: &SelectedPin, manifest: &[u8], family: &[u8]) -> Result<PrereqCatalog, FactError> {
     family_asset::verify_family(pin, manifest, &PREREQ_STEPS_FAMILY, wire::SCHEMA, family)?;
-    let rows = wire::decode(pin, family)?;
-    PrereqCatalog::from_rows(rows).map_err(|reason| FactError::Invalid {
-        source: crate::selected::SourceSpan {
-            file: Arc::from("prereq_steps.json"),
-            first: 0,
-            last: 0,
-        },
-        reason: Arc::from(reason.to_string()),
-    })
+    wire::decode(pin, family)
 }

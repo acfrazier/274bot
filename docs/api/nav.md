@@ -590,7 +590,7 @@ its `navflags` sidecar, groups alternatives over ordinary and teleport edges,
 and records standability and transport admission for each takeoff.
 The prerequisite generator consumes this projection through
 `GAME_DATA_289_PREREQ_CROSSINGS` and verifies it against
-`GAME_DATA_289_NAV_PACK`. Catalog schema 2 includes the required takeoff.
+`GAME_DATA_289_NAV_PACK`. Catalog schema 3 retains the required takeoff.
 The probe walks to that exact legal stand, then clicks the exact loc anchor.
 It never walks onto a blocked anchor or substitutes an arbitrary nearby tile.
 Loc interaction reach remains the engine's shape-, rotation-, footprint-
@@ -602,6 +602,30 @@ request identity, selected pin and continuation in one cold allocation.
 Unrelated API seats reserve only a pointer. Native reissues retain the
 original destination and policy, but bind a fresh evidence stamp rather than
 keeping the expired request stamp in every ordinary walk.
+
+The same catalog can declare a journal evidence source instead of a world
+interaction. The runner reads that page through the native journal owner:
+one quest-row click, a fresh title-checked page, one close, and an observed
+close. All source-pinned text rules must match within that page. No match
+or multiple matches leave the gate closed. The session remembers the
+proved signal range and its content-checked preservation range.
+
+The Shield of Arrav page distinguishes completed Phoenix and Black Arm
+accounts even though their quest-list row has the same green colour.
+Its Phoenix completion text proves `phoenixgang = 10`. Its Black Arm
+completion text proves `phoenixgang < 9`. The Brimhaven kitchen can therefore
+use real membership evidence rather than guessing from that shared row.
+The runner reads once per prerequisite attempt, not per tick or search.
+Later walks in the same run retain the completed Phoenix proof. The Black
+Arm range widens conservatively after acquisition, so it never grants
+Phoenix membership. Neither this read nor the search starts a quest or
+probes a door.
+
+The same page-source mechanism reads the Heroes' Quest journal when the
+required `heroquest >= 3` fact is unknown. The Phoenix text about giving
+Alfonse the password proves the eligible stage range without starting
+dialogue or changing quest progress. This keeps the kitchen available
+before Heroes' Quest completion as well as after it.
 
 
 ## Router (`nav_planner::router`)
