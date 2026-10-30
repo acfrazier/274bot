@@ -107,9 +107,7 @@ pub(super) fn read<'s>(
         "targetButtonByBase" => target_button_by_base(scope, facts, arg0, arg1),
         "selectButtonByVarp" => select_button_by_varp(scope, facts, arg0, arg1, arg2),
         "selectButtonLabelsByVarp" => select_button_labels_by_varp(scope, facts, arg0, arg1),
-        "mainModalButtonNearText" => {
-            main_modal_button_near_text(scope, snapshot, facts, arg0)
-        }
+        "mainModalButtonNearText" => main_modal_button_near_text(scope, snapshot, facts, arg0),
         "mainSkillMultiItems" => main_skill_multi_items(scope, snapshot),
         "questStatuses" => quest_statuses(scope, snapshot, facts),
         "sideTabInterface" => side_tab_interface(scope, snapshot, arg0),
@@ -119,18 +117,10 @@ pub(super) fn read<'s>(
         "ifText" => if_text(scope, facts, arg0),
         "countDialogOpen" => bool_property_value(scope, snapshot, "count_dialog_open"),
         "makeProducts" => make_products(scope, snapshot),
-        "overlayPosWorld" => overlay_pos_world(
-            scope,
-            facts,
-            [arg0, arg1, arg2, arg3, arg4],
-            false,
-        ),
-        "projectAreaGameWorld" => overlay_pos_world(
-            scope,
-            facts,
-            [arg0, arg1, arg2, arg3, arg4],
-            true,
-        ),
+        "overlayPosWorld" => overlay_pos_world(scope, facts, [arg0, arg1, arg2, arg3, arg4], false),
+        "projectAreaGameWorld" => {
+            overlay_pos_world(scope, facts, [arg0, arg1, arg2, arg3, arg4], true)
+        }
         "locBox" => loc_box(scope, snapshot, facts, arg0, arg1),
         "itemIconPixels" => item_icon_pixels(scope, facts, arg0),
         _ => {
