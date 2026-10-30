@@ -10124,6 +10124,35 @@ mod route_quest_provider_tests {
     }
 
     #[test]
+    fn rejected_compat_handover_keeps_outer_terminal_for_seat_observer() {
+        let mut bot = compat_bot(17);
+        let (_, gates) = compat_gates();
+        fail_compat(&mut bot, script::native::WalkEnd::NeedsStep(gates));
+        let mut slot = script::SlotScript::new();
+        assert!(!crate::script_walk::observe_compat_walk(
+            &mut slot,
+            &mut bot,
+            Some(WorldTile {
+                x: 3408,
+                z: 3489,
+                level: 0,
+            }),
+            "rejected-compat-test",
+        ));
+        assert_eq!(bot.compat_walk_request_id(), None);
+        assert_eq!(bot.walk_outcome_request_id, 17);
+        assert!(bot.walk_outcome_failed);
+        let sequence = bot.walk_outcome_seq;
+        assert!(!crate::script_walk::observe_compat_walk(
+            &mut slot,
+            &mut bot,
+            None,
+            "rejected-compat-test",
+        ));
+        assert_eq!(bot.walk_outcome_seq, sequence);
+    }
+
+    #[test]
     fn compat_reissue_preserves_a_false_bank_fetch_policy() {
         let mut bot = compat_bot(15);
         let walk = bot.compat_walk.as_mut().expect("retained owner");
