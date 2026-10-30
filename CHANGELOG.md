@@ -72,8 +72,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   no cure is held, or when hitpoints are at or below the eat line and no food is
   held, they pause work without ending the run and show the needed cure or food
   in the status row.
-- A Gatherer bank trip keeps held antipoison and super antipoison doses and
-  Strange fruit in the pack, so a later poison still finds them.
+- A Gatherer bank trip keeps held antipoison and super antipoison doses in the
+  pack, so a later poison still finds them.
 - The panel and terminal app show the same status row when poison means the bot
   needs a cure or food, and clear it when that need passes.
 - When the game ignores a survival drink (for example in the tick after a

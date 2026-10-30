@@ -227,25 +227,31 @@ fn slot_keeps_parked_native_run_and_resumes_after_dose() {
             chat_since: 0,
         },
     );
-    snapshot.seed_tick(42);
+    // The drink sent at tick 41 delays the player through ticks 42 and 43
+    // (`consume_effects.rs2:124-126`, `PlayerOps.ts:376-378`). The runner
+    // holds its work through the drink lock and resumes at tick 44.
     snapshot.seed_inventory(Vec::new(), 28);
-    dispatch(
-        &mut slot,
-        &selected,
-        &snapshot,
-        42,
-        fact(42, PoisonState::Immune { until_lower: 80 }, 60, 0),
-    );
-
-    let status = slot.native_status().expect("resumed native status");
-    assert_eq!(slot.state(), RunState::Running);
-    assert!(slot.dispatch_open());
-    assert_eq!(slot.native_run(), Some(run));
-    assert_eq!(status.run, run);
-    assert_eq!(status.phase, NativePhase::Working);
-    assert!(status.failure.is_none());
-    assert!(slot.lifecycle_receipt().is_none());
-    assert!(slot.terminal_native_status.is_none());
+    for tick in 42..=44 {
+        snapshot.seed_tick(u32::try_from(tick).unwrap());
+        dispatch(
+            &mut slot,
+            &selected,
+            &snapshot,
+            tick,
+            fact(tick, PoisonState::Immune { until_lower: 80 }, 60, 0),
+        );
+        let status = slot.native_status().expect("resumed native status");
+        assert_eq!(slot.state(), RunState::Running);
+        assert!(slot.dispatch_open());
+        assert_eq!(slot.native_run(), Some(run));
+        assert_eq!(status.run, run);
+        assert!(status.failure.is_none());
+        assert!(slot.lifecycle_receipt().is_none());
+        assert!(slot.terminal_native_status.is_none());
+        if tick == 44 {
+            assert_eq!(status.phase, NativePhase::Working);
+        }
+    }
 }
 
 #[test]
