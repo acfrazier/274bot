@@ -34,6 +34,7 @@ pub struct WalkArm {
     pub bank_fetch: Option<PendingBankFetch>,
     pub admission: Option<Box<Admission>>,
     pub assessment: Option<Arc<RouteAssessment>>,
+    pub(crate) poison_hold: Option<crate::poison_hold::PoisonHold>,
     pub last_assessment: Option<Arc<RouteAssessment>>,
     pub basis: Option<Arc<RouteBasis>>,
     pub refusal: Option<WalkRefusal>,
@@ -295,6 +296,7 @@ pub fn arm_walk_on(
                 if !admission.escape.is_some_and(crate::admission::escape_live) {
                     arm.traveller.clear();
                     arm.route = None;
+                    arm.poison_hold = None;
                     arm.bank_fetch = None;
                     arm.basis = None;
                     arm.assessment = None;
@@ -322,6 +324,7 @@ fn with_walk_arm_bot<R>(arm: &mut WalkArm, run: impl FnOnce(&mut NavBot) -> R) -
         route_generation: arm.route_generation,
         admission: arm.admission.take(),
         assessment: arm.assessment.take(),
+        poison_hold: arm.poison_hold.take(),
         last_assessment: arm.last_assessment.take(),
         route_basis: arm.basis.take(),
         admission_pending: std::mem::take(&mut arm.admission_pending),
@@ -333,6 +336,7 @@ fn with_walk_arm_bot<R>(arm: &mut WalkArm, run: impl FnOnce(&mut NavBot) -> R) -
     arm.traveller = std::mem::take(&mut bot.traveller);
     arm.admission = bot.admission.take();
     arm.assessment = bot.assessment.take();
+    arm.poison_hold = bot.poison_hold.take();
     arm.last_assessment = bot.last_assessment.take();
     arm.basis = bot.route_basis.take();
     arm.admission_pending = bot.admission_pending;
@@ -365,10 +369,18 @@ pub fn step_walk_arm_bank_fetch<D: Driver>(
     map_members: bool,
 ) -> bool {
     with_walk_arm_bot(arm, |bot| {
+        if let Some(world) = world {
+            crate::admission::publish(bot, world, snapshot, map_members, None);
+        }
+        if crate::script_walk::step_poison_hold_on_bot(driver, snapshot, bot, world, None, true) {
+            return false;
+        }
         let wrote = step_bank_fetch_on_bot(driver, snapshot, bot, world, here, map_members);
         if let Some(world) = world {
             crate::admission::publish(bot, world, snapshot, map_members, None);
         }
+        let _ =
+            crate::script_walk::step_poison_hold_on_bot(driver, snapshot, bot, world, None, true);
         wrote
     })
 }
@@ -430,6 +442,7 @@ fn replace_walk_arm(
         // A fresh arm replaces any in-flight follow run and its prior
         // BankBudget session. Traveller::clear preserves the essence latch.
         arm.traveller.clear();
+        arm.poison_hold = None;
         arm.bank_fetch = bank_fetch;
         arm.route = Some(Arc::clone(&route));
         arm.route_generation = admission.generation;
@@ -474,6 +487,22 @@ pub fn observe_walk_arm_admission(
     with_walk_arm_bot(arm, |bot| {
         crate::admission::publish(bot, world, snapshot, map_members, slot);
     });
+    finish_walk_arm_refusal(
+        before,
+        snapshot,
+        arm,
+        slot,
+        world.graph.zones.is_none(),
+    )
+}
+
+fn finish_walk_arm_refusal(
+    before: Option<WorldTile>,
+    snapshot: &GameSnapshot,
+    arm: &mut WalkArm,
+    slot: Option<&str>,
+    zones_unknown: bool,
+) -> bool {
     if let (Some(destination), None, Some(assessment)) =
         (before, walk_destination(arm), arm.last_assessment.as_ref())
     {
@@ -491,7 +520,7 @@ pub fn observe_walk_arm_admission(
                     .tile()
                     .map(|(x, z, level)| WorldTile { x, z, level }),
                 escape.as_deref().unwrap_or(&assessment.reason),
-                world.graph.zones.is_none(),
+                zones_unknown,
             );
             clear_admission(arm);
             return true;
@@ -518,6 +547,26 @@ pub fn step_walk_arm_follow<D: Driver>(
     {
         return true;
     }
+
+    let before = walk_destination(arm);
+    let poison_hold_active = with_walk_arm_bot(arm, |bot| {
+        if let Some(world) = world {
+            crate::admission::publish(bot, world, snapshot, map_members, slot);
+        }
+        crate::script_walk::step_poison_hold_on_bot(driver, snapshot, bot, world, slot, true)
+    });
+    if finish_walk_arm_refusal(
+        before,
+        snapshot,
+        arm,
+        slot,
+        world.is_none_or(|world| world.graph.zones.is_none()),
+    ) {
+        return true;
+    }
+    if poison_hold_active {
+        return false;
+    }
     if arm
         .admission
         .as_deref()
@@ -535,6 +584,21 @@ pub fn step_walk_arm_follow<D: Driver>(
             // traveller polled that arrival. Discard that private follow
             // state before the operator's final route is resumed.
             arm.traveller.clear();
+        }
+        let hold_active = with_walk_arm_bot(arm, |bot| {
+            crate::script_walk::step_poison_hold_on_bot(driver, snapshot, bot, world, slot, true)
+        });
+        if finish_walk_arm_refusal(
+            bank_destination,
+            snapshot,
+            arm,
+            slot,
+            world.is_none_or(|world| world.graph.zones.is_none()),
+        ) {
+            return true;
+        }
+        if hold_active {
+            return false;
         }
         if arm.bank_fetch.is_none() && arm.route.is_none() {
             arm.traveller.clear();
@@ -570,6 +634,10 @@ pub fn step_walk_arm_follow<D: Driver>(
         close_enough: 0,
         teleports: world.map(|world| world.graph.teleports.as_slice()),
         edges: world.map(|world| world.graph.edges.as_slice()),
+        route_index_limit: arm
+            .poison_hold
+            .as_ref()
+            .map(|hold| hold.until_index),
         ..TravelOptions::default()
     };
     let outcome = arm
@@ -577,6 +645,7 @@ pub fn step_walk_arm_follow<D: Driver>(
         .follow_shared(driver, snapshot, Arc::clone(route), &mut options);
     if walking_stand && matches!(&outcome, Some(TravelOutcome::Arrived { .. })) {
         arm.route = None;
+        arm.poison_hold = None;
         return false;
     }
     let Some(outcome) = outcome else {
@@ -607,6 +676,7 @@ fn clear_admission(arm: &mut WalkArm) {
     arm.admission = None;
     arm.assessment = None;
     arm.basis = None;
+    arm.poison_hold = None;
     arm.admission_pending = false;
 }
 

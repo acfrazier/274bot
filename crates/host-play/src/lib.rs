@@ -88,6 +88,7 @@ mod script_api_live_probe;
 #[cfg(feature = "js")]
 mod script_channels;
 mod script_runtime;
+pub(crate) mod poison_hold;
 mod slot_bank_memory;
 mod slot_condition;
 mod walk_arm;

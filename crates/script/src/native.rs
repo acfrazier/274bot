@@ -977,7 +977,10 @@ pub enum WalkRefusal {
         maximum_bytes: usize,
     },
     Unsurvivable,
-    FixableWith,
+    PoisonUnsettled {
+        waited: u8,
+        cause: api::condition::WindowReset,
+    },
     Unknown(crate::combat::risk::UnknownWhy),
     EscapeInProgress,
 }
@@ -1000,7 +1003,10 @@ impl std::fmt::Display for WalkRefusal {
                 "route result needs {required_bytes} bytes, above the {maximum_bytes}-byte limit",
             ),
             Self::Unsurvivable => f.write_str("route is unsurvivable"),
-            Self::FixableWith => f.write_str("route needs additional supplies"),
+            Self::PoisonUnsettled { waited, cause } => write!(
+                f,
+                "poison state remained unsettled after {waited} observed ticks ({cause:?})",
+            ),
             Self::Unknown(why) => write!(f, "route risk is unknown: {why:?}"),
             Self::EscapeInProgress => f.write_str("escape in progress"),
         }
@@ -1485,7 +1491,10 @@ mod walk_permission_tests {
                 last: Some(crate::combat::risk::Verdict::Unsurvivable),
             },
             WalkRefusal::Unsurvivable,
-            WalkRefusal::FixableWith,
+            WalkRefusal::PoisonUnsettled {
+                waited: 18,
+                cause: api::condition::WindowReset::Modal,
+            },
             WalkRefusal::Unknown(crate::combat::risk::UnknownWhy::MissingFacts),
             WalkRefusal::EscapeInProgress,
             WalkRefusal::RouteTooLarge {
@@ -1498,6 +1507,17 @@ mod walk_permission_tests {
                 assert_ne!(refusals[left], refusals[right]);
             }
         }
+    }
+    #[test]
+    fn poison_unsettled_display_names_wait_and_reset_cause() {
+        assert_eq!(
+            WalkRefusal::PoisonUnsettled {
+                waited: 18,
+                cause: api::condition::WindowReset::Modal,
+            }
+            .to_string(),
+            "poison state remained unsettled after 18 observed ticks (Modal)",
+        );
     }
 
     #[test]

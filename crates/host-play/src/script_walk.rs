@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use api::bank_memory::BankMemory;
-use api::condition::BotCondition;
+use api::condition::{BotCondition, PoisonState, WindowReset};
 use api::interact::{ActionSpec, Driver, Interactions, OpTarget, SendResult};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, ReadContext, SnapshotView, WorldTile};
@@ -10,7 +10,7 @@ use nav_executor::TravelOptions;
 use nav_planner::arrival::ArrivalKind;
 use nav_planner::bank_fetch::{bank_access_tiles, is_bank_access, BankStep, SAME_BANK};
 use nav_planner::router::{
-    find_first_blocking_zones, find_first_with_avoid, find_with_avoid, FindOptions, Route,
+    find_first_blocking_zones, find_first_with_avoid, find_with_avoid, FindOptions, Leg, Route,
     RouteError,
 };
 use nav_planner::world::NavWorld;
@@ -28,6 +28,145 @@ use super::{
 
 /// Pumps a non-Walk BankBudget step may wait before a truthful abort.
 const BANK_STEP_ATTEMPTS: u32 = 32;
+
+fn legacy_route_tile(route: &Route, index: u16) -> Option<WorldTile> {
+    let target = usize::from(index);
+    let mut offset = 0usize;
+    for (leg_index, leg) in route.legs.iter().enumerate() {
+        match leg {
+            Leg::Walk { tiles } => {
+                if target >= offset {
+                    if let Some(tile) = tiles.get(target - offset) {
+                        return Some(*tile);
+                    }
+                }
+                offset = offset.checked_add(tiles.len())?;
+            }
+            Leg::Transport { edge } => {
+                let takeoff = edge.takeoff.unwrap_or(edge.at);
+                let attached = leg_index
+                    .checked_sub(1)
+                    .and_then(|previous| route.legs.get(previous))
+                    .is_some_and(
+                        |leg| matches!(leg, Leg::Walk { tiles } if tiles.last() == Some(&takeoff)),
+                    );
+                if !attached {
+                    if offset == target {
+                        return Some(takeoff);
+                    }
+                    offset = offset.checked_add(1)?;
+                }
+            }
+        }
+    }
+    None
+}
+
+pub(crate) fn step_poison_hold_on_bot<D: Driver>(
+    driver: &mut D,
+    snapshot: &GameSnapshot,
+    bot: &mut NavBot,
+    world: Option<&NavWorld>,
+    slot: Option<&str>,
+    allow_stand_click: bool,
+) -> bool {
+    let Some(until_index) = bot.poison_hold.as_ref().map(|hold| hold.until_index) else {
+        return false;
+    };
+    let now = snapshot.tick() as u16;
+    let fact = bot
+        .condition
+        .current()
+        .copied()
+        .filter(|fact| fact.tick == snapshot.tick());
+    if fact.is_some_and(|fact| !matches!(fact.poison, PoisonState::Unknown { .. }))
+        && bot
+            .poison_hold
+            .as_ref()
+            .is_some_and(|hold| hold.wait.is_none())
+    {
+        // If a caller has not refreshed admission yet, freeze before a
+        // hold window starts. An already-started window still times out.
+        return true;
+    }
+    let retreat = if let Some(route) = bot.compact_route.as_ref() {
+        route
+            .view()
+            .and_then(|view| script::combat::risk::RoutePath::new(view).ok())
+            .and_then(|path| path.point(until_index))
+            .map(|point| point.tile)
+    } else if let Some(world) = world {
+        bot.route
+            .as_ref()
+            .and_then(|route| nav_planner::producer::route_view(world, route).ok())
+            .and_then(|view| script::combat::risk::RoutePath::new(view).ok())
+            .and_then(|path| path.point(until_index))
+            .map(|point| point.tile)
+    } else {
+        bot.route
+            .as_deref()
+            .and_then(|route| legacy_route_tile(route, until_index))
+    };
+    let here = snapshot.tile().map(|(x, z, level)| WorldTile { x, z, level });
+    let at_retreat = retreat.is_some() && here == retreat;
+    let window = fact.and_then(|fact| fact.poison_window);
+    let remaining = window.map_or(crate::poison_hold::CLEAN_TICKS, |window| window.remaining);
+    let accepted = window.is_some_and(|window| window.accepted);
+
+    if at_retreat {
+        let hold = bot.poison_hold.as_mut().expect("hold was read above");
+        if let Some(wait) = hold.start_wait(now, remaining) {
+            api::host_log!(
+                api::hostlog::Category::NavEvent,
+                api::hostlog::Level::Info,
+                slot = slot.unwrap_or_default(),
+                "poison-hold start until_index={until_index} started={} deadline={} remaining={} accepted={accepted}",
+                wait.started,
+                wait.deadline,
+                wait.remaining(),
+            );
+        }
+        if !accepted && !hold.stand_sent && allow_stand_click {
+            hold.stand_sent = true;
+            let result = Interactions::new(snapshot, driver)
+                .walk(retreat.expect("at_retreat requires a retreat tile"));
+            api::host_log!(
+                api::hostlog::Category::NavEvent,
+                api::hostlog::Level::Info,
+                slot = slot.unwrap_or_default(),
+                "poison-hold stand until_index={until_index} tick={now} sent={}",
+                matches!(result, SendResult::Sent { .. }),
+            );
+        }
+    }
+
+    let Some(wait) = bot.poison_hold.as_ref().and_then(|hold| hold.wait) else {
+        return false;
+    };
+    if wait.ended(now) {
+        let cause = window.map_or(WindowReset::IncompleteFact, |window| window.last_reset);
+        let destination = bot.route_destination().or(retreat).or(here);
+        if let Some(destination) = destination {
+            let waited = wait.waited(now);
+            api::host_log!(
+                api::hostlog::Category::NavEvent,
+                api::hostlog::Level::Info,
+                slot = slot.unwrap_or_default(),
+                "poison-hold end outcome=unsettled until_index={until_index} started={} deadline={} waited={waited} cause={cause:?}",
+                wait.started,
+                wait.deadline,
+            );
+            crate::admission::refuse(
+                bot,
+                world,
+                destination,
+                crate::native::WalkRefusal::PoisonUnsettled { waited, cause },
+            );
+        }
+        return true;
+    }
+    true
+}
 
 struct LiveRouteRefresh {
     to: WorldTile,
@@ -926,6 +1065,17 @@ pub(crate) fn step_nav_bot<D: Driver>(
             if let Some(world) = world {
                 crate::admission::publish(bot, world, snapshot, map_members, Some(name));
             }
+            if step_poison_hold_on_bot(
+                driver,
+                snapshot,
+                bot,
+                world.map(Arc::as_ref),
+                Some(name),
+                !hold,
+            ) {
+                publish_script_walk(statuses, name, bot.route_destination());
+                return;
+            }
             if snapshot
                 .stats()
                 .iter()
@@ -1195,6 +1345,10 @@ pub(crate) fn step_nav_bot<D: Driver>(
                                     .map(|world| world.graph.teleports.as_slice()),
                                 edges: borrowed_world.map(|world| world.graph.edges.as_slice()),
                                 quest_evidence: bot.route_quest_evidence.as_ref(),
+                                route_index_limit: bot
+                                    .poison_hold
+                                    .as_ref()
+                                    .map(|hold| hold.until_index),
                                 ..TravelOptions::default()
                             };
                             match route.plan_for_follow() {
@@ -1397,6 +1551,7 @@ fn resume_final_route(
                     pending.dest
                 )
             });
+            bot.poison_hold = None;
             bot.route = Some(Arc::new(route));
             bot.compact_route = None;
         }
@@ -1531,7 +1686,7 @@ fn step_walk(
         };
     bot.assessment = assessment;
     if let Some(refusal) = refusal {
-        crate::admission::refuse(bot, w, dest, refusal);
+        crate::admission::refuse(bot, Some(w), dest, refusal);
         return (false, StepEnd::Abort("bank access route risk refused"));
     }
     let crate::RouteOutcome::Routed(route) = outcome else {
@@ -1546,6 +1701,7 @@ fn step_walk(
         *level = reached.level;
     }
     log_walk_arm_bot(|| format!("bank_fetch Walk armed sub-route dest={reached:?}"));
+    bot.poison_hold = None;
     bot.route = Some(Arc::new(route));
     bot.compact_route = None;
     bot.map_route_generation = crate::walk_map::next_map_route_generation();
@@ -2047,5 +2203,34 @@ mod zone_diagnostic_tests {
             Err(Some(keys)) => assert_eq!(keys, vec![ZoneKey::Zone(0)]),
             other => panic!("expected a bank-access zone witness, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn poison_hold_legacy_route_index_resolves_without_world() {
+        let origin = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let retreat = WorldTile {
+            x: 3200,
+            z: 3201,
+            level: 0,
+        };
+        let destination = WorldTile {
+            x: 3200,
+            z: 3202,
+            level: 0,
+        };
+        let route = Route {
+            legs: vec![Leg::Walk {
+                tiles: vec![origin, retreat, destination],
+            }],
+            dest: destination,
+            ticks: 1.5,
+        };
+
+        assert_eq!(legacy_route_tile(&route, 1), Some(retreat));
+        assert_eq!(legacy_route_tile(&route, 3), None);
     }
 }
