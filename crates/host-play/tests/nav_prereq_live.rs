@@ -406,7 +406,8 @@ fn make_fixture_with_seed_commands(
                 return;
             }
             if matches!(*phase, FixtureSeedPhase::Ready) {
-                if input.hold || input.host_move_owned || !client.ingame || client.scene_state != 2 {
+                if input.hold || input.host_move_owned || !client.ingame || client.scene_state != 2
+                {
                     return;
                 }
                 let arm = frame_manual_arms
