@@ -1271,7 +1271,7 @@ fn axe_wear_requires_observed_inventory_slot_and_later_equipment_transition() {
         }),
     ];
 
-    let (wear, failures) = wear_action(&[action.clone()], &frames, IRON_AXE_ID);
+    let (wear, failures) = wear_action(std::slice::from_ref(&action), &frames, IRON_AXE_ID);
     assert!(failures.is_empty(), "{failures:?}");
     let wear = wear.expect("the accepted Held/Wield action is classified");
     assert_eq!(wear["inventory_axe"], 1);
@@ -1326,8 +1326,8 @@ fn axe_gather_uses_normalized_loc_request_and_observed_world_tile() {
     });
 
     let gather = gather_action(
-        &[action.clone()],
-        &[frame.clone()],
+        std::slice::from_ref(&action),
+        std::slice::from_ref(&frame),
         Case::AxeWear,
         TREE_START,
         12,

@@ -35,6 +35,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - A fresh "can't reach" reply now lets a shop purchase retry its rejected
   Trade. A timeout alone still cannot start another Trade while the first
   response is unconfirmed.
+- An active route now sends at most one walk packet per observed game tick.
+  Repeated position updates no longer cause movement request bursts.
 
 ### Combat
 

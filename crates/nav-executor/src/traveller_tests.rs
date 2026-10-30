@@ -8091,7 +8091,7 @@ fn follow_click_ahead_sends_the_next_hop_before_exact_stand() {
 #[test]
 fn follow_limits_real_walk_packets_per_player_info_tick_and_defers() {
     let mut c = scene_client();
-    let mut snap = snap_at(&mut c, 0, 0);
+    let mut snap = snap_at(&mut c, 1, 1);
     let packets = Arc::new(FollowPacketCounter {
         revision: c.revision(),
         committed: AtomicU64::new(0),
@@ -8100,12 +8100,13 @@ fn follow_limits_real_walk_packets_per_player_info_tick_and_defers() {
     c.out.set_observer(Some(observer));
     let before = packet_commit_count(&c);
 
-    let tiles: Vec<(i32, i32)> = (0..=100).map(|z| (3200, 3200 + z)).collect();
+    // Keep the real client's route inside the collision-map boundary.
+    let tiles: Vec<(i32, i32)> = (1..=101).map(|z| (3201, 3200 + z)).collect();
     let route = Route {
         legs: vec![walk_leg(&tiles)],
         dest: WorldTile {
-            x: 3200,
-            z: 3300,
+            x: 3201,
+            z: 3301,
             level: 0,
         },
         ticks: 50.0,
@@ -8140,7 +8141,7 @@ fn follow_limits_real_walk_packets_per_player_info_tick_and_defers() {
     // Client tile changes can re-poll the active follow without a new
     // PLAYER_INFO tick; those same-tick click-ahead sends remain pending.
     for z in [13, 14] {
-        plant_player(&mut c, 0, z);
+        plant_player(&mut c, 1, z + 1);
         c.bump_gens(ServerProt::REBUILD_NORMAL);
         snap.rebuild(&c);
         assert_eq!(snap.tick(), 1);
@@ -8160,7 +8161,7 @@ fn follow_limits_real_walk_packets_per_player_info_tick_and_defers() {
 
     // Later ticks continue click-ahead at the same movement cadence.
     for (tick, z, commits) in [(3, 29, 3), (4, 45, 4), (5, 61, 5), (6, 77, 6), (7, 93, 7)] {
-        plant_player(&mut c, 0, z);
+        plant_player(&mut c, 1, z + 1);
         bump_rebuild(&mut c, &mut snap);
         assert_eq!(snap.tick(), tick);
         assert!(t
@@ -8170,14 +8171,14 @@ fn follow_limits_real_walk_packets_per_player_info_tick_and_defers() {
     }
 
     // The final hop still requires the exact destination tile.
-    plant_player(&mut c, 0, 100);
+    plant_player(&mut c, 1, 101);
     bump_rebuild(&mut c, &mut snap);
     assert_eq!(snap.tick(), 8);
     assert!(matches!(
         t.follow(&mut c, &snap, route, &mut options),
         Some(TravelOutcome::Arrived { at }) if at == WorldTile {
-            x: 3200,
-            z: 3300,
+            x: 3201,
+            z: 3301,
             level: 0,
         }
     ));
