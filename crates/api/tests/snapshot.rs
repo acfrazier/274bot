@@ -2899,7 +2899,10 @@ fn trade_confirm_lists_decode_only_while_the_confirm_screen_is_open() {
     let mut snap = GameSnapshot::new();
     assert!(snap.rebuild_family(&c, Family::Trade));
     assert!(snap.trade().offer_open);
-    assert!(snap.trade().confirm.is_none(), "no confirm screen, no lists");
+    assert!(
+        snap.trade().confirm.is_none(),
+        "no confirm screen, no lists"
+    );
     assert_eq!(snap.trade().my_offer.len(), 1);
 
     // `trade.rs2:80-86` stops the offers, `:119-145` fills the confirm lists

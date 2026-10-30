@@ -851,9 +851,28 @@ fn trade_waits_count_observed_game_ticks_and_ignore_both_clocks() {
         assert!(frame.actions.poll(&handle, &mut frame.cx).is_pending());
     });
     assert!(
-        ledger.as_ref().unwrap().outbox.is_empty(),
-        "no observed tick passed, so the two-tick budget is not spent"
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .all(|action| !matches!(
+                action.effect,
+                HostEffect::Interaction(InteractReq::CloseModal)
+            )),
+        "no observed tick passed, so the two-tick budget is not spent and nothing closes"
     );
+    // One more observed tick spends the budget: the clocks are not consulted.
+    assert!(poll(&snapshot, &mut ledger, &handle, 3, epoch).is_pending());
+    assert!(ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .any(|action| matches!(
+            action.effect,
+            HostEffect::Interaction(InteractReq::CloseModal)
+        )));
 }
 
 #[test]
