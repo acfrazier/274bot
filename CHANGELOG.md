@@ -72,11 +72,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - After an advancing step's settle timeout, the Quester rereads quest progress
   before it retries. Steps can also set their own attempt limit and a named
   stop.
-- Quest guides can select a product and quantity from a production menu
-  opened by using an item on another item or on a location.
-- Loc-triggered production steps wait for arrival and an accepted click. The
-  one-tick menu deadline starts at the first observed tick after arrival and
-  allows for the engine's next-tick click processing and interface-packet order.
+- Quest guides can now select a product and quantity from a production menu
+  opened by using an item on another item or on a location. Fixed menu buttons
+  count processes, while `qty` counts output items; guides select the smallest
+  whole-process quantity that reaches the held target when the content allows
+  it. If a loc-triggered batch closes before the target is met, the guide uses
+  the item on the loc again.
+- A loc-triggered production clock starts after arrival and an accepted click.
+  Its one-tick observation window includes a one-tick packet-order margin for
+  the engine's next-tick input and interface update
+  (`E: engine/src/engine/World.ts:350-355,
+  engine/src/engine/entity/NetworkPlayer.ts:171-177`).
 - Non-kill combat re-engagements are now bounded. `until_drop` uses its
   authored `max_kills`; `until` and `win` use the configured target
   alternatives. The bound spans the full step, and exhaustion keeps the last

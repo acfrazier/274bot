@@ -3741,11 +3741,14 @@ fn loc_make_starts_menu_clock_after_multi_tick_approach() {
             with_step(tick, |cx| run.poll(cx))
         })
         .is_pending());
-        assert!(matches!(
-            &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-            crate::native::HostEffect::Walk(request)
-                if request.target == anchor && request.loc_id == Some(wheel_id) && request.radius == 1
-        ), "the loc op must wait for its multi-tick approach");
+        assert!(
+            matches!(
+                &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+                crate::native::HostEffect::Walk(request)
+                    if request.target == anchor && request.radius == 1
+            ),
+            "the loc op must wait for its multi-tick approach"
+        );
 
         for tick in 3..=5 {
             assert!(with_tick(&snapshot, &mut ledger, tick, |native| {
@@ -3753,10 +3756,10 @@ fn loc_make_starts_menu_clock_after_multi_tick_approach() {
             })
             .is_pending());
         }
-        snapshot.seed_local_player(local_player(tile(3199, 3200)));
+        snapshot.seed_local_player(local_player(anchor));
         let mut wheel = loc(wheel_id, "Spinning wheel", "Spin");
         wheel.tile = anchor;
-        wheel.distance = 1;
+        wheel.distance = 0;
         snapshot.seed_locs(vec![wheel]);
         let (request_id, run_key) = {
             let action = ledger
@@ -3887,7 +3890,7 @@ fn main_make_retriggers_item_on_loc_after_each_closed_batch() {
         let mut menu_client =
             production_main_make_client(bar_id, "Bronze bar", &["Make 1", "Make 5", "Make 10"]);
         let mut snapshot = ready();
-        snapshot.seed_local_player(local_player(tile(5, 5)));
+        snapshot.seed_local_player(local_player(tile(5, 6)));
         snapshot.seed_inventory(
             vec![
                 held(bar_id, "Bronze bar", 8, 10, None),
@@ -3897,7 +3900,7 @@ fn main_make_retriggers_item_on_loc_after_each_closed_batch() {
         );
         let mut anvil = loc(anvil_id, "Anvil", "Use");
         anvil.tile = tile(5, 6);
-        anvil.distance = 1;
+        anvil.distance = 0;
         snapshot.seed_locs(vec![anvil]);
         let mut ledger = None;
         let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {

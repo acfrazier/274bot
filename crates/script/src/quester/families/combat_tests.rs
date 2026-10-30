@@ -5052,8 +5052,13 @@ fn nonkill_combat_outcomes_reengage_with_a_bounded_content_budget() {
     super::super::tests::seed_dialogue_combat(&mut snapshot, false);
     let mut ledger = None;
 
-    let mut until_drop =
-        until_drop_test_run(imp_target(&selected), None, item.id, Arc::clone(&item_name), 1);
+    let mut until_drop = until_drop_test_run(
+        imp_target(&selected),
+        None,
+        item.id,
+        Arc::clone(&item_name),
+        1,
+    );
     assert!(with_step_context(&snapshot, &mut ledger, 20, |cx| {
         until_drop.on_combat_report(report(CombatEnd::NoTarget), cx)
     })
@@ -5080,10 +5085,7 @@ fn nonkill_combat_outcomes_reengage_with_a_bounded_content_budget() {
         not_targeting_others: false,
     };
     let mut until = combat_test_run(target.clone(), None, Some(Arc::new(NeverStop)), vec![]);
-    for (tick, end) in [
-        (30, CombatEnd::NoTarget),
-        (31, CombatEnd::Budget),
-    ] {
+    for (tick, end) in [(30, CombatEnd::NoTarget), (31, CombatEnd::Budget)] {
         assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| {
             until.on_combat_report(report(end), cx)
         })
@@ -5101,8 +5103,7 @@ fn nonkill_combat_outcomes_reengage_with_a_bounded_content_budget() {
         CombatEnd::TargetGone
     );
 
-    let mut cumulative =
-        combat_test_run(target.clone(), None, Some(Arc::new(NeverStop)), vec![]);
+    let mut cumulative = combat_test_run(target.clone(), None, Some(Arc::new(NeverStop)), vec![]);
     assert!(with_step_context(&snapshot, &mut ledger, 33, |cx| {
         cumulative.on_combat_report(report(CombatEnd::NoTarget), cx)
     })
@@ -5132,10 +5133,7 @@ fn nonkill_combat_outcomes_reengage_with_a_bounded_content_budget() {
 
     let mut win = combat_test_run(target, None, None, vec![]);
     win.win = Some(Arc::new(NeverStop));
-    for (tick, end) in [
-        (40, CombatEnd::Budget),
-        (41, CombatEnd::TargetGone),
-    ] {
+    for (tick, end) in [(40, CombatEnd::Budget), (41, CombatEnd::TargetGone)] {
         assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| {
             win.on_combat_report(report(end), cx)
         })
@@ -5148,7 +5146,10 @@ fn nonkill_combat_outcomes_reengage_with_a_bounded_content_budget() {
         exhausted,
         Poll::Ready(Err(ActionError::Failed(detail))) if detail.contains("NoTarget")
     ));
-    assert_eq!(last_test_combat_receipt(&win).report.end, CombatEnd::NoTarget);
+    assert_eq!(
+        last_test_combat_receipt(&win).report.end,
+        CombatEnd::NoTarget
+    );
 }
 
 #[test]

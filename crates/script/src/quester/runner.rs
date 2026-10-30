@@ -5532,10 +5532,8 @@ mod tests {
     fn jailer_terminal_status_uses_the_completed_sequence_cursor() {
         use super::super::path::PathDocument;
 
-        let document: PathDocument = serde_json::from_slice(include_bytes!(
-            "../../paths/289/scorpcatcher.json"
-        ))
-        .unwrap();
+        let document: PathDocument =
+            serde_json::from_slice(include_bytes!("../../paths/289/scorpcatcher.json")).unwrap();
         let (mut script, snapshot) = status_fixture(document);
         let stage = FactKey::new("scorpcatcher:2");
         script.seq_index =

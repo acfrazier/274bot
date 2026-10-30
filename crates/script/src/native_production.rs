@@ -150,8 +150,8 @@ pub struct MakeRequest {
     pub qty: i32,
     /// Product items yielded by one menu process, as authored in content.
     pub items_per_process: i32,
-    /// First observed tick after an arrived loc's accepted click; `None` starts at `begin`.
-    pub menu_start_tick: Option<u64>,
+    /// Whether a production trigger was accepted before this menu opened.
+    pub after_trigger: bool,
     pub make_x: bool,
 }
 
@@ -195,9 +195,10 @@ impl NativeMachine for MakeMachine {
             )));
         }
         let tick = cx.evidence().tick;
-        let (menu_start_tick, arrival_gated_packet_ticks) = match request.menu_start_tick {
-            Some(start_tick) => (start_tick, MENU_PACKET_ORDER_TICKS),
-            None => (tick, 0),
+        let packet_order_ticks = if request.after_trigger {
+            MENU_PACKET_ORDER_TICKS
+        } else {
+            0
         };
         let last_held = held(cx, request.product_id).unwrap_or(0);
         let make_x = MakeXCore::new();
@@ -206,9 +207,9 @@ impl NativeMachine for MakeMachine {
             request,
             phase,
             make_x,
-            deadline_tick: menu_start_tick
+            deadline_tick: tick
                 .saturating_add(MENU_OBSERVATION_TICKS)
-                .saturating_add(arrival_gated_packet_ticks),
+                .saturating_add(packet_order_ticks),
             last_held,
             active_target: 0,
             main_make_ready_tick: tick,
@@ -380,11 +381,8 @@ impl NativeMachine for MakeMachine {
                                 ))?;
                                 self.phase = Phase::Product;
                                 self.surface = Some(Surface::Chat);
-                                self.active_target = item_target(
-                                    current,
-                                    quantity,
-                                    self.request.items_per_process,
-                                );
+                                self.active_target =
+                                    item_target(current, quantity, self.request.items_per_process);
                                 self.last_held = current;
                                 self.deadline_tick = tick.saturating_add(PRODUCT_PROGRESS_TICKS);
                                 return Poll::Pending;
@@ -467,11 +465,8 @@ impl NativeMachine for MakeMachine {
                                 )))?;
                                 self.phase = Phase::Product;
                                 self.surface = Some(Surface::MainMake);
-                                self.active_target = item_target(
-                                    current,
-                                    quantity,
-                                    self.request.items_per_process,
-                                );
+                                self.active_target =
+                                    item_target(current, quantity, self.request.items_per_process);
                                 self.deadline_tick = tick.saturating_add(PRODUCT_PROGRESS_TICKS);
                                 return Poll::Pending;
                             }
@@ -751,7 +746,7 @@ mod tests {
             menu_id: 1737,
             qty: 20,
             items_per_process: 1,
-            menu_start_tick: None,
+            after_trigger: false,
             make_x,
         }
     }
@@ -984,7 +979,7 @@ mod tests {
                     menu_id: 1737,
                     qty: quantity,
                     items_per_process: 1,
-                    menu_start_tick: None,
+                    after_trigger: false,
                     make_x: false,
                 },
             );
@@ -1043,7 +1038,7 @@ mod tests {
                 menu_id,
                 qty: 7,
                 items_per_process: 1,
-                menu_start_tick: None,
+                after_trigger: false,
                 make_x: false,
             },
         );
@@ -1054,10 +1049,7 @@ mod tests {
         });
         assert!(matches!(
             first,
-            HostEffect::Interaction(InteractReq::MakePanel {
-                operation: 2,
-                ..
-            })
+            HostEffect::Interaction(InteractReq::MakePanel { operation: 2, .. })
         ));
 
         client.main_modal_id = -1;
@@ -1094,10 +1086,7 @@ mod tests {
         });
         assert!(matches!(
             effect,
-            HostEffect::Interaction(InteractReq::MakePanel {
-                operation: 1,
-                ..
-            })
+            HostEffect::Interaction(InteractReq::MakePanel { operation: 1, .. })
         ));
     }
 

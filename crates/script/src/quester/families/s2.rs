@@ -654,8 +654,7 @@ pub(super) fn compile_make(
                 CompileError::code("unresolved-loc").with_detail(loc_arg.name.as_str())
             })?;
             if loc_arg.op.as_ref().is_some_and(|op| {
-                !loc
-                    .ops
+                !loc.ops
                     .iter()
                     .any(|candidate| candidate.eq_ignore_ascii_case(op))
             }) {
@@ -672,19 +671,22 @@ pub(super) fn compile_make(
         _ => return Err(CompileError::code("invalid-make-trigger")),
     };
     let product = item(cx, &args.product)?;
-    let menu_item = match args.menu {
+    let product_id = product.id;
+    let (menu_item_id, menu_item_name) = match args.menu {
         Some(menu) => {
             if menu.source.trim().is_empty() {
                 return Err(CompileError::code("invalid-make-menu"));
             }
-            item(cx, &menu.obj)?
+            let menu_item = item(cx, &menu.obj)?;
+            (menu_item.id, menu_item.name)
         }
-        None => product.clone(),
+        None => (product_id, product.name),
     };
     Ok(Arc::new(MakePlan {
         trigger,
-        product,
-        menu_item,
+        product_id,
+        menu_item_id,
+        menu_item_name,
         items_per_process: make_items_per_process(&args.product),
         qty,
         make_x: args.make_x,
@@ -714,8 +716,9 @@ fn make_items_per_process(product: &str) -> i32 {
 
 struct MakePlan {
     trigger: Option<MakeTrigger>,
-    product: BankItem,
-    menu_item: BankItem,
+    product_id: i32,
+    menu_item_id: i32,
+    menu_item_name: Arc<str>,
     items_per_process: i32,
     qty: QuantityPlan,
     make_x: bool,
@@ -727,15 +730,15 @@ impl StepPlan for MakePlan {
         })?;
         Ok(Box::new(MakeRun {
             trigger_plan: self.trigger.clone(),
+            input_item_name: Arc::clone(&self.menu_item_name),
             request: MakeRequest {
-                product_id: self.product.id,
-                menu_id: self.menu_item.id,
+                product_id: self.product_id,
+                menu_id: self.menu_item_id,
                 qty,
                 items_per_process: self.items_per_process,
-                menu_start_tick: None,
+                after_trigger: false,
                 make_x: self.make_x,
             },
-            input_item_name: Arc::clone(&self.menu_item.name),
             walk: None,
             trigger: None,
             retrigger: None,
@@ -749,8 +752,8 @@ impl StepPlan for MakePlan {
 
 struct MakeRun {
     trigger_plan: Option<MakeTrigger>,
-    request: MakeRequest,
     input_item_name: Arc<str>,
+    request: MakeRequest,
     walk: Option<ActionHandle<Walk>>,
     trigger: Option<ActionHandle<reach::Reach>>,
     retrigger: Option<ActionHandle<super::UseOnAction>>,
@@ -763,7 +766,7 @@ fn make_use_on_request(
     item_name: &str,
     cx: &ActionContext<'_>,
 ) -> Result<crate::shim::InteractReq, ActionError> {
-    let source = cx
+    let source_item_slot = cx
         .snapshot()
         .inventory()
         .and_then(|items| {
@@ -773,7 +776,9 @@ fn make_use_on_request(
                 .find(|item| item.def.id == menu_id && item.count > 0)
                 .map(|item| item.slot)
         })
-        .ok_or_else(|| ActionError::Unavailable(Arc::from("production trigger item is not held")))?;
+        .ok_or_else(|| {
+            ActionError::Unavailable(Arc::from("production trigger item is not held"))
+        })?;
     Ok(crate::shim::InteractReq::UseOn {
         name: item_name.to_owned(),
         kind: "loc".to_owned(),
@@ -783,7 +788,7 @@ fn make_use_on_request(
         level: trigger.tile.level,
         index: None,
         source_item_id: Some(menu_id),
-        source_item_slot: Some(source),
+        source_item_slot: Some(source_item_slot),
         target_item_id: Some(trigger.loc_id),
         target_item_slot: None,
     })
@@ -809,8 +814,7 @@ impl StepRun for MakeRun {
                 let loc = {
                     let snapshot = cx.tick.cx.snapshot();
                     snapshot.locs().and_then(|locs| {
-                        locs
-                            .value
+                        locs.value
                             .iter()
                             .find(|loc| loc.id == trigger.loc_id && loc.tile == trigger.tile)
                             .cloned()
@@ -820,9 +824,12 @@ impl StepRun for MakeRun {
                     return Poll::Pending;
                 };
                 if !reach::loc_arrived(&cx.tick.cx, &loc) {
-                    let here = cx.tick.cx.snapshot().local_player().map(|player| {
-                        player.value.player.network
-                    });
+                    let here = cx
+                        .tick
+                        .cx
+                        .snapshot()
+                        .local_player()
+                        .map(|player| player.value.player.network);
                     self.walk = Some(std::task::ready!(crate::native::defer_budget(
                         cx.tick.actions.begin::<Walk>(
                             reach::loc_walk_request(&loc, here, cx.required_after),
@@ -881,7 +888,7 @@ impl StepRun for MakeRun {
                 }
                 Poll::Ready(Ok(true)) => {
                     self.trigger = None;
-                    self.request.menu_start_tick = Some(cx.tick.cx.evidence().tick);
+                    self.request.after_trigger = true;
                     self.make = Some(
                         cx.tick
                             .actions
@@ -899,7 +906,7 @@ impl StepRun for MakeRun {
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(_)) => {
                     self.retrigger = None;
-                    self.request.menu_start_tick = Some(cx.tick.cx.evidence().tick);
+                    self.request.after_trigger = true;
                     self.make = Some(
                         cx.tick
                             .actions

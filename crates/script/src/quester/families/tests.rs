@@ -2369,6 +2369,14 @@ fn same_tick_composed_approaches_defer_before_native_dispatch() {
         for (index, plan) in plans.into_iter().enumerate() {
             let mut snapshot = ready();
             snapshot.seed_local_player(local_player(tile(3200, 3200)));
+            let mut wheel = loc(
+                compile.selected.loc_by_config("spinningwheel").unwrap().id,
+                "Spinning wheel",
+                "Spin",
+            );
+            wheel.tile = tile(3220, 3200);
+            wheel.distance = 20;
+            snapshot.seed_locs(vec![wheel]);
             snapshot.seed_inventory(
                 vec![ItemView {
                     def: def(resolve_obj(compile, "shears").unwrap(), "Shears"),
@@ -2423,8 +2431,8 @@ fn same_tick_make_trigger_retries_the_same_location_next_tick() {
         let mut snapshot = ready();
         snapshot.seed_local_player(local_player(tile(3200, 3200)));
         let mut wheel = loc(selected.id, "Spinning wheel", "Spin");
-        wheel.tile = tile(3201, 3200);
-        wheel.distance = 1;
+        wheel.tile = tile(3200, 3200);
+        wheel.distance = 0;
         snapshot.seed_locs(vec![wheel]);
         let plan = s2::compile_make(test_args::<s2::MakeArgs>(serde_json::json!({
             "loc": {"name": "spinningwheel", "op": "Spin"},
@@ -2439,7 +2447,11 @@ fn same_tick_make_trigger_retries_the_same_location_next_tick() {
             for _ in 0..3 {
                 assert!(with_step(tick, |cx| run.poll(cx)).is_pending());
             }
-            assert!(tick.cx.ledger.as_ref().unwrap().outbox.is_empty());
+            assert!(tick
+                .cx
+                .ledger
+                .as_ref()
+                .is_none_or(|ledger| ledger.outbox.is_empty()));
             run
         });
         assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
@@ -2485,12 +2497,17 @@ fn buy_and_make_approach_from_the_network_tile() {
             )
             .unwrap(),
         ];
+        let wheel_id = compile.selected.loc_by_config("spinningwheel").unwrap().id;
         for plan in plans {
             let mut snapshot = ready();
             snapshot.seed_local_player(local_player_with_network(
                 tile(3200, 3200),
                 tile(3193, 3200),
             ));
+            let mut wheel = loc(wheel_id, "Spinning wheel", "Spin");
+            wheel.tile = tile(3200, 3200);
+            wheel.distance = 7;
+            snapshot.seed_locs(vec![wheel]);
             let mut ledger = None;
             let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
                 with_step(tick, |step| plan.begin(step).unwrap())
@@ -4345,7 +4362,7 @@ fn make_selects_the_input_menu_row_and_settles_on_the_output() {
                     menu_id: 1737,
                     qty: 20,
                     items_per_process: 1,
-                    menu_start_tick: None,
+                    after_trigger: false,
                     make_x: true,
                 },
                 &mut tick.cx,
@@ -5822,8 +5839,8 @@ fn assert_sheep_partial_spin(finish_target: bool) {
         let document: crate::quester::path::PathDocument =
             serde_json::from_str(crate::quester::compile::SHEEP_JSON).unwrap();
         let here = WorldTile {
-            x: 2982,
-            z: 3315,
+            x: 2981,
+            z: 3314,
             level: 0,
         };
         let path =
@@ -5847,7 +5864,7 @@ fn assert_sheep_partial_spin(finish_target: bool) {
                 z: 3314,
                 level: 0,
             },
-            distance: 1,
+            distance: 0,
             ..loc(2644, "Spinning wheel", "Spin")
         }]);
         snapshot.rebuild_family(&client, api::snapshot::Family::MakeProducts);

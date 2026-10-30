@@ -285,21 +285,12 @@ mod smoke_tests {
             let loadout = seeds.fixture_loadout().unwrap();
             let extra_items = seeds.extra_item_refs();
             let seed_vars = seeds.seed_var_refs();
-            let cell = smoke_cell(
-                row,
-                &seeds,
-                loadout,
-                &extra_items,
-                &seed_vars,
-                false,
-            )
-            .unwrap();
+            let cell = smoke_cell(row, &seeds, loadout, &extra_items, &seed_vars, false).unwrap();
             assert_eq!(cell.quest, quest);
             assert!(matches!(cell.mode, Mode::Stage { .. }));
             assert_eq!(cell.scenario.settings.deadline, DEADLINE);
         }
     }
-
 
     #[test]
     fn danger_route_permission_is_opt_in() {
