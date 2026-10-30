@@ -234,13 +234,15 @@ mod tests {
 
     fn plan() -> Plan {
         let selected = selected();
+        let (targets, no_target_wait_ticks) = selected_targets(&selected, "digworkman1").unwrap();
         Plan {
-            targets: selected_targets(&selected, "digworkman1").unwrap(),
+            targets,
             item_id: 995,
             qty: super::super::s2::QuantityPlan::Fixed(1),
             anchor: None,
             radius: 12,
             duration: Duration::from_secs(60),
+            no_target_wait_ticks,
         }
     }
 
@@ -395,21 +397,27 @@ mod tests {
     #[test]
     fn target_alias_and_display_resolve_to_exact_selected_npc_levels() {
         let selected = selected();
-        let alias = selected_targets(&selected, "digworkman1").unwrap();
+        let (alias, wait_ticks) = selected_targets(&selected, "digworkman1").unwrap();
         assert_eq!(alias.len(), 1);
         assert_eq!(alias[0].id, 613);
         assert_eq!(alias[0].display.as_ref(), "Digsite workman");
         assert_eq!(alias[0].action.as_ref(), STEAL_FROM);
         assert_eq!(alias[0].required_level, 25);
+        assert_eq!(alias[0].respawn_ticks, 100);
+        assert_eq!(
+            wait_ticks, 101,
+            "the compiled empty-anchor bound is the respawn rate plus one observed tick"
+        );
 
-        let display = selected_targets(&selected, "Digsite workman").unwrap();
+        let (display, wait_ticks) = selected_targets(&selected, "Digsite workman").unwrap();
         assert_eq!(
             display.iter().map(|target| target.id).collect::<Vec<_>>(),
             vec![613, 614]
         );
         assert!(display.iter().all(|target| target.required_level == 25));
+        assert_eq!(wait_ticks, 101);
         for (alias, id) in [("troll_prison_guard1", 1128), ("troll_prison_guard2", 1129)] {
-            let target = selected_targets(&selected, alias).unwrap();
+            let (target, _) = selected_targets(&selected, alias).unwrap();
             assert!(
                 target
                     .iter()
@@ -419,14 +427,27 @@ mod tests {
         }
 
         for (alias, id) in [("man", 1), ("man2", 2), ("man3", 3)] {
-            let target = selected_targets(&selected, alias).unwrap();
+            let (target, wait_ticks) = selected_targets(&selected, alias).unwrap();
             assert!(
                 target
                     .iter()
                     .any(|target| target.id == id && target.required_level == 1),
                 "Waterfall men use the selected level-1 pickpocket fact for {alias}"
             );
+            assert_eq!(wait_ticks, 51, "{alias} respawns in 50 ticks");
         }
+
+        let (gnome, wait_ticks) = selected_targets(&selected, "gnome").unwrap();
+        assert_eq!(
+            gnome.iter().map(|target| target.id).collect::<Vec<_>>(),
+            vec![66],
+            "the alias resolves one NPC config"
+        );
+        assert_eq!(gnome[0].respawn_ticks, 120);
+        assert_eq!(
+            wait_ticks, 121,
+            "a 120-tick spawn outlives the 101-tick wait the fixed constant used"
+        );
     }
 
     #[test]
