@@ -1844,7 +1844,7 @@ fn empty_gate_needs_evidence_uses_active_step_wait_detail_before_drop() {
 }
 
 #[test]
-fn nonempty_gate_needs_evidence_keeps_navigation_reason() {
+fn nonempty_gate_needs_evidence_reports_quest_and_state() {
     let gates: Arc<[api::selected::QuestGate]> = Arc::from([api::selected::QuestGate::Complete(
         api::selected::FactKey::new("cook:mid"),
     )]);
@@ -1856,7 +1856,7 @@ fn nonempty_gate_needs_evidence_keeps_navigation_reason() {
     ));
     assert_eq!(
         script.last_error.as_deref(),
-        Some("walk needs authoritative quest-gate evidence")
+        Some("needs evidence: quest cook:mid; completion; evidence state unknown")
     );
 }
 
