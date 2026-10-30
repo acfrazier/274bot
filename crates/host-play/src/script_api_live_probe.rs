@@ -1,6 +1,20 @@
 //! Test-only host receipts and coordination for the ignored Script API C/D cells.
 use crate::{script_runtime::script_slot, Play};
 
+fn queue_abort_walk(slot: &script::SlotScript, request_id: u64) -> Result<(), String> {
+    let expression = format!(
+        "__rs2b0t_seat_host().interact.push({{op:'abort-walk',request_id:{request_id}}}); true"
+    );
+    match slot
+        .probe(&expression)
+        .map_err(|error| error.to_string())?
+        .as_bool()
+    {
+        Some(true) => Ok(()),
+        _ => Err("compat AbortWalk did not enqueue".into()),
+    }
+}
+
 impl Play {
     #[doc(hidden)]
     pub fn script_api_live_probe(&self, name: &str) -> serde_json::Value {
@@ -44,17 +58,24 @@ impl Play {
         }
         let cell = script_slot(&self.scripts, name).ok_or("script slot missing")?;
         let slot = cell.lock().map_err(|_| "script slot lock poisoned")?;
-        let expression = format!(
-            "__rs2b0t_seat_host().interact.push({{op:'abort-walk',request_id:{request_id}}}); true"
-        );
-        match slot
-            .probe(&expression)
-            .map_err(|error| error.to_string())?
-            .as_bool()
-        {
-            Some(true) => Ok(()),
-            _ => Err("compat AbortWalk did not enqueue".into()),
-        }
+        queue_abort_walk(&slot, request_id)
+    }
+
+    /// Queue the same AbortWalk row from a pre-script fixture callback.
+    /// The captured slot must still own the exact logical compat request.
+    #[doc(hidden)]
+    pub fn script_api_live_compat_abort_handle(
+        &self,
+        name: &str,
+    ) -> Option<impl Fn(u64) -> Result<(), String> + Send + Sync + 'static> {
+        let cell = script_slot(&self.scripts, name)?;
+        Some(move |request_id| {
+            let slot = cell.lock().map_err(|_| "script slot lock poisoned")?;
+            if slot.api_live_compat_walk_request_id() != Some(request_id) {
+                return Err("walk request id is not the current logical compat walk".into());
+            }
+            queue_abort_walk(&slot, request_id)
+        })
     }
 
     /// Signal the fixture consumer after the host observes the real stage-40 cheat
