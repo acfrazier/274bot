@@ -89,7 +89,7 @@ fn pick_aim_in_scene_through(
     last_allowed: usize,
 ) -> (WorldTile, usize) {
     let (_, idx) = pick_aim(tiles, here, cursor);
-    let idx = idx.min(last_allowed);
+    let mut idx = idx.min(last_allowed);
     let aim = tiles[idx];
     if tile_in_scene(scene, aim) {
         return (aim, idx);

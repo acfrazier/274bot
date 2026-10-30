@@ -644,11 +644,10 @@ no bank-fetch zone attribution.
 `risk::assess` computes an `Arc<RouteAssessment>` from the immutable found
 route, its zone table, shared combat/risk tables, permissions and a compact
 `RiskInput`. It is compute-only: it does not request another route, admit a
-walk, install an observer or execute an escape. Existing walking behavior and
-the pack format are unchanged.
+walk, install an observer or execute an escape. The pack format is unchanged.
 
-`risk::odds` also exposes a pure no-action probability core.
-It does not yet change `assess`, admission, or the escape net.
+`risk::odds` provides the no-action probability core used by assessment and
+admission. It does not change the escape net.
 `hit_chance` uses inclusive attack and defence rolls, where a tie misses.
 `HitChance` rounds that probability upward into four bytes.
 An `Attack` event draws uniform inclusive damage after its accuracy roll.
