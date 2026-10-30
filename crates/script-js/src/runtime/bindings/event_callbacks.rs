@@ -142,20 +142,6 @@ pub(crate) fn remove_callback_for<'s>(
     });
 }
 
-/// Test helper: deliver a JSON payload to all listeners in registration order.
-#[cfg(test)]
-pub(crate) fn emit_json(
-    runtime: &mut Runtime,
-    event: &str,
-    payload: &serde_json::Value,
-) -> Result<(), String> {
-    let context = runtime.deno_runtime().main_context();
-    let mut scope = runtime.deno_runtime().handle_scope();
-    let global = context.open(&mut scope).global(&mut scope);
-    let payload = rustyscript::deno_core::serde_v8::to_v8(&mut scope, payload)
-        .map_err(|error| format!("event payload: {error}"))?;
-    emit_value(&mut scope, event, Some(payload), global)
-}
 
 /// Deliver a no-argument event to all listeners in registration order.
 pub(crate) fn emit_no_args(runtime: &mut Runtime, event: &str) -> Result<(), String> {
@@ -470,7 +456,9 @@ mod v8_tests {
     use rustyscript::{Runtime, RuntimeOptions};
     use serde_json::json;
 
-    use super::{clear_all, emit_json, install};
+    use super::{clear_all, install};
+    use crate::events::NativeEvent;
+    use crate::runtime::snapshot::dispatch_native_events;
 
     const FAST_CHILD: &str = "SCRIPT_EVENT_FAST_TEST_CHILD";
     const FAST_TEST: &str =
@@ -521,24 +509,97 @@ mod v8_tests {
         runtime
             .eval::<()>(
                 r#"
-globalThis.__event_payload_fast = false;
-globalThis.__rs2b0t_native_event_on('skill.xp', payload => {
+globalThis.__nativeEventPayloads = [];
+globalThis.__rs2b0t_native_event_batch_dispatch_original =
+    globalThis.__rs2b0t_native_event_batch_dispatch;
+globalThis.__rs2b0t_native_event_batch_dispatch = (events) => {
+    globalThis.__nativeEventRecords = events;
+    globalThis.__rs2b0t_native_event_batch_dispatch_original(events);
+};
+for (const type of ['chat.message', 'skill.xp', 'inventory.changed']) {
+    globalThis.__rs2b0t_native_event_on(type, payload => {
+        globalThis.__nativeEventPayloads.push(payload);
+    });
+}
+globalThis.__nativeEventShapeFacts = () => {
     const fast = new Function('value', 'return %HasFastProperties(value)');
-    globalThis.__event_payload_fast = fast(payload);
-});
+    return {
+        records: globalThis.__nativeEventRecords.map(event => ({
+            type: event.type,
+            wrapperFast: fast(event),
+            payloadFast: fast(event.payload),
+            payloadKeys: Object.keys(event.payload),
+        })),
+        payloadCount: globalThis.__nativeEventPayloads.length,
+    };
+};
 "#,
             )
             .unwrap();
-        emit_json(
-            &mut runtime,
-            "skill.xp",
-            &json!({"skill": 5, "name": "prayer", "xp": 1000, "delta": 20}),
-        )
-        .unwrap();
-        assert!(runtime
-            .eval::<bool>("globalThis.__event_payload_fast")
-            .unwrap());
+        dispatch_native_events(&mut runtime, &events).unwrap();
+        flush_pending_events(&mut runtime);
+        let facts: serde_json::Value = runtime.eval("__nativeEventShapeFacts()").unwrap();
+        assert_eq!(
+            facts,
+            json!({
+                "records": [
+                    {
+                        "type": "chat.message",
+                        "wrapperFast": true,
+                        "payloadFast": true,
+                        "payloadKeys": ["type", "username", "text"]
+                    },
+                    {
+                        "type": "skill.xp",
+                        "wrapperFast": true,
+                        "payloadFast": true,
+                        "payloadKeys": ["skill", "name", "xp", "delta"]
+                    },
+                    {
+                        "type": "inventory.changed",
+                        "wrapperFast": true,
+                        "payloadFast": true,
+                        "payloadKeys": [
+                            "slot", "id", "name", "count", "previousId", "previousCount"
+                        ]
+                    }
+                ],
+                "payloadCount": 3
+            }),
+            "production native-event wrappers and payloads retain fixed V8 shapes"
+        );
         clear_all();
+    }
+
+    fn sample_events() -> [NativeEvent; 3] {
+        [
+            NativeEvent::ChatMessage {
+                type_: 0,
+                username: Some("Ada".into()),
+                text: "hello".into(),
+            },
+            NativeEvent::SkillXp {
+                skill: 5,
+                name: "prayer".into(),
+                xp: 1000,
+                delta: 20,
+            },
+            NativeEvent::InventoryChanged {
+                slot: 2,
+                id: 995,
+                name: Some("Coins".into()),
+                count: 7,
+                previous_id: 995,
+                previous_count: 6,
+            },
+        ]
+    }
+    fn flush_pending_events(runtime: &mut Runtime) {
+        runtime
+            .eval::<()>(
+                "globalThis.__rs2b0t_dispatch_native_events(globalThis.__rs2b0t_pending_native_event_batch.splice(0))",
+            )
+            .unwrap();
     }
 
     #[test]
@@ -552,17 +613,21 @@ globalThis.__rs2b0t_native_event_on('skill.xp', payload => {
             .eval::<()>(
                 r#"
 globalThis.__event_payload_count = 0;
-globalThis.__rs2b0t_native_event_on('skill.xp', payload => {
-    if (payload.skill === 5) globalThis.__event_payload_count += 1;
-});
+for (const type of ['chat.message', 'skill.xp', 'inventory.changed']) {
+    globalThis.__rs2b0t_native_event_on(type, () => {
+        globalThis.__event_payload_count += 1;
+    });
+}
 "#,
             )
             .unwrap();
-        let payload = json!({"skill": 5, "name": "prayer", "xp": 1000, "delta": 20});
-        emit_json(&mut runtime, "skill.xp", &payload).unwrap();
+        let events = sample_events();
+        dispatch_native_events(&mut runtime, &events).unwrap();
+        flush_pending_events(&mut runtime);
         let baseline = collected_used_heap(&mut runtime);
         for _ in 0..1024 {
-            emit_json(&mut runtime, "skill.xp", &payload).unwrap();
+            dispatch_native_events(&mut runtime, &events).unwrap();
+            flush_pending_events(&mut runtime);
         }
         let after = collected_used_heap(&mut runtime);
         let count = runtime
@@ -573,11 +638,12 @@ globalThis.__rs2b0t_native_event_on('skill.xp', payload => {
         println!(
             "compat v1 Events V8 heap baseline={baseline} after={after} growth={growth} limit={limit}"
         );
-        assert_eq!(count, 1025, "every payload reaches its listener once");
+        assert_eq!(count, 3075, "every event reaches its listener once");
         assert!(
             growth <= limit,
-            "collected event-payload heap grew {growth} bytes; limit {limit}"
+            "collected native-event heap grew {growth} bytes; limit {limit}"
         );
         clear_all();
     }
 }
+

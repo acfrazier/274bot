@@ -1,4 +1,4 @@
-//! Real Engine L cells for the compat v1 Bot, Events, and Input contract.
+//! Real Engine L cells for the compat v1 Bot, Events, Input, and Runtime contracts.
 //!
 //! Each ignored test uses one fresh generated account and writes a receipt to
 //! LIVE_EVIDENCE_DIR. Run each cell three times on one product commit.
@@ -606,15 +606,70 @@ export default class CompatEventsProbe extends LoopingBot {
     source.replace("GENERATION", &generation.to_string())
 }
 
-fn prepare_catalog_task(root: &Path, temp: &Path) -> Result<PreparedCatalogTask, String> {
+fn replace_once(source: &mut String, needle: &str, replacement: &str) -> Result<(), String> {
+    let count = source.matches(needle).count();
+    if count != 1 {
+        return Err(format!(
+            "expected one catalog source marker {needle:?}, found {count}"
+        ));
+    }
+    *source = source.replacen(needle, replacement, 1);
+    Ok(())
+}
+
+fn start_catalog_task(
+    session: &LiveSession<'_>,
+    card: PreparedCatalogTask,
+) -> Result<(), String> {
+    session.play.script_start_handle().start_load(
+        &session.account,
+        card.js,
+        card.shape,
+        Some(card.settings),
+        card.siblings,
+    )
+}
+
+fn wait_script_state(
+    session: &mut LiveSession<'_>,
+    expected: script::RunState,
+    description: &str,
+) -> Result<(), String> {
+    let deadline = Instant::now() + ACTION_DEADLINE;
+    loop {
+        drain_logs(session);
+        let state = session.play.script_state(&session.account);
+        if state == expected {
+            return Ok(());
+        }
+        if let Some(error) = session.play.script_last_error(&session.account) {
+            return Err(format!(
+                "{description}: compat v1 script failed in {state:?}: {error}"
+            ));
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "{description}: timed out in state {state:?}; logs: {:?}",
+                session.receipt.logs
+            ));
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+fn prepare_catalog_task(
+    root: &Path,
+    temp: &Path,
+    card_name: &str,
+    source_relative_path: &str,
+) -> Result<PreparedCatalogTask, String> {
     let catalog_commit = git_output(root, &["rev-parse", "--short=10", "HEAD"])?;
     if !catalog_commit.starts_with(CATALOG_SHORT) {
         return Err(format!(
             "expected rs2b0t catalog {CATALOG_SHORT}, found {catalog_commit}"
         ));
     }
-    let card_name = "ClueSolver";
-    let source_path = root.join("src/bot/scripts/ClueSolver/ClueSolver.ts");
+    let source_path = root.join(source_relative_path);
     if !source_path.is_file() {
         return Err(format!(
             "catalog source is missing: {}",
@@ -689,7 +744,12 @@ fn run_tree_cell(receipt: &mut Receipt) -> Result<(), String> {
         .home
         .join("compat-v1-live")
         .join(&session.account);
-    let card = prepare_catalog_task(&catalog_root, &temp)?;
+    let card = prepare_catalog_task(
+        &catalog_root,
+        &temp,
+        "ClueSolver",
+        "src/bot/scripts/ClueSolver/ClueSolver.ts",
+    )?;
     session.play.script_start_handle().start_load(
         &session.account,
         card.js,
@@ -1055,4 +1115,347 @@ fn run_runtime_frame_cell(receipt: &mut Receipt) -> Result<(), String> {
 fn compat_v1_runtime_frame_live() {
     run_and_record("compat_v1_runtime_frame", run_runtime_frame_cell)
         .unwrap_or_else(|error| panic!("{error}"));
+}
+fn instrument_account_leveler_frames(js: &mut String) -> Result<(), String> {
+    replace_once(
+        js,
+        "BotHost.addFrameListener(() => {",
+        "BotHost.addFrameListener(() => {\n            const frameCount = (globalThis.__compatV1AccountLevelerFrames = (globalThis.__compatV1AccountLevelerFrames || 0) + 1);\n            if (frameCount <= 4) this.log('RUNTIME:ACCOUNT_LEVELER_FRAME:' + frameCount + ':' + ScriptRunner.state);",
+    )?;
+    replace_once(
+        js,
+        "this.activity.stop();",
+        "this.log('RUNTIME:ACCOUNT_LEVELER_STOP');\n        this.activity.stop();",
+    )
+}
+
+fn instrument_alcher_active_event(js: &mut String) -> Result<(), String> {
+    replace_once(
+        js,
+        "export default class Alcher extends TaskBot {",
+        "class Alcher extends TaskBot {",
+    )?;
+    js.push_str(
+        r#"
+export default class CompatAlcherActiveEventProbe extends Alcher {
+    onStart() {
+        this.sampleEvent();
+        this.__compatLastActiveEvent = ScriptRunner.ctx?.activeEvent ?? null;
+        this.log('RUNTIME:ALCHER_ACTIVE_EVENT:' + (this.__compatLastActiveEvent ?? '<null>'));
+    }
+    loop() {
+        this.sampleEvent();
+        const activeEvent = ScriptRunner.ctx?.activeEvent ?? null;
+        if (activeEvent !== this.__compatLastActiveEvent) {
+            this.__compatLastActiveEvent = activeEvent;
+            this.log('RUNTIME:ALCHER_ACTIVE_EVENT:' + (activeEvent ?? '<null>'));
+        }
+    }
+    onStop() { this.log('RUNTIME:ALCHER_STOP'); }
+}
+"#,
+    );
+    Ok(())
+}
+
+fn run_runtime_catalog_cell(receipt: &mut Receipt) -> Result<(), String> {
+    let mut session = session("compat-v1-runtime-catalog", receipt)?;
+    let catalog_root = required_path("RS2B0T")?;
+    let temp = session
+        ._isolated
+        .home
+        .join("compat-v1-live")
+        .join(&session.account);
+    let mut account_leveler = prepare_catalog_task(
+        &catalog_root,
+        &temp,
+        "AccountLeveler",
+        "src/bot/scripts/AccountLeveler/AccountLeveler.ts",
+    )?;
+    instrument_account_leveler_frames(&mut account_leveler.js)?;
+    start_catalog_task(&session, account_leveler)?;
+    wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
+        logs.iter()
+            .any(|line| line.starts_with("RUNTIME:ACCOUNT_LEVELER_FRAME:2:"))
+    })?;
+    if session.play.script_state(&session.account) != script::RunState::Running {
+        return Err(format!(
+            "AccountLeveler did not reach Running: {:?}",
+            session.play.script_state(&session.account)
+        ));
+    }
+    if !session.receipt.logs.iter().any(|line| {
+        line.starts_with("RUNTIME:ACCOUNT_LEVELER_FRAME:2:")
+            && line.ends_with(":running")
+    }) {
+        return Err(format!(
+            "AccountLeveler frame observer did not read Running: {:?}",
+            session.receipt.logs
+        ));
+    }
+    stop_script(&mut session, "RUNTIME:ACCOUNT_LEVELER_STOP", false)?;
+    let account_stop_index = session
+        .receipt
+        .logs
+        .iter()
+        .position(|line| line == "RUNTIME:ACCOUNT_LEVELER_STOP")
+        .ok_or_else(|| "AccountLeveler did not log its stop hook".to_string())?;
+    let stopped_tick = lock_state(&session.state).tick;
+    wait_for_game_tick(&mut session, stopped_tick.saturating_add(2))?;
+    drain_logs(&mut session);
+    if session.receipt.logs[account_stop_index + 1..]
+        .iter()
+        .any(|line| line.starts_with("RUNTIME:ACCOUNT_LEVELER_FRAME:"))
+    {
+        return Err("AccountLeveler frame observer ran after stop".into());
+    }
+
+    let mut alcher = prepare_catalog_task(
+        &catalog_root,
+        &temp,
+        "Alcher",
+        "src/bot/scripts/Alcher/Alcher.ts",
+    )?;
+    instrument_alcher_active_event(&mut alcher.js)?;
+    let alcher_start = session.receipt.logs.len();
+    start_catalog_task(&session, alcher)?;
+    wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
+        logs.get(alcher_start..).is_some_and(|recent| {
+            recent
+                .iter()
+                .any(|line| line.starts_with("RUNTIME:ALCHER_ACTIVE_EVENT:"))
+        })
+    })?;
+    if session.play.script_state(&session.account) != script::RunState::Running {
+        return Err(format!(
+            "Alcher did not reach Running: {:?}",
+            session.play.script_state(&session.account)
+        ));
+    }
+    stop_script(&mut session, "RUNTIME:ALCHER_STOP", false)?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires LIVE=1, throwaway HOME, pinned catalog, and real 289 Engine L"]
+fn compat_v1_runtime_catalog_live() {
+    run_and_record("compat_v1_runtime_catalog", run_runtime_catalog_cell)
+        .unwrap_or_else(|error| panic!("{error}"));
+}
+fn instrument_walk_to_settings(js: &mut String) -> Result<(), String> {
+    replace_once(
+        js,
+        "export default class WalkToBot extends TaskBot {",
+        "class WalkToBot extends TaskBot {",
+    )?;
+    js.push_str(
+        r#"
+export default class CompatWalkToSettingsProbe extends WalkToBot {
+    async onStart() {
+        await super.onStart();
+        if (SettingsStore.saved('WalkTo', 'customTile') === undefined) {
+            const here = Game.tile();
+            if (!here) throw new Error('WalkTo settings probe has no player tile');
+            const raw = `${here.x + 16},${here.z},${here.level}`;
+            SettingsStore.save('WalkTo', 'customTile', raw);
+            this.log('RUNTIME:WALK_WRITE:' + raw);
+        }
+        const target = this.targetTile();
+        this.log('RUNTIME:WALK_SETTINGS:' + JSON.stringify({
+            raw: SettingsStore.saved('WalkTo', 'customTile'),
+            destination: SettingsStore.saved('WalkTo', 'destination'),
+            label: this.destLabel(),
+            target: { x: target.x, z: target.z, level: target.level },
+        }));
+    }
+    async loop() {
+        const work = super.loop();
+        let settled = false;
+        Promise.resolve(work).then(
+            () => { settled = true; },
+            () => { settled = true; },
+        );
+        await Promise.resolve();
+        if (!settled && !this.__compatPendingLogged) {
+            this.__compatPendingLogged = true;
+            this.log('RUNTIME:WALK_PENDING');
+        }
+        await work;
+        this.log('RUNTIME:WALK_RETURN');
+    }
+    onPause() { this.log('RUNTIME:WALK_PAUSE'); }
+    onResume() { this.log('RUNTIME:WALK_RESUME'); }
+    onStop() {
+        super.onStop();
+        this.log('RUNTIME:WALK_STOP');
+    }
+}
+"#,
+    );
+    Ok(())
+}
+
+fn validate_walk_map_pick(logs: &[String], start: usize) -> Result<String, String> {
+    let payload = logs
+        .get(start..)
+        .and_then(|recent| {
+            recent
+                .iter()
+                .find_map(|line| line.strip_prefix("RUNTIME:WALK_SETTINGS:"))
+        })
+        .ok_or_else(|| "WalkTo did not report its resolved map-pick settings".to_string())?;
+    let settings: Value =
+        serde_json::from_str(payload).map_err(|error| format!("invalid WalkTo settings: {error}"))?;
+    let raw = settings
+        .get("raw")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "WalkTo did not read the saved custom tile".to_string())?;
+    if settings.get("destination").and_then(Value::as_str) != Some("Map pick") {
+        return Err(format!(
+            "WalkTo did not select Map pick after the custom-tile write: {settings}"
+        ));
+    }
+    let mut parts = raw.split(',').map(|part| {
+        part.parse::<i32>()
+            .map_err(|error| format!("invalid saved WalkTo tile {raw:?}: {error}"))
+    });
+    let x = parts.next().ok_or_else(|| "saved WalkTo tile has no x".to_string())??;
+    let z = parts.next().ok_or_else(|| "saved WalkTo tile has no z".to_string())??;
+    let level = parts
+        .next()
+        .ok_or_else(|| "saved WalkTo tile has no level".to_string())??;
+    if parts.next().is_some() {
+        return Err(format!("saved WalkTo tile has extra coordinates: {raw:?}"));
+    }
+    let expected_label = format!("Map pick {x},{z}");
+    if settings.get("label").and_then(Value::as_str) != Some(expected_label.as_str()) {
+        return Err(format!(
+            "WalkTo did not apply the map-pick label {expected_label:?}: {settings}"
+        ));
+    }
+    let target = settings
+        .get("target")
+        .ok_or_else(|| "WalkTo did not report its target tile".to_string())?;
+    if target.get("x").and_then(Value::as_i64) != Some(i64::from(x))
+        || target.get("z").and_then(Value::as_i64) != Some(i64::from(z))
+        || target.get("level").and_then(Value::as_i64) != Some(i64::from(level))
+    {
+        return Err(format!(
+            "WalkTo target does not match saved map-pick tile {raw:?}: {settings}"
+        ));
+    }
+    Ok(raw.to_owned())
+}
+
+fn run_runtime_settings_walk_cell(receipt: &mut Receipt) -> Result<(), String> {
+    let mut session = session("compat-v1-runtime-settings-walk", receipt)?;
+    let catalog_root = required_path("RS2B0T")?;
+    let temp = session
+        ._isolated
+        .home
+        .join("compat-v1-live")
+        .join(&session.account);
+    let mut card = prepare_catalog_task(
+        &catalog_root,
+        &temp,
+        "WalkTo",
+        "src/bot/scripts/WalkToBot/WalkToBot.ts",
+    )?;
+    instrument_walk_to_settings(&mut card.js)?;
+    start_catalog_task(&session, card)?;
+    wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
+        logs.iter().any(|line| line.starts_with("RUNTIME:WALK_WRITE:"))
+            && logs.iter().any(|line| line == "RUNTIME:WALK_PENDING")
+    })?;
+    if session.play.script_state(&session.account) != script::RunState::Running {
+        return Err(format!(
+            "WalkTo did not reach Running: {:?}",
+            session.play.script_state(&session.account)
+        ));
+    }
+    let first_map_pick = validate_walk_map_pick(&session.receipt.logs, 0)?;
+    let written_tile = session
+        .receipt
+        .logs
+        .iter()
+        .find_map(|line| line.strip_prefix("RUNTIME:WALK_WRITE:"))
+        .ok_or_else(|| "WalkTo did not log an accepted settings write".to_string())?;
+    if written_tile != first_map_pick {
+        return Err(format!(
+            "WalkTo saved tile {written_tile:?} differs from its resolved tile {first_map_pick:?}"
+        ));
+    }
+
+    session.play.script_pause(&session.account);
+    wait_script_state(&mut session, script::RunState::Paused, "pausing pending WalkTo")?;
+    wait_for_logs(&mut session, STOP_DEADLINE, |logs| {
+        logs.iter().any(|line| line == "RUNTIME:WALK_PAUSE")
+    })?;
+    let pending_index = session
+        .receipt
+        .logs
+        .iter()
+        .position(|line| line == "RUNTIME:WALK_PENDING")
+        .ok_or_else(|| "WalkTo did not record its pending traversal".to_string())?;
+    let pause_index = session
+        .receipt
+        .logs
+        .iter()
+        .position(|line| line == "RUNTIME:WALK_PAUSE")
+        .ok_or_else(|| "WalkTo did not run its pause hook".to_string())?;
+    if session.receipt.logs[pending_index..pause_index]
+        .iter()
+        .any(|line| line == "RUNTIME:WALK_RETURN")
+    {
+        return Err("WalkTo completed before the pending pause took effect".into());
+    }
+
+    session.play.script_resume(&session.account);
+    wait_script_state(&mut session, script::RunState::Running, "resuming pending WalkTo")?;
+    wait_for_logs(&mut session, STOP_DEADLINE, |logs| {
+        logs.iter().any(|line| line == "RUNTIME:WALK_RESUME")
+    })?;
+    stop_script(&mut session, "RUNTIME:WALK_STOP", false)?;
+
+    let restart_start = session.receipt.logs.len();
+    let mut restart = prepare_catalog_task(
+        &catalog_root,
+        &temp,
+        "WalkTo",
+        "src/bot/scripts/WalkToBot/WalkToBot.ts",
+    )?;
+    instrument_walk_to_settings(&mut restart.js)?;
+    start_catalog_task(&session, restart)?;
+    wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
+        logs.get(restart_start..).is_some_and(|recent| {
+            recent
+                .iter()
+                .any(|line| line.starts_with("RUNTIME:WALK_SETTINGS:"))
+                && recent.iter().any(|line| line == "RUNTIME:WALK_PENDING")
+        })
+    })?;
+    if session.receipt.logs[restart_start..]
+        .iter()
+        .any(|line| line.starts_with("RUNTIME:WALK_WRITE:"))
+    {
+        return Err("WalkTo rewrote its custom tile instead of loading it after restart".into());
+    }
+    let restarted_map_pick = validate_walk_map_pick(&session.receipt.logs, restart_start)?;
+    if restarted_map_pick != first_map_pick {
+        return Err(format!(
+            "WalkTo restart changed the saved map-pick tile from {first_map_pick:?} to {restarted_map_pick:?}"
+        ));
+    }
+    stop_script(&mut session, "RUNTIME:WALK_STOP", false)?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires LIVE=1, throwaway HOME, pinned catalog, and real 289 Engine L"]
+fn compat_v1_runtime_settings_walk_live() {
+    run_and_record(
+        "compat_v1_runtime_settings_walk",
+        run_runtime_settings_walk_cell,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
 }

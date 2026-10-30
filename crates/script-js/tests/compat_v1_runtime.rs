@@ -139,7 +139,7 @@ fn runtime_settings_state() -> Arc<SlotState> {
     let port = Arc::new(RuntimeSettingsPort::default());
     Arc::new(SlotState::new(
         port,
-        AccountKey::try_new("local-289", "compat-runtime").unwrap(),
+        AccountKey::try_new("local-289", "runtime").unwrap(),
         ContentScope::try_new(api::selected::ClientRevision::R289, "compat-runtime").unwrap(),
     ))
 }
@@ -168,7 +168,7 @@ globalThis.__facts = {
 };
 "#,
     );
-    let facts = run(&src, "__facts");
+    let facts = run(&src, "globalThis.__facts");
     assert_eq!(
         facts["candidates"],
         serde_json::json!([
@@ -493,6 +493,11 @@ globalThis.__stop = () => ScriptRunner.stop('frame census stop');
     );
     let mut iso = spawn(&src);
     iso.on_game_tick(1);
+    assert_eq!(
+        iso.probe("__frames").unwrap(),
+        0,
+        "the tick registers the listener before client frames arrive"
+    );
     assert!(
         iso.test_client_frame(),
         "one listener receives a client frame"
@@ -1101,7 +1106,7 @@ globalThis.__activityOutcomeFacts = {
         serde_json::json!({
             "outcome": { "kind": "failed", "reason": "child failed" },
             "child": null,
-            "logs": ["[Failing] failed: child failed"],
+            "logs": ["failed: child failed"],
         }),
         "the actual child failure is retained with its reason and logged before cleanup"
     );

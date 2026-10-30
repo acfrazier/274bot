@@ -289,15 +289,13 @@ fn start_inner<'s>(
         .ok_or_else(|| cb::type_error(scope, "ScriptActivity id space exhausted"))?;
     let generation_value = v8::BigInt::new_from_u64(scope, generation);
     let child_id_value = v8::BigInt::new_from_u64(scope, activity_id);
-    let log_data = cb::object(
+    let log_data = activity_log_data(
         scope,
-        &[
-            ("owner", owner.into()),
-            ("log", log),
-            ("meta", meta),
-            ("generation", generation_value.into()),
-            ("childId", child_id_value.into()),
-        ],
+        owner,
+        log,
+        meta,
+        generation_value.into(),
+        child_id_value.into(),
     )?;
     let log_callback = build_callback(
         scope,
@@ -313,14 +311,12 @@ fn start_inner<'s>(
         "child.bindLog",
     )?;
 
-    let finish_data = cb::object(
+    let finish_data = activity_finish_data(
         scope,
-        &[
-            ("owner", owner.into()),
-            ("generation", generation_value.into()),
-            ("childId", child_id_value.into()),
-            ("ActivityFinished", activity_finished),
-        ],
+        owner,
+        generation_value.into(),
+        child_id_value.into(),
+        activity_finished,
     )?;
     let finish_callback = build_callback(
         scope,
@@ -613,6 +609,44 @@ fn run_data<'s>(
         ],
     )
 }
+fn activity_log_data<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    owner: v8::Local<'s, v8::Object>,
+    log: v8::Local<'s, v8::Value>,
+    meta: v8::Local<'s, v8::Value>,
+    generation: v8::Local<'s, v8::Value>,
+    child_id: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    cb::object(
+        scope,
+        &[
+            ("owner", owner.into()),
+            ("log", log),
+            ("meta", meta),
+            ("generation", generation),
+            ("childId", child_id),
+        ],
+    )
+}
+
+fn activity_finish_data<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    owner: v8::Local<'s, v8::Object>,
+    generation: v8::Local<'s, v8::Value>,
+    child_id: v8::Local<'s, v8::Value>,
+    activity_finished: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    cb::object(
+        scope,
+        &[
+            ("owner", owner.into()),
+            ("generation", generation),
+            ("childId", child_id),
+            ("ActivityFinished", activity_finished),
+        ],
+    )
+}
+
 
 fn build_callback<'s>(
     scope: &mut v8::HandleScope<'s>,
@@ -1542,4 +1576,219 @@ fn spread_copy<'s>(
         }
     }
     Ok(())
+}
+
+#[cfg(all(test, feature = "memory-profile"))]
+mod v8_tests {
+    use std::process::Command;
+
+    use rustyscript::deno_core::v8;
+    use rustyscript::{Runtime, RuntimeOptions};
+    use serde_json::json;
+
+    use super::*;
+
+    const FAST_CHILD: &str = "SCRIPT_ACTIVITY_DATA_FAST_TEST_CHILD";
+    const FAST_TEST: &str =
+        "activity_v8::v8_tests::activity_data_objects_have_fast_properties";
+    const HEAP_CHILD: &str = "SCRIPT_ACTIVITY_DATA_HEAP_TEST_CHILD";
+    const HEAP_TEST: &str =
+        "activity_v8::v8_tests::repeated_activity_data_objects_have_bounded_post_gc_heap";
+
+    const SETUP: &str = r#"
+globalThis.__ActivityTestSettingsBag = class {
+    constructor(values) { return values; }
+};
+globalThis.__activityTestMeta = {
+    name: 'V8 activity data',
+    settingsSchema: {
+        food: { default: 'Lobster' },
+        enabled: { default: false },
+    },
+};
+globalThis.__activityTestOverrides = { food: 'Shark' };
+"#;
+
+    fn setup() -> Runtime {
+        crate::platform::bootstrap_test_v8_platform();
+        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+        cb::install_ops(&mut runtime).unwrap();
+        cb::install(
+            &mut runtime,
+            "__rs2b0t_activity_test_build_data",
+            build_activity_data,
+        )
+        .unwrap();
+        runtime.eval::<()>(SETUP).unwrap();
+        runtime
+    }
+
+    fn in_child(marker: &str, test_name: &str) -> bool {
+        if std::env::var_os(marker).is_some() {
+            return true;
+        }
+        let output = Command::new(std::env::current_exe().expect("test executable"))
+            .args(["--exact", test_name, "--nocapture"])
+            .env(marker, "1")
+            .output()
+            .expect("run isolated ScriptActivity V8 test");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "isolated ScriptActivity V8 test failed\nstdout: {stdout}\nstderr: {stderr}"
+        );
+        false
+    }
+
+    fn build_activity_data<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        _args: v8::FunctionCallbackArguments<'s>,
+        mut rv: v8::ReturnValue,
+    ) {
+        let result = (|| -> JsResult<'s, v8::Local<'s, v8::Value>> {
+            let global = scope.get_current_context().global(scope);
+            let meta = cb::get(scope, global.into(), "__activityTestMeta")?;
+            let overrides = cb::get(scope, global.into(), "__activityTestOverrides")?;
+            let settings_constructor =
+                cb::get(scope, global.into(), "__ActivityTestSettingsBag")?;
+            let owner = v8::Object::new(scope);
+            let child = v8::Object::new(scope);
+            let log = v8::undefined(scope).into();
+            let generation = v8::BigInt::new_from_u64(scope, 71).into();
+            let child_id = v8::BigInt::new_from_u64(scope, 3).into();
+            let undefined = v8::undefined(scope).into();
+
+            let log_data =
+                activity_log_data(scope, owner, log, meta, generation, child_id)?;
+            let finish_data =
+                activity_finish_data(scope, owner, generation, child_id, undefined)?;
+            let run_data = run_data(
+                scope,
+                RunData {
+                    owner,
+                    child: child.into(),
+                    log,
+                    meta,
+                    generation: 71,
+                    child_id: 3,
+                    mode: "loop",
+                    sustain: undefined,
+                    event_signal: undefined,
+                    run_manager: undefined,
+                    scheduler: undefined,
+                    script_aborted: undefined,
+                    activity_finished: undefined,
+                    bot_host: undefined,
+                },
+            )?;
+
+            let schema = cb::get(scope, meta, "settingsSchema")?;
+            let setting = cb::get(scope, schema, "food")?;
+            let key = cb::string(scope, "food");
+            let pair = v8::Array::new_with_elements(scope, &[key, setting]);
+            let mapper = v8::Function::builder(settings_default_entry)
+                .build(scope)
+                .ok_or_else(|| cb::type_error(scope, "could not create settings row test"))?;
+            let row = cb::call(
+                scope,
+                mapper.into(),
+                undefined,
+                &[pair.into()],
+                "settings row test",
+            )?;
+            let settings = settings_bag(scope, meta, overrides, settings_constructor)?;
+            Ok(v8::Array::new_with_elements(
+                scope,
+                &[log_data, finish_data, run_data, row, settings],
+            )
+            .into())
+        })();
+        cb::finish(scope, rv, result);
+    }
+
+    fn collected_used_heap(runtime: &mut Runtime) -> usize {
+        let isolate = runtime.deno_runtime().v8_isolate();
+        isolate.low_memory_notification();
+        isolate.get_heap_statistics().used_heap_size()
+    }
+
+    #[test]
+    fn activity_data_objects_have_fast_properties() {
+        if !in_child(FAST_CHILD, FAST_TEST) {
+            return;
+        }
+        v8::V8::set_flags_from_string("--allow-natives-syntax");
+        let mut runtime = setup();
+        let facts: serde_json::Value = runtime
+            .eval(
+                r#"
+(() => {
+    const hasFast = new Function('value', 'return %HasFastProperties(value)');
+    return __rs2b0t_activity_test_build_data().map((value) => ({
+        array: Array.isArray(value),
+        fast: hasFast(value),
+        keys: Object.keys(value),
+    }));
+})()
+"#,
+            )
+            .unwrap();
+        assert_eq!(
+            facts,
+            json!([
+                {
+                    "array": false,
+                    "fast": true,
+                    "keys": ["owner", "log", "meta", "generation", "childId"]
+                },
+                {
+                    "array": false,
+                    "fast": true,
+                    "keys": ["owner", "generation", "childId", "ActivityFinished"]
+                },
+                {
+                    "array": false,
+                    "fast": true,
+                    "keys": [
+                        "owner", "child", "log", "meta", "generation", "childId", "mode",
+                        "Sustain", "EventSignal", "RunManager", "Scheduler", "ScriptAborted",
+                        "ActivityFinished", "BotHost"
+                    ]
+                },
+                { "array": true, "fast": true, "keys": ["0", "1"] },
+                { "array": false, "fast": true, "keys": ["food", "enabled"] }
+            ]),
+            "native ScriptActivity callback data and settings objects retain fixed shapes"
+        );
+    }
+
+    #[test]
+    fn repeated_activity_data_objects_have_bounded_post_gc_heap() {
+        if !in_child(HEAP_CHILD, HEAP_TEST) {
+            return;
+        }
+        let mut runtime = setup();
+        runtime
+            .eval::<()>(
+                "for (let index = 0; index < 1000; index++) __rs2b0t_activity_test_build_data()",
+            )
+            .unwrap();
+        let baseline = collected_used_heap(&mut runtime);
+        runtime
+            .eval::<()>(
+                "for (let index = 0; index < 25000; index++) __rs2b0t_activity_test_build_data()",
+            )
+            .unwrap();
+        let after = collected_used_heap(&mut runtime);
+        let growth = after.saturating_sub(baseline);
+        const LIMIT: usize = 64 * 1024;
+        println!(
+            "ScriptActivity callback/settings post-GC V8 heap baseline={baseline} after={after} growth={growth} limit={LIMIT}"
+        );
+        assert!(
+            growth <= LIMIT,
+            "transient ScriptActivity callback/settings objects grew post-GC V8 heap by {growth} bytes; limit {LIMIT}"
+        );
+    }
 }

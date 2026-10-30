@@ -1512,6 +1512,10 @@ impl LocalStatePort for LocalStateService {
                 &store.file,
                 FileState::Rejected(rejection) if rejection.reason == FailureReason::Schema
             );
+        let cold_runtime_settings =
+            matches!(key, StoreKey::ScriptRuntimeSettings { .. })
+                && edit.expected().is_none()
+                && matches!(&store.file, FileState::Cold);
         let (accepted_at, growth) = match gate(&key, store, &edit, growth) {
             Gate::Accept(version, growth) => (version, growth),
             Gate::Hydrate(code) => {
@@ -1569,6 +1573,10 @@ impl LocalStatePort for LocalStateService {
             growth,
         });
         state.requests.insert(request, key.clone());
+        if cold_runtime_settings {
+            // The writer cannot take a cold store's queue until a readback settles.
+            let _ = self.shared.request_readback(&mut state, &key);
+        }
         let cancelled = Settlement::Cancelled(Cancellation::Superseded);
         let superseded = superseded.filter(|terminal| {
             state.settle(&key, terminal.request, cancelled.clone(), Some(request))
