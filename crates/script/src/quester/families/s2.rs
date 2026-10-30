@@ -735,7 +735,8 @@ impl StepPlan for MakePlan {
                 make_x: self.make_x,
             },
             walk: None,
-            trigger: None,
+            trigger_reach: None,
+            trigger_use_on: None,
             make: None,
         }))
     }
@@ -744,16 +745,12 @@ impl StepPlan for MakePlan {
     }
 }
 
-enum MakeTriggerHandle {
-    Reach(ActionHandle<reach::Reach>),
-    UseOn(ActionHandle<super::UseOnAction>),
-}
-
 struct MakeRun {
     trigger_plan: Option<MakeTrigger>,
     request: MakeRequest,
     walk: Option<ActionHandle<Walk>>,
-    trigger: Option<MakeTriggerHandle>,
+    trigger_reach: Option<ActionHandle<reach::Reach>>,
+    trigger_use_on: Option<ActionHandle<super::UseOnAction>>,
     make: Option<ActionHandle<MakeMachine>>,
 }
 
@@ -808,7 +805,10 @@ impl StepRun for MakeRun {
                 }
             }
         }
-        if self.trigger.is_none() && self.make.is_none() {
+        if self.trigger_reach.is_none()
+            && self.trigger_use_on.is_none()
+            && self.make.is_none()
+        {
             if let Some(trigger) = self.trigger_plan.clone() {
                 let loc = {
                     let snapshot = cx.tick.cx.snapshot();
@@ -852,7 +852,7 @@ impl StepRun for MakeRun {
                     return Poll::Pending;
                 }
                 if let Some(op) = trigger.op.as_ref() {
-                    self.trigger = Some(MakeTriggerHandle::Reach(std::task::ready!(
+                    self.trigger_reach = Some(std::task::ready!(
                         crate::native::defer_budget(cx.tick.actions.begin::<reach::Reach>(
                             reach::ReachArgs {
                                 kind: reach::ReachKind::Loc {
@@ -868,17 +868,17 @@ impl StepRun for MakeRun {
                             },
                             &mut cx.tick.cx,
                         ))
-                    )?));
+                    )?);
                 } else {
                     let request =
                         make_use_on_request(&trigger, &loc, self.request.menu_id, &cx.tick.cx)?;
-                    self.trigger = Some(MakeTriggerHandle::UseOn(std::task::ready!(
+                    self.trigger_use_on = Some(std::task::ready!(
                         crate::native::defer_budget(
                             cx.tick
                                 .actions
                                 .begin::<super::UseOnAction>(request, &mut cx.tick.cx,)
                         )
-                    )?));
+                    )?);
                 }
                 return Poll::Pending;
             }
@@ -888,39 +888,37 @@ impl StepRun for MakeRun {
                     .begin::<MakeMachine>(self.request.clone(), &mut cx.tick.cx)?,
             );
         }
-        if let Some(handle) = &self.trigger {
-            let accepted = match handle {
-                MakeTriggerHandle::Reach(handle) => {
-                    match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                        Poll::Pending => return Poll::Pending,
-                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                        Poll::Ready(Ok(false)) => {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "production trigger failed",
-                            ))))
-                        }
-                        Poll::Ready(Ok(true)) => true,
-                    }
+        let accepted = if let Some(handle) = &self.trigger_reach {
+            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(false)) => {
+                    return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                        "production trigger failed",
+                    ))))
                 }
-                MakeTriggerHandle::UseOn(handle) => {
-                    match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                        Poll::Pending => return Poll::Pending,
-                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                        Poll::Ready(Ok(_)) => true,
-                    }
-                }
-            };
-            if accepted {
-                self.trigger = None;
-                self.request.after_trigger = true;
-                self.make = Some(
-                    cx.tick
-                        .actions
-                        .begin::<MakeMachine>(self.request.clone(), &mut cx.tick.cx)?,
-                );
-                if !cx.tick.cx.may_continue_this_tick() {
-                    return Poll::Pending;
-                }
+                Poll::Ready(Ok(true)) => true,
+            }
+        } else if let Some(handle) = &self.trigger_use_on {
+            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(_)) => true,
+            }
+        } else {
+            false
+        };
+        if accepted {
+            self.trigger_reach = None;
+            self.trigger_use_on = None;
+            self.request.after_trigger = true;
+            self.make = Some(
+                cx.tick
+                    .actions
+                    .begin::<MakeMachine>(self.request.clone(), &mut cx.tick.cx)?,
+            );
+            if !cx.tick.cx.may_continue_this_tick() {
+                return Poll::Pending;
             }
         }
         let Some(handle) = self.make.as_ref() else {

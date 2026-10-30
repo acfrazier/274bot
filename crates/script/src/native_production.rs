@@ -218,14 +218,14 @@ impl NativeMachine for MakeMachine {
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
-        loop {
-            let tick = cx.evidence().tick;
-            let now_held = held(cx, self.request.product_id);
-            let current = now_held.unwrap_or(0);
-            let remaining_processes = process_count_for_items(
-                self.request.qty.saturating_sub(current),
-                self.request.items_per_process,
-            );
+        let tick = cx.evidence().tick;
+        let now_held = held(cx, self.request.product_id);
+        let current = now_held.unwrap_or(0);
+        let remaining_processes = process_count_for_items(
+            self.request.qty.saturating_sub(current),
+            self.request.items_per_process,
+        );
+        'phases: loop {
             if now_held.is_some_and(|count| count >= self.request.qty) {
                 let make_x_pending =
                     self.phase == Phase::MakeX && self.make_x.phase() != MakeXPhase::Select;
@@ -321,7 +321,7 @@ impl NativeMachine for MakeMachine {
                                 return Poll::Ready(Ok(MakeReceipt { held: current }));
                             }
                             self.deadline_tick = tick.saturating_add(PRODUCT_PROGRESS_TICKS);
-                            return Poll::Pending;
+                            continue 'phases;
                         }
                         MakeXStep::TimedOut(phase) => {
                             let message = match phase {
