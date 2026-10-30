@@ -3417,6 +3417,9 @@ fn resource_rows(
                     vertex_known.clone().unwrap_or(Value::Null),
                     vertex_known.is_some(),
                 ),
+                RenderResource::VertexCoordinates => {
+                    unreachable!("fixed coordinate range is not a byte-budget census row")
+                }
                 RenderResource::ContextCpu => (
                     owner_bounds.map_or(Value::Null, |bounds| json!(bounds.context_cpu.bytes)),
                     json!({
