@@ -1,7 +1,9 @@
 use super::thieving_core::{
     level_ready, ChatEvidence, Decision, Failure, Observation, ThieveCore, PICKPOCKET, STEAL_FROM,
 };
-use super::{ActionContext, ActionError, NativeMachine, WalkEnd};
+use super::{
+    ActionContext, ActionError, HoldResume, InteractionDispatch, NativeMachine, WalkEnd,
+};
 use crate::gatherer::oneop::{OneOp, OneOpArgs};
 use crate::quester::families::reach::{self, Reach, ReachArgs, ReachKind};
 use api::quest_progress::EvidenceStamp;
@@ -325,6 +327,47 @@ impl NativeMachine for Thieve {
         }
         if let Some(modal) = self.modal.as_mut() {
             modal.cancel();
+        }
+    }
+
+    const RESUMES_AFTER_HOLD: bool = true;
+
+    /// The core already holds the right rule for an attempt the server took:
+    /// it does not dispatch again while the attempt is pending, resolves it
+    /// from the experience, item or chat it caused, or times it out and only
+    /// then retries (`thieving_core.rs`, `ThieveCore::poll`), and it checks the
+    /// item count against the goal before any dispatch. A guardian hold adds
+    /// one case: the host dropped the attempt's request unsent, so no receipt
+    /// will come and the core would end the action at its receipt deadline.
+    /// That attempt did not happen: forget it, so the poll after this dispatches
+    /// once, unless the goal count is already held.
+    fn after_hold(&mut self, cx: &mut ActionContext<'_>) -> Result<HoldResume, ActionError> {
+        let Some(request_id) = self.core.pending_request_id() else {
+            return Ok(HoldResume::Kept("no attempt is pending"));
+        };
+        let goal_met = cx
+            .snapshot()
+            .stock()
+            .held(self.args.item_id)
+            .is_some_and(|held| held >= self.args.goal_qty);
+        if goal_met {
+            return Ok(HoldResume::Kept("the item count already meets the goal"));
+        }
+        match cx.interaction_dispatch(request_id) {
+            InteractionDispatch::Unsent => {
+                cx.cancel_request(request_id);
+                self.discard_reach();
+                self.core.abandon_attempt(cx.active_now());
+                self.pending_action = None;
+                self.pending_target_id = None;
+                Ok(HoldResume::Reissued("thieving attempt"))
+            }
+            InteractionDispatch::Queued => {
+                Ok(HoldResume::Kept("the host still holds the attempt's request"))
+            }
+            InteractionDispatch::Settled(_) => Ok(HoldResume::Kept(
+                "the server took the attempt; its own window resolves or times it out before any retry",
+            )),
         }
     }
 }

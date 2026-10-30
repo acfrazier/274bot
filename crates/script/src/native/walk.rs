@@ -1,6 +1,8 @@
 //! Native adapter for the shared walk correlation and arrival core.
 use super::walk_wait::{HostOutcome, Observation, WalkKey, WalkSlot};
-use super::{ActionContext, ActionError, NativeMachine, WalkEnd, WalkReceipt, WalkRequest};
+use super::{
+    ActionContext, ActionError, HoldResume, NativeMachine, WalkEnd, WalkReceipt, WalkRequest,
+};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::SnapshotView;
 use nav_planner::contract::ArrivalKind;
@@ -24,6 +26,9 @@ pub struct Walk {
     required_after: EvidenceStamp,
     deadline: Duration,
     wait: WalkSlot,
+    /// The request as sent, to send again if the host drops it unsent in a
+    /// guardian hold ([`NativeMachine::after_hold`]).
+    request: Box<WalkRequest>,
 }
 
 struct Frame<'a> {
@@ -98,6 +103,7 @@ impl NativeMachine for Walk {
         let arrival = request.arrival;
         let required_after = request.required_after;
         let candidate_goals = request.candidate_goals.is_some();
+        let retained = Box::new(request.clone());
         let request_id = cx.walk(request)?;
         let mut wait = WalkSlot::new();
         wait.begin(
@@ -114,7 +120,44 @@ impl NativeMachine for Walk {
             required_after,
             deadline: cx.active_now().saturating_add(WALK_DEADLINE),
             wait,
+            request: retained,
         })
+    }
+
+    const RESUMES_AFTER_HOLD: bool = true;
+
+    /// The host follows an armed walk through a guardian hold: it freezes the
+    /// route and carries on from where the player stands afterwards. Only a
+    /// walk the host dropped unsent in the hold has no follow and no receipt
+    /// to come, so this sends that one again, once, unless the player already
+    /// stands at its goal.
+    fn after_hold(&mut self, cx: &mut ActionContext<'_>) -> Result<HoldResume, ActionError> {
+        if cx.walk_receipt(self.request_id).is_some() {
+            return Ok(HoldResume::Kept("the walk already has its receipt"));
+        }
+        if !cx.walk_unsent(self.request_id) {
+            return Ok(HoldResume::Kept("the host armed the walk and still follows it"));
+        }
+        let frame = Frame {
+            snapshot: cx.snapshot(),
+            outcome: HostOutcome::empty(),
+            loc_id: self.loc_id,
+            arrival: self.arrival,
+            candidate_goals: self.candidate_goals,
+            goal: None,
+        };
+        if !self.candidate_goals && frame.arrived(self.key) {
+            return Ok(HoldResume::Kept("the player already stands at the goal"));
+        }
+        let request_id = cx.walk((*self.request).clone())?;
+        self.request_id = request_id;
+        self.wait.reset();
+        self.wait.begin(
+            NonZeroU64::new(request_id).expect("host request is nonzero"),
+            self.key,
+            HostOutcome::empty(),
+        );
+        Ok(HoldResume::Reissued("walk request"))
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {

@@ -3158,8 +3158,61 @@ impl UseOnRun {
     }
 }
 
+impl UseOnRun {
+    /// Whether the accepted round's own goal is met: the `until` count is
+    /// reached, or the observed item count rose past the round's start.
+    fn round_goal_met(&self, cx: &crate::native::ActionContext<'_>) -> bool {
+        if until_reached(self.until, cx) {
+            return true;
+        }
+        let observed_id = self.until.map(|(id, _)| id).or(self.product);
+        match (observed_id, self.round_before) {
+            (Some(id), Some(before)) => inventory_count(cx, id).is_some_and(|count| count > before),
+            // Nothing observable to wait for: the round ends on acceptance.
+            _ => true,
+        }
+    }
+
+    /// An accepted round with no live handle (only the world shows its effect)
+    /// that a guardian hold interrupted: the guardian's own interaction
+    /// replaced the player's, so the product never comes. After one observed
+    /// tick for an in-flight effect to land, and only if the round's goal is
+    /// still unmet, the round starts over once: the same re-dispatch a
+    /// timed-out `until` round already makes (`clear_round`).
+    fn resume_after_hold(
+        &mut self,
+        cx: &mut crate::native::ActionContext<'_>,
+    ) -> Poll<()> {
+        use crate::native::{log_hold_resume, AfterHold, HoldResume};
+        if !self.accepted || self.dialogue.is_some() {
+            return Poll::Ready(());
+        }
+        match cx.after_hold() {
+            AfterHold::Settling => return Poll::Pending,
+            AfterHold::Resume => {}
+            AfterHold::None => return Poll::Ready(()),
+        }
+        if !cx.take_hold_resume() {
+            return Poll::Ready(());
+        }
+        if self.round_goal_met(cx) {
+            log_hold_resume(
+                "use-on step",
+                HoldResume::Kept("the round's goal is already met"),
+            );
+        } else {
+            self.clear_round();
+            log_hold_resume("use-on step", HoldResume::Reissued("use-on request"));
+        }
+        Poll::Ready(())
+    }
+}
+
 impl StepRun for UseOnRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        if self.resume_after_hold(&mut cx.tick.cx).is_pending() {
+            return Poll::Pending;
+        }
         // One same-poll reentry after a Dialogue is begun on a live page
         // (TICK-FIX #14, C-DIALOGUE-ADOPT); the loop top polls it.
         let mut adopt = true;
@@ -3682,28 +3735,72 @@ impl StepRun for UseOnRun {
 
 struct UseOnAction {
     request: u64,
+    /// The request as sent, to send again if the host drops it unsent.
+    resend: InteractReq,
 }
+
+impl UseOnAction {
+    /// Send the request again after the host dropped it unsent (a guardian
+    /// hold, a held tick, a session reset): no receipt will come for the first
+    /// one (`ActionContext::interaction_dispatch`). The same rule as Talk's
+    /// (`dialogue.rs`, `TalkDispatch::Unsent`).
+    fn resend(&mut self, cx: &mut crate::native::ActionContext<'_>) -> Result<(), ActionError> {
+        self.request = cx.emit(self.resend.clone())?;
+        Ok(())
+    }
+}
+
 impl crate::native::NativeMachine for UseOnAction {
     type Args = InteractReq;
     type Output = i32;
+    const RESUMES_AFTER_HOLD: bool = true;
     fn begin(
         request: Self::Args,
         cx: &mut crate::native::ActionContext<'_>,
     ) -> Result<Self, ActionError> {
+        let resend = request.clone();
         Ok(Self {
             request: cx.emit(request)?,
+            resend,
         })
     }
     fn poll(
         &mut self,
         cx: &mut crate::native::ActionContext<'_>,
     ) -> Poll<Result<i32, ActionError>> {
-        match cx.interaction_receipt(self.request) {
-            Some(receipt) if receipt.accepted => Poll::Ready(Ok(receipt.chat_since)),
-            Some(_) => Poll::Ready(Err(ActionError::Failed(Arc::from(
-                "use_on dispatch rejected",
-            )))),
-            None => Poll::Pending,
+        match cx.interaction_dispatch(self.request) {
+            crate::native::InteractionDispatch::Settled(receipt) if receipt.accepted => {
+                Poll::Ready(Ok(receipt.chat_since))
+            }
+            crate::native::InteractionDispatch::Settled(_) => Poll::Ready(Err(ActionError::Failed(
+                Arc::from("use_on dispatch rejected"),
+            ))),
+            // The host still holds the request: the wait is its lifecycle's.
+            crate::native::InteractionDispatch::Queued => Poll::Pending,
+            crate::native::InteractionDispatch::Unsent => {
+                std::task::ready!(crate::native::defer_budget(self.resend(cx)))?;
+                Poll::Pending
+            }
+        }
+    }
+    /// The request waits for its receipt only here (an accepted one ends this
+    /// machine; [`UseOnRun`] resumes from there). A request the host dropped
+    /// unsent in the hold is sent again once.
+    fn after_hold(
+        &mut self,
+        cx: &mut crate::native::ActionContext<'_>,
+    ) -> Result<crate::native::HoldResume, ActionError> {
+        match cx.interaction_dispatch(self.request) {
+            crate::native::InteractionDispatch::Unsent => {
+                self.resend(cx)?;
+                Ok(crate::native::HoldResume::Reissued("use-on request"))
+            }
+            crate::native::InteractionDispatch::Queued => Ok(crate::native::HoldResume::Kept(
+                "the host still holds the use-on request",
+            )),
+            crate::native::InteractionDispatch::Settled(_) => Ok(crate::native::HoldResume::Kept(
+                "the host settled the use-on request",
+            )),
         }
     }
     fn cancel(&mut self) {}

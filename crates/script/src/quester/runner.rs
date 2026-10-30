@@ -276,21 +276,6 @@ fn chat_page_label(tick: &NativeTick<'_>) -> String {
     label
 }
 
-/// Whether the random event moves the player, which ends an in-flight step.
-/// The Maze and Mime events teleport the player to the event square and back
-/// to the tile they left (`macro_event_maze.rs2:15-18`,
-/// `macro_event_mime.rs2:9-11`). Every other kind spawns an NPC or an item
-/// beside the player (`macro_events.rs2:26-36`) and moves nobody; the
-/// ignored-event teleport (`macro_event_mysterious_old_man.rs2:71`,
-/// `macro_events.rs2:120-126`) comes only after several unanswered prompts,
-/// and the guardian answers the event.
-fn random_event_relocates_player(event: &DetectedRandom) -> bool {
-    matches!(
-        event.kind,
-        api::random::RandomKind::Maze | api::random::RandomKind::Mime
-    )
-}
-
 fn trace_error_reason(error: &ActionError) -> &str {
     match error {
         ActionError::Unavailable(reason)
@@ -1605,6 +1590,62 @@ impl Quester {
             self.dirty = true;
         }
         self.clear_last_error();
+    }
+
+    /// The guardian hold teleported the player, which clears the player's
+    /// interaction and moves them off the tile the step planned from: drop the
+    /// step handle and its native owners, and read the journal again. Progress
+    /// and the ordered cursor stay, so selection resumes at the same step and
+    /// its own `skip_if`. A step that had already finished (`settling`) keeps
+    /// `settling`, `last_outcome`, `advances` and `settle_deadline`, so it goes
+    /// on from its own settle predicate, not from cursor 0. Partner work
+    /// pending keeps the step: the pair's protocol owns it.
+    fn drop_step_for_teleport(&mut self) {
+        if self.pair_work_pending() {
+            api::host_log!(
+                api::hostlog::Category::ScriptLifecycle,
+                api::hostlog::Level::Info,
+                "quester {}: the player was teleported during a guardian hold; partner work is pending, so the step stays (cursor {})",
+                self.path.id.0,
+                self.cursor
+            );
+            return;
+        }
+        api::host_log!(
+            api::hostlog::Category::ScriptLifecycle,
+            api::hostlog::Level::Info,
+            "quester {}: the player was teleported during a guardian hold; dropping the in-flight step, keeping progress and cursor {} (settling: {})",
+            self.path.id.0,
+            self.cursor,
+            self.settling
+        );
+        let settling = self.settling;
+        self.pair_admission = None;
+        self.pair_admission_since = None;
+        // Dropping these guards revokes their native owners before the host can dispatch them.
+        self.capture_prayer_cleanup();
+        self.step = None;
+        self.provisioner.cancel();
+        self.clear_prayers = None;
+        self.journal = None;
+        self.journal_drain = None;
+        self.needs_read = true;
+        self.last_combat = None;
+        self.attempts = 0;
+        if !settling {
+            self.last_outcome = None;
+            self.advances = false;
+            self.settle_deadline = Duration::ZERO;
+        }
+        self.unreadable_since = None;
+        self.journal_attempts = 0;
+        self.journal_drains = 0;
+        self.journal_drain_since = None;
+        self.journal_retry_pending = false;
+        self.journal_quiet_since = None;
+        self.selection_since = None;
+        self.waiting = None;
+        self.dirty = true;
     }
 
     fn current_step(&self) -> Option<&CompiledStep> {
@@ -3286,6 +3327,9 @@ impl Script for Quester {
             self.cancel_step(tick);
             self.dirty = true;
         }
+        if tick.cx.take_hold_teleport() {
+            self.drop_step_for_teleport();
+        }
         if self.anchor.is_none() {
             self.anchor = tick.cx.snapshot().here().map(|here| here.value);
         }
@@ -3498,80 +3542,51 @@ impl Script for Quester {
             Interrupt::Pause | Interrupt::Hold(_) => {}
         }
     }
-    /// A random event keeps the quest's own progress. The engine spawns the
-    /// event NPC beside the player on a login timer (`login.rs2:40` sets
-    /// `general_macro_events` to 500 ticks; `macro_events.rs2:2-12` spawns
-    /// it), so every bot meets one about 500 ticks after login, in the middle
-    /// of whatever step it runs. Dropping the step and progress there made the
-    /// next journal read restart the step from cursor 0 with no failure
-    /// (QUESTER-READ-KEEPS-STEP). The guardian holds the script while it
-    /// answers the event, and the step's own checks decide what a held tick
-    /// did, as they already do for partner work.
+    /// A random event keeps the quest's own progress and its in-flight step.
+    /// The engine spawns the event NPC beside the player on a login timer
+    /// (`login.rs2:40` sets `general_macro_events` to 500 ticks;
+    /// `macro_events.rs2:2-12` spawns it), so every bot meets one about 500
+    /// ticks after login, in the middle of whatever step it runs. Dropping the
+    /// step and progress there made the next journal read restart the step
+    /// from cursor 0 with no failure (QUESTER-READ-KEEPS-STEP). The guardian
+    /// holds the script while it answers the event
+    /// (`RandomStatus::hold`, only with `settings.random_events` on), and the
+    /// step's own checks decide what a held tick did, as they already do for
+    /// partner work.
     ///
-    /// Only an event that moves the player ends an in-flight step: the Maze
-    /// and Mime old man teleports the player to the event square and back to
-    /// where they stood afterwards (`macro_event_maze.rs2:15-18`,
-    /// `macro_event_mime.rs2:9-11`), and a teleport drops the player's
-    /// interaction. That drops the step handle only; progress and the ordered
-    /// cursor stay, and a step that already completed keeps settling on its
-    /// own settle predicate.
+    /// Nothing here depends on the event's name. Two things follow the hold,
+    /// both by observation:
+    /// - A step whose action was interrupted (the guardian sent its own
+    ///   interaction, or the host dropped its queued request during the hold)
+    ///   re-issues that request once, after one observed tick and only if its
+    ///   goal is not already met ([`crate::native::NativeMachine::after_hold`]).
+    /// - If the player was teleported while the hold lasted
+    ///   ([`crate::native::is_teleport`]), the step handle is dropped
+    ///   ([`Self::drop_step_for_teleport`]); progress and the ordered cursor
+    ///   stay.
+    ///
+    /// With `settings.random_events` off the guardian neither holds nor acts
+    /// (`guardian.rs`: `hold` and `ours` need the setting), so the event is not
+    /// answered and nothing interrupts the step. The Quester keeps the step,
+    /// progress and cursor exactly as with the setting on and no teleport; it
+    /// does not classify a teleport that no hold surrounds, and the step's own
+    /// checks judge whatever the ignored event does to the player.
     fn on_random(&mut self, event: &DetectedRandom) -> RandomClaim {
-        let preserve_pair_work = self.pair_work_pending();
         self.watchdog = Watchdog::default();
         self.custom_reader = None;
         self.custom_read_after = None;
         self.gang_reader.cancel();
-        let relocates = random_event_relocates_player(event);
-        if preserve_pair_work || !relocates {
-            api::host_log!(
-                api::hostlog::Category::ScriptLifecycle,
-                api::hostlog::Level::Info,
-                "quester {}: random event {:?} {:?} keeps the step, progress and cursor {} (step in flight: {}, partner work pending: {})",
-                self.path.id.0,
-                event.kind,
-                event.name,
-                self.cursor,
-                self.step.is_some(),
-                preserve_pair_work
-            );
-        } else {
-            api::host_log!(
-                api::hostlog::Category::ScriptLifecycle,
-                api::hostlog::Level::Info,
-                "quester {}: random event {:?} {:?} moves the player; dropping the in-flight step, keeping progress and cursor {} (settling: {})",
-                self.path.id.0,
-                event.kind,
-                event.name,
-                self.cursor,
-                self.settling
-            );
-            let settling = self.settling;
-            self.pair_admission = None;
-            self.pair_admission_since = None;
-            // Dropping these guards revokes their native owners before the host can dispatch them.
-            self.capture_prayer_cleanup();
-            self.step = None;
-            self.provisioner.cancel();
-            self.clear_prayers = None;
-            self.journal = None;
-            self.journal_drain = None;
-            self.needs_read = true;
-            self.last_combat = None;
-            self.attempts = 0;
-            if !settling {
-                self.last_outcome = None;
-                self.advances = false;
-                self.settle_deadline = Duration::ZERO;
-            }
-            self.unreadable_since = None;
-            self.journal_attempts = 0;
-            self.journal_drains = 0;
-            self.journal_drain_since = None;
-            self.journal_retry_pending = false;
-            self.journal_quiet_since = None;
-            self.selection_since = None;
-            self.waiting = None;
-        }
+        api::host_log!(
+            api::hostlog::Category::ScriptLifecycle,
+            api::hostlog::Level::Info,
+            "quester {}: random event {:?} {:?} keeps the step, progress and cursor {} (step in flight: {}, partner work pending: {})",
+            self.path.id.0,
+            event.kind,
+            event.name,
+            self.cursor,
+            self.step.is_some(),
+            self.pair_work_pending()
+        );
         self.dirty = true;
         RandomClaim::Host
     }

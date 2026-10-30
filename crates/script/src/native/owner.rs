@@ -16,6 +16,9 @@ pub(crate) struct Owner {
     /// a seat refusal or a session reset dropped its queued action
     /// ([`super::ledger::HostAction`] custody). No receipt will come for it.
     interaction_unsent: AtomicBool,
+    /// The same for `walk`: the host discarded the queued walk before it armed
+    /// the route, so no walk receipt will come.
+    walk_unsent: AtomicBool,
     batch: [AtomicU64; 5],
     batch_first: AtomicU64,
     batch_accepted: AtomicU8,
@@ -31,6 +34,7 @@ impl Owner {
             walk: AtomicU64::new(0),
             interaction: AtomicU64::new(0),
             interaction_unsent: AtomicBool::new(false),
+            walk_unsent: AtomicBool::new(false),
             batch: std::array::from_fn(|_| AtomicU64::new(0)),
             batch_first: AtomicU64::new(0),
             batch_accepted: AtomicU8::new(0),
@@ -70,6 +74,7 @@ impl Owner {
     }
 
     pub fn set_walk(&self, request: NonZeroU64) {
+        self.walk_unsent.store(false, Ordering::Release);
         self.walk.store(request.get(), Ordering::Release);
     }
 
@@ -95,12 +100,24 @@ impl Owner {
     }
 
     /// The host dropped `request` from its custody without dispatching it.
-    /// Only the owner's current single interaction is marked: a cancelled or
-    /// superseded request is already not queued ([`Self::interaction_queued`]).
+    /// Only the owner's current single interaction or current walk is marked:
+    /// a cancelled or superseded request is already not queued
+    /// ([`Self::interaction_queued`]). Request ids are unique within the
+    /// ledger, so the id names which of the two it is.
     pub fn note_unsent(&self, request: NonZeroU64) {
         if self.interaction.load(Ordering::Acquire) == request.get() {
             self.interaction_unsent.store(true, Ordering::Release);
+        } else if self.walk.load(Ordering::Acquire) == request.get() {
+            self.walk_unsent.store(true, Ordering::Release);
         }
+    }
+
+    /// Whether `request` is this live owner's current walk and the host
+    /// discarded it before it armed the route.
+    pub fn walk_unsent(&self, request: NonZeroU64) -> bool {
+        self.live()
+            && self.walk.load(Ordering::Acquire) == request.get()
+            && self.walk_unsent.load(Ordering::Acquire)
     }
 
     /// Whether `request` is this live owner's current single interaction and
