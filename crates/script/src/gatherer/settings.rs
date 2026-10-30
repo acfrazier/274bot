@@ -914,6 +914,36 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn tick_method_is_default_off_validated_and_restart_required_for_all_skills() {
+        let off = GathererSettings::from_bag(&SettingsBag::new()).unwrap();
+        assert_eq!(off.tick_method, "Off");
+        let definition = schema().iter().find(|def| def.id == "tickMethod").unwrap();
+        assert_eq!(definition.default.as_deref(), Some("Off"));
+        assert_eq!(definition.options, ["Off", "Knife"]);
+        assert_eq!(
+            definition.show_if.as_deref(),
+            Some("{ key: 'skill', anyOf: ['Woodcutting', 'Mining', 'Fishing'] }")
+        );
+        for skill in ["Woodcutting", "Mining", "Fishing"] {
+            let mut bag = SettingsBag::new();
+            bag.insert("skill".into(), json!(skill));
+            bag.insert("tickMethod".into(), json!("Knife"));
+            let knife = GathererSettings::from_bag(&bag).unwrap();
+            assert_eq!(knife.tick_method, "Knife");
+            assert!(off.restart_required_changed(&knife));
+            let same_skill_off = GathererSettings {
+                tick_method: "Off".into(),
+                ..knife.clone()
+            };
+            assert!(knife.restart_required_changed(&same_skill_off));
+            bag.insert("tickMethod".into(), json!("Fast"));
+            let error = GathererSettings::from_bag(&bag).unwrap_err();
+            assert_eq!(error.field.as_ref(), "tickMethod");
+            assert_eq!(error.code.as_ref(), "invalid-option");
+        }
+    }
+
+    #[test]
     fn site_is_additive_required_only_when_active_and_restart_required() {
         assert_eq!(super::super::card::CARD.schema_version, 4);
         let old = GathererSettings::from_bag(&SettingsBag::new()).unwrap();

@@ -1073,6 +1073,98 @@ mod tests {
     }
 
     #[test]
+    fn tick_kit_preparation_does_not_decide_method_or_tool_applicability() {
+        for (skill, method) in [
+            ("Woodcutting", None),
+            ("Mining", None),
+            ("Fishing", Some("fishing.category_633.op1")),
+        ] {
+            let mut settings = crate::native::SettingsBag::new();
+            settings.insert("skill".into(), json!(skill));
+            settings.insert("tickMethod".into(), json!("Knife"));
+            if let Some(method) = method {
+                settings.insert("fishingMethod".into(), json!(method));
+            }
+            let prepared = prepare(settings);
+            let kit = prepared.supply.tick_kit.as_ref().unwrap();
+            assert_eq!(kit.knife.name.as_ref(), "Knife");
+            assert_eq!(kit.logs.name.as_ref(), "Logs");
+            assert_ne!(kit.knife.id, kit.logs.id);
+        }
+        assert!(prepare(crate::native::SettingsBag::new())
+            .supply
+            .tick_kit
+            .is_none());
+    }
+
+    #[test]
+    fn tick_kit_trips_only_for_unknown_or_usable_bank_stock() {
+        let mut settings = crate::native::SettingsBag::new();
+        settings.insert("tickMethod".into(), json!("Knife"));
+        let prepared = prepare(settings);
+        let kit = prepared.supply.tick_kit.as_ref().unwrap();
+        let stats = stats(&prepared);
+        let (tool_id, tool_name) = known_tool(&prepared);
+        let held = [item(tool_id, &tool_name, 1, ItemContainer::Inventory)];
+        for origin in [Origin::Hint, Origin::Session] {
+            for logs in [1, 10] {
+                let bank = memory(&[(kit.knife.id, 1), (kit.logs.id, logs)], origin);
+                let stock = with_bank(&held, &[], &bank);
+                let SupplyVerdict::Trip(plan) = SupplyPlan::plan(&prepared, &stats, stock) else {
+                    panic!("a bank holding the usable kit must admit its trip");
+                };
+                assert_eq!(targets(&plan), vec![(kit.knife.id, 1), (kit.logs.id, logs.min(3))]);
+                assert!(!plan.kit_missing());
+                assert_eq!(plan.missing(), None);
+            }
+            for rows in [vec![], vec![(kit.knife.id, 1)], vec![(kit.logs.id, 3)]] {
+                let bank = memory(&rows, origin);
+                let stock = with_bank(&held, &[], &bank);
+                assert_eq!(
+                    SupplyPlan::plan(&prepared, &stats, stock),
+                    SupplyVerdict::NotDue,
+                    "a known incomplete kit is not a trip or a gating missing item"
+                );
+                let plan = SupplyPlan::build(&prepared, &stats, stock, |id| bank.count(id).unwrap_or(0));
+                assert!(plan.kit_missing());
+                assert_eq!(plan.missing(), None);
+                assert!(targets(&plan).is_empty());
+            }
+        }
+        let unknown = memory(&[], Origin::Unknown);
+        assert_eq!(
+            SupplyPlan::plan(&prepared, &stats, with_bank(&held, &[], &unknown)),
+            SupplyVerdict::TripToLearn
+        );
+        let empty = memory(&[], Origin::Session);
+        let loaded = SupplyPlan::from_loaded_bank(&prepared, &stats, &held, &[], Some(&[]));
+        let SupplyPlanResult::Ready(plan) = loaded else {
+            panic!("an unavailable optional kit must not fail a loaded-bank plan");
+        };
+        assert!(plan.kit_missing());
+        assert_eq!(plan.missing(), None);
+        let stocked = [
+            held[0].clone(),
+            item(kit.knife.id, &kit.knife.name, 1, ItemContainer::Inventory),
+            item(kit.logs.id, &kit.logs.name, 1, ItemContainer::Inventory),
+        ];
+        let stock = with_bank(&stocked, &[], &empty);
+        assert_eq!(SupplyPlan::plan(&prepared, &stats, stock), SupplyVerdict::NotDue);
+        let plan = SupplyPlan::build(&prepared, &stats, stock, |_| 0);
+        assert!(!plan.kit_missing());
+        assert!(targets(&plan).is_empty());
+        let knife_held = &stocked[..2];
+        let logs_banked = memory(&[(kit.logs.id, 3)], Origin::Session);
+        let SupplyVerdict::Trip(plan) =
+            SupplyPlan::plan(&prepared, &stats, with_bank(knife_held, &[], &logs_banked))
+        else {
+            panic!("a held knife and banked logs form a usable kit");
+        };
+        assert_eq!(targets(&plan), vec![(kit.logs.id, 3)]);
+        assert!(!plan.kit_missing());
+    }
+
+    #[test]
     fn supply_tool_selection_uses_effective_levels_for_boosts_and_drains() {
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("skill".into(), json!("Mining"));

@@ -2580,6 +2580,107 @@ mod tests {
     use std::mem::size_of;
 
     #[test]
+    fn tick_kit_drop_copy_and_withdrawal_batch_hold_all_nine_supply_ids() {
+        use crate::quester::families::tests::{def, with_tick};
+        use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView};
+
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let reserve = selected
+            .teleports()
+            .iter()
+            .find(|spell| spell.available() && spell.runes.len() == 3)
+            .unwrap();
+        let mut settings = crate::native::SettingsBag::new();
+        for (key, value) in [
+            ("skill", serde_json::json!("Fishing")),
+            ("fishingMethod", serde_json::json!("fishing.freshfish.op1")),
+            ("food", serde_json::json!("Lobster")),
+            ("foodTarget", serde_json::json!(1)),
+            ("coinTarget", serde_json::json!(1)),
+            ("reserveTeleport", serde_json::json!(reserve.name)),
+            ("reserveCasts", serde_json::json!(1)),
+            ("tickMethod", serde_json::json!("Knife")),
+        ] {
+            settings.insert(key.into(), value);
+        }
+        let config = api::selected::FamilyPreparation::run(move |families| {
+            crate::slot::prepare_config(
+                families,
+                crate::CompiledId("Gatherer"),
+                1,
+                Arc::new(settings),
+                selected,
+                Arc::default(),
+                None,
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        let prepared = Arc::clone(config.get::<Arc<Prepared>>().unwrap());
+        let tool = known_rows(&prepared.catalog.methods()[prepared.methods[0]].tools)[0].item;
+        let protected = supply::protected_ids(&prepared, tool);
+        assert_eq!(protected.as_slice().len(), 9);
+        let kit = prepared.supply.tick_kit.as_ref().unwrap();
+        assert!(protected.as_slice().contains(&kit.knife.id));
+        assert!(protected.as_slice().contains(&kit.logs.id));
+        let row = |id, count, container| ItemView {
+            def: def(id, prepared.selected.item_by_id(id).unwrap().name.as_deref().unwrap()),
+            container,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count,
+            actions: Vec::new(),
+            component_id: -1,
+        };
+        let bank: Vec<_> = protected
+            .as_slice()
+            .iter()
+            .map(|&id| row(id, 10_000, ItemContainer::Bank))
+            .collect();
+        let stats = [StatView {
+            index: 10,
+            name: "fishing".into(),
+            base: 99,
+            effective: 99,
+            xp: 0,
+            used: true,
+        }];
+        let supply::SupplyPlanResult::Ready(plan) =
+            supply::SupplyPlan::from_loaded_bank(&prepared, &stats, &[], &[], Some(&bank))
+        else {
+            panic!("the complete nine-item bank must produce a withdrawal batch");
+        };
+        assert_eq!(plan.iter().count(), 9);
+        assert!(!plan.kit_missing());
+        let product = prepared.products[0];
+        let mut inventory: Vec<_> = protected
+            .as_slice()
+            .iter()
+            .map(|&id| row(id, 1, ItemContainer::Inventory))
+            .collect();
+        inventory.push(row(product, 1, ItemContainer::Inventory));
+        assert_eq!(
+            supply::bank_deposit_ids(&prepared, tool, &inventory).as_ref(),
+            &[product]
+        );
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(inventory, 28);
+        let mut gatherer = Gatherer::new(
+            RunKey { slot: 1, run: 1, session: 1 },
+            config,
+            Arc::clone(&prepared),
+            GatherRetained::default(),
+        );
+        gatherer.tool = ToolState { id: tool, worn: false };
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.start_drop(tick));
+        assert!(matches!(gatherer.active, Active::Drop(_)));
+    }
+
+    #[test]
     fn gatherer_resource_validation_uses_effective_level() {
         use crate::quester::families::tests::{local_player, with_tick};
         use api::snapshot::{GameSnapshot, WorldStateView};
