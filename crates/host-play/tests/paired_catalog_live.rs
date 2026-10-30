@@ -1762,8 +1762,16 @@ mod tests {
                     "{revision:?} rule_button({bit})"
                 );
             }
-            assert_eq!(controls.rule_button(14), None, "{revision:?} out-of-range bit");
-            assert_eq!(controls.rule_button(u8::MAX), None, "{revision:?} invalid bit");
+            assert_eq!(
+                controls.rule_button(14),
+                None,
+                "{revision:?} out-of-range bit"
+            );
+            assert_eq!(
+                controls.rule_button(u8::MAX),
+                None,
+                "{revision:?} invalid bit"
+            );
             let scim = data.item_by_alias("bronze_scimitar").unwrap();
             assert_eq!(scim.wear_position, WEARPOS_RIGHTHAND);
             assert_eq!(data.item_by_alias("blankrune").unwrap().id, 1436);

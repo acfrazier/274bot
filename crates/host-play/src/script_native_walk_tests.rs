@@ -2581,8 +2581,9 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
         ));
         assert!(matches!(
             assessment.poison_test,
-            script::combat::risk::PoisonTest::PassesCharged { charged }
-                if charged <= script::combat::risk::consts::DEATH_BOUND
+            script::combat::risk::PoisonTest::WaitForClear { charged, until_index }
+                if charged > script::combat::risk::consts::DEATH_BOUND
+                    && until_index == assessment.plan.crossings[0].retreat
         ));
         assert!(bot.has_route());
     }
@@ -2635,8 +2636,9 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
         ));
         assert!(matches!(
             assessment.poison_test,
-            script::combat::risk::PoisonTest::PassesCharged { charged }
-                if charged <= script::combat::risk::consts::DEATH_BOUND
+            script::combat::risk::PoisonTest::WaitForClear { charged, until_index }
+                if charged > script::combat::risk::consts::DEATH_BOUND
+                    && until_index == assessment.plan.crossings[0].retreat
         ));
         assert!(bot.has_route());
     }

@@ -204,6 +204,7 @@ function fixture(npcSource = npcConfig, paramSource = combatParams): string {
         '19=transitive_middle',
         '20=wolf_dormant',
         '21=wolf_awake',
+        '22=unsafe_helper_attacker',
         '477=khazard_warlord',
         '',
     ].join('\n'));

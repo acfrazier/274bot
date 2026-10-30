@@ -295,7 +295,6 @@ fn outgoing_client() -> (Client, std::net::TcpListener) {
     client.ingame = true;
     client.scene_state = 2;
     client.out.random = Some(client::io::Isaac::new(&[1, 2, 3, 4]));
-    client.bump_gens(client::io::ServerProt::REBUILD_NORMAL);
     (client, listener)
 }
 

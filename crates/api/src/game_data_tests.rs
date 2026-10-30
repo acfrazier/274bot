@@ -2129,8 +2129,16 @@ fn duel_rule_buttons_match_both_pinned_sources() {
                 "{revision:?} rule_button({bit})"
             );
         }
-        assert_eq!(controls.rule_button(14), None, "{revision:?} out-of-range bit");
-        assert_eq!(controls.rule_button(u8::MAX), None, "{revision:?} invalid bit");
+        assert_eq!(
+            controls.rule_button(14),
+            None,
+            "{revision:?} out-of-range bit"
+        );
+        assert_eq!(
+            controls.rule_button(u8::MAX),
+            None,
+            "{revision:?} invalid bit"
+        );
     }
 }
 
