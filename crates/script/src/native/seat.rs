@@ -1014,6 +1014,19 @@ impl<R> GameplaySeat<R> {
         kind: NativeKind,
         cancelled: bool,
     ) -> Result<Admission, SeatError> {
+        self.start_with_api_foreground(stamp, kind, cancelled, false)
+    }
+
+    /// The public CastNpc operation returns false while an API foreground is
+    /// busy. Let that one Session root reach its no-dispatch completion path;
+    /// other competing Session roots keep the seat's Busy refusal.
+    pub fn start_with_api_foreground(
+        &mut self,
+        stamp: RequestStamp,
+        kind: NativeKind,
+        cancelled: bool,
+        api_foreground: bool,
+    ) -> Result<Admission, SeatError> {
         if self.held {
             return Ok(Admission::Deferred);
         }
@@ -1109,9 +1122,13 @@ impl<R> GameplaySeat<R> {
             parent_entry.depth + 1
         } else {
             // Admission is ordered: a Session may start beside existing
-            // capability roots, but any live Session blocks a new root,
+            // capability roots. Other Session roots block a new root,
             // including a Capability under Hunt's non-filtering foreground.
-            if self.session().is_some() {
+            // A busy CastNpc root alone reaches its no-dispatch false result.
+            let busy_cast_npc = kind == NativeKind::CastNpc
+                && api_foreground
+                && self.foreground().is_some();
+            if self.session().is_some() && !busy_cast_npc {
                 return self.refuse(id, Refusal::Busy);
             }
             if matches!(class, RequestClass::Capability) {

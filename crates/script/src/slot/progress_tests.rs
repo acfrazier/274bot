@@ -292,7 +292,7 @@ fn journal_rule_reads_one_click_closes_and_resolves_stage_and_count() {
 fn journal_only_reads_exact_quest_and_waits_for_observed_close() {
     let mut slot = load();
     let mut snapshot = snapshot(0xf8f800);
-    read_journal(&mut slot, 30, "cOoK");
+    read_journal(&mut slot, 30, "cOoK's Assistant");
 
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {

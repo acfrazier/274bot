@@ -111,8 +111,8 @@ impl NativeKind {
         Self::CakeStall,
         Self::CastNpc,
     ];
-    /// Exhaustive classification keeps bankNearest and PeriodicBank as
-    /// Capabilities, and quest progress as a Session (§25 R5-4.6).
+    /// Keeps bankNearest and PeriodicBank as Capabilities and quest progress
+    /// as a Session (§25 R5-4.6); CastNpc shares Combat's foreground (§28.2:37).
     pub const fn policy(self) -> FamilyPolicy {
         let class = match self {
             Self::Gather => RequestClass::Session(SessionFamily::Gather),
@@ -121,6 +121,7 @@ impl NativeKind {
             Self::Quester => RequestClass::Session(SessionFamily::Quester),
             Self::DeathRecovery => RequestClass::Session(SessionFamily::DeathRecovery),
             Self::QuestProgress => RequestClass::Session(SessionFamily::Progress),
+            Self::CastNpc => RequestClass::Session(SessionFamily::Combat),
             Self::Walk
             | Self::BankPlan
             | Self::BankNearest
@@ -139,8 +140,7 @@ impl NativeKind {
             | Self::Fire
             | Self::Clue
             | Self::Duel
-            | Self::CakeStall
-            | Self::CastNpc => RequestClass::Capability,
+            | Self::CakeStall => RequestClass::Capability,
         };
         FamilyPolicy {
             class,
@@ -329,6 +329,18 @@ mod tests {
                     assert_eq!(policy.reconnect(), ReconnectPolicy::Carry);
                     assert_eq!(policy.sub_operation(), None);
                     assert_eq!(policy.commands(), Some(ReconnectPolicy::Carry));
+                    assert_eq!(policy.encoded_settings_max(), None);
+                }
+                NativeKind::CastNpc => {
+                    assert_eq!(
+                        policy.class(),
+                        RequestClass::Session(SessionFamily::Combat)
+                    );
+                    assert_eq!(policy.pause(), PausePolicy::Freeze);
+                    assert_eq!(policy.takeover(), TakeoverPolicy::None);
+                    assert_eq!(policy.reconnect(), ReconnectPolicy::Resume);
+                    assert_eq!(policy.sub_operation(), None);
+                    assert_eq!(policy.commands(), None);
                     assert_eq!(policy.encoded_settings_max(), None);
                 }
                 NativeKind::Walk => {

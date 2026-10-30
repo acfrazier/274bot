@@ -2697,11 +2697,12 @@ impl SlotScript {
                 cancel.of == start.id
                     && cancel.reason == api::script_contract::CallbackCancelReason::ParentAborted
             });
+            let api_foreground = self.api_owns_foreground();
             let admission = match self
                 .seat
                 .as_mut()
                 .expect("armed")
-                .start(stamp, start.kind, cancelled)
+                .start_with_api_foreground(stamp, start.kind, cancelled, api_foreground)
             {
                 Ok(admission) => admission,
                 Err(error) => {

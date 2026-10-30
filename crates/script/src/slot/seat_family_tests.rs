@@ -324,6 +324,11 @@ fn fixture_26_progress_first_rejects_competing_api_work() {
                 crate::channel::decode(values[0].value).expect("cast result value"),
                 serde_json::Value::Bool(false)
             );
+            assert_eq!(
+                slot.api.as_ref().unwrap().cast_npc_token(),
+                None,
+                "busy CastNpc does not start or dispatch a cast"
+            );
         } else {
             assert_eq!(
                 result.outcome,
