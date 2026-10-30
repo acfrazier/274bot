@@ -186,6 +186,9 @@ impl Rig {
                 cache.objs[id].name = name.into();
                 cache.objs[id].iop[4] = Some("Drop".into());
             }
+            cache.locs.resize_with(1277, Default::default);
+            cache.locs[1276].width = 1;
+            cache.locs[1276].length = 1;
         }
         let names = Arc::new(api::obj_names::ObjNames::from_objs(&client.cache.objs));
         let mut snapshot = GameSnapshot::new();
@@ -1659,11 +1662,29 @@ fn ordered_delayed_request_counts_later_foreign_traffic_without_rate_admission()
 fn checked_loc_click(rig: &mut Rig) -> u64 {
     let before = rig.client.out.committed_packet_count().unwrap();
     let loc = rig.snapshot.locs()[0].clone();
+    let x = loc.tile.x - rig.client.map_build_base_x;
+    let z = loc.tile.z - rig.client.map_build_base_z;
+    assert!(rig.client.world.add_scenery(
+        loc.tile.level,
+        x,
+        z,
+        0,
+        loc.typecode,
+        loc.shape,
+        loc.width,
+        loc.length,
+        0,
+        0,
+        0,
+        0,
+        0,
+    ));
     assert!(matches!(
         Interactions::new(&rig.snapshot, &mut rig.client)
             .interact(OpTarget::Loc(&loc), ActionSpec::Operation(1)),
         SendResult::Sent { .. }
     ));
+    rig.client.out.finish_packet();
     rig.client
         .out
         .committed_packet_count()
@@ -1724,6 +1745,9 @@ fn ordered_native_budget_rejects_second_same_window_emission_before_dispatch() {
     let request = knife_request(&mut rig, true);
     rig.start([Emission::DoubleContent(request, close_request())]);
     rig.pump(1);
+    rig.input.with_server_ordered_input(|state| {
+        assert_eq!(state.snapshot().category_counts(), [4, 0, 0]);
+    });
     rig.pump(2);
 
     let receipt = rig.receipt();
@@ -1739,7 +1763,7 @@ fn ordered_native_budget_rejects_second_same_window_emission_before_dispatch() {
     assert_eq!(rig.decoded().len(), 4);
     rig.input.with_server_ordered_input(|state| {
         assert_eq!(state.snapshot().packet_count(), 4);
-        assert_eq!(state.snapshot().category_counts(), [4, 0, 0]);
+        assert_eq!(state.snapshot().category_counts(), [0, 0, 0]);
     });
 }
 
