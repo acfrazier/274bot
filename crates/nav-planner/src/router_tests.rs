@@ -1932,10 +1932,7 @@ fn first_target_search_stops_at_its_explicit_hard_cap_when_the_proof_cannot_deci
 fn first_target_area_routes_past_the_unproven_budget_after_reverse_abandons() {
     let len = FIRST_TARGET_BUDGET + REVERSE_PROOF_BUDGET + 1_024;
     let wc = bake(1, len, &[]);
-    let targets = [
-        tile(0, len as i32 - 2, 0),
-        tile(0, len as i32 - 1, 0),
-    ];
+    let targets = [tile(0, len as i32 - 2, 0), tile(0, len as i32 - 1, 0)];
     let world = Arc::new(crate::world::NavWorld::from_parts(
         wc,
         TransportGraph::default(),
@@ -2079,16 +2076,10 @@ fn first_target_proof_of_reachability_lifts_the_unproven_budget() {
     }
 }
 
-/// R6-B1: a fallback set keeps its own proof when the preferred budget stops
-/// the search. On a 1024² plane the preferred goal lies on a plane no move
-/// reaches, too large for its proof to close, so the stands stop at the
-/// unproven budget. The radius tile sits in a sealed room whose only way in
-/// is a teleport dearer than walking the whole plane: its proof meets the
-/// landing at once, but it settles only after the plane, past the stands'
-/// budget. It is left undecided rather than failed, and the search over it
-/// alone, under the budget its proof lifts, routes to it.
+/// A preferred proof that abandons no longer stops the shared flood early.
+/// Its reachable fallback routes before the preferred search completes.
 #[test]
-fn fallback_proven_reachable_past_the_preferred_budget_still_routes() {
+fn fallback_proven_reachable_routes_after_the_preferred_proof_abandons() {
     const SIZE: i32 = 1024;
     let mut ring = Vec::new();
     for x in 600..=604 {
@@ -2109,10 +2100,14 @@ fn fallback_proven_reachable_past_the_preferred_budget_still_routes() {
     };
     let state = WorldState::empty();
 
-    assert_eq!(shared.proof(), ReverseProof::Unreachable);
-    assert_eq!(shared.route().err(), Some(RouteError::BudgetExhausted));
-    assert_eq!(shared.settled(), FIRST_TARGET_BUDGET);
-    assert_eq!(shared.fallback(), Some(&FallbackRoute::Undecided));
+    let shared = find_first_with_fallback(&wc, &graph, from, &stands, &fallback, opts, &state);
+    assert_eq!(shared.proof(), ReverseProof::Abandoned);
+    assert_eq!(shared.route().err(), Some(RouteError::NoPath));
+    assert!(shared.settled() > FIRST_TARGET_BUDGET);
+    let Some(FallbackRoute::Routed(route)) = shared.fallback() else {
+        panic!("the reachable fallback must route: {:?}", shared.fallback());
+    };
+    assert_eq!(route.dest, fallback[0]);
 
     let alone = find_first_with(&wc, &graph, from, &fallback, opts, &state);
     assert_eq!(alone.proof(), ReverseProof::Reachable);

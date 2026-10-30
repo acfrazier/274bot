@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use api::snapshot::WorldTile;
-use nav_planner::router::{find_first_with, FindOptions, Leg, RouteError};
+use nav_planner::router::{find_first_with, find_with, missing_item_reqs, FindOptions, RouteError};
 use nav_planner::world::NavWorld;
 use nav_planner::WorldState;
 
@@ -17,8 +17,10 @@ fn waterfall_state() -> WorldState {
         worn: HashSet::from([1163, 1333, 1113, 1201, 1079]),
         inventory_ready: true,
         equipment_ready: true,
-        stats: (0..=20).map(|id| (id, 1)).collect(),
-        combat_level: Some(3),
+        stats: (0..21)
+            .map(|id| (id, if id < 7 && id != 5 { 40 } else { 1 }))
+            .collect(),
+        combat_level: Some(46),
         map_members: true,
         ..WorldState::empty()
     }
@@ -50,16 +52,27 @@ fn draynor_to_almera_area_goal_routes_with_the_observed_waterfall_state() {
 
     let state = waterfall_state();
     for allow_teleports in [false, true] {
+        let options = FindOptions {
+            allow_wilderness: true,
+            allow_teleports,
+            ..FindOptions::default()
+        };
+        let exact_route = find_with(
+            &world.collision,
+            &world.graph,
+            tile(3092, 3243),
+            exact,
+            options,
+            &state,
+        )
+        .expect("the exact target routes within NODE_BUDGET");
+        assert_eq!(exact_route.ticks, 538.5);
         let search = find_first_with(
             &world.collision,
             &world.graph,
             tile(3092, 3243),
             &stands,
-            FindOptions {
-                allow_wilderness: true,
-                allow_teleports,
-                ..FindOptions::default()
-            },
+            options,
             &state,
         );
         let route = search.route().unwrap_or_else(|error| {
@@ -71,13 +84,10 @@ fn draynor_to_almera_area_goal_routes_with_the_observed_waterfall_state() {
             "allow_teleports={allow_teleports}: {} ticks",
             route.ticks
         );
-        assert!(route.legs.iter().all(|leg| match leg {
-            Leg::Walk { .. } => true,
-            Leg::Transport { edge } => {
-                !edge.item_req.iter().any(|(id, _)| *id == 1712)
-                    && !edge.consumed_req.iter().any(|(id, _)| *id == 1712)
-            }
-        }), "the route must not use a charged glory");
+        assert!(
+            missing_item_reqs(route, &state).is_empty(),
+            "the route needs no item absent from the observed inventory and equipment"
+        );
     }
 
     let wilderness_off = find_first_with(

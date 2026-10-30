@@ -347,7 +347,10 @@ fn main() -> Result<(), String> {
         worn: HashSet::from([1163, 1333, 1113, 1201, 1079]),
         inventory_ready: true,
         equipment_ready: true,
-        stats: (0..21).map(|skill| (skill, 1)).collect(),
+        stats: (0..21)
+            .map(|id| (id, if id < 7 && id != 5 { 40 } else { 1 }))
+            .collect(),
+        combat_level: Some(46),
         map_members: true,
         ..WorldState::empty()
     };
