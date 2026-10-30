@@ -206,7 +206,7 @@ pub(super) fn materialize_snapshot(
         let value = if event.is_empty() {
             none
         } else {
-            js_string(&mut scope, event)?.into()
+            js_string(&mut scope, event)?
         };
         set(&mut scope, obj, "guardian_active_event", value)?;
     } else if !had {

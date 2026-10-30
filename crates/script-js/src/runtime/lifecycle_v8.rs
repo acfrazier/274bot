@@ -339,8 +339,7 @@ fn dispatch_runtime<'s>(
             } else {
                 RuntimeRunState::Stopped.as_str()
             },
-        )
-        .into()),
+        )),
         "active" => Ok(v8::Boolean::new(
             scope,
             generation_matches
@@ -355,7 +354,7 @@ fn dispatch_runtime<'s>(
             .filter(|_| generation_matches)
             .and_then(|snapshot| snapshot.stop_reason)
         {
-            Some(reason) => Ok(cb::string(scope, &reason).into()),
+            Some(reason) => Ok(cb::string(scope, &reason)),
             None => Ok(v8::null(scope).into()),
         },
         "watchdogHold" => match context
@@ -363,7 +362,7 @@ fn dispatch_runtime<'s>(
             .filter(|_| generation_matches)
             .and_then(|context| context.watchdog_hold())
         {
-            Some(hold) => Ok(cb::string(scope, &hold).into()),
+            Some(hold) => Ok(cb::string(scope, &hold)),
             None => Ok(v8::null(scope).into()),
         },
         "setWatchdogHold" => {
@@ -385,7 +384,7 @@ fn dispatch_runtime<'s>(
             .filter(|_| generation_matches)
             .and_then(|snapshot| snapshot.source_identity)
         {
-            Some(identity) => Ok(cb::string(scope, &identity).into()),
+            Some(identity) => Ok(cb::string(scope, &identity)),
             None => Ok(v8::null(scope).into()),
         },
         "meta" => runtime_metadata(scope, &state, context.as_ref()),
@@ -501,7 +500,7 @@ fn abort_waiters<'s>(
     let length_key = cb::string(scope, "length");
     let length = cb::num(scope, f64::from(retained));
     let compacted = cb::catching(scope, |scope| {
-        queue.set(scope, length_key.into(), length.into())
+        queue.set(scope, length_key, length)
     })?;
     if !compacted {
         return Err(cb::type_error(

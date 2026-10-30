@@ -419,6 +419,7 @@ enum SetupState {
 pub(crate) struct GameplayFactory;
 
 impl GameplayFactory {
+    #[cfg(test)]
     pub(crate) fn spawn_with_content(
         &self,
         js: String,
@@ -439,6 +440,7 @@ impl GameplayFactory {
         )
     }
 
+    #[allow(clippy::too_many_arguments)] // the slot's per-run inputs plus its local state
     pub(crate) fn spawn_with_content_and_state(
         &self,
         js: String,

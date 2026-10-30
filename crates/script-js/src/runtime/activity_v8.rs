@@ -339,20 +339,22 @@ fn start_inner<'s>(
     let (inner_resolver, inner_promise) = new_promise(scope)?;
     let data = run_data(
         scope,
-        owner,
-        child,
-        log,
-        meta,
-        generation,
-        activity_id,
-        "start",
-        sustain,
-        event_signal,
-        run_manager,
-        scheduler,
-        script_aborted,
-        activity_finished,
-        bot_host,
+        RunData {
+            owner,
+            child,
+            log,
+            meta,
+            generation,
+            child_id: activity_id,
+            mode: "start",
+            sustain,
+            event_signal,
+            run_manager,
+            scheduler,
+            script_aborted,
+            activity_finished,
+            bot_host,
+        },
     )?;
     let on_fulfilled = build_callback(
         scope,
@@ -501,20 +503,22 @@ fn loop_inner<'s>(
     let (inner_resolver, inner_promise) = new_promise(scope)?;
     let data = run_data(
         scope,
-        owner,
-        child,
-        log,
-        meta,
-        generation,
-        activity_id,
-        "loop",
-        sustain,
-        event_signal,
-        run_manager,
-        scheduler,
-        script_aborted,
-        activity_finished,
-        bot_host,
+        RunData {
+            owner,
+            child,
+            log,
+            meta,
+            generation,
+            child_id: activity_id,
+            mode: "loop",
+            sustain,
+            event_signal,
+            run_manager,
+            scheduler,
+            script_aborted,
+            activity_finished,
+            bot_host,
+        },
     )?;
     let on_fulfilled = build_callback(
         scope,
@@ -564,15 +568,15 @@ fn loop_inner<'s>(
     Ok(())
 }
 
-fn run_data<'s>(
-    scope: &mut v8::HandleScope<'s>,
+/// The values one ScriptActivity run callback needs, captured as its data object.
+struct RunData<'s> {
     owner: v8::Local<'s, v8::Object>,
     child: v8::Local<'s, v8::Value>,
     log: v8::Local<'s, v8::Value>,
     meta: v8::Local<'s, v8::Value>,
     generation: u64,
     child_id: u64,
-    mode: &str,
+    mode: &'static str,
     sustain: v8::Local<'s, v8::Value>,
     event_signal: v8::Local<'s, v8::Value>,
     run_manager: v8::Local<'s, v8::Value>,
@@ -580,27 +584,32 @@ fn run_data<'s>(
     script_aborted: v8::Local<'s, v8::Value>,
     activity_finished: v8::Local<'s, v8::Value>,
     bot_host: v8::Local<'s, v8::Value>,
+}
+
+fn run_data<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    data: RunData<'s>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let generation_value = v8::BigInt::new_from_u64(scope, generation).into();
-    let child_id_value = v8::BigInt::new_from_u64(scope, child_id).into();
-    let mode_value = cb::string(scope, mode);
+    let generation_value = v8::BigInt::new_from_u64(scope, data.generation).into();
+    let child_id_value = v8::BigInt::new_from_u64(scope, data.child_id).into();
+    let mode_value = cb::string(scope, data.mode);
     cb::object(
         scope,
         &[
-            ("owner", owner.into()),
-            ("child", child),
-            ("log", log),
-            ("meta", meta),
+            ("owner", data.owner.into()),
+            ("child", data.child),
+            ("log", data.log),
+            ("meta", data.meta),
             ("generation", generation_value),
             ("childId", child_id_value),
             ("mode", mode_value),
-            ("Sustain", sustain),
-            ("EventSignal", event_signal),
-            ("RunManager", run_manager),
-            ("Scheduler", scheduler),
-            ("ScriptAborted", script_aborted),
-            ("ActivityFinished", activity_finished),
-            ("BotHost", bot_host),
+            ("Sustain", data.sustain),
+            ("EventSignal", data.event_signal),
+            ("RunManager", data.run_manager),
+            ("Scheduler", data.scheduler),
+            ("ScriptAborted", data.script_aborted),
+            ("ActivityFinished", data.activity_finished),
+            ("BotHost", data.bot_host),
         ],
     )
 }
@@ -1347,17 +1356,20 @@ fn ignored_randoms<'s>(
     }
 }
 
+/// The active child's id, child object, log function and meta object.
+type ActiveChild<'s> = (
+    u64,
+    v8::Local<'s, v8::Value>,
+    v8::Local<'s, v8::Value>,
+    v8::Local<'s, v8::Value>,
+);
+
 fn active_for_owner<'s>(
     scope: &mut v8::HandleScope<'s>,
     state: &ActivityState,
     generation: u64,
     owner: v8::Local<'s, v8::Object>,
-) -> Option<(
-    u64,
-    v8::Local<'s, v8::Value>,
-    v8::Local<'s, v8::Value>,
-    v8::Local<'s, v8::Value>,
-)> {
+) -> Option<ActiveChild<'s>> {
     let context = context_for_generation(state, generation)?;
     let active = state.active.borrow();
     let active = active.as_ref()?;
