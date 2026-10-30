@@ -220,6 +220,58 @@ fn stale_refusal_is_ignored_and_fresh_mesbox_pages_close_before_terminal() {
 }
 
 #[test]
+fn changed_refusal_pages_close_without_a_new_chat_ring_message() {
+    let mut client = scene_client();
+    let mut snapshot = snap_at(&mut client, 0, 1);
+    client.add_chat(0, "An existing ordinary chat line.", "");
+    plant_message_dialog(&mut client, REFUSAL);
+    bump_rebuild(&mut client, &mut snapshot);
+    let observed_sequence = super::super::chat_seq(&snapshot);
+    let edge = gated_shantay_edge();
+    let crossing = edge.crossing_id().expect("directed crossing identity");
+    let mut options = TravelOptions {
+        close_enough: 0,
+        refusal_texts: Arc::from([(crossing, Arc::<str>::from(REFUSAL))]),
+        ..TravelOptions::default()
+    };
+    let mut run = start_sent_hop(edge, &snapshot, &options);
+    let mut driver = FollowRec::default();
+    assert!(matches!(
+        run.poll_transport(&mut driver, &snapshot, &mut options, &mut None),
+        Poll::Watching
+    ));
+    assert_eq!(driver.pause_buttons, 0, "the send-time page is stale");
+
+    for (index, page) in ["STOP!", "Can't I go through here?", REFUSAL]
+        .into_iter()
+        .enumerate()
+    {
+        plant_message_dialog(&mut client, page);
+        bump_rebuild(&mut client, &mut snapshot);
+        assert_eq!(super::super::chat_seq(&snapshot), observed_sequence);
+        assert!(matches!(
+            run.poll_transport(&mut driver, &snapshot, &mut options, &mut None),
+            Poll::Watching
+        ));
+        assert_eq!(driver.pause_buttons, index + 1);
+    }
+    let matched_tick = u64::from(snapshot.tick());
+    client.chat_modal_id = -1;
+    bump_rebuild(&mut client, &mut snapshot);
+    let Poll::Terminal(TravelOutcome::GateRefused { matched, .. }) =
+        run.poll_transport(&mut driver, &snapshot, &mut options, &mut None)
+    else {
+        panic!("acknowledged refusal pages need no ordinary chat message");
+    };
+    assert_eq!(matched.text, 0);
+    assert_eq!(matched.tick, matched_tick);
+    assert_eq!(
+        matched.sequence,
+        u64::try_from(observed_sequence).expect("observed chat sequence")
+    );
+}
+
+#[test]
 fn pass_requires_the_exact_direction_message_and_landing() {
     super::n1_tests::install_log_capture();
     let log_slot = "prereq-hop-test-pass";
