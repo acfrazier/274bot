@@ -511,7 +511,7 @@ mod tests {
             panic!("missing journal status must refuse after one observed tick");
         };
         assert!(matches!(
-            receipt.end,
+            &receipt.end,
             WalkEnd::NeedsEvidence(gates) if gates.as_ref() == [biohazard_complete_gate()]
         ));
         assert!(
@@ -566,6 +566,13 @@ mod tests {
         });
         let original = post_needs_evidence_receipt(&mut ledger, 1);
 
+
+        assert!(matches!(
+            with_tick(&initial, &mut ledger, 1, |tick| tick
+                .actions
+                .poll(&handle, &mut tick.cx)),
+            Poll::Pending
+        ));
         assert!(matches!(
             with_tick(&observed, &mut ledger, 2, |tick| tick
                 .actions
