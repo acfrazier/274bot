@@ -4381,11 +4381,9 @@ pub(crate) fn find_first_with_avoid_budgets(
 /// or the preferred set stops without a goal, caught up to one step per
 /// settle spent (so a fallback goal within that budget, or a preferred goal,
 /// costs it nothing, and only one proof's scratch is live at a time). A
-/// goal settling past the budget counts only if the proof showed a goal
-/// reachable within it; proven unreachable, or past its budget without
-/// proving a goal reachable, the set has failed; otherwise it is
-/// [`FallbackRoute::Undecided`] for the caller to search alone. Of the two
-/// searches, at most one then stops at the unproven budget.
+/// reachable goal or abandoned proof permits the caller's full budget. A
+/// proven unreachable set, or one past that full budget, has failed;
+/// otherwise it is [`FallbackRoute::Undecided`] for the caller to search alone.
 pub fn find_first_with_fallback(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -5954,11 +5952,11 @@ pub fn find_missing_item_reqs_with_avoid_bounded(
 /// fallback alone only when the shared search leaves it
 /// [`FallbackRoute::Undecided`]. The diagnosis is the chosen route's: the
 /// cheapest preferred goal's when one routes relaxed, else the fallback
-/// set's. The searches keep the strict first-goal budgets
-/// ([`FIRST_TARGET_BUDGET`] unless the backward proof shows a goal
-/// reachable), so a goal set costs what its strict search may, never one
-/// diagnosis per goal. The `Unknown` stage-gate retry and the `None` cases
-/// are [`find_missing_item_reqs`]'s.
+/// set's. Each relaxed search keeps the strict first-goal budget policy:
+/// an unreachable proof stops it early, while a reachable goal or abandoned
+/// proof permits the full caller budget. A goal set costs what its strict
+/// search may, never one diagnosis per goal. The `Unknown` stage-gate retry
+/// and the `None` cases are [`find_missing_item_reqs`]'s.
 #[expect(
     clippy::too_many_arguments,
     reason = "Keeps collision, transports, targets, policy, and search limits separate."
