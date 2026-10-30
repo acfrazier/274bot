@@ -7,7 +7,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use api::identity::SlotKey;
-use client::render::backend::BackendKind;
+use client::render::backend::{BackendKind, CaptureGeometry, ReadbackBudget, ReadbackError};
 use client::render::budget::RenderBudgetLimits;
 use host::render_head::test_hooks::{
     configure_process, configure_process_control, configure_render_budgets,
@@ -94,6 +94,7 @@ fn optional_pair(
 struct HeldLease {
     slot: u64,
     duration: Duration,
+    hold_readback: bool,
     used: AtomicBool,
     active: AtomicBool,
     finished: AtomicBool,
@@ -103,6 +104,9 @@ struct HeldLease {
     peer_slot: AtomicU64,
     peer_first: AtomicI32,
     peer_last: AtomicI32,
+    readback_acquired: AtomicBool,
+    busy_before: AtomicU64,
+    busy_after: AtomicU64,
 }
 
 struct LiveControl {
@@ -116,22 +120,33 @@ struct LiveControl {
 
 impl LiveControl {
     fn from_env() -> Result<Self, String> {
-        let held =
-            optional_pair("T44_HELD_SLOT", "T44_HELD_LEASE_MS", false)?.map(|(slot, millis)| {
-                HeldLease {
-                    slot,
-                    duration: Duration::from_millis(millis),
-                    used: AtomicBool::new(false),
-                    active: AtomicBool::new(false),
-                    finished: AtomicBool::new(false),
-                    gpu: AtomicBool::new(false),
-                    ui_before: AtomicU64::new(0),
-                    ui_after: AtomicU64::new(0),
-                    peer_slot: AtomicU64::new(0),
-                    peer_first: AtomicI32::new(i32::MIN),
-                    peer_last: AtomicI32::new(i32::MIN),
-                }
-            });
+        let held_spec = optional_pair("T44_HELD_SLOT", "T44_HELD_LEASE_MS", false)?;
+        let hold_readback = if held_spec.is_some() {
+            match required("T44_HELD_READBACK")?.as_str() {
+                "0" => false,
+                "1" => true,
+                _ => return Err("T44_HELD_READBACK must be 0 or 1".into()),
+            }
+        } else {
+            false
+        };
+        let held = held_spec.map(|(slot, millis)| HeldLease {
+            slot,
+            duration: Duration::from_millis(millis),
+            hold_readback,
+            used: AtomicBool::new(false),
+            active: AtomicBool::new(false),
+            finished: AtomicBool::new(false),
+            gpu: AtomicBool::new(false),
+            ui_before: AtomicU64::new(0),
+            ui_after: AtomicU64::new(0),
+            peer_slot: AtomicU64::new(0),
+            peer_first: AtomicI32::new(i32::MIN),
+            peer_last: AtomicI32::new(i32::MIN),
+            readback_acquired: AtomicBool::new(false),
+            busy_before: AtomicU64::new(0),
+            busy_after: AtomicU64::new(0),
+        });
         let loading = optional_pair("T44_LOADING_AFTER_MS", "T44_LOADING_FOR_MS", true)?.map(
             |(after, duration)| {
                 (
@@ -161,11 +176,19 @@ impl LiveControl {
             let first = held.peer_first.load(Ordering::Acquire);
             let last = held.peer_last.load(Ordering::Acquire);
             let peer_advanced = first != i32::MIN && last.wrapping_sub(first) > 0;
+            let busy_before = held.busy_before.load(Ordering::Acquire);
+            let busy_after = held.busy_after.load(Ordering::Acquire);
+            let busy_valid = !held.hold_readback
+                || (held.readback_acquired.load(Ordering::Acquire)
+                    && busy_after
+                        .checked_sub(busy_before)
+                        .is_some_and(|drops| drops > 0));
             let valid = held.used.load(Ordering::Acquire)
                 && held.finished.load(Ordering::Acquire)
                 && held.gpu.load(Ordering::Acquire)
                 && after.checked_sub(before).is_some_and(|paints| paints > 0)
-                && peer_advanced;
+                && peer_advanced
+                && busy_valid;
             passed &= valid;
             eprintln!(
                 "t44_headed_held_lease={}",
@@ -180,6 +203,12 @@ impl LiveControl {
                     "peer_slot": held.peer_slot.load(Ordering::Acquire),
                     "peer_cycle_before": first,
                     "peer_cycle_after": last,
+                    "readback_slot_held": held.hold_readback,
+                    "readback_permit_acquired": held.readback_acquired.load(Ordering::Acquire),
+                    "actual_recording_busy_before": busy_before,
+                    "actual_recording_busy_after": busy_after,
+                    "busy_passed": busy_valid,
+                    "readback_hold_scope": "real admission permit; not simulated GPU mapping latency",
                     "passed": valid,
                 })
             );
@@ -304,13 +333,37 @@ impl RenderTestControl for LiveControl {
         };
         if event.head.slot().incarnation().get() != held.slot
             || held.peer_slot.load(Ordering::Acquire) == 0
-            || held.used.swap(true, Ordering::AcqRel)
+            || held.used.load(Ordering::Acquire)
         {
             return;
         }
         let Some(deadline) = Instant::now().checked_add(held.duration) else {
             return;
         };
+        // This is a real admission in the one process-wide budget. It
+        // deliberately holds no staging buffer and claims no GPU latency.
+        let readback = if held.hold_readback {
+            match ReadbackBudget::process().try_acquire(CaptureGeometry::new(1, 1), deadline) {
+                Ok(permit) => Some(permit),
+                Err(ReadbackError::Busy) => return,
+                Err(error) => {
+                    held.used.store(true, Ordering::Release);
+                    eprintln!("t44_headed_readback_hold_refused: {error:?}");
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        if held.used.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        held.readback_acquired
+            .store(readback.is_some(), Ordering::Release);
+        held.busy_before.store(
+            panel::window::test_hooks::recording_busy_drops(),
+            Ordering::Release,
+        );
         held.ui_before.store(
             panel::window::test_hooks::submitted_paints(),
             Ordering::Release,
@@ -327,6 +380,11 @@ impl RenderTestControl for LiveControl {
         while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
             std::thread::park_timeout(remaining);
         }
+        held.busy_after.store(
+            panel::window::test_hooks::recording_busy_drops(),
+            Ordering::Release,
+        );
+        drop(readback);
         held.ui_after.store(
             panel::window::test_hooks::submitted_paints(),
             Ordering::Release,
@@ -367,6 +425,9 @@ fn run_fixture() -> Result<(), String> {
                 + 2 * std::mem::size_of::<usize>(),
             "held_lease_inline_bytes": std::mem::size_of::<HeldLease>(),
             "submitted_ui_counter_static_bytes": std::mem::size_of::<AtomicU64>(),
+            "recording_busy_counter_static_bytes": std::mem::size_of::<AtomicU64>(),
+            "watchdog_requested_stack_bytes": 65_536,
+            "watchdog_cancel_channel_capacity": 1,
             "scope": "diagnostic fixture only; excluded from renderer owner totals",
         })
     );
@@ -395,12 +456,33 @@ fn run_fixture() -> Result<(), String> {
     shutdown
 }
 
+fn run_bounded_fixture() -> Result<(), String> {
+    let timeout = Duration::from_millis(positive("T44_HEADED_RUN_TIMEOUT_MS")?);
+    let (cancel, cancelled) = std::sync::mpsc::sync_channel(1);
+    let watchdog = std::thread::Builder::new()
+        .name("t44-headed-deadline".into())
+        .stack_size(65_536)
+        .spawn(move || {
+            if cancelled.recv_timeout(timeout) == Err(std::sync::mpsc::RecvTimeoutError::Timeout) {
+                eprintln!("t44_headed_live FAILED: independent run deadline {timeout:?} expired");
+                std::process::exit(1);
+            }
+        })
+        .map_err(|error| format!("headed fixture watchdog: {error}"))?;
+    let result = run_fixture();
+    let _ = cancel.send(());
+    watchdog
+        .join()
+        .map_err(|_| "headed fixture watchdog panicked".to_string())?;
+    result
+}
+
 fn main() -> ExitCode {
     if std::env::var("T44_HEADED_LIVE").as_deref() != Ok("1") {
         println!("t44_headed_live not selected; explicit live fixture inputs are required");
         return ExitCode::SUCCESS;
     }
-    match run_fixture() {
+    match run_bounded_fixture() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("t44_headed_live FAILED: {error}");

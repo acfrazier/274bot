@@ -43,12 +43,12 @@ fn panel_render_pump_deadline_preempts_each_sleep_mode() {
     let render_due = now + std::time::Duration::from_millis(50);
 
     assert_eq!(
-        render_deadline_control_flow(RedrawMode::Poll, frame_due, Some(render_due)),
+        render_deadline_control_flow(RedrawMode::Poll, frame_due, Some(render_due), None),
         ControlFlow::Poll,
         "Poll pumps every loop turn rather than sleeping past the render deadline"
     );
     assert_eq!(
-        render_deadline_control_flow(RedrawMode::Wait, frame_due, Some(render_due)),
+        render_deadline_control_flow(RedrawMode::Wait, frame_due, Some(render_due), None),
         ControlFlow::WaitUntil(render_due)
     );
     assert_eq!(
@@ -56,6 +56,7 @@ fn panel_render_pump_deadline_preempts_each_sleep_mode() {
             RedrawMode::WaitUntil { fps: 60.0 },
             frame_due,
             Some(render_due),
+            None,
         ),
         ControlFlow::WaitUntil(render_due)
     );
@@ -64,14 +65,79 @@ fn panel_render_pump_deadline_preempts_each_sleep_mode() {
             RedrawMode::WaitUntil { fps: 60.0 },
             render_due,
             Some(frame_due),
+            None,
         ),
         ControlFlow::WaitUntil(render_due),
         "the earlier panel frame still wins"
     );
     assert_eq!(
-        render_deadline_control_flow(RedrawMode::Wait, frame_due, None),
+        render_deadline_control_flow(RedrawMode::Wait, frame_due, None, None),
         ControlFlow::Wait
     );
+}
+
+#[test]
+fn recorder_deadline_wakes_wait_without_capture_or_render_work() {
+    let now = Instant::now();
+    let record_due = now + Duration::from_millis(500);
+    let later = record_due + Duration::from_secs(1);
+    for render_due in [None, Some(later)] {
+        assert_eq!(
+            render_deadline_control_flow(RedrawMode::Wait, later, render_due, Some(record_due)),
+            ControlFlow::WaitUntil(record_due)
+        );
+        assert_eq!(
+            render_deadline_control_flow(
+                RedrawMode::WaitUntil { fps: 1.0 },
+                later,
+                render_due,
+                Some(record_due),
+            ),
+            ControlFlow::WaitUntil(record_due)
+        );
+    }
+    assert_eq!(
+        render_deadline_control_flow(RedrawMode::Wait, later, Some(now), Some(record_due)),
+        ControlFlow::WaitUntil(now),
+        "recorder cadence must not postpone a render deadline"
+    );
+    assert_eq!(
+        render_deadline_control_flow(RedrawMode::Poll, later, None, Some(record_due)),
+        ControlFlow::Poll
+    );
+}
+
+#[test]
+fn legacy_recording_does_not_add_a_window_deadline() {
+    let mut shots = ShotState::default();
+    shots.set_record_ui_deadline(Some(Instant::now()));
+    assert_eq!(shots.record_ui_deadline, None);
+    assert!(!shots.capture_pending());
+}
+
+#[cfg(feature = "render-test-hooks")]
+#[test]
+fn gated_record_ui_deadline_is_scalar_and_does_not_arm_readback() {
+    const CHILD: &str = "PANEL_CAPTURE_FIXTURE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        run_capture_fixture_child(
+            "window::tests::gated_record_ui_deadline_is_scalar_and_does_not_arm_readback",
+            false,
+        );
+        return;
+    }
+    let _fixture = capture_process_fixture(true, false);
+    let mut shots = ShotState::default();
+    let now = Instant::now();
+    let bytes = shots.metadata_bytes();
+    shots.set_record_ui_deadline(Some(now));
+    assert_eq!(shots.record_ui_deadline, Some(now));
+    assert!(!shots.capture_pending());
+    assert_eq!(shots.metadata_bytes(), bytes);
+    assert_eq!(std::mem::size_of::<Option<Instant>>(), 16);
+    shots.set_record_ui_deadline(None);
+    assert_eq!(shots.record_ui_deadline, None);
+    println!("render fixture child completed");
 }
 
 /// The `Gpu` texture-id manager must delegate register/update/unregister
@@ -441,6 +507,52 @@ fn many_untagged_shots_cannot_multiply_staging() {
     println!("render fixture child completed");
 }
 
+#[cfg(feature = "render-test-hooks")]
+#[test]
+fn busy_recording_counts_typed_refusal_and_reuses_slot() {
+    const CHILD: &str = "PANEL_CAPTURE_FIXTURE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        run_capture_fixture_child(
+            "window::tests::busy_recording_counts_typed_refusal_and_reuses_slot",
+            false,
+        );
+        return;
+    }
+    let _fixture = capture_process_fixture(true, false);
+    let mut shots = ShotState::default();
+    shots
+        .configure_capture_policy(
+            std::num::NonZeroUsize::new(16_384).unwrap(),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+    let now = Instant::now();
+    let deadline = shots.capture_deadline(now).unwrap();
+    let geometry = client::render::backend::CaptureGeometry::new(64, 64);
+    let occupied = ReadbackBudget::process()
+        .try_acquire(geometry, deadline)
+        .unwrap();
+    let busy_before = test_hooks::recording_busy_drops();
+    shots.arm_record_with_deadline(deadline).unwrap();
+    assert!(matches!(
+        shots.reserve_next_readback(geometry, now, 1),
+        Err(CaptureError::Busy)
+    ));
+    assert!(!shots.record_armed);
+    assert_eq!(shots.take_record_drops(), 1);
+    assert_eq!(test_hooks::recording_busy_drops(), busy_before + 1);
+    drop(occupied);
+    shots.arm_record_with_deadline(deadline).unwrap();
+    let permit = shots
+        .reserve_next_readback(geometry, now, 2)
+        .unwrap()
+        .expect("the next recording uses the released process slot");
+    assert!(shots.active_capture.as_ref().unwrap().recording);
+    shots.fail_active(CaptureError::Device);
+    drop(permit);
+    println!("render fixture child completed");
+}
+
 #[cfg(all(feature = "render-test-hooks", feature = "render-diagnostics"))]
 #[test]
 fn writer_diagnostic_label_capacity_is_admitted_before_copy() {
@@ -767,6 +879,8 @@ fn bounded_window_fixed_layout_receipt() {
                 "terminal_status": size_of::<TerminalStatus>(),
                 "terminal_outcome": size_of::<TerminalOutcome>(),
                 "frame_stamp": size_of::<FrameStamp>(),
+                "record_ui_deadline_bytes_once_per_process": size_of::<Option<Instant>>(),
+                "recording_busy_counter_bytes_once_per_process": size_of::<std::sync::atomic::AtomicU64>(),
                 "borrowed_pair_label_stack": size_of::<[[u8; CAPTURE_NAME_BYTES]; 2]>(),
             },
             "container_entry_limit": CAPTURE_QUEUE,

@@ -379,6 +379,8 @@ pub struct ShotState {
     actor_display_confirmed: bool,
     actor_display_error: Option<CaptureError>,
     record_deadline: Option<Instant>,
+    /// Next recorder UI poll, distinct from an accepted readback's deadline.
+    record_ui_deadline: Option<Instant>,
     record_drops: u64,
     /// Requests pushed by the scenario sink / pair terminal path, drained
     /// by the UI body.
@@ -871,6 +873,14 @@ impl ShotState {
             || self.active_capture.is_some()
             || self.actor_capture.is_some()
             || self.write_pending_label.is_some()
+    }
+
+    pub fn set_record_ui_deadline(&mut self, deadline: Option<Instant>) {
+        self.record_ui_deadline = if render_fair_capture_enabled() {
+            deadline
+        } else {
+            None
+        };
     }
 
     /// Arm a legacy recording frame. Gated capture requires an explicit
@@ -1454,6 +1464,10 @@ impl ShotState {
                     self.record_armed = false;
                     self.record_deadline = None;
                     self.record_drops = self.record_drops.saturating_add(1);
+                    #[cfg(feature = "render-test-hooks")]
+                    if error == CaptureError::Busy {
+                        test_hooks::note_recording_busy();
+                    }
                     return Err(error);
                 }
                 if error == CaptureError::Busy {
@@ -1784,10 +1798,22 @@ pub mod test_hooks {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static SUBMITTED_PAINTS: AtomicU64 = AtomicU64::new(0);
+    static RECORDING_BUSY_DROPS: AtomicU64 = AtomicU64::new(0);
 
     /// Actual submitted window paints, not redraw requests or hook callbacks.
     pub fn submitted_paints() -> u64 {
         SUBMITTED_PAINTS.load(Ordering::Acquire)
+    }
+
+    /// Actual recording opportunities refused by the process readback budget.
+    pub fn recording_busy_drops() -> u64 {
+        RECORDING_BUSY_DROPS.load(Ordering::Acquire)
+    }
+
+    pub(super) fn note_recording_busy() {
+        let _ = RECORDING_BUSY_DROPS.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            count.checked_add(1)
+        });
     }
 
     pub(super) fn note_submitted_paint() {
@@ -3543,6 +3569,7 @@ where
         }
         let mut readback_pending = false;
         let mut capture_queued = false;
+        let mut record_due = None;
         if render_fair_capture_enabled() {
             if let Some(window) = self.window.as_mut() {
                 if window.poll_pending_capture(self.shots.as_ref()) {
@@ -3550,7 +3577,15 @@ where
                 }
                 readback_pending = window.pending_capture.is_some();
             }
-            capture_queued = self.shots.lock().unwrap().capture_pending();
+            let shots = self.shots.lock().unwrap();
+            capture_queued = shots.capture_pending();
+            record_due = shots.record_ui_deadline;
+            drop(shots);
+            if record_due.is_some_and(|due| due <= pump_now) {
+                if let Some(window) = &self.window {
+                    window.window.request_redraw();
+                }
+            }
         }
         match self.cfg.redraw {
             RedrawMode::Poll => {
@@ -3558,6 +3593,7 @@ where
                     self.cfg.redraw,
                     pump_now,
                     render_due,
+                    record_due,
                 ));
                 if let Some(window) = &self.window {
                     window.window.request_redraw();
@@ -3572,7 +3608,7 @@ where
                 event_loop.set_control_flow(if capture_queued || readback_pending {
                     ControlFlow::Poll
                 } else {
-                    render_deadline_control_flow(self.cfg.redraw, pump_now, render_due)
+                    render_deadline_control_flow(self.cfg.redraw, pump_now, render_due, record_due)
                 });
             }
             RedrawMode::WaitUntil { fps } => {
@@ -3589,7 +3625,7 @@ where
                 event_loop.set_control_flow(if readback_pending {
                     ControlFlow::Poll
                 } else {
-                    render_deadline_control_flow(self.cfg.redraw, next_wake, render_due)
+                    render_deadline_control_flow(self.cfg.redraw, next_wake, render_due, record_due)
                 });
             }
         }
@@ -3607,11 +3643,16 @@ fn render_deadline_control_flow(
     redraw: RedrawMode,
     panel_due: Instant,
     render_due: Option<Instant>,
+    record_due: Option<Instant>,
 ) -> ControlFlow {
+    let next_due = match (render_due, record_due) {
+        (Some(render), Some(record)) => Some(render.min(record)),
+        (render, record) => render.or(record),
+    };
     match redraw {
         RedrawMode::Poll => ControlFlow::Poll,
-        RedrawMode::Wait => render_due.map_or(ControlFlow::Wait, ControlFlow::WaitUntil),
-        RedrawMode::WaitUntil { .. } => ControlFlow::WaitUntil(earliest(panel_due, render_due)),
+        RedrawMode::Wait => next_due.map_or(ControlFlow::Wait, ControlFlow::WaitUntil),
+        RedrawMode::WaitUntil { .. } => ControlFlow::WaitUntil(earliest(panel_due, next_due)),
     }
 }
 

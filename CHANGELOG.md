@@ -19,7 +19,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   selected image and its snapshot together across later paints. PNG and JSON
   saving runs on the evidence writer instead of the UI thread. Capture queues
   and recording sidecars have bounded memory, and recording shutdown does not
-  join the encoder on the UI thread. These paths remain opt-in pending qualification.
+  join the encoder on the UI thread. A sleeping experimental panel wakes for
+  recording frames and encoder shutdown. These paths remain opt-in pending qualification.
 - Source builds can now omit the JavaScript runtime with
   `--no-default-features`. These builds keep Gatherer, Grinch and Quester,
   their settings, and native Start, Pause, Stop and paint controls. They do

@@ -923,6 +923,21 @@ impl HeadedRecord {
         self.config.readback_deadline(now)
     }
 
+    /// Keep a sleeping UI on the configured capture cadence. Finalization
+    /// polls at that same cadence without waiting for the supervisor.
+    /// Gate-off recording keeps its existing event-loop behavior.
+    pub fn next_ui_deadline(&self, now: Instant) -> Option<Instant> {
+        if !self.gated {
+            None
+        } else if self.is_active() {
+            Some(self.pacer.next.unwrap_or(now))
+        } else if self.is_finalizing() {
+            now.checked_add(self.pacer.interval)
+        } else {
+            None
+        }
+    }
+
     /// Give up recording for this run without arming.
     pub fn abandon(&mut self) {
         self.config.enabled = false;
@@ -2288,6 +2303,49 @@ mod tests {
         assert!(!pacer.poll(late));
         assert!(!pacer.poll(late + Duration::from_millis(499)));
         assert!(pacer.poll(late + Duration::from_millis(500)));
+    }
+
+    #[test]
+    fn gated_recording_deadline_tracks_pacer_and_finalization() {
+        let (sender, _receiver) = sync_channel::<EncoderMessage>(RECORD_QUEUE);
+        let mut record = HeadedRecord {
+            config: HeadedRecordConfig {
+                enabled: true,
+                fps: 2.0,
+                readback_timeout: None,
+                finish_timeout: None,
+            },
+            pacer: RecordPacer::new(Duration::from_millis(500)),
+            gated: false,
+            active: Some(ActiveRecording::for_test(sender, 2.0)),
+            legacy_active: None,
+            finalizing: None,
+            done: false,
+        };
+        let now = Instant::now();
+        assert_eq!(record.next_ui_deadline(now), None);
+        record.gated = true;
+        assert_eq!(record.next_ui_deadline(now), Some(now));
+        assert!(record.is_due(now));
+        let due = now + Duration::from_millis(500);
+        assert_eq!(record.next_ui_deadline(now), Some(due));
+        assert!(!record.is_due(now + Duration::from_millis(1)));
+        assert_eq!(record.next_ui_deadline(now), Some(due));
+        let late = now + Duration::from_secs(10);
+        assert!(record.is_due(late));
+        assert_eq!(
+            record.next_ui_deadline(late),
+            Some(late + Duration::from_millis(500))
+        );
+        record.request_finish(late);
+        assert!(!record.is_active());
+        assert!(record.is_finalizing());
+        assert_eq!(
+            record.next_ui_deadline(late),
+            Some(late + Duration::from_millis(500))
+        );
+        record.finalizing = None;
+        assert_eq!(record.next_ui_deadline(late), None);
     }
 
     #[test]

@@ -8805,6 +8805,19 @@ pub(super) fn finish_recording_for_exit(
 /// order of these calls is the frame's contract (the pump publishes the
 /// status the live tick reads).
 fn frame_pumps(state: &mut PanelState, live_failure: &Mutex<Option<String>>) -> bool {
+    let exit = frame_pumps_inner(state, live_failure);
+    if crate::window::render_fair_capture_enabled() {
+        let deadline = state.record.next_ui_deadline(Instant::now());
+        state
+            .shot_state
+            .lock()
+            .unwrap()
+            .set_record_ui_deadline(deadline);
+    }
+    exit
+}
+
+fn frame_pumps_inner(state: &mut PanelState, live_failure: &Mutex<Option<String>>) -> bool {
     state.session.poll_panel_preferences();
     apply_amber_current(&state.session.ui.chrome);
     let wrote_shots = pump_shots(state);
