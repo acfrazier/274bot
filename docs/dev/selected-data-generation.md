@@ -59,6 +59,9 @@ An omitted parameter uses only its declared content default.
 The extractor reads NPC stat defaults from the pinned engine decoder.
 Missing or malformed required facts stop generation.
 NPC rows also publish `max_dealt` and attack-rate, poison-severity, and multi-combat defaults from `combat.param`.
+NPC damage types use the declared `npc_combat.param` default when omitted.
+The extractor resolves that code through `combat_damagetypes.constant`.
+A missing default or an ambiguous constant stops generation.
 Version-1 rows require attack, defence, magic, the signed attack/defence bonus fields, and `max_dealt`; missing keys fail API decoding rather than becoming zero.
 
 ## Server-ordered content contracts

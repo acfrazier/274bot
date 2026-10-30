@@ -721,7 +721,7 @@ function weaponStyleTables(content: string) {
     }
     return { byCategory, fallback: fallbackSeen ? fallback : null };
 }
-function combatConstantCodes(content: string, file: string, label: string) {
+export function combatConstantCodes(content: string, file: string, label: string) {
     const source = stripComments(requireGatherText(content, file));
     const codes = new Map<string, number | null>();
     for (const match of source.matchAll(/^\s*\^([A-Za-z][A-Za-z0-9_]*)\s*=\s*(-?\d+)\s*$/gm)) {

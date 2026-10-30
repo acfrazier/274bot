@@ -1,11 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parsePack, parseParamDefinitions, requireGatherText, walkContentFiles } from './common.ts';
-import { buildSpellMaxHits, extractNpcCombatFacts, parseCombatScripts, type CombatNpcSource, type CombatScripts } from './combat.ts';
+import { buildSpellMaxHits, combatConstantCodes, extractNpcCombatFacts, parseCombatScripts, type CombatNpcSource, type CombatScripts } from './combat.ts';
 
 export const NPC_COMBAT_FACTS_VERSION = 1;
 
-export const npcNamesContentFiles = ['pack/npc.pack', 'scripts/skill_combat/configs/combat.param'];
+export const npcNamesContentFiles = [
+    'pack/npc.pack',
+    'scripts/skill_combat/configs/combat.param',
+    'scripts/skill_combat/configs/npc_combat.param',
+    'scripts/skill_combat/configs/combat_damagetypes.constant',
+];
 
 type NpcBlock = {
     name: string;
@@ -112,6 +117,12 @@ function requiredParamDefault(definitions: ReadonlyMap<string, { type?: string; 
 export function parseNpcFiles(content: string, revision: 274 | 289, engineNpcTypeSource: string) {
     const definitions = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/combat.param'));
     const stats = parseNpcStatDefaults(engineNpcTypeSource, revision);
+    const npcDefinitions = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/npc_combat.param'));
+    const damageCode = requiredParamDefault(npcDefinitions, 'damagetype');
+    const damageCodes = combatConstantCodes(content, 'scripts/skill_combat/configs/combat_damagetypes.constant', 'damagetype');
+    const damageNames = [...damageCodes].filter(([, code]) => code === damageCode);
+    if (damageNames.length !== 1) throw new Error(`npc_names: damagetype default ${damageCode} has no unique content constant`);
+    const damagetype = `^${damageNames[0]![0]}`;
     const defaultMaxrange = revision === 274 ? 7 : -1;
     const attackbonus = requiredParamDefault(definitions, 'attackbonus');
     const rangeattack = requiredParamDefault(definitions, 'rangeattack');
@@ -131,6 +142,7 @@ export function parseNpcFiles(content: string, revision: 274 | 289, engineNpcTyp
     const forcemulti = requiredParamDefault(definitions, 'npc_forcemulti') !== 0;
     const max_dealt = requiredParamDefault(definitions, 'max_dealt');
     const combatDefaults = {
+        damagetype,
         attackbonus,
         rangeattack,
         magicattack,
@@ -172,7 +184,7 @@ export function parseNpcFiles(content: string, revision: 274 | 289, engineNpcTyp
                     defence: stats.defence,
                     hitpoints: stats.hitpoints,
                     magic: stats.magic,
-                    damagetype: null,
+                    damagetype,
                     category: null,
                     strength: stats.strength,
                     ranged: stats.ranged,
@@ -313,7 +325,7 @@ export function extractNpcNamesFacts(
                 defence: block?.defence ?? stats.defence,
                 hitpoints: block?.hitpoints ?? stats.hitpoints,
                 magic: block?.magic ?? stats.magic,
-                damagetype: block?.damagetype ?? null,
+                damagetype: block?.damagetype ?? combatDefaults.damagetype,
                 strength: block?.strength ?? stats.strength,
                 ranged: block?.ranged ?? stats.ranged,
                 attackbonus: block?.attackbonus ?? combatDefaults.attackbonus,

@@ -167,6 +167,8 @@ function fixture(npcSource = npcConfig, paramSource = combatParams): string {
     ].join('\n'));
     fs.writeFileSync(path.join(root, 'scripts/skill_combat/configs/combat.param'), paramSource);
     fs.writeFileSync(path.join(root, 'scripts/npc/configs/stat-default.npc'), npcSource);
+    fs.writeFileSync(path.join(root, 'scripts/skill_combat/configs/npc_combat.param'), '[damagetype]\ntype=int\ndefault=2\n');
+    fs.writeFileSync(path.join(root, 'scripts/skill_combat/configs/combat_damagetypes.constant'), '^stab_style=0\n^slash_style=1\n^crush_style=2\n');
     fs.writeFileSync(path.join(root, 'scripts/skill_combat/scripts/npc/melee.rs2'), `[proc,npc_melee_maxhit]()(int)
 def_int $strengthbonus = npc_param(strengthbonus);
 def_int $effective_strength = ~combat_effective_stat(npc_stat(strength), 100);
@@ -225,6 +227,8 @@ for (const revision of [274, 289] as const) {
         [1, 1, 1, 2, 1, 1],
         `${revision}: omitted levels use the NpcType source default; hitpoints honors its explicit override`,
     );
+    // Old: omitted damage type was null. New: read the declared crush default.
+    assert.equal(plain.damagetype, '^crush_style', `${revision}: declared NPC damage type default`);
     assert.equal(plain.attackbonus, 0, `${revision}: omitted attackbonus uses combat.param default 0`);
     assert.deepEqual(
         [
@@ -303,6 +307,22 @@ for (const revision of [274, 289] as const) {
         `${revision}: a pack row without a content block uses declared combat defaults`,
     );
 }
+
+function facts_damage_type_requires_declared_default() {
+    // Old: extraction succeeded without this default. New: it throws.
+    const root = fixture();
+    try {
+        fs.writeFileSync(path.join(root, 'scripts/skill_combat/configs/npc_combat.param'), '[damagetype]\ntype=int\n');
+        assert.throws(
+            () => extractNpcNamesFacts(root, 289, engineNpcTypeSource, scripts, maxHits),
+            /damagetype combat\.param default is missing/,
+        );
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
+facts_damage_type_requires_declared_default();
 
 function facts_missing_fact_fails_generation() {
     const facts = extractNpcNamesFacts(content, 274, engineNpcTypeSource, scripts, maxHits);

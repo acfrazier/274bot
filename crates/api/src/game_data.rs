@@ -583,7 +583,7 @@ pub struct Attribution {
 /// the ten signed bonuses are aggregated per object (C
 /// `scripts/player/scripts/equip.rs2:239-252` in 274, `:268-281` in 289).
 /// Missing params use selected `combat.param` defaults (C
-/// `scripts/skill_combat/configs/combat.param:1-58`).
+/// `scripts/skill_combat/configs/combat.param:1-68`).
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub struct ItemCombatBonus {
     /// Selected obj id.
