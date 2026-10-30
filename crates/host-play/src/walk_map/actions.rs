@@ -1463,8 +1463,11 @@ impl Play {
                             api::hostlog::Category::NavEvent,
                             api::hostlog::Level::Info,
                             slot = name.as_str(),
-                            "[DEBUG-nav-manual] actionable={:?}",
-                            diagnosis.as_ref().map(|gates| gates.as_ref().map(|gates| gates.len())),
+                            "[DEBUG-nav-manual] actionable={diagnosis:?} priest_list={:?}",
+                            snapshot.map(|snapshot| (
+                                snapshot.quest_statuses_available(),
+                                snapshot.quest_statuses().iter().find(|row| row.name == "Priest in Peril"),
+                            )),
                         );
                         if let Ok(Some(gates)) = diagnosis {
                             let gate_count = gates.len();
