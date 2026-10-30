@@ -1,10 +1,10 @@
 use super::thieving_core::{
     level_ready, ChatEvidence, Decision, Failure, Observation, ThieveCore, PICKPOCKET, STEAL_FROM,
 };
+use super::walk::Walk;
 use super::{ActionContext, ActionError, NativeMachine};
 use crate::gatherer::oneop::{OneOp, OneOpArgs};
 use crate::quester::families::reach::{self, Reach, ReachArgs, ReachKind};
-use api::quest_progress::EvidenceStamp;
 use api::snapshot::{NpcView, SnapshotView, StatView};
 use api::WorldTile;
 use std::sync::Arc;
@@ -40,7 +40,7 @@ pub(crate) struct Thieve {
     args: ThieveActionArgs,
     core: ThieveCore,
     area_anchor: Option<WorldTile>,
-    walk: Option<PendingWalk>,
+    walk: Option<Walk>,
     reach: Option<Reach>,
     reach_request_id: Option<u64>,
     reach_target: Option<(i32, &'static str)>,
@@ -57,11 +57,6 @@ pub(crate) struct Thieve {
     /// can be after the action's wall-clock deadline. The deadline must not
     /// kill it; it still ends the approach walk and later attempts.
     anchor_spawn_attempt: bool,
-}
-
-struct PendingWalk {
-    request_id: u64,
-    required_after: EvidenceStamp,
 }
 
 /// Fresh plans after a failed approach walk. AGENTS.md ("A walk failure is
@@ -463,61 +458,64 @@ impl Thieve {
         radius: u16,
         cx: &mut ActionContext<'_>,
     ) -> Result<(), ActionError> {
-        let required_after = cx.evidence();
-        let mut request = reach::walk_request(target, radius, None, required_after);
+        let mut request = reach::walk_request(target, radius, None, cx.evidence());
         // The action's own gate is the Chebyshev radius (`reach::within`):
         // any standable tile inside it is enough to look for a workman, so
         // the anchor walk must not demand a path onto the anchor tile. A
         // visible workman still uses the reach machine's `Reach` arrival.
         request.arrival = nav_planner::contract::ArrivalKind::Area;
-        let request_id = cx.walk(request)?;
-        self.walk = Some(PendingWalk {
-            request_id,
-            required_after,
-        });
+        // An area route ends in a plain host `RouteEnded`, so the receipt
+        // must be settled by the shared walk adapter: it accepts a walkable
+        // tile inside the area and waits one tick on a scene entry. Reading
+        // the raw receipt here failed the live Digsite run on `[3347,3395,0]`,
+        // twelve tiles from the anchor, with "walk route ended before
+        // arrival".
+        self.walk = Some(Walk::begin(request, cx)?);
         Ok(())
     }
 
     fn poll_walk(&mut self, cx: &mut ActionContext<'_>) -> Result<bool, ActionError> {
-        let Some(walk) = self.walk.as_ref() else {
+        let Some(walk) = self.walk.as_mut() else {
             return Ok(false);
         };
-        let request_id = walk.request_id;
-        let required_after = walk.required_after;
-        if let Some(receipt) = cx.walk_receipt(request_id).cloned() {
-            if receipt.evidence.meets(required_after) {
+        let polled = walk.poll(cx);
+        let receipt = match polled {
+            Poll::Pending => return Ok(true),
+            Poll::Ready(Ok(receipt)) => receipt,
+            Poll::Ready(Err(error)) => {
                 self.walk = None;
-                match receipt.into_arrival() {
-                    Ok(_) => {
-                        self.walk_failures = 0;
-                        return Ok(false);
-                    }
-                    // Manual takeover, revocation and a pending evidence gate
-                    // are not walk failures to replan from.
-                    Err(
-                        error @ (ActionError::UserInput
-                        | ActionError::Cancelled
-                        | ActionError::NeedsEvidence(_)),
-                    ) => return Err(error),
-                    // A failed walk is information: plan again from the
-                    // observed position while the bounded budget lasts, then
-                    // end with this last failure's detail.
-                    Err(error) => {
-                        self.walk_failures = self.walk_failures.saturating_add(1);
-                        if self.walk_failures > APPROACH_WALK_RETRIES {
-                            return Err(error);
-                        }
-                        return Ok(false);
-                    }
+                return Err(error);
+            }
+        };
+        self.walk = None;
+        match receipt.into_arrival() {
+            Ok(_) => {
+                self.walk_failures = 0;
+                Ok(false)
+            }
+            // Manual takeover, revocation and a pending evidence gate are not
+            // walk failures to replan from.
+            Err(
+                error @ (ActionError::UserInput
+                | ActionError::Cancelled
+                | ActionError::NeedsEvidence(_)),
+            ) => Err(error),
+            // A failed walk is information: plan again from the observed
+            // position while the bounded budget lasts, then end with this
+            // last failure's detail.
+            Err(error) => {
+                self.walk_failures = self.walk_failures.saturating_add(1);
+                if self.walk_failures > APPROACH_WALK_RETRIES {
+                    return Err(error);
                 }
+                Ok(false)
             }
         }
-        Ok(true)
     }
 
     fn cancel_walk(&mut self, cx: &mut ActionContext<'_>) {
         if let Some(walk) = self.walk.take() {
-            cx.cancel_request(walk.request_id);
+            cx.cancel_request(walk.request_id());
         }
     }
 
@@ -1282,6 +1280,185 @@ mod tests {
             npc_click_count(&ledger),
             1,
             "after an area arrival the action looks for the workman"
+        );
+    }
+
+    /// The live Digsite approach failed on its second route end. Request 131
+    /// stopped thirteen tiles from the anchor `[3359,3401,0]`, which spent
+    /// the one retry. Request 132 stopped on `[3347,3395,0]`, exactly twelve
+    /// tiles away at radius 12. The action asks for an area arrival, so the
+    /// shared walk adapter must settle that second receipt as arrival and the
+    /// action must go on to look for a workman. Reading the raw receipt
+    /// instead ends the step with "walk route ended before arrival".
+    #[test]
+    fn route_ended_at_the_radius_after_a_retry_is_an_area_arrival() {
+        let anchor = WorldTile {
+            x: 3359,
+            z: 3401,
+            level: 0,
+        };
+        // The live start, fifty-seven tiles north of the anchor.
+        let start = WorldTile {
+            x: 3357,
+            z: 3344,
+            level: 0,
+        };
+        // The live request 131 stop: thirteen tiles away.
+        let too_short = WorldTile {
+            x: 3346,
+            z: 3394,
+            level: 0,
+        };
+        // The live request 132 stop: twelve west, six south of the anchor.
+        let inside = WorldTile {
+            x: 3347,
+            z: 3395,
+            level: 0,
+        };
+        let workman_at = WorldTile {
+            x: 3348,
+            z: 3395,
+            level: 0,
+        };
+        let view = flood_view(
+            WorldTile {
+                x: 3330,
+                z: 3330,
+                level: 0,
+            },
+            96,
+            &[],
+            inside,
+        );
+        assert!(
+            !reach::within(start, anchor, 12),
+            "the approach starts outside"
+        );
+        assert!(
+            !reach::within(too_short, anchor, 12),
+            "request 131 stopped outside the radius"
+        );
+        assert!(
+            reach::within(inside, anchor, 12) && !reach::within(inside, anchor, 11),
+            "the retry tile sits exactly on the authored radius"
+        );
+        assert!(
+            view.walkable(inside),
+            "the retry tile is standable, so only the receipt settlement decides"
+        );
+
+        let outside = game_snapshot(start, vec![], vec![]);
+        let short = game_snapshot(too_short, vec![], vec![]);
+        let arrived = game_snapshot(inside, vec![placed_npc(19, workman_at, inside)], vec![]);
+        let mut ledger = None;
+        let run = with_tick_reach(&outside, &view, &mut ledger, 1, |tick| {
+            let run = tick
+                .actions
+                .begin::<Thieve>(args(anchor, 12), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
+            run
+        });
+        assert_eq!(walk_request_count(&ledger), 1, "one area approach walk");
+
+        // Request 131: the host stops the area route outside the radius, so
+        // the action spends its one fresh plan.
+        post_walk_end(&mut ledger, 2, WalkEnd::RouteEnded, None);
+        assert!(
+            with_tick_reach(&short, &view, &mut ledger, 2, |tick| {
+                tick.actions.poll(&run, &mut tick.cx)
+            })
+            .is_pending(),
+            "the action replans after the first route end"
+        );
+        assert_eq!(walk_request_count(&ledger), 2, "the retry walk is owed");
+
+        // Request 132: the host stops on a standable tile at the radius.
+        post_walk_end(&mut ledger, 3, WalkEnd::RouteEnded, None);
+        let outcome = with_tick_reach(&arrived, &view, &mut ledger, 3, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        });
+        assert!(
+            outcome.is_pending(),
+            "the second route end must be an area arrival, not a failure: {outcome:?}"
+        );
+        assert_eq!(
+            walk_request_count(&ledger),
+            2,
+            "an arrival inside the radius must not replan"
+        );
+        assert_eq!(
+            npc_click_count(&ledger),
+            1,
+            "after the area arrival the action looks for the workman"
+        );
+    }
+
+    /// A route end outside the radius is still a walk failure: the shared
+    /// adapter keeps `RouteEnded`, and the action spends its one fresh plan
+    /// from the observed position. The live request 131 ended thirteen tiles
+    /// from the anchor on `[3346,3394,0]`.
+    #[test]
+    fn route_ended_outside_the_radius_is_a_walk_failure_with_one_replan() {
+        let anchor = WorldTile {
+            x: 3359,
+            z: 3401,
+            level: 0,
+        };
+        let start = WorldTile {
+            x: 3357,
+            z: 3344,
+            level: 0,
+        };
+        let short = WorldTile {
+            x: 3346,
+            z: 3394,
+            level: 0,
+        };
+        let view = flood_view(
+            WorldTile {
+                x: 3330,
+                z: 3330,
+                level: 0,
+            },
+            96,
+            &[],
+            short,
+        );
+        assert!(
+            !reach::within(short, anchor, 12),
+            "the stop tile is outside the authored radius"
+        );
+        assert!(
+            view.walkable(short),
+            "the tile is standable, so only the radius can reject the arrival"
+        );
+
+        let outside = game_snapshot(start, vec![], vec![]);
+        let stopped_short = game_snapshot(short, vec![], vec![]);
+        let mut ledger = None;
+        let run = with_tick_reach(&outside, &view, &mut ledger, 1, |tick| {
+            let run = tick
+                .actions
+                .begin::<Thieve>(args(anchor, 12), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
+            run
+        });
+        assert_eq!(walk_request_count(&ledger), 1);
+
+        post_walk_end(&mut ledger, 2, WalkEnd::RouteEnded, None);
+        assert!(
+            with_tick_reach(&stopped_short, &view, &mut ledger, 2, |tick| {
+                tick.actions.poll(&run, &mut tick.cx)
+            })
+            .is_pending(),
+            "the action retries instead of ending on the first walk failure"
+        );
+        assert_eq!(
+            walk_request_count(&ledger),
+            2,
+            "a route end outside the radius is a walk failure and spends the one replan"
         );
     }
 

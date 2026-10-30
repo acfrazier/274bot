@@ -84,6 +84,15 @@ impl Observation for Frame<'_> {
     }
 }
 
+impl Walk {
+    /// The host walk request this machine began. Dropping the machine does
+    /// not revoke the host follow, so a caller that abandons a walk passes
+    /// this to [`ActionContext::cancel_request`].
+    pub(crate) fn request_id(&self) -> u64 {
+        self.request_id
+    }
+}
+
 impl NativeMachine for Walk {
     type Args = WalkRequest;
     type Output = WalkReceipt;

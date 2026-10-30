@@ -104,7 +104,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   accept any standable tile inside the authored radius. Before, the walk
   required a path onto the anchor tile itself, so a bot that stopped short
   could end with "walk route ended before arrival" while already inside the
-  area.
+  area. The thieving approach settles the route end through the shared walk
+  adapter, so it accepts the area and goes on to look for a workman there.
 
 ### Scripting
 
