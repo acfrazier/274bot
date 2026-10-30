@@ -346,6 +346,10 @@ fn random_event_that_moves_nobody_keeps_the_active_step_owner() {
             .actions
             .begin::<PendingNativeAction>(Arc::clone(&cancelled), &mut tick.cx)
             .unwrap();
+        assert!(matches!(
+            tick.actions.poll(&handle, &mut tick.cx),
+            Poll::Pending
+        ));
         script.step = Some(Box::new(OwnedActionStep {
             handle: Some(handle),
         }));

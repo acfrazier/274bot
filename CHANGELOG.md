@@ -87,6 +87,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Quester
 
+- A random event no longer restarts the Quester's step. About 500 game ticks
+  after login the server can spawn a random event beside the player. Before,
+  the Quester then dropped its quest progress, read the quest journal and began
+  the step it was running again from the top of its sequence, with no failure
+  shown. Now the step, the quest progress and the place in an ordered sequence
+  stay. Only the Maze and Mime events, which teleport the player, end the
+  step that was running; the Quester then goes on from the same place in the
+  sequence, and a step that had finished keeps waiting for its own check. The
+  Log now names the reason each time the Quester drops its step or progress
+  (a random event that moves the player, a new run, a death, a pause and resume,
+  or a session end).
 - A Talk step no longer fails when the NPC is out of view for a moment while
   the bot walks to it, for example while it wanders. The bot keeps walking
   to where it last saw the NPC and talks to it when it sees it again. If the
