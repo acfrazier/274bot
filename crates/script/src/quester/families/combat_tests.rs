@@ -1104,8 +1104,8 @@ fn combat_run_size_stays_within_retained_budget() {
         std::mem::size_of::<CombatReceipt>(),
     );
     assert!(
-        size <= 1_280,
-        "CombatRun is {size} bytes. The source Elemental R1 head measured 1,192 bytes, including the 16-byte Option<u64> loot deadline. This integration also retains the bounded UntilDropConfig and confirmed-kill count. The one-byte miss flag records a missing drop until the until predicate check. The nested Action stayed 680 bytes in the source measurements. The integrated retained-state limit is 1,280 bytes."
+        size <= 1_480,
+        "CombatRun is {size} bytes. The source Elemental R1 head measured 1,192 bytes, including the 16-byte Option<u64> loot deadline. This integration also retains the bounded UntilDropConfig and confirmed-kill count. The one-byte miss flag records a missing drop until the until predicate check. The nested Action stayed 680 bytes in the source measurements. The dialogue-open-r2 head measured 1,224 bytes against a 1,280-byte limit. The combat escape retry fix grew AbortEscape from 56 to 256 bytes (fixed retry regions, asserted in combat_escape.rs), so the merged head measures 1,424 bytes. The limit keeps the same 56-byte headroom: 1,480 bytes."
     );
 }
 
