@@ -4354,6 +4354,14 @@ pub(crate) fn route_quest_context(
     slot: &script::SlotScript,
     tick: u64,
 ) -> Option<RouteQuestContext> {
+    route_quest_context_with_data(slot, tick, slot.compiled_game_data()?)
+}
+
+fn route_quest_context_with_data(
+    slot: &script::SlotScript,
+    tick: u64,
+    selected: Arc<api::game_data::SelectedGameData>,
+) -> Option<RouteQuestContext> {
     let api::identity::Scope::Slot(key) = slot.work_scope()? else {
         return None;
     };
@@ -4362,7 +4370,6 @@ pub(crate) fn route_quest_context(
         run: slot.runtime_generation(),
         session: slot.work_epoch(),
     });
-    let selected = slot.compiled_game_data()?;
     Some(RouteQuestContext {
         prereq_catalog: selected.try_prereq_steps(),
         selected,
@@ -4380,12 +4387,17 @@ pub(crate) fn manual_route_state(
     snapshot: &GameSnapshot,
     base: &WorldState,
     world: &NavWorld,
+    profile_data: Option<&Arc<api::game_data::SelectedGameData>>,
 ) -> Option<(
     api::selected::RunKey,
     Option<Arc<api::prereq_steps::PrereqCatalog>>,
     WorldState,
 )> {
-    let mut context = route_quest_context(slot, u64::from(snapshot.tick()))?;
+    let selected = slot
+        .compiled_game_data()
+        .or_else(|| profile_data.cloned())?;
+    let mut context =
+        route_quest_context_with_data(slot, u64::from(snapshot.tick()), selected)?;
     if let Some(run) = slot.manual_route_run().filter(|run| {
         run.slot == context.stamp.run.slot && run.session == context.stamp.run.session
     }) {
@@ -9306,6 +9318,72 @@ mod route_quest_provider_tests {
         ));
         assert!(state.record_prereq_fact(fact));
         state
+    }
+
+    #[test]
+    fn idle_manual_route_uses_profile_data_and_same_run_memory() {
+        let selected = selected_r289();
+        let mut slot = script::SlotScript::new();
+        slot.bind_incarnation(41);
+        let run = RunKey {
+            slot: 41,
+            run: slot.runtime_generation(),
+            session: slot.work_epoch(),
+        };
+        let quest = api::selected::FactKey::new("priestperil");
+        let values = api::selected::InclusiveRange {
+            min: Some(61),
+            max: Some(61),
+        };
+        slot.bind_local_state(state_with_fact(api::prereq_knowledge::Fact {
+            quest: quest.clone(),
+            signal: quest.clone(),
+            possible: values,
+            after: values,
+            refused: None,
+            source: api::prereq_knowledge::FactSource::Page { row: 0, line: 0 },
+            observed: stamp(run, 0, 0),
+        }));
+        assert!(slot.compiled_game_data().is_none());
+        assert!(route_quest_context(&slot, 0).is_none());
+        let mut world = tiny_world();
+        Arc::get_mut(&mut world).unwrap().graph.quest_family = Some(family(&selected));
+        let snapshot = GameSnapshot::new();
+        let (captured_run, catalog, route_state) = manual_route_state(
+            &slot,
+            &snapshot,
+            &WorldState::empty(),
+            &world,
+            Some(&selected),
+        )
+        .expect("idle manual request uses the bound profile capability");
+        assert_eq!(captured_run, run);
+        assert!(catalog.is_some());
+        assert!(route_state.establishable.is_some());
+        assert_eq!(
+            route_state.quest_evidence.unwrap().test(&QuestGate::Window(
+                api::selected::StageWindow {
+                    quest: quest.clone(),
+                    signal: quest,
+                    values,
+                }
+            )),
+            Truth::True
+        );
+    }
+
+    #[test]
+    fn idle_manual_route_without_profile_data_stays_unavailable() {
+        let mut slot = script::SlotScript::new();
+        slot.bind_incarnation(42);
+        assert!(manual_route_state(
+            &slot,
+            &GameSnapshot::new(),
+            &WorldState::empty(),
+            &tiny_world(),
+            None,
+        )
+        .is_none());
     }
 
     #[test]

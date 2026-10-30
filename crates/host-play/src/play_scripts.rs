@@ -228,7 +228,7 @@ impl ScriptStartHandle {
     )> {
         let slot = script_slot(&self.scripts, name)?;
         let slot = slot.lock().ok()?;
-        script_runtime::manual_route_state(&slot, snapshot, base, world)
+        script_runtime::manual_route_state(&slot, snapshot, base, world, self.game_data.as_ref())
     }
 
     pub(crate) fn record_gate_refusal(
