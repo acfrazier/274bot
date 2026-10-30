@@ -1816,7 +1816,10 @@ fn compat_handover_requires_dispatched_unreleased_physical_walk() {
             Some(Release::AbortWalk(id)),
         )
         .unwrap();
-        assert!(!seat.has_armed_walk(id), "a queued abort ends handover authority");
+        assert!(
+            !seat.has_armed_walk(id),
+            "a queued abort ends handover authority"
+        );
         seat.walk_terminal(id);
         assert_eq!(seat.reserved_releases(), 1);
         seat.take();

@@ -347,9 +347,10 @@ impl<R> GameplaySeat<R> {
     /// A host-fenced compatibility handover owns a dispatched physical walk,
     /// which need not have a native forest entry. Queued aborts are not live.
     pub(crate) fn has_armed_walk(&self, id: RequestId) -> bool {
-        self.walk_releases.iter().flatten().any(|slot| {
-            slot.id == id && slot.state == WalkReleaseState::Armed
-        })
+        self.walk_releases
+            .iter()
+            .flatten()
+            .any(|slot| slot.id == id && slot.state == WalkReleaseState::Armed)
     }
 
     /// Retire an armed physical walk after its matching host terminal. A
