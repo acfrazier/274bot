@@ -1657,29 +1657,34 @@ fn dialogue_stationary_cook_refusal_retries_once_at_fixed_ticks() {
 
 #[test]
 fn dialogue_refusal_approach_failure_keeps_refusal_detail() {
-    let cook_id = content_npc_id("cook");
+    let brundt_id = content_npc_id("viking_brundt");
+    assert_eq!(content_wander_range("viking_brundt"), 2);
     let player_tile = api::WorldTile {
         x: 6,
         z: 5,
         level: 0,
     };
-    let mut before = snapshot();
-    before.seed_local_player(super::tests::local_player(player_tile));
-    before.seed_npcs(vec![content_dialogue_npc(
-        cook_id,
-        "Cook",
+    let brundt = content_dialogue_npc(
+        brundt_id,
+        "Brundt the Chieftain",
         1,
         api::WorldTile {
             x: 7,
             z: 5,
             level: 0,
         },
-    )]);
+    );
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(player_tile));
+    before.seed_npcs(vec![brundt.clone()]);
     let mut ledger = None;
     let handle = with_tick(&before, &mut ledger, 1, |tick| {
         let handle = tick
             .actions
-            .begin::<Dialogue>(npc_args_for(cook_id, "Cook"), &mut tick.cx)
+            .begin::<Dialogue>(
+                npc_args_for(brundt_id, "Brundt the Chieftain"),
+                &mut tick.cx,
+            )
             .unwrap();
         assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         handle
@@ -1687,21 +1692,22 @@ fn dialogue_refusal_approach_failure_keeps_refusal_detail() {
     complete_talk(&mut ledger, 2, true, false);
     let mut refused = snapshot();
     refused.seed_local_player(super::tests::local_player(player_tile));
-    refused.seed_npcs(vec![content_dialogue_npc(
-        cook_id,
-        "Cook",
-        1,
-        api::WorldTile {
-            x: 7,
-            z: 5,
-            level: 0,
-        },
-    )]);
+    refused.seed_npcs(vec![brundt]);
     refused.seed_chat_lines(vec![game_message(1, "I can't reach that!")]);
     assert!(with_tick(&refused, &mut ledger, 2, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
+    assert_eq!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|entry| matches!(&entry.effect, HostEffect::Walk(_)) && entry.live())
+            .count(),
+        1
+    );
 
     let mut missing = snapshot();
     missing.seed_local_player(super::tests::local_player(player_tile));
