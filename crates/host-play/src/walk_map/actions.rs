@@ -1402,6 +1402,18 @@ impl Play {
         let route_generation = crate::walk_map::next_map_route_generation();
         let (outer, handover_enabled) =
             manual_outer_walk(destination, options, route_generation, globals);
+        #[cfg(feature = "live-probe")]
+        api::host_log!(
+            api::hostlog::Category::NavEvent,
+            api::hostlog::Level::Info,
+            slot = name.as_str(),
+            "[DEBUG-nav-manual] context={} run={route_run:?} catalog={:?} establishable={} evidence={} enabled={handover_enabled} allow={:?}",
+            manual_route.is_some(),
+            route_catalog.map(|catalog| catalog.len()),
+            route_state.establishable.is_some(),
+            route_state.quest_evidence.is_some(),
+            outer.prereq_allow,
+        );
         let slot: std::sync::Arc<str> = std::sync::Arc::from(name.as_str());
         let manual_prereq = |route: &Route| {
             let (Some(run), Some(catalog)) = (route_run, route_catalog) else {
@@ -1437,7 +1449,7 @@ impl Play {
                     && (outer.prereq_allow.dialogue || outer.prereq_allow.quest_start)
                 {
                     if let (Some(run), Some(catalog)) = (route_run, route_catalog) {
-                        if let Ok(Some(gates)) = nav_planner::router::find_actionable_quest_gates(
+                        let diagnosis = nav_planner::router::find_actionable_quest_gates(
                             &world.collision,
                             &world.graph,
                             world_tile(origin),
@@ -1445,7 +1457,16 @@ impl Play {
                             options,
                             route_state,
                             &[],
-                        ) {
+                        );
+                        #[cfg(feature = "live-probe")]
+                        api::host_log!(
+                            api::hostlog::Category::NavEvent,
+                            api::hostlog::Level::Info,
+                            slot = name.as_str(),
+                            "[DEBUG-nav-manual] actionable={:?}",
+                            diagnosis.as_ref().map(|gates| gates.as_ref().map(|gates| gates.len())),
+                        );
+                        if let Ok(Some(gates)) = diagnosis {
                             let gate_count = gates.len();
                             if let Some(content) =
                                 crate::script_runtime::route_prereq_content(catalog, run, gates)
