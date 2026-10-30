@@ -652,6 +652,8 @@ pub fn step_walk_arm_follow<D: Driver>(
     let outcome = arm
         .traveller
         .follow_shared(driver, snapshot, Arc::clone(route), &mut options);
+    // Release the borrowed route evidence before clearing the arm.
+    drop(options);
     if walking_stand && matches!(&outcome, Some(TravelOutcome::Arrived { .. })) {
         arm.route = None;
         return false;
