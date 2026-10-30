@@ -2470,6 +2470,10 @@ fn family_maximum_bytes(
         .map(|values| values.into_iter().max().unwrap_or_default())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The owner census combines distinct measured layouts and source-content populations"
+)]
 fn content_owner_bounds(
     families: &BTreeMap<String, FamilyMaximum>,
     scene_maxima: &BTreeMap<String, SceneMaximum>,
@@ -3029,6 +3033,10 @@ fn content_owner_bounds(
         },
     })
 }
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each resource row preserves independently available census inputs and their blockers"
+)]
 fn resource_rows(
     families: &BTreeMap<String, FamilyMaximum>,
     scene_maxima: &BTreeMap<String, SceneMaximum>,
@@ -3825,7 +3833,7 @@ fn render_budget_content_census() {
             }
         }
         for npc in &cache.npcs {
-            let model_list_load = npc.model.as_deref().map_or(true, configured_model_ids_load);
+            let model_list_load = npc.model.as_deref().is_none_or(configured_model_ids_load);
             if !model_list_load {
                 inputs.fail(
                     "dynamic_npc_model_source_unavailable",
@@ -3945,7 +3953,7 @@ fn render_budget_content_census() {
             }
         }
         for (id, idk) in cache.idks.iter().enumerate() {
-            let model_list_load = idk.model.as_deref().map_or(true, configured_model_ids_load);
+            let model_list_load = idk.model.as_deref().is_none_or(configured_model_ids_load);
             idk_model_lists_load[id] = model_list_load;
             let body_gender_slot = match idk.part {
                 0..=6 => Some((0, idk.part as usize)),
@@ -4045,7 +4053,7 @@ fn render_budget_content_census() {
             dynamic_face_upper_complete = false;
         }
         for (sequence_id, sequence) in cache.seqs.iter().enumerate() {
-            for gender in 0..=1 {
+            for (gender, slot_maxima) in player_slot_maxima.iter_mut().enumerate() {
                 let gender_name = if gender == 0 { "male" } else { "female" };
                 for (hand, slot, appearance_value) in [
                     ("right", 3usize, sequence.replaceheldright),
@@ -4072,7 +4080,7 @@ fn render_budget_content_census() {
                                     "seq:{sequence_id}:replaceheld{hand}:value:{appearance_value}:empty"
                                 ),
                             };
-                            player_slot_maxima[gender][slot].record_faces(faces, trigger.clone());
+                            slot_maxima[slot].record_faces(faces, trigger.clone());
                             sequence_hand_replacements.push(json!({
                                 "gender": gender_name,
                                 "appearance_slot": slot,
@@ -4932,7 +4940,7 @@ fn loaded_scene_metric_uses_eight_tile_aligned_origins() {
 
 #[test]
 fn submitted_static_geometry_sums_only_co_located_components() {
-    let mut terrain = vec![TerrainCell {
+    let terrain = vec![TerrainCell {
         world_x: 0,
         world_z: 0,
         faces: 9,
@@ -4947,7 +4955,7 @@ fn submitted_static_geometry_sums_only_co_located_components() {
         .unwrap()
         .0;
     let maximum =
-        maximum_submitted_static_geometry(&mut terrain, &mut entities, 8, 4, 2, 2, 24).unwrap();
+        maximum_submitted_static_geometry(&terrain, &mut entities, 8, 4, 2, 2, 24).unwrap();
     assert_eq!(terrain_maximum, 9);
     assert_eq!(entity_maximum, 9);
     assert_eq!(maximum.total_faces, 9);
@@ -4960,12 +4968,11 @@ fn submitted_static_geometry_sums_only_co_located_components() {
 
 #[test]
 fn submitted_fifty_tile_footprint_is_distinct_from_loaded_104_tile_scene() {
-    let mut terrain = Vec::new();
+    let terrain = Vec::new();
     let mut entities = vec![synthetic_entity(0, 2, 3), synthetic_entity(60, 2, 3)];
     let loaded = maximum_scene_entities(&entities, 104, 120, MAP_LOAD_ORIGIN_STRIDE, None).unwrap();
     let submitted =
-        maximum_submitted_static_geometry(&mut terrain, &mut entities, 120, 104, 50, 2, 24)
-            .unwrap();
+        maximum_submitted_static_geometry(&terrain, &mut entities, 120, 104, 50, 2, 24).unwrap();
     assert_eq!(loaded.faces, 6);
     assert_eq!(submitted.total_faces, 3);
     assert!(loaded.faces > submitted.total_faces);
@@ -5018,9 +5025,11 @@ fn dynamic_face_upper_checked_aggregation_rejects_overflow() {
 
 #[test]
 fn loc_shape_without_a_paired_model_is_not_declared() {
-    let mut loc = client::config::LocType::default();
-    loc.shape = Some(vec![10, 4]);
-    loc.model = Some(vec![42]);
+    let mut loc = client::config::LocType {
+        shape: Some(vec![10, 4]),
+        model: Some(vec![42]),
+        ..Default::default()
+    };
     assert!(!loc_declares_model_for_shape(&loc, 4));
     loc.model = Some(vec![42, 43]);
     assert!(loc_declares_model_for_shape(&loc, 4));

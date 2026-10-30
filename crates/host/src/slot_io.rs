@@ -2558,7 +2558,8 @@ mod tests {
         assert_eq!(token, token_n);
         assert!(valid, "later invalid N+1 cannot change N's scene validity");
         assert_eq!(rgba.len(), expected_n_pixels.len() * 4);
-        for (index, (pixel, expected)) in rgba.chunks_exact(4).zip(&expected_n_pixels).enumerate() {
+        let pixels = rgba.as_chunks::<4>().0;
+        for (index, (pixel, expected)) in pixels.iter().zip(&expected_n_pixels).enumerate() {
             let expected = *expected as u32;
             assert_eq!(pixel[0], (expected >> 16) as u8, "N red channel at {index}");
             assert_eq!(
