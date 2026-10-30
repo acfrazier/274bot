@@ -465,6 +465,17 @@ fn morytania_sites_compare_proof_unknown_and_false_gate_routes() {
         }
     }
     println!("real-pack unique crossing ids: {}", crossing_ids.len());
+    println!(
+        "real-pack census: ordinary_edges={} teleports={} quest_gated_edges={}",
+        world().graph.edges.len(),
+        world().graph.teleports.len(),
+        world()
+            .graph
+            .edges
+            .iter()
+            .filter(|edge| edge.quest_gates.is_some())
+            .count(),
+    );
 
     let a1 = ingress(3443, |edge| {
         edge.option == 1 && edge.at == tile(3440, 9886) && edge.to == tile(3423, 3485)
