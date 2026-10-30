@@ -526,41 +526,43 @@ struct InventoryCheck {
     after: i32,
 }
 /// The trade's clock: observed game ticks (`EvidenceStamp::tick`, one per
-/// `PLAYER_INFO`) that the run was eligible for. Every deadline of the machine,
-/// the whole-trade budget, the phase waits and the cleanup limits, is a value on
-/// this clock, so a hold spends none of them. The published contract keeps a
-/// reserved phase through a transient guardian, readiness or welcome hold and
-/// pauses its inactivity deadline (`docs/api/script.md`, "Transient guardian,
-/// readiness, welcome and same-session boundary holds retain a reserved phase");
-/// only an explicit Pause revokes the phase.
+/// `PLAYER_INFO`) on which the run was driven and the pair was ready. Every
+/// deadline of the machine, the whole-trade budget, the phase waits and the
+/// cleanup limits, is a value on this clock, so a hold spends none of them. The
+/// published contract keeps a reserved phase through a transient guardian,
+/// readiness or welcome hold and pauses its inactivity deadline
+/// (`docs/api/script.md`, "Transient guardian, readiness, welcome and
+/// same-session boundary holds retain a reserved phase"); only an explicit Pause
+/// revokes the phase.
 ///
-/// The ticks between two polls count when this poll and the previous one were
-/// both eligible. A hold in force at either end of the gap is charged for all of
-/// it, so a tick the run was not polled for cannot be spent either. The first
-/// eligible poll after a hold therefore spends nothing: it rereads the screen.
+/// Two holds reach the machine in two ways. While the frame is ineligible
+/// (`ActionContext::eligible`, set by a guardian, readiness or welcome hold)
+/// `NativeActions::poll` does not call the machine at all, so those ticks show
+/// only as a gap between two polls; the clock charges every tick of a gap. While
+/// the pair broker answers `PairError::NotReady` (either account is held) the
+/// machine is polled every tick, and the clock charges each such tick itself.
 #[derive(Clone, Copy)]
 struct EligibleClock {
-    last: (u64, bool),
+    last: u64,
     held: u64,
 }
 impl EligibleClock {
-    fn new(tick: u64, eligible: bool) -> Self {
+    fn new(tick: u64) -> Self {
         Self {
-            last: (tick, eligible),
+            last: tick,
             held: 0,
         }
     }
-    /// Record a poll at observed `tick` and return the clock reading.
-    fn observe(&mut self, tick: u64, eligible: bool) -> u64 {
-        let (last_tick, last_eligible) = self.last;
-        if !(eligible && last_eligible) {
-            self.held += tick.saturating_sub(last_tick);
-        }
-        self.last = (tick.max(last_tick), eligible);
+    /// Record a poll at observed `tick`, `held` when the broker says `NotReady`;
+    /// returns the clock reading. A repeat poll in one tick spends nothing.
+    fn observe(&mut self, tick: u64, held: bool) -> u64 {
+        let gap = tick.saturating_sub(self.last);
+        self.held += gap.saturating_sub(1) + u64::from(held && gap > 0);
+        self.last = self.last.max(tick);
         self.now()
     }
     fn now(&self) -> u64 {
-        self.last.0.saturating_sub(self.held)
+        self.last - self.held
     }
 }
 enum TradePhase {
@@ -681,7 +683,7 @@ impl TradeMachine {
             check_len: 0,
             before: cx.evidence(),
             deadline: now,
-            clock: EligibleClock::new(now, cx.eligible()),
+            clock: EligibleClock::new(now),
             request: None,
             requested: false,
             cancelled: false,
@@ -822,7 +824,7 @@ impl NativeMachine for TradeMachine {
             return Self::failed_begin(args, cx, error);
         }
         // `timeout_ticks` is a budget of eligible observed game ticks.
-        let clock = EligibleClock::new(cx.evidence().tick, cx.eligible());
+        let clock = EligibleClock::new(cx.evidence().tick);
         let deadline = clock.now() + u64::from(args.budget);
         Ok(Self {
             args,
@@ -844,7 +846,7 @@ impl NativeMachine for TradeMachine {
         }
         match self.args.port.poll(&self.args.token, cx.run()) {
             Poll::Ready(Err(PairError::NotReady)) => {
-                self.clock.observe(cx.evidence().tick, false);
+                self.clock.observe(cx.evidence().tick, true);
                 return Poll::Pending;
             }
             Poll::Ready(Err(error)) => return Poll::Ready(Err(error.action())),
@@ -852,10 +854,7 @@ impl NativeMachine for TradeMachine {
             _ => return Poll::Ready(Err(ActionError::Stale)),
         }
         // A held run keeps its phase and spends no tick of any deadline.
-        let now = self.clock.observe(cx.evidence().tick, cx.eligible());
-        if !cx.eligible() {
-            return Poll::Pending;
-        }
+        let now = self.clock.observe(cx.evidence().tick, false);
         if matches!(&self.phase, TradePhase::Cleanup(_)) {
             return self.poll_cleanup(cx);
         }

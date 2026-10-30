@@ -919,7 +919,10 @@ fn hold_run(
             tick,
             matches!(hold, Hold::Ineligible),
         );
-        assert!(polled.is_pending(), "{hold:?} tick {tick} must stay pending");
+        assert!(
+            polled.is_pending(),
+            "{hold:?} tick {tick} must stay pending"
+        );
         assert!(
             ledger.as_ref().unwrap().outbox.is_empty(),
             "{hold:?} tick {tick}: a held run sends nothing"
@@ -1009,11 +1012,18 @@ fn a_trade_over_its_eligible_tick_budget_still_fails_with_cleanup_after_a_hold()
     // waits at the barrier and sends nothing until its budget is spent.
     snapshot.seed_trade(offer(2));
     assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
-    // 40 held ticks (3 to 42), then the run is eligible again on tick 43: that
-    // first poll spends nothing, the clock reads 2 and stays below the budget.
-    let mut tick = hold_run(&snapshot, &mut ledger, &handle, &port, (3, 40), Hold::Ineligible);
+    // 40 held ticks (3 to 42), then the run is eligible again on tick 43: the
+    // clock reads 3 there, and reaches the budget of 7 on tick 47.
+    let mut tick = hold_run(
+        &snapshot,
+        &mut ledger,
+        &handle,
+        &port,
+        (3, 40),
+        Hold::Ineligible,
+    );
     assert_eq!(tick, 43);
-    for _ in 0..5 {
+    for _ in 0..4 {
         assert!(poll(&snapshot, &mut ledger, &handle, tick, epoch).is_pending());
         assert!(
             ledger.as_ref().unwrap().outbox.is_empty(),
@@ -1021,7 +1031,7 @@ fn a_trade_over_its_eligible_tick_budget_still_fails_with_cleanup_after_a_hold()
         );
         tick += 1;
     }
-    // Tick 48 is the sixth eligible tick after the hold: the budget is spent.
+    // Tick 47 is the fifth eligible tick after the hold: the budget is spent.
     assert!(poll(&snapshot, &mut ledger, &handle, tick, epoch).is_pending());
     assert_eq!(ack(&mut ledger, tick), InteractReq::CloseModal);
     // The close grace is eligible ticks too: a hold inside it spends none of it.
