@@ -44,8 +44,8 @@
       "progress_binding": "journal:blackarmgang",
       "progress": {
         "colour": {
-          "not_started": "p:0",
-          "in_progress": "p:1",
+          "not_started": "p:9",
+          "in_progress": "p:9",
           "complete": "p:done"
         },
         "rules": [
@@ -53,51 +53,6 @@
             "stage": "p:9",
             "all": [
               "allowed me to join the phoenix gang"
-            ],
-            "any": [],
-            "not": [],
-            "varp": null
-          },
-          {
-            "stage": "p:8",
-            "all": [
-              "join the gang in return for killing jonny the beard"
-            ],
-            "any": [],
-            "not": [],
-            "varp": null
-          },
-          {
-            "stage": "p:4",
-            "all": [
-              "i should find them and join"
-            ],
-            "any": [],
-            "not": [],
-            "varp": null
-          },
-          {
-            "stage": "p:3",
-            "all": [
-              "reldo told me that the fur trader"
-            ],
-            "any": [],
-            "not": [],
-            "varp": null
-          },
-          {
-            "stage": "p:2",
-            "all": [
-              "i should ask reldo in the varrock palace library"
-            ],
-            "any": [],
-            "not": [],
-            "varp": null
-          },
-          {
-            "stage": "p:1",
-            "all": [
-              "reldo says there is a quest hidden"
             ],
             "any": [],
             "not": [],
@@ -179,33 +134,15 @@
       "progress_binding": "journal:blackarmgang",
       "progress": {
         "colour": {
-          "not_started": "b:0",
-          "in_progress": "b:1",
+          "not_started": "b:2",
+          "in_progress": "b:2",
           "complete": "b:done"
         },
         "rules": [
           {
-            "stage": "b:3",
-            "all": [
-              "allowed me to join the black arm gang"
-            ],
-            "any": [],
-            "not": [],
-            "varp": null
-          },
-          {
             "stage": "b:2",
             "all": [
               "she offered to let me join the gang in return for"
-            ],
-            "any": [],
-            "not": [],
-            "varp": null
-          },
-          {
-            "stage": "b:1",
-            "all": [
-              "he directed me to speak to katrine"
             ],
             "any": [],
             "not": [],
