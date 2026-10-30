@@ -94,6 +94,14 @@ pub mod test_hooks {
         Ok(())
     }
 
+    /// Charge headed shared-device initialization to the configured process
+    /// budget before any slot constructs its own head-local budget scope.
+    pub fn with_process_render_budget<T>(action: impl FnOnce() -> T) -> T {
+        LazyLock::force(&PROCESS);
+        let _scope = process_budget_scope();
+        action()
+    }
+
     /// Install a caller-owned control for real slots created by a headed
     /// integration fixture. This cannot enable fair admission on its own.
     #[cfg(feature = "render-test-hooks")]

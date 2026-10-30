@@ -371,9 +371,12 @@ fn gpu_budget_fixture() -> Option<MutexGuard<'static, ()>> {
         .expect("the configured fair pump is live before the first slot tick");
     // A bare GpuBackend probe would initialize the process context outside
     // its budget, and a later real head must reject that uncharged context.
-    let probe = render_head::test_hooks::CaptureFixture::new(slot_key(), false, false)
-        .expect("the GPU probe attaches through the real process budget scope");
-    let available = probe.backend_kind() == BackendKind::Gpu;
+    assert!(client::render::budget::RenderBudget::current().is_none());
+    let available = render_head::test_hooks::with_process_render_budget(|| {
+        assert!(client::render::budget::RenderBudget::current().is_some());
+        GpuBackend::try_new().is_ok()
+    });
+    assert!(client::render::budget::RenderBudget::current().is_none());
     assert!(
         !required("T4_REQUIRE_GPU") || available,
         "T4_REQUIRE_GPU=1 but the budget-scoped fixture selected no GPU head"

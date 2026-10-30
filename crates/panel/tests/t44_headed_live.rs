@@ -10,8 +10,9 @@ use api::identity::SlotKey;
 use client::render::backend::BackendKind;
 use client::render::budget::RenderBudgetLimits;
 use host::render_head::test_hooks::{
-    configure_process, configure_process_control, configure_render_budgets, ProcessFixture,
-    RenderTestControl, RenderTestCross, RenderTestEvent, RenderTestPoint,
+    configure_process, configure_process_control, configure_render_budgets,
+    with_process_render_budget, ProcessFixture, RenderTestControl, RenderTestCross, RenderTestEvent,
+    RenderTestPoint,
 };
 
 #[cfg(feature = "memory-profile")]
@@ -384,7 +385,8 @@ fn run_fixture() -> Result<(), String> {
     )
     .map_err(|(_, message)| message)?;
     frontend_core::process::raise_fd_limit();
-    let result = panel::run_panel_render_fixture(args, redraw).map_err(|error| error.to_string());
+    let result = with_process_render_budget(|| panel::run_panel_render_fixture(args, redraw))
+        .map_err(|error| error.to_string());
     let evidence = control.validate();
     let shutdown =
         frontend_core::process::shutdown_background_work().map_err(|error| error.to_string());
