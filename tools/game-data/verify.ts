@@ -326,7 +326,7 @@ async function verifyRevision(revision: number) {
     if (revision === 274 || revision === 289) {
         // `digworkman1` declares no `respawnrate` (`scripts/quests/quest_itexam/configs/quest_itexam.npc:1`),
         // so the engine default 100 applies (`engine/src/cache/config/NpcType.ts:105`);
-        // `gnome` declares `respawnrate=120` (`scripts/areas/area_gnome/configs/gnome.npc:15`).
+        // `gnome` declares `respawnrate=120` (`scripts/areas/area_gnome/configs/gnome.npc`).
         for (const [alias, respawn] of [['digworkman1', 100], ['gnome', 120]] as const) {
             const rows = pickpocket.filter((value) => hasPickpocketNpcs(value) && value.npcs.some((npc) => npc.alias === alias));
             if (rows.length === 0) throw new Error(`${revision}: missing pickpocket row for ${alias}`);

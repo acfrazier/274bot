@@ -277,7 +277,7 @@ fn thieving_respawn_ticks_come_from_the_selected_npc_config() {
         // engine default 100 applies (`NpcType.ts:105`).
         assert_eq!(data.thieving_npc_respawn_ticks(613), Some(100));
         // 66 `gnome` declares `respawnrate=120`
-        // (`scripts/areas/area_gnome/configs/gnome.npc:15`).
+        // (`scripts/areas/area_gnome/configs/gnome.npc`).
         assert_eq!(data.thieving_npc_respawn_ticks(66), Some(120));
         assert_eq!(
             data.thieving_npc_respawn_ticks(-1),
