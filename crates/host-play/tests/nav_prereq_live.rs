@@ -267,6 +267,7 @@ struct LiveFixture {
     state: Arc<SlotState>,
     selected: Arc<api::game_data::SelectedGameData>,
     snapshot: Arc<Mutex<GameSnapshot>>,
+    manual_arms: WalkArms,
     name: String,
     seed_run: RunKey,
     _scratch: Scratch,
@@ -384,6 +385,11 @@ fn make_fixture_with_seed_commands(
     let seed_errors = Arc::new(Mutex::new(Vec::<String>::new()));
     let frame_errors = Arc::clone(&seed_errors);
     let frame_phase = Mutex::new(FixtureSeedPhase::InitialReady);
+    let manual_arms = WalkArms::default();
+    let frame_manual_arms = Arc::clone(&manual_arms);
+    let frame_manual_latch = Mutex::new(None);
+    let frame_world = template.world().expect("selected navigation world");
+    let frame_map_members = profile.map_members();
     let mut play = host_play::run_with_template(
         Arc::clone(&template),
         false,
@@ -396,9 +402,34 @@ fn make_fixture_with_seed_commands(
             let mut snapshot = frame_snapshot.lock().expect("game snapshot mutex");
             snapshot.rebuild(client);
             let mut phase = frame_phase.lock().expect("fixture seed phase mutex");
-            if matches!(*phase, FixtureSeedPhase::Ready)
-                || !frame_errors.lock().expect("seed error mutex").is_empty()
-            {
+            if !frame_errors.lock().expect("seed error mutex").is_empty() {
+                return;
+            }
+            if matches!(*phase, FixtureSeedPhase::Ready) {
+                if input.hold || input.host_move_owned || !client.ingame || client.scene_state != 2 {
+                    return;
+                }
+                let arm = frame_manual_arms
+                    .lock()
+                    .expect("manual arms mutex")
+                    .get(username)
+                    .cloned();
+                if let (Some(arm), Some(here)) = (arm, snapshot.tile()) {
+                    let step = (client.gens.player, here);
+                    let mut latch = frame_manual_latch.lock().expect("manual step latch mutex");
+                    if *latch != Some(step) {
+                        *latch = Some(step);
+                        host_play::step_walk_arm_follow(
+                            client,
+                            &snapshot,
+                            &mut arm.lock().expect("manual arm mutex"),
+                            Some(&frame_world),
+                            here,
+                            frame_map_members,
+                            Some(username),
+                        );
+                    }
+                }
                 return;
             }
             if matches!(*phase, FixtureSeedPhase::WaitLogout) && !client.ingame {
@@ -550,6 +581,7 @@ fn make_fixture_with_seed_commands(
         state,
         selected,
         snapshot,
+        manual_arms,
         name: seed_name,
         seed_run,
         _scratch: scratch,
@@ -655,11 +687,7 @@ fn map_context(fixture: &LiveFixture) -> MapContext {
     }
 }
 
-fn manual_map_walk(
-    fixture: &LiveFixture,
-    destination: WorldTile,
-    arms: &WalkArms,
-) -> serde_json::Value {
+fn manual_map_walk(fixture: &LiveFixture, destination: WorldTile) -> serde_json::Value {
     let world = fixture.template.world().expect("selected navigation world");
     let context = map_context(fixture);
     let origin = fixture
@@ -701,7 +729,7 @@ fn manual_map_walk(
             &state,
             &BankRows::default(),
             RiskInput::default(),
-            arms,
+            &fixture.manual_arms,
         )
         .expect("arm owner-driven manual route");
     let admission = match outcome {
@@ -1121,8 +1149,7 @@ fn live_manual_prereq_holy_barrier_denied() {
         true,
     );
     seed_wrong_memory(&fixture, "priestperil", 61, fixture.seed_run);
-    let arms = WalkArms::default();
-    let route = manual_map_walk(&fixture, PREREQ_EAST, &arms);
+    let route = manual_map_walk(&fixture, PREREQ_EAST);
     let fact = refusal_fact(&fixture, "priestperil", Duration::from_secs(180));
     assert_holy_barrier_refusal_fact(&fact);
     let terminal = assert_not_allowed_terminal(&fixture, Duration::from_secs(180));
@@ -1141,7 +1168,7 @@ fn live_manual_prereq_holy_barrier_denied() {
                 .then_some(())
         },
     );
-    let second_route = manual_map_walk(&fixture, PREREQ_EAST, &arms);
+    let second_route = manual_map_walk(&fixture, PREREQ_EAST);
     let second_terminal = wait_for(
         &fixture.play,
         &fixture.name,
@@ -1465,7 +1492,7 @@ fn live_manual_prereq_holy_barrier_allowed() {
         true,
     );
     let previous_generation = lifecycle_generation(&fixture);
-    let route = manual_map_walk(&fixture, PREREQ_EAST, &WalkArms::default());
+    let route = manual_map_walk(&fixture, PREREQ_EAST);
     let run = wait_for_manual_walk_run(&fixture);
     let fact = refusal_fact(&fixture, "priestperil", Duration::from_secs(240));
     assert_holy_barrier_refusal_fact(&fact);
@@ -1517,7 +1544,7 @@ fn live_manual_prereq_holy_barrier_wrong_memory_retries() {
     );
     seed_wrong_memory(&fixture, "priestperil", 61, fixture.seed_run);
     let previous_generation = lifecycle_generation(&fixture);
-    let route = manual_map_walk(&fixture, PREREQ_EAST, &WalkArms::default());
+    let route = manual_map_walk(&fixture, PREREQ_EAST);
     let run = wait_for_manual_walk_run(&fixture);
     let fact = refusal_fact(&fixture, "priestperil", Duration::from_secs(240));
     assert_holy_barrier_refusal_fact(&fact);
