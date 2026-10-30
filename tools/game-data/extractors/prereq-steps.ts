@@ -1,15 +1,16 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { integer, parseJm2LocPlacements, parseJm2NpcPlacements, parseMapsquarePath, parsePack, sourceFile, walkContentFiles, worldFromMapsquare } from './common.ts';
 import { assertPrereqPreservation } from './prereq-preservation.ts';
 import type { InputHash } from '../generate.ts';
 
-export const PREREQ_STEPS_SCHEMA = 1;
+export const PREREQ_STEPS_SCHEMA = 2;
 export type RangeWire = { min: number; max: number };
 export type TileWire = { x: number; z: number; level: number };
 export type SourceWire = string;
 export type CrossingWire = {
-    crossing: { loc_id: number; option: number; at: TileWire; to: TileWire; kind: string };
+    crossing: { loc_id: number; option: number; at: TileWire; takeoff: TileWire; to: TileWire; kind: string };
     pass: { message: string; landing: TileWire; proves: RangeWire; source: SourceWire };
     delay: { ticks: number; source?: SourceWire };
     source: SourceWire;
@@ -45,7 +46,363 @@ export type PrereqRowWire = {
 export type PrereqStepFacts = { rows: PrereqRowWire[] };
 
 const AUTHORED_FILE = path.resolve(import.meta.dirname, '../prereq-steps.json');
-const AUTHORED = JSON.parse(fs.readFileSync(AUTHORED_FILE, 'utf8')) as PrereqStepFacts;
+
+/**
+ * Authored crossing template: source-pinned content only. The template keeps
+ * the loc/option/kind selector plus the pass/delay/source citations, but must
+ * never carry at/to/takeoff/landing coordinates: every generated coordinate
+ * derives from the CLI shared pack projection (see `loadPrereqCrossingProjection`).
+ * `heading` selects one directed door heading from the actual takeoff->to
+ * geometry (`south` = the pack step lands one south of its takeoff); omitting
+ * it expands to every distinct legal takeoff (the A1 barrier).
+ */
+export type CrossingTemplate = {
+    loc_id: number;
+    option: number;
+    kind: string;
+    heading?: 'north' | 'south' | 'east' | 'west';
+    pass: { message: string; proves: RangeWire; source: SourceWire };
+    delay: { ticks: number; source?: SourceWire };
+    source: SourceWire;
+};
+export type AuthoredPrereqRow = Omit<PrereqRowWire, 'crossings'> & { crossings: CrossingTemplate[] };
+export type AuthoredPrereqTemplates = { rows: AuthoredPrereqRow[] };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function loadAuthoredTemplates(): AuthoredPrereqTemplates {
+    const parsed: unknown = JSON.parse(fs.readFileSync(AUTHORED_FILE, 'utf8'));
+    if (!isRecord(parsed) || !Array.isArray(parsed.rows) || Object.keys(parsed).join(',') !== 'rows') {
+        throw new Error('prereq_steps: authored templates must be exactly {rows}');
+    }
+    const ids = parsed.rows.map((row) => (isRecord(row) ? row.id : undefined));
+    if (ids.join('|') !== 'priestperil:drezel-advice|druidspirit:drezel-start') {
+        throw new Error('prereq_steps: expected the reviewed A1/A2 template rows in route order');
+    }
+    for (const row of parsed.rows) {
+        if (!isRecord(row) || !Array.isArray(row.crossings)) throw new Error('prereq_steps: authored row is malformed');
+        for (const template of row.crossings) {
+            if (!isRecord(template)) throw new Error(`prereq_steps: ${(row.id as string) ?? '?'} has a malformed crossing template`);
+            for (const banned of ['at', 'to', 'takeoff', 'landing']) {
+                if (banned in template || (isRecord(template.pass) && banned === 'landing' && 'landing' in template.pass)) {
+                    throw new Error(`prereq_steps: authored crossing coordinates are forbidden (${banned}); they derive from the pack projection`);
+                }
+            }
+            const keys = Object.keys(template).sort().join(',');
+            if (keys !== 'delay,kind,loc_id,option,pass,source' && keys !== 'delay,heading,kind,loc_id,option,pass,source') {
+                throw new Error(`prereq_steps: ${(row.id as string) ?? '?'} crossing template fields are malformed (${keys})`);
+            }
+            if (!Number.isInteger(template.loc_id) || !Number.isInteger(template.option)
+                || (template.option as number) < 0 || (template.option as number) > 255) {
+                throw new Error(`prereq_steps: ${(row.id as string) ?? '?'} crossing template has an invalid loc/option selector`);
+            }
+            const templateKind: unknown = template.kind;
+            if (typeof templateKind !== 'string' || !KNOWN_CROSSING_KINDS.has(templateKind)) {
+                throw new Error(`prereq_steps: ${(row.id as string) ?? '?'} crossing template has an unknown kind`);
+            }
+            const templateHeading: unknown = template.heading;
+            if (templateHeading !== undefined && (typeof templateHeading !== 'string' || !KNOWN_HEADINGS.has(templateHeading))) {
+                throw new Error(`prereq_steps: ${(row.id as string) ?? '?'} crossing template has an unknown heading`);
+            }
+            if (!isRecord(template.pass) || typeof template.pass.message !== 'string' || template.pass.message.length === 0
+                || !isRecord(template.pass.proves) || typeof template.pass.source !== 'string'
+                || Object.keys(template.pass).sort().join(',') !== 'message,proves,source') {
+                throw new Error(`prereq_steps: ${(row.id as string) ?? '?'} crossing template pass is malformed`);
+            }
+            if (!isRecord(template.delay) || !Number.isInteger(template.delay.ticks)
+                || (template.delay.ticks as number) < 0 || (template.delay.ticks as number) > 65535
+                || (template.delay.source !== undefined && typeof template.delay.source !== 'string')) {
+                throw new Error(`prereq_steps: ${(row.id as string) ?? '?'} crossing template delay is malformed`);
+            }
+            if (typeof template.source !== 'string' || template.source.length === 0) {
+                throw new Error(`prereq_steps: ${(row.id as string) ?? '?'} crossing template source is malformed`);
+            }
+        }
+    }
+    return parsed as unknown as AuthoredPrereqTemplates;
+}
+
+// ---------------------------------------------------------------------------
+// CLI shared pack projection (owned by PackCrossingProjection; consumed here).
+// ---------------------------------------------------------------------------
+
+/** CLI export envelope schema (tools/game-data projection, not the family schema). */
+export const PREREQ_CROSSING_PROJECTION_SCHEMA = 1;
+/** Lower-case CrossingKind serde representation, matching the Rust decoder. */
+const KNOWN_CROSSING_KINDS = new Set([
+    'door', 'ladder', 'stairs', 'boat', 'teleport',
+    'agility_shortcut', 'glider', 'spirit_tree', 'npc', 'essence_exit',
+]);
+const KNOWN_HEADINGS = new Set(['north', 'south', 'east', 'west']);
+
+export type ProjectionTile = { x: number; z: number; level: number };
+export type ProjectionCrossing = {
+    loc_id: number;
+    option: number;
+    at: ProjectionTile;
+    takeoff: ProjectionTile;
+    to: ProjectionTile;
+    kind: string;
+};
+export type ProjectionEntry = {
+    crossing: ProjectionCrossing;
+    standable: boolean;
+    admissible: boolean;
+    quest_gates: unknown[];
+};
+export type ValidatedProjection = { navpack_sha256: string; entries: ProjectionEntry[] };
+
+function projectionTile(value: unknown, label: string): ProjectionTile {
+    if (!isRecord(value) || Object.keys(value).sort().join(',') !== 'level,x,z') {
+        throw new Error(`prereq_steps: ${label} must be exactly {x,z,level}`);
+    }
+    for (const axis of ['x', 'z', 'level'] as const) {
+        if (!Number.isInteger(value[axis])) throw new Error(`prereq_steps: ${label}.${axis} is not an integer`);
+    }
+    const level = value.level as number;
+    if (level < 0 || level > 3) throw new Error(`prereq_steps: ${label}.level ${level} is not a game plane`);
+    return { x: value.x as number, z: value.z as number, level };
+}
+
+function projectionGate(value: unknown, label: string): unknown {
+    if (!isRecord(value) || Object.keys(value).length !== 1) {
+        throw new Error(`prereq_steps: ${label} is not a QuestGate (exactly one of Complete/Window)`);
+    }
+    if ('Complete' in value) {
+        if (typeof value.Complete !== 'string' || value.Complete.length === 0) {
+            throw new Error(`prereq_steps: ${label} Complete gate is malformed`);
+        }
+        return value;
+    }
+    if ('Window' in value) {
+        const window = value.Window;
+        if (!isRecord(window) || Object.keys(window).sort().join(',') !== 'quest,signal,values') {
+            throw new Error(`prereq_steps: ${label} Window gate is malformed`);
+        }
+        if (typeof window.quest !== 'string' || window.quest.length === 0
+            || typeof window.signal !== 'string' || window.signal.length === 0) {
+            throw new Error(`prereq_steps: ${label} Window gate identity is malformed`);
+        }
+        if (!isRecord(window.values) || Object.keys(window.values).sort().join(',') !== 'max,min'
+            || (window.values.min !== null && !Number.isInteger(window.values.min))
+            || (window.values.max !== null && !Number.isInteger(window.values.max))) {
+            throw new Error(`prereq_steps: ${label} Window gate values are malformed`);
+        }
+        return value;
+    }
+    throw new Error(`prereq_steps: ${label} is not a QuestGate (exactly one of Complete/Window)`);
+}
+
+function projectionIdentityKey(crossing: ProjectionCrossing): string {
+    return JSON.stringify([
+        crossing.loc_id, crossing.option,
+        crossing.at.x, crossing.at.z, crossing.at.level,
+        crossing.takeoff.x, crossing.takeoff.z, crossing.takeoff.level,
+        crossing.to.x, crossing.to.z, crossing.to.level,
+        crossing.kind,
+    ]);
+}
+
+function tilesEqual(left: ProjectionTile, right: ProjectionTile): boolean {
+    return left.x === right.x && left.z === right.z && left.level === right.level;
+}
+
+/** Travel heading of the actual takeoff->to step; null unless it is one cardinal tile. */
+function headingOf(takeoff: ProjectionTile, to: ProjectionTile): string | null {
+    if (takeoff.level !== to.level) return null;
+    if (to.x === takeoff.x && to.z === takeoff.z + 1) return 'north';
+    if (to.x === takeoff.x && to.z === takeoff.z - 1) return 'south';
+    if (to.x === takeoff.x + 1 && to.z === takeoff.z) return 'east';
+    if (to.x === takeoff.x - 1 && to.z === takeoff.z) return 'west';
+    return null;
+}
+
+function requireEnv(name: string, label: string): string {
+    const value = process.env[name];
+    if (!value) throw new Error(`set ${name} to ${label}`);
+    return value;
+}
+
+/** The nav-pack bytes the projection was exported from: a file path, or a 64-hex SHA. */
+function navPackSha256(selector: string): string {
+    if (/^[0-9a-fA-F]{64}$/.test(selector)) return selector.toLowerCase();
+    if (!fs.existsSync(selector)) throw new Error(`set GAME_DATA_289_NAV_PACK to the 289 nav pack path or its hex SHA (missing: ${selector})`);
+    return crypto.createHash('sha256').update(fs.readFileSync(selector)).digest('hex');
+}
+
+/**
+ * Load and validate the CLI shared crossing projection for 289. Fails closed
+ * on schema, SHA, duplicate identity, invalid option/kind/tile/gate, and any
+ * blocked or inadmissible takeoff the generator would need as legal. No binary
+ * pack decoder lives here: pack identity is verified by SHA only.
+ */
+export function loadPrereqCrossingProjection(
+    revision: number,
+    overrides?: { projectionPath?: string; navPack?: string },
+): ValidatedProjection | null {
+    if (revision !== 289) return null;
+    const projectionPath = overrides?.projectionPath ?? requireEnv('GAME_DATA_289_PREREQ_CROSSINGS', 'the CLI shared 289 crossing projection JSON');
+    const navPack = overrides?.navPack ?? requireEnv('GAME_DATA_289_NAV_PACK', 'the 289 nav pack path or its hex SHA');
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(fs.readFileSync(projectionPath, 'utf8'));
+    } catch (error) {
+        throw new Error(`prereq_steps: cannot read GAME_DATA_289_PREREQ_CROSSINGS ${projectionPath}: ${error instanceof Error ? error.message : error}`);
+    }
+    if (!isRecord(parsed) || parsed.schema !== PREREQ_CROSSING_PROJECTION_SCHEMA
+        || typeof parsed.navpack_sha256 !== 'string' || !Array.isArray(parsed.crossings)
+        || Object.keys(parsed).sort().join(',') !== 'crossings,navpack_sha256,schema') {
+        throw new Error('prereq_steps: projection must be exactly {schema:1,navpack_sha256,crossings}');
+    }
+    const sha = (parsed.navpack_sha256 as string).toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(sha)) throw new Error('prereq_steps: projection navpack_sha256 is not hex');
+    const actual = navPackSha256(navPack);
+    if (actual !== sha) {
+        throw new Error('prereq_steps: projection navpack_sha256 does not match GAME_DATA_289_NAV_PACK (mismatched projection input)');
+    }
+    const entries: ProjectionEntry[] = [];
+    const seen = new Set<string>();
+    parsed.crossings.forEach((raw: unknown, index: number) => {
+        const label = `projection crossings[${index}]`;
+        if (!isRecord(raw) || Object.keys(raw).sort().join(',') !== 'admissible,crossing,quest_gates,standable') {
+            throw new Error(`prereq_steps: ${label} must be exactly {crossing,standable,admissible,quest_gates}`);
+        }
+        if (typeof raw.standable !== 'boolean' || typeof raw.admissible !== 'boolean') {
+            throw new Error(`prereq_steps: ${label} standable/admissible must be booleans`);
+        }
+        if (!Array.isArray(raw.quest_gates)) throw new Error(`prereq_steps: ${label} quest_gates must be a list`);
+        raw.quest_gates.forEach((gate: unknown, gateIndex: number) => projectionGate(gate, `${label} quest_gates[${gateIndex}]`));
+        const crossing = raw.crossing;
+        if (!isRecord(crossing) || Object.keys(crossing).sort().join(',') !== 'at,kind,loc_id,option,takeoff,to') {
+            throw new Error(`prereq_steps: ${label}.crossing must be exactly {loc_id,option,at,takeoff,to,kind}`);
+        }
+        if (!Number.isInteger(crossing.loc_id)) throw new Error(`prereq_steps: ${label}.crossing.loc_id is not an integer`);
+        if (!Number.isInteger(crossing.option) || (crossing.option as number) < 0 || (crossing.option as number) > 255) {
+            throw new Error(`prereq_steps: ${label}.crossing.option is not a representable u8 identity`);
+        }
+        const entryKind: unknown = crossing.kind;
+        if (typeof entryKind !== 'string' || !KNOWN_CROSSING_KINDS.has(entryKind)) {
+            throw new Error(`prereq_steps: ${label}.crossing.kind is not a lower-case CrossingKind`);
+        }
+        const entry: ProjectionEntry = {
+            crossing: {
+                loc_id: crossing.loc_id as number,
+                option: crossing.option as number,
+                at: projectionTile(crossing.at, `${label}.crossing.at`),
+                takeoff: projectionTile(crossing.takeoff, `${label}.crossing.takeoff`),
+                to: projectionTile(crossing.to, `${label}.crossing.to`),
+                kind: entryKind,
+            },
+            standable: raw.standable,
+            admissible: raw.admissible,
+            quest_gates: raw.quest_gates,
+        };
+        const key = projectionIdentityKey(entry.crossing);
+        if (seen.has(key)) throw new Error(`prereq_steps: duplicate crossing identity in the projection (${label})`);
+        seen.add(key);
+        entries.push(entry);
+    });
+    return { navpack_sha256: sha, entries };
+}
+
+function toCrossingWire(template: CrossingTemplate, entry: ProjectionEntry): CrossingWire {
+    return {
+        crossing: {
+            loc_id: entry.crossing.loc_id,
+            option: entry.crossing.option,
+            at: { ...entry.crossing.at },
+            takeoff: { ...entry.crossing.takeoff },
+            to: { ...entry.crossing.to },
+            kind: entry.crossing.kind,
+        },
+        pass: {
+            message: template.pass.message,
+            landing: { ...entry.crossing.to },
+            proves: { ...template.pass.proves },
+            source: template.pass.source,
+        },
+        delay: template.delay.source === undefined
+            ? { ticks: template.delay.ticks }
+            : { ticks: template.delay.ticks, source: template.delay.source },
+        source: template.source,
+    };
+}
+
+/**
+ * Join authored templates with the validated projection. Every generated
+ * coordinate (at, to, takeoff, landing) is copied from the pack entry; the
+ * template supplies only the loc/option/kind/heading selector and the
+ * source-pinned pass/delay provenance. Refuses absent selectors, illegal
+ * (blocked/inadmissible) takeoffs, and any legal entry for a catalog-covered
+ * (loc, option, kind) identity that no template binds (completeness: A1 emits
+ * every distinct legal takeoff).
+ */
+function buildPrereqFacts(templates: AuthoredPrereqTemplates, projection: ValidatedProjection): PrereqStepFacts {
+    const legal = projection.entries.filter((entry) => entry.standable && entry.admissible);
+    const coveredTriples = new Set(templates.rows.flatMap((row) =>
+        row.crossings.map((template) => `${template.loc_id}|${template.option}|${template.kind}`)));
+    const coveredLocs = new Set(templates.rows.flatMap((row) => row.crossings.map((template) => template.loc_id)));
+    const tripleKey = (entry: ProjectionEntry) =>
+        `${entry.crossing.loc_id}|${entry.crossing.option}|${entry.crossing.kind}`;
+    const consumed = new Set<string>();
+    const rows: PrereqRowWire[] = templates.rows.map((row) => {
+        const crossings: CrossingWire[] = [];
+        for (const template of row.crossings) {
+            const matches = legal.filter((entry) =>
+                entry.crossing.loc_id === template.loc_id
+                && entry.crossing.option === template.option
+                && entry.crossing.kind === template.kind
+                && (template.heading === undefined || headingOf(entry.crossing.takeoff, entry.crossing.to) === template.heading));
+            if (template.heading === undefined) {
+                if (matches.length === 0) {
+                    throw new Error(`prereq_steps: ${row.id} loc ${template.loc_id} has no legal pack crossing (absent/mismatched/illegal projection)`);
+                }
+                const takeoffs = new Set(matches.map((entry) =>
+                    `${entry.crossing.takeoff.x},${entry.crossing.takeoff.z},${entry.crossing.takeoff.level}`));
+                if (takeoffs.size !== matches.length) {
+                    throw new Error(`prereq_steps: ${row.id} loc ${template.loc_id} shares a legal takeoff across pack crossings`);
+                }
+                matches.sort((left, right) => projectionIdentityKey(left.crossing) < projectionIdentityKey(right.crossing) ? -1 : 1);
+                for (const entry of matches) {
+                    crossings.push(toCrossingWire(template, entry));
+                    consumed.add(projectionIdentityKey(entry.crossing));
+                }
+            } else {
+                if (matches.length !== 1) {
+                    throw new Error(`prereq_steps: ${row.id} loc ${template.loc_id} heading ${template.heading} matches ${matches.length} legal pack crossings (expected exactly one)`);
+                }
+                crossings.push(toCrossingWire(template, matches[0]));
+                consumed.add(projectionIdentityKey(matches[0].crossing));
+            }
+        }
+        const { crossings: _templateCrossings, ...rest } = row;
+        void _templateCrossings;
+        return { ...rest, crossings } as PrereqRowWire;
+    });
+    for (const entry of legal) {
+        if (coveredTriples.has(tripleKey(entry)) && !consumed.has(projectionIdentityKey(entry.crossing))) {
+            throw new Error(`prereq_steps: legal pack crossing ${projectionIdentityKey(entry.crossing)} for a catalog-covered identity is bound by no template`);
+        }
+    }
+    // Wall-door start binding: headings of one loc must separate by actual
+    // start relative to the anchor (one takeoff on the anchor, one across).
+    // This checks the pack geometry instead of trusting hand-edited sides.
+    for (const loc of coveredLocs) {
+        const headed = legal.filter((entry) => entry.crossing.loc_id === loc && consumed.has(projectionIdentityKey(entry.crossing))
+            && templates.rows.some((row) => row.crossings.some((template) =>
+                template.loc_id === loc && template.heading !== undefined
+                && headingOf(entry.crossing.takeoff, entry.crossing.to) === template.heading)));
+        if (headed.length > 1) {
+            const onAnchor = headed.filter((entry) => tilesEqual(entry.crossing.takeoff, entry.crossing.at));
+            if (onAnchor.length === 0 || onAnchor.length === headed.length) {
+                throw new Error(`prereq_steps: loc ${loc} headings do not separate by start relative to the anchor`);
+            }
+        }
+    }
+    return { rows };
+}
 
 function parseSource(source: string) {
     return source.split(';').map((part) => {
@@ -265,12 +622,17 @@ function verifyPlacements(content: string, rows: PrereqRowWire[]) {
                 const placement = parseJm2LocPlacements(`==== LOC ====\n${mapText[line - 1]}`, new Set([crossing.crossing.loc_id]))[0];
                 return placement ? [worldFromMapsquare(mx, mz, placement.lx, placement.lz, placement.plane)] : [];
             });
-            // A directed door crossing starts on either side of its fixed loc.
-            // The adjacent-door check below still requires these two endpoints.
-            const endpoints = crossing.crossing.kind === 'door'
-                ? [crossing.crossing.at, crossing.crossing.to] : [crossing.crossing.at];
-            if (placements.length !== 1 || !endpoints.some((tile) =>
-                placements[0].x === tile.x && placements[0].z === tile.z && placements[0].plane === tile.level)) {
+            // CrossingId.at stays the loc anchor: it must equal the cited map
+            // tile. Direction distinguishes identities by the exact legal
+            // takeoff, never by a second anchor.
+            if (!crossing.crossing.takeoff) {
+                throw new Error(`prereq_steps: ${row.id} crossing ${crossing.crossing.loc_id} has no pack-derived takeoff`);
+            }
+            if (!KNOWN_CROSSING_KINDS.has(crossing.crossing.kind)) {
+                throw new Error(`prereq_steps: ${row.id} crossing ${crossing.crossing.loc_id} has an unknown kind`);
+            }
+            if (placements.length !== 1 || placements[0].x !== crossing.crossing.at.x
+                || placements[0].z !== crossing.crossing.at.z || placements[0].plane !== crossing.crossing.at.level) {
                 throw new Error(`prereq_steps: ${row.id} crossing ${crossing.crossing.loc_id} does not match its cited map tile`);
             }
             const jumps = [...citedText(content, crossing.pass.source).matchAll(/\bp_telejump\((\d+)_(\d+)_(\d+)_(\d+)_(\d+)\)/g)];
@@ -287,8 +649,11 @@ function verifyPlacements(content: string, rows: PrereqRowWire[]) {
                 });
                 if (!landsAtSource) throw new Error(`prereq_steps: ${row.id} pass landing differs from its p_telejump source`);
             } else if (crossing.crossing.kind === 'door') {
-                const distance = Math.abs(crossing.crossing.at.x - crossing.crossing.to.x) + Math.abs(crossing.crossing.at.z - crossing.crossing.to.z);
-                if (distance !== 1 || crossing.crossing.at.level !== crossing.crossing.to.level) {
+                // Adjacent-door geometry runs from the legal takeoff to the
+                // landing, not from the anchor: the reverse crossing lands on
+                // the anchor itself, so anchor->to would measure zero.
+                const distance = Math.abs(crossing.crossing.takeoff.x - crossing.crossing.to.x) + Math.abs(crossing.crossing.takeoff.z - crossing.crossing.to.z);
+                if (distance !== 1 || crossing.crossing.takeoff.level !== crossing.crossing.to.level) {
                     throw new Error(`prereq_steps: ${row.id} door landing is not the adjacent tile`);
                 }
             }
@@ -318,8 +683,15 @@ function verifyPlacements(content: string, rows: PrereqRowWire[]) {
     }
 }
 
-export function extractPrereqStepsFacts(revision: number): PrereqStepFacts {
-    return revision === 289 ? AUTHORED : { rows: [] };
+export function extractPrereqStepsFacts(
+    revision: number,
+    overrides?: { projectionPath?: string; navPack?: string },
+): PrereqStepFacts {
+    if (revision !== 289) return { rows: [] };
+    const templates = loadAuthoredTemplates();
+    const projection = loadPrereqCrossingProjection(revision, overrides);
+    if (!projection) throw new Error('prereq_steps: 289 requires GAME_DATA_289_PREREQ_CROSSINGS');
+    return buildPrereqFacts(templates, projection);
 }
 
 export function assertPrereqStepFacts(
@@ -337,6 +709,16 @@ export function assertPrereqStepFacts(
     verifyPlacements(content, facts.rows);
     assertPrereqPreservation(content, facts.rows, questRows);
     for (const row of facts.rows) {
+        const seen = new Set<string>();
+        for (const crossing of row.crossings) {
+            const key = JSON.stringify([
+                crossing.crossing.loc_id, crossing.crossing.option,
+                crossing.crossing.at, crossing.crossing.takeoff, crossing.crossing.to,
+                crossing.crossing.kind,
+            ]);
+            if (seen.has(key)) throw new Error(`prereq_steps: duplicate crossing identity in ${row.id}`);
+            seen.add(key);
+        }
         if (row.crossings.some((crossing) => crossing.delay.ticks < 0 || crossing.delay.ticks > 65535)) {
             throw new Error(`prereq_steps: invalid crossing delay in ${row.id}`);
         }

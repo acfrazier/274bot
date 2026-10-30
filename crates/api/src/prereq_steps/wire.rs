@@ -6,7 +6,7 @@ use serde::de::IgnoredAny;
 use serde::Deserialize;
 use std::sync::Arc;
 
-pub(super) const SCHEMA: u16 = 1;
+pub(super) const SCHEMA: u16 = 2;
 
 #[derive(Deserialize)]
 struct Header<'a> {

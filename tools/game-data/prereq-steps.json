@@ -4,16 +4,11 @@
       "id": "priestperil:drezel-advice",
       "crossings": [
         {
-          "crossing": {
-            "loc_id": 3443,
-            "option": 1,
-            "at": { "x": 3440, "z": 9886, "level": 0 },
-            "to": { "x": 3423, "z": 3485, "level": 0 },
-            "kind": "door"
-          },
+          "loc_id": 3443,
+          "option": 1,
+          "kind": "door",
           "pass": {
             "message": "You pass through the holy barrier.",
-            "landing": { "x": 3423, "z": 3485, "level": 0 },
             "proves": { "min": 61, "max": 61 },
             "source": "scripts/areas/area_mausoleum/scripts/holy_barrier.rs2:2-5"
           },
@@ -116,16 +111,12 @@
       "id": "druidspirit:drezel-start",
       "crossings": [
         {
-          "crossing": {
-            "loc_id": 3507,
-            "option": 1,
-            "at": { "x": 3443, "z": 3458, "level": 0 },
-            "to": { "x": 3443, "z": 3457, "level": 0 },
-            "kind": "door"
-          },
+          "loc_id": 3507,
+          "option": 1,
+          "kind": "door",
+          "heading": "south",
           "pass": {
             "message": "You walk into the gloomy atmosphere of Mort Myre.",
-            "landing": { "x": 3443, "z": 3457, "level": 0 },
             "proves": { "min": 1, "max": 110 },
             "source": "scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:9-16"
           },
@@ -136,16 +127,12 @@
           "source": "scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:2; maps/m53_54.jm2:5089; scripts/doors/scripts/door_procs.rs2:90-101; scripts/doors/scripts/open_and_close_double_doors.rs2:96-108"
         },
         {
-          "crossing": {
-            "loc_id": 3506,
-            "option": 1,
-            "at": { "x": 3444, "z": 3458, "level": 0 },
-            "to": { "x": 3444, "z": 3457, "level": 0 },
-            "kind": "door"
-          },
+          "loc_id": 3506,
+          "option": 1,
+          "kind": "door",
+          "heading": "south",
           "pass": {
             "message": "You walk into the gloomy atmosphere of Mort Myre.",
-            "landing": { "x": 3444, "z": 3457, "level": 0 },
             "proves": { "min": 1, "max": 110 },
             "source": "scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:9-16"
           },
@@ -156,16 +143,12 @@
           "source": "scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:1; maps/m53_54.jm2:5096; scripts/doors/scripts/door_procs.rs2:90-101; scripts/doors/scripts/open_and_close_double_doors.rs2:96-108"
         },
         {
-          "crossing": {
-            "loc_id": 3507,
-            "option": 1,
-            "at": { "x": 3443, "z": 3457, "level": 0 },
-            "to": { "x": 3443, "z": 3458, "level": 0 },
-            "kind": "door"
-          },
+          "loc_id": 3507,
+          "option": 1,
+          "kind": "door",
+          "heading": "north",
           "pass": {
             "message": "You skip gladly out of murky Mort Myre.",
-            "landing": { "x": 3443, "z": 3458, "level": 0 },
             "proves": { "min": 1, "max": 110 },
             "source": "scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:17-23"
           },
@@ -173,16 +156,12 @@
           "source": "scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:2; maps/m53_54.jm2:5089; scripts/doors/scripts/door_procs.rs2:90-101; scripts/doors/scripts/open_and_close_double_doors.rs2:96-108"
         },
         {
-          "crossing": {
-            "loc_id": 3506,
-            "option": 1,
-            "at": { "x": 3444, "z": 3457, "level": 0 },
-            "to": { "x": 3444, "z": 3458, "level": 0 },
-            "kind": "door"
-          },
+          "loc_id": 3506,
+          "option": 1,
+          "kind": "door",
+          "heading": "north",
           "pass": {
             "message": "You skip gladly out of murky Mort Myre.",
-            "landing": { "x": 3444, "z": 3458, "level": 0 },
             "proves": { "min": 1, "max": 110 },
             "source": "scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2:17-23"
           },
