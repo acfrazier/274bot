@@ -428,16 +428,9 @@ fn poison_start(
     let (combat, risks) = tables;
     let zones = producer::zones_view(world).unwrap().unwrap();
     let wilderness = producer::wilderness_view(world).unwrap();
-    // Keep the anchor's real NPC kinds, not only its two individual spawns:
-    // approaching that coast can encounter another spawn of the same kind first.
-    let anchor_kinds: Vec<_> = zones
-        .containing(anchor)
-        .map(|zone| zone.kind().npc_id())
-        .collect();
-    assert!(
-        !anchor_kinds.is_empty(),
-        "the stated anchor must name real zones"
-    );
+    // The poison cells exercise a timing contract, not a particular NPC.
+    // Derive their first crossing from any real route in this search region;
+    // the separate rock-crab cell keeps its exact authored endpoints.
     let anchor_geometry: Vec<_> = zones
         .containing(anchor)
         .map(|zone| {
@@ -455,7 +448,7 @@ fn poison_start(
     };
     let mut searched = 0;
     let mut best_prefix = 0;
-    let mut rejected = [0usize; 5];
+    let mut rejected = [0usize; 4];
     let mut sample_crossing = None;
     // A client can run two tiles per game tick. Eighty safe walk edges leave
     // at least forty observed ticks before retreat, even with running enabled.
@@ -513,12 +506,6 @@ fn poison_start(
                 }
                 if crossing.retreat == CrossingGeom::NONE {
                     rejected[3] += 1;
-                    continue;
-                }
-                if !rows.iter().any(|row| {
-                    anchor_kinds.contains(&zones.zone(row.zone).unwrap().kind().npc_id())
-                }) {
-                    rejected[4] += 1;
                     continue;
                 }
                 best_prefix = best_prefix.max(crossing.retreat);
@@ -581,11 +568,6 @@ fn poison_start(
                 let crossing = &assessment.plan.crossings[0];
                 let rows = &assessment.plan.intervals
                     [usize::from(crossing.intervals.0)..usize::from(crossing.intervals.1)];
-                if !rows.iter().any(|row| {
-                    anchor_kinds.contains(&zones.zone(row.zone).unwrap().kind().npc_id())
-                }) {
-                    continue;
-                }
                 let retreat = path.point(until_index).unwrap().tile;
                 let geometry: Vec<_> = rows
                     .iter()
@@ -615,7 +597,7 @@ fn poison_start(
         }
     }
     Err(format!(
-        "no qualifying real start within 128 tiles of {anchor:?}: searched {searched} standable candidates, best safe prefix {best_prefix}, required {minimum_prefix}; rejections (plan error, no crossing, incomplete, no retreat, other first zone)={rejected:?}; anchor geometry={anchor_geometry:?}; sample crossing={sample_crossing:?}"
+        "no qualifying real start within 128 tiles of {anchor:?}: searched {searched} standable candidates, best safe prefix {best_prefix}, required {minimum_prefix}; rejections (plan error, no crossing, incomplete, no retreat)={rejected:?}; anchor geometry={anchor_geometry:?}; sample crossing={sample_crossing:?}"
     ))
 }
 
