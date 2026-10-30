@@ -69,8 +69,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   without a plan does not start Quester.
 
 - Starting one Quester shows its declared danger zones in the Script section
-  before Start. The TUI palette opens that section first. The user must select
-  Start there after reviewing the list.
+  before Start. Selecting a card in Browse closes Browse, and Start will not
+  run Quester while Browse hides that list. The TUI palette opens that section
+  first; the user must select Start after reviewing the zones.
 - The Quester card no longer offers the blanket `Allow danger zones` setting.
   The old saved value still loads, but it no longer affects Quester routes.
   The harness no longer offers `QUESTER_ALLOW_DANGER_ZONES`. Guides use
