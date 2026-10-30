@@ -240,6 +240,26 @@ impl Script for CompleteOnce {
     }
 }
 
+enum FixtureSeedPhase {
+    InitialReady,
+    InitialTutorial(i32),
+    WaitInitialTutorial(i32),
+    WaitLogout,
+    WaitRelog,
+    ReseedTutorial,
+    WaitReseed(scenario::tutorial::PostRelogTutorial),
+    SeedAccount,
+    Ready,
+}
+
+fn send_seed_command(client: &mut Client, command: &str) -> Result<(), String> {
+    if interact::cheat(client, command).is_sent() {
+        Ok(())
+    } else {
+        Err(format!("refused seed command {command:?}"))
+    }
+}
+
 struct LiveFixture {
     play: host_play::Play,
     profile: Arc<host_play::ServerProfile>,
@@ -363,31 +383,94 @@ fn make_fixture_with_seed_commands(
     let frame_name = seed_name.clone();
     let seed_errors = Arc::new(Mutex::new(Vec::<String>::new()));
     let frame_errors = Arc::clone(&seed_errors);
+    let frame_phase = Mutex::new(FixtureSeedPhase::InitialReady);
     let play = host_play::run_with_template(
         Arc::clone(&template),
-        true,
+        false,
         vec![account],
         |_| (None, None),
-        move |client: &mut Client, username, _| {
-            if username != frame_name || !client.ingame || client.scene_state != 2 {
+        move |client: &mut Client, username, input| {
+            if username != frame_name {
                 return;
             }
-            if !frame_seeded.swap(true, Ordering::AcqRel) {
-                client.draw = false;
-                interact::seed_at(client, origin.level, origin.x, origin.z);
-                for command in &frame_commands {
-                    if !interact::cheat(client, command).is_sent() {
-                        frame_errors
-                            .lock()
-                            .expect("seed error mutex")
-                            .push(format!("refused seed command {command:?}"));
-                    }
-                }
+            let mut snapshot = frame_snapshot.lock().expect("game snapshot mutex");
+            snapshot.rebuild(client);
+            let mut phase = frame_phase.lock().expect("fixture seed phase mutex");
+            if matches!(*phase, FixtureSeedPhase::Ready)
+                || !frame_errors.lock().expect("seed error mutex").is_empty()
+            {
+                return;
             }
-            frame_snapshot
-                .lock()
-                .expect("game snapshot mutex")
-                .rebuild(client);
+            if matches!(*phase, FixtureSeedPhase::WaitLogout) && !client.ingame {
+                *phase = FixtureSeedPhase::WaitRelog;
+                return;
+            }
+            if input.hold || !client.ingame || client.scene_state != 2 {
+                return;
+            }
+            let result = (|| -> Result<(), String> {
+                match &*phase {
+                    FixtureSeedPhase::InitialReady => {
+                        client.draw = false;
+                        let baseline = scenario::tutorial::chat_baseline(&snapshot);
+                        interact::mainland_hop(client);
+                        *phase = FixtureSeedPhase::InitialTutorial(baseline);
+                    }
+                    FixtureSeedPhase::InitialTutorial(baseline) => {
+                        send_seed_command(client, scenario::tutorial::TUTORIAL_GETVAR)?;
+                        *phase = FixtureSeedPhase::WaitInitialTutorial(*baseline);
+                    }
+                    FixtureSeedPhase::WaitInitialTutorial(baseline)
+                        if scenario::tutorial::tutorial_confirmed(&snapshot, *baseline) =>
+                    {
+                        let ifaces = Arc::clone(&client.ifaces);
+                        if !interact::logout(client, &ifaces) {
+                            return Err(
+                                "logout interface unavailable during seed preparation".into()
+                            );
+                        }
+                        *phase = FixtureSeedPhase::WaitLogout;
+                    }
+                    FixtureSeedPhase::WaitRelog
+                        if snapshot
+                            .side_tabs()
+                            .iter()
+                            .any(|tab| tab.index == 3 && tab.available) =>
+                    {
+                        *phase = FixtureSeedPhase::ReseedTutorial;
+                    }
+                    FixtureSeedPhase::ReseedTutorial => {
+                        let baseline = scenario::tutorial::chat_baseline(&snapshot);
+                        send_seed_command(client, scenario::tutorial::TUTORIAL_SETVAR)?;
+                        send_seed_command(client, scenario::tutorial::TUTORIAL_GETVAR)?;
+                        *phase = FixtureSeedPhase::WaitReseed(
+                            scenario::tutorial::PostRelogTutorial::new(baseline),
+                        );
+                    }
+                    FixtureSeedPhase::WaitReseed(tutorial) => {
+                        if tutorial.check(&snapshot)? {
+                            println!("{}", scenario::tutorial::confirmation_log());
+                            *phase = FixtureSeedPhase::SeedAccount;
+                        }
+                    }
+                    FixtureSeedPhase::SeedAccount => {
+                        send_seed_command(
+                            client,
+                            &interact::tele_args(origin.level, origin.x, origin.z),
+                        )?;
+                        for command in &frame_commands {
+                            send_seed_command(client, command)?;
+                        }
+                        *phase = FixtureSeedPhase::Ready;
+                        frame_seeded.store(true, Ordering::Release);
+                    }
+                    _ => {}
+                }
+                Ok(())
+            })();
+            if let Err(error) = result {
+                frame_errors.lock().expect("seed error mutex").push(error);
+            }
         },
     )
     .expect("start isolated local-289 Play");
@@ -399,11 +482,11 @@ fn make_fixture_with_seed_commands(
         "real server seed position",
         Duration::from_secs(240),
         |play| {
+            let errors = seed_errors.lock().expect("seed error mutex");
+            assert!(errors.is_empty(), "fixture seed errors: {errors:?}");
             if !seeded.load(Ordering::Acquire) {
                 return None;
             }
-            let errors = seed_errors.lock().expect("seed error mutex");
-            assert!(errors.is_empty(), "fixture seed errors: {errors:?}");
             play.statuses().into_iter().find(|row| {
                 row.username == seed_name
                     && row.ingame
