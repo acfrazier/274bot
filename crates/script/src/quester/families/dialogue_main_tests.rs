@@ -2194,7 +2194,6 @@ fn dialogue_terminal_walk_receipts_keep_typed_user_input_evidence_and_danger_err
     ];
     for (end, refusal, detail) in cases {
         let (mut ledger, handle, before, _) = begin_far_cook();
-        let assessment = last_assessment_id(&ledger);
         super::tests::post_assess_receipt(&mut ledger, 1, 10, None);
         assert!(with_tick(&before, &mut ledger, 2, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
@@ -2366,19 +2365,19 @@ fn dialogue_refusal_recovery_keeps_the_refusal_when_the_router_finds_no_route() 
         last: None,
     });
     super::tests::post_assess_receipt(&mut ledger, 2, 0, no_route);
-    let mut poll_at = |tick_number| {
-        super::tests::with_tick_reach(&refused, &reach, &mut ledger, tick_number, |tick| {
+    let poll_at = |ledger: &mut Option<Box<crate::native::ledger::Ledger>>, tick_number| {
+        super::tests::with_tick_reach(&refused, &reach, ledger, tick_number, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })
     };
-    assert!(poll_at(3).is_pending());
-    assert!(poll_at(4).is_pending());
+    assert!(poll_at(&mut ledger, 3).is_pending());
+    assert!(poll_at(&mut ledger, 4).is_pending());
     super::tests::post_assess_receipt(&mut ledger, 4, 0, no_route);
-    assert!(poll_at(5).is_pending());
-    assert!(poll_at(6).is_pending());
+    assert!(poll_at(&mut ledger, 5).is_pending());
+    assert!(poll_at(&mut ledger, 6).is_pending());
     super::tests::post_assess_receipt(&mut ledger, 6, 0, no_route);
     assert!(matches!(
-        poll_at(7),
+        poll_at(&mut ledger, 7),
         Poll::Ready(Err(ActionError::Failed(reason)))
             if reason.as_ref()
                 == "server refused Talk-to: I can't reach that!; recovery walk failed: no route to the NPC: router found no route"

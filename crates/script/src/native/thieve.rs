@@ -1027,7 +1027,7 @@ mod tests {
             tick.actions.poll(&run, &mut tick.cx)
         })
         .is_pending());
-        assert!(run.walk_retry.pending());
+        assert!(run.machine.borrow().as_ref().unwrap().walk_retry.pending());
         assert!(with_tick(&outside, &mut ledger, 4, |tick| {
             tick.actions.poll(&run, &mut tick.cx)
         })
@@ -1052,19 +1052,21 @@ mod tests {
             tick.actions.poll(&run, &mut tick.cx)
         })
         .is_pending());
-        assert!(run.walk_retry.pending());
+        assert!(run.machine.borrow().as_ref().unwrap().walk_retry.pending());
 
         let inside = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
         assert!(with_tick(&inside, &mut ledger, 6, |tick| {
             tick.actions.poll(&run, &mut tick.cx)
         })
         .is_pending());
-        assert!(!run.walk_retry.pending());
+        assert!(!run.machine.borrow().as_ref().unwrap().walk_retry.pending());
 
         with_tick(&outside, &mut ledger, 7, |tick| {
             tick.cx.action_id = action_id;
-            run.begin_walk(anchor, 2, &mut tick.cx).unwrap();
-            run.walk_retry.action_submitted();
+            let mut machine = run.machine.borrow_mut();
+            let machine = machine.as_mut().unwrap();
+            machine.begin_walk(anchor, 2, &mut tick.cx).unwrap();
+            machine.walk_retry.action_submitted();
         });
         post_walk_receipt(
             &mut ledger,
@@ -1077,7 +1079,7 @@ mod tests {
         })
         .is_pending());
         assert!(
-            run.walk_retry.pending(),
+            run.machine.borrow().as_ref().unwrap().walk_retry.pending(),
             "a separate approach receives a fresh retry allowance"
         );
         assert_eq!(walk_count(&ledger), 3);
