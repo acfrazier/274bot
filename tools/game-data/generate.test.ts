@@ -331,7 +331,7 @@ type=int
 default=1000
 `;
 fs.writeFileSync(combatParamFile, combatParams);
-fs.writeFileSync(path.join(combat, 'npc_combat.param'), '[damagetype]\ntype=int\ndefault=2\n');
+fs.writeFileSync(path.join(content, 'scripts/skill_combat/configs/npc_combat.param'), '[damagetype]\ntype=int\ndefault=2\n');
 fs.writeFileSync(path.join(combat, 'magic_combat_spells.dbrow'), `[magic_spell_wind_strike]
 data=name,Wind Strike
 data=spellcom,wind_strike_button

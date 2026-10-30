@@ -3,8 +3,8 @@ use crate::combat::risk::{combat_roll, consts::DEATH_BOUND, defence_rolls};
 
 // Failing-before contract for every P1-B test below: the approved P1-A head has
 // no risk::odds, so these exact imports and assertions do not compile there.
-// The retained before probe compiles this file against that head. The old
-// worst-case wolf comparison is 7 * 6 >= 40, not a probability admission.
+// The retained before probe compiles this file against the merged facts head.
+// The old worst-case wolf comparison is 7 * 6 >= 40, not a probability admission.
 fn attack(hit: f64, amount: u8) -> Event {
     Event {
         tick: 0,
@@ -14,7 +14,7 @@ fn attack(hit: f64, amount: u8) -> Event {
     }
 }
 fn sample(seed: &mut u64) -> f64 {
-    // Calculator c024a4152, fight.rs:690-695: deterministic independent draws.
+    // Calculator c024a4152, fight.rs: deterministic independent draws.
     *seed ^= *seed << 13;
     *seed ^= *seed >> 7;
     *seed ^= *seed << 17;
@@ -23,7 +23,7 @@ fn sample(seed: &mut u64) -> f64 {
 
 #[test]
 fn inclusive_roll_hand_cases() {
-    // Moved from calculator c024a4152, fight.rs:671-689. A tie misses.
+    // Moved from calculator c024a4152, fight.rs. A tie misses.
     assert_eq!(hit_chance(3, 1), 5.0 / 8.0);
     assert_eq!(hit_chance(1, 3), 1.0 / 8.0);
     assert_eq!(hit_chance(2, 2), 3.0 / 9.0);
@@ -34,9 +34,7 @@ fn inclusive_roll_hand_cases() {
                 .map(|x| (0..=d).filter(|y| x > *y).count())
                 .sum::<usize>();
             assert!(
-                (hit_chance(a, d) - successes as f64 / f64::from((a + 1) * (d + 1)))
-                    .abs()
-                    < 1e-14
+                (hit_chance(a, d) - successes as f64 / f64::from((a + 1) * (d + 1))).abs() < 1e-14
             );
         }
     }
@@ -90,9 +88,17 @@ fn bound_is_order_independent() {
         attack(0.156, 6),
         attack(0.7, 3),
         attack(0.156, 6),
-        Event { kind: EventKind::Poison, amount: 2, ..attack(0.0, 0) },
+        Event {
+            kind: EventKind::Poison,
+            amount: 2,
+            ..attack(0.0, 0)
+        },
         attack(0.4, 8),
-        Event { kind: EventKind::Certain, amount: 1, ..attack(0.0, 0) },
+        Event {
+            kind: EventKind::Certain,
+            amount: 1,
+            ..attack(0.0, 0)
+        },
         attack(0.4, 8),
     ];
     let expected = death_bound(&events, 17).unwrap();
@@ -120,7 +126,11 @@ fn exhaustive_tail(events: &[Event], hp: u8) -> f64 {
     let positive = event.hit.get() / (f64::from(event.amount) + 1.0);
     (0..=event.amount)
         .map(|damage| {
-            let chance = if damage == 0 { 1.0 - event.hit.get() + positive } else { positive };
+            let chance = if damage == 0 {
+                1.0 - event.hit.get() + positive
+            } else {
+                positive
+            };
             chance * exhaustive_tail(&events[1..], hp.saturating_sub(damage))
         })
         .sum()
@@ -139,8 +149,12 @@ fn bound_dominating_kind_never_understates() {
                         let mixed = death_bound(&mixture, hp).unwrap();
                         let dominating = death_bound(&envelope, hp).unwrap();
                         let exact = exhaustive_tail(&mixture, hp);
-                        assert!((mixed.bound - exact).abs() <= f64::from(mixed.visits) * f64::EPSILON);
-                        assert!(dominating.bound + f64::from(dominating.visits) * f64::EPSILON >= exact);
+                        assert!(
+                            (mixed.bound - exact).abs() <= f64::from(mixed.visits) * f64::EPSILON
+                        );
+                        assert!(
+                            dominating.bound + f64::from(dominating.visits) * f64::EPSILON >= exact
+                        );
                     }
                 }
             }
@@ -151,11 +165,18 @@ fn bound_dominating_kind_never_understates() {
 #[test]
 fn forced_max_kind_is_a_certain_hit() {
     // A forced maximum is not an accuracy-1 uniform roll. Its full amount lands.
-    let certain = Event { kind: EventKind::Certain, ..attack(0.0, 6) };
+    let certain = Event {
+        kind: EventKind::Certain,
+        ..attack(0.0, 6)
+    };
     assert_eq!(death_bound(&[certain], 6).unwrap().bound, 1.0);
     assert_eq!(death_bound(&[certain], 7).unwrap().bound, 0.0);
     assert!(death_bound(&[attack(1.0, 6)], 6).unwrap().bound < 1.0);
-    let poison = Event { kind: EventKind::Poison, amount: 3, ..certain };
+    let poison = Event {
+        kind: EventKind::Poison,
+        amount: 3,
+        ..certain
+    };
     assert_eq!(death_bound(&[certain, poison], 9).unwrap().bound, 1.0);
     assert_eq!(death_bound(&[certain, poison], 10).unwrap().bound, 0.0);
 }
@@ -177,7 +198,10 @@ fn hit_chance_is_rounded_up() {
             assert_eq!(stored, f64::from(h as f32));
         }
     }
-    assert!(nearest_understated, "nearest rounding would understate this sample");
+    assert!(
+        nearest_understated,
+        "nearest rounding would understate this sample"
+    );
     assert_eq!(HitChance::ceil_from(0.0).get(), 0.0);
     assert_eq!(HitChance::ceil_from(1.0).get(), 1.0);
 }
@@ -185,7 +209,13 @@ fn hit_chance_is_rounded_up() {
 #[test]
 fn bound_numeric_guard_is_visits_times_epsilon() {
     let bound = death_bound(&[attack(0.5, 1)], 1).unwrap();
-    assert_eq!(bound, DeathBound { bound: 0.25, visits: 2 });
+    assert_eq!(
+        bound,
+        DeathBound {
+            bound: 0.25,
+            visits: 2
+        }
+    );
     let guarded = bound.bound + f64::from(bound.visits) * f64::EPSILON;
     assert!(!bound.admits(bound.bound));
     assert!(!bound.admits(guarded.next_down()));
@@ -209,13 +239,25 @@ fn bound_overflow_refuses_above_max_events() {
     assert_eq!(buffer.events().len(), MAX_EVENTS);
     let oversized = [event; MAX_EVENTS + 1];
     assert_eq!(death_bound(&oversized, 40), Err(UnknownWhy::Overflow));
-    assert_eq!(escape_floor(&oversized, 40, DEATH_BOUND), Err(UnknownWhy::Overflow));
+    assert_eq!(
+        escape_floor(&oversized, 40, DEATH_BOUND),
+        Err(UnknownWhy::Overflow)
+    );
     assert_eq!(death_bound(&[], 128), Err(UnknownWhy::Overflow));
     assert_eq!(death_bound(&[], 0), Err(UnknownWhy::MissingFacts));
-    assert_eq!(escape_floor(&[], 128, DEATH_BOUND), Err(UnknownWhy::Overflow));
-    assert_eq!(escape_floor(&[], 0, DEATH_BOUND), Err(UnknownWhy::MissingFacts));
+    assert_eq!(
+        escape_floor(&[], 128, DEATH_BOUND),
+        Err(UnknownWhy::Overflow)
+    );
+    assert_eq!(
+        escape_floor(&[], 0, DEATH_BOUND),
+        Err(UnknownWhy::MissingFacts)
+    );
     for invalid in [f64::NAN, f64::INFINITY, -0.1, 1.1] {
-        assert_eq!(death_bound(&[attack(invalid, 6)], 40), Err(UnknownWhy::MissingFacts));
+        assert_eq!(
+            death_bound(&[attack(invalid, 6)], 40),
+            Err(UnknownWhy::MissingFacts)
+        );
     }
     buffer.clear();
     assert!(buffer.events().is_empty());
@@ -263,18 +305,33 @@ fn escape_floor_is_zero_without_attackers() {
 
 #[test]
 fn escape_floor_matches_independent_death_tails() {
-    let events = [attack(0.4, 6), attack(0.75, 2), Event { kind: EventKind::Poison, ..attack(0.0, 2) }];
+    let events = [
+        attack(0.4, 6),
+        attack(0.75, 2),
+        Event {
+            kind: EventKind::Poison,
+            ..attack(0.0, 2)
+        },
+    ];
     for maximum in 1..=40 {
-        let first = (1..=maximum)
-            .find(|&hp| death_bound(&events, hp).unwrap().admits(DEATH_BOUND));
-        let expected = match first { Some(1) => 0, Some(hp) => hp, None => maximum + 1 };
+        let first = (1..=maximum).find(|&hp| death_bound(&events, hp).unwrap().admits(DEATH_BOUND));
+        let expected = match first {
+            Some(1) => 0,
+            Some(hp) => hp,
+            None => maximum + 1,
+        };
         assert_eq!(escape_floor(&events, maximum, DEATH_BOUND), Ok(expected));
     }
 }
 
 #[test]
 fn bound_matches_no_action_monte_carlo() {
-    let events = [attack(0.6, 2), attack(0.4, 3), attack(0.35, 3), attack(0.7, 1)];
+    let events = [
+        attack(0.6, 2),
+        attack(0.4, 3),
+        attack(0.35, 3),
+        attack(0.7, 1),
+    ];
     let mut seed = 0x0192_dab4_bafe_7135;
     let mut deaths = 0;
     const TRIALS: u32 = 200_000;

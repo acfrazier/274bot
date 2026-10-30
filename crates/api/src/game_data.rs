@@ -1269,6 +1269,8 @@ pub struct NpcNameRow {
     pub attack: i32,
     pub defence: i32,
     pub magic: i32,
+    /// Selected damage-type constant. Omitted NPC params use the declared
+    /// `npc_combat.param:1-3` default, resolved through `combat_damagetypes.constant`.
     pub damagetype: Option<String>,
     /// Selected-content NPC headicon **sprite index**, not a bitmask (unlike
     /// `PlayerView::headicons`): 3 protect melee, 4 protect missiles,

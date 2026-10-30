@@ -82,6 +82,7 @@ strength=24
 hitpoints=33
 ranged=3
 magic=4
+param=damagetype,^stab_style
 [bespoke_attacker]
 name=Bespoke attacker
 op1=Attack
@@ -281,6 +282,7 @@ for (const revision of [274, 289] as const) {
         `${revision}: explicit combat levels override the engine defaults`,
     );
     assert.equal(valued.max_dealt, 1000, `${revision}: omitted max_dealt uses its declared default`);
+    assert.equal(valued.damagetype, '^stab_style', `${revision}: explicit damage type overrides its default`);
 
     const bespoke = row('bespoke_attacker');
     assert.equal(bespoke.bespoke, true, `${revision}: a type-change attack stays bespoke`);
