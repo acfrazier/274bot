@@ -148,6 +148,15 @@ impl NativeMachine for GatherRun {
             .is_none_or(|timing| timing.cycle.allows_native_begin())
         {
             machine.emit_click(cx)?;
+            if let Some(timing) = &mut machine.args.timing {
+                let serial = snapshot
+                    .local_player()
+                    .and_then(|player| player.animation_update)
+                    .map_or(0, |animation| animation.serial);
+                timing
+                    .cycle
+                    .begin_native(cx.evidence().tick, serial, chat_since);
+            }
         } else {
             machine.drive_timing(cx, false)?;
         }

@@ -567,6 +567,12 @@ impl TickCycle {
         ) && self.pending_batch_id.is_none()
     }
 
+    /// A new native click starts a new cadence; retain the policy, not the parked baseline.
+    pub(crate) fn begin_native(&mut self, tick: u64, anim_serial: u32, chat_cursor: i32) {
+        debug_assert!(self.allows_native_begin());
+        *self = Self::new(self.spec, tick, anim_serial, chat_cursor);
+    }
+
     pub(crate) fn allows_stray_tend(&self) -> bool {
         matches!(self.phase, Phase::Native { .. } | Phase::Idle { .. })
     }
@@ -1453,6 +1459,10 @@ impl TickCycle {
         reason: CycleReason,
         policy: &mut TickPolicy,
     ) -> CycleStep {
+        let pending = match self.phase {
+            Phase::Armed { act, .. } => self.asked_act(act),
+            _ => None,
+        };
         self.record_cycle(
             policy,
             if late {
@@ -1467,20 +1477,24 @@ impl TickCycle {
             self.phase = Phase::Native {
                 roll_due: None,
                 fallback: None,
-                pending: None,
+                pending,
             };
             return CycleStep::Native(reason);
         }
         if self.spec.depletes && success {
-            self.phase = Phase::Idle { since: tick, fallback: None, pending: None };
+            self.phase = Phase::Idle {
+                since: tick,
+                fallback: None,
+                pending,
+            };
             return self.drive_idle(signals, policy);
         }
+        self.phase = Phase::Native {
+            roll_due: None,
+            fallback: None,
+            pending,
+        };
         if signals.menu_open {
-            self.phase = Phase::Native {
-                roll_due: None,
-                fallback: None,
-                pending: None,
-            };
             CycleStep::Wait
         } else {
             self.start_batch(signals, false, policy)
@@ -1542,7 +1556,7 @@ impl TickCycle {
         blind: bool,
         policy: &mut TickPolicy,
     ) -> CycleStep {
-        if !signals.batch_permitted {
+        if !signals.batch_permitted || self.has_unresolved_requests() {
             return CycleStep::Wait;
         }
         let tick = signals.tick;
