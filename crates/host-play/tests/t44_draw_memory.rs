@@ -81,16 +81,239 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use api::interact;
+use api::snapshot::GameSnapshot;
+use client::client::Client;
 use client::render::backend::{BackendKind, FrameOutput, SceneProgress};
 use client::render::budget::RenderBytes;
 use host::render_head::test_hooks::{RenderTestControl, RenderTestEvent};
-use host::{render_head, FrameBuf, SlotInput};
+use host::{render_head, FrameBuf, Pump, SlotInput};
+use host_play::walk_map::{ActionKind, FocusToken, MapContext, MapModel};
 use host_play::{
     current_resident_bytes, mint_live_names, run_with_template, Play, ProfileOptions,
-    SharedClientTemplate,
+    SharedClientTemplate, SlotArm, WalkArm, WalkArms,
 };
+use nav_planner::bank_fetch::BankRows;
+use nav_planner::map::identity::Digest;
+use nav_planner::router::{FindOptions, Leg, Route};
+use nav_planner::tile::Tile;
+use nav_planner::transport::DoorDir;
+use nav_planner::WorldState;
 use serde_json::{json, Value};
 use vault::{Profile, ProfileSettings, RasterMode};
+
+#[derive(Clone, Debug)]
+struct RegionClientEvent {
+    tick: u32,
+    tile: Option<(i32, i32, i32)>,
+    scene_state: i32,
+    base: (i32, i32),
+    centre_zone: (i32, i32),
+    minimap_flag: (i32, i32),
+    main_overlay_id: i32,
+    main_modal_id: i32,
+    phase: &'static str,
+    reasons: Vec<&'static str>,
+    expected_generation: u64,
+}
+
+#[derive(Clone, Debug)]
+struct RegionFrameEvidence {
+    event_ids: Vec<usize>,
+    generation: u64,
+    kind: &'static str,
+    width: Option<i32>,
+    height: Option<i32>,
+    pixel_count: Option<usize>,
+    pixel_hash_fnv1a64: Option<u64>,
+    splash_band_hash_fnv1a64: Option<u64>,
+    minimap_band_hash_fnv1a64: Option<u64>,
+    scene_progress: Option<String>,
+    has_valid_scene: Option<bool>,
+    scene_consumes: Option<u64>,
+}
+
+#[derive(Default)]
+struct RegionTrace {
+    client_events: Vec<RegionClientEvent>,
+    frames: Vec<RegionFrameEvidence>,
+}
+
+fn pixel_hash(pixels: &[i32]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for pixel in pixels {
+        hash ^= *pixel as u32 as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+fn pixel_region_hash(
+    pixels: &[i32],
+    width: usize,
+    height: usize,
+    x: std::ops::Range<usize>,
+    y: std::ops::Range<usize>,
+) -> Option<u64> {
+    if x.start >= x.end || y.start >= y.end || x.end > width || y.end > height {
+        return None;
+    }
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for row in y {
+        for column in x.clone() {
+            let pixel = *pixels.get(row.checked_mul(width)?.checked_add(column)?)?;
+            hash ^= pixel as u32 as u64;
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    Some(hash)
+}
+
+fn region_trace_json(trace: &RegionTrace) -> Value {
+    json!({
+        "client_events": trace.client_events.iter().enumerate().map(|(id, event)| json!({
+            "id": id,
+            "tick": event.tick,
+            "tile": event.tile,
+            "scene_state_before_paint": event.scene_state,
+            "map_build_base": [event.base.0, event.base.1],
+            "centre_zone": [event.centre_zone.0, event.centre_zone.1],
+            "minimap_flag": [event.minimap_flag.0, event.minimap_flag.1],
+            "main_overlay_id": event.main_overlay_id,
+            "main_modal_id": event.main_modal_id,
+            "phase": event.phase,
+            "reasons": event.reasons,
+            "expected_frame_generation": event.expected_generation,
+        })).collect::<Vec<_>>(),
+        "paint_frames": trace.frames.iter().map(|frame| json!({
+            "events": frame.event_ids,
+            "generation": frame.generation,
+            "kind": frame.kind,
+            "width": frame.width,
+            "height": frame.height,
+            "pixel_count": frame.pixel_count,
+            "pixel_hash_fnv1a64": frame.pixel_hash_fnv1a64,
+            "loading_splash_band_hash_fnv1a64": frame.splash_band_hash_fnv1a64,
+            "minimap_band_hash_fnv1a64": frame.minimap_band_hash_fnv1a64,
+            "scene_progress": frame.scene_progress,
+            "has_valid_scene": frame.has_valid_scene,
+            "scene_consumes": frame.scene_consumes,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+#[derive(Default)]
+struct OutputProbe {
+    latest: Mutex<Option<OutputObservation>>,
+    region_trace: Option<Arc<Mutex<RegionTrace>>>,
+}
+
+impl OutputProbe {
+    fn for_region_trace(region_trace: Arc<Mutex<RegionTrace>>) -> Self {
+        Self {
+            latest: Mutex::new(None),
+            region_trace: Some(region_trace),
+        }
+    }
+
+    fn observe(&self, mailbox: &FrameBuf, output: FrameOutput) {
+        let (kind, width, height, pixels) = match &output {
+            FrameOutput::PixMap(pixmap) => (
+                "pixmap",
+                Some(pixmap.width),
+                Some(pixmap.height),
+                Some(pixmap.pixels.len()),
+            ),
+            FrameOutput::Texture(texture) => (
+                "texture",
+                Some(texture.width as i32),
+                Some(texture.height as i32),
+                None,
+            ),
+            FrameOutput::Refused(_) => ("refused", None, None, None),
+        };
+        let fault = output
+            .render_fault()
+            .or_else(|| mailbox.render_fault())
+            .map(|_| "render_fault");
+        let generation = mailbox.generation();
+        let sample = OutputObservation {
+            kind,
+            width,
+            height,
+            pixels,
+            fresh: output.is_fresh(),
+            fault,
+            generation,
+        };
+        *self.latest.lock().unwrap() = Some(sample);
+
+        let Some(region_trace) = &self.region_trace else {
+            return;
+        };
+        let event_ids: Vec<_> = {
+            let trace = region_trace.lock().unwrap();
+            trace
+                .client_events
+                .iter()
+                .enumerate()
+                .filter_map(|(id, event)| (event.expected_generation == generation).then_some(id))
+                .collect()
+        };
+        if event_ids.is_empty() || generation == 0 {
+            return;
+        }
+        let (pixel_hash_fnv1a64, splash_band_hash_fnv1a64, minimap_band_hash_fnv1a64) =
+            match &output {
+                FrameOutput::PixMap(pixmap) => {
+                    let width = pixmap.width.max(0) as usize;
+                    let height = pixmap.height.max(0) as usize;
+                    (
+                        Some(pixel_hash(&pixmap.pixels)),
+                        pixel_region_hash(&pixmap.pixels, width, height, 120..400, 128..180),
+                        pixel_region_hash(&pixmap.pixels, width, height, 516..765, 0..176),
+                    )
+                }
+                _ => (None, None, None),
+            };
+        let scene_stats = mailbox.fair_stats().filter(|stats| {
+            mailbox
+                .head()
+                .is_some_and(|head| head_key(head) == head_key(stats.identity()))
+        });
+        let (scene_progress, has_valid_scene, scene_consumes) = scene_stats.map_or(
+            (None, None, None),
+            |stats| {
+                (
+                    Some(format!("{:?}", stats.scene_progress())),
+                    Some(stats.has_valid_scene()),
+                    Some(stats.scene_consumes()),
+                )
+            },
+        );
+        let mut trace = region_trace.lock().unwrap();
+        if trace.frames.len() < 1024 {
+            trace.frames.push(RegionFrameEvidence {
+                event_ids,
+                generation,
+                kind,
+                width,
+                height,
+                pixel_count: pixels,
+                pixel_hash_fnv1a64,
+                splash_band_hash_fnv1a64,
+                minimap_band_hash_fnv1a64,
+                scene_progress,
+                has_valid_scene,
+                scene_consumes,
+            });
+        }
+    }
+
+    fn latest(&self) -> Option<OutputObservation> {
+        *self.latest.lock().unwrap()
+    }
+}
 
 const CONSUMER_PERIOD: Duration = Duration::from_millis(16);
 const SAMPLE_PERIOD: Duration = Duration::from_secs(1);
@@ -196,48 +419,6 @@ struct OutputObservation {
     generation: u64,
 }
 
-#[derive(Default)]
-struct OutputProbe {
-    latest: Mutex<Option<OutputObservation>>,
-}
-
-impl OutputProbe {
-    fn observe(&self, mailbox: &FrameBuf, output: FrameOutput) {
-        let (kind, width, height, pixels) = match &output {
-            FrameOutput::PixMap(pixmap) => (
-                "pixmap",
-                Some(pixmap.width),
-                Some(pixmap.height),
-                Some(pixmap.pixels.len()),
-            ),
-            FrameOutput::Texture(texture) => (
-                "texture",
-                Some(texture.width as i32),
-                Some(texture.height as i32),
-                None,
-            ),
-            FrameOutput::Refused(_) => ("refused", None, None, None),
-        };
-        let fault = output
-            .render_fault()
-            .or_else(|| mailbox.render_fault())
-            .map(|_| "render_fault");
-        let sample = OutputObservation {
-            kind,
-            width,
-            height,
-            pixels,
-            fresh: output.is_fresh(),
-            fault,
-            generation: mailbox.generation(),
-        };
-        *self.latest.lock().unwrap() = Some(sample);
-    }
-
-    fn latest(&self) -> Option<OutputObservation> {
-        *self.latest.lock().unwrap()
-    }
-}
 
 struct HeadProbe {
     name: String,
@@ -1707,4 +1888,993 @@ fn t44_cpu_draw_memory_ab() {
         !play.statuses().iter().any(|status| status.ingame),
         "every drawing-memory slot logged out"
     );
+}
+
+const REGION_ORIGIN: Tile = Tile {
+    x: 2659,
+    z: 3292,
+    level: 0,
+};
+const REGION_DESTINATION: Tile = Tile {
+    x: 2661,
+    z: 3301,
+    level: 0,
+};
+const SEED_SCENE_TICK_BUDGET: u32 = 150;
+const SCENE_LOADING_TICK_BUDGET: u32 = 600;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RegionPhase {
+    AwaitingLogin,
+    SeedPending,
+    AtOrigin,
+    Walking,
+    Arrived,
+}
+
+impl RegionPhase {
+    fn label(self) -> &'static str {
+        match self {
+            Self::AwaitingLogin => "awaiting_login",
+            Self::SeedPending => "seed_pending",
+            Self::AtOrigin => "at_origin",
+            Self::Walking => "walking",
+            Self::Arrived => "arrived",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RegionClientSignature {
+    tick: u32,
+    tile: Option<(i32, i32, i32)>,
+    scene_state: i32,
+    base: (i32, i32),
+    flag: (i32, i32),
+    phase: RegionPhase,
+}
+
+struct RegionRun {
+    snapshot: GameSnapshot,
+    pump: Pump,
+    phase: RegionPhase,
+    seeded: bool,
+    seed_tick: Option<u32>,
+    origin_tick: Option<u32>,
+    starting_base: Option<(i32, i32)>,
+    origin_overlay_flag: Option<(i32, i32)>,
+    route_start_tick: Option<u32>,
+    route_start_tile: Option<(i32, i32, i32)>,
+    route_tick_budget: Option<u32>,
+    route_tick_cost: Option<f64>,
+    route_description: Option<String>,
+    route_crosses_zone_edge: bool,
+    route_has_displacing_transport: bool,
+    source_route_confirmed: bool,
+    walk_arms: WalkArms,
+    route_arm: Option<Arc<Mutex<WalkArm>>>,
+    last_walk_tick: Option<u32>,
+    movement_ticks: u32,
+    scene_loading_ticks: u32,
+    natural_loading_tick: Option<u32>,
+    arrival_tick: Option<u32>,
+    overlay_change_tick: Option<u32>,
+    overlay_clear_tick: Option<u32>,
+    last_signature: Option<RegionClientSignature>,
+    failure: Option<String>,
+}
+
+impl RegionRun {
+    fn new() -> Self {
+        Self {
+            snapshot: GameSnapshot::new(),
+            pump: Pump::new(),
+            phase: RegionPhase::AwaitingLogin,
+            seeded: false,
+            seed_tick: None,
+            origin_tick: None,
+            starting_base: None,
+            origin_overlay_flag: None,
+            route_start_tick: None,
+            route_start_tile: None,
+            route_tick_budget: None,
+            route_tick_cost: None,
+            route_description: None,
+            route_crosses_zone_edge: false,
+            route_has_displacing_transport: false,
+            source_route_confirmed: false,
+            walk_arms: WalkArms::default(),
+            route_arm: None,
+            last_walk_tick: None,
+            movement_ticks: 0,
+            scene_loading_ticks: 0,
+            natural_loading_tick: None,
+            arrival_tick: None,
+            overlay_change_tick: None,
+            overlay_clear_tick: None,
+            last_signature: None,
+            failure: None,
+        }
+    }
+}
+
+fn route_crosses_zone_edge(route: &Route) -> bool {
+    route.legs.iter().any(|leg| match leg {
+        Leg::Walk { tiles } => tiles.windows(2).any(|step| {
+            step[0].x.div_euclid(8) != step[1].x.div_euclid(8)
+                || step[0].z.div_euclid(8) != step[1].z.div_euclid(8)
+        }),
+        Leg::Transport { .. } => false,
+    })
+}
+
+fn route_has_displacing_transport(route: &Route) -> bool {
+    route.legs.iter().any(|leg| {
+        matches!(leg, Leg::Transport { edge } if edge.to != edge.at)
+    })
+}
+
+fn route_movement_tick_budget(route: &Route) -> u32 {
+    // nav-planner/router.rs:6-8,178-181 sets run pace to 0.5 ticks/tile.
+    // Count each actual step at one observed tick and retain every transport
+    // edge cost plus one action tick. Two ticks cover movement terminal slack;
+    // scene loading and current-flag clearing are separately observed.
+    let mut ticks = 2u64;
+    for leg in &route.legs {
+        match leg {
+            Leg::Walk { tiles } => {
+                ticks = ticks.saturating_add(tiles.len().saturating_sub(1) as u64);
+            }
+            Leg::Transport { edge } => {
+                ticks = ticks
+                    .saturating_add(edge.ticks.max(0) as u64)
+                    .saturating_add(1);
+            }
+        }
+    }
+    u32::try_from(ticks).unwrap_or(u32::MAX)
+}
+
+fn append_region_client_event(
+    run: &mut RegionRun,
+    client: &Client,
+    mailbox: &FrameBuf,
+    trace: &Arc<Mutex<RegionTrace>>,
+) {
+    let tick = run.snapshot.tick();
+    let tile = run.snapshot.tile();
+    let base = (client.map_build_base_x, client.map_build_base_z);
+    let flag = (client.minimap_flag_x, client.minimap_flag_z);
+    let signature = RegionClientSignature {
+        tick,
+        tile,
+        scene_state: client.scene_state,
+        base,
+        flag,
+        phase: run.phase,
+    };
+    if run.last_signature == Some(signature) {
+        return;
+    }
+
+    let mut reasons = Vec::new();
+    if run.phase == RegionPhase::AtOrigin && tile == Some((REGION_ORIGIN.x, REGION_ORIGIN.z, 0)) {
+        reasons.push("origin_scene_ready");
+    }
+    if run.phase == RegionPhase::Walking && client.scene_state == 1 {
+        reasons.push("natural_scene_state_1");
+        run.natural_loading_tick.get_or_insert(tick);
+    }
+    if run
+        .starting_base
+        .is_some_and(|starting_base| base != starting_base)
+    {
+        reasons.push("map_build_base_changed");
+    }
+    if run
+        .last_signature
+        .is_some_and(|previous| previous.flag.0 != flag.0)
+    {
+        if flag.0 != 0 {
+            reasons.push("minimap_flag_changed");
+            run.overlay_change_tick.get_or_insert(tick);
+        } else if run.overlay_change_tick.is_some() {
+            reasons.push("minimap_flag_cleared");
+            run.overlay_clear_tick.get_or_insert(tick);
+        }
+    }
+    if client.scene_state == 2
+        && run.natural_loading_tick.is_some_and(|loading_tick| {
+            tick.wrapping_sub(loading_tick) > 0
+                && run
+                    .starting_base
+                    .is_some_and(|starting_base| base != starting_base)
+        })
+    {
+        reasons.push("post_rebuild_scene_complete");
+    }
+    if run.phase == RegionPhase::Arrived
+        && tile == Some((REGION_DESTINATION.x, REGION_DESTINATION.z, 0))
+    {
+        reasons.push("route_arrival");
+    }
+
+    let event = RegionClientEvent {
+        tick,
+        tile,
+        scene_state: client.scene_state,
+        base,
+        centre_zone: (
+            client.map_build_centre_zone_x,
+            client.map_build_centre_zone_z,
+        ),
+        minimap_flag: flag,
+        main_overlay_id: client.main_overlay_id,
+        main_modal_id: client.main_modal_id,
+        phase: run.phase.label(),
+        reasons,
+        expected_generation: mailbox.generation().saturating_add(1),
+    };
+    trace.lock().unwrap().client_events.push(event);
+    run.last_signature = Some(signature);
+}
+
+fn source_walk_contains_door(route: &Route) -> bool {
+    route.legs.iter().any(|leg| {
+        matches!(leg, Leg::Transport { edge }
+            if edge.loc_id == 1530
+                && edge.dir == Some(DoorDir::W)
+                && edge.to == edge.at)
+    })
+}
+
+fn record_route_failure(run: &mut RegionRun, message: impl Into<String>) {
+    if run.failure.is_none() {
+        run.failure = Some(message.into());
+    }
+}
+
+fn drive_region_client(
+    client: &mut Client,
+    username: &str,
+    mailbox: &FrameBuf,
+    region: &Arc<Mutex<RegionRun>>,
+    trace: &Arc<Mutex<RegionTrace>>,
+    route_requested: &AtomicBool,
+    world: &nav_planner::world::NavWorld,
+    nav_digest: Digest,
+) {
+    client.set_draw(true);
+    let mut run = region.lock().unwrap();
+    let drain = run.pump.drain_client(client);
+    host::publish_snapshot(&mut run.snapshot, client, drain);
+    let tick = run.snapshot.tick();
+
+    if !run.seeded && run.snapshot.ingame() && run.snapshot.attached() && client.scene_state == 2 {
+        // The only fixture mutation is this account's own initial position.
+        interact::seed_at(client, REGION_ORIGIN.level, REGION_ORIGIN.x, REGION_ORIGIN.z);
+        run.seeded = true;
+        run.seed_tick = Some(tick);
+        run.phase = RegionPhase::SeedPending;
+    }
+
+    if run.phase == RegionPhase::SeedPending {
+        if run.seed_tick.is_some_and(|seed_tick| {
+            tick.wrapping_sub(seed_tick) > SEED_SCENE_TICK_BUDGET
+        }) {
+            let observed_tile = run.snapshot.tile();
+            record_route_failure(
+                &mut run,
+                format!(
+                    "seeded origin not observed within {SEED_SCENE_TICK_BUDGET} server ticks: {observed_tile:?}"
+                ),
+            );
+        } else if client.scene_state == 2
+            && run.snapshot.tile() == Some((REGION_ORIGIN.x, REGION_ORIGIN.z, REGION_ORIGIN.level))
+        {
+            run.phase = RegionPhase::AtOrigin;
+            run.origin_tick = Some(tick);
+            run.starting_base = Some((client.map_build_base_x, client.map_build_base_z));
+            run.origin_overlay_flag = Some((client.minimap_flag_x, client.minimap_flag_z));
+        }
+    }
+
+    if run.phase == RegionPhase::AtOrigin
+        && route_requested.load(Ordering::Acquire)
+        && client.scene_state == 2
+        && run.snapshot.tile() == Some((REGION_ORIGIN.x, REGION_ORIGIN.z, REGION_ORIGIN.level))
+    {
+        let context = MapContext {
+            focus: Some(FocusToken::capture(&SlotArm::new(1, false))),
+            nav: nav_digest,
+            overlay: None,
+            generation: 1,
+        };
+        let mut model = MapModel::default();
+        model.bind(context);
+        model.select_tile(world, REGION_DESTINATION);
+        let command = match model.confirm(
+            ActionKind::Walk,
+            &context,
+            Some(REGION_ORIGIN),
+            FindOptions::default(),
+        ) {
+            Ok(command) => command,
+            Err(error) => {
+                record_route_failure(&mut run, format!("confirm source WalkTo route: {error:?}"));
+                append_region_client_event(&mut run, client, mailbox, trace);
+                return;
+            }
+        };
+        let state = WorldState::from_snapshot(&run.snapshot);
+        let admission = host_play::admission::Admission::manual(
+            command.options(),
+            host_play::admission::capture(
+                &run.snapshot,
+                state.map_members,
+                Default::default(),
+                false,
+            ),
+            0,
+            host_play::WalkGlobals::default(),
+        );
+        let route = match command.walk_on(
+            world,
+            &context,
+            username,
+            &state,
+            &BankRows::default(),
+            admission,
+            &run.walk_arms,
+        ) {
+            Ok(route) => route,
+            Err(error) => {
+                record_route_failure(&mut run, format!("plan source WalkTo route: {error:?}"));
+                append_region_client_event(&mut run, client, mailbox, trace);
+                return;
+            }
+        };
+        let route_arm = run
+            .walk_arms
+            .lock()
+            .unwrap()
+            .get(username)
+            .cloned();
+        let Some(route_arm) = route_arm else {
+            record_route_failure(&mut run, "WalkTo did not publish its production WalkArm");
+            append_region_client_event(&mut run, client, mailbox, trace);
+            return;
+        };
+        run.route_description = Some(format!("{:?}", route.route.legs));
+        run.route_tick_cost = Some(route.route.ticks);
+        run.route_tick_budget = Some(route_movement_tick_budget(&route.route));
+        run.route_crosses_zone_edge = route_crosses_zone_edge(&route.route);
+        run.route_has_displacing_transport = route_has_displacing_transport(&route.route);
+        run.source_route_confirmed = source_walk_contains_door(&route.route);
+        run.route_arm = Some(route_arm);
+        run.route_start_tick = Some(tick);
+        run.route_start_tile = run.snapshot.tile();
+        run.last_walk_tick = Some(tick);
+        run.phase = RegionPhase::Walking;
+        if !run.source_route_confirmed {
+            record_route_failure(
+                &mut run,
+                "planned route no longer matches the source-backed Ardougne door walk",
+            );
+        }
+        if !run.route_crosses_zone_edge {
+            record_route_failure(
+                &mut run,
+                "planned source route does not cross an 8x8 scene-zone edge",
+            );
+        }
+        if run.route_has_displacing_transport {
+            record_route_failure(
+                &mut run,
+                "source route displaces the player through a transport instead of crossing only by walking",
+            );
+        }
+    }
+
+    if run.phase == RegionPhase::Walking && run.last_walk_tick != Some(tick) {
+        if client.scene_state == 1 {
+            run.scene_loading_ticks = run.scene_loading_ticks.saturating_add(1);
+            if run.scene_loading_ticks > SCENE_LOADING_TICK_BUDGET {
+                record_route_failure(
+                    &mut run,
+                    format!(
+                        "natural check_scene exceeded {SCENE_LOADING_TICK_BUDGET} observed ticks"
+                    ),
+                );
+            }
+        } else if client.scene_state == 2 {
+            run.movement_ticks = run.movement_ticks.saturating_add(1);
+            let tick_budget = run.route_tick_budget.unwrap_or(0);
+            if run.movement_ticks > tick_budget {
+                record_route_failure(
+                    &mut run,
+                    format!("WalkTo exceeded its source-derived {tick_budget}-tick movement bound"),
+                );
+            } else {
+                let route_arm = run.route_arm.clone();
+                if let (Some(here), Some(route_arm)) = (run.snapshot.tile(), route_arm) {
+                    let world_state = WorldState::from_snapshot(&run.snapshot);
+                    let mut arm = route_arm.lock().unwrap();
+                    host_play::step_walk_arm_follow(
+                        client,
+                        &run.snapshot,
+                        &mut arm,
+                        Some(world),
+                        here,
+                        world_state.map_members,
+                        Some(username),
+                    );
+                    if arm.route.is_none() {
+                        if here == (
+                            REGION_DESTINATION.x,
+                            REGION_DESTINATION.z,
+                            REGION_DESTINATION.level,
+                        ) {
+                            run.phase = RegionPhase::Arrived;
+                            run.arrival_tick = Some(tick);
+                        } else {
+                            record_route_failure(
+                                &mut run,
+                                format!("production WalkTo terminated before arrival at {here:?}"),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        run.last_walk_tick = Some(tick);
+    }
+
+    // draw.rs:836-840 clears the marker when the local player reaches it;
+    // this observer runs before paint, so allow the next two observed ticks.
+
+    if run.phase == RegionPhase::Arrived
+        && run.overlay_clear_tick.is_none()
+        && run
+            .arrival_tick
+            .is_some_and(|arrival_tick| tick.wrapping_sub(arrival_tick) > 2)
+    {
+        record_route_failure(
+            &mut run,
+            "the current minimap destination flag did not clear within two observed ticks of arrival",
+        );
+    }
+
+    append_region_client_event(&mut run, client, mailbox, trace);
+    if run.phase == RegionPhase::Arrived && run.natural_loading_tick.is_none() {
+        record_route_failure(
+            &mut run,
+            "production arrival completed without an observed natural scene_state=1 loading transition",
+        );
+    }
+    if run.phase == RegionPhase::Arrived
+        && run
+            .starting_base
+            .is_some_and(|starting_base| starting_base == (client.map_build_base_x, client.map_build_base_z))
+    {
+        record_route_failure(
+            &mut run,
+            "production arrival completed without a real map-build base change",
+        );
+    }
+
+}
+
+fn frame_for_reason(trace: &RegionTrace, reason: &'static str) -> Option<RegionFrameEvidence> {
+    trace
+        .frames
+        .iter()
+        .find(|frame| {
+            frame.event_ids.iter().any(|id| {
+                trace
+                    .client_events
+                    .get(*id)
+                    .is_some_and(|event| event.reasons.contains(&reason))
+            })
+        })
+        .cloned()
+}
+
+fn rebuild_base_matches_centre_zone(event: &RegionClientEvent) -> bool {
+    event.base
+        == (
+            (event.centre_zone.0 - 6) * 8,
+            (event.centre_zone.1 - 6) * 8,
+        )
+}
+
+fn genuine_region_rebuild_seen(
+    trace: &RegionTrace,
+    starting_base: (i32, i32),
+    planned_zone_crossing: bool,
+    route_start: Option<(i32, i32, i32)>,
+    destination: (i32, i32, i32),
+) -> bool {
+    let Some(route_start) = route_start else {
+        return false;
+    };
+    let initial_scene_matches_base = trace.client_events.iter().any(|event| {
+        event.phase == RegionPhase::Walking.label()
+            && event.tile == Some(route_start)
+            && event.base == starting_base
+            && rebuild_base_matches_centre_zone(event)
+    });
+    let actual_zone_crossing = trace.client_events.iter().any(|event| {
+        event.phase == RegionPhase::Walking.label()
+            && event.tile.is_some_and(|tile| {
+                tile.0.div_euclid(8) != route_start.0.div_euclid(8)
+                    || tile.1.div_euclid(8) != route_start.1.div_euclid(8)
+            })
+    });
+    let Some(loading) = trace.client_events.iter().find(|event| {
+        event.phase == RegionPhase::Walking.label()
+            && event.scene_state == 1
+            && event.base != starting_base
+            && rebuild_base_matches_centre_zone(event)
+            && event.reasons.contains(&"natural_scene_state_1")
+    }) else {
+        return false;
+    };
+    planned_zone_crossing
+        && initial_scene_matches_base
+        && actual_zone_crossing
+        && trace.client_events.iter().any(|event| {
+            event.scene_state == 2
+                && event.phase == RegionPhase::Arrived.label()
+                && event.base != starting_base
+                && rebuild_base_matches_centre_zone(event)
+                && event.tile == Some(destination)
+                && event.tick.wrapping_sub(loading.tick) > 0
+                && event.reasons.contains(&"post_rebuild_scene_complete")
+        })
+}
+
+#[test]
+fn region_transition_oracle_rejects_a_paint_only_loading_state() {
+    let base = (3280, 3240);
+    let mut trace = RegionTrace {
+        client_events: vec![
+            RegionClientEvent {
+                tick: 10,
+                tile: Some((2659, 3292, 0)),
+                scene_state: 2,
+                base,
+                centre_zone: (338, 418),
+                minimap_flag: (0, 0),
+                main_overlay_id: -1,
+                main_modal_id: -1,
+                phase: "walking",
+                reasons: Vec::new(),
+                expected_generation: 1,
+            },
+            RegionClientEvent {
+                tick: 11,
+                tile: Some((2659, 3292, 0)),
+                scene_state: 1,
+                base,
+                centre_zone: (338, 418),
+                minimap_flag: (0, 0),
+                main_overlay_id: -1,
+                main_modal_id: -1,
+                phase: "walking",
+                reasons: vec!["natural_scene_state_1"],
+                expected_generation: 2,
+            },
+            RegionClientEvent {
+                tick: 12,
+                tile: Some((2661, 3301, 0)),
+                scene_state: 2,
+                base,
+                centre_zone: (338, 418),
+                minimap_flag: (0, 0),
+                main_overlay_id: -1,
+                main_modal_id: -1,
+                phase: "arrived",
+                reasons: vec!["post_rebuild_scene_complete"],
+                expected_generation: 3,
+            },
+        ],
+        frames: Vec::new(),
+    };
+    let route_start = Some((2659, 3292, 0));
+    let destination = (2661, 3301, 0);
+    assert!(!genuine_region_rebuild_seen(
+        &trace,
+        base,
+        true,
+        route_start,
+        destination,
+    ));
+
+    let initial_base = (2608, 3240);
+    let rebuilt_base = (2608, 3248);
+    trace.client_events[0].base = initial_base;
+    trace.client_events[0].centre_zone = (332, 411);
+    trace.client_events[1].tile = Some((2660, 3296, 0));
+    trace.client_events[1].base = rebuilt_base;
+    trace.client_events[1].centre_zone = (332, 412);
+    trace.client_events[2].base = rebuilt_base;
+    trace.client_events[2].centre_zone = (332, 412);
+    assert!(genuine_region_rebuild_seen(
+        &trace,
+        initial_base,
+        true,
+        route_start,
+        destination,
+    ));
+}
+
+#[test]
+#[ignore = "LIVE=1 Engine L CPU real scene-region crossing; explicit drawing budgets required"]
+fn real_region_crossing_draws_loading_splash_and_current_overlays() {
+    assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
+    assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
+    let evidence_path = PathBuf::from(required("T44_REGION_CROSS_OUT"));
+    if let Some(parent) = evidence_path.parent() {
+        std::fs::create_dir_all(parent).expect("create region-crossing evidence directory");
+    }
+    client::profiling::enable();
+    std::sync::LazyLock::force(&EPOCH);
+    configure_drawing_fixture();
+
+    let options = ProfileOptions {
+        profile: Some("local-289".into()),
+        revision: Some("289".into()),
+        host: Some("127.0.0.1".into()),
+        asset_host: Some("127.0.0.1".into()),
+        port: Some(env_or("BOT_GAME_PORT", 47594u16)),
+        http_port: Some(env_or("BOT_HTTP_PORT", 3080u16)),
+        engine_dir: Some(required("ENGINE_DIR").into()),
+        nav_pack: Some(required("NAV_PACK").into()),
+        ..ProfileOptions::default()
+    };
+    let profile = options
+        .resolve(None)
+        .expect("resolve local Engine L profile")
+        .bind()
+        .expect("bind local Engine L profile");
+    let template = SharedClientTemplate::load(Arc::clone(&profile)).expect("load real profile");
+    let world = template.world().expect("load the profile's real nav pack");
+    let nav_digest = Digest::from_hex(
+        &profile
+            .nav_identity()
+            .expect("profile nav identity")
+            .nav_sha256,
+    )
+    .expect("parse profile nav digest");
+
+    let name = mint_live_names(1).pop().expect("one account name");
+    let input = SlotInput::new();
+    input.set_prefer_cpu(true);
+    input.set_render_focused(true);
+    input.set_full_rate(true);
+    let mailbox = FrameBuf::new();
+    let loading = Arc::new(AtomicBool::new(false));
+    let loading_paints = Arc::new(AtomicU64::new(0));
+    let control = PaintControl {
+        loading,
+        loading_paints: Arc::clone(&loading_paints),
+    };
+    let trace = Arc::new(Mutex::new(RegionTrace::default()));
+    let output = Arc::new(OutputProbe::for_region_trace(Arc::clone(&trace)));
+    let region = Arc::new(Mutex::new(RegionRun::new()));
+    let route_requested = Arc::new(AtomicBool::new(false));
+
+    let frame_region = Arc::clone(&region);
+    let frame_trace = Arc::clone(&trace);
+    let frame_route_requested = Arc::clone(&route_requested);
+    let frame_mailbox = Arc::clone(&mailbox);
+    let frame_world = Arc::clone(&world);
+    let frame_name = name.clone();
+    let mut play = run_with_template(
+        template,
+        false,
+        Vec::new(),
+        |_| (None, None),
+        move |client, username, _| {
+            if username == frame_name {
+                drive_region_client(
+                    client,
+                    username,
+                    &frame_mailbox,
+                    &frame_region,
+                    &frame_trace,
+                    &frame_route_requested,
+                    &frame_world,
+                    nav_digest,
+                );
+            }
+        },
+    )
+    .expect("create one real Play");
+    play.set_render_test_control(&name, Arc::new(control))
+        .expect("bind non-forcing render observer before slot spawn");
+    play.try_spawn_slot(
+        live_profiles(std::slice::from_ref(&name))
+            .into_iter()
+            .next()
+            .expect("one real profile"),
+        Some(Arc::clone(&input)),
+        Some(Arc::clone(&mailbox)),
+        None,
+    )
+    .expect("spawn one real CPU slot");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let consumer = {
+        let thread_stop = Arc::clone(&stop);
+        let consumer_mailbox = Arc::clone(&mailbox);
+        let consumer_output = Arc::clone(&output);
+        let join = thread::spawn(move || {
+            while !thread_stop.load(Ordering::Relaxed) {
+                if let Some(frame) = consumer_mailbox.take() {
+                    consumer_output.observe(&consumer_mailbox, frame);
+                }
+                render_head::pump(Instant::now());
+                thread::sleep(CONSUMER_PERIOD);
+            }
+        });
+        ConsumerGuard {
+            stop: Arc::clone(&stop),
+            join: Some(join),
+        }
+    };
+
+    // check_scene notes its 360 s hang diagnostic at client.rs:11981-11984.
+    // At Engine L's 600 ms tick, 600 observed loading ticks span that bound;
+    // the broader wall deadline only detects a harness that stops callbacks.
+    let harness_deadline = Instant::now() + Duration::from_secs(420);
+    loop {
+        let (phase, failure, tick) = {
+            let run = region.lock().unwrap();
+            (run.phase, run.failure.clone(), run.snapshot.tick())
+        };
+        if let Some(failure) = failure {
+            panic!("region-crossing setup failed at tick {tick}: {failure}");
+        }
+        let origin_frame = {
+            let trace = trace.lock().unwrap();
+            frame_for_reason(&trace, "origin_scene_ready")
+        };
+        if phase == RegionPhase::AtOrigin
+            && origin_frame.is_some_and(|frame| {
+                frame.kind == "pixmap"
+                    && frame.has_valid_scene == Some(true)
+                    && frame.pixel_hash_fnv1a64.is_some()
+            })
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < harness_deadline,
+            "slot harness stopped before a valid origin scene; phase={phase:?}, tick={tick}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    route_requested.store(true, Ordering::Release);
+    play.wake(&name);
+    loop {
+        let (
+            phase,
+            failure,
+            tick,
+            start_base,
+            start_tile,
+            route_crosses,
+            source_route,
+            arrival_tick,
+            overlay_change_tick,
+            overlay_clear_tick,
+            movement_ticks,
+            scene_loading_ticks,
+        ) = {
+            let run = region.lock().unwrap();
+            (
+                run.phase,
+                run.failure.clone(),
+                run.snapshot.tick(),
+                run.starting_base,
+                run.route_start_tile,
+                run.route_crosses_zone_edge,
+                run.source_route_confirmed,
+                run.arrival_tick,
+                run.overlay_change_tick,
+                run.overlay_clear_tick,
+                run.movement_ticks,
+                run.scene_loading_ticks,
+            )
+        };
+        if let Some(failure) = failure {
+            panic!("region-crossing route failed at tick {tick}: {failure}");
+        }
+        let trace_snapshot = trace.lock().unwrap();
+        let scene_complete_frame = frame_for_reason(&trace_snapshot, "post_rebuild_scene_complete");
+        let loading_frame = frame_for_reason(&trace_snapshot, "natural_scene_state_1");
+        let flag_frame = frame_for_reason(&trace_snapshot, "minimap_flag_changed");
+        let clear_frame = frame_for_reason(&trace_snapshot, "minimap_flag_cleared");
+        let has_genuine_rebuild = start_base.is_some_and(|base| {
+            genuine_region_rebuild_seen(
+                &trace_snapshot,
+                base,
+                route_crosses,
+                start_tile,
+                (
+                    REGION_DESTINATION.x,
+                    REGION_DESTINATION.z,
+                    REGION_DESTINATION.level,
+                ),
+            )
+        });
+        let complete = phase == RegionPhase::Arrived
+            && arrival_tick.is_some()
+            && overlay_change_tick.is_some()
+            && overlay_clear_tick.is_some()
+            && has_genuine_rebuild
+            && source_route
+            && loading_frame.is_some_and(|frame| {
+                frame.kind == "pixmap"
+                    && frame.scene_progress.as_deref() == Some("Retained")
+                    && frame.has_valid_scene == Some(true)
+                    && frame.pixel_hash_fnv1a64.is_some()
+            })
+            && scene_complete_frame.is_some_and(|frame| {
+                frame.kind == "pixmap"
+                    && frame.scene_progress.as_deref() == Some("Rebuilt")
+                    && frame.has_valid_scene == Some(true)
+                    && frame.pixel_hash_fnv1a64.is_some()
+            })
+            && flag_frame.is_some_and(|frame| frame.pixel_hash_fnv1a64.is_some())
+            && clear_frame.is_some_and(|frame| frame.pixel_hash_fnv1a64.is_some());
+        drop(trace_snapshot);
+        if complete {
+            break;
+        }
+        let movement_budget = region
+            .lock()
+            .unwrap()
+            .route_tick_budget
+            .unwrap_or_default();
+        assert!(
+            movement_ticks <= movement_budget,
+            "region crossing exceeded the source-derived movement tick budget"
+        );
+        assert!(
+            scene_loading_ticks <= SCENE_LOADING_TICK_BUDGET,
+            "natural scene loading exceeded its source-backed observed-tick budget"
+        );
+        assert!(
+            Instant::now() < harness_deadline,
+            "slot harness stopped before real region crossing completed; phase={phase:?}, tick={tick}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    let run_snapshot = {
+        let run = region.lock().unwrap();
+        assert_eq!(run.seeded as u32, 1, "the account was seeded exactly once");
+        assert_eq!(
+            run.origin_overlay_flag.map(|flag| flag.0),
+            Some(0),
+            "the seeded scene begins without a minimap destination flag"
+        );
+        assert!(run.route_description.is_some(), "record planned route");
+        assert!(run.route_crosses_zone_edge, "planned route crosses a real scene-zone edge");
+        assert!(run.source_route_confirmed, "the nav-pack route retains its source door");
+        assert!(
+            !run.route_has_displacing_transport,
+            "the source route crosses its zone edge without teleporting"
+        );
+        json!({
+            "seed_calls": run.seeded as u32,
+            "origin": [REGION_ORIGIN.x, REGION_ORIGIN.z, REGION_ORIGIN.level],
+            "destination": [REGION_DESTINATION.x, REGION_DESTINATION.z, REGION_DESTINATION.level],
+            "origin_tick": run.origin_tick,
+            "route_start_tick": run.route_start_tick,
+            "arrival_tick": run.arrival_tick,
+            "overlay_flag_changed_tick": run.overlay_change_tick,
+            "overlay_flag_cleared_tick": run.overlay_clear_tick,
+            "starting_base": run.starting_base,
+            "route_tick_cost": run.route_tick_cost,
+            "route_movement_tick_budget": run.route_tick_budget,
+            "route_movement_ticks": run.movement_ticks,
+            "scene_loading_ticks": run.scene_loading_ticks,
+            "planned_route_crosses_scene_zone_edge": run.route_crosses_zone_edge,
+            "source_route_has_ardougne_west_door_1530": run.source_route_confirmed,
+            "route_has_displacing_transport": run.route_has_displacing_transport,
+            "walk_legs": run.route_description,
+        })
+    };
+
+    let (loading_frame, origin_frame, flag_frame, clear_frame, scene_complete_frame, trace_json) = {
+        let trace = trace.lock().unwrap();
+        (
+            frame_for_reason(&trace, "natural_scene_state_1").expect("captured natural loading frame"),
+            frame_for_reason(&trace, "origin_scene_ready").expect("captured valid origin scene"),
+            frame_for_reason(&trace, "minimap_flag_changed").expect("captured changed current overlay"),
+            frame_for_reason(&trace, "minimap_flag_cleared").expect("captured cleared current overlay"),
+            frame_for_reason(&trace, "post_rebuild_scene_complete").expect("captured rebuilt scene"),
+            region_trace_json(&trace),
+        )
+    };
+    assert_ne!(
+        loading_frame.splash_band_hash_fnv1a64,
+        origin_frame.splash_band_hash_fnv1a64,
+        "the naturally dispatched loading splash changes its source-backed text band"
+    );
+    assert_ne!(
+        flag_frame.minimap_band_hash_fnv1a64,
+        origin_frame.minimap_band_hash_fnv1a64,
+        "the real WalkTo destination flag changes current minimap pixels"
+    );
+    assert_ne!(
+        clear_frame.minimap_band_hash_fnv1a64,
+        flag_frame.minimap_band_hash_fnv1a64,
+        "the production destination flag clearing changes current minimap pixels again"
+    );
+    assert_ne!(
+        scene_complete_frame.pixel_hash_fnv1a64,
+        loading_frame.pixel_hash_fnv1a64,
+        "the complete post-crossing scene publishes distinct pixels"
+    );
+    assert_eq!(
+        loading_paints.load(Ordering::Relaxed),
+        0,
+        "the live cell never enabled the deterministic loading-paint override"
+    );
+
+    if let Some(arm) = play.arm(&name) {
+        arm.request_logout();
+    }
+    let logout_deadline = Instant::now() + Duration::from_secs(30);
+    while play.statuses().iter().any(|status| status.ingame)
+        && Instant::now() < logout_deadline
+    {
+        thread::sleep(Duration::from_millis(10));
+    }
+    consumer.stop_and_join();
+    assert!(
+        !play.statuses().iter().any(|status| status.ingame),
+        "the live region-crossing account logged out"
+    );
+
+    let receipt = json!({
+        "schema": "t44-real-region-crossing/v1",
+        "qualification": "one-account real Play CPU slot; production nav-pack walk; natural REBUILD_NORMAL only",
+        "engine_profile": "local-289 Engine L",
+        "game_port": env_or("BOT_GAME_PORT", 47594u16),
+        "http_port": env_or("BOT_HTTP_PORT", 3080u16),
+        "route_source": "crates/host-play/tests/nav_origin_live.rs:123-221",
+        "rebuild_source": "vendor/fr-client-rust/crates/client/src/client/client.rs:8789-8809,11965-12041",
+        "loading_splash_source": "vendor/fr-client-rust/crates/client/src/render/draw.rs:4167-4190",
+        "overlay_source": "vendor/fr-client-rust/crates/client/src/client/client.rs:5204-5205,8485-8488; vendor/fr-client-rust/crates/client/src/render/draw.rs:838-840,3880-3892",
+        "overlay_clear_observation": "the current client minimap flag returned to x=0 after production arrival; local arrival-draw and UNSET_MAP_FLAG clears are not distinguished",
+        "paint_only_loading_override_enabled": false,
+        "run": run_snapshot,
+        "pixel_evidence": {
+            "origin_frame_generation": origin_frame.generation,
+            "origin_pixel_hash_fnv1a64": origin_frame.pixel_hash_fnv1a64,
+            "loading_frame_generation": loading_frame.generation,
+            "loading_pixel_hash_fnv1a64": loading_frame.pixel_hash_fnv1a64,
+            "loading_splash_band_hash_fnv1a64": loading_frame.splash_band_hash_fnv1a64,
+            "flag_frame_generation": flag_frame.generation,
+            "flag_minimap_band_hash_fnv1a64": flag_frame.minimap_band_hash_fnv1a64,
+            "cleared_flag_frame_generation": clear_frame.generation,
+            "cleared_minimap_band_hash_fnv1a64": clear_frame.minimap_band_hash_fnv1a64,
+            "rebuilt_scene_frame_generation": scene_complete_frame.generation,
+            "rebuilt_scene_pixel_hash_fnv1a64": scene_complete_frame.pixel_hash_fnv1a64,
+        },
+        "trace": trace_json,
+    });
+    std::fs::write(
+        &evidence_path,
+        serde_json::to_vec_pretty(&receipt).expect("serialize region-crossing evidence"),
+    )
+    .expect("write region-crossing evidence");
+    eprintln!("t44 real region-crossing evidence: {}", evidence_path.display());
 }
