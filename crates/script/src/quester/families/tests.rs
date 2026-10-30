@@ -6019,22 +6019,23 @@ fn assert_sheep_partial_spin(finish_target: bool) {
             "11 held balls cannot settle the journal's remaining 12"
         );
         if !finish_target {
-            // No raw wool remains. A final queued output can still arrive within
-            // three ticks (skill_crafting/scripts/spinning/spinning.rs2:83-99).
+            // No raw wool remains. Keep the full four-tick Make-X progress window
+            // before we report a failed held target. The queue is in
+            // `content/scripts/skill_crafting/scripts/spinning/spinning.rs2:87-110`.
             for _ in 0..100 {
                 assert!(with_tick(&snapshot, &mut ledger, 8, |tick| {
                     with_sheep_step(tick, 12, |cx| run.poll(cx))
                 })
                 .is_pending());
             }
-            for game_tick in 9..=10 {
+            for game_tick in 9..=11 {
                 assert!(with_tick(&snapshot, &mut ledger, game_tick, |tick| {
                     with_sheep_step(tick, 12, |cx| run.poll(cx))
                 })
                 .is_pending());
             }
             assert!(matches!(
-                with_tick(&snapshot, &mut ledger, 11, |tick| {
+                with_tick(&snapshot, &mut ledger, 12, |tick| {
                     with_sheep_step(tick, 12, |cx| run.poll(cx))
                 }),
                 Poll::Ready(Err(ActionError::Failed(reason)))
