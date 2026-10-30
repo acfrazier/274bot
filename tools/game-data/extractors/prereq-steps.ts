@@ -129,7 +129,7 @@ function loadAuthoredTemplates(): AuthoredPrereqTemplates {
 // ---------------------------------------------------------------------------
 
 /** CLI export envelope schema (tools/game-data projection, not the family schema). */
-export const PREREQ_CROSSING_PROJECTION_SCHEMA = 1;
+export const PREREQ_CROSSING_PROJECTION_SCHEMA = 2;
 /** Lower-case CrossingKind serde representation, matching the Rust decoder. */
 const KNOWN_CROSSING_KINDS = new Set([
     'door', 'ladder', 'stairs', 'boat', 'teleport',
@@ -150,9 +150,13 @@ export type ProjectionEntry = {
     crossing: ProjectionCrossing;
     standable: boolean;
     admissible: boolean;
-    quest_gates: unknown[];
+    /** Disjunction of conjunctive quest-gate arrays: gates within one inner
+     * array are conjunctive; the outer arrays are alternative encoded edge
+     * conditions for this same physical crossing. An empty inner array is an
+     * unconditional alternative. Arrays are preserved exactly, never unioned. */
+    quest_gate_alternatives: unknown[][];
 };
-export type ValidatedProjection = { navpack_sha256: string; entries: ProjectionEntry[] };
+export type ValidatedProjection = { navpack_sha256: string; entries: ProjectionEntry[]; identical_edge_groups: string[][] };
 
 function projectionTile(value: unknown, label: string): ProjectionTile {
     if (!isRecord(value) || Object.keys(value).sort().join(',') !== 'level,x,z') {
@@ -195,6 +199,32 @@ function projectionGate(value: unknown, label: string): unknown {
     throw new Error(`prereq_steps: ${label} is not a QuestGate (exactly one of Complete/Window)`);
 }
 
+function projectionGateAlternatives(value: unknown, label: string): unknown[][] {
+    if (!Array.isArray(value)) throw new Error(`prereq_steps: ${label} quest_gate_alternatives must be a list of gate lists`);
+    return value.map((alternative: unknown, alternativeIndex: number) => {
+        const alternativeLabel = `${label} quest_gate_alternatives[${alternativeIndex}]`;
+        if (!Array.isArray(alternative)) throw new Error(`prereq_steps: ${alternativeLabel} must be a list of QuestGate`);
+        alternative.forEach((gate: unknown, gateIndex: number) => projectionGate(gate, `${alternativeLabel}[${gateIndex}]`));
+        return alternative as unknown[];
+    });
+}
+
+const IDENTICAL_EDGE_SOURCE_PATTERN = /^graph\.(edges|teleports)\[\d+\]$/;
+
+function projectionIdenticalEdgeGroups(value: unknown): string[][] {
+    if (!Array.isArray(value)) throw new Error('prereq_steps: identical_edge_groups must be a list of source lists');
+    return value.map((group: unknown, groupIndex: number) => {
+        const label = `identical_edge_groups[${groupIndex}]`;
+        if (!Array.isArray(group) || group.length < 2) throw new Error(`prereq_steps: ${label} must list at least two edge sources`);
+        for (const source of group) {
+            if (typeof source !== 'string' || !IDENTICAL_EDGE_SOURCE_PATTERN.test(source)) {
+                throw new Error(`prereq_steps: ${label} has a malformed edge source ${JSON.stringify(source)}`);
+            }
+        }
+        return group as string[];
+    });
+}
+
 function projectionIdentityKey(crossing: ProjectionCrossing): string {
     return JSON.stringify([
         crossing.loc_id, crossing.option,
@@ -234,9 +264,14 @@ function navPackSha256(selector: string): string {
 
 /**
  * Load and validate the CLI shared crossing projection for 289. Fails closed
- * on schema, SHA, duplicate identity, invalid option/kind/tile/gate, and any
+ * on schema, SHA, duplicate physical identity, invalid option/kind/tile/gate,
+ * malformed identical_edge_groups metadata, and any
  * blocked or inadmissible takeoff the generator would need as legal. No binary
- * pack decoder lives here: pack identity is verified by SHA only.
+ * pack decoder lives here: pack identity is verified by SHA only. Conditional
+ * edge alternatives of one physical crossing share that crossing's identity in
+ * `crossings` with every distinct gate array kept in `quest_gate_alternatives`;
+ * fully identical TransportEdge duplicates are reported in
+ * `identical_edge_groups` and never fail this load.
  */
 export function loadPrereqCrossingProjection(
     revision: number,
@@ -253,8 +288,9 @@ export function loadPrereqCrossingProjection(
     }
     if (!isRecord(parsed) || parsed.schema !== PREREQ_CROSSING_PROJECTION_SCHEMA
         || typeof parsed.navpack_sha256 !== 'string' || !Array.isArray(parsed.crossings)
-        || Object.keys(parsed).sort().join(',') !== 'crossings,navpack_sha256,schema') {
-        throw new Error('prereq_steps: projection must be exactly {schema:1,navpack_sha256,crossings}');
+        || !Array.isArray(parsed.identical_edge_groups)
+        || Object.keys(parsed).sort().join(',') !== 'crossings,identical_edge_groups,navpack_sha256,schema') {
+        throw new Error('prereq_steps: projection must be exactly {schema:2,navpack_sha256,crossings,identical_edge_groups}');
     }
     const sha = (parsed.navpack_sha256 as string).toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(sha)) throw new Error('prereq_steps: projection navpack_sha256 is not hex');
@@ -262,18 +298,18 @@ export function loadPrereqCrossingProjection(
     if (actual !== sha) {
         throw new Error('prereq_steps: projection navpack_sha256 does not match GAME_DATA_289_NAV_PACK (mismatched projection input)');
     }
+    const identical_edge_groups = projectionIdenticalEdgeGroups(parsed.identical_edge_groups);
     const entries: ProjectionEntry[] = [];
     const seen = new Set<string>();
     parsed.crossings.forEach((raw: unknown, index: number) => {
         const label = `projection crossings[${index}]`;
-        if (!isRecord(raw) || Object.keys(raw).sort().join(',') !== 'admissible,crossing,quest_gates,standable') {
-            throw new Error(`prereq_steps: ${label} must be exactly {crossing,standable,admissible,quest_gates}`);
+        if (!isRecord(raw) || Object.keys(raw).sort().join(',') !== 'admissible,crossing,quest_gate_alternatives,standable') {
+            throw new Error(`prereq_steps: ${label} must be exactly {crossing,standable,admissible,quest_gate_alternatives}`);
         }
         if (typeof raw.standable !== 'boolean' || typeof raw.admissible !== 'boolean') {
             throw new Error(`prereq_steps: ${label} standable/admissible must be booleans`);
         }
-        if (!Array.isArray(raw.quest_gates)) throw new Error(`prereq_steps: ${label} quest_gates must be a list`);
-        raw.quest_gates.forEach((gate: unknown, gateIndex: number) => projectionGate(gate, `${label} quest_gates[${gateIndex}]`));
+        const quest_gate_alternatives = projectionGateAlternatives(raw.quest_gate_alternatives, label);
         const crossing = raw.crossing;
         if (!isRecord(crossing) || Object.keys(crossing).sort().join(',') !== 'at,kind,loc_id,option,takeoff,to') {
             throw new Error(`prereq_steps: ${label}.crossing must be exactly {loc_id,option,at,takeoff,to,kind}`);
@@ -297,14 +333,14 @@ export function loadPrereqCrossingProjection(
             },
             standable: raw.standable,
             admissible: raw.admissible,
-            quest_gates: raw.quest_gates,
+            quest_gate_alternatives,
         };
         const key = projectionIdentityKey(entry.crossing);
         if (seen.has(key)) throw new Error(`prereq_steps: duplicate crossing identity in the projection (${label})`);
         seen.add(key);
         entries.push(entry);
     });
-    return { navpack_sha256: sha, entries };
+    return { navpack_sha256: sha, entries, identical_edge_groups };
 }
 
 function toCrossingWire(template: CrossingTemplate, entry: ProjectionEntry): CrossingWire {

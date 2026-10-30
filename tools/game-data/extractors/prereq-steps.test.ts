@@ -85,12 +85,12 @@ for (const source of [
 // Synthetic-projection checks below exercise the fail-closed projection joins
 // without content: templates bind to pack geometry, never to edited constants.
 const tile = (x: number, z: number, level = 0) => ({ x, z, level });
-function packEntry(loc: number, at: { x: number; z: number; level: number }, takeoff: { x: number; z: number; level: number }, to: { x: number; z: number; level: number }, standable = true, admissible = true) {
+function packEntry(loc: number, at: { x: number; z: number; level: number }, takeoff: { x: number; z: number; level: number }, to: { x: number; z: number; level: number }, standable = true, admissible = true, quest_gate_alternatives: unknown[][] = [[]]) {
     return {
         crossing: { loc_id: loc, option: 1, at, takeoff, to, kind: 'door' },
         standable,
         admissible,
-        quest_gates: [] as unknown[],
+        quest_gate_alternatives,
     };
 }
 function baseEntries() {
@@ -103,17 +103,17 @@ function baseEntries() {
         packEntry(3506, tile(51, 60), tile(51, 59), tile(51, 60)),
     ];
 }
-function writeProjection(entries: unknown[], shaOverride?: string) {
+function writeProjection(entries: unknown[], shaOverride?: string, identicalEdgeGroups: unknown = []) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prereq-projection-'));
     const pack = path.join(dir, 'nav.pack');
     fs.writeFileSync(pack, 'nav-pack-bytes');
     const sha = crypto.createHash('sha256').update(fs.readFileSync(pack)).digest('hex');
     const file = path.join(dir, 'crossings.json');
-    fs.writeFileSync(file, JSON.stringify({ schema: 1, navpack_sha256: shaOverride ?? sha, crossings: entries }));
+    fs.writeFileSync(file, JSON.stringify({ schema: 2, navpack_sha256: shaOverride ?? sha, crossings: entries, identical_edge_groups: identicalEdgeGroups }));
     return { dir, pack, file };
 }
-function withProjection(entries: unknown[], run: (overrides: { projectionPath: string; navPack: string }) => void, shaOverride?: string) {
-    const { dir, pack, file } = writeProjection(entries, shaOverride);
+function withProjection(entries: unknown[], run: (overrides: { projectionPath: string; navPack: string }) => void, shaOverride?: string, identicalEdgeGroups?: unknown) {
+    const { dir, pack, file } = writeProjection(entries, shaOverride, identicalEdgeGroups);
     try {
         run({ projectionPath: file, navPack: pack });
     } finally {
@@ -154,4 +154,49 @@ withProjection([...baseEntries(), packEntry(3507, tile(50, 60), tile(50, 60), ti
     } finally {
         if (savedCrossings !== undefined) process.env.GAME_DATA_289_PREREQ_CROSSINGS = savedCrossings;
     }
+}
+
+// Schema-2 condition groups: two stage-window alternatives for one physical
+// crossing share that crossing's identity and keep both condition arrays —
+// the loader never unions them into one conjunction, and the join still
+// yields one catalog identity per physical crossing.
+const stageWindow = (stage: number) => ({
+    Window: { quest: 'priestperil', signal: 'priestperil_stage', values: { min: stage, max: stage } },
+});
+{
+    const gated = packEntry(3443, tile(10, 20), tile(10, 21), tile(30, 40), true, true,
+        [[stageWindow(7)], [stageWindow(8)]]);
+    const entries = [gated, ...baseEntries().slice(1)];
+    withProjection(entries, (overrides) => {
+        const projection = loadPrereqCrossingProjection(289, overrides)!;
+        const match = projection.entries.filter((entry) =>
+            entry.crossing.loc_id === 3443
+            && JSON.stringify(entry.crossing.takeoff) === JSON.stringify(tile(10, 21)));
+        assert.equal(match.length, 1);
+        assert.deepEqual(match[0].quest_gate_alternatives, [[stageWindow(7)], [stageWindow(8)]]);
+        const joined = extractPrereqStepsFacts(289, overrides);
+        const barrierTakeoffs = joined.rows[0].crossings.map((entry) => JSON.stringify(entry.crossing.takeoff));
+        assert.equal(new Set(barrierTakeoffs).size, barrierTakeoffs.length);
+        assert.ok(barrierTakeoffs.includes(JSON.stringify(tile(10, 21))));
+        assert.equal(joined.rows[0].crossings.length, 2);
+    });
+}
+// Fully identical TransportEdge duplicates are bake metadata only: listing
+// the repeated physical record in identical_edge_groups must not fail the
+// export, must not change the joined pack rows, and the crossings themselves
+// stay unique.
+withProjection(baseEntries(), (overrides) => {
+    const projection = loadPrereqCrossingProjection(289, overrides)!;
+    assert.deepEqual(projection.identical_edge_groups, []);
+    const joined = extractPrereqStepsFacts(289, overrides);
+    assert.equal(joined.rows[0].crossings.length, 2);
+    assert.equal(joined.rows[1].crossings.length, 4);
+}, undefined, [['graph.edges[1833]', 'graph.edges[1834]']]);
+{
+    const malformed = baseEntries().map((entry, index) => index === 0
+        ? { ...entry, quest_gate_alternatives: [{ Complete: 'priestperil' }] }
+        : entry);
+    withProjection(malformed, (overrides) => {
+        assert.throws(() => extractPrereqStepsFacts(289, overrides), /must be a list of QuestGate/);
+    });
 }
