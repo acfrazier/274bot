@@ -2268,6 +2268,15 @@ mod api_gather_seat {
     }
     #[test]
     fn seat_refusal_entry_with_denied_script_setting_returns_not_allowed() {
+        assert_compat_refusal_after_scene_observation(false);
+    }
+
+    #[test]
+    fn compat_refusal_keeps_actual_session_after_scene_only_down_observation() {
+        assert_compat_refusal_after_scene_observation(true);
+    }
+
+    fn assert_compat_refusal_after_scene_observation(scene_only_down: bool) {
         use api::local_state::{
             DomainEdit, DomainIdentity, DomainLease, ErrorCode, LocalStatePort, StoreVersion,
             SubmitReceipt, WriteSettlement,
@@ -2427,6 +2436,12 @@ mod api_gather_seat {
         };
         slot.accept_compat_walk_handover(run, handover)
             .expect("live compat request accepts its refusal owner");
+        if scene_only_down {
+            slot.on_is_up(false);
+            slot.on_is_up(true);
+            assert_ne!(slot.work_epoch, run.session);
+            assert_eq!(slot.seat.as_ref().unwrap().run(), run);
+        }
 
         tick(&mut slot);
         let (terminal_run, terminal_request, result) = slot
