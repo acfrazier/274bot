@@ -418,8 +418,7 @@ fn make_fixture_with_seed_commands(
                 return;
             }
             if matches!(*phase, FixtureSeedPhase::Ready) {
-                if input.hold || input.host_move_owned || !client.ingame || client.scene_state != 2
-                {
+                if input.hold || !client.ingame || client.scene_state != 2 {
                     return;
                 }
                 // Observe and queue the release before this frame polls Dialogue.
@@ -439,6 +438,9 @@ fn make_fixture_with_seed_commands(
                             }
                         }
                     }
+                }
+                if input.host_move_owned {
+                    return;
                 }
                 let arm = frame_manual_arms
                     .lock()
