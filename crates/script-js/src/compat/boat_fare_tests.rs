@@ -490,7 +490,10 @@ fn walk_to_keeps_prerequisite_consent_after_earning_the_fare() {
 fn walk_to_consent_metadata_keeps_the_active_frame_bounded() {
     let bytes = std::mem::size_of::<super::WalkTo>();
     println!("WalkTo active frame: {bytes} bytes");
-    assert!(bytes <= 176, "WalkTo active frame exceeds 176 bytes: {bytes}");
+    assert!(
+        bytes <= 176,
+        "WalkTo active frame exceeds 176 bytes: {bytes}"
+    );
 }
 
 #[test]

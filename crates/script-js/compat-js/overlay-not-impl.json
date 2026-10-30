@@ -113,7 +113,7 @@
     "selector": "Traversal.remaining",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script-js/src/shim/traversal.js:93",
+    "runtime": "crates/script-js/src/shim/traversal.js:105",
     "async": false
   },
   {
@@ -122,7 +122,7 @@
     "selector": "Traversal.requestRepath",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script-js/src/shim/traversal.js:99",
+    "runtime": "crates/script-js/src/shim/traversal.js:111",
     "async": false
   },
   {
