@@ -237,24 +237,33 @@ fn held_default_admits_router_endpoint_and_opt_in_proceeds() {
     let route = find(&world, tile(0, 1), tile(20, 1));
     let request = default_admission(input(99, PoisonState::default()));
     assert_eq!(request.policy, RiskPolicy::Avoid);
+    assert_eq!(request.grants, ZoneExempt::NONE);
+    assert!(
+        !request.enforce,
+        "the held default keeps its existing routing mode"
+    );
     let assessment = admission::assess(&route, &world, &request);
-    eprintln!(
-        "probe endpoint verdict={:?} intervals={} crossings={} reason={}",
-        assessment.verdict,
-        assessment.plan.intervals.len(),
-        assessment.plan.crossings.len(),
-        assessment.reason
-    );
-    assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Poison));
+    assert!(assessment.plan.complete);
+    assert_eq!(assessment.plan.intervals.len(), 1);
+    assert_eq!(assessment.plan.crossings.len(), 1);
+    assert!(matches!(
+        assessment.input.poison,
+        PoisonState::Unknown { .. }
+    ));
+    assert_eq!(assessment.verdict, Verdict::Survivable);
+    assert!(assessment.bound <= script::combat::risk::consts::DEATH_BOUND);
+    assert!(matches!(
+        assessment.poison_test,
+        script::combat::risk::PoisonTest::PassesCharged { charged }
+            if charged <= script::combat::risk::consts::DEATH_BOUND
+    ));
     assert!(admission::permits(&route, &world, &request, &assessment));
-    assert_eq!(
-        admission::verdict_refusal(assessment.verdict),
-        WalkRefusal::Unknown(UnknownWhy::Poison)
-    );
     let opt_in = Admission {
         policy: RiskPolicy::Proceed,
         ..request
     };
+    assert_eq!(opt_in.policy, RiskPolicy::Proceed);
+    assert_eq!(opt_in.grants, ZoneExempt::NONE);
     assert!(admission::permits(&route, &world, &opt_in, &assessment));
 }
 
@@ -416,13 +425,26 @@ fn reentering_after_an_origin_escape_is_a_crossing() {
         ..default_admission(risk_input)
     };
     let assessment = admission::assess(&route, &world, &request);
+    assert_eq!(request.policy, RiskPolicy::Avoid);
+    assert_eq!(request.grants, ZoneExempt::NONE);
+    assert!(request.enforce);
     assert!(assessment.plan.complete);
     assert_eq!(assessment.plan.intervals.len(), 2);
     assert!(assessment.plan.intervals[0].escaping());
     assert!(!assessment.plan.intervals[1].escaping());
     assert_eq!(assessment.plan.crossings.len(), 1);
-    assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Poison));
-    assert!(!admission::permits(&route, &world, &request, &assessment));
+    assert!(matches!(
+        assessment.input.poison,
+        PoisonState::Unknown { .. }
+    ));
+    assert_eq!(assessment.verdict, Verdict::Survivable);
+    assert!(assessment.bound <= script::combat::risk::consts::DEATH_BOUND);
+    assert!(matches!(
+        assessment.poison_test,
+        script::combat::risk::PoisonTest::PassesCharged { charged }
+            if charged <= script::combat::risk::consts::DEATH_BOUND
+    ));
+    assert!(admission::permits(&route, &world, &request, &assessment));
 }
 
 fn find_through(world: &NavWorld, from: WorldTile, to: WorldTile) -> Route {

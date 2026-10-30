@@ -93,6 +93,7 @@ struct HoldRig {
     navs: Arc<Mutex<HashMap<String, NavBot>>>,
     statuses: Arc<Mutex<Vec<crate::play_status::SlotStatus>>>,
     observer: Client,
+    _listener: std::net::TcpListener,
     snapshot: GameSnapshot,
     driver: HoldDriver,
 }
@@ -101,12 +102,12 @@ impl HoldRig {
     fn new(start: i32, safe_index: u16, accepted: bool) -> Self {
         let world = Arc::new(test_world(start, safe_index));
         let route = Arc::new(test_route(start));
-        let snapshot = frame(0, tile(start), None, None, world_width(start));
+        let (mut observer, listener) = outgoing_client();
+        let snapshot = frame(&observer, 0, tile(start), None, None, world_width(start));
         let (combat, poison_rate) =
             admission::condition_tables(&world).expect("selected risk tables are available");
         assert_eq!(poison_rate, POISON_RATE);
 
-        let mut observer = outgoing_client();
         let mut bot = NavBot::default();
         bot.condition
             .session_started(0, 0, Some((combat, poison_rate)));
@@ -179,13 +180,21 @@ impl HoldRig {
                 ..Default::default()
             }])),
             observer,
+            _listener: listener,
             snapshot,
             driver,
         }
     }
 
     fn observe(&mut self, tick: u32, here: WorldTile, modal: Option<i32>, hit: Option<(i32, i32)>) {
-        self.snapshot = frame(tick, here, modal, hit, world_width(self.start));
+        self.snapshot = frame(
+            &self.observer,
+            tick,
+            here,
+            modal,
+            hit,
+            world_width(self.start),
+        );
         self.navs
             .lock()
             .unwrap()
@@ -267,7 +276,11 @@ impl HoldRig {
     }
 }
 
-fn outgoing_client() -> Client {
+fn outgoing_client() -> (Client, std::net::TcpListener) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("fixture listener");
+    let addr = listener.local_addr().expect("fixture listener address");
+    let stream = client::io::ClientStream::connect(&addr.ip().to_string(), addr.port())
+        .expect("fixture client stream");
     let mut client = Client::new_with_revision(
         ClientConfig {
             host: "127.0.0.1".into(),
@@ -278,9 +291,12 @@ fn outgoing_client() -> Client {
         },
         ClientRevision::R289,
     );
+    client.stream = Some(stream);
     client.ingame = true;
+    client.scene_state = 2;
     client.out.random = Some(client::io::Isaac::new(&[1, 2, 3, 4]));
-    client
+    client.bump_gens(client::io::ServerProt::REBUILD_NORMAL);
+    (client, listener)
 }
 
 fn observe_dispatch(
@@ -389,6 +405,7 @@ fn test_world(start: i32, safe_index: u16) -> NavWorld {
 }
 
 fn frame(
+    observer: &Client,
     tick: u32,
     here: WorldTile,
     modal: Option<i32>,
@@ -396,6 +413,11 @@ fn frame(
     width: usize,
 ) -> GameSnapshot {
     let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(observer);
+    assert!(
+        snapshot.attached(),
+        "fixture frames must be backed by a connected observer"
+    );
     snapshot.seed_ingame(2);
     snapshot.seed_world(WorldStateView::default());
     snapshot.seed_tile(here);

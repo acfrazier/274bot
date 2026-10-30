@@ -2538,7 +2538,7 @@ fn cancelling_and_rewalking_the_same_destination_arms_the_new_walk() {
 #[test]
 fn native_cross_exemption_is_scoped_to_one_walk() {
     let mut rig = rig(Some(Arc::new(s2b_admission_contract::ice_world())), false);
-    s2b_admission_contract::observed_loadout(&mut rig.snapshot);
+    s2b_admission_contract::observed_loadout_with_hp(&mut rig.snapshot, 99);
     let goal = WorldTile {
         x: 255,
         z: 0,
@@ -2558,6 +2558,34 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
         rig.navs.lock().unwrap()["alice"].requested_route.unwrap().5,
         nav_planner::zones::ZoneExempt::NONE
     );
+    {
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        let grants = bot.requested_route.expect("first native route request").5;
+        assert!(
+            !grants.is_all(),
+            "the first route receives a named, not global, grant"
+        );
+        let assessment = bot.assessment.as_ref().expect("first route assessment");
+        assert!(bot.risk_refusal.is_none());
+        assert_eq!(
+            assessment.verdict,
+            script::combat::risk::Verdict::Survivable
+        );
+        assert!(assessment.bound <= script::combat::risk::consts::DEATH_BOUND);
+        assert!(assessment.plan.complete);
+        assert_eq!(assessment.plan.crossings.len(), 1);
+        assert!(matches!(
+            assessment.input.poison,
+            api::condition::PoisonState::Unknown { .. }
+        ));
+        assert!(matches!(
+            assessment.poison_test,
+            script::combat::risk::PoisonTest::PassesCharged { charged }
+                if charged <= script::combat::risk::consts::DEATH_BOUND
+        ));
+        assert!(bot.has_route());
+    }
     crate::script_runtime::apply_nav_follow_outcome(
         rig.navs.lock().unwrap().get_mut("alice").unwrap(),
         Some(nav_executor::TravelOutcome::Arrived {
@@ -2569,31 +2597,48 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
         }),
         false,
     );
-    rig.observe_at(2, goal);
+    rig.rebuild_snapshot_at(goal);
+    s2b_admission_contract::observed_loadout_with_hp(&mut rig.snapshot, 99);
+    rig.observe_with_here(2, goal);
     assert_eq!(rig.shared.lock().results.len(), 1);
     rig.shared.lock().options.allow_danger_zones = script::native::WalkBit::Forbid;
 
-    rig.observe_at(
-        3,
-        WorldTile {
-            x: 0,
-            z: 0,
-            level: 0,
-        },
-    );
+    let origin = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    rig.rebuild_snapshot_at(origin);
+    s2b_admission_contract::observed_loadout_with_hp(&mut rig.snapshot, 99);
+    rig.observe_with_here(3, origin);
     rig.wait_routed();
     {
         let navs = rig.navs.lock().unwrap();
         let bot = &navs["alice"];
         assert_eq!(
-            bot.requested_route.unwrap().5,
+            bot.requested_route.expect("second native route request").5,
             nav_planner::zones::ZoneExempt::NONE,
             "the second request does not inherit the first request's named grant"
         );
         assert!(bot.risk_refusal.is_none());
-        assert!(
-            bot.assessment.as_ref().unwrap().bound <= script::combat::risk::consts::DEATH_BOUND
+        let assessment = bot.assessment.as_ref().expect("second route assessment");
+        assert_eq!(
+            assessment.verdict,
+            script::combat::risk::Verdict::Survivable
         );
+        assert!(assessment.bound <= script::combat::risk::consts::DEATH_BOUND);
+        assert!(assessment.plan.complete);
+        assert_eq!(assessment.plan.crossings.len(), 1);
+        assert!(matches!(
+            assessment.input.poison,
+            api::condition::PoisonState::Unknown { .. }
+        ));
+        assert!(matches!(
+            assessment.poison_test,
+            script::combat::risk::PoisonTest::PassesCharged { charged }
+                if charged <= script::combat::risk::consts::DEATH_BOUND
+        ));
+        assert!(bot.has_route());
     }
     crate::script_runtime::apply_nav_follow_outcome(
         rig.navs.lock().unwrap().get_mut("alice").unwrap(),
@@ -6006,6 +6051,10 @@ mod s2b_admission_contract {
     }
 
     pub(super) fn observed_loadout(snapshot: &mut GameSnapshot) {
+        observed_loadout_with_hp(snapshot, 50);
+    }
+
+    pub(super) fn observed_loadout_with_hp(snapshot: &mut GameSnapshot, hitpoints: i32) {
         snapshot.seed_inventory(Vec::new(), 28);
         snapshot.seed_equipment(Vec::new());
         snapshot.seed_stats(vec![
@@ -6020,8 +6069,8 @@ mod s2b_admission_contract {
             api::snapshot::StatView {
                 index: 3,
                 name: "hitpoints".into(),
-                base: 50,
-                effective: 50,
+                base: hitpoints,
+                effective: hitpoints,
                 xp: 0,
                 used: true,
             },
