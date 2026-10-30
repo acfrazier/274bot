@@ -615,16 +615,19 @@ mod tests {
             xp: 0,
             used: true,
         }]);
+        // Poison content queues ceil(poison/5) then decrements
+        // (`content/scripts/skill_combat/scripts/poison.rs2:20-30`): R0(54)=319.
+        // At HP 13, p=11 gives line 12 and cap 8, so ceil((319-13+1)/8)=39.
         assert!(matches!(
             want(
                 &mut SurvivalStep::default(),
                 &snapshot,
                 &condition,
                 CurePoison::WhenNeeded,
-                21
+                0
             ),
             SurvivalWant::Need(SurvivalNeed::Cure {
-                or_food: 40,
+                or_food: 39,
                 why: NeedWhy::Lethal,
                 ..
             })

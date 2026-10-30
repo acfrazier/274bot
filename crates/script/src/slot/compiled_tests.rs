@@ -2544,7 +2544,9 @@ mod api_gather_seat {
             8
         );
         // Typed RouteTooLarge adds 40 B to inline receipts: 8,206 B measured, 242 B headroom.
-        assert!(exclusive <= 8448, "exclusive API seat exceeds 8.25KiB");
+        // A11 permits 576 B of running growth: 8,448 B + 576 B = 9,024 B.
+        // This head measures 8,634 B (+428 B), leaving 390 B under the new cap.
+        assert!(exclusive <= 9_024, "exclusive API seat exceeds 9,024 B");
         let stopped = allocation_counter::measure(|| stop_in_seat(&mut slot, 209));
         println!("API gather post-Stop retained={}B (exclusive live + Stop delta), Stop={stopped:?}, worker transient_peak={}B", exclusive + stopped.bytes_current, i128::from(worker.bytes_max) - i128::from(worker.bytes_current));
         assert!(!slot.api_owns_foreground());

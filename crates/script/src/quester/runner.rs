@@ -4376,6 +4376,11 @@ mod tests {
     #[test]
     fn quester_struct_fits_the_per_bot_budget() {
         let bytes = std::mem::size_of::<Quester>();
+        assert!(
+            std::mem::size_of::<crate::survival::SurvivalStep>() <= 192,
+            "SurvivalStep={} exceeds its 192 B bound",
+            std::mem::size_of::<crate::survival::SurvivalStep>()
+        );
         assert!(std::mem::size_of::<QueuedQuester>() < 4096);
         eprintln!("Quester size_of={bytes}; bank memory borrowed, heap=0");
         assert!(bytes < 4096, "Quester is {bytes} bytes");
@@ -5320,6 +5325,8 @@ mod tests {
         }]);
         snapshot.seed_equipment(vec![]);
         snapshot.seed_npcs(vec![]);
+        snapshot.seed_players(Vec::new());
+        snapshot.seed_projectiles(Vec::new());
         snapshot.seed_hitmarks(HitmarksView {
             marks: [HitmarkView {
                 value: 0,
@@ -5544,6 +5551,8 @@ mod tests {
         }]);
         snapshot.seed_equipment(vec![]);
         snapshot.seed_npcs(vec![]);
+        snapshot.seed_players(Vec::new());
+        snapshot.seed_projectiles(Vec::new());
         snapshot.seed_hitmarks(HitmarksView {
             marks: [HitmarkView {
                 value: 0,
@@ -5987,6 +5996,8 @@ mod tests {
         }]);
         snapshot.seed_equipment(vec![]);
         snapshot.seed_npcs(vec![]);
+        snapshot.seed_players(Vec::new());
+        snapshot.seed_projectiles(Vec::new());
         snapshot.seed_varps(
             data.prayers()
                 .iter()

@@ -241,6 +241,8 @@ mod tests {
     // (`content/scripts/player/configs/consumption/consume_normal.dbrow:172-180`),
     // so ten held lobsters credit 120 below the line, not their nominal total
     // heals at arbitrary HP.
+    // `Some(0)` below is a complete, quiet threat set; `None` means danger is
+    // unknown and keeps the conservative half-max eat line.
     #[test]
     fn need_lethal_at_line_unknown_source() {
         let condition = fact(
@@ -255,7 +257,7 @@ mod tests {
         );
         let (or_food, why) = cure(survival_need(
             Some(&condition),
-            None,
+            Some(0),
             Exposure::None,
             20,
             11,
@@ -280,7 +282,7 @@ mod tests {
         let condition = fact(60, onset(Some(11)), FoodSummary::default());
         let (_, why) = cure(survival_need(
             Some(&condition),
-            None,
+            Some(0),
             Exposure::Attributable { max_pulse: 3 },
             20,
             11,
@@ -310,7 +312,7 @@ mod tests {
         assert_eq!(
             cure(survival_need(
                 Some(&condition),
-                None,
+                Some(0),
                 Exposure::None,
                 20,
                 11,
@@ -328,7 +330,7 @@ mod tests {
             },
         );
         assert_eq!(
-            survival_need(Some(&six_food), None, Exposure::None, 20, 11, None, 0,),
+            survival_need(Some(&six_food), Some(0), Exposure::None, 20, 11, None, 0,),
             None
         );
     }

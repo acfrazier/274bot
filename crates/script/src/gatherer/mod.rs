@@ -87,8 +87,8 @@ pub(crate) fn test_full_pack_fixture(
     use api::gather_methods::{known_rows, SceneRegionInput};
     use api::selected::EntityId;
     use api::snapshot::{
-        ActorView, ItemContainer, ItemView, LocLayer, LocView, LocalPlayerView, PlayerView,
-        StatView, WorldStateView,
+        ActorView, HitmarkView, HitmarksView, ItemContainer, ItemView, LocLayer, LocView,
+        LocalPlayerView, PlayerView, StatView, WorldStateView,
     };
     use api::ItemDefView;
     use std::sync::Arc;
@@ -205,6 +205,16 @@ pub(crate) fn test_full_pack_fixture(
     snapshot.rebuild(&client);
     snapshot.seed_ingame(2);
     snapshot.seed_npcs(Vec::new());
+    snapshot.seed_players(Vec::new());
+    snapshot.seed_projectiles(Vec::new());
+    snapshot.seed_hitmarks(HitmarksView {
+        marks: [HitmarkView {
+            value: 0,
+            kind: 0,
+            cycle: 0,
+        }; 4],
+        loop_cycle: 0,
+    });
     snapshot.seed_world(WorldStateView {
         map_base_x: tree_tile.x.saturating_sub(52),
         map_base_z: tree_tile.z.saturating_sub(52),

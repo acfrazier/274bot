@@ -45,10 +45,11 @@ const SURVIVAL_GATHERER_INJECT: &[ScriptSettingInject] = &[
 pub(crate) fn survival_need_scenario() -> Scenario {
     let mut steps = script_live_seed_steps();
     steps.push(Step {
-        name: "prepare Woodcutting 99, Hitpoints 30, rune axe and sinister key",
+        name: "prepare Attack 40, Woodcutting 99, Hitpoints 30, rune axe and sinister key",
         kind: StepKind::Perform {
             send: Box::new(|client, _| {
-                cheat(client, "setstat woodcutting 99").is_sent()
+                cheat(client, "setstat attack 40").is_sent()
+                    && cheat(client, "setstat woodcutting 99").is_sent()
                     && cheat(client, "setstat hitpoints 30").is_sent()
                     && cheat(client, "give rune_axe 1").is_sent()
                     && cheat(client, "give sinister_key 1").is_sent()

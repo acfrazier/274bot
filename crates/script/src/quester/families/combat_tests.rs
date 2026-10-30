@@ -386,14 +386,10 @@ fn authored_combat_walk_permissions_reach_return_and_abort_requests() {
                     panic!("the compiled combat transition must submit a native walk");
                 };
                 assert_eq!(request.protect, protect, "{expected:?}: cross={cross}");
-                assert_eq!(
-                    request.food_guard,
-                    aborted && !protect,
-                    "only an unprotected abort walk requests the food-only guard"
-                );
+                assert!(request.food_guard, "every runner walk has a food guard");
+                assert!(request.allow.food, "every runner walk permits food");
                 if aborted {
                     assert_eq!(request.allow.prayer, protect);
-                    assert!(request.allow.food);
                 }
                 if cross {
                     assert_eq!(request.cross.as_ref(), &[Arc::from("draynor-jail-guards")]);
@@ -1927,24 +1923,25 @@ fn m4_exhausted_escape_walk(
             |cx| { run.poll(cx) }
         )
         .is_pending());
-        if pending_walk(&ledger).is_some_and(|walk| !walk.allow_food) {
+        if matches!(&run.phase, Phase::EscapingAfterAbortHold)
+            && pending_walk(&ledger).is_some()
+        {
             return (run, ledger, snapshot);
         }
     }
     panic!("the hold must run out of supplies and start the exhausted escape");
 }
 
-/// Arrival is not safety: the exhausted pass has neither prayer nor food, and
-/// its fallback tier names tiles that are only farther than the player is. An
-/// arrival with the attacker still live plans the next tier. The step
-/// completes only when no attacker is observed.
+/// Arrival is not safety: the exhausted pass has neither prayer nor held food,
+/// but its food guard remains enabled. An arrival with the attacker still live
+/// plans the next tier. The step completes only when no attacker is observed.
 #[test]
 fn exhausted_m4_escape_arrival_with_a_live_attacker_replans_and_completes_only_when_safe() {
     let collision = m4_collision();
     let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
     let (mut run, mut ledger, live) = m4_exhausted_escape_walk(&lease);
     let first = last_walk(&ledger);
-    assert!(!first.food_guard && !first.allow_food);
+    assert!(first.food_guard && first.allow_food);
     let goal = arrival_goal(&first);
 
     post_walk_receipt(&mut ledger, 41, WalkEnd::Arrived, None, Some(goal));
@@ -2999,11 +2996,11 @@ fn failed_abort_walk_escapes_once_when_food_is_exhausted() {
     };
     assert!(!request.protect);
     assert!(
-        !request.food_guard,
-        "the exhausted escape walk is unguarded"
+        request.food_guard,
+        "the exhausted escape retains its food guard"
     );
     assert!(!request.allow.prayer);
-    assert!(!request.allow.food);
+    assert!(request.allow.food);
     let escape_walk = outbox[0].request_id.get();
     ledger.as_mut().unwrap().outbox.clear();
     ledger.as_mut().unwrap().walk = Some(WalkReceipt {
@@ -3107,13 +3104,12 @@ fn failed_escape_recovery_is_bounded_and_preserves_the_last_failure() {
         assert_eq!(
             walks.len(),
             2 * pass,
-            "stand={stand:?}: one guarded pass and one exhausted pass"
+            "stand={stand:?}: one food-supplied pass and one exhausted pass"
         );
         for (index, walk) in walks.iter().enumerate() {
-            assert_eq!(
-                walk.food_guard,
-                index < pass,
-                "walk {index}: only the first pass runs under the food guard"
+            assert!(
+                walk.food_guard && walk.allow_food,
+                "walk {index}: the runner keeps food protection through exhaustion"
             );
         }
         for chunk in walks.chunks(pass) {
@@ -3285,7 +3281,7 @@ fn escape_walks_that_never_settle_end_on_their_observed_tick_budget() {
         assert_eq!(
             walks.len(),
             2 * pass,
-            "stand={stand:?}: one guarded pass and one exhausted pass"
+            "stand={stand:?}: one food-supplied pass and one exhausted pass"
         );
         for chunk in walks.chunks(pass) {
             for pair in chunk.windows(2) {
@@ -3307,7 +3303,10 @@ fn escape_walks_that_never_settle_end_on_their_observed_tick_budget() {
             }
         }
         for (index, (_, walk)) in walks.iter().enumerate() {
-            assert_eq!(walk.food_guard, index < pass, "walk {index}");
+            assert!(
+                walk.food_guard && walk.allow_food,
+                "walk {index}: food guard and permission remain enabled"
+            );
         }
         assert!(
             matches!(
@@ -3856,7 +3855,7 @@ fn return_and_abort_walks_use_only_authored_protection() {
                 assert_eq!(request.radius, 1);
             }
             assert_eq!(request.protect, protect);
-            assert_eq!(request.food_guard, aborting && !protect);
+            assert!(request.food_guard && request.allow.food);
             if aborting {
                 assert_eq!(request.allow.prayer, protect);
                 assert!(request.allow.food);

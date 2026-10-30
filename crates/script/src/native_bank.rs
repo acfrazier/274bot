@@ -4953,9 +4953,12 @@ mod tests {
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         });
 
+        // `with_tick` starts tick 1 at 600 ms, and the deposit click is emitted
+        // in that poll. Its 4,800 ms floor reaches 5,400 ms at tick 10.
+        // Tick 9's 5,399 ms sample is 4,799 ms elapsed and remains pending.
         for tick_number in 3..=9 {
             let active_millis = if tick_number == 9 {
-                4_799
+                5_399
             } else {
                 1_000 + (tick_number - 2) * 100
             };
@@ -4970,7 +4973,7 @@ mod tests {
         }
 
         let cancelled = with_tick(&snapshot, &mut ledger, 10, |tick| {
-            tick.cx.active_now = Duration::from_millis(4_800);
+            tick.cx.active_now = Duration::from_millis(5_400);
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(matches!(

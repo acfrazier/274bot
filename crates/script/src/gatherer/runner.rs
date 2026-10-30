@@ -2852,10 +2852,16 @@ mod tests {
     #[test]
     fn instance_with_widening_stays_inside_the_inline_budget() {
         assert_eq!(size_of::<Walk>(), 136, "Walk inline layout changed");
+        // The 1,216 B budget is the prior 1,024 B bound plus A11's 192 B allowance.
         assert!(
-            size_of::<Gatherer>() <= 1024,
+            size_of::<Gatherer>() <= 1216,
             "Gatherer={} exceeds its inline budget",
             size_of::<Gatherer>()
+        );
+        assert!(
+            size_of::<crate::survival::SurvivalStep>() <= 192,
+            "SurvivalStep={} exceeds its 192 B bound",
+            size_of::<crate::survival::SurvivalStep>()
         );
         assert!(size_of::<GatherRetained>() <= 80);
         println!(
@@ -3184,7 +3190,10 @@ mod tests {
         fn with_eat_below(eat_below: i32) -> Self {
             use crate::quester::families::tests::{def, local_player};
             use api::bank_memory::{BankMemory, ObservedAt};
-            use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, WorldStateView};
+            use api::snapshot::{
+                GameSnapshot, HitmarkView, HitmarksView, ItemActionFamily, ItemContainer,
+                WorldStateView,
+            };
             let selected =
                 api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
             let mut bag = crate::native::SettingsBag::new();
@@ -3246,6 +3255,16 @@ mod tests {
             snapshot.seed_equipment(vec![]);
             snapshot.seed_locs(vec![]);
             snapshot.seed_npcs(vec![]);
+            snapshot.seed_players(Vec::new());
+            snapshot.seed_projectiles(Vec::new());
+            snapshot.seed_hitmarks(HitmarksView {
+                marks: [HitmarkView {
+                    value: 0,
+                    kind: 0,
+                    cycle: 0,
+                }; 4],
+                loop_cycle: 0,
+            });
             let mut session = BankMemory::default();
             session.observe(
                 &[],

@@ -63,12 +63,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Survival
 
-- A poison cure can now interrupt Gatherer and Quester work. The bot uses a
-  held antipoison dose, then resumes the work.
+- Gatherer and Quester check for a needed poison cure while they work. They can
+  drink a held antipoison during a walk, even when eating is disabled. When
+  poison makes survival unsafe, they pause work without ending the run and show
+  the needed cure or food in the status row.
 - Quester waits for an active provisioning transfer to finish or reach its
   limit before it closes the bank and drinks.
-- The panel and terminal app show the same status row for a cure or food need
-  caused by poison.
 
 ### Scripting
 
