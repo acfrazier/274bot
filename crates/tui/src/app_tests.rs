@@ -2105,10 +2105,7 @@ fn palette_start_opens_quester_zone_scope_before_start() {
         assert_eq!(app.show_screen(Screen::Overview), AppAction::None);
 
         assert_eq!(
-            app.on_key(KeyEvent::new(
-                KeyCode::Char('p'),
-                KeyModifiers::CONTROL
-            )),
+            app.on_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)),
             AppAction::None
         );
         for character in "start script".chars() {

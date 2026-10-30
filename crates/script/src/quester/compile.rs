@@ -2878,7 +2878,10 @@ mod tests {
         });
         assert_eq!(error.code.as_ref(), "invalid-args");
         assert_eq!(error.step, Some(FactKey::new("cross-test-walk")));
-        let detail = error.detail.as_deref().expect("the error explains the field");
+        let detail = error
+            .detail
+            .as_deref()
+            .expect("the error explains the field");
         assert!(detail.contains("allow_danger_zones"), "{detail}");
         assert!(detail.contains("stage-level `cross`"), "{detail}");
     }

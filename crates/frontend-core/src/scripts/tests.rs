@@ -191,7 +191,6 @@ fn fixture(test: &str, members: &[&str]) -> Fixture {
     }
 }
 
-
 #[cfg(feature = "js")]
 struct ScriptSurface<'a>(&'a mut Scripts);
 
