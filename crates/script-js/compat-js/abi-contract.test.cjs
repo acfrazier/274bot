@@ -534,7 +534,7 @@ test('callback source citations resolve and identify each member', { skip: !froz
         assert.ok(normalizedEvidence.includes(memberToken), `${row.member} appears at a cited source line`);
     }
     assert.ok(citationCount > 0);
-    assert.equal(citationCount, 219, 'checked callback citation range parts');
+    assert.equal(citationCount, 223, 'checked callback citation range parts');
 });
 
 
