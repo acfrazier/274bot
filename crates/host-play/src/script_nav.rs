@@ -7399,7 +7399,7 @@ mod diagnostic_tests {
         })
     }
     #[test]
-    fn budget_exhausted_strict_search_is_incomplete() {
+    fn budget_exhausted_strict_search_keeps_non_supply_diagnostics() {
         let mut job = RouteJob::prepare(
             "test",
             stage_request(Arc::new(NavWorld::from_parts(
@@ -7431,13 +7431,11 @@ mod diagnostic_tests {
         )
         .unwrap();
 
-        assert!(!job.diagnostics_started);
-        assert!(matches!(job.stage, RouteJobStage::Assess));
+        assert!(job.diagnostics_started);
+        assert!(matches!(job.stage, RouteJobStage::BeginDiagnostics));
         assert_eq!(job.budget_settled, Some(524_288));
-        assert!(matches!(
-            job.refusal.as_ref(),
-            Some(script::native::WalkRefusal::NoRouteWithinBounds { .. })
-        ));
+        assert!(job.refusal.is_none());
+        job.missing.push(MissingCarry { id: 954, count: 1 });
         job.identity = Some(stage_identity(1));
         let output = job.finish();
         assert_eq!(

@@ -717,7 +717,7 @@ fn witness_verdicts_through_the_kind_view_match_the_round_two_rule() {
 
 #[cfg(feature = "test-support")]
 #[test]
-fn u6_budget_exhaustion_does_not_run_witness_or_retry() {
+fn u6_real_budget_one_corridor_still_runs_witness_and_named_retry() {
     const BUDGET: usize = 1;
     const WIDTH: usize = 160;
     const WITNESS_X: i32 = 80;
@@ -781,17 +781,17 @@ fn u6_budget_exhaustion_does_not_run_witness_or_retry() {
         (result, observed_errors)
     });
 
-    assert_eq!(errors, [RouteError::BudgetExhausted]);
+    assert_eq!(errors, [RouteError::BudgetExhausted, RouteError::BudgetExhausted]);
     assert_eq!(
-        kernels, 1,
-        "the incomplete search must not run a witness or retry"
+        kernels, 5,
+        "the incomplete search still runs the witness and one named retry"
     );
-    assert_eq!(result.tried, 0);
-    assert!(result.blocked.is_empty());
+    assert_eq!(result.tried, 1);
+    assert_eq!(result.blocked.len(), 1);
     assert_eq!(
         result.refusal,
         Some(WalkRefusal::NoRouteWithinBounds {
-            tried: 0,
+            tried: 1,
             last: None
         })
     );
