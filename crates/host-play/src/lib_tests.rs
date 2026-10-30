@@ -31567,8 +31567,6 @@ mod quest_route_evidence_tests {
     use super::*;
     use api::identity::Scope;
     use api::quest_progress::EvidenceStamp;
-    #[cfg(feature = "js")]
-    use api::selected::RunKey;
     use api::selected::{QuestGate, Truth};
     use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, QuestStatusView, StatView};
     use script::native::{NativeTick, Script, ScriptFailure, ScriptFlow};
@@ -31833,19 +31831,6 @@ export default class T extends LoopingBot {
             false,
         );
     }
-    #[cfg(feature = "js")]
-    fn route_run(slot: &script::SlotScript) -> RunKey {
-        slot.native_run().unwrap_or_else(|| {
-            let Scope::Slot(key) = slot.work_scope().expect("slot work scope") else {
-                panic!("compatibility route must use slot scope");
-            };
-            RunKey {
-                slot: key.incarnation().get(),
-                run: slot.runtime_generation(),
-                session: slot.work_epoch(),
-            }
-        })
-    }
 
     #[cfg(feature = "js")]
     fn start_walk(slot: &Arc<Mutex<script::SlotScript>>) {
@@ -31893,8 +31878,18 @@ export default class T extends LoopingBot {
         start_walk(&slot);
         observe(&rig, &mut driver, &snapshot, 2, None);
         await_walk(&rig);
+        let expected_run = {
+            let slot = slot.lock().unwrap();
+            let run = slot.seat_run().expect("compatibility gameplay seat");
+            assert_ne!(
+                run.session,
+                slot.work_epoch(),
+                "fixture must distinguish gameplay session from work epoch"
+            );
+            run
+        };
         let expected = EvidenceStamp {
-            run: route_run(&slot.lock().unwrap()),
+            run: expected_run,
             tick: 2,
             sequence: 2,
         };
