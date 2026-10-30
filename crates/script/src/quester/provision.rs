@@ -4332,7 +4332,9 @@ mod tests {
     fn a_reopen_inside_a_trip_keeps_the_lease_only_when_the_kernel_made_it() {
         for player in [false, true] {
             let (mut snapshot, bank, banks) = openable_bank_fixture();
-            let plan = scan_plan(bank);
+            // A required bank is picked again for each trip, so the trip knows its stand.
+            let mut plan = scan_plan(bank);
+            plan.bank_required = true;
             let quests = quest_catalog();
             let mut bank_rows = vec![bank_row(42, "Quest token", 1)];
             let mut pack: Vec<ItemView> = Vec::new();
