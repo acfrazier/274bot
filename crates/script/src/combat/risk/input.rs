@@ -9,7 +9,6 @@ use api::snapshot::{StatView, VarpView, WorldTile};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
     Survivable,
-    FixableWith,
     Unsurvivable,
     Unknown(UnknownWhy),
 }
@@ -28,6 +27,22 @@ pub enum UnknownWhy {
     /// or names a row this pack does not have (`nav_planner::contract` refused it).
     NavIdentity,
 }
+impl std::fmt::Display for UnknownWhy {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Kind(kind) => write!(formatter, "unsupported risk kind: {kind:?}"),
+            Self::AlreadyEngaged => formatter.write_str("already-engaged threat is unsupported"),
+            Self::NoZoneTable => formatter.write_str("zone facts are unavailable"),
+            Self::MissingFacts => formatter.write_str("required combat facts are unavailable"),
+            Self::InputLock => formatter.write_str("player input is locked"),
+            Self::Poison => formatter.write_str("selected poison facts are missing or invalid"),
+            Self::Overflow => formatter.write_str("risk model bounds were exceeded"),
+            Self::NavIdentity => formatter.write_str("navigation identities do not match"),
+        }
+    }
+}
+
+impl std::error::Error for UnknownWhy {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Style {
