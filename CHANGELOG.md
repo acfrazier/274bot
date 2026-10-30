@@ -134,9 +134,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   to change, so it reported `dialogue failed` while the server had already
   accepted the Continue. The guide now counts a Continue as done when the
   host accepted it and a later game tick was observed, or when the page
-  changes. The guide presses Continue again on an identical page. A page that
-  never changes ends the wait after 10 observed game ticks from its first
-  Continue, not after 3 seconds of clock time.
+  changes. The guide presses Continue again on an identical page, but only
+  within the 10 observed game ticks that its first Continue on that page got.
+  A page that never changes ends the wait at that bound, not after 3 seconds
+  of clock time, even when the guide did not observe every tick (for example
+  during a hold).
 - When a step with a dialogue fails while a dialogue page is still open, its
   retry continues that page from the player's current tile. It no longer
   walks back to the step's start position first. This matters where the
@@ -144,6 +146,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   Crystal crate does. The retry still counts against the step's attempt limit.
   When the attempts run out, the step stops with the reason of the last
   failure.
+- Quest dialogue no longer reports `expected dialogue did not open` while the
+  host has not yet accepted the Talk-to click. The wait for the first page
+  starts when the host accepts the click. A click that the host does not
+  accept, or refuses, within 8 observed game ticks ends the wait. The failure
+  names the NPC, what the host did and the last game message.
 
 ### Scripting
 

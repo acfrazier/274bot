@@ -41,6 +41,21 @@ pub const DIALOGUE_OBSERVE_TICKS: u64 = 1;
 /// still observed. NPC-script messages are not failures: the first one
 /// re-anchors the deadline (`Dialogue::observe_talk_message`).
 pub const DIALOGUE_OPEN_TICKS: u64 = DIALOGUE_PAGE_DELAY_TICKS + DIALOGUE_OBSERVE_TICKS;
+/// Observed ticks from the Talk-to's emit tick within which the host must
+/// have accepted it. The page budget ([`DIALOGUE_OPEN_TICKS`]) does not run
+/// until the host accepts the click: the engine cannot trigger `opnpc1`
+/// from a click it never received, so a wait that expires before the
+/// acceptance measures the host, not the content. The host drains an emitted
+/// interaction in the observation pass that follows the script's poll
+/// (`script_observe.rs:1344` and `:1410`) and stamps the receipt with that
+/// pass's tick, so an unheld host accepts on the emit tick or the next one.
+/// The remaining ticks are the allowance for a pass that waits behind a
+/// guardian or recovery hold (`script_observe.rs:821-822`): no engine or
+/// content value bounds host work, so this is the same bound that
+/// [`DIALOGUE_ASSESS_TICKS`] uses for the router's answer. A refused receipt
+/// is not an acceptance: the wait runs to the same bound, and a page that
+/// opens before it (from an earlier click) is still taken.
+pub const DIALOGUE_TALK_ACCEPT_TICKS: u64 = 8;
 /// An NPC's legal wander square contains `(2 * wanderrange + 1)^2` tiles.
 /// Set the replan cap to the number of non-home tiles in this square. The
 /// engine chooses destinations within that square (`Npc.ts:705-728`) and has
@@ -411,6 +426,10 @@ pub struct Dialogue {
     chat_advanced: bool,
     chat_page_owned: bool,
     chat_advance_request_id: Option<u64>,
+    /// The matured accepted receipt of the previous press acknowledged an
+    /// unchanged page: the next `drive` presses it again inside the first
+    /// press's tick bound and keeps that bound.
+    repeat_press: bool,
 }
 // Keep retained per-action dialogue state within its reviewed size budget.
 // 392 B measured (+8 B headroom). The approach round 3 fix added the route
@@ -478,6 +497,7 @@ impl NativeMachine for Dialogue {
             chat_advanced: false,
             chat_page_owned: false,
             chat_advance_request_id: None,
+            repeat_press: false,
         };
         dialogue.open(cx)?;
         Ok(dialogue)
@@ -647,11 +667,20 @@ impl NativeMachine for Dialogue {
                 }
                 self.observe_talk_arrival(cx, obs.tick);
                 self.observe_talk_message(cx, obs.tick);
-                self.update_talk_open_deadline(cx);
+                let receipt = self.update_talk_open_deadline(cx);
                 if obs.tick >= self.content_deadline_tick {
-                    static REASON: std::sync::LazyLock<Arc<str>> =
-                        std::sync::LazyLock::new(|| Arc::from("expected dialogue did not open"));
-                    return Poll::Ready(Err(ActionError::Failed(Arc::clone(&REASON))));
+                    return Poll::Ready(Err(match receipt {
+                        TalkReceipt::Missing | TalkReceipt::Refused => {
+                            self.talk_unaccepted_error(cx, receipt)
+                        }
+                        TalkReceipt::Accepted | TalkReceipt::NotRequested => {
+                            static REASON: std::sync::LazyLock<Arc<str>> =
+                                std::sync::LazyLock::new(|| {
+                                    Arc::from("expected dialogue did not open")
+                                });
+                            ActionError::Failed(Arc::clone(&REASON))
+                        }
+                    }));
                 }
                 Poll::Pending
             }
@@ -663,11 +692,18 @@ impl NativeMachine for Dialogue {
                 // `quest_arthur.rs2:15-16`): the server reuses the chat root
                 // and Continue component, so such a page has the same
                 // acknowledgement values as the one that was dismissed.
-                if self
-                    .ack_page
-                    .acknowledged(obs.modal, obs.r#continue, obs.page_fingerprint())
-                    || self.continue_receipt_acknowledged(cx)
-                {
+                // An unchanged page is pressed again only inside the tick
+                // bound of its first press: once that bound has passed, a
+                // matured receipt cannot renew it, however sparse the
+                // observations were.
+                let page_changed =
+                    self.ack_page
+                        .acknowledged(obs.modal, obs.r#continue, obs.page_fingerprint());
+                let repeat = !page_changed
+                    && obs.tick <= self.content_deadline_tick
+                    && self.continue_receipt_acknowledged(cx);
+                if page_changed || repeat {
+                    self.repeat_press = repeat;
                     // The engine resumes the paused script in the ack packet's
                     // own cycle (`ResumePauseButtonHandler.ts:7-13`) and writes
                     // the next `~chatnpc`/`~chatplayer` page in that execution
@@ -1095,20 +1131,23 @@ impl Dialogue {
         }
     }
 
-    /// First-page deadline, counted in observed ticks from the engine's own
-    /// trigger. The host stamps the receipt with the click tick, so the engine
-    /// reads the click one cycle later; when the bot walks the last tiles
-    /// after the click, the trigger is the cycle of arrival. Until the bot is
-    /// beside the NPC, the planned route plus slack bounds the wait.
-    fn update_talk_open_deadline(&mut self, cx: &ActionContext<'_>) {
+    /// First-page deadline, counted in observed ticks. Until the host accepts
+    /// the Talk-to the wait is [`DIALOGUE_TALK_ACCEPT_TICKS`] from the emit
+    /// tick and the page budget does not run. After acceptance the deadline
+    /// is counted from the engine's own trigger. The host stamps the receipt
+    /// with the click tick, so the engine reads the click one cycle later;
+    /// when the bot walks the last tiles after the click, the trigger is the
+    /// cycle of arrival. Until the bot is beside the NPC, the planned route
+    /// plus slack bounds the wait.
+    fn update_talk_open_deadline(&mut self, cx: &ActionContext<'_>) -> TalkReceipt {
         let Some(request_id) = self.talk_request_id else {
-            return;
+            return TalkReceipt::NotRequested;
         };
         let Some(receipt) = cx.interaction_receipt(request_id) else {
-            return;
+            return TalkReceipt::Missing;
         };
         if !receipt.accepted {
-            return;
+            return TalkReceipt::Refused;
         }
         let click_tick = receipt.evidence.tick;
         let mut deadline = click_tick.saturating_add(u64::from(self.talk_approach_budget_ticks));
@@ -1122,6 +1161,36 @@ impl Dialogue {
             deadline = message_tick.saturating_add(DIALOGUE_OPEN_TICKS);
         }
         self.content_deadline_tick = deadline;
+        TalkReceipt::Accepted
+    }
+
+    /// The open wait ended with no accepted Talk-to. The error names the
+    /// request, what the host did with it, and the last game message since
+    /// the click, so a refusal and a lost request read differently.
+    fn talk_unaccepted_error(&self, cx: &ActionContext<'_>, receipt: TalkReceipt) -> ActionError {
+        let name = match &self.args.target {
+            DialogueTarget::Npc { name, .. } => name.as_ref(),
+            DialogueTarget::Continuation => "",
+        };
+        let host = if receipt == TalkReceipt::Refused {
+            format!(
+                "the host refused it and accepted no Talk-to by observed tick {}",
+                self.content_deadline_tick
+            )
+        } else {
+            format!(
+                "the host had not accepted it by observed tick {}",
+                self.content_deadline_tick
+            )
+        };
+        let last = self
+            .talk_chat_mark
+            .and_then(|since| last_game_message(cx, since))
+            .map_or_else(String::new, |text| format!("; last game message: {text}"));
+        ActionError::Failed(Arc::from(format!(
+            "expected dialogue did not open: {} {name}: {host}{last}",
+            self.npc_action
+        )))
     }
 
     /// The conversation's used-`prefer` mask, for the acceptance tests.
@@ -1200,7 +1269,7 @@ impl Dialogue {
         self.content_deadline_tick = cx
             .evidence()
             .tick
-            .saturating_add(u64::from(talk_approach_budget_ticks));
+            .saturating_add(DIALOGUE_TALK_ACCEPT_TICKS);
         Ok(())
     }
 
@@ -1384,6 +1453,7 @@ impl Dialogue {
         cx: &mut ActionContext<'_>,
         obs: &ChatObs,
     ) -> Poll<Result<DialogueOutcome, ActionError>> {
+        let repeated = std::mem::take(&mut self.repeat_press);
         if self.steps >= DRIVE_STEPS {
             return Poll::Ready(Ok(if obs.open {
                 DialogueOutcome::Failed
@@ -1403,16 +1473,12 @@ impl Dialogue {
             // The same page again, pressed because the previous press's
             // accepted receipt matured while the page had not changed: the
             // identical second `And wait...`, or a page that ignores the
-            // press. The tick bound of the first press on this page stays,
-            // so a page that never changes ends the wait however many
-            // receipts arrive, and the repeat is not another page toward
-            // `DRIVE_STEPS`.
-            let fingerprint = obs.page_fingerprint();
-            let unchanged = !self
-                .ack_page
-                .acknowledged(obs.modal, obs.r#continue, fingerprint);
-            let repeated = unchanged && self.content_deadline_tick >= obs.tick;
-            let ack_page = PageAcknowledgement::capture(obs.modal, obs.r#continue, fingerprint);
+            // press. The tick bound of the first press on this page stays
+            // (`WaitContinueAck` presses again only inside it), so a page
+            // that never changes ends the wait however many receipts arrive,
+            // and the repeat is not another page toward `DRIVE_STEPS`.
+            let ack_page =
+                PageAcknowledgement::capture(obs.modal, obs.r#continue, obs.page_fingerprint());
             let request_id = std::task::ready!(crate::native::defer_budget(
                 cx.emit(InteractReq::ContinueDialog { component_id: None })
             ))?;
@@ -1461,6 +1527,29 @@ impl Dialogue {
         self.due_tick = obs.tick.saturating_add(PAGE_SETTLE_TICKS);
         Poll::Pending
     }
+}
+
+/// What the host did with the Talk-to request of the open wait.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TalkReceipt {
+    /// This dialogue sent no Talk-to (a continuation).
+    NotRequested,
+    /// No receipt yet: the host has not drained the request.
+    Missing,
+    Refused,
+    Accepted,
+}
+
+/// The text of the newest server game message newer than chat `since`.
+fn last_game_message(cx: &ActionContext<'_>, since: i32) -> Option<String> {
+    cx.snapshot().chat_lines(since).and_then(|lines| {
+        lines
+            .value
+            .iter()
+            .filter(|line| line.username.is_none() && line.type_ == 0)
+            .max_by_key(|line| line.sequence)
+            .map(|line| line.text.to_string())
+    })
 }
 
 fn inventory_fingerprint(cx: &ActionContext<'_>) -> Option<u64> {
