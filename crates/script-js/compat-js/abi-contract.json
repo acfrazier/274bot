@@ -4,7 +4,7 @@
   "activation_state": "partially-activated",
   "frozen_source": {
     "repository": "https://github.com/rs2b2t/rs2b0t.git",
-    "revision": "90a69240a4617155f280f098958c3cd7f044f234",
+    "revision": "ae56ccc95ba5681b12f1f66ec2adea14427fe497",
     "runtime_declarations": "packages/rs2b0t-api/index.js",
     "typed_declarations": "packages/rs2b0t-api/index.d.ts"
   },
