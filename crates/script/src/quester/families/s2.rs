@@ -867,10 +867,11 @@ impl StepRun for MakeRun {
                         &cx.tick.cx,
                     )?;
                     self.trigger = Some(MakeTriggerHandle::UseOn(std::task::ready!(
-                        crate::native::defer_budget(cx.tick.actions.begin::<super::UseOnAction>(
-                            request,
-                            &mut cx.tick.cx,
-                        ))
+                        crate::native::defer_budget(
+                            cx.tick
+                                .actions
+                                .begin::<super::UseOnAction>(request, &mut cx.tick.cx,)
+                        )
                     )?));
                 }
                 return Poll::Pending;
@@ -939,10 +940,11 @@ impl StepRun for MakeRun {
                     &cx.tick.cx,
                 )?;
                 self.trigger = Some(MakeTriggerHandle::UseOn(std::task::ready!(
-                    crate::native::defer_budget(cx.tick.actions.begin::<super::UseOnAction>(
-                        request,
-                        &mut cx.tick.cx,
-                    ))
+                    crate::native::defer_budget(
+                        cx.tick
+                            .actions
+                            .begin::<super::UseOnAction>(request, &mut cx.tick.cx,)
+                    )
                 )?));
                 Poll::Pending
             }
