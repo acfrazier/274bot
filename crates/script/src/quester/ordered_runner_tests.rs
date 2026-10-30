@@ -865,20 +865,19 @@ fn a_guardian_walk_of_a_few_tiles_keeps_the_step_for_every_event_name() {
 #[test]
 fn a_teleport_keeps_the_step_while_partner_work_is_pending() {
     let (mut harness, release) = held_second_step();
-    release.store(true, Ordering::Release);
-    harness.run_until_begun(3);
-    assert_eq!(harness.script.cursor, 2);
     harness.script.pair_admission_since = Some(harness.active_now());
     harness.script.on_random(&random_event());
     harness.guardian_hold(&[tile(3280, 3290)]);
     harness.step();
-    assert!(harness.script.step.is_some());
+    assert!(harness.script.step.is_some(), "the step stays");
     assert!(harness.script.progress.is_some());
-    assert_eq!(harness.script.cursor, 2);
-    harness.run_until_begun(4);
+    assert_eq!(harness.script.cursor, 1);
+    release.store(true, Ordering::Release);
+    harness.run_until_begun(3);
     assert_eq!(
-        harness.begun[3], "step-4",
-        "the next begin is step 4, not a replay"
+        harness.begun,
+        ["step-1", "step-2", "step-3"],
+        "the next begin is step 3, not a replay of step 2"
     );
 }
 
