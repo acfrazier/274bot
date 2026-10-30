@@ -841,7 +841,10 @@ mod compat {
                 tick: Some(8),
                 ..page_closed
             };
-            assert_eq!(step(&mut machine, &mut clock, &receipt), (Some(true), vec![]));
+            assert_eq!(
+                step(&mut machine, &mut clock, &receipt),
+                (Some(true), vec![])
+            );
         }
 
         #[test]
