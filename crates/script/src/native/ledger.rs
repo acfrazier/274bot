@@ -1103,6 +1103,96 @@ mod tests {
         assert_eq!(budget.events, 5);
     }
     #[test]
+    fn a_finished_guardian_hold_settles_for_one_observed_tick_then_resumes_once() {
+        let mut budget = TickBudget::default();
+        budget.observe(5);
+        assert_eq!(budget.after_hold(), AfterHold::None);
+        budget.hold_begin();
+        // Ticks that pass while the guardian holds move nothing on.
+        budget.observe(6);
+        budget.observe(7);
+        assert_eq!(budget.after_hold(), AfterHold::None);
+        budget.hold_end();
+        assert_eq!(budget.after_hold(), AfterHold::None, "no tick has run yet");
+        budget.observe(8);
+        assert_eq!(budget.after_hold(), AfterHold::Settling);
+        budget.observe(8);
+        assert_eq!(
+            budget.after_hold(),
+            AfterHold::Settling,
+            "a second poll of the same tick does not move it"
+        );
+        assert!(!budget.take_hold_resume());
+        budget.observe(9);
+        assert_eq!(budget.after_hold(), AfterHold::Resume);
+        assert!(budget.take_hold_resume());
+        assert!(!budget.take_hold_resume(), "the resume is consumed once");
+        assert_eq!(budget.after_hold(), AfterHold::None);
+    }
+
+    #[test]
+    fn a_new_hold_restarts_the_settle_and_an_action_begun_after_one_is_not_resumed() {
+        let mut budget = TickBudget::default();
+        budget.observe(1);
+        budget.hold_begin();
+        budget.hold_end();
+        budget.observe(2);
+        budget.hold_begin();
+        budget.observe(3);
+        assert_eq!(budget.after_hold(), AfterHold::None, "held again");
+        budget.hold_end();
+        budget.observe(4);
+        assert_eq!(budget.after_hold(), AfterHold::Settling);
+        budget.clear_hold();
+        budget.observe(5);
+        assert_eq!(budget.after_hold(), AfterHold::None);
+    }
+
+    #[test]
+    fn the_teleport_rule_separates_a_walk_from_a_jump() {
+        let at = |x, z, level| api::WorldTile { x, z, level };
+        // Running covers two tiles a cycle; one cycle of slack on the count.
+        assert!(!is_teleport(at(3200, 3200, 0), at(3204, 3200, 0), 1));
+        assert!(is_teleport(at(3200, 3200, 0), at(3205, 3200, 0), 1));
+        assert!(!is_teleport(at(3200, 3200, 0), at(3220, 3200, 0), 9));
+        assert!(is_teleport(at(3200, 3200, 0), at(3231, 3200, 0), 9));
+        // A plane change is a teleport at any distance.
+        assert!(is_teleport(at(3200, 3200, 0), at(3200, 3200, 1), 50));
+        // The Maze and Mime squares are far from anywhere a player is sent from.
+        assert!(is_teleport(at(3200, 3200, 0), at(2900, 4555, 0), 30));
+    }
+
+    #[test]
+    fn only_frames_of_a_hold_can_report_a_teleport() {
+        let at = |x, z| Some(api::WorldTile { x, z, level: 0 });
+        let mut budget = TickBudget::default();
+        // A teleport the player makes on their own (a spell, a lodestone) with
+        // no guardian hold is not reported.
+        budget.observe_fix(1, at(3200, 3200));
+        budget.observe_fix(2, at(3000, 3500));
+        assert!(!budget.take_hold_teleport());
+        budget.hold_begin();
+        budget.observe_fix(3, at(3002, 3500));
+        budget.observe_fix(4, at(3004, 3500));
+        budget.hold_end();
+        budget.observe_fix(5, at(3005, 3500));
+        assert!(!budget.take_hold_teleport(), "a few tiles of walking");
+        budget.hold_begin();
+        budget.observe_fix(6, at(2900, 4555));
+        assert!(!budget.take_hold_teleport(), "not before the hold is over");
+        budget.observe_fix(7, at(3005, 3500));
+        budget.hold_end();
+        assert!(budget.take_hold_teleport(), "out and back is a teleport");
+        assert!(!budget.take_hold_teleport(), "reported once");
+        // A frame with no player keeps the last position.
+        budget.hold_begin();
+        budget.observe_fix(8, None);
+        budget.observe_fix(9, at(3500, 3500));
+        budget.hold_end();
+        assert!(budget.take_hold_teleport());
+    }
+
+    #[test]
     fn scene_fence_uses_four_bytes_and_tick_budget_stays_compact() {
         assert_eq!(std::mem::size_of::<SceneFence>(), 4);
         assert_eq!(std::mem::size_of::<TickBudget>(), 24);
