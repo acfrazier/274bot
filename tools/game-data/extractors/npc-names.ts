@@ -177,6 +177,16 @@ export function extractNpcNamesFacts(content: string, revision: number, scripts:
                 maxrange = Math.max(maxrange, wanderrange);
             }
             const combat = extractNpcCombatFacts(config, block?.category ?? null, scripts, maxHits);
+            const poisonSeverityFact = block ? block.poison_severity : poisonSeverity;
+            const ordinaryMelee = combat.ordinary_melee
+                && block !== undefined
+                && block.strength !== null
+                && block.strength >= 0
+                && block.strengthbonus !== null
+                && block.attackrate !== null
+                && block.attackrate > 0
+                && !block.forcemulti
+                && poisonSeverityFact === 0;
             combatNpcs.push({
                 config,
                 category: block?.category ?? null,
@@ -208,9 +218,9 @@ export function extractNpcNamesFacts(content: string, revision: number, scripts:
                 forced_max_hit: combat.forced_max_hit,
                 dragonfire: combat.dragonfire,
                 attackrate: block?.attackrate ?? null,
-                poison_severity: block ? block.poison_severity : poisonSeverity,
+                poison_severity: poisonSeverityFact,
                 forcemulti: block?.forcemulti ?? defaultForcemulti,
-                bespoke: combat.bespoke,
+                bespoke: combat.bespoke && !ordinaryMelee,
                 counter_protect: combat.counter_protect,
             };
         });

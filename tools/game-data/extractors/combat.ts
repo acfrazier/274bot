@@ -24,6 +24,7 @@ export type CombatNpcFacts = {
     forced_max_hit: number | null;
     dragonfire: DragonfireKind | null;
     bespoke: boolean;
+    ordinary_melee: boolean;
     counter_protect: boolean;
 };
 
@@ -161,11 +162,15 @@ function matchingTriggers(config: string, category: string | null, scripts: Comb
 }
 
 
-function referencedProcedures(body: string) {
-    const names = new Set<string>();
-    for (const match of body.matchAll(/(?:~|@)([A-Za-z][A-Za-z0-9_]*)\s*(?=\(|;|$)/g)) names.add(match[1]!);
-    for (const match of body.matchAll(/\b(?:gosub|gosub_with_params|goto|jump)\s*\(\s*([A-Za-z][A-Za-z0-9_]*)/g)) names.add(match[1]!);
+function procedureReferences(body: string) {
+    const names: string[] = [];
+    for (const match of body.matchAll(/(?:~|@)([A-Za-z][A-Za-z0-9_]*)\s*(?=\(|;|$)/g)) names.push(match[1]!);
+    for (const match of body.matchAll(/\b(?:gosub|gosub_with_params|goto|jump)\s*\(\s*([A-Za-z][A-Za-z0-9_]*)/g)) names.push(match[1]!);
     return names;
+}
+
+function referencedProcedures(body: string) {
+    return new Set(procedureReferences(body));
 }
 
 const GENERIC_ATTACK_PROCEDURES = new Set([
@@ -212,16 +217,22 @@ const SHARED_ATTACK_PROCEDURES = new Set([
     'npc_default_retaliate',
     'npc_default_retaliate_ap',
 ]);
+const DEFAULT_MELEE_DISPATCH_PROCEDURES = new Set(['npc_default_attack']);
+const ORDINARY_RETALIATION_PROCEDURES = new Set(['npc_default_retaliate', 'npc_default_retaliate_ap']);
 
-function isSharedAttackBody(body: string) {
+function onlySharedAttackBody(body: string, allowedProcedures: ReadonlySet<string>) {
     let found = false;
     const call = /(?:~([A-Za-z][A-Za-z0-9_]*)\s*(?:\([^;]*\))?\s*;?|gosub(?:_with_params)?\s*\(\s*([A-Za-z][A-Za-z0-9_]*)\s*(?:,[^)]*)?\)\s*;?)/g;
     const rest = body.replace(call, (source, tildeName: string | undefined, gosubName: string | undefined) => {
-        if (!SHARED_ATTACK_PROCEDURES.has(tildeName ?? gosubName ?? '')) return source;
+        if (!allowedProcedures.has(tildeName ?? gosubName ?? '')) return source;
         found = true;
         return '';
     });
     return found && /^[\s{};]*$/.test(rest);
+}
+
+function isSharedAttackBody(body: string) {
+    return onlySharedAttackBody(body, SHARED_ATTACK_PROCEDURES);
 }
 
 function dragonfireKind(relative: string): DragonfireKind {
@@ -271,6 +282,193 @@ function bodyAttackFacts(body: string, maxHits: ReadonlyMap<string, number>) {
     return { ranged, magic, forcedMaxHit: forced.length ? Math.max(...forced) : null };
 }
 
+const ORDINARY_MELEE_SAFE_CALLS = new Set([
+    'anim',
+    'gosub',
+    'gosub_with_params',
+    'if',
+    'npc_anim',
+    'npc_param',
+    'npc_say',
+    'npc_setmode',
+    'random',
+    'sound_synth',
+    'switch_int',
+]);
+
+// These normalized bodies pin the content routines' complete attack semantics.
+// A call-name whitelist alone would miss changed argument flow or extra effects.
+const STANDARD_MELEE_MAX_HIT_BODY = [
+    'def_int $strengthbonus = npc_param(strengthbonus);',
+    'def_int $effective_strength = ~combat_effective_stat(npc_stat(strength), 100);',
+    '$effective_strength = add($effective_strength, 9);',
+    'def_int $melee_strength = ~combat_stat($effective_strength, $strengthbonus);',
+    'return(~combat_maxhit($melee_strength));',
+].join(' ');
+
+const STANDARD_MELEE_ATTACK_BODY = [
+    'def_int $attack_roll = ~npc_melee_attack_roll;',
+    'def_int $defence_roll = ~player_defence_roll_specific(npc_param(damagetype));',
+    'def_int $maxhit = ~npc_melee_maxhit;',
+    'if (randominc($attack_roll) > randominc($defence_roll)) {',
+    '~playerhit_n_melee(true, randominc($maxhit), npc_param(attackrate));',
+    '~npc_poison_player;',
+    'return;',
+    '}',
+    '~playerhit_n_melee(true, 0, npc_param(attackrate));',
+].join(' ');
+
+function standardMeleeMaxHitRoutineExists(scripts: CombatScripts) {
+    const routines = scripts.procedures.get('npc_melee_maxhit') ?? [];
+    return routines.length === 1
+        && routines[0]!.body.replace(/\s+/g, ' ').trim() === STANDARD_MELEE_MAX_HIT_BODY;
+}
+
+function standardMeleeRoutineExists(scripts: CombatScripts) {
+    const routines = scripts.procedures.get('npc_meleeattack') ?? [];
+    return routines.length === 1
+        && standardMeleeMaxHitRoutineExists(scripts)
+        && routines[0]!.body.replace(/\s+/g, ' ').trim() === STANDARD_MELEE_ATTACK_BODY;
+}
+
+function ordinaryMeleeBodyIsSafe(
+    body: string,
+    script: CombatScript,
+    scripts: CombatScripts,
+    active = new Set<string>(),
+    depth = 0,
+): boolean {
+    if (depth >= 16) return false;
+    if (/(?<![~@])\b(?:npc_meleeattack|npc_default_attack)\s*\(/.test(body)) return false;
+
+    const modeCalls = [...body.matchAll(/\bnpc_setmode\s*\(\s*\^?([A-Za-z][A-Za-z0-9_]*)\s*\)/g)];
+    if ((body.match(/\bnpc_setmode\b/g) ?? []).length !== modeCalls.length
+        || modeCalls.some((match) => !['null', 'opplayer2', 'applayer2'].includes(match[1]!))) {
+        return false;
+    }
+
+    const procedureIsSafe = (name: string): boolean => {
+        if (ORDINARY_MELEE_SAFE_CALLS.has(name)) return true;
+        if (name === 'npc_meleeattack') {
+            return !script.procedures.has(name) && standardMeleeRoutineExists(scripts);
+        }
+        if (name === 'npc_default_attack') {
+            return !script.procedures.has(name) && defaultAttackUsesMelee(scripts);
+        }
+        if (GENERIC_ATTACK_PROCEDURES.has(name)) return false;
+
+        const candidates = script.procedures.get(name) ?? [];
+        if (candidates.length !== 1 || active.has(candidates[0]!.key)) return false;
+        const nextActive = new Set(active);
+        nextActive.add(candidates[0]!.key);
+        return ordinaryMeleeBodyIsSafe(candidates[0]!.body, script, scripts, nextActive, depth + 1);
+    };
+
+    for (const name of referencedProcedures(body)) {
+        if (!procedureIsSafe(name)) return false;
+    }
+    for (const match of body.matchAll(/\b([A-Za-z][A-Za-z0-9_]*)\s*\(/g)) {
+        if (!procedureIsSafe(match[1]!)) return false;
+    }
+    return true;
+}
+
+function ordinaryMeleeDispatchCount(
+    body: string,
+    script: CombatScript,
+    scripts: CombatScripts,
+    active = new Set<string>(),
+    depth = 0,
+): number | null {
+    if (depth >= 16) return null;
+    let count = 0;
+    for (const name of procedureReferences(body)) {
+        if (ORDINARY_MELEE_SAFE_CALLS.has(name)) continue;
+        if (name === 'npc_meleeattack') {
+            if (script.procedures.has(name) || !standardMeleeRoutineExists(scripts)) return null;
+            count += 1;
+            continue;
+        }
+        if (name === 'npc_default_attack') {
+            if (script.procedures.has(name) || !defaultAttackUsesMelee(scripts)) return null;
+            count += 1;
+            continue;
+        }
+        if (GENERIC_ATTACK_PROCEDURES.has(name)) return null;
+
+        const candidates = script.procedures.get(name) ?? [];
+        if (candidates.length !== 1 || active.has(candidates[0]!.key)) return null;
+        const nextActive = new Set(active);
+        nextActive.add(candidates[0]!.key);
+        const nestedCount = ordinaryMeleeDispatchCount(candidates[0]!.body, script, scripts, nextActive, depth + 1);
+        if (nestedCount === null) return null;
+        count += nestedCount;
+    }
+    return count;
+}
+
+function defaultAttackUsesMelee(scripts: CombatScripts) {
+    const routines = scripts.procedures.get('npc_default_attack') ?? [];
+    if (routines.length !== 1 || !referencedProcedures(routines[0]!.body).has('npc_meleeattack')) return false;
+    const routine = routines[0]!;
+    const script = scripts.files.find((file) =>
+        file.procedures.get('npc_default_attack')?.some((candidate) => candidate.key === routine.key),
+    );
+    return script !== undefined
+        && ordinaryMeleeBodyIsSafe(routine.body, script, scripts, new Set([routine.key]))
+        && ordinaryMeleeDispatchCount(routine.body, script, scripts, new Set([routine.key])) === 1;
+}
+
+function defaultOpAttackUsesMelee(scripts: CombatScripts) {
+    const handlers = (scripts.triggers.get('_') ?? []).filter(({ section }) => section.kind === 'ai_opplayer2');
+    return handlers.length === 1
+        && onlySharedAttackBody(handlers[0]!.section.body, DEFAULT_MELEE_DISPATCH_PROCEDURES)
+        && defaultAttackUsesMelee(scripts);
+}
+
+function hasModeRoute(modes: string[], target: 'applayer2' | 'opplayer2') {
+    return modes.includes(target) && modes.every((mode) => mode === target || mode === 'null');
+}
+
+function ordinaryMeleeAttackHandlers(relevant: { script: CombatScript; section: ScriptSection }[], scripts: CombatScripts) {
+    const attackHandlers = relevant.filter(({ section }) => section.kind === 'ai_applayer2' || section.kind === 'ai_opplayer2');
+    if (attackHandlers.length === 0) return false;
+    if (relevant.some(({ section }) =>
+        section.kind === 'ai_queue1' && !onlySharedAttackBody(section.body, ORDINARY_RETALIATION_PROCEDURES))) {
+        return false;
+    }
+
+    const hasOpHandler = attackHandlers.some(({ section }) => section.kind === 'ai_opplayer2');
+    const hasApHandler = attackHandlers.some(({ section }) => section.kind === 'ai_applayer2');
+    const defaultOpMelee = !hasOpHandler && defaultOpAttackUsesMelee(scripts);
+    let hasMeleeDispatch = false;
+
+    for (const { script, section } of attackHandlers) {
+        if (!ordinaryMeleeBodyIsSafe(section.body, script, scripts)) return false;
+        const dispatchCount = ordinaryMeleeDispatchCount(section.body, script, scripts);
+        if (dispatchCount === null || dispatchCount > 1) return false;
+        const expanded = expandSections(section.body, script, scripts, true);
+        const modes = expanded.flatMap(({ body }) =>
+            [...body.matchAll(/\bnpc_setmode\s*\(\s*\^?([A-Za-z][A-Za-z0-9_]*)\s*\)/g)].map((match) => match[1]!),
+        );
+        if (dispatchCount === 1) {
+            if (modes.some((mode) => mode !== 'null')) return false;
+            hasMeleeDispatch = true;
+            continue;
+        }
+        if (section.kind === 'ai_opplayer2' && hasApHandler && hasModeRoute(modes, 'applayer2')) continue;
+        if (section.kind === 'ai_applayer2' && hasOpHandler && hasModeRoute(modes, 'opplayer2')) continue;
+        if (section.kind === 'ai_applayer2' && defaultOpMelee && hasModeRoute(modes, 'opplayer2')) {
+            hasMeleeDispatch = true;
+            continue;
+        }
+        return false;
+    }
+
+    return hasMeleeDispatch && standardMeleeRoutineExists(scripts);
+}
+
+
 export function extractNpcCombatFacts(config: string, category: string | null, scripts: CombatScripts, maxHits: ReadonlyMap<string, number>): CombatNpcFacts {
     const matched = matchingTriggers(config, category, scripts);
     const relevant = matched.filter(({ section }) => AI_KINDS.has(section.kind));
@@ -304,7 +502,13 @@ export function extractNpcCombatFacts(config: string, category: string | null, s
     const counterProtect = [...apTriggers, ...opTriggers].some(({ section }) =>
         /~check_protect_prayer\s*(?:\(|;)/.test(section.body));
     const forced = attacks.flatMap((attack) => attack.forcedMaxHit === null ? [] : [attack.forcedMaxHit]);
-    return { ap_attack: apAttack, attack_kind: attackKind, forced_max_hit: forced.length ? Math.max(...forced) : null, dragonfire, bespoke, counter_protect: counterProtect };
+    const ordinaryMelee = bespoke
+        && attackKind === null
+        && forced.length === 0
+        && dragonfire === null
+        && !counterProtect
+        && ordinaryMeleeAttackHandlers(relevant, scripts);
+    return { ap_attack: apAttack, attack_kind: attackKind, forced_max_hit: forced.length ? Math.max(...forced) : null, dragonfire, bespoke, ordinary_melee: ordinaryMelee, counter_protect: counterProtect };
 }
 
 function sourceValueId(value: string | number | undefined, pack: ReadonlyMap<string, number>, label: string): number | null {
