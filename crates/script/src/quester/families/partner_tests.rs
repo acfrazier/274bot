@@ -950,10 +950,11 @@ fn complete_trade_across_a_hold(at: usize, hold: Hold) {
     for offered in [0, 1] {
         snapshot.seed_trade(offer(offered));
         assert!(poll(&snapshot, &mut ledger, &handle, tick, epoch).is_pending());
-        assert!(matches!(
-            ack(&mut ledger, tick),
-            InteractReq::InvButton { id: 1, .. }
-        ));
+        let request = ack(&mut ledger, tick);
+        assert!(
+            matches!(request, InteractReq::InvButton { id: 1, .. }),
+            "{hold:?} at checkpoint {at}, tick {tick}: {request:?}"
+        );
         tick += 1;
     }
     snapshot.seed_trade(offer(2));
@@ -1004,6 +1005,9 @@ fn a_trade_over_its_eligible_tick_budget_still_fails_with_cleanup_after_a_hold()
     // is spent when the clock reads 7 and `CLOSE_MODAL` goes out.
     let (mut snapshot, mut ledger, handle, port) = fixture(6);
     let epoch = Instant::now();
+    // Both offers are already exact and the partner has not accepted: the machine
+    // waits at the barrier and sends nothing until its budget is spent.
+    snapshot.seed_trade(offer(2));
     assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
     // 40 held ticks (3 to 42), then the run is eligible again on tick 43: that
     // first poll spends nothing, the clock reads 2 and stays below the budget.
