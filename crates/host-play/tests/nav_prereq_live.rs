@@ -248,7 +248,8 @@ enum FixtureSeedPhase {
     WaitRelog,
     ReseedTutorial,
     WaitReseed(scenario::tutorial::PostRelogTutorial),
-    SeedAccount,
+    SeedPosition,
+    SeedAccount(usize),
     Ready,
 }
 
@@ -491,19 +492,25 @@ fn make_fixture_with_seed_commands(
                     FixtureSeedPhase::WaitReseed(tutorial) => {
                         if tutorial.check(&snapshot)? {
                             println!("{}", scenario::tutorial::confirmation_log());
-                            *phase = FixtureSeedPhase::SeedAccount;
+                            *phase = FixtureSeedPhase::SeedPosition;
                         }
                     }
-                    FixtureSeedPhase::SeedAccount => {
+                    // Queue each seed packet only after the previous frame output has flushed.
+                    FixtureSeedPhase::SeedPosition if client.out.pos == 0 => {
                         send_seed_command(
                             client,
                             &interact::tele_args(origin.level, origin.x, origin.z),
                         )?;
-                        for command in &frame_commands {
+                        *phase = FixtureSeedPhase::SeedAccount(0);
+                    }
+                    FixtureSeedPhase::SeedAccount(next_command) if client.out.pos == 0 => {
+                        if let Some(command) = frame_commands.get(*next_command) {
                             send_seed_command(client, command)?;
+                            *phase = FixtureSeedPhase::SeedAccount(*next_command + 1);
+                        } else {
+                            *phase = FixtureSeedPhase::Ready;
+                            frame_seeded.store(true, Ordering::Release);
                         }
-                        *phase = FixtureSeedPhase::Ready;
-                        frame_seeded.store(true, Ordering::Release);
                     }
                     _ => {}
                 }
