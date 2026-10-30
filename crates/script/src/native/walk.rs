@@ -39,6 +39,14 @@ struct Frame<'a> {
     goal: Option<api::WorldTile>,
 }
 
+fn walk_key(request: &WalkRequest) -> WalkKey {
+    WalkKey {
+        tile: request.target,
+        radius: i32::from(request.radius),
+        allow_teleports: request.options.allow_teleports.explicit(),
+    }
+}
+
 fn quest_key_matches_row(key: &str, row_name: &str) -> bool {
     let key = key
         .chars()
