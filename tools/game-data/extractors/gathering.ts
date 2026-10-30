@@ -1041,7 +1041,7 @@ function extractWoodcutting(ctx: Ctx, axeCell: Know<ToolWire[]>, scale: PlayerSc
         }
         const empty = resources.length === 0;
         const why = 'code' in model ? model : gap('no-resource-target', row.span);
-        const tools = empty ? unknown('no-resource-target', row.span) : axeCell;
+        const tools = empty ? unknown<ToolWire[]>('no-resource-target', [spanRef(row.span)]) : axeCell;
         methods.push({
             id,
             skill: 'woodcutting',

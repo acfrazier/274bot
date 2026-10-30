@@ -3135,6 +3135,12 @@ for (const { revision, root } of gatheringPins) {
     assert.equal(jungle.targets.state, 'unknown');
     assert.equal(jungle.spots.state, 'unknown');
     assert.equal(jungle.targets.state === 'unknown' && jungle.targets.gap.code, 'no-resource-target');
+    assert.equal(jungle.tools.state, 'unknown');
+    assert.deepEqual(
+        jungle.tools.state === 'unknown' && jungle.tools.gap.sources,
+        jungle.targets.state === 'unknown' && jungle.targets.gap.sources,
+        'an unavailable tool cell retains the same encoded source-reference sequence as its target cell',
+    );
     assert.equal(facts.loose.filter((each) => each.skill === 'woodcutting').every((each) => each.gap?.code === 'custom-handler' && each.gap.sources.some((source) => source.includes('jungle_tree.rs2'))), true);
 
     // Content-defined zones: 289 Miscellania intercepts coal, trees and fish, but not iron; 274 has no such content.
