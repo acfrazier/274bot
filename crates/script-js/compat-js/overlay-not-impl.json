@@ -226,51 +226,6 @@
     "async": false
   },
   {
-    "id": "not-impl:api/bot/Bot.js:resolveLoopCadence",
-    "module": "api/bot/Bot.js",
-    "selector": "resolveLoopCadence",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: rs2b0t's loop-cadence pacing is not carried into native compatibility.",
-    "runtime": "crates/script-js/src/shim/bot.js:11",
-    "async": false
-  },
-  {
-    "id": "not-impl:api/bot/Bot.js:BranchTask.validate",
-    "module": "api/bot/Bot.js",
-    "selector": "BranchTask.validate",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
-    "runtime": "crates/script-js/src/shim/bot.js:20",
-    "async": false
-  },
-  {
-    "id": "not-impl:api/bot/Bot.js:BranchTask.success",
-    "module": "api/bot/Bot.js",
-    "selector": "BranchTask.success",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
-    "runtime": "crates/script-js/src/shim/bot.js:24",
-    "async": false
-  },
-  {
-    "id": "not-impl:api/bot/Bot.js:BranchTask.failure",
-    "module": "api/bot/Bot.js",
-    "selector": "BranchTask.failure",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
-    "runtime": "crates/script-js/src/shim/bot.js:28",
-    "async": false
-  },
-  {
-    "id": "not-impl:api/bot/Bot.js:LeafTask.execute",
-    "module": "api/bot/Bot.js",
-    "selector": "LeafTask.execute",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
-    "runtime": "crates/script-js/src/shim/bot.js:38",
-    "async": false
-  },
-  {
     "id": "not-impl:adapter/ClientAdapter.js:invalidateLocSnapshots",
     "module": "adapter/ClientAdapter.js",
     "selector": "invalidateLocSnapshots",
@@ -667,86 +622,6 @@
     "async": false
   }
   ,
-  {
-    "id": "not-impl:input/Input.js:Input.useItemOnLoc",
-    "module": "input/Input.js",
-    "selector": "Input.useItemOnLoc",
-    "operation": "not-impl",
-    "preserveParameters": true,
-    "reason": "Unconditional not-impl: target item-on-location interaction is not provided by the native host.",
-    "runtime": "crates/script-js/src/shim/input.js:154",
-    "async": false
-  },
-  {
-    "id": "not-impl:input/Input.js:Input.useItemOnNpc",
-    "module": "input/Input.js",
-    "selector": "Input.useItemOnNpc",
-    "operation": "not-impl",
-    "preserveParameters": true,
-    "reason": "Unconditional not-impl: target item-on-NPC interaction is not provided by the native host.",
-    "runtime": "crates/script-js/src/shim/input.js:157",
-    "async": false
-  },
-  {
-    "id": "not-impl:input/Input.js:Input.useItemOnObj",
-    "module": "input/Input.js",
-    "selector": "Input.useItemOnObj",
-    "operation": "not-impl",
-    "preserveParameters": true,
-    "reason": "Unconditional not-impl: target item-on-object interaction is not provided by the native host.",
-    "runtime": "crates/script-js/src/shim/input.js:160",
-    "async": false
-  },
-  {
-    "id": "not-impl:input/Input.js:Input.useItemOnItem",
-    "module": "input/Input.js",
-    "selector": "Input.useItemOnItem",
-    "operation": "not-impl",
-    "preserveParameters": true,
-    "reason": "Unconditional not-impl: target item-on-item interaction is not provided by the native host.",
-    "runtime": "crates/script-js/src/shim/input.js:163",
-    "async": false
-  },
-  {
-    "id": "not-impl:input/Input.js:Input.castOnNpc",
-    "module": "input/Input.js",
-    "selector": "Input.castOnNpc",
-    "operation": "not-impl",
-    "preserveParameters": true,
-    "reason": "Unconditional not-impl: spell-on-NPC interaction is not provided by the native host.",
-    "runtime": "crates/script-js/src/shim/input.js:166",
-    "async": false
-  },
-  {
-    "id": "not-impl:input/Input.js:Input.castOnLoc",
-    "module": "input/Input.js",
-    "selector": "Input.castOnLoc",
-    "operation": "not-impl",
-    "preserveParameters": true,
-    "reason": "Unconditional not-impl: spell-on-location interaction is not provided by the native host.",
-    "runtime": "crates/script-js/src/shim/input.js:169",
-    "async": false
-  },
-  {
-    "id": "not-impl:input/Input.js:Input.castOnItem",
-    "module": "input/Input.js",
-    "selector": "Input.castOnItem",
-    "operation": "not-impl",
-    "preserveParameters": true,
-    "reason": "Unconditional not-impl: spell-on-item interaction is not provided by the native host.",
-    "runtime": "crates/script-js/src/shim/input.js:172",
-    "async": false
-  },
-  {
-    "id": "not-impl:input/Input.js:Input.continueDialog",
-    "module": "input/Input.js",
-    "selector": "Input.continueDialog",
-    "operation": "not-impl",
-    "preserveParameters": true,
-    "reason": "Unconditional not-impl: dialog continuation is not provided by the native host.",
-    "runtime": "crates/script-js/src/shim/input.js:175",
-    "async": false
-  },
   {
     "id": "not-impl:paint/Paint.js:PaintFrame.cols",
     "module": "paint/Paint.js",

@@ -151,15 +151,6 @@
     "declaration": "combatStyleMode(style?: MeleeCombatStyle): number;"
   },
   {
-    "id": "event-ignored-randoms",
-    "module": "api/execution/EventSignal.js",
-    "selector": "EventSignal.ignoredRandoms",
-    "add": true,
-    "reason": "Host additionally publishes the active bot's ignored random-event names.",
-    "runtime": "crates/script-js/src/shim/event_signal.js:25",
-    "declaration": "ignoredRandoms(): string[];"
-  },
-  {
     "id": "continue-dialog-public-callback",
     "module": "api/tasks/ContinueDialog.js",
     "selector": "ContinueDialog.onContinue",
