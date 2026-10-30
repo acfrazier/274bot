@@ -3627,7 +3627,7 @@ fn yielding_checkpoint(
 }
 
 #[test]
-fn t5w_assessment_yields_one_unit_and_drops_geometry_and_replay_state() {
+fn t5w_assessment_yields_and_drops_geometry_and_timeline_state() {
     let tables = tables();
     let risk = RiskTables::build(&tables);
     let walk = route(80, 139);
@@ -3688,7 +3688,7 @@ fn t5w_assessment_yields_one_unit_and_drops_geometry_and_replay_state() {
         clear,
         &mut immediate,
     ));
-    let geometry_units = baseline_calls.load(Ordering::Relaxed);
+    let clear_baseline_units = baseline_calls.load(Ordering::Relaxed);
 
     let mut poisoned = clear;
     poisoned.poison = PoisonState::Poisoned {
@@ -3706,21 +3706,22 @@ fn t5w_assessment_yields_one_unit_and_drops_geometry_and_replay_state() {
         &mut checkpoint,
     ));
     let mut task_context = Context::from_waker(Waker::noop());
-    let replay_units = geometry_units + 8; // seven fixed inventory rows, then the first tick.
-    for _ in 0..replay_units {
+    // A clear and a poisoned empty-plan case both have one timeline-bound pass.
+    // This baseline includes the final post-boundary checkpoint.
+    for _ in 0..clear_baseline_units {
         assert!(future.as_mut().poll(&mut task_context).is_pending());
     }
-    assert_eq!(calls.load(Ordering::Relaxed), replay_units);
+    assert_eq!(calls.load(Ordering::Relaxed), clear_baseline_units);
     drop(future);
     assert_eq!(
         calls.load(Ordering::Relaxed),
-        replay_units,
-        "cancelled replay cannot continue"
+        clear_baseline_units,
+        "cancelled assessment cannot continue"
     );
     assert_eq!(
         drops.load(Ordering::Relaxed),
-        replay_units,
-        "geometry/replay checkpoint futures are dropped"
+        clear_baseline_units,
+        "geometry/timeline checkpoint futures are dropped"
     );
 }
 
