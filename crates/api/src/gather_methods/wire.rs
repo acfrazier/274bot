@@ -1023,6 +1023,36 @@ mod tests {
     }
 
     #[test]
+    fn tick_arm_is_required_and_rejects_unknown_or_duplicate_tool_facts() {
+        let missing = decode_edited(|family| {
+            method_mut(family, "mining.copper")
+                .as_object_mut()
+                .unwrap()
+                .remove("tick_arm");
+        });
+        assert!(missing.is_err(), "every method requires its tick arm");
+
+        let unknown_kind = decode_edited(|family| {
+            method_mut(family, "mining.copper")["tick_arm"]["kind"] = json!("unknown");
+        });
+        assert!(unknown_kind.is_err(), "tick arm kinds are a closed set");
+
+        let unknown_field = decode_edited(|family| {
+            method_mut(family, "mining.copper")["tick_arm"]["unreviewed"] = json!(true);
+        });
+        assert!(unknown_field.is_err(), "tick arm wire objects are strict");
+
+        let duplicate_tool = decode_edited(|family| {
+            let tools = method_mut(family, "mining.copper")["tick_arm"]["tool_facts"]
+                .as_array_mut()
+                .unwrap();
+            assert!(tools.len() > 1, "mining methods retain their per-pickaxe facts");
+            tools[1] = tools[0].clone();
+        });
+        assert!(duplicate_tool.is_err(), "tool facts must be unique and item-sorted");
+    }
+
+    #[test]
     fn every_placement_id_resolves_to_its_own_method_and_spot() {
         let catalog = decode(&pin(), REAL).unwrap();
         let mut last = None;

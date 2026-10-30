@@ -2893,6 +2893,88 @@ for (const { revision, root } of gatheringPins) {
     assert.equal(family.schema, GATHERING_SCHEMA);
     assert.equal(JSON.stringify(extractGatheringFamily(root).payload), JSON.stringify(facts), `${revision} extraction is deterministic`);
     assert.deepEqual(family.summary.methods, { woodcutting: 10, mining: 15, fishing: 16 }, `${revision} method inventory`);
+    const objPack = parsePack(fs.readFileSync(path.join(root, 'pack/obj.pack'), 'utf8'));
+    const seqPack = parsePack(fs.readFileSync(path.join(root, 'pack/seq.pack'), 'utf8'));
+    const itemId = (alias: string) => {
+        const id = objPack.get(alias);
+        assert.notEqual(id, undefined, `${revision} object pack contains ${alias}`);
+        return id;
+    };
+    const sequenceId = (alias: string) => {
+        const id = seqPack.get(alias);
+        assert.notEqual(id, undefined, `${revision} sequence pack contains ${alias}`);
+        return id;
+    };
+    for (const method of facts.methods) {
+        assert.ok(['continuing', 'ending', 'none'].includes(method.tick_arm.kind), `${method.id} has a reviewed kind`);
+        assert.ok(['always', 'sometimes', 'never'].includes(method.tick_arm.roll_signal), `${method.id} has a reviewed roll signal`);
+        const tools = method.tick_arm.tool_facts.map((tool) => tool.item);
+        assert.deepEqual(tools, [...new Set(tools)].sort((a, b) => a - b), `${method.id} tool facts are uniquely item-sorted`);
+    }
+
+    const fly = view.method('fishing.freshfish.op1').tick_arm;
+    assert.deepEqual(
+        [fly.kind, fly.roll_signal, fly.native_arm, fly.act_min_d, fly.act_silent, fly.no_gain, fly.skill_anim, fly.roll_anim, fly.cast_anim, fly.fletch_anim],
+        ['continuing', 'always', 4, 1, false, false, null, sequenceId('human_fish_onspot'), sequenceId('human_fishing_casting'), sequenceId('human_fletching')],
+        `${revision} fly animation and native arm are selected by name`,
+    );
+    assert.equal(view.method('fishing.loc_2027.op1').tick_arm.roll_signal, 'always', `${revision} waterfall fly has a regular roll signal`);
+    const waterfallPike = view.method('fishing.loc_2027.op2').tick_arm;
+    assert.equal(waterfallPike.roll_signal, 'sometimes', `${revision} waterfall pike's recast branch suppresses the roll animation`);
+    assert.equal(waterfallPike.roll_anim, sequenceId('human_fish_onspot'));
+
+    const smallNet = view.method('fishing.saltfish.op1').tick_arm;
+    assert.deepEqual(
+        [smallNet.kind, smallNet.roll_signal, smallNet.roll_anim, smallNet.cast_anim],
+        ['ending', 'never', null, sequenceId('human_smallnet')],
+        `${revision} small-net roll is silent`,
+    );
+    const harpoon = view.method('fishing.rarefish.op3').tick_arm;
+    assert.deepEqual(
+        [harpoon.kind, harpoon.roll_signal, harpoon.roll_anim, harpoon.cast_anim],
+        ['ending', 'always', sequenceId('human_harpoon'), sequenceId('human_harpoon')],
+        `${revision} rarefish op3 is the harpoon family`,
+    );
+    const lavaEel = view.method('fishing.0_45_152_lavafish.op1').tick_arm;
+    assert.deepEqual(
+        [lavaEel.kind, lavaEel.native_arm, lavaEel.act_silent, lavaEel.roll_signal, lavaEel.cast_anim],
+        ['continuing', 5, true, 'never', sequenceId('human_fishing_casting')],
+        `${revision} lava-eel dispatch is silent and arms at five`,
+    );
+    assert.equal(view.method('fishing.category_633.op1').tick_arm.kind, 'none', `${revision} Karambwan vessel has no armable loop`);
+
+    const tree = view.method('woodcutting.normal').tick_arm;
+    assert.deepEqual([tree.kind, tree.depletes, tree.native_arm, tree.act_min_d], ['continuing', true, 3, 0]);
+    for (const [alias, sequence] of [
+        ['rune_axe', 'human_woodcutting_rune_axe'],
+        ['adamant_axe', 'human_woodcutting_adamant_axe'],
+        ['mithril_axe', 'human_woodcutting_mithril_axe'],
+        ['black_axe', 'human_woodcutting_black_axe'],
+        ['steel_axe', 'human_woodcutting_steel_axe'],
+        ['iron_axe', 'human_woodcutting_iron_axe'],
+        ['bronze_axe', 'human_woodcutting_bronze_axe'],
+    ] as const) {
+        const tool = tree.tool_facts.find((each) => each.item === itemId(alias));
+        assert.ok(tool, `${revision} ${alias} has selected tool facts`);
+        assert.deepEqual([tool.native_arm, tool.no_gain, tool.skill_anim], [3, false, sequenceId(sequence)], `${revision} ${alias}`);
+    }
+
+    const normalMine = view.method('mining.copper').tick_arm;
+    const fastMine = view.method('mining.iron').tick_arm;
+    assert.deepEqual([normalMine.delay_drop, fastMine.delay_drop], [true, false], `${revision} normal versus fast mining drop delay`);
+    assert.deepEqual([normalMine.native_arm, normalMine.no_gain], [null, null], `${revision} mining arms are selected by pickaxe`);
+    for (const [alias, nativeArm, sequence, noGain] of [
+        ['bronze_pickaxe', 7, 'human_mining_bronze_pickaxe', false],
+        ['iron_pickaxe', 6, 'human_mining_iron_pickaxe', false],
+        ['steel_pickaxe', 5, 'human_mining_steel_pickaxe', false],
+        ['adamant_pickaxe', 3, 'human_mining_adamant_pickaxe', false],
+        ['mithril_pickaxe', 4, 'human_mining_mithril_pickaxe', false],
+        ['rune_pickaxe', 2, 'human_mining_rune_pickaxe', true],
+    ] as const) {
+        const tool = normalMine.tool_facts.find((each) => each.item === itemId(alias));
+        assert.ok(tool, `${revision} ${alias} has selected tool facts`);
+        assert.deepEqual([tool.native_arm, tool.no_gain, tool.skill_anim], [nativeArm, noGain, sequenceId(sequence)], `${revision} ${alias}`);
+    }
 
     // M-215 R2/R3: handler-less locs are proven inert (no alias or category oploc handler;
     // a global handler fails closed at index time, so reaching here proves there is none
