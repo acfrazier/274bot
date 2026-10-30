@@ -1231,7 +1231,7 @@ fn u11_fresh_ignores_only_clock_age() {
     };
     changed.push(poison);
     let mut off_debt = input;
-    off_debt.off_debt = true;
+    off_debt.set_off_debt(true);
     changed.push(off_debt);
 
     for value in changed {

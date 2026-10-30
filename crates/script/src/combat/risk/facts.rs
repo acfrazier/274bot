@@ -476,7 +476,6 @@ mod tests {
             crushdefence: 0,
             magicdefence: 0,
             rangedefence: 0,
-            max_dealt: None,
             strength: Some(30),
             ranged: Some(30),
             strengthbonus: Some(0),

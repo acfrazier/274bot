@@ -1663,8 +1663,8 @@ fn u4_prayer_credit_all_conditions_and_one_raw_volley() {
             0 => allow.prayer = false,
             1 => changed.prayer_base = 1,
             2 => changed.prayer = 1,
-            3 => changed.other_prayers_on = true,
-            _ => changed.off_debt = true,
+            3 => changed.set_other_prayers_on(true),
+            _ => changed.set_off_debt(true),
         }
         let c = Estimate { allow, ..cx };
         let actual = assess(fx.route(&route), &c, changed);
@@ -2245,7 +2245,7 @@ fn u5_witnesses_unknown_overflow_and_multi_burst() {
         Verdict::Unknown(UnknownWhy::NoZoneTable)
     );
     let mut bad = input(40, 40, 0, &tables);
-    bad.unattributed = true;
+    bad.set_unattributed(true);
     let bad_result = assert_assessment_equivalence(fx.route(&route), &cx, bad);
     assert_eq!(
         bad_result.verdict,
@@ -2658,13 +2658,13 @@ fn u5_b1_b3_live_classification_multi_and_input_limits() {
     let cx = context(&fx, &risks, &tables);
     let walk = route(88, 112);
     let mut locked = input(90, 90, 0, &tables);
-    locked.input_locked = true;
+    locked.set_input_locked(true);
     assert_eq!(
         assess(fx.route(&walk), &cx, locked).verdict,
         Verdict::Unknown(UnknownWhy::InputLock)
     );
     let mut overflow = input(90, 90, 0, &tables);
-    overflow.overflow = true;
+    overflow.set_overflow(true);
     assert_eq!(
         assess(fx.route(&walk), &cx, overflow).verdict,
         Verdict::Unknown(UnknownWhy::Overflow)
@@ -2686,11 +2686,12 @@ fn u5_b1_b3_live_classification_multi_and_input_limits() {
         Verdict::Unknown(_)
     ));
     live.live[0].ident = tables.selected().npc_by_config("poisonspider").unwrap().id;
-    live.map_members = true;
-    assert_eq!(
+    live.set_map_members(true);
+    // Poison is a numeric fact, not an unsupported live-attacker class.
+    assert!(!matches!(
         assess(fx.route(&walk), &cx, live).verdict,
-        Verdict::Unknown(UnknownWhy::AlreadyEngaged)
-    );
+        Verdict::Unknown(_)
+    ));
     let path = fx.path(&walk);
     let ident = known_kind(&tables).npc_id;
     let weak = RoutePlan {

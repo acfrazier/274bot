@@ -299,7 +299,7 @@ fn no_crossing_walk_is_admitted_under_unknown_attacker_and_missing_facts() {
     let world = corridor(16, &[]);
     let route = find(&world, tile(0, 1), tile(10, 1));
     let mut engaged = input(99, PoisonState::default());
-    engaged.unattributed = true;
+    engaged.set_unattributed(true);
     let request = default_admission(engaged);
     let assessment = admission::assess(&route, &world, &request);
     eprintln!(
@@ -316,7 +316,7 @@ fn no_crossing_walk_is_admitted_under_unknown_attacker_and_missing_facts() {
     assert!(admission::permits(&route, &world, &request, &assessment));
 
     let mut missing = input(99, PoisonState::default());
-    missing.missing_facts = true;
+    missing.set_missing_facts(true);
     let request = default_admission(missing);
     let assessment = admission::assess(&route, &world, &request);
     eprintln!(
@@ -342,15 +342,15 @@ fn input_problems_refuse_only_entering_crossings_in_every_enforcing_mode() {
     let crossing_route = find(&world, tile(0, 1), tile(20, 1));
     let clean = input(99, PoisonState::Clear);
     let mut unattributed = clean;
-    unattributed.unattributed = true;
+    unattributed.set_unattributed(true);
     let mut missing = clean;
-    missing.missing_facts = true;
+    missing.set_missing_facts(true);
     let mut overflow = clean;
-    overflow.overflow = true;
+    overflow.set_overflow(true);
     let mut too_many = clean;
     too_many.live_len = 5;
     let mut locked = clean;
-    locked.input_locked = true;
+    locked.set_input_locked(true);
     let mut unknown_npc = clean;
     unknown_npc.live_len = 1;
     unknown_npc.live[0] = LiveRow {
