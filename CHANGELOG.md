@@ -73,9 +73,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Navigation
 
-- Long walks to an area, including the Waterfall Quest start, can now find
-  routes beyond the planner's initial search limit. The full search limit
-  still bounds each request.
+- Bots now find long walks to an area that the route planner gave up on
+  before, such as the walk to the Waterfall Quest start. When the planner
+  cannot tell early whether an area is reachable, it now keeps searching up
+  to its normal limit. A walk to a place that cannot be reached can take
+  longer to fail.
 
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
