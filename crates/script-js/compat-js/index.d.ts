@@ -27,7 +27,7 @@ SOFTWARE.
 declare module '@rs2b0t/api' {
 export function defineBot<T extends {name: string; create: () => unknown}>(manifest: T): T;
 export type { BotManifest, BotManifestInput } from '*runtime/defineBot.js';
-export function registerScript(manifest: BotManifestInput, origin?: string): void;
+export function registerScript(manifest: import('*runtime/defineBot.js').BotManifestInput, origin?: string): void;
 export { Game } from '*api/game/Game.js';
 export { Inventory, InvItem } from '*api/inventory/Inventory.js';
 export { Skills } from '*api/skills/Skills.js';

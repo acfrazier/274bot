@@ -719,7 +719,7 @@ async function main() {
                 const clause = s.exportClause;
                 // The runtime returns ScriptMeta, but the published root API stays void.
                 if (clause && ts.isNamedExports(clause) && clause.elements.some(e => name(e) === 'registerScript')) {
-                    return ['export function registerScript(manifest: BotManifestInput, origin?: string): void;'];
+                    return ["export function registerScript(manifest: import('*runtime/defineBot.js').BotManifestInput, origin?: string): void;"];
                 }
                 return [print(s, barrelSource).replace(/(['"])\.\.\/\.\.\/([^'"]+)\1/g, "'*$2'")];
             }

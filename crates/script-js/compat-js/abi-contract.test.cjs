@@ -170,6 +170,7 @@ import {
     Inventory as RootInventory,
     InvItem as RootInvItem,
     Equipment as RootEquipment,
+    registerScript,
 } from '@rs2b0t/api';
 import * as RootInventoryModule from '@rs2b0t/api';
 import {
@@ -193,13 +194,15 @@ import type { InvItemSnapshot } from '#/bot/adapter/ClientAdapter.js';
 import type { Loc } from '#/bot/api/model/Loc.js';
 import type { Npc } from '#/bot/api/model/Npc.js';
 import type { Player } from '#/bot/api/model/Player.js';
-import type { GroundItem } from '#/bot/api/grounditems/GroundItems.js';
+import type { BotManifestInput } from '#/bot/runtime/defineBot.js';
 
 declare const row: InvItemSnapshot;
 declare const loc: Loc;
 declare const npc: Npc;
 declare const player: Player;
-declare const groundItem: GroundItem;
+declare const manifest: BotManifestInput;
+
+registerScript(manifest);
 
 const moduleRows: InvItemSnapshot[] = backpackSnapshots();
 const moduleCapacity: number = backpackCapacity();
