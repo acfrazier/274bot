@@ -10,7 +10,9 @@ use nav_planner::world::NavWorld;
 use nav_planner::WorldState;
 
 use crate::admission::{Admission, RouteBasis};
-use crate::script_runtime::{session_freezes_follow, step_bank_fetch_on_bot, NavBot};
+use crate::script_runtime::{
+    session_freezes_follow, step_bank_fetch_on_bot, step_poison_hold_on_bot, NavBot,
+};
 use crate::walk_plan::{route_or_bank_fetch, PendingBankFetch, RouteOutcome};
 use script::combat::risk::RouteAssessment;
 use script::native::WalkRefusal;
@@ -372,15 +374,14 @@ pub fn step_walk_arm_bank_fetch<D: Driver>(
         if let Some(world) = world {
             crate::admission::publish(bot, world, snapshot, map_members, None);
         }
-        if crate::script_walk::step_poison_hold_on_bot(driver, snapshot, bot, world, None, true) {
+        if step_poison_hold_on_bot(driver, snapshot, bot, world, None, true) {
             return false;
         }
         let wrote = step_bank_fetch_on_bot(driver, snapshot, bot, world, here, map_members);
         if let Some(world) = world {
             crate::admission::publish(bot, world, snapshot, map_members, None);
         }
-        let _ =
-            crate::script_walk::step_poison_hold_on_bot(driver, snapshot, bot, world, None, true);
+        let _ = step_poison_hold_on_bot(driver, snapshot, bot, world, None, true);
         wrote
     })
 }
@@ -547,7 +548,7 @@ pub fn step_walk_arm_follow<D: Driver>(
         if let Some(world) = world {
             crate::admission::publish(bot, world, snapshot, map_members, slot);
         }
-        crate::script_walk::step_poison_hold_on_bot(driver, snapshot, bot, world, slot, true)
+        step_poison_hold_on_bot(driver, snapshot, bot, world, slot, true)
     });
     if finish_walk_arm_refusal(
         before,
@@ -580,7 +581,7 @@ pub fn step_walk_arm_follow<D: Driver>(
             arm.traveller.clear();
         }
         let hold_active = with_walk_arm_bot(arm, |bot| {
-            crate::script_walk::step_poison_hold_on_bot(driver, snapshot, bot, world, slot, true)
+            step_poison_hold_on_bot(driver, snapshot, bot, world, slot, true)
         });
         if finish_walk_arm_refusal(
             bank_destination,

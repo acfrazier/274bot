@@ -1,4 +1,4 @@
-use super::{HoldWait, PoisonHold};
+use super::HoldWait;
 use crate::admission::{self, Admission, RiskPolicy, WalkAllow, WalkRefusal};
 use crate::script_runtime::NavBot;
 use api::condition::{PoisonState, WindowReset};
@@ -122,7 +122,7 @@ impl HoldRig {
 
         let input = admission::capture(&snapshot, false, bot.condition.current(), false);
         assert!(
-            !input.missing_facts,
+            !input.missing_facts(),
             "fixture must have complete live facts"
         );
         assert_eq!(input.poison, PoisonState::Unknown { since: 0 });
@@ -159,7 +159,7 @@ impl HoldRig {
             crate::walk_plan::RouteOutcome::Routed(route.as_ref().clone()),
         );
         bot.admission = Some(Box::new(admission));
-        bot.assessment = Some(Arc::new(assessment));
+        bot.assessment = Some(assessment);
         bot.admission_pending = true;
 
         let mut driver = HoldDriver::default();
@@ -252,7 +252,7 @@ impl HoldRig {
             crate::walk_plan::RouteOutcome::Routed(self.route.as_ref().clone()),
         );
         bot.admission = Some(Box::new(admission));
-        bot.assessment = Some(Arc::new(assessment));
+        bot.assessment = Some(assessment);
         bot.admission_pending = true;
         bot.risk_refusal = None;
     }
@@ -476,6 +476,7 @@ fn frame(
     snapshot.seed_main_modal(modal.unwrap_or(-1), Vec::new());
     snapshot.seed_chat_modal(-1, Vec::new());
     snapshot.seed_scene(SceneView {
+        available: true,
         base_x: 0,
         base_z: 0,
         level: 0,
@@ -715,7 +716,7 @@ fn poison_hold_reassesses_a_kind_two_hit_as_poisoned() {
     );
     assert!(navs[ALICE].poison_hold.is_none());
     assert!(matches!(
-        navs[ALICE].risk_refusal.as_ref(),
+        navs[ALICE].risk_refusal.as_deref().map(|entry| entry.1),
         Some(WalkRefusal::Unsurvivable)
     ));
 }
@@ -731,7 +732,7 @@ fn poison_hold_reset_ends_at_deadline_and_retry_gets_a_new_hold() {
     {
         let navs = rig.bot();
         assert!(matches!(
-            navs[ALICE].risk_refusal.as_ref(),
+            navs[ALICE].risk_refusal.as_deref().map(|entry| entry.1),
             Some(WalkRefusal::PoisonUnsettled { .. })
         ));
         assert!(navs[ALICE].poison_hold.is_none());
@@ -792,7 +793,7 @@ fn known_clear_or_poisoned_fact_with_no_world_never_becomes_unsettled() {
         .is_some());
     clear.pump(tile(0), false);
     assert!(!matches!(
-        clear.bot()[ALICE].risk_refusal.as_ref(),
+        clear.bot()[ALICE].risk_refusal.as_deref().map(|entry| entry.1),
         Some(WalkRefusal::PoisonUnsettled { .. })
     ));
 
@@ -811,7 +812,7 @@ fn known_clear_or_poisoned_fact_with_no_world_never_becomes_unsettled() {
     ));
     poisoned.pump(tile(0), false);
     assert!(!matches!(
-        poisoned.bot()[ALICE].risk_refusal.as_ref(),
+        poisoned.bot()[ALICE].risk_refusal.as_deref().map(|entry| entry.1),
         Some(WalkRefusal::PoisonUnsettled { .. })
     ));
 }

@@ -80,7 +80,7 @@ impl Rig {
             .condition
             .dispatch_checkpoint(&self.client);
         if follow && drain.player_info {
-            crate::script_walk::step_nav_bot(
+            crate::script_runtime::step_nav_bot(
                 &mut self.client,
                 &self.name,
                 self.snapshot.tile(),
@@ -218,9 +218,10 @@ impl Rig {
     fn clear_from_observation(&mut self) {
         let (x, z, level) = self.snapshot.tile().unwrap();
         self.send(|snapshot, client| {
-            assert!(Interactions::new(snapshot, client)
-                .walk(WorldTile { x, z, level })
-                .is_sent());
+            assert!(matches!(
+                Interactions::new(snapshot, client).walk(WorldTile { x, z, level }),
+                interact::SendResult::Sent { .. }
+            ));
         });
         self.until(40, false, |rig| {
             matches!(
@@ -348,7 +349,10 @@ fn prepare(
                     .any(|item| item.def.id == id)
             });
             rig.send(|snapshot, client| {
-                assert!(Interactions::new(snapshot, client).wear(id).is_sent())
+                assert!(matches!(
+                    Interactions::new(snapshot, client).wear(id),
+                    interact::SendResult::Sent { .. }
+                ))
             });
             rig.until(30, false, |rig| {
                 rig.snapshot
