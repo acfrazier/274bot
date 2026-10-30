@@ -16,6 +16,9 @@ use client::render::store::render_test_shared_index_layout;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
+#[path = "concrete_crowd.rs"]
+mod concrete_crowd;
+
 const R289_VERSION: &str = "37214163f1e6ceca";
 const CLIENT_JAGS: [&str; 8] = [
     "title",
