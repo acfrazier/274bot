@@ -1426,7 +1426,10 @@ fn wait_for_drezel_advice_page(fixture: &LiveFixture) -> (ChatWitness, String, V
                 return None;
             }
             let page = first_chat_witness(&snapshot)?;
-            if !page.text.contains("I cannot let you pass without warning you.") {
+            if !page
+                .text
+                .contains("I cannot let you pass without warning you.")
+            {
                 return None;
             }
             Some((page, w3, logs))
@@ -1442,6 +1445,10 @@ fn wait_for_live_approach(fixture: &LiveFixture) -> (u64, serde_json::Value) {
         Duration::from_secs(240),
         |play| {
             let request_id = play.script_live_walk_request_id(&fixture.name)?;
+            let inner_request_id = play.script_live_follow_request_id(&fixture.name)?;
+            if request_id == inner_request_id {
+                return None;
+            }
             let row = play
                 .statuses()
                 .into_iter()
@@ -1456,6 +1463,7 @@ fn wait_for_live_approach(fixture: &LiveFixture) -> (u64, serde_json::Value) {
                     "tick": snapshot.tick(),
                     "tile": [row.tile_x, row.tile_z, row.tile_level],
                     "chat_modal": snapshot.modals().chat,
+                    "inner_request_id": inner_request_id,
                 }),
             ))
         },

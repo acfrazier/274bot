@@ -25,6 +25,12 @@ impl Play {
         }) {
             return Some(request_id);
         }
+        self.script_live_follow_request_id(name)
+    }
+
+    /// The physical follow id, which can differ from its logical outer walk.
+    #[doc(hidden)]
+    pub fn script_live_follow_request_id(&self, name: &str) -> Option<u64> {
         self.navs.lock().ok()?.get(name).and_then(|bot| {
             (bot.walk_request_id != 0 && bot.walk_work_live()).then_some(bot.walk_request_id)
         })
