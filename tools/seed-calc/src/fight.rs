@@ -1,5 +1,7 @@
-//! Exact absorbing-state calculation, with analytic elimination of zero-damage cycles.
+//! Finite-state absorbing fight model with product-backed food decisions.
+use std::collections::HashMap;
 use std::path::PathBuf;
+use crate::food;
 
 use api::game_data::{NpcNameRow, SelectedGameData};
 use script::combat::risk::KindRisk;
@@ -42,7 +44,7 @@ fn one() -> u8 {
     1
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Style {
     #[default]
@@ -50,6 +52,8 @@ pub enum Style {
     Aggressive,
     Defensive,
     Controlled,
+    Ranged,
+    Magic,
 }
 impl Style {
     fn bonuses(self) -> [u32; 3] {
@@ -58,6 +62,7 @@ impl Style {
             Self::Aggressive => [0, 3, 0],
             Self::Defensive => [0, 0, 3],
             Self::Controlled => [1, 1, 1],
+            Self::Ranged | Self::Magic => [0; 3],
         }
     }
     fn code(self) -> u8 {
@@ -66,59 +71,100 @@ impl Style {
             Self::Aggressive => 1,
             Self::Controlled => 2,
             Self::Defensive => 3,
+            Self::Ranged | Self::Magic => 0,
         }
     }
+    fn melee(self) -> bool {
+        !matches!(self, Self::Ranged | Self::Magic)
+    }
+}
+fn base40() -> u8 {
+    40
+}
+fn default_free_slots() -> u8 {
+    28
 }
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Stats {
     pub attack: u8,
     pub strength: u8,
     pub defence: u8,
     pub hitpoints: u8,
+    #[serde(default = "base40")]
+    pub magic: u8,
+    #[serde(default = "base40")]
+    pub ranged: u8,
 }
 impl Stats {
-    fn policy(level: u8) -> Self {
+    fn policy(level: u8, style: Style) -> Self {
         Self {
             attack: level,
             strength: level,
             defence: level,
             hitpoints: level.max(10),
+            magic: 40,
+            ranged: if style == Style::Ranged { 50 } else { 40 },
         }
     }
     fn valid(self) -> bool {
-        [self.attack, self.strength, self.defence, self.hitpoints]
+        [self.attack, self.strength, self.defence, self.hitpoints, self.magic, self.ranged]
             .iter()
             .all(|v| (1..=99).contains(v))
     }
 }
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FightQuery {
+    #[serde(default)]
+    pub label: Option<String>,
     pub npc: Selector,
     pub facts: PathBuf,
     #[serde(default = "default_weapon")]
     pub weapon: Selector,
     #[serde(default)]
     pub style: Style,
+    #[serde(default)]
+    pub worn_items: Vec<Selector>,
+    #[serde(default)]
+    pub food: Option<Selector>,
+    #[serde(default)]
+    pub ammunition: Option<Selector>,
+    #[serde(default)]
+    pub spell: Option<String>,
+    /// Maximum available count to search; each food occupies one free slot.
+    #[serde(default)]
+    pub food_count: u8,
+    #[serde(default = "default_free_slots", alias = "free_inventory_slots")]
+    pub free_slots: u8,
     /// Omit candidate to request only the minimum-policy search.
     #[serde(default)]
     pub candidate: Option<Stats>,
     /// One NPC only. Larger counts are explicitly not modelled.
     #[serde(default = "one")]
     pub npc_count: u8,
-    /// Consecutive single-NPC fights, carrying HP without healing or regeneration.
+    /// Consecutive single-NPC fights, carrying HP, food and regeneration.
     #[serde(default = "one")]
     pub sequential_kills: u8,
     /// Default assumes an aggressive NPC ready at tick zero. Player damage lands at tick one.
     #[serde(default)]
     pub player_initiates: bool,
 }
-
 #[derive(Debug, Deserialize)]
 struct Facts {
     revision: i32,
     npcs: Vec<NpcRoll>,
     weapons: Vec<Weapon>,
+    #[serde(default)]
+    items: Vec<ItemFact>,
+    #[serde(default)]
+    foods: Vec<FoodSource>,
+}
+#[derive(Debug, Deserialize)]
+struct FoodSource {
+    id: i32,
+    alias: String,
+    source: String,
 }
 #[derive(Debug, Deserialize)]
 struct NpcRoll {
@@ -135,19 +181,50 @@ struct NpcRoll {
     max_dealt: u16,
     source: String,
 }
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum WeaponKind {
+    Melee,
+    Ranged,
+}
+#[derive(Debug, Deserialize)]
+struct WearRequirement {
+    attack: u8,
+    strength: u8,
+    defence: u8,
+    ranged: u8,
+    magic: u8,
+    quest_gated: bool,
+}
+#[derive(Debug, Deserialize)]
+struct ItemFact {
+    id: i32,
+    config: String,
+    attack_bonus: [i32; 5],
+    defence_bonus: [i32; 5],
+    strength_bonus: i32,
+    range_bonus: i32,
+    wear: WearRequirement,
+    source: String,
+    wear_source: String,
+}
 #[derive(Debug, Deserialize)]
 struct Weapon {
     id: i32,
     config: String,
-    attack_bonus: [i32; 3],
-    defence_bonus: [i32; 3],
+    kind: WeaponKind,
+    attack_bonus: [i32; 5],
+    defence_bonus: [i32; 5],
     strength_bonus: i32,
+    range_bonus: i32,
     attackrate: u8,
     required_attack: u8,
-    /// One entry per supported semantic mode. Each value is stab=0, slash=1, crush=2.
+    required_ranged: u8,
+    /// One entry per supported semantic melee mode. Each value is stab=0, slash=1, crush=2.
     damage_types: [Option<usize>; 4],
     poisoned: bool,
     source: String,
+    wear_source: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -159,6 +236,7 @@ pub struct Outcome {
 #[derive(Debug, Serialize)]
 pub struct Evaluation {
     pub stats: Stats,
+    pub food_count: u8,
     pub outcome: Outcome,
     pub player_hit_chance: f64,
     pub npc_hit_chance: f64,
@@ -166,13 +244,26 @@ pub struct Evaluation {
     pub npc_max_hit: u16,
     pub player_interval: u8,
     pub npc_interval: u8,
+    pub equipment_attack_bonus: [i32; 3],
+    pub equipment_defence_bonus: [i32; 3],
+    pub equipment_strength_bonus: i32,
+    pub equipment_range_bonus: i32,
 }
 #[derive(Debug, Serialize)]
 pub struct FightResult {
+    pub label: Option<String>,
     pub status: &'static str,
     pub npc_id: i32,
     pub npc: String,
     pub weapon: String,
+    pub worn_items: Vec<String>,
+    pub food: Option<String>,
+    pub ammunition: Option<String>,
+    pub spell: Option<String>,
+    pub food_search_limit: u8,
+    pub free_slots: u8,
+    pub selected_food_count: Option<u8>,
+    pub accepted_death_bound: Option<&'static str>,
     pub style: Style,
     pub sequential_kills: u8,
     pub poison_changes_result: &'static str,
@@ -184,7 +275,13 @@ pub struct FightResult {
     pub timing: &'static str,
 }
 
-fn unsupported(row: &NpcNameRow, tables: &CombatTables, count: u8, weapon: &Weapon) -> Vec<String> {
+fn unsupported(
+    row: &NpcNameRow,
+    tables: &CombatTables,
+    count: u8,
+    weapon: &Weapon,
+    style: Style,
+) -> Vec<String> {
     let mut reasons = Vec::new();
     let risk = KindRisk::from_npc(row, tables);
     if count != 1 {
@@ -203,10 +300,13 @@ fn unsupported(row: &NpcNameRow, tables: &CombatTables, count: u8, weapon: &Weap
         reasons.push("special attack needs calibration".into());
     }
     if row.attack_kind.is_some() {
-        reasons.push(
-            "ranged projectile flight/posthumous hits or magic spell effects are not modelled"
-                .into(),
-        );
+        reasons.push("ranged projectile flight/posthumous hits or magic spell effects are not modelled".into());
+    }
+    if style == Style::Ranged || weapon.kind == WeaponKind::Ranged {
+        reasons.push("player ranged projectile flight and queued damage are not modelled".into());
+    }
+    if style == Style::Magic {
+        reasons.push("player spell-dependent damage, effects, and timing are not modelled".into());
     }
     if row.poison_severity != Some(0) || weapon.poisoned {
         reasons.push("poison changes survival and timing; its probability is not modelled".into());
@@ -217,10 +317,69 @@ fn unsupported(row: &NpcNameRow, tables: &CombatTables, count: u8, weapon: &Weap
     reasons
 }
 
+fn display_name(selected: &SelectedGameData, id: i32) -> Option<&str> {
+    selected
+        .items()
+        .iter()
+        .find(|item| item.id == id)
+        .and_then(|item| item.name.as_deref())
+}
+
+fn resolve_item<'a>(
+    selected: &SelectedGameData,
+    facts: &'a [ItemFact],
+    selector: &Selector,
+) -> Result<&'a ItemFact, FightError> {
+    let matches: Vec<_> = facts
+        .iter()
+        .filter(|item| selector.matches(item.id, &item.config, display_name(selected, item.id)))
+        .collect();
+    match matches.as_slice() {
+        [item] => Ok(*item),
+        [] => Err(FightError::Input(
+            "worn item missing from source supplement".into(),
+        )),
+        _ => Err(FightError::Input(
+            "worn item selector is ambiguous; use an id".into(),
+        )),
+    }
+}
+fn resolve_selected_ammunition<'a>(
+    selected: &'a SelectedGameData,
+    selector: &Selector,
+) -> Result<&'a api::game_data::GameItem, FightError> {
+    let mut matches = selected.items().iter().filter(|item| {
+        selector.matches(
+            item.id,
+            item.alias.as_deref().unwrap_or(""),
+            item.name.as_deref(),
+        )
+    });
+    let Some(item) = matches.next() else {
+        return Err(FightError::Input("ammunition item not found".into()));
+    };
+    if matches.next().is_some() {
+        return Err(FightError::Input(
+            "ammunition selector is ambiguous; use an id".into(),
+        ));
+    }
+    Ok(item)
+}
+
 pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResult, FightError> {
     if query.sequential_kills == 0 {
         return Err(FightError::Input(
             "sequential_kills must be positive".into(),
+        ));
+    }
+    if query.free_slots > 28 || query.food_count > query.free_slots {
+        return Err(FightError::Input(
+            "food_count must fit within the 28-slot inventory and declared free_slots".into(),
+        ));
+    }
+    if query.food_count > 0 && query.food.is_none() {
+        return Err(FightError::Input(
+            "food_count requires one selected food item".into(),
         ));
     }
     let selected = tables.selected();
@@ -256,15 +415,9 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
         .weapons
         .iter()
         .filter(|weapon| {
-            query.weapon.matches(
-                weapon.id,
-                &weapon.config,
-                selected
-                    .items()
-                    .iter()
-                    .find(|i| i.id == weapon.id)
-                    .and_then(|i| i.name.as_deref()),
-            )
+            query
+                .weapon
+                .matches(weapon.id, &weapon.config, display_name(selected, weapon.id))
         })
         .collect();
     let weapon = match weapons.as_slice() {
@@ -275,8 +428,107 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
             ))
         }
     };
-    let reasons = unsupported(row, tables, query.npc_count, weapon);
+    let weapon_item = resolve_item(selected, &facts.items, &Selector::Id(weapon.id))?;
+    if weapon_item.attack_bonus != weapon.attack_bonus[..5]
+        || weapon_item.defence_bonus != weapon.defence_bonus[..5]
+        || weapon_item.strength_bonus != weapon.strength_bonus
+        || weapon_item.range_bonus != weapon.range_bonus
+    {
+        return Err(FightError::Input(
+            "weapon roll supplement disagrees with its source item facts".into(),
+        ));
+    }
+    if (query.style == Style::Ranged && weapon.kind != WeaponKind::Ranged)
+        || (query.style.melee() && weapon.kind != WeaponKind::Melee)
+    {
+        return Err(FightError::Input(
+            "weapon kind does not match requested combat style".into(),
+        ));
+    }
+    let mut worn = Vec::with_capacity(query.worn_items.len());
+    for selector in &query.worn_items {
+        let item = resolve_item(selected, &facts.items, selector)?;
+        if item.id == weapon.id || worn.iter().any(|known: &&ItemFact| known.id == item.id) {
+            return Err(FightError::Input(
+                "worn_items must not repeat the weapon or another worn item".into(),
+            ));
+        }
+        if selected.item_combat_bonus(item.id).is_some_and(|bonus| {
+            bonus.strengthbonus != item.strength_bonus || bonus.rangebonus != item.range_bonus
+        }) {
+            return Err(FightError::Input(
+                "worn item strength or ranged bonus disagrees with selected facts".into(),
+            ));
+        }
+        worn.push(item);
+    }
+    let food_item = if let Some(selector) = &query.food {
+        let matches: Vec<_> = selected
+            .items()
+            .iter()
+            .filter(|item| {
+                selector.matches(
+                    item.id,
+                    item.alias.as_deref().unwrap_or(""),
+                    item.name.as_deref(),
+                )
+            })
+            .collect();
+        match matches.as_slice() {
+            [item] => Some(*item),
+            [] => return Err(FightError::Input("food item not found".into())),
+            _ => {
+                return Err(FightError::Input(
+                    "food selector is ambiguous; use an id".into(),
+                ))
+            }
+        }
+    } else {
+        None
+    };
+    let ammunition_item = query
+        .ammunition
+        .as_ref()
+        .map(|selector| resolve_selected_ammunition(selected, selector))
+        .transpose()?;
+    let mut reasons = unsupported(row, tables, query.npc_count, weapon, query.style);
+    if (query.style == Style::Ranged && weapon.kind != WeaponKind::Ranged)
+        || (query.style.melee() && weapon.kind != WeaponKind::Melee)
+    {
+        return Err(FightError::Input(
+            "weapon kind does not match requested combat style".into(),
+        ));
+    }
+    if query.style != Style::Magic {
+        validate_weapon(selected, weapon, query.style)?;
+        validate_wear(Stats::policy(40, query.style), weapon, &worn)?;
+    }
+    if let Some(food) = food_item {
+        if tables.food(food.id).is_none() {
+            return Err(FightError::Input(format!(
+                "{} is not recognized by product food facts",
+                food.alias.as_deref().unwrap_or("selected food")
+            )));
+        }
+    }
+    let food_source = if let Some(food) = food_item {
+        let alias = food.alias.as_deref().ok_or_else(|| {
+            FightError::Input("selected food has no content alias for source validation".into())
+        })?;
+        Some(
+            facts
+                .foods
+                .iter()
+                .find(|source| source.id == food.id && source.alias == alias)
+                .ok_or_else(|| {
+                    FightError::Input("food source row missing from source supplement".into())
+                })?,
+        )
+    } else {
+        None
+    };
     let mut result = FightResult {
+        label: query.label.clone(),
         status: if reasons.is_empty() {
             "modelled"
         } else {
@@ -285,6 +537,14 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
         npc_id: row.id,
         npc: row.config.clone(),
         weapon: weapon.config.clone(),
+        worn_items: worn.iter().map(|item| item.config.clone()).collect(),
+        food: food_item.and_then(|item| item.alias.clone()),
+        ammunition: ammunition_item.and_then(|item| item.alias.clone()),
+        spell: query.spell.clone(),
+        food_search_limit: query.food_count,
+        free_slots: query.free_slots,
+        selected_food_count: None,
+        accepted_death_bound: None,
         style: query.style,
         sequential_kills: query.sequential_kills,
         poison_changes_result: if row.poison_severity == Some(0) && !weapon.poisoned {
@@ -292,62 +552,132 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
         } else {
             "yes: poison can change survival; calibration needed"
         },
-        reasons,
+        reasons: std::mem::take(&mut reasons),
         candidate: None,
         minimum: None,
         previous_level: None,
-        sources: vec![weapon.source.clone()],
+        sources: vec![
+            weapon.source.clone(),
+            "content/scripts/skill_combat/scripts/player/player_combat_stat.rs2:62-100".into(),
+            "content/scripts/skill_combat/scripts/player/player_combat.rs2:52-85".into(),
+            "content/scripts/skill_combat/scripts/player/player_melee.rs2:18-28,46-57".into(),
+            "content/scripts/skill_combat/scripts/npc/npc_combat_melee.rs2:2-48".into(),
+            "content/scripts/skill_combat/scripts/npc/npc_combat.rs2:7-24,315-343,391-428".into(),
+            "content/scripts/login_logout/login.rs2:34-38".into(),
+            "content/scripts/player/scripts/stat.rs2:58-60".into(),
+        ],
         timing: if query.player_initiates {
-            "player swing tick 0, damage tick 1; NPC first attack tick 1 + floor(interval/2), from retaliation flinch; queued player damage wins ties"
+            "player swing tick 0; queued damage lands one tick later; NPC first attacks at 1 + floor(interval/2); eat action adds its content skill delay to the next player action; HP regeneration ticks every 100"
         } else {
-            "NPC ready at tick 0; player swing tick 0, damage tick 1; queued player damage wins ties"
+            "NPC and player are ready at tick 0; queued player damage lands one tick later; NPC damage resolves before food and player actions; eat action adds its content skill delay to the next player action; HP regeneration ticks every 100"
         },
     };
-    if !result.reasons.is_empty() {
-        return Ok(result);
+    for item in &worn {
+        result.sources.push(item.source.clone());
+        if !item.wear_source.is_empty() {
+            result.sources.push(item.wear_source.clone());
+        }
+    }
+    if !weapon.wear_source.is_empty() {
+        result.sources.push(weapon.wear_source.clone());
+    }
+    if food_item.is_some() {
+        if let Some(source) = food_source {
+            result.sources.push(source.source.clone());
+        }
+        result.sources.push("content/scripts/player/scripts/consumption/consume.rs2:114-134".into());
+        result.sources.push("content/scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2:39-74".into());
+        result.sources.push("crates/script/src/combat/guard.rs:470-483".into());
+        result.sources.push("crates/script/src/combat/policy.rs:333-386".into());
+        result.sources.push("crates/script/src/combat/schedule.rs:85-87,118-131".into());
     }
     let npc = facts
         .npcs
         .iter()
         .find(|n| n.id == row.id && n.config == row.config)
         .ok_or_else(|| FightError::Input("NPC roll supplement missing".into()))?;
+    let expected_npc_max_hit = u16::from(
+        npc_max_hit(row).ok_or_else(|| FightError::Input("NPC maximum hit unavailable".into()))?,
+    );
     if npc.hitpoints != row.hitpoints
         || Some(npc.strength) != row.strength
         || Some(npc.strength_bonus) != row.strengthbonus
         || npc.attackrate != tables.npc_rate(row)
+        || npc.max_dealt != expected_npc_max_hit
     {
         return Err(FightError::Input(
             "source supplement disagrees with selected NPC facts".into(),
         ));
     }
     result.sources.push(npc.source.clone());
-    validate_weapon(selected, weapon, query.style)?;
+    if !result.reasons.is_empty() {
+        return Ok(result);
+    }
     if let Some(stats) = query.candidate {
+        let candidate_food = None;
         result.candidate = Some(evaluate(
             stats,
             row,
             npc,
             weapon,
+            &worn,
             query.style,
+            candidate_food,
+            0,
             query.player_initiates,
             query.sequential_kills,
         )?);
     }
-    for level in weapon.required_attack.max(1)..=99 {
-        let evaluation = evaluate(
-            Stats::policy(level),
-            row,
-            npc,
-            weapon,
-            query.style,
-            query.player_initiates,
-            query.sequential_kills,
-        )?;
-        if evaluation.outcome.death_probability <= 0.01 {
+    let food_limit = if food_item.is_some() { query.food_count } else { 0 };
+    for level in 40..=99 {
+        let stats = Stats::policy(level, query.style);
+        validate_wear(stats, weapon, &worn)?;
+        let food_rule = food_item
+            .map(|food| food::build(tables, row, food, stats.hitpoints))
+            .transpose()
+            .map_err(FightError::Input)?;
+        let mut within_one = None;
+        let mut within_five = None;
+        let mut best = None;
+        for food_count in 0..=food_limit {
+            let evaluation = evaluate(
+                stats,
+                row,
+                npc,
+                weapon,
+                &worn,
+                query.style,
+                food_rule.as_ref(),
+                food_count,
+                query.player_initiates,
+                query.sequential_kills,
+            )?;
+            if best.as_ref().is_none_or(|current: &Evaluation| {
+                evaluation.outcome.death_probability < current.outcome.death_probability
+            }) {
+                best = Some(evaluation);
+            }
+            if evaluation.outcome.death_probability <= 0.01 {
+                within_one = Some(evaluation);
+                break;
+            }
+            if within_five.is_none() && evaluation.outcome.death_probability <= 0.05 {
+                within_five = Some(evaluation);
+            }
+        }
+        if let Some(evaluation) = within_one {
+            result.selected_food_count = Some(evaluation.food_count);
+            result.accepted_death_bound = Some("1%");
             result.minimum = Some(evaluation);
             break;
         }
-        result.previous_level = Some(evaluation);
+        if let Some(evaluation) = within_five {
+            result.selected_food_count = Some(evaluation.food_count);
+            result.accepted_death_bound = Some("5%");
+            result.minimum = Some(evaluation);
+            break;
+        }
+        result.previous_level = best;
     }
     if result.minimum.is_none() {
         result.status = "no_seed_within_policy";
@@ -369,67 +699,147 @@ fn validate_weapon(
             "weapon supplement disagrees with selected item identity".into(),
         ));
     }
-    if selected
-        .item_combat_bonus(weapon.id)
-        .map(|b| b.strengthbonus)
-        != Some(weapon.strength_bonus)
-    {
-        return Err(FightError::Input(
-            "weapon strength supplement disagrees with selected facts".into(),
-        ));
+    if let Some(bonus) = selected.item_combat_bonus(weapon.id) {
+        if bonus.strengthbonus != weapon.strength_bonus || bonus.rangebonus != weapon.range_bonus {
+            return Err(FightError::Input(
+                "weapon strength or ranged bonus disagrees with selected facts".into(),
+            ));
+        }
     }
-    let tier = selected
-        .melee_weapon_tier(weapon.id)
-        .ok_or_else(|| FightError::Input("selected weapon requirement missing".into()))?;
-    if tier.quest_gated
-        || tier.strength > 0
-        || weapon.required_attack != tier.tier.max(1)
-        || weapon
-            .damage_types
-            .iter()
-            .flatten()
-            .any(|damage_type| *damage_type > 2)
-    {
-        return Err(FightError::Input(
-            "weapon requirement or damage type disagrees with generic melee model".into(),
-        ));
-    }
-    let style_fact = selected
-        .weapon_styles()
-        .iter()
-        .find(|fact| fact.obj_id == weapon.id)
-        .ok_or_else(|| FightError::Input("selected weapon style missing".into()))?;
-    if style_fact.attackrate != weapon.attackrate
-        || style_fact.style != 1
-        || weapon.damage_types[usize::from(style.code())].is_none()
-        || !selected
-            .melee_modes()
-            .iter()
-            .any(|fact| Some(fact.tab) == style_fact.tab && fact.mode == style.code())
-    {
-        return Err(FightError::Input(
-            "weapon does not offer requested melee style or interval disagrees".into(),
-        ));
+    match weapon.kind {
+        WeaponKind::Melee => {
+            if !style.melee() {
+                return Err(FightError::Input(
+                    "melee weapon does not match requested combat style".into(),
+                ));
+            }
+            let tier = selected
+                .melee_weapon_tier(weapon.id)
+                .ok_or_else(|| FightError::Input("selected weapon requirement missing".into()))?;
+            if tier.quest_gated
+                || tier.strength > 0
+                || weapon.required_attack != tier.tier.max(1)
+                || weapon
+                    .damage_types
+                    .iter()
+                    .flatten()
+                    .any(|damage_type| *damage_type > 2)
+            {
+                return Err(FightError::Input(
+                    "weapon requirement or damage type disagrees with generic melee model".into(),
+                ));
+            }
+            let style_fact = selected
+                .weapon_styles()
+                .iter()
+                .find(|fact| fact.obj_id == weapon.id && fact.category == 0)
+                .ok_or_else(|| FightError::Input("selected melee weapon style missing".into()))?;
+            if style_fact.attackrate != weapon.attackrate
+                || style_fact.style != 1
+                || weapon.damage_types[usize::from(style.code())].is_none()
+                || !selected
+                    .melee_modes()
+                    .iter()
+                    .any(|fact| Some(fact.tab) == style_fact.tab && fact.mode == style.code())
+            {
+                return Err(FightError::Input(
+                    "weapon does not offer requested melee style or interval disagrees".into(),
+                ));
+            }
+        }
+        WeaponKind::Ranged => {
+            if style != Style::Ranged {
+                return Err(FightError::Input(
+                    "ranged weapon requires the ranged combat style".into(),
+                ));
+            }
+            let fact = selected
+                .ranged_weapons()
+                .iter()
+                .find(|fact| fact.obj_id == weapon.id)
+                .ok_or_else(|| FightError::Input("selected ranged weapon fact missing".into()))?;
+            let style = selected
+                .weapon_styles()
+                .iter()
+                .find(|fact| fact.obj_id == weapon.id && fact.category == 1)
+                .ok_or_else(|| FightError::Input("selected ranged weapon style missing".into()))?;
+            if fact.levelrequire != weapon.required_ranged
+                || style.attackrate != weapon.attackrate
+            {
+                return Err(FightError::Input(
+                    "ranged weapon requirement or interval disagrees with selected facts".into(),
+                ));
+            }
+        }
     }
     Ok(())
 }
+
+fn validate_wear(stats: Stats, weapon: &Weapon, worn: &[&ItemFact]) -> Result<(), FightError> {
+    if !stats.valid() {
+        return Err(FightError::Input("combat stats must be between 1 and 99".into()));
+    }
+    if stats.attack < weapon.required_attack || stats.ranged < weapon.required_ranged {
+        return Err(FightError::Input(format!(
+            "stats cannot wield {} (Attack {}, Ranged {})",
+            weapon.config, weapon.required_attack, weapon.required_ranged
+        )));
+    }
+    for item in worn {
+        let requirement = &item.wear;
+        if requirement.quest_gated {
+            return Err(FightError::Input(format!(
+                "{} has an unmet quest-gated wear requirement",
+                item.config
+            )));
+        }
+        if stats.attack < requirement.attack
+            || stats.strength < requirement.strength
+            || stats.defence < requirement.defence
+            || stats.ranged < requirement.ranged
+            || stats.magic < requirement.magic
+        {
+            return Err(FightError::Input(format!(
+                "stats cannot wear {} (Attack {}, Strength {}, Defence {}, Ranged {}, Magic {})",
+                item.config,
+                requirement.attack,
+                requirement.strength,
+                requirement.defence,
+                requirement.ranged,
+                requirement.magic
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn roll(stat: u32, bonus: i32) -> Result<u32, FightError> {
     let value = i64::from(stat) * (i64::from(bonus) + 64);
     u32::try_from(value)
         .map_err(|_| FightError::Input("negative or overflowing combat roll".into()))
 }
+
 fn evaluate(
     stats: Stats,
     row: &NpcNameRow,
     npc: &NpcRoll,
     weapon: &Weapon,
+    worn: &[&ItemFact],
     style: Style,
+    food_rule: Option<&food::FoodRule>,
+    food_count: u8,
     initiates: bool,
     sequential_kills: u8,
 ) -> Result<Evaluation, FightError> {
-    if !stats.valid() || stats.attack < weapon.required_attack {
+    validate_wear(stats, weapon, worn)?;
+    if !style.melee() {
         return Err(FightError::Input(
-            "invalid levels or weapon Attack requirement not met".into(),
+            "ranged and magic attacks are not modelled".into(),
+        ));
+    }
+    if food_count > 0 && food_rule.is_none() {
+        return Err(FightError::Input(
+            "food count has no product-backed food rule".into(),
         ));
     }
     let [attack, strength, defence] = style.bonuses();
@@ -445,10 +855,22 @@ fn evaluate(
             ))
         }
     };
+    let mut equipment_attack_bonus = [0i32; 3];
+    let mut equipment_defence_bonus = [0i32; 3];
+    for damage in 0..3 {
+        equipment_attack_bonus[damage] = weapon.attack_bonus[damage]
+            + worn.iter().map(|item| item.attack_bonus[damage]).sum::<i32>();
+        equipment_defence_bonus[damage] = weapon.defence_bonus[damage]
+            + worn.iter().map(|item| item.defence_bonus[damage]).sum::<i32>();
+    }
+    let equipment_strength_bonus =
+        weapon.strength_bonus + worn.iter().map(|item| item.strength_bonus).sum::<i32>();
+    let equipment_range_bonus =
+        weapon.range_bonus + worn.iter().map(|item| item.range_bonus).sum::<i32>();
     let player_hit_chance = hit_chance(
         roll(
             u32::from(stats.attack) + 8 + attack,
-            weapon.attack_bonus[damage_type],
+            equipment_attack_bonus[damage_type],
         )?,
         roll(npc.defence + 9, npc.defence_bonus[damage_type])?,
     );
@@ -456,23 +878,22 @@ fn evaluate(
         roll(npc.attack + 9, npc.attack_bonus)?,
         roll(
             u32::from(stats.defence) + 8 + defence,
-            weapon.defence_bonus[npc_type],
+            equipment_defence_bonus[npc_type],
         )?,
     );
     let player_max_hit = u16::try_from(
         (roll(
             u32::from(stats.strength) + 8 + strength,
-            weapon.strength_bonus,
+            equipment_strength_bonus,
         )? + 320)
             / 640,
     )
-    .map_err(|_| FightError::Input("player maximum hit overflow".into()))?
-    .min(npc.max_dealt);
+    .map_err(|_| FightError::Input("player maximum hit overflow".into()))?;
     let npc_max_hit = u16::from(
         npc_max_hit(row).ok_or_else(|| FightError::Input("NPC maximum hit unavailable".into()))?,
     );
-    let model = Model {
-        player_hp: u16::from(stats.hitpoints),
+    let model = SurvivalModel {
+        player_hp: stats.hitpoints,
         npc_hp: u16::try_from(row.hitpoints)
             .map_err(|_| FightError::Input("NPC Hitpoints out of range".into()))?,
         player_chance: player_hit_chance,
@@ -482,17 +903,371 @@ fn evaluate(
         player_interval: weapon.attackrate,
         npc_interval: npc.attackrate,
         npc_first_tick: if initiates { 1 + npc.attackrate / 2 } else { 0 },
+        sequential_kills,
+        food_rule,
+        food_count,
     };
     Ok(Evaluation {
         stats,
-        outcome: solve(model, sequential_kills)?,
+        food_count,
+        outcome: solve_survival(model)?,
         player_hit_chance,
         npc_hit_chance,
         player_max_hit,
         npc_max_hit,
         player_interval: weapon.attackrate,
         npc_interval: npc.attackrate,
+        equipment_attack_bonus,
+        equipment_defence_bonus,
+        equipment_strength_bonus,
+        equipment_range_bonus,
     })
+}
+
+#[derive(Clone, Copy)]
+struct SurvivalModel<'a> {
+    player_hp: u8,
+    npc_hp: u16,
+    player_chance: f64,
+    npc_chance: f64,
+    player_max: u16,
+    npc_max: u16,
+    player_interval: u8,
+    npc_interval: u8,
+    npc_first_tick: u8,
+    sequential_kills: u8,
+    food_rule: Option<&'a food::FoodRule>,
+    food_count: u8,
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+struct SurvivalState {
+    player_hp: u8,
+    npc_hp: u16,
+    food: u8,
+    player_wait: u16,
+    npc_wait: u16,
+    pending_damage: u16,
+    pending_wait: u8,
+    regen_wait: u16,
+    food_wait: u16,
+    kills_left: u8,
+}
+
+#[derive(Clone, Copy)]
+struct Branch {
+    state: SurvivalState,
+    probability: f64,
+    terminal: Option<bool>,
+    ate: bool,
+}
+
+#[derive(Clone, Copy)]
+struct RawTransition {
+    next: Option<SurvivalState>,
+    won: bool,
+    probability: f64,
+    ticks: u16,
+}
+
+struct Edge {
+    next: Option<usize>,
+    won: bool,
+    probability: f64,
+    ticks: u16,
+}
+
+struct Node {
+    state: SurvivalState,
+    edges: Vec<Edge>,
+}
+
+const MAX_SURVIVAL_STATES: usize = 1_000_000;
+const MAX_VALUE_ITERATIONS: usize = 100_000;
+
+fn damage_distribution(chance: f64, maximum: u16) -> Vec<(u16, f64)> {
+    let positive = chance / (f64::from(maximum) + 1.0);
+    std::iter::once((0, 1.0 - positive * f64::from(maximum)))
+        .chain((1..=maximum).map(|damage| (damage, positive)))
+        .collect()
+}
+
+fn spawn_next(model: SurvivalModel<'_>, state: &mut SurvivalState) {
+    state.npc_hp = model.npc_hp;
+    state.kills_left -= 1;
+    state.pending_damage = 0;
+    state.pending_wait = 0;
+    state.player_wait = 0;
+    state.npc_wait = u16::from(model.npc_first_tick);
+}
+
+fn next_food_delay(rule: &food::FoodRule, hp: u8, remaining: u16) -> Option<u16> {
+    (0..remaining).rev().find_map(|cooldown| {
+        let cooldown = u8::try_from(cooldown).ok()?;
+        rule.should_eat(hp, cooldown)
+            .then_some(remaining - u16::from(cooldown))
+    })
+}
+
+fn advance(state: &mut SurvivalState, model: SurvivalModel<'_>) -> Result<u16, FightError> {
+    let mut delay = state
+        .player_wait
+        .min(state.npc_wait)
+        .min(state.regen_wait);
+    if state.pending_damage > 0 {
+        delay = delay.min(u16::from(state.pending_wait));
+    }
+    if state.food > 0 {
+        if let Some(food_delay) = model
+            .food_rule
+            .and_then(|rule| next_food_delay(rule, state.player_hp, state.food_wait))
+        {
+            delay = delay.min(food_delay);
+        }
+    }
+    if delay == 0 || delay == u16::MAX {
+        return Err(FightError::Input(
+            "survival event scheduler failed to advance".into(),
+        ));
+    }
+    state.player_wait -= delay;
+    state.npc_wait -= delay;
+    state.regen_wait -= delay;
+    state.food_wait = state.food_wait.saturating_sub(delay);
+    if state.pending_damage > 0 {
+        state.pending_wait = state.pending_wait.saturating_sub(
+            u8::try_from(delay).unwrap_or(u8::MAX),
+        );
+    }
+    Ok(delay)
+}
+
+fn expand_survival(
+    original: SurvivalState,
+    model: SurvivalModel<'_>,
+) -> Result<Vec<RawTransition>, FightError> {
+    let mut branches = vec![Branch {
+        state: original,
+        probability: 1.0,
+        terminal: None,
+        ate: false,
+    }];
+
+    for branch in &mut branches {
+        if branch.state.pending_damage == 0 || branch.state.pending_wait != 0 {
+            continue;
+        }
+        let damage = branch.state.pending_damage;
+        branch.state.pending_damage = 0;
+        branch.state.pending_wait = 0;
+        branch.state.npc_hp = branch.state.npc_hp.saturating_sub(damage);
+        if branch.state.npc_hp == 0 {
+            if branch.state.kills_left == 1 {
+                branch.terminal = Some(true);
+            } else {
+                spawn_next(model, &mut branch.state);
+            }
+        }
+    }
+
+    let mut after_npc = Vec::new();
+    for branch in branches {
+        if branch.terminal.is_some() || branch.state.npc_wait != 0 {
+            after_npc.push(branch);
+            continue;
+        }
+        for (damage, probability) in damage_distribution(model.npc_chance, model.npc_max) {
+            let mut next = branch;
+            next.state.player_hp = next.state.player_hp.saturating_sub(
+                u8::try_from(damage).unwrap_or(u8::MAX),
+            );
+            next.state.npc_wait = u16::from(model.npc_interval);
+            next.probability *= probability;
+            if next.state.player_hp == 0 {
+                next.terminal = Some(false);
+            }
+            after_npc.push(next);
+        }
+    }
+
+    let mut after_regen = Vec::with_capacity(after_npc.len());
+    for mut branch in after_npc {
+        if branch.terminal.is_none() && branch.state.regen_wait == 0 {
+            branch.state.player_hp = branch.state.player_hp.saturating_add(1).min(model.player_hp);
+            branch.state.regen_wait = 100;
+        }
+        after_regen.push(branch);
+    }
+
+    let mut after_food = Vec::with_capacity(after_regen.len());
+    for mut branch in after_regen {
+        if branch.terminal.is_none()
+            && branch.state.food > 0
+            && model.food_rule
+                .is_some_and(|rule| {
+                    rule.should_eat(branch.state.player_hp, branch.state.food_wait as u8)
+                })
+        {
+            let rule = model.food_rule.expect("food choice needs its rule");
+            branch.state.food -= 1;
+            branch.state.player_hp = branch
+                .state
+                .player_hp
+                .saturating_add(rule.heal)
+                .min(model.player_hp);
+            branch.state.food_wait = u16::from(rule.eat_delay);
+            branch.state.player_wait =
+                branch.state.player_wait.saturating_add(u16::from(rule.skill_delay));
+            branch.ate = true;
+        }
+        after_food.push(branch);
+    }
+
+    let mut after_player = Vec::new();
+    for branch in after_food {
+        if branch.terminal.is_some() || branch.ate || branch.state.player_wait != 0 {
+            after_player.push(branch);
+            continue;
+        }
+        for (damage, probability) in damage_distribution(model.player_chance, model.player_max) {
+            let mut next = branch;
+            next.state.player_wait = u16::from(model.player_interval);
+            if damage > 0 {
+                next.state.pending_damage = damage.min(next.state.npc_hp);
+                next.state.pending_wait = 1;
+            }
+            next.probability *= probability;
+            after_player.push(next);
+        }
+    }
+
+    let mut transitions = Vec::with_capacity(after_player.len());
+    for mut branch in after_player {
+        if let Some(won) = branch.terminal {
+            transitions.push(RawTransition {
+                next: None,
+                won,
+                probability: branch.probability,
+                ticks: 0,
+            });
+        } else {
+            let ticks = advance(&mut branch.state, model)?;
+            transitions.push(RawTransition {
+                next: Some(branch.state),
+                won: false,
+                probability: branch.probability,
+                ticks,
+            });
+        }
+    }
+    Ok(transitions)
+}
+
+fn solve_survival(model: SurvivalModel<'_>) -> Result<Outcome, FightError> {
+    if model.player_interval < 2
+        || model.npc_interval == 0
+        || model.player_hp == 0
+        || model.npc_hp == 0
+        || model.sequential_kills == 0
+    {
+        return Err(FightError::Input(
+            "invalid survival model timing or Hitpoints".into(),
+        ));
+    }
+    if model.player_max == 0 || model.player_chance == 0.0 {
+        return Err(FightError::Input(
+            "player cannot deal positive damage".into(),
+        ));
+    }
+    if model.food_count > 0 && model.food_rule.is_none() {
+        return Err(FightError::Input(
+            "food count has no product-backed food rule".into(),
+        ));
+    }
+    let initial = SurvivalState {
+        player_hp: model.player_hp,
+        npc_hp: model.npc_hp,
+        food: model.food_count,
+        player_wait: 0,
+        npc_wait: u16::from(model.npc_first_tick),
+        pending_damage: 0,
+        pending_wait: 0,
+        regen_wait: 100,
+        food_wait: 0,
+        kills_left: model.sequential_kills,
+    };
+    let mut nodes = vec![Node {
+        state: initial,
+        edges: Vec::new(),
+    }];
+    let mut indices = HashMap::from([(initial, 0usize)]);
+    let mut cursor = 0;
+    while cursor < nodes.len() {
+        if nodes.len() > MAX_SURVIVAL_STATES {
+            return Err(FightError::Input(format!(
+                "survival state graph exceeded {MAX_SURVIVAL_STATES} states"
+            )));
+        }
+        let transitions = expand_survival(nodes[cursor].state, model)?;
+        let mut edges = Vec::with_capacity(transitions.len());
+        for transition in transitions {
+            let next = transition.next.map(|state| {
+                if let Some(index) = indices.get(&state) {
+                    *index
+                } else {
+                    let index = nodes.len();
+                    nodes.push(Node {
+                        state,
+                        edges: Vec::new(),
+                    });
+                    indices.insert(state, index);
+                    index
+                }
+            });
+            edges.push(Edge {
+                next,
+                won: transition.won,
+                probability: transition.probability,
+                ticks: transition.ticks,
+            });
+        }
+        nodes[cursor].edges = edges;
+        cursor += 1;
+    }
+
+    let mut wins = vec![0.0; nodes.len()];
+    let mut lengths = vec![0.0; nodes.len()];
+    for _ in 0..MAX_VALUE_ITERATIONS {
+        let mut max_win_delta: f64 = 0.0;
+        let mut max_tick_delta: f64 = 0.0;
+        for index in (0..nodes.len()).rev() {
+            let mut win = 0.0;
+            let mut ticks = 0.0;
+            for edge in &nodes[index].edges {
+                if let Some(next) = edge.next {
+                    win += edge.probability * wins[next];
+                    ticks += edge.probability * (f64::from(edge.ticks) + lengths[next]);
+                } else {
+                    win += edge.probability * f64::from(edge.won);
+                    ticks += edge.probability * f64::from(edge.ticks);
+                }
+            }
+            max_win_delta = max_win_delta.max((win - wins[index]).abs());
+            max_tick_delta = max_tick_delta.max((ticks - lengths[index]).abs());
+            wins[index] = win;
+            lengths[index] = ticks;
+        }
+        if max_win_delta < 1e-13 && max_tick_delta < 1e-9 {
+            return Ok(Outcome {
+                win_probability: wins[0].clamp(0.0, 1.0),
+                death_probability: (1.0 - wins[0]).clamp(0.0, 1.0),
+                expected_ticks: lengths[0],
+            });
+        }
+    }
+    Err(FightError::Input(
+        "survival state graph did not converge within 100000 value iterations".into(),
+    ))
 }
 
 /// P(U[0,A] > U[0,D]). A tie misses, including A=D=0.
@@ -505,6 +1280,7 @@ pub fn hit_chance(attack: u32, defence: u32) -> f64 {
         a / (2.0 * (d + 1.0))
     }
 }
+#[cfg(test)]
 #[derive(Clone, Copy)]
 struct Model {
     player_hp: u16,
@@ -517,6 +1293,7 @@ struct Model {
     npc_interval: u8,
     npc_first_tick: u8,
 }
+#[cfg(test)]
 #[derive(Clone, Copy)]
 struct Event {
     tick: u32,
@@ -525,6 +1302,7 @@ struct Event {
     positive: f64,
     zero: f64,
 }
+#[cfg(test)]
 fn events(model: Model) -> Result<(Vec<Event>, u32), FightError> {
     if model.player_interval < 2
         || model.npc_interval == 0
@@ -575,6 +1353,7 @@ fn events(model: Model) -> Result<(Vec<Event>, u32), FightError> {
     }
     Ok((events, period))
 }
+#[cfg(test)]
 fn solve(model: Model, sequential_kills: u8) -> Result<Outcome, FightError> {
     let (events, period) = events(model)?;
     let phases = events.len();
@@ -686,6 +1465,22 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn armour_bonus_reduces_incoming_hit_chance_hand_case() {
+        let npc_attack_roll = roll(18, 0).unwrap();
+        let bare_defence_roll = roll(48, 0).unwrap();
+        let armoured_defence_roll = roll(48, 40).unwrap();
+        assert_eq!(bare_defence_roll, 3_072);
+        assert_eq!(armoured_defence_roll, 4_992);
+        assert_eq!(
+            hit_chance(npc_attack_roll, armoured_defence_roll),
+            1_152.0 / (2.0 * 4_993.0)
+        );
+        assert!(
+            hit_chance(npc_attack_roll, armoured_defence_roll)
+                < hit_chance(npc_attack_roll, bare_defence_roll)
+        );
+    }
     fn sample(seed: &mut u64) -> f64 {
         *seed ^= *seed << 13;
         *seed ^= *seed >> 7;
@@ -735,6 +1530,183 @@ mod tests {
             death_probability: 1.0 - win,
             expected_ticks: ticks as f64 / f64::from(TRIALS),
         }
+    }
+    fn product_food_rule(hp_max: u8) -> food::FoodRule {
+        let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let tables = CombatTables::build(selected).unwrap();
+        let npc = tables.npc(95).unwrap().clone();
+        let lobster = tables
+            .selected()
+            .items()
+            .iter()
+            .find(|item| item.alias.as_deref() == Some("lobster"))
+            .unwrap()
+            .clone();
+        food::build(&tables, &npc, &lobster, hp_max).unwrap()
+    }
+
+    fn sampled_damage(seed: &mut u64, chance: f64, maximum: u16) -> u16 {
+        if sample(seed) < chance {
+            (sample(seed) * f64::from(maximum + 1)) as u16
+        } else {
+            0
+        }
+    }
+
+    fn monte_carlo_survival(
+        model: SurvivalModel<'_>,
+        trials: u32,
+    ) -> Result<Outcome, FightError> {
+        let initial = SurvivalState {
+            player_hp: model.player_hp,
+            npc_hp: model.npc_hp,
+            food: model.food_count,
+            player_wait: 0,
+            npc_wait: u16::from(model.npc_first_tick),
+            pending_damage: 0,
+            pending_wait: 0,
+            regen_wait: 100,
+            food_wait: 0,
+            kills_left: model.sequential_kills,
+        };
+        let mut seed = 0x0137_ade1_17ab_901du64;
+        let mut wins = 0u32;
+        let mut ticks = 0u64;
+        for _ in 0..trials {
+            let mut state = initial;
+            let mut elapsed = 0u64;
+            let won = loop {
+                if state.pending_damage > 0 && state.pending_wait == 0 {
+                    state.npc_hp = state.npc_hp.saturating_sub(state.pending_damage);
+                    state.pending_damage = 0;
+                    if state.npc_hp == 0 {
+                        if state.kills_left == 1 {
+                            break true;
+                        }
+                        spawn_next(model, &mut state);
+                    }
+                }
+                if state.npc_wait == 0 {
+                    let damage =
+                        sampled_damage(&mut seed, model.npc_chance, model.npc_max);
+                    state.player_hp = state.player_hp.saturating_sub(
+                        u8::try_from(damage).unwrap_or(u8::MAX),
+                    );
+                    state.npc_wait = u16::from(model.npc_interval);
+                    if state.player_hp == 0 {
+                        break false;
+                    }
+                }
+                if state.regen_wait == 0 {
+                    state.player_hp = state.player_hp.saturating_add(1).min(model.player_hp);
+                    state.regen_wait = 100;
+                }
+                let ate = state.food > 0
+                    && model.food_rule.is_some_and(|rule| {
+                        rule.should_eat(state.player_hp, state.food_wait as u8)
+                    });
+                if ate {
+                    let rule = model.food_rule.expect("food choice needs its rule");
+                    state.food -= 1;
+                    state.player_hp = state.player_hp.saturating_add(rule.heal).min(model.player_hp);
+                    state.food_wait = u16::from(rule.eat_delay);
+                    state.player_wait = state
+                        .player_wait
+                        .saturating_add(u16::from(rule.skill_delay));
+                } else if state.player_wait == 0 {
+                    let damage =
+                        sampled_damage(&mut seed, model.player_chance, model.player_max);
+                    state.player_wait = u16::from(model.player_interval);
+                    if damage > 0 {
+                        state.pending_damage = damage.min(state.npc_hp);
+                        state.pending_wait = 1;
+                    }
+                }
+                let delay = advance(&mut state, model)?;
+                elapsed += u64::from(delay);
+            };
+            wins += u32::from(won);
+            ticks += elapsed;
+        }
+        let win_probability = f64::from(wins) / f64::from(trials);
+        Ok(Outcome {
+            win_probability,
+            death_probability: 1.0 - win_probability,
+            expected_ticks: ticks as f64 / f64::from(trials),
+        })
+    }
+
+    #[test]
+    fn product_food_causes_one_heal_and_three_tick_player_delay() {
+        let rule = product_food_rule(40);
+        let hp = (1..40)
+            .find(|hp| rule.should_eat(*hp, 0))
+            .expect("product food policy should select lobster below its eat line");
+        let model = SurvivalModel {
+            player_hp: 40,
+            npc_hp: 1,
+            player_chance: 1.0,
+            npc_chance: 0.0,
+            player_max: 1,
+            npc_max: 0,
+            player_interval: 4,
+            npc_interval: 4,
+            npc_first_tick: 0,
+            sequential_kills: 1,
+            food_rule: Some(&rule),
+            food_count: 1,
+        };
+        let state = SurvivalState {
+            player_hp: hp,
+            npc_hp: 1,
+            food: 1,
+            player_wait: 0,
+            npc_wait: 100,
+            pending_damage: 0,
+            pending_wait: 0,
+            regen_wait: 100,
+            food_wait: 0,
+            kills_left: 1,
+        };
+        let transitions = expand_survival(state, model).unwrap();
+        assert_eq!(transitions.len(), 1);
+        let transition = transitions[0];
+        let next = transition.next.unwrap();
+        assert_eq!(transition.ticks, 3);
+        assert_eq!(next.player_hp, hp.saturating_add(rule.heal).min(40));
+        assert_eq!(next.food, 0);
+        assert_eq!(next.player_wait, 0);
+        assert_eq!(next.food_wait, 1);
+    }
+
+    #[test]
+    fn absorbing_solver_matches_deterministic_food_and_regeneration_simulation() {
+        let rule = product_food_rule(4);
+        let model = SurvivalModel {
+            player_hp: 4,
+            npc_hp: 4,
+            player_chance: 0.15,
+            npc_chance: 0.65,
+            player_max: 1,
+            npc_max: 1,
+            player_interval: 4,
+            npc_interval: 4,
+            npc_first_tick: 0,
+            sequential_kills: 1,
+            food_rule: Some(&rule),
+            food_count: 1,
+        };
+        let exact = solve_survival(model).unwrap();
+        assert!(exact.expected_ticks > 100.0);
+        let sampled = monte_carlo_survival(model, 30_000).unwrap();
+        assert!(
+            (exact.death_probability - sampled.death_probability).abs() < 0.02,
+            "{exact:?} {sampled:?}"
+        );
+        assert!(
+            (exact.expected_ticks - sampled.expected_ticks).abs() < exact.expected_ticks * 0.08 + 2.0,
+            "{exact:?} {sampled:?}"
+        );
     }
     #[test]
     fn dp_matches_two_brute_force_monte_carlo_cases() {
@@ -861,31 +1833,35 @@ mod tests {
         let weapon = Weapon {
             id: 1321,
             config: "bronze_scimitar".into(),
-            attack_bonus: [1, 7, -2],
-            defence_bonus: [0, 1, 0],
+            kind: WeaponKind::Melee,
+            attack_bonus: [1, 7, -2, 0, 0],
+            defence_bonus: [0, 1, 0, 0, 0],
             strength_bonus: 6,
+            range_bonus: 0,
             attackrate: 4,
             required_attack: 1,
+            required_ranged: 1,
             damage_types: [Some(1), Some(1), Some(0), Some(1)],
             poisoned: false,
             source: "test".into(),
+            wear_source: "test".into(),
         };
         validate_weapon(tables.selected(), &weapon, Style::Accurate).unwrap();
         let mut row = tables.npc(95).unwrap().clone();
-        assert!(unsupported(&row, &tables, 1, &weapon).is_empty());
-        assert!(!unsupported(&row, &tables, 2, &weapon).is_empty());
+        assert!(unsupported(&row, &tables, 1, &weapon, Style::Accurate).is_empty());
+        assert!(!unsupported(&row, &tables, 2, &weapon, Style::Accurate).is_empty());
         row.bespoke = true;
-        assert!(unsupported(&row, &tables, 1, &weapon)
+        assert!(unsupported(&row, &tables, 1, &weapon, Style::Accurate)
             .iter()
             .any(|r| r.contains("bespoke")));
         row.bespoke = false;
         row.poison_severity = Some(5);
-        assert!(unsupported(&row, &tables, 1, &weapon)
+        assert!(unsupported(&row, &tables, 1, &weapon, Style::Accurate)
             .iter()
             .any(|r| r.contains("poison changes")));
         row.poison_severity = Some(0);
         row.strength = None;
-        assert!(unsupported(&row, &tables, 1, &weapon)
+        assert!(unsupported(&row, &tables, 1, &weapon, Style::Accurate)
             .iter()
             .any(|r| r.contains("unknown NPC maximum")));
     }
@@ -894,10 +1870,17 @@ mod tests {
         let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let tables = CombatTables::build(selected).unwrap();
         let query = FightQuery {
+            label: None,
             npc: Selector::Name("Skeleton".into()),
             facts: PathBuf::from("not-read"),
             weapon: default_weapon(),
             style: Style::Accurate,
+            worn_items: Vec::new(),
+            food: None,
+            ammunition: None,
+            spell: None,
+            food_count: 0,
+            free_slots: 28,
             candidate: None,
             npc_count: 1,
             player_initiates: false,
@@ -907,7 +1890,7 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("ambiguous"));
-        assert_eq!(Stats::policy(1).hitpoints, 10);
-        assert_eq!(Stats::policy(11).hitpoints, 11);
+        assert_eq!(Stats::policy(1, Style::Accurate).hitpoints, 10);
+        assert_eq!(Stats::policy(11, Style::Accurate).hitpoints, 11);
     }
 }

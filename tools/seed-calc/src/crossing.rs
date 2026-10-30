@@ -18,6 +18,10 @@ use thiserror::Error;
 
 const FIRST_LEVEL: u8 = 1;
 const LAST_LEVEL: u8 = 99;
+const POLICY_C_BASE_LEVEL: u8 = 40;
+const LOBSTER_ID: i32 = 379;
+const MELEE_KIT: [i32; 5] = [1163, 1113, 1079, 1201, 1333];
+const MELEE_SHIELD_ID: i32 = 1201;
 
 /// One product route query. Zone names are exact pack identities, not labels.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -26,6 +30,11 @@ pub struct CrossQuery {
     pub from: [i32; 3],
     pub to: [i32; 3],
     pub zones: Vec<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+    /// Search held lobsters from zero through this limit at the policy-C seed.
+    #[serde(default)]
+    pub lobster_search_limit: Option<u8>,
     #[serde(default)]
     pub route_state: RouteState,
 }
@@ -41,6 +50,7 @@ pub struct RouteState {
     pub completed_quests: Vec<String>,
     #[serde(deserialize_with = "numeric_map")]
     pub inventory: BTreeMap<i32, i32>,
+    pub worn: Vec<i32>,
 }
 
 // Internally tagged Query deserialization buffers JSON keys as strings.
@@ -90,6 +100,7 @@ pub struct CrossCandidate {
     pub hp: u8,
     pub defence: u8,
     pub combat_level: u8,
+    pub food_count: Option<u8>,
     pub admitted: bool,
     pub verdict: CrossVerdict,
     pub refusal: Option<String>,
@@ -102,6 +113,7 @@ pub struct CrossCandidate {
 pub enum CrossStatus {
     Admitted,
     NoAdmissionThrough99 { at_99: CrossCandidate },
+    NoAdmissionWithinFoodSlots { at_limit: CrossCandidate },
 }
 
 /// Product route zones and the first candidate accepted by host admission.
@@ -111,6 +123,9 @@ pub struct CrossThreshold {
     pub lowest_level: Option<u8>,
     pub lowest_hp: Option<u8>,
     pub defence: Option<u8>,
+    pub food_search_limit: Option<u8>,
+    pub lowest_food_count: Option<u8>,
+    pub available_food_slots: Option<u8>,
     /// Whether the product risk input uses Defence directly. It currently does not.
     pub defence_used_directly_by_risk: bool,
     pub below_floor: Option<CrossCandidate>,
@@ -127,6 +142,29 @@ impl CrossThreshold {
             self.route_zones.join(", ")
         };
         match &self.status {
+            CrossStatus::Admitted if self.lowest_food_count.is_some() => {
+                let Some(at_floor) = self.at_floor.as_ref() else {
+                    return format!("crossing: inconsistent food admission; route zones: {zones}");
+                };
+                let food_count = self.lowest_food_count.unwrap_or_default();
+                let below = self.below_floor.as_ref().map_or_else(
+                    || "no lower food count".to_owned(),
+                    |candidate| {
+                        format!(
+                            "N={} refused ({:?}: {})",
+                            candidate.food_count.unwrap_or_default(),
+                            candidate.verdict,
+                            candidate.refusal.as_deref().unwrap_or("no refusal detail"),
+                        )
+                    },
+                );
+                format!(
+                    "crossing: minimum lobster count N={food_count} at base40, admitted ({:?}); below: {below}; search limit={}, available slots={}; risk reads the shield flag but not other worn armour; route zones: {zones}",
+                    at_floor.verdict,
+                    self.food_search_limit.unwrap_or_default(),
+                    self.available_food_slots.unwrap_or_default(),
+                )
+            }
             CrossStatus::Admitted => {
                 match (&self.at_floor, self.lowest_level, self.lowest_hp, self.defence) {
                     (Some(at_floor), Some(level), Some(hp), Some(defence)) => {
@@ -163,6 +201,14 @@ impl CrossThreshold {
                 at_99.refusal.as_deref().unwrap_or("none"),
                 self.defence_used_directly_by_risk,
             ),
+            CrossStatus::NoAdmissionWithinFoodSlots { at_limit } => format!(
+                "crossing: no admission for N=0..{} ({} free slots); at N={} verdict={:?} refusal={}; route zones: {zones}",
+                self.food_search_limit.unwrap_or_default(),
+                self.available_food_slots.unwrap_or_default(),
+                at_limit.food_count.unwrap_or_default(),
+                at_limit.verdict,
+                at_limit.refusal.as_deref().unwrap_or("none"),
+            ),
         }
     }
 }
@@ -195,14 +241,19 @@ pub enum CrossError {
 /// Consent admission and no-grant survivability are different product decisions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CrossResult {
+    pub label: Option<String>,
     pub declared_cross_admission: CrossThreshold,
     pub ungranted_survivability: CrossThreshold,
 }
 
 impl CrossResult {
     pub fn summary(&self) -> String {
+        let label = self
+            .label
+            .as_deref()
+            .map_or_else(String::new, |label| format!("{label}: "));
         format!(
-            "declared {}; ungranted survivability {}",
+            "{label}declared {}; ungranted survivability {}",
             self.declared_cross_admission.summary(),
             self.ungranted_survivability.summary(),
         )
@@ -213,6 +264,7 @@ struct EvaluatedCandidate {
     level: u8,
     hp: u8,
     combat_level: u8,
+    food_count: Option<u8>,
     assessment: Option<Arc<RouteAssessment>>,
     admitted: bool,
     route_refusal: Option<String>,
@@ -225,9 +277,22 @@ pub fn calculate(query: &CrossQuery) -> Result<CrossResult, CrossError> {
         path: query.navpack.clone(),
         source,
     })?;
+    let (declared_cross_admission, ungranted_survivability) =
+        if let Some(limit) = query.lobster_search_limit {
+            (
+                calculate_food_in_world(query, &world, true, limit)?,
+                calculate_food_in_world(query, &world, false, limit)?,
+            )
+        } else {
+            (
+                calculate_in_world(query, &world, true)?,
+                calculate_in_world(query, &world, false)?,
+            )
+        };
     Ok(CrossResult {
-        declared_cross_admission: calculate_in_world(query, &world, true)?,
-        ungranted_survivability: calculate_in_world(query, &world, false)?,
+        label: query.label.clone(),
+        declared_cross_admission,
+        ungranted_survivability,
     })
 }
 
@@ -270,6 +335,7 @@ fn calculate_in_world(
                         level,
                         hp,
                         combat_level,
+                        food_count: None,
                         assessment: Some(assessment),
                         admitted,
                         route_refusal: None,
@@ -280,6 +346,7 @@ fn calculate_in_world(
                     level,
                     hp,
                     combat_level,
+                    food_count: None,
                     assessment: None,
                     admitted: false,
                     route_refusal: Some(format!("NoRoute({reason:?})")),
@@ -299,6 +366,9 @@ fn calculate_in_world(
                 lowest_level: Some(level),
                 lowest_hp: Some(hp),
                 defence: Some(level),
+                food_search_limit: None,
+                lowest_food_count: None,
+                available_food_slots: None,
                 defence_used_directly_by_risk: false,
                 below_floor,
                 at_floor: Some(at_floor),
@@ -320,11 +390,152 @@ fn calculate_in_world(
         lowest_level: None,
         lowest_hp: None,
         defence: None,
+        food_search_limit: None,
+        lowest_food_count: None,
+        available_food_slots: None,
         defence_used_directly_by_risk: false,
         below_floor: None,
         at_floor: None,
         status: CrossStatus::NoAdmissionThrough99 {
             at_99: candidate(&at_99),
+        },
+    })
+}
+
+fn calculate_food_in_world(
+    query: &CrossQuery,
+    world: &NavWorld,
+    consent: bool,
+    requested_limit: u8,
+) -> Result<CrossThreshold, CrossError> {
+
+    let missing_item = MELEE_KIT
+        .iter()
+        .find(|&&id| !query.route_state.worn.contains(&id));
+    if let Some(id) = missing_item {
+        return Err(CrossError::InvalidState(format!(
+            "policy-C crossing search requires melee kit item {id} worn"
+        )));
+    }
+    if query.route_state.inventory.contains_key(&LOBSTER_ID) {
+        return Err(CrossError::InvalidState(
+            "policy-C crossing search adds lobsters and rejects an existing lobster stack".into(),
+        ));
+    }
+
+    let from = tile(query.from);
+    let to = tile(query.to);
+    let zones = declared_zone_exemptions(world, &query.zones)?;
+    let options = FindOptions {
+        zones,
+        ..FindOptions::default()
+    };
+    let available_food_slots = inventory_free_slots(&query.route_state)?;
+    let food_search_limit = requested_limit.min(available_food_slots);
+    let mut state = player_state(&query.route_state)?;
+    for (stat, level) in [
+        (CombatStat::Attack, POLICY_C_BASE_LEVEL),
+        (CombatStat::Strength, POLICY_C_BASE_LEVEL),
+        (CombatStat::Defence, POLICY_C_BASE_LEVEL),
+        (CombatStat::Hitpoints, POLICY_C_BASE_LEVEL),
+        (CombatStat::Ranged, POLICY_C_BASE_LEVEL),
+        (CombatStat::Prayer, 1),
+        (CombatStat::Magic, POLICY_C_BASE_LEVEL),
+    ] {
+        state.stats.insert(stat.index() as i32, i32::from(level));
+    }
+    let hp = POLICY_C_BASE_LEVEL;
+    let combat_level = player_combat_level_base40();
+    state.combat_level = Some(i32::from(combat_level));
+
+    let mut previous = None;
+    for food_count in 0..=food_search_limit {
+        if food_count == 0 {
+            state.inv.remove(&LOBSTER_ID);
+        } else {
+            state.inv.insert(LOBSTER_ID, i32::from(food_count));
+        }
+        let free_slots = available_food_slots - food_count;
+        let evaluated =
+            match router::find_with(&world.collision, &world.graph, from, to, options, &state) {
+                Ok(route) => {
+                    let admission = product_admission(
+                        risk_input_with_food(
+                            from,
+                            hp,
+                            combat_level,
+                            free_slots,
+                            food_count,
+                            state.worn.contains(&MELEE_SHIELD_ID),
+                        ),
+                        if consent { zones } else { ZoneExempt::NONE },
+                    );
+                    let assessment = admission::assess(&route, world, &admission);
+                    let admitted = admission::permits(&route, world, &admission, &assessment);
+                    EvaluatedCandidate {
+                        level: BASE_LEVEL,
+                        hp,
+                        combat_level,
+                        food_count: Some(food_count),
+                        assessment: Some(assessment),
+                        admitted,
+                        route_refusal: None,
+                        reason: String::new(),
+                    }
+                }
+                Err(reason) => EvaluatedCandidate {
+                    level: BASE_LEVEL,
+                    hp,
+                    combat_level,
+                    food_count: Some(food_count),
+                    assessment: None,
+                    admitted: false,
+                    route_refusal: Some(format!("NoRoute({reason:?})")),
+                    reason: format!("Product route unavailable: {reason:?}"),
+                },
+            };
+        if evaluated.admitted {
+            let assessment = evaluated
+                .assessment
+                .as_ref()
+                .ok_or(CrossError::MissingAssessment)?;
+            return Ok(CrossThreshold {
+                route_zones: product_route_zones(world, assessment)?,
+                lowest_level: Some(BASE_LEVEL),
+                lowest_hp: Some(hp),
+                defence: Some(BASE_LEVEL),
+                food_search_limit: Some(food_search_limit),
+                lowest_food_count: Some(food_count),
+                available_food_slots: Some(available_food_slots),
+                defence_used_directly_by_risk: false,
+                below_floor: previous.as_ref().map(candidate),
+                at_floor: Some(candidate(&evaluated)),
+                status: CrossStatus::Admitted,
+            });
+        }
+        previous = Some(evaluated);
+    }
+
+    let Some(at_limit) = previous else {
+        return Err(CrossError::NoCandidateLevels);
+    };
+    let route_zones = match at_limit.assessment.as_ref() {
+        Some(assessment) => product_route_zones(world, assessment)?,
+        None => Vec::new(),
+    };
+    Ok(CrossThreshold {
+        route_zones,
+        lowest_level: None,
+        lowest_hp: None,
+        defence: None,
+        food_search_limit: Some(food_search_limit),
+        lowest_food_count: None,
+        available_food_slots: Some(available_food_slots),
+        defence_used_directly_by_risk: false,
+        below_floor: None,
+        at_floor: None,
+        status: CrossStatus::NoAdmissionWithinFoodSlots {
+            at_limit: candidate(&at_limit),
         },
     })
 }
@@ -389,6 +600,8 @@ fn product_admission(input: RiskInput, grants: ZoneExempt) -> Admission {
 }
 
 fn player_state(profile: &RouteState) -> Result<WorldState, CrossError> {
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .map_err(|error| CrossError::InvalidState(format!("{error:?}")))?;
     let mut state = WorldState::empty();
     state.inventory_ready = true;
     state.equipment_ready = true;
@@ -396,6 +609,19 @@ fn player_state(profile: &RouteState) -> Result<WorldState, CrossError> {
     state
         .inv
         .extend(profile.inventory.iter().map(|(&id, &count)| (id, count)));
+    for &id in &profile.worn {
+        let item = selected
+            .items()
+            .iter()
+            .find(|item| item.id == id)
+            .ok_or_else(|| CrossError::InvalidState(format!("unknown worn item {id}")))?;
+        if item.wear_position < 0 && item.wear_position_2 < 0 && item.wear_position_3 < 0 {
+            return Err(CrossError::InvalidState(format!(
+                "item {id} cannot be worn"
+            )));
+        }
+        state.worn.insert(id);
+    }
     state
         .varps
         .extend(profile.varps.iter().map(|(&id, &value)| (id, value)));
@@ -456,9 +682,36 @@ fn player_combat_level(defence: u8, hp: u8) -> u8 {
     ((5 * sum + 13) / 20) as u8
 }
 
+/// Match Player.getCombatLevel with all six combat stats at 40 and Prayer at 1.
+fn player_combat_level_base40() -> u8 {
+    let level = 40u16;
+    let style = (level + level).max(level + level / 2);
+    let sum = level + level + 1 / 2;
+    ((10 * sum + 13 * style) / 40) as u8
+}
+
 fn risk_input(from: WorldTile, hp: u8, combat_level: u8, free_slots: u8) -> RiskInput {
+    risk_input_with_food(from, hp, combat_level, free_slots, 0, false)
+}
+
+fn risk_input_with_food(
+    from: WorldTile,
+    hp: u8,
+    combat_level: u8,
+    free_slots: u8,
+    food_count: u8,
+    worn_shield: bool,
+) -> RiskInput {
+    let (food_ids, food_counts, food_len) = if food_count == 0 {
+        ([0; 6], [0; 6], 0)
+    } else {
+        ([LOBSTER_ID, 0, 0, 0, 0, 0], [food_count, 0, 0, 0, 0, 0], 1)
+    };
     RiskInput {
         pos: from,
+        food_ids,
+        food_counts,
+        food_len,
         poison: PoisonState::Clear,
         hp,
         hp_max: hp,
@@ -470,7 +723,7 @@ fn risk_input(from: WorldTile, hp: u8, combat_level: u8, free_slots: u8) -> Risk
         run: true,
         other_prayers_on: false,
         off_debt: false,
-        worn_shield: false,
+        worn_shield,
         missing_facts: false,
         unattributed: false,
         input_locked: false,
@@ -509,6 +762,7 @@ fn candidate(value: &EvaluatedCandidate) -> CrossCandidate {
         hp: value.hp,
         defence: value.level,
         combat_level: value.combat_level,
+        food_count: value.food_count,
         admitted: value.admitted,
         verdict,
         refusal,
@@ -601,6 +855,8 @@ mod tests {
             from: [0, 1, 0],
             to: [21, 1, 0],
             zones,
+            label: None,
+            lobster_search_limit: None,
             route_state: RouteState::default(),
         }
     }
@@ -641,6 +897,19 @@ mod tests {
     fn fresh_profile_combat_level_matches_engine_formula() {
         assert_eq!(player_combat_level(1, 10), 3);
         assert_eq!(player_combat_level(99, 99), 50);
+        assert_eq!(player_combat_level_base40(), 46);
+    }
+
+    #[test]
+    fn policy_c_crossing_input_uses_base40_lobsters_and_shield() {
+        let input = risk_input_with_food(tile(0, 1), 40, 46, 23, 5, true);
+
+        assert_eq!(input.hp, 40);
+        assert_eq!(input.hp_max, 40);
+        assert_eq!(input.combat, Some(46));
+        assert_eq!(input.free_slots, 23);
+        assert_eq!(input.food_iter().collect::<Vec<_>>(), [(LOBSTER_ID, 5)]);
+        assert!(input.worn_shield);
     }
 
     #[test]
@@ -650,12 +919,14 @@ mod tests {
             varps: BTreeMap::from([(188, 15), (347, 10)]),
             completed_quests: vec!["Hero's Quest".into(), "The Fremennik Trials".into()],
             inventory: BTreeMap::from([(995, 15), (1265, 1), (1351, 1)]),
+            worn: vec![1333],
         };
         let state = player_state(&profile).unwrap();
         assert_eq!(state.stats.get(&14), Some(&15));
         assert_eq!(state.varps.get(&347), Some(&10));
         assert!(state.quests.contains("Hero's Quest"));
         assert_eq!(state.inv.get(&995), Some(&15));
+        assert!(state.worn.contains(&1333));
         assert!(state.quest_evidence.is_none());
         assert_eq!(inventory_free_slots(&profile).unwrap(), 25);
         let query = crate::Query::Crossing(CrossQuery {
@@ -668,6 +939,7 @@ mod tests {
         };
         assert_eq!(decoded.route_state.inventory, profile.inventory);
         assert_eq!(decoded.route_state.skills, profile.skills);
+        assert_eq!(decoded.route_state.worn, profile.worn);
         profile.skills.insert(0, 99);
         assert!(player_state(&profile).is_err());
         profile.inventory.insert(1351, 29);
@@ -691,6 +963,45 @@ mod tests {
         let candidate = result.at_floor.expect("declared crossing admitted");
         assert!(candidate.admitted);
         assert_ne!(candidate.verdict, CrossVerdict::Survivable);
+    }
+
+    #[test]
+    fn policy_c_search_reports_first_food_admission_or_full_refusal() {
+        let world = fixture_world();
+        let mut query = fixture_query(declared_fixture_zones());
+        query.route_state.worn = MELEE_KIT.to_vec();
+        let threshold = calculate_food_in_world(&query, &world, false, 4)
+            .expect("fixed policy-C crossing search");
+
+        assert_eq!(threshold.food_search_limit, Some(4));
+        assert_eq!(threshold.available_food_slots, Some(28));
+        match threshold.status {
+            CrossStatus::Admitted => {
+                let count = threshold
+                    .lowest_food_count
+                    .expect("an admitted food search has a threshold");
+                assert_eq!(threshold.lowest_level, Some(POLICY_C_BASE_LEVEL));
+                assert_eq!(threshold.lowest_hp, Some(POLICY_C_BASE_LEVEL));
+                assert_eq!(threshold.defence, Some(POLICY_C_BASE_LEVEL));
+                let at_floor = threshold.at_floor.expect("admitted candidate");
+                assert_eq!(at_floor.food_count, Some(count));
+                assert!(at_floor.admitted);
+                if let Some(below) = threshold.below_floor {
+                    assert_eq!(below.food_count, Some(count - 1));
+                    assert!(!below.admitted);
+                } else {
+                    assert_eq!(count, 0);
+                }
+            }
+            CrossStatus::NoAdmissionWithinFoodSlots { at_limit } => {
+                assert_eq!(threshold.lowest_food_count, None);
+                assert_eq!(at_limit.food_count, Some(4));
+                assert!(!at_limit.admitted);
+            }
+            CrossStatus::NoAdmissionThrough99 { .. } => {
+                panic!("fixed food search must not use the level-search status")
+            }
+        }
     }
 
     #[test]
@@ -736,6 +1047,8 @@ mod tests {
                 from,
                 to,
                 zones: zones.into_iter().map(str::to_owned).collect(),
+                label: None,
+                lobster_search_limit: None,
                 route_state: RouteState::default(),
             };
             let result = calculate(&query).expect("reference route must be calculable");
