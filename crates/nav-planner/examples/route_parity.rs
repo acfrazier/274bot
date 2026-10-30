@@ -364,7 +364,11 @@ fn main() -> Result<(), String> {
         }
     }
     for (area_name, exact_name, allow_teleports) in [
-        ("waterfall_area_teles_off", "waterfall_exact_teles_off", false),
+        (
+            "waterfall_area_teles_off",
+            "waterfall_exact_teles_off",
+            false,
+        ),
         ("waterfall_area_teles_on", "waterfall_exact_teles_on", true),
     ] {
         let options = FindOptions {
