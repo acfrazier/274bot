@@ -1134,6 +1134,7 @@ pub(crate) fn imp_plan_run_for_runner(cx: &mut StepContext<'_, '_>) -> Box<dyn S
         loot: run.loot,
         finish: None,
         until_drop: None,
+        reengage_budget: 0,
     }
     .begin(cx)
     .unwrap()
