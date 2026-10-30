@@ -99,11 +99,13 @@ fn matrix(world: &NavWorld, qualified: bool) -> Vec<serde_json::Value> {
                     .walkable_word(2788, 3189 + z as i32, level as i32) as u8;
         }
     }
-    let graph = TransportGraph {
+    let mut graph = TransportGraph {
         edges,
         quest_family: world.graph.quest_family,
         ..Default::default()
     };
+    graph.rebuild_index(&collision);
+    assert_eq!(graph.at.len(), 2, "both real takeoffs are indexed");
     let profiles = [
         (
             "phoenix_alfonse",
