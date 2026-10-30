@@ -1415,9 +1415,9 @@ fn drezel_advice_match_uses_rendered_widget_boundaries() {
     ]
     .map(str::to_owned);
     assert!(drezel_advice_page_matches(&warning));
-    assert!(!drezel_advice_page_matches(
-        &["Here, take it again, but please try and be more careful this time.".to_owned()]
-    ));
+    assert!(!drezel_advice_page_matches(&[
+        "Here, take it again, but please try and be more careful this time.".to_owned()
+    ]));
 }
 
 fn wait_for_drezel_advice_page(fixture: &LiveFixture) -> (ChatWitness, String, Vec<String>) {
