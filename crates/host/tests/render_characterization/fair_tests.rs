@@ -889,10 +889,10 @@ fn resource_failure_releases_before_overlay_and_retains_the_scene() {
             .is_some_and(|stats| stats.scene_consumes() == 2)
     });
     assert_eq!(failed.generation, first.generation);
-    assert!(matches!(
-        slot.output.refusal(),
-        Some(client::render::backend::RenderFault::Budget(_))
-    ));
+    assert_eq!(
+        slot.output.render_fault(),
+        Some(client::render::backend::RenderFault::InjectedResourceLimit)
+    );
     assert!(failed.stats.unwrap().has_valid_scene());
     assert_eq!(
         failed.stats.unwrap().scene_progress(),
