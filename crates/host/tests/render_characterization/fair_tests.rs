@@ -859,7 +859,9 @@ fn client_scene_lock_holder_blocks_only_the_try_lock_attempt() {
     assert!(!slot.event(RenderTestPoint::OverlayEntry).event.owns_lease);
     let failed = receive(&slot.completed, |completed| {
         completed.tick > first.tick
-            && completed.stats.is_some_and(|stats| stats.scene_consumes() == 2)
+            && completed
+                .stats
+                .is_some_and(|stats| stats.scene_consumes() == 2)
     });
     assert_eq!(failed.generation, first.generation);
     assert_eq!(failed.stats.unwrap().scene_consumes(), 2);
@@ -1265,7 +1267,9 @@ fn host_asset_contention_releases_before_overlays() {
     assert!(!peer.event(RenderTestPoint::OverlayEntry).event.owns_lease);
     let failed = receive(&peer.completed, |completed| {
         completed.tick > first.tick
-            && completed.stats.is_some_and(|stats| stats.scene_consumes() == 2)
+            && completed
+                .stats
+                .is_some_and(|stats| stats.scene_consumes() == 2)
     });
     assert_eq!(failed.generation, first.generation);
     let stats = failed.stats.unwrap();
