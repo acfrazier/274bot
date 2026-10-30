@@ -351,12 +351,13 @@ fn a_random_event_that_takes_the_hand_in_talk_over_resends_it_once_without_a_res
 
 /// QUESTER-READ-KEEPS-STEP-R3, finding R1.2, on the real compiled Cook path: a
 /// teleporting event takes the player out and back inside one observed tick
-/// while the hand-in's Talk-to is in flight. The host's two frames of that
-/// tick show the remote square and then the start tile, so the hold's ends
-/// show the same tile. The budget keeps the teleport flag through the return
-/// and the end of the hold; the runner takes it once, drops the in-flight
-/// step with progress and cursor kept, and the hand-in starts again from its
-/// own checks: one new Talk-to, and it completes.
+/// while the hand-in's Talk-to is in flight. The host's frames of that tick
+/// show the start tile, the remote square and then the start tile again, so
+/// the hold's ends show the same tile and every pair is zero ticks apart. The
+/// budget keeps the teleport flag through the return and the end of the hold;
+/// the runner takes it once, drops the in-flight step with progress and
+/// cursor kept, and the hand-in starts again from its own checks: one new
+/// Talk-to, and it completes.
 #[test]
 fn a_teleport_out_and_back_inside_one_tick_drops_the_talk_once_and_the_hand_in_recovers() {
     let mut fixture = CookDialogueFixture::new();
@@ -379,8 +380,11 @@ fn a_teleport_out_and_back_inside_one_tick_drops_the_talk_once_and_the_hand_in_r
         ours: true,
         npc_index: None,
     });
+    // One observed tick, three frames: the start tile before the hold, then
+    // the Maze square and the start tile again inside it. All three carry the
+    // same tick, so only the zero-elapsed comparison can see the teleport.
+    fixture.budget.observe_fix(tick, Some(start));
     fixture.budget.hold_begin();
-    // One observed tick, two frames: the Maze square, then the start tile.
     fixture.budget.observe_fix(tick, Some(tile(2893, 4555)));
     fixture.budget.observe_fix(tick, Some(start));
     fixture.budget.hold_end();

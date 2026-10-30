@@ -1196,12 +1196,13 @@ mod tests {
     /// Two frames with the same observed tick number are zero ticks apart,
     /// not an invalid pair: a jump out and back inside one tick is latched,
     /// the return frame does not clear it, and it is taken once after the
-    /// hold.
+    /// hold. The start, the jump and the return all carry tick 11, so only
+    /// the zero-elapsed comparison can see the jump.
     #[test]
     fn a_jump_out_and_back_inside_one_observed_tick_is_latched_and_taken_once() {
         let at = |x, z| Some(api::WorldTile { x, z, level: 0 });
         let mut budget = TickBudget::default();
-        budget.observe_fix(10, at(3209, 3215));
+        budget.observe_fix(11, at(3209, 3215));
         budget.hold_begin();
         budget.observe_fix(11, at(2893, 4555));
         budget.observe_fix(11, at(3209, 3215));
