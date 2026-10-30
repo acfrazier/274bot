@@ -1463,14 +1463,15 @@ mod tests {
 
     #[test]
     fn the_same_model_twice_stores_bit_identical_probabilities() {
-        // Every roll ends a full regeneration timer, so many paths fold into one state and each
-        // stored probability is a sum of several terms. Floating-point addition is not
-        // associative, so a map that visits those terms in a different order changes the last
-        // bits of the stored number.
-        let regen_step = |index: u8| {
+        // Every roll ends a full regeneration timer, so a state above the starting Hitpoints
+        // receives three terms in one merge pass: a success from itself, a failure from itself,
+        // and a success from the state below it. The chances below are not exact binary
+        // fractions once they multiply, so the three-term sums round, and the order in which a
+        // distribution visits its states changes the stored last bits.
+        let regen_step = |index: u8, successes: u16| {
             Operation::Bounded(BoundedStep {
                 id: format!("regen-{index}"),
-                attempts: 3,
+                attempts: 8,
                 stop: format!("regen-{index}-exhausted"),
                 hazard: Hazard {
                     id: "regen",
@@ -1489,16 +1490,19 @@ mod tests {
                     source: "test",
                     timing_note: "test",
                 }
-                .with_test_successes(96),
+                .with_test_successes(successes),
                 entries_per_parent_pass: 1,
             })
         };
-        let mut plan: Vec<Operation> = (1..=4u8).map(regen_step).collect();
+        let mut plan: Vec<Operation> = [(1u8, 1u16), (2, 255), (3, 161), (4, 96), (5, 63), (6, 200)]
+            .into_iter()
+            .map(|(index, successes)| regen_step(index, successes))
+            .collect();
         plan.push(Operation::Bounded(BoundedStep {
             id: "damage".into(),
-            attempts: 3,
+            attempts: 8,
             stop: "damage-exhausted".into(),
-            hazard: test_hazard(96, Damage::Fixed(3)),
+            hazard: test_hazard(161, Damage::Fixed(3)),
             entries_per_parent_pass: 1,
         }));
         let initial = State {
