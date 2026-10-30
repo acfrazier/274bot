@@ -5567,7 +5567,7 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
     };
     let mut run = combat_test_run_with_radius(
         imp_target(&data),
-        None,
+        Some(here),
         Some(Arc::new(NeverStop)),
         vec![
             LootItem {
