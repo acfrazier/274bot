@@ -3054,7 +3054,7 @@ pub(crate) fn route_prereq_content(
                 registered.push(gate.clone());
             }
         } else {
-            if gate.truth != Truth::True {
+            if gate.truth != api::selected::Truth::True {
                 return None;
             }
             if registered.is_none() {
