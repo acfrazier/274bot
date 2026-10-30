@@ -1170,42 +1170,27 @@ fn live_manual_prereq_holy_barrier_denied() {
     let fact = refusal_fact(&fixture, "priestperil", Duration::from_secs(180));
     assert_holy_barrier_refusal_fact(&fact);
     let terminal = assert_not_allowed_terminal(&fixture, Duration::from_secs(180));
-    wait_for(
-        &fixture.play,
-        &fixture.name,
-        "first manual WalkTo terminal log",
-        Duration::from_secs(30),
-        |_| {
-            let logs = slot_nav_logs(&fixture.name);
-            (logs
-                .iter()
-                .filter(|line| line.starts_with("WalkTo outcome=aborted "))
-                .count()
-                == 1)
-                .then_some(())
-        },
+    assert_eq!(
+        fixture.play.script_native_run(&fixture.name),
+        None,
+        "first manual WalkTo owner remains live after its terminal"
     );
     let second_route = manual_map_walk(&fixture, PREREQ_EAST);
-    let second_terminal = wait_for(
-        &fixture.play,
-        &fixture.name,
-        "second same-run manual WalkTo NotAllowed terminal",
+    let second_terminal = wait_for_manual_terminal(
+        &fixture,
+        fact.observed.run,
+        terminal.runtime_generation,
+        script::ScriptTerminalState::Failed,
         Duration::from_secs(180),
-        |play| {
-            let terminal = play.script_lifecycle_receipt(&fixture.name)?;
-            if terminal.state != script::ScriptTerminalState::Failed
-                || !terminal.reason.contains("NotAllowed")
-            {
-                return None;
-            }
-            let logs = slot_nav_logs(&fixture.name);
-            (logs
-                .iter()
-                .filter(|line| line.starts_with("WalkTo outcome=aborted "))
-                .count()
-                == 2)
-                .then_some(terminal)
-        },
+    );
+    assert!(
+        second_terminal.reason.contains("NotAllowed"),
+        "second same-run manual WalkTo did not retain the consent denial: {second_terminal:?}"
+    );
+    assert_eq!(
+        fixture.play.script_native_run(&fixture.name),
+        None,
+        "second manual WalkTo owner remains live after its terminal"
     );
     let retained_fact = refusal_fact(&fixture, "priestperil", Duration::from_secs(30));
     assert_eq!(
