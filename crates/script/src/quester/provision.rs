@@ -11,7 +11,16 @@
 //! and it is still open, because a Path step cannot act under the bank
 //! interface. It never closes a bank that was already open when its first trip
 //! began (the player's, or an earlier step's): that session is not its own.
-//! A Path step that needs the bank opens it again through the bank kernel.
+//!
+//! Ownership is a [`BankLease`]. It is recorded only when a frame shows the
+//! bank open after a trip of this provisioner began with the bank shut. It
+//! names the login session and the bank session generation it covers, so a
+//! relog, or a bank that was closed and opened again by someone else, makes it
+//! void. A trip that ends by error or cancel keeps an observed lease: the
+//! bank is still open, and the queue runner closes it through [`BankCloser`]
+//! when input is allowed again. An operator Stop sends nothing and discards
+//! the lease with the run. A Path step that needs the bank opens it again
+//! through the bank kernel.
 use super::compile::{
     CompiledAcquireRecipe, CompiledItemKind, CompiledProvisioning, StepContext, StepPlan, StepRun,
 };
@@ -22,7 +31,7 @@ use crate::acquire::{
     AcquireOutcome, AcquireRequest, NeedKind, OpenGate, Presence, SourceSet, WorldFacts,
 };
 use crate::bank::{self, ops};
-use crate::native::{ActionError, ActionHandle, NativeActions};
+use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeTick};
 use crate::native_bank::{BankAction, BankReceipt};
 use api::bank_memory::Origin;
 use api::selected::{FactKey, Truth};
@@ -92,6 +101,160 @@ pub enum ProvisionEvent {
     Blocked { item: Arc<str> },
 }
 
+/// The bank this Quester's own trips opened. It names the login session and
+/// the bank session generation of the frame that showed the bank open. Any
+/// other session or generation is somebody else's bank.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BankLease {
+    session: u64,
+    generation: u64,
+}
+
+impl BankLease {
+    pub(super) fn new(session: u64, generation: u64) -> Self {
+        Self {
+            session,
+            generation,
+        }
+    }
+}
+
+/// What the current frame says about a lease.
+enum LeaseView {
+    /// No lease, or the frame voided it (relog, bank shut, another session).
+    Absent,
+    /// The frame has no bank observation, so the lease is neither proved nor voided.
+    Unobserved,
+    /// The bank is open in the leased session.
+    Owned,
+}
+
+/// Reads the lease against the frame and drops it when the frame voids it.
+fn lease_view(cx: &ActionContext<'_>, lease: &mut Option<BankLease>) -> LeaseView {
+    let Some(held) = *lease else {
+        return LeaseView::Absent;
+    };
+    if held.session != cx.evidence().run.session {
+        *lease = None;
+        return LeaseView::Absent;
+    }
+    match cx.snapshot().bank_session() {
+        None => LeaseView::Unobserved,
+        Some(view) if view.value.open && view.value.generation == held.generation => {
+            LeaseView::Owned
+        }
+        Some(_) => {
+            *lease = None;
+            LeaseView::Absent
+        }
+    }
+}
+
+/// How one drive of a [`BankCloser`] ended.
+pub(super) enum Closed {
+    /// No bank is owed a close (none leased, voided, or no frame to judge by).
+    Done,
+    Pending,
+    /// The close is given up and the lease dropped, so the failure is final.
+    Failed(ActionError),
+}
+
+/// Closes the bank a [`BankLease`] covers, through the bank kernel's own
+/// close. Its wait counts observed game ticks, with an active-time floor. A
+/// close that times out is begun again, up to `MAX_CLOSE_ATTEMPTS`. It sends
+/// nothing without a lease the frame still proves.
+#[derive(Default)]
+pub(super) struct BankCloser {
+    handle: Option<Box<ActionHandle<bank::Close>>>,
+    attempts: u8,
+}
+
+impl BankCloser {
+    pub(super) fn active(&self) -> bool {
+        self.handle.is_some()
+    }
+
+    /// Drops the close in flight. Dropping revokes it before the host can dispatch it.
+    pub(super) fn cancel(&mut self) {
+        self.handle = None;
+        self.attempts = 0;
+    }
+
+    pub(super) fn drive(
+        &mut self,
+        tick: &mut NativeTick<'_>,
+        lease: &mut Option<BankLease>,
+    ) -> Closed {
+        if let Some(handle) = self.handle.take() {
+            match tick.actions.poll(&handle, &mut tick.cx) {
+                Poll::Pending => {
+                    self.handle = Some(handle);
+                    return Closed::Pending;
+                }
+                Poll::Ready(Ok(())) => {
+                    *lease = None;
+                    self.attempts = 0;
+                    return Closed::Done;
+                }
+                // The bank did not shut in time, its session was replaced, or
+                // the action owner refused: judge the frame again.
+                Poll::Ready(Err(
+                    ActionError::Busy
+                    | ActionError::Held
+                    | ActionError::Stale
+                    | ActionError::Cancelled
+                    | ActionError::BudgetExhausted,
+                )) => {}
+                Poll::Ready(Err(ActionError::Failed(message)))
+                    if message.as_ref() == "bank did not close"
+                        || message.starts_with("bank session replaced") => {}
+                Poll::Ready(Err(error)) => {
+                    *lease = None;
+                    self.attempts = 0;
+                    return Closed::Failed(error);
+                }
+            }
+        }
+        match lease_view(&tick.cx, lease) {
+            LeaseView::Absent => {
+                self.attempts = 0;
+                return Closed::Done;
+            }
+            LeaseView::Unobserved => return Closed::Done,
+            LeaseView::Owned => {}
+        }
+        if !tick.cx.may_continue_this_tick() {
+            return Closed::Pending;
+        }
+        if self.attempts >= MAX_CLOSE_ATTEMPTS {
+            self.attempts = 0;
+            *lease = None;
+            return Closed::Failed(ActionError::Failed(Arc::from(format!(
+                "bank-close-failed: bank did not close after {MAX_CLOSE_ATTEMPTS} attempts"
+            ))));
+        }
+        match tick.actions.begin::<bank::Close>((), &mut tick.cx) {
+            Ok(handle) => {
+                self.attempts += 1;
+                self.handle = Some(Box::new(handle));
+                Closed::Pending
+            }
+            Err(
+                ActionError::Busy
+                | ActionError::Held
+                | ActionError::Stale
+                | ActionError::Cancelled
+                | ActionError::BudgetExhausted,
+            ) => Closed::Pending,
+            Err(error) => {
+                self.attempts = 0;
+                *lease = None;
+                Closed::Failed(error)
+            }
+        }
+    }
+}
+
 pub struct Provisioner {
     path: Option<api::selected::FactKey>,
     bank_run: Option<AcquireRun>,
@@ -105,10 +268,15 @@ pub struct Provisioner {
     /// Bank trips started so far (wrapping), so the runner can trace a trip
     /// that began and ended within one poll.
     bank_starts: u32,
-    /// A trip of this provisioner opened the bank and its session has not ended.
-    session_open: bool,
-    close_run: Option<ActionHandle<bank::Close>>,
-    close_attempts: u8,
+    /// The provisioner has started bank trips and has not reached the end of
+    /// that session, the close included. A lease outside a session is owed to
+    /// the queue runner, which closes it.
+    in_session: bool,
+    /// A trip began with the bank shut and no frame has shown it open yet.
+    opening: bool,
+    /// The bank this provisioner's trips opened, once a frame showed it open.
+    lease: Option<BankLease>,
+    closer: BankCloser,
     /// Optional needs already logged as unmet since the last path reset.
     unmet_logged: Vec<UnmetNeed>,
 }
@@ -132,14 +300,35 @@ impl Provisioner {
             status: Status::default(),
             revision: 0,
             bank_starts: 0,
-            session_open: false,
-            close_run: None,
-            close_attempts: 0,
+            in_session: false,
+            opening: false,
+            lease: None,
+            closer: BankCloser::default(),
             unmet_logged: Vec::new(),
         }
     }
 
     pub fn poll(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+        plan: &CompiledProvisioning,
+        active_loadout: Option<&str>,
+        current_stage: Option<&FactKey>,
+    ) -> Poll<Result<ProvisionEvent, ActionError>> {
+        let result = self.poll_inner(cx, plan, active_loadout, current_stage);
+        // An error, or a return to the Path, ends the session. The lease stays
+        // with this provisioner for the queue runner to close.
+        if matches!(
+            result,
+            Poll::Ready(Err(_) | Ok(ProvisionEvent::Ready | ProvisionEvent::Blocked { .. }))
+        ) {
+            self.in_session = false;
+            self.opening = false;
+        }
+        result
+    }
+
+    fn poll_inner(
         &mut self,
         cx: &mut StepContext<'_, '_>,
         plan: &CompiledProvisioning,
@@ -157,12 +346,13 @@ impl Provisioner {
             self.path = Some(plan.path.clone());
             self.set_coin_drawn(plan.coin_float <= 0);
         }
+        self.observe_bank(cx.tick);
 
-        if self.close_run.is_some() {
-            match self.poll_close(cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(())) => {}
+        if self.closer.active() {
+            match self.closer.drive(cx.tick, &mut self.lease) {
+                Closed::Pending => return Poll::Pending,
+                Closed::Failed(error) => return Poll::Ready(Err(error)),
+                Closed::Done => {}
             }
         }
         if self.bank_run.is_some() {
@@ -186,9 +376,12 @@ impl Provisioner {
             if self.bank_run.is_some() {
                 return self.poll_bank(cx);
             }
-            if self.close_run.is_some() {
-                return match self.poll_close(cx) {
-                    Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            if self.closer.active() {
+                return match self.closer.drive(cx.tick, &mut self.lease) {
+                    Closed::Failed(error) => {
+                        self.in_session = false;
+                        Poll::Ready(Err(error))
+                    }
                     _ => Poll::Pending,
                 };
             }
@@ -199,10 +392,15 @@ impl Provisioner {
         prepared
     }
 
+    /// Stops this provisioner's runs. It sends nothing. A lease that a frame
+    /// showed open stays: that bank is still open and still ours. A trip that
+    /// was cancelled before any frame showed its bank open owns nothing.
     pub fn cancel(&mut self) {
         self.bank_run = None;
         self.acquire_run = None;
-        self.close_run = None;
+        self.closer.cancel();
+        self.in_session = false;
+        self.opening = false;
         self.acquire_finished = false;
         self.set_status(
             ProvisionPhase::Idle,
@@ -221,15 +419,14 @@ impl Provisioner {
         if let Some(mut run) = self.acquire_run.take() {
             run.cancel(actions);
         }
-        if let Some(handle) = self.close_run.take() {
-            actions.cancel(handle);
-        }
+        self.closer.cancel();
+        self.in_session = false;
+        self.opening = false;
         self.acquire_finished = false;
         self.path = None;
         self.set_coin_drawn(false);
         self.set_carry_drawn(0);
         self.attempts = 0;
-        self.close_attempts = 0;
         self.unmet_logged.clear();
         self.set_status(ProvisionPhase::Idle, None, 0, 0, None, false);
     }
@@ -247,16 +444,37 @@ impl Provisioner {
     }
 
     pub(super) fn bank_phase(&self) -> Option<ProvisionPhase> {
-        (self.bank_run.is_some() || self.close_run.is_some()).then_some(self.status.phase)
+        (self.bank_run.is_some() || self.closer.active()).then_some(self.status.phase)
     }
 
     pub(super) fn bank_starts(&self) -> u32 {
         self.bank_starts
     }
 
-    /// This provisioner's trips opened a bank that its session has not closed yet.
+    /// This provisioner's trips are running, or its close of their bank is.
     pub(super) fn session_open(&self) -> bool {
-        self.session_open
+        self.in_session
+    }
+
+    /// The bank this provisioner's trips opened, while a frame last showed it open.
+    pub(super) fn bank_lease(&self) -> Option<BankLease> {
+        self.lease
+    }
+
+    /// Hands the lease of an ended session to the queue runner, which closes
+    /// it. `None` while a session is running: the provisioner closes that one.
+    pub(super) fn take_unowned_lease(&mut self) -> Option<BankLease> {
+        if self.in_session {
+            None
+        } else {
+            self.lease.take()
+        }
+    }
+
+    /// Test fixture for a session that left its bank open before the test begins.
+    #[cfg(test)]
+    pub(super) fn set_lease_for_test(&mut self, lease: BankLease) {
+        self.lease = Some(lease);
     }
 
     pub(super) fn take_trace_event(&mut self) -> Option<super::compile::StepTraceEvent> {
@@ -278,7 +496,7 @@ impl Provisioner {
     /// A bank or acquisition run is live and may own an open dialogue.
     pub(super) fn run_live(&self) -> bool {
         self.bank_run.is_some()
-            || self.close_run.is_some()
+            || self.closer.active()
             || (self.acquire_run.is_some() && !self.acquire_finished)
     }
 
@@ -805,9 +1023,8 @@ impl Provisioner {
         pack: i32,
         bank: Option<i32>,
     ) {
-        if !self.session_open && !bank_open(&cx.tick.cx) {
-            self.session_open = true;
-        }
+        self.in_session = true;
+        self.opening = !bank_open(&cx.tick.cx);
         let request = AcquireRequest::bank_actions(
             plan.bank,
             plan.bank_required,
@@ -826,64 +1043,48 @@ impl Provisioner {
         self.set_status(phase, item, need, pack, bank, bank_known(cx));
     }
 
-    /// Ends the bank session: closes the bank this provisioner's trips opened.
-    /// `None` means nothing is left to close. Otherwise the result is the
-    /// poll result to return while the close runs. The close waits for the
-    /// modal root to go away in observed game ticks, in the bank kernel.
+    /// Ends the bank session: closes the bank this provisioner's trips opened
+    /// and a frame still shows open. `None` means nothing is left to close.
+    /// Otherwise the result is the poll result to return while the close runs.
     fn end_session(
         &mut self,
         cx: &mut StepContext<'_, '_>,
     ) -> Option<Poll<Result<ProvisionEvent, ActionError>>> {
-        if !self.session_open {
-            return None;
-        }
-        if !bank_open(&cx.tick.cx) {
-            self.session_open = false;
-            return None;
-        }
-        if !cx.tick.cx.may_continue_this_tick() {
-            return Some(Poll::Pending);
-        }
-        if self.close_attempts >= MAX_CLOSE_ATTEMPTS {
-            self.close_attempts = 0;
-            return Some(Poll::Ready(Err(ActionError::Failed(Arc::from(format!(
-                "bank-close-failed: bank did not close after {MAX_CLOSE_ATTEMPTS} attempts"
-            ))))));
-        }
-        match cx.tick.actions.begin::<bank::Close>((), &mut cx.tick.cx) {
-            Ok(handle) => {
-                self.close_attempts += 1;
-                self.close_run = Some(handle);
-                self.set_status(ProvisionPhase::Closing, None, 0, 0, None, bank_known(cx));
+        match self.closer.drive(cx.tick, &mut self.lease) {
+            Closed::Done => {
+                self.in_session = false;
+                None
+            }
+            Closed::Pending => {
+                if self.closer.active() {
+                    self.set_status(ProvisionPhase::Closing, None, 0, 0, None, bank_known(cx));
+                }
                 Some(Poll::Pending)
             }
-            Err(error) => Some(Poll::Ready(Err(error))),
+            Closed::Failed(error) => {
+                self.in_session = false;
+                Some(Poll::Ready(Err(error)))
+            }
         }
     }
 
-    fn poll_close(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<(), ActionError>> {
-        let Some(handle) = self.close_run.take() else {
-            return Poll::Ready(Ok(()));
+    /// Records the lease when a frame first shows the bank open after a trip
+    /// of this provisioner began with it shut. Within the session, a bank that
+    /// the kernel reopened is the same lease under a new generation.
+    fn observe_bank(&mut self, tick: &NativeTick<'_>) {
+        let Some(view) = tick.cx.snapshot().bank_session().map(|seen| seen.value) else {
+            return;
         };
-        match cx.tick.actions.poll(&handle, &mut cx.tick.cx) {
-            Poll::Pending => {
-                self.close_run = Some(handle);
-                Poll::Pending
-            }
-            Poll::Ready(Ok(())) => {
-                self.session_open = false;
-                self.close_attempts = 0;
-                Poll::Ready(Ok(()))
-            }
-            // The next end of session begins another close, up to the cap.
-            Poll::Ready(Err(ActionError::Failed(message)))
-                if message.as_ref() == "bank did not close" =>
-            {
-                Poll::Ready(Ok(()))
-            }
-            Poll::Ready(Err(error)) => {
-                self.close_attempts = 0;
-                Poll::Ready(Err(error))
+        if !view.open {
+            return;
+        }
+        let session = tick.cx.evidence().run.session;
+        if self.opening {
+            self.lease = Some(BankLease::new(session, view.generation));
+            self.opening = false;
+        } else if self.in_session {
+            if let Some(lease) = self.lease.as_mut().filter(|lease| lease.session == session) {
+                lease.generation = view.generation;
             }
         }
     }
@@ -3685,5 +3886,343 @@ mod tests {
             "{}",
             lines[0].message
         );
+    }
+
+    fn scan_plan(bank: NamedBank) -> CompiledProvisioning {
+        provisioning(
+            vec![compiled_item(
+                42,
+                "Quest token",
+                1,
+                CompiledItemKind::MustHave,
+                None,
+            )],
+            Some(bank),
+        )
+    }
+
+    /// A plan that needs no bank trip, so polling it only ends a session.
+    fn owned_plan() -> CompiledProvisioning {
+        let mut plan = provisioning(Vec::new(), None);
+        plan.owns_inventory = true;
+        plan
+    }
+
+    fn closes_sent(ledger: &Option<Box<ledger::Ledger>>) -> usize {
+        ledger.as_ref().map_or(0, |ledger| {
+            ledger
+                .outbox
+                .iter()
+                .filter(|action| {
+                    matches!(
+                        &action.effect,
+                        HostEffect::Interaction(crate::shim::InteractReq::Close)
+                    )
+                })
+                .count()
+        })
+    }
+
+    /// A scan trip to the point where a frame shows the bank open and the
+    /// kernel waits on a table that never arrives. Returns the tick reached.
+    #[allow(clippy::too_many_arguments)] // Explicit fixture inputs mirror the production poll context.
+    fn open_the_bank_without_a_table(
+        provisioner: &mut Provisioner,
+        snapshot: &mut GameSnapshot,
+        ledger: &mut Option<Box<ledger::Ledger>>,
+        plan: &CompiledProvisioning,
+        banks: &Arc<NamedBankFacts>,
+        bank: NamedBank,
+    ) -> u64 {
+        let memory = BankMemory::default();
+        let quests = quest_catalog();
+        assert!(poll_once(
+            provisioner,
+            snapshot,
+            ledger,
+            1,
+            plan,
+            None,
+            &memory,
+            banks,
+            &quests
+        )
+        .is_pending());
+        complete_bank_pick(ledger, bank, bank.tile, 1);
+        assert!(poll_once(
+            provisioner,
+            snapshot,
+            ledger,
+            2,
+            plan,
+            None,
+            &memory,
+            banks,
+            &quests
+        )
+        .is_pending());
+        complete_open_stand(ledger, 2);
+        snapshot.seed_bank_observation(1, 2, None, Vec::new());
+        assert!(poll_once(
+            provisioner,
+            snapshot,
+            ledger,
+            3,
+            plan,
+            None,
+            &memory,
+            banks,
+            &quests
+        )
+        .is_pending());
+        3
+    }
+
+    #[test]
+    fn a_terminal_error_with_the_bank_open_ends_the_session_and_keeps_the_lease() {
+        let (mut snapshot, bank, banks) = openable_bank_fixture();
+        let plan = scan_plan(bank);
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let reached = open_the_bank_without_a_table(
+            &mut provisioner,
+            &mut snapshot,
+            &mut ledger,
+            &plan,
+            &banks,
+            bank,
+        );
+        assert!(provisioner.session_open());
+        assert_eq!(
+            provisioner.bank_lease(),
+            Some(BankLease::new(1, snapshot.bank_session_generation())),
+            "a frame showed the bank open after a trip that began with it shut"
+        );
+        let result = poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            reached + 10,
+            &plan,
+            None,
+            &BankMemory::default(),
+            &banks,
+            &quest_catalog(),
+        );
+        assert!(matches!(result, Poll::Ready(Err(_))), "{result:?}");
+        assert!(
+            !provisioner.session_open(),
+            "the error ended the session without a close"
+        );
+        assert_eq!(closes_sent(&ledger), 0, "the provisioner sends no close here");
+        assert!(provisioner.take_unowned_lease().is_some());
+        assert_eq!(provisioner.take_unowned_lease(), None, "handed over once");
+    }
+
+    #[test]
+    fn cancel_keeps_a_lease_a_frame_showed_and_drops_an_unobserved_open() {
+        let (mut snapshot, bank, banks) = openable_bank_fixture();
+        let plan = scan_plan(bank);
+        let memory = BankMemory::default();
+        let quests = quest_catalog();
+
+        // Cancelled before any frame showed the bank open: nothing is owned.
+        let mut early = Provisioner::new();
+        let mut ledger = None;
+        assert!(poll_once(
+            &mut early, &snapshot, &mut ledger, 1, &plan, None, &memory, &banks, &quests
+        )
+        .is_pending());
+        early.cancel();
+        snapshot.seed_bank_observation(1, 2, Some(Vec::new()), Vec::new());
+        assert!(poll_once(
+            &mut early,
+            &snapshot,
+            &mut ledger,
+            2,
+            &owned_plan(),
+            None,
+            &memory,
+            &banks,
+            &quests
+        )
+        .is_ready());
+        assert_eq!(early.bank_lease(), None);
+
+        // Cancelled with the bank observed open: the bank is still ours.
+        let (mut snapshot, bank, banks) = openable_bank_fixture();
+        let mut late = Provisioner::new();
+        let mut ledger = None;
+        open_the_bank_without_a_table(&mut late, &mut snapshot, &mut ledger, &plan, &banks, bank);
+        late.cancel();
+        assert!(!late.session_open());
+        assert!(late.take_unowned_lease().is_some());
+    }
+
+    #[test]
+    fn a_trip_cancelled_before_the_bank_opened_does_not_own_a_bank_the_player_opens() {
+        let (mut snapshot, bank, banks) = openable_bank_fixture();
+        let plan = scan_plan(bank);
+        let memory = BankMemory::default();
+        let quests = quest_catalog();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        assert!(poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            1,
+            &plan,
+            None,
+            &memory,
+            &banks,
+            &quests
+        )
+        .is_pending());
+        provisioner.cancel();
+        ledger.as_mut().unwrap().outbox.clear();
+        snapshot.seed_bank_observation(1, 2, Some(Vec::new()), Vec::new());
+        let result = poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            2,
+            &owned_plan(),
+            None,
+            &memory,
+            &banks,
+            &quests,
+        );
+        assert!(matches!(result, Poll::Ready(Ok(ProvisionEvent::Ready))));
+        assert_eq!(closes_sent(&ledger), 0, "the player's bank stays open");
+        assert_eq!(provisioner.bank_lease(), None);
+    }
+
+    #[test]
+    fn a_replaced_bank_session_is_not_closed_by_a_stale_lease() {
+        let (mut snapshot, bank, banks) = openable_bank_fixture();
+        let plan = scan_plan(bank);
+        let quests = quest_catalog();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let mut memory = BankMemory::default();
+        let mut tick = 0;
+        drive_trip_to_receipt(
+            &mut provisioner,
+            &mut snapshot,
+            &mut memory,
+            &mut ledger,
+            &mut tick,
+            &plan,
+            &banks,
+            &quests,
+            bank,
+            bank.tile,
+            Some(Vec::new()),
+        );
+        assert!(provisioner.bank_lease().is_some());
+        // The runner abandons the session, then the bank is shut and opened
+        // again by someone else: a different bank session generation.
+        provisioner.cancel();
+        snapshot.seed_bank_observation(-1, tick + 1, None, Vec::new());
+        snapshot.seed_bank_observation(1, tick + 2, Some(Vec::new()), Vec::new());
+        ledger.as_mut().unwrap().outbox.clear();
+        let result = poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            tick + 3,
+            &owned_plan(),
+            None,
+            &memory,
+            &banks,
+            &quests,
+        );
+        assert!(matches!(result, Poll::Ready(Ok(ProvisionEvent::Ready))));
+        assert_eq!(closes_sent(&ledger), 0);
+        assert_eq!(provisioner.bank_lease(), None, "the stale lease is dropped");
+    }
+
+    #[test]
+    fn a_lease_from_another_login_session_is_dropped_without_a_close() {
+        let (mut snapshot, bank, banks) = openable_bank_fixture();
+        let plan = scan_plan(bank);
+        let quests = quest_catalog();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let mut memory = BankMemory::default();
+        let mut tick = 0;
+        drive_trip_to_receipt(
+            &mut provisioner,
+            &mut snapshot,
+            &mut memory,
+            &mut ledger,
+            &mut tick,
+            &plan,
+            &banks,
+            &quests,
+            bank,
+            bank.tile,
+            Some(Vec::new()),
+        );
+        // The test frames carry login session 1. The lease was made in session 2.
+        provisioner.cancel();
+        provisioner.lease = Some(BankLease::new(2, snapshot.bank_session_generation()));
+        ledger.as_mut().unwrap().outbox.clear();
+        let result = poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            tick + 1,
+            &owned_plan(),
+            None,
+            &memory,
+            &banks,
+            &quests,
+        );
+        assert!(matches!(result, Poll::Ready(Ok(ProvisionEvent::Ready))));
+        assert_eq!(closes_sent(&ledger), 0);
+        assert_eq!(provisioner.bank_lease(), None);
+    }
+
+    #[test]
+    fn a_bank_the_kernel_reopens_inside_the_session_is_still_closed() {
+        let (mut snapshot, bank, banks) = openable_bank_fixture();
+        let plan = scan_plan(bank);
+        let quests = quest_catalog();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let mut memory = BankMemory::default();
+        let mut tick = 0;
+        drive_trip_to_receipt(
+            &mut provisioner,
+            &mut snapshot,
+            &mut memory,
+            &mut ledger,
+            &mut tick,
+            &plan,
+            &banks,
+            &quests,
+            bank,
+            bank.tile,
+            Some(Vec::new()),
+        );
+        assert!(provisioner.session_open());
+        snapshot.seed_bank_observation(-1, tick + 1, None, Vec::new());
+        snapshot.seed_bank_observation(1, tick + 2, Some(Vec::new()), Vec::new());
+        ledger.as_mut().unwrap().outbox.clear();
+        let result = poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            tick + 3,
+            &owned_plan(),
+            None,
+            &memory,
+            &banks,
+            &quests,
+        );
+        assert!(result.is_pending());
+        assert_eq!(closes_sent(&ledger), 1, "the reopened bank is the same session's");
     }
 }
