@@ -1069,8 +1069,12 @@ fn wait_for_manual_walk_run(fixture: &LiveFixture) -> RunKey {
         |play| {
             // The internal WalkTo card emits no ScriptStatus.
             // Require its new native owner, not an optional status payload.
-            play.script_native_run(&fixture.name)
-                .filter(|run| run.slot == fixture.seed_run.slot && run.run > fixture.seed_run.run)
+            let session = play.arm(&fixture.name)?.session_key()?;
+            play.script_native_run(&fixture.name).filter(|run| {
+                run.slot == fixture.seed_run.slot
+                    && run.run > fixture.seed_run.run
+                    && run.session_key() == Some(session)
+            })
         },
     )
 }
