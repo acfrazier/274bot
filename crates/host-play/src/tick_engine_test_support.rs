@@ -34,8 +34,8 @@ pub enum TransportMutation {
     /// Forward the first packet, then hold the remaining stream bytes through
     /// the next observed PLAYER_INFO edge.
     SplitAfterFirstPacket,
-    /// Forward the first `packet_count` encoded packets, then drop this
-    /// dispatch's remaining bytes instead of sending them to the engine.
+    /// Forward the first `packet_count` encoded packets and drop the
+    /// remaining bytes at the proxy. The host dispatcher still completes.
     DropSuffixAfterPacket(usize),
 }
 
@@ -530,9 +530,6 @@ impl TickEngineTestHook {
                 cancel_after = Some(count);
             }
             Some(DispatchMutation::Transport(mode)) => {
-                if let TransportMutation::DropSuffixAfterPacket(count) = mode {
-                    cancel_after = Some(count);
-                }
                 transport = Some(mode);
             }
             None => {}

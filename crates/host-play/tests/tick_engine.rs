@@ -22,10 +22,13 @@ use vault::{Profile, ProfileSettings};
 #[path = "support/loopback_proxy.rs"]
 mod loopback_proxy;
 use loopback_proxy::{LoopbackProxy, ProxyObservation};
+#[path = "support/engine_packet_log.rs"]
+mod engine_packet_log;
+use engine_packet_log::{EnginePacket, EnginePacketLog};
 
 const ENGINE_HOST: &str = "127.0.0.1";
-const ENGINE_GAME_PORT: u16 = 47_594;
-const ENGINE_HTTP_PORT: u16 = 3_080;
+const ENGINE_GAME_PORT: u16 = 48_594;
+const ENGINE_HTTP_PORT: u16 = 4_080;
 const LOG_ID: i32 = 1_511;
 const KNIFE_ID: i32 = 946;
 const LOGS_ID: i32 = 1_511;
@@ -107,6 +110,7 @@ struct Scenario {
     mutations: Vec<DispatchMutation>,
     use_proxy: bool,
     suppress_openchat_span: Option<u32>,
+    pre_batch_user_events: usize,
 }
 
 impl Scenario {
@@ -128,6 +132,7 @@ impl Scenario {
             mutations: Vec::new(),
             use_proxy: false,
             suppress_openchat_span: None,
+            pre_batch_user_events: 0,
         }
     }
 
@@ -148,6 +153,7 @@ impl Scenario {
             mutations: Vec::new(),
             use_proxy: false,
             suppress_openchat_span: None,
+            pre_batch_user_events: 0,
         }
     }
 
@@ -168,6 +174,7 @@ impl Scenario {
             mutations: Vec::new(),
             use_proxy: false,
             suppress_openchat_span: None,
+            pre_batch_user_events: 0,
         })
     }
 
@@ -188,6 +195,7 @@ impl Scenario {
             mutations: Vec::new(),
             use_proxy: false,
             suppress_openchat_span: None,
+            pre_batch_user_events: 0,
         })
     }
 
@@ -208,6 +216,7 @@ impl Scenario {
             mutations: Vec::new(),
             use_proxy: false,
             suppress_openchat_span: None,
+            pre_batch_user_events: 0,
         }
     }
 
@@ -219,6 +228,11 @@ impl Scenario {
 
     fn with_openchat_suppression(mut self, edges_from_start: u32) -> Self {
         self.suppress_openchat_span = Some(edges_from_start);
+        self
+    }
+
+    fn with_pre_batch_user_events(mut self, count: usize) -> Self {
+        self.pre_batch_user_events = count;
         self
     }
 
@@ -293,6 +307,17 @@ enum SetupPhase {
     Seed,
     Verify,
     Ready,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ForeignEventState {
+    requested: usize,
+    armed: bool,
+    sent: bool,
+    emitted: usize,
+    client_tick: Option<u32>,
+    host_frame: Option<u64>,
+    error: Option<String>,
 }
 
 struct SetupState {
@@ -505,11 +530,94 @@ struct RunEvidence {
     account: String,
     profile: String,
     world_members: String,
+    product_ids: Vec<i32>,
+    pre_batch_user_events: ForeignEventState,
     start_tick: Option<u32>,
     baseline: Option<FrameObservation>,
     trace: TickEngineTrace,
     statuses: Vec<StatusObservation>,
     transport: Vec<ProxyObservation>,
+    engine_packets: Option<Result<Vec<EnginePacket>, String>>,
+}
+
+fn send_pre_batch_user_events(
+    client: &mut Client,
+    hold: bool,
+    hook: &TickEngineTestHook,
+    state: &Arc<Mutex<ForeignEventState>>,
+) {
+    if hold {
+        return;
+    }
+    if {
+        let state = state.lock().expect("tick-engine foreign event state poisoned");
+        !state.armed || state.sent || state.error.is_some()
+    } {
+        return;
+    }
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(client);
+    if !snapshot.ingame()
+        || snapshot.scene_state() != 2
+        || snapshot.tick() == hook.observed_game_tick()
+    {
+        return;
+    }
+    let client_tick = snapshot.tick();
+    let host_frame = hook.observed_host_frame();
+    let requested = {
+        let mut state = state.lock().expect("tick-engine foreign event state poisoned");
+        if !state.armed || state.sent || state.error.is_some() {
+            return;
+        }
+        state.armed = false;
+        state.requested
+    };
+    if requested == 0 {
+        return;
+    }
+    let Some((source_x, source_z)) = snapshot.tile().and_then(|(world_x, world_z, _)| {
+        snapshot
+            .base()
+            .map(|(base_x, base_z)| (world_x - base_x, world_z - base_z))
+    }) else {
+        let mut state = state.lock().expect("tick-engine foreign event state poisoned");
+        state.client_tick = Some(client_tick);
+        state.host_frame = Some(host_frame);
+        state.error = Some("real edge had no local-player tile or scene base".into());
+        return;
+    };
+    let direction = if source_x <= 100 { 1 } else { -1 };
+    let mut returned_moves = 0;
+    for offset in 1..=requested {
+        let target_x = source_x + direction * offset as i32;
+        if !client.tryMove(
+            source_x, source_z, target_x, source_z, true, 0, 0, 0, 0, 0, 0,
+        ) {
+            break;
+        }
+        returned_moves += 1;
+    }
+    let observed_moves = hook
+        .trace()
+        .wire
+        .iter()
+        .filter(|wire| {
+            wire.host_frame == host_frame
+                && wire.request_id.is_none()
+                && wire.opcode == ClientProt289::MOVE_GAMECLICK.id
+        })
+        .count();
+    let mut state = state.lock().expect("tick-engine foreign event state poisoned");
+    state.client_tick = Some(client_tick);
+    state.host_frame = Some(host_frame);
+    state.emitted = observed_moves;
+    state.sent = returned_moves == requested && observed_moves == requested;
+    if !state.sent {
+        state.error = Some(format!(
+            "requested {requested} MOVE_GAMECLICK events; tryMove returned {returned_moves}, real wire recorded {observed_moves}"
+        ));
+    }
 }
 
 struct TempRoot(PathBuf);
@@ -546,12 +654,14 @@ struct LiveRun {
     profile_identity: String,
     world_members: String,
     setup: Arc<Mutex<SetupState>>,
+    foreign_events: Arc<Mutex<ForeignEventState>>,
     hook: Arc<TickEngineTestHook>,
     proxy: Option<Arc<LoopbackProxy>>,
     play: Option<host_play::Play>,
     start_tick: Option<u32>,
     baseline: Option<FrameObservation>,
     statuses: Vec<StatusObservation>,
+    engine_log: Option<EnginePacketLog>,
     shutdown: bool,
 }
 
@@ -597,7 +707,7 @@ impl LiveRun {
             || profile.client().asset_port() != ENGINE_HTTP_PORT
             || profile.client().game_port() != game_port
         {
-            return Err("tick-engine cases require the assigned loopback Engine L profile".into());
+            return Err("tick-engine cases require the assigned loopback Engine T profile".into());
         }
         let world_members = format!("{:?}", profile.world_members());
         if scenario.require_free_world
@@ -616,7 +726,7 @@ impl LiveRun {
         }
         let template = SharedClientTemplate::load(Arc::clone(&profile))?;
         if template.world().is_none() {
-            return Err("selected Engine L navigation template has no world".into());
+            return Err("selected Engine T navigation template has no world".into());
         }
         let profile_identity = format!(
             "{} game={}:{} asset={}:{} nav={}",
@@ -643,12 +753,18 @@ impl LiveRun {
             account.clone(),
             scenario.clone(),
         )));
+        let foreign_events = Arc::new(Mutex::new(ForeignEventState {
+            requested: scenario.pre_batch_user_events,
+            ..ForeignEventState::default()
+        }));
         let hook = TickEngineTestHook::new(account.clone());
         hook.install();
         if let Some(proxy) = &proxy {
             hook.set_transport_controller(Arc::clone(proxy));
         }
         let frame_setup = Arc::clone(&setup);
+        let frame_foreign_events = Arc::clone(&foreign_events);
+        let frame_hook = Arc::clone(&hook);
         let frame_account = account.clone();
         let play = match host_play::run_with_template(
             Arc::clone(&template),
@@ -661,6 +777,12 @@ impl LiveRun {
                         .lock()
                         .expect("tick-engine setup poisoned")
                         .frame(client, username, frame.hold);
+                    send_pre_batch_user_events(
+                        client,
+                        frame.hold,
+                        &frame_hook,
+                        &frame_foreign_events,
+                    );
                 }
             },
         ) {
@@ -679,12 +801,14 @@ impl LiveRun {
             profile_identity,
             world_members,
             setup,
+            foreign_events,
             hook,
             proxy,
             play: Some(play),
             start_tick: None,
             baseline: None,
             statuses: Vec::new(),
+            engine_log: None,
             shutdown: false,
         })
     }
@@ -706,9 +830,10 @@ impl LiveRun {
         };
         self.play_mut()
             .try_spawn_slot(profile, None, None, None)
-            .map_err(|error| format!("spawn Engine L account: {error}"))?;
+            .map_err(|error| format!("spawn Engine T account: {error}"))?;
         self.play_mut().focus(&self.account);
         self.wait_setup_ready()?;
+        self.engine_log = Some(EnginePacketLog::capture(required_file("TICK_ENGINE_PACKET_LOG")?)?);
         let after = self.hook.observed_host_frame();
         self.hook.arm_measurement(LOG_ID, &self.scenario.products);
         if self.hook.wait_for_frame(after, FRAME_HANG_GUARD).is_none() {
@@ -739,6 +864,12 @@ impl LiveRun {
             self.scenario.target,
             self.scenario.seed_items()
         );
+        if self.scenario.pre_batch_user_events > 0 {
+            self.foreign_events
+                .lock()
+                .map_err(|_| "tick-engine foreign event state poisoned")?
+                .armed = true;
+        }
         self.play_mut()
             .script_start(
                 &self.account,
@@ -754,6 +885,20 @@ impl LiveRun {
             self.wait_until(baseline.game_tick, STARTUP_EDGE_BUDGET, |_, statuses| {
                 statuses.iter().any(|status| status.tick_method.is_some())
             })?;
+        }
+        let foreign_events = self
+            .foreign_events
+            .lock()
+            .map_err(|_| "tick-engine foreign event state poisoned")?
+            .clone();
+        if foreign_events.requested > 0
+            && (!foreign_events.sent
+                || foreign_events.emitted != foreign_events.requested
+                || foreign_events.error.is_some())
+        {
+            return Err(self.failure(format!(
+                "pre-batch user events did not reach the real Client wire: {foreign_events:?}"
+            )));
         }
         if self.play().script_state(&self.account) != script::RunState::Running {
             return Err(self.failure("Gatherer native loop did not reach Running after Start"));
@@ -849,6 +994,12 @@ impl LiveRun {
             account: self.account.clone(),
             profile: self.profile_identity.clone(),
             world_members: self.world_members.clone(),
+            product_ids: self.scenario.products.clone(),
+            pre_batch_user_events: self
+                .foreign_events
+                .lock()
+                .expect("tick-engine foreign event state poisoned")
+                .clone(),
             start_tick: self.start_tick,
             baseline: self.baseline.clone(),
             trace: self.hook.trace(),
@@ -857,12 +1008,13 @@ impl LiveRun {
                 .proxy
                 .as_ref()
                 .map_or_else(Vec::new, |proxy| proxy.observations()),
+            engine_packets: self
+                .engine_log
+                .as_ref()
+                .map(|log| log.read(&self.account)),
         }
     }
 
-    fn print_evidence(&self) {
-        println!("TICK-MANIP evidence {:#?}", self.evidence());
-    }
 
     fn failure(&self, message: impl std::fmt::Display) -> String {
         format!(
@@ -1002,12 +1154,19 @@ fn run_case(
         .map_err(|_| "tick-engine live-run lock poisoned")?;
     let mut run = LiveRun::new(scenario)?;
     let result = run.start().and_then(|()| assertion(&mut run));
-    run.print_evidence();
-    let evidence = run.evidence();
-    let persisted = persist_evidence(&evidence);
+    let account = run.account.clone();
+    run.play_mut().script_stop(&account);
+    let mut evidence = run.evidence();
     let cleanup = run.shutdown();
+    evidence.engine_packets = run.engine_log.as_ref().map(|log| log.read(&run.account));
+    let correlation = correlate_engine_packets(&evidence);
+    println!("TICK-MANIP evidence {evidence:#?}");
+    let persisted = persist_evidence(&evidence);
     let mut failures = Vec::new();
     if let Err(error) = result {
+        failures.push(error);
+    }
+    if let Err(error) = correlation {
         failures.push(error);
     }
     if let Err(error) = persisted {
@@ -1023,6 +1182,428 @@ fn run_case(
     }
 }
 
+fn correlate_engine_packets(evidence: &RunEvidence) -> Result<(), String> {
+    let packets = evidence
+        .engine_packets
+        .as_ref()
+        .ok_or("Engine T packet capture was not armed")?
+        .as_ref()
+        .map_err(|error| format!("Engine T packet capture failed: {error}"))?;
+    let relevant = |opcode| {
+        [
+            ClientProt289::OPHELDU.id,
+            ClientProt289::IF_BUTTON.id,
+            ClientProt289::MOVE_GAMECLICK.id,
+            ClientProt289::MOVE_OPCLICK.id,
+            ClientProt289::OPLOC1.id,
+            ClientProt289::OPNPC1.id,
+        ]
+        .contains(&opcode)
+    };
+    let mut dropped_packets = HashSet::<(u64, usize)>::new();
+    for observation in evidence
+        .transport
+        .iter()
+        .filter(|observation| observation.dropped_bytes > 0)
+    {
+        let host_packets = wires_for_request(&evidence.trace, observation.request_id);
+        let total_bytes: usize = observation.packet_lengths.iter().sum();
+        let mut forwarded_count = 0;
+        let mut forwarded_bytes = 0;
+        while forwarded_count < observation.packet_lengths.len()
+            && forwarded_bytes < observation.forwarded_bytes
+        {
+            forwarded_bytes += observation.packet_lengths[forwarded_count];
+            forwarded_count += 1;
+        }
+        if !observation.mutation.starts_with("DropSuffixAfterPacket(")
+            || observation.request_ids.len() != 1
+            || observation.request_ids.first() != Some(&observation.request_id)
+            || observation.packet_requests.len() != observation.packet_opcodes.len()
+            || observation.packet_opcodes.len() != observation.packet_lengths.len()
+            || host_packets.len() != observation.packet_opcodes.len()
+            || forwarded_bytes != observation.forwarded_bytes
+            || forwarded_count == 0
+            || forwarded_count == observation.packet_lengths.len()
+            || observation.dropped_bytes
+                != observation.packet_lengths[forwarded_count..].iter().sum::<usize>()
+            || observation.forwarded_bytes + observation.dropped_bytes != total_bytes
+        {
+            return Err(format!(
+                "proxy did not report a complete byte-preserving dropped suffix: {observation:?}"
+            ));
+        }
+        for (index, (wire, (request_id, packet_index))) in host_packets
+            .iter()
+            .zip(&observation.packet_requests)
+            .enumerate()
+        {
+            if *request_id != observation.request_id
+                || *packet_index != index + 1
+                || wire.opcode != observation.packet_opcodes[index]
+                || wire.encoded_length != observation.packet_lengths[index]
+            {
+                return Err(format!(
+                    "proxy packet accounting differs from host wire evidence at index {index}: {observation:?}"
+                ));
+            }
+            if index >= forwarded_count {
+                dropped_packets.insert((*request_id, *packet_index));
+            }
+        }
+    }
+    let mut packet_indexes = BTreeMap::<u64, usize>::new();
+    let transmitted: Vec<_> = evidence
+        .trace
+        .wire
+        .iter()
+        .filter_map(|wire| {
+            let dropped = wire.request_id.is_some_and(|request_id| {
+                let packet_index = packet_indexes.entry(request_id).or_default();
+                *packet_index += 1;
+                dropped_packets.contains(&(request_id, *packet_index))
+            });
+            (relevant(wire.opcode) && !dropped).then_some(wire.opcode)
+        })
+        .collect();
+    let decoded: Vec<_> = packets
+        .iter()
+        .filter(|packet| relevant(packet.opcode))
+        .map(|packet| packet.opcode)
+        .collect();
+    if transmitted.is_empty() || transmitted != decoded {
+        return Err(format!(
+            "Engine T decoded packet order differs from the encrypted Client stream after proxy byte drops: transmitted={transmitted:?} decoded={decoded:?}"
+        ));
+    }
+    let mut accepted_by_engine_tick = BTreeMap::<u64, u32>::new();
+    for packet in packets.iter().filter(|packet| packet.charged_user_event) {
+        *accepted_by_engine_tick.entry(packet.tick).or_default() += 1;
+    }
+    println!(
+        "TICK-MANIP server_account={} accepted_user_events_by_engine_tick={accepted_by_engine_tick:?}; engine ticks and Client observation ticks are distinct clocks; host dispatch receipts are not server acknowledgements",
+        evidence.account
+    );
+    if evidence.pre_batch_user_events.requested > 0 {
+        assert_deferred_terminal_row(evidence, packets)?;
+    }
+    if matches!(evidence.case, "tick-make-without-click" | "tick-make-proxy-drop") {
+        assert_engine_accepted_make_prefix(packets)?;
+    }
+    Ok(())
+}
+
+
+fn engine_accepted_user_event(packet: &EnginePacket) -> bool {
+    packet.outcome == "accepted" && packet.handler_accepted && packet.charged_user_event
+}
+
+fn assert_engine_accepted_make_prefix(packets: &[EnginePacket]) -> Result<(), String> {
+    let Some(opener_index) = packets
+        .iter()
+        .position(|packet| packet.opcode == ClientProt289::OPHELDU.id)
+    else {
+        return Err("Engine T log has no Knife opener for accepted-Make case".into());
+    };
+    let opener = &packets[opener_index];
+    let make = packets
+        .iter()
+        .skip(opener_index + 1)
+        .find(|packet| packet.opcode == ClientProt289::IF_BUTTON.id);
+    if !make.is_some_and(|make| {
+        make.tick == opener.tick
+            && make.sequence > opener.sequence
+            && engine_accepted_user_event(opener)
+            && engine_accepted_user_event(make)
+    }) {
+        return Err(format!(
+            "Engine T did not accept the Make prefix in one tick: opener={opener:?} make={make:?}"
+        ));
+    }
+    println!(
+        "TICK-MANIP Engine T accepted Knife opener and Make before the absent terminal click"
+    );
+    Ok(())
+}
+fn assert_deferred_terminal_row(
+    evidence: &RunEvidence,
+    packets: &[EnginePacket],
+) -> Result<(), String> {
+    if evidence.pre_batch_user_events.requested != 3 {
+        return Err(format!(
+            "deferred terminal-row case expected three foreign events, requested {}",
+            evidence.pre_batch_user_events.requested
+        ));
+    }
+    let mut by_tick = BTreeMap::<u64, Vec<&EnginePacket>>::new();
+    for packet in packets {
+        by_tick.entry(packet.tick).or_default().push(packet);
+    }
+    let accepted = engine_accepted_user_event;
+    for (tick, rows) in by_tick {
+        let movement: Vec<_> = rows
+            .iter()
+            .copied()
+            .filter(|packet| packet.opcode == ClientProt289::MOVE_GAMECLICK.id)
+            .collect();
+        let opener: Vec<_> = rows
+            .iter()
+            .copied()
+            .filter(|packet| packet.opcode == ClientProt289::OPHELDU.id)
+            .collect();
+        let make: Vec<_> = rows
+            .iter()
+            .copied()
+            .filter(|packet| packet.opcode == ClientProt289::IF_BUTTON.id)
+            .collect();
+        let deferred_move: Vec<_> = rows
+            .iter()
+            .copied()
+            .filter(|packet| packet.opcode == ClientProt289::MOVE_OPCLICK.id)
+            .collect();
+        let deferred_loc: Vec<_> = rows
+            .iter()
+            .copied()
+            .filter(|packet| packet.opcode == ClientProt289::OPLOC1.id)
+            .collect();
+        if movement.len() != 3
+            || opener.len() != 1
+            || make.len() != 1
+            || deferred_move.len() != 1
+            || deferred_loc.len() != 1
+            || !movement.iter().all(|packet| accepted(packet))
+            || !accepted(opener[0])
+            || !accepted(make[0])
+            || deferred_move[0].outcome != "deferred"
+            || deferred_loc[0].outcome != "deferred"
+            || rows
+                .iter()
+                .filter(|packet| packet.charged_user_event)
+                .count()
+                != 5
+            || movement.iter().any(|packet| packet.sequence >= opener[0].sequence)
+            || opener[0].sequence >= make[0].sequence
+            || make[0].sequence >= deferred_move[0].sequence
+            || deferred_move[0].sequence >= deferred_loc[0].sequence
+        {
+            continue;
+        }
+        println!(
+            "TICK-MANIP deferred terminal row proved by Engine T tick={tick}; accepted moves=3, accepted Knife/Make=2, deferred click/loc=2"
+        );
+        return Ok(());
+    }
+    Err(format!(
+        "Engine T log has no tick with three accepted MOVE_GAMECLICK events before accepted Knife/Make and deferred MOVE_OPCLICK/OPLOC1: {packets:?}"
+    ))
+}
+
+fn evidence_json(evidence: &RunEvidence) -> Value {
+    let frame_json = |frame: &FrameObservation| {
+        let chat = frame
+            .chat
+            .iter()
+            .map(|line| {
+                json!({
+                    "game_tick": line.game_tick,
+                    "sequence": line.sequence,
+                    "text": line.text,
+                    "poll_kind": match line.poll {
+                        PollKind::Edge => "edge",
+                        PollKind::Wake => "wake",
+                    },
+                })
+            })
+            .collect::<Vec<_>>();
+        let inventory = frame
+            .inventory_counts
+            .iter()
+            .map(|(id, count)| json!({"id": id, "count": count}))
+            .collect::<Vec<_>>();
+        let products = evidence
+            .product_ids
+            .iter()
+            .map(|id| {
+                json!({
+                    "id": id,
+                    "count": frame
+                        .inventory_counts
+                        .iter()
+                        .find(|(item_id, _)| item_id == id)
+                        .map_or(0, |(_, count)| *count),
+                })
+            })
+            .collect::<Vec<_>>();
+        let skill_xp = frame
+            .skill_xp
+            .iter()
+            .map(|(index, xp)| json!({"skill_index": index, "xp": xp}))
+            .collect::<Vec<_>>();
+        json!({
+            "host_frame": frame.host_frame,
+            "game_tick": frame.game_tick,
+            "tick_edge": frame.tick_edge,
+            "snapshot": {
+                "tile": frame.player_tile.map(|tile| {
+                    json!({"x": tile.x, "z": tile.z, "level": tile.level})
+                }),
+                "animation": frame.animation.map(|animation| {
+                    json!({"sequence": animation.sequence, "serial": animation.serial})
+                }),
+                "chat_lines": chat,
+                "inventory_counts": inventory,
+                "product_counts": products,
+                "log_count": frame.log_count,
+                "skill_xp": skill_xp,
+                "chat_modal_root": frame.chat_modal_root,
+                "actual_chat_modal_root": frame.actual_chat_modal_root,
+                "server_if_close_packets": frame.server_if_close_packets,
+                "main_modal_opened_observation": frame.main_modal_opened_observation,
+                "main_modal_closed_observation": frame.main_modal_closed_observation,
+                "suppressed_openchat": frame.suppressed_openchat,
+            },
+        })
+    };
+    let frames = evidence.trace.frames.iter().map(&frame_json).collect::<Vec<_>>();
+    let baseline = evidence.baseline.as_ref().map(frame_json);
+    let dispatches = evidence
+        .trace
+        .dispatches
+        .iter()
+        .map(|dispatch| {
+            let receipt = dispatch.receipt;
+            json!({
+                "request_id": receipt.request_id,
+                "dispatch_tick": receipt.dispatch_tick,
+                "row_count": receipt.row_count,
+                "dispatched_prefix": receipt.dispatched_prefix,
+                "wire_events": receipt.wire_events,
+                "terminal": receipt.terminal.map(|terminal| format!("{terminal:?}")),
+                "rows": receipt.rows.iter().map(|row| format!("{row:?}")).collect::<Vec<_>>(),
+                "request_debug": dispatch.request_debug,
+                "mutation_applied": dispatch.mutation_applied,
+            })
+        })
+        .collect::<Vec<_>>();
+    let wire = evidence
+        .trace
+        .wire
+        .iter()
+        .map(|packet| {
+            json!({
+                "host_frame": packet.host_frame,
+                "game_tick": packet.game_tick,
+                "request_id": packet.request_id,
+                "opcode": packet.opcode,
+                "encoded_length": packet.encoded_length,
+            })
+        })
+        .collect::<Vec<_>>();
+    let statuses = evidence
+        .statuses
+        .iter()
+        .map(|status| {
+            json!({
+                "host_frame": status.host_frame,
+                "game_tick": status.game_tick,
+                "phase": status.phase,
+                "method": status.method,
+                "tick_method": status.tick_method,
+                "target": status.target,
+                "last_event": status.last_event,
+                "tick_cycle": status.tick_cycle,
+                "tick_verified": status.tick_verified,
+                "tick_unobserved": status.tick_unobserved,
+                "tick_slips": status.tick_slips,
+                "tick_lost": status.tick_lost,
+                "tick_delayed": status.tick_delayed,
+                "tick_paused": status.tick_paused,
+                "tick_fallbacks": status.tick_fallbacks,
+                "tick_fallback_failed": status.tick_fallback_failed,
+                "tick_events": status.tick_events,
+            })
+        })
+        .collect::<Vec<_>>();
+    let transport = evidence
+        .transport
+        .iter()
+        .map(|observation| {
+            json!({
+                "request_id": observation.request_id,
+                "request_ids": observation.request_ids,
+                "mutation": observation.mutation,
+                "start_game_tick": observation.start_game_tick,
+                "start_host_frame": observation.start_host_frame,
+                "packet_requests": observation.packet_requests,
+                "packet_opcodes": observation.packet_opcodes,
+                "packet_lengths": observation.packet_lengths,
+                "forwarded_bytes": observation.forwarded_bytes,
+                "dropped_bytes": observation.dropped_bytes,
+                "release_edge_tick": observation.release_edge_tick,
+                "release_trigger_tick": observation.release_trigger_tick,
+                "release_edge_frame": observation.release_edge_frame,
+                "released_host_frame": observation.released_host_frame,
+            })
+        })
+        .collect::<Vec<_>>();
+    let engine_packets = match &evidence.engine_packets {
+        Some(Ok(packets)) => json!({
+            "status": "captured",
+            "packets": packets.iter().map(|packet| {
+                json!({
+                    "sequence": packet.sequence,
+                    "tick": packet.tick,
+                    "username": packet.username,
+                    "opcode": packet.opcode,
+                    "name": packet.name,
+                    "outcome": packet.outcome,
+                    "reason": packet.reason,
+                    "handler_accepted": packet.handler_accepted,
+                    "charged_user_event": packet.charged_user_event,
+                    "scripts": packet.scripts.iter().map(|script| {
+                        json!({
+                            "outcome": script.outcome,
+                            "reason": script.reason,
+                            "script": script.script,
+                            "state": script.state,
+                        })
+                    }).collect::<Vec<_>>(),
+                })
+            }).collect::<Vec<_>>(),
+        }),
+        Some(Err(error)) => json!({"status": "error", "error": error}),
+        None => json!({"status": "not_armed"}),
+    };
+    json!({
+        "case": evidence.case,
+        "account": evidence.account,
+        "profile": evidence.profile,
+        "world_members": evidence.world_members,
+        "pre_batch_user_events": {
+            "requested": evidence.pre_batch_user_events.requested,
+            "armed": evidence.pre_batch_user_events.armed,
+            "sent": evidence.pre_batch_user_events.sent,
+            "emitted": evidence.pre_batch_user_events.emitted,
+            "client_tick": evidence.pre_batch_user_events.client_tick,
+            "host_frame": evidence.pre_batch_user_events.host_frame,
+            "error": evidence.pre_batch_user_events.error,
+        },
+        "start_tick": evidence.start_tick,
+        "product_ids": evidence.product_ids,
+        "baseline_snapshot": baseline,
+        "frames": frames,
+        "dispatch_receipts": dispatches,
+        "encrypted_client_wire": wire,
+        "native_status_history": statuses,
+        "proxy_transport_history": transport,
+        "engine_packet_history": engine_packets,
+        "interpretation": {
+            "host_dispatch_receipts_are_not_server_acknowledgements": true,
+            "client_game_ticks_and_engine_ticks_are_distinct_clocks": true,
+        },
+    })
+}
+
 fn persist_evidence(evidence: &RunEvidence) -> Result<PathBuf, String> {
     let root = required_path("LIVE_EVIDENCE_DIR")?;
     let epoch = SystemTime::now()
@@ -1032,8 +1613,10 @@ fn persist_evidence(evidence: &RunEvidence) -> Result<PathBuf, String> {
     let directory = root.join(format!("{}_{}", evidence.case, epoch));
     std::fs::create_dir_all(&directory)
         .map_err(|error| format!("create evidence directory {}: {error}", directory.display()))?;
-    let path = directory.join("tick_engine.txt");
-    std::fs::write(&path, format!("{evidence:#?}\n"))
+    let path = directory.join("tick_engine.json");
+    let bytes = serde_json::to_vec_pretty(&evidence_json(evidence))
+        .map_err(|error| format!("serialize evidence JSON: {error}"))?;
+    std::fs::write(&path, bytes)
         .map_err(|error| format!("write evidence {}: {error}", path.display()))?;
     println!("TICK-MANIP evidence_path={}", path.display());
     Ok(path)
@@ -1044,9 +1627,9 @@ fn require_live_config() -> Result<(), String> {
         return Err("tick-engine live tests require LIVE=1; opted-in cases never silently skip".into());
     }
     let prefix = std::env::var("BOT_LIVE_NAME_PREFIX")
-        .map_err(|_| "BOT_LIVE_NAME_PREFIX is required for fresh Engine L accounts".to_owned())?;
-    if prefix.is_empty() || prefix.len() > 4 || !prefix.is_ascii() || prefix == "live" {
-        return Err("BOT_LIVE_NAME_PREFIX must be an owned 1-4 character ASCII prefix, not the default".into());
+        .map_err(|_| "BOT_LIVE_NAME_PREFIX=tmx is required for Engine T accounts".to_owned())?;
+    if prefix != "tmx" {
+        return Err("S8 is assigned Engine T and requires BOT_LIVE_NAME_PREFIX=tmx".into());
     }
     let evidence_dir = required_path("LIVE_EVIDENCE_DIR")?;
     if evidence_dir.exists() && !evidence_dir.is_dir() {
@@ -1267,15 +1850,23 @@ fn has_act_line(trace: &TickEngineTrace, tick: u64) -> bool {
     })
 }
 
-fn has_members_line(trace: &TickEngineTrace, through_tick: u64) -> bool {
+fn has_fletching_members_line(
+    trace: &TickEngineTrace,
+    from_tick: u64,
+    through_tick: u64,
+) -> bool {
     trace
         .frames
         .iter()
-        .filter(|frame| u64::from(frame.game_tick) <= through_tick)
+        .filter(|frame| {
+            let tick = u64::from(frame.game_tick);
+            tick >= from_tick && tick <= through_tick
+        })
         .flat_map(|frame| frame.chat.iter())
         .any(|line| {
-            let text = line.text.to_ascii_lowercase();
-            text.contains("member") && (text.contains("fletch") || text.contains("skill"))
+            line.text.trim().eq_ignore_ascii_case(
+                "You need to be on a members' world to gain experience in Fletching.",
+            )
         })
 }
 
@@ -1370,6 +1961,126 @@ fn assert_held_batch(
     {
         return Err(run.failure(format!(
             "real encrypted batch was not held through the requested edge: {observation:?}"
+        )));
+    }
+    Ok(())
+}
+
+fn assert_proxy_drop_after_make(run: &LiveRun, request_id: u64) -> Result<(), String> {
+    let observations = run
+        .proxy
+        .as_ref()
+        .map_or_else(Vec::new, |proxy| proxy.observations());
+    let Some(observation) = observations.first() else {
+        return Err(run.failure("Make suffix drop has no completed proxy observation"));
+    };
+    let wires = wires_for_request(&run.hook.trace(), request_id);
+    let packet_lengths: Vec<_> = wires.iter().map(|wire| wire.encoded_length).collect();
+    let packet_opcodes: Vec<_> = wires.iter().map(|wire| wire.opcode).collect();
+    let expected_packets: Vec<_> = (1..=wires.len())
+        .map(|packet_index| (request_id, packet_index))
+        .collect();
+    let forwarded_bytes: usize = packet_lengths.iter().take(2).sum();
+    let dropped_bytes: usize = packet_lengths.iter().skip(2).sum();
+    if observations.len() != 1
+        || observation.request_id != request_id
+        || observation.request_ids != vec![request_id]
+        || observation.mutation != "DropSuffixAfterPacket(2)"
+        || packet_opcodes.as_slice()
+            != [
+                ClientProt289::OPHELDU.id,
+                ClientProt289::IF_BUTTON.id,
+                ClientProt289::MOVE_OPCLICK.id,
+                ClientProt289::OPLOC1.id,
+            ]
+        || observation.packet_requests != expected_packets
+        || observation.packet_opcodes != packet_opcodes
+        || observation.packet_lengths != packet_lengths
+        || observation.forwarded_bytes != forwarded_bytes
+        || observation.dropped_bytes != dropped_bytes
+        || observation.forwarded_bytes + observation.dropped_bytes
+            != packet_lengths.iter().sum::<usize>()
+    {
+        return Err(run.failure(format!(
+            "proxy did not forward only the two-packet Make prefix and drop its byte suffix: {observation:?}"
+        )));
+    }
+    Ok(())
+}
+
+fn assert_make_without_click_outcome(
+    run: &mut LiveRun,
+    origin: u64,
+) -> Result<(), String> {
+    run.wait_until(origin as u32, MAKE_WITHOUT_CLICK_BUDGET, |trace, statuses| {
+        fresh_animation_on_edge(trace, origin + 1)
+            .is_some_and(|(sequence, _)| sequence == FLETCHING_ANIMATION)
+            && !has_act_line(trace, origin + 1)
+            && click_dispatches_at(trace, origin + 1).len() == 1
+            && fresh_animation_on_edge(trace, origin + 3)
+                .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
+            && statuses
+                .last()
+                .is_some_and(|status| status.tick_cycle == Some(3))
+    })?;
+    let trace = run.hook.trace();
+    assert_click(run, &trace, origin + 1)?;
+    assert_roll(run, origin + 3)?;
+    if has_act_line(&trace, origin + 1) {
+        return Err(run.failure("accepted Make without the click unexpectedly produced the act line"));
+    }
+    assert_log_unchanged(run)?;
+    assert_running(run)
+}
+
+fn assert_pre_batch_user_events(
+    run: &LiveRun,
+    dispatch: &DispatchObservation,
+) -> Result<(), String> {
+    let events = run
+        .foreign_events
+        .lock()
+        .map_err(|_| run.failure("tick-engine foreign event state poisoned"))?
+        .clone();
+    let Some(host_frame) = events.host_frame else {
+        return Err(run.failure(format!(
+            "pre-batch user-event driver has no host-frame evidence: {events:?}"
+        )));
+    };
+    let trace = run.hook.trace();
+    let movement_positions: Vec<_> = trace
+        .wire
+        .iter()
+        .enumerate()
+        .filter_map(|(index, wire)| {
+            (wire.host_frame == host_frame
+                && wire.request_id.is_none()
+                && wire.opcode == ClientProt289::MOVE_GAMECLICK.id)
+                .then_some(index)
+        })
+        .collect();
+    let opener_position = trace.wire.iter().position(|wire| {
+        wire.request_id == Some(dispatch.receipt.request_id)
+            && wire.opcode == ClientProt289::OPHELDU.id
+    });
+    if events.requested != 3
+        || !events.sent
+        || events.emitted != 3
+        || events.error.is_some()
+        || movement_positions.len() != 3
+        || opener_position.is_none()
+        || opener_position.is_some_and(|opener| {
+            movement_positions
+                .last()
+                .is_some_and(|position| *position >= opener)
+        })
+        || dispatch.receipt.dispatched_prefix != 3
+        || dispatch.receipt.wire_events != 4
+        || dispatch.receipt.terminal.is_some()
+    {
+        return Err(run.failure(format!(
+            "three real movement events did not precede the full KnifeArm wire: events={events:?} movement_positions={movement_positions:?} opener_position={opener_position:?} receipt={:?}",
+            dispatch.receipt
         )));
     }
     Ok(())
@@ -1656,7 +2367,7 @@ fn normalized_prefix(evidence: &RunEvidence, end_offset: u32) -> PrefixTrace {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine L 127.0.0.1:47594/3080"]
+#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine T 127.0.0.1:48594/4080"]
 fn tick_engine_clean_continuing_river() {
     run_case(Scenario::river("tick-clean-river"), |run| {
         let trace = run.hook.trace();
@@ -1714,7 +2425,7 @@ fn tick_engine_clean_continuing_river() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine L 127.0.0.1:47594/3080"]
+#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine T 127.0.0.1:48594/4080"]
 fn tick_engine_clean_ending_net_twenty_cycles() {
     run_case(Scenario::net("tick-clean-net"), |run| {
         let trace = run.hook.trace();
@@ -1759,7 +2470,7 @@ fn tick_engine_clean_ending_net_twenty_cycles() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine L 127.0.0.1:47594/3080"]
+#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine T 127.0.0.1:48594/4080"]
 fn tick_engine_stale_menu_guard_late_case_two() {
     let scenario = Scenario::river("tick-stale-menu")
         .with_mutation(DispatchMutation::CancelAfterPackets(1))
@@ -1818,7 +2529,7 @@ fn tick_engine_stale_menu_guard_late_case_two() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine L 127.0.0.1:47594/3080"]
+#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine T 127.0.0.1:48594/4080"]
 fn tick_engine_split_opener_late_case_one() {
     let scenario = Scenario::river("tick-split-opener")
         .with_mutation(DispatchMutation::Transport(TransportMutation::SplitAfterFirstPacket));
@@ -1866,7 +2577,7 @@ fn tick_engine_split_opener_late_case_one() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine L 127.0.0.1:47594/3080"]
+#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine T 127.0.0.1:48594/4080"]
 fn tick_engine_plain_late_river_and_mithril_iron() {
     let river = Scenario::river("tick-late-river")
         .with_mutation(DispatchMutation::Transport(TransportMutation::HoldThroughNextEdge));
@@ -1874,19 +2585,11 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
         let first = first_knife(&run.hook.trace()).map_err(|error| run.failure(error))?;
         let origin = first.receipt.dispatch_tick;
         assert_batch(run, &first, 3, 4)?;
-        let baseline = run.baseline.as_ref().expect("started run has baseline").clone();
+        // The first window may include interface packets before PLAYER_INFO.
         run.wait_until(origin as u32, LATE_RIVER_BUDGET, |trace, statuses| {
-            !edge_has_openchat(trace, origin + 1)
-                && frames_in_tick(trace, origin + 1).iter().all(|frame| {
-                    frame.main_modal_opened_observation
-                        == baseline.main_modal_opened_observation
-                        && frame.main_modal_closed_observation
-                            == baseline.main_modal_closed_observation
-                })
-                && fresh_animation_on_edge(trace, origin + 2).is_some_and(|(sequence, _)| {
-                    sequence == FLETCHING_ANIMATION || sequence == CAST_ANIMATION
-                })
-                && click_dispatches_at(trace, origin + 2).len() == 1
+            fresh_animation_on_edge(trace, origin + 2).is_some_and(|(sequence, _)| {
+                sequence == FLETCHING_ANIMATION || sequence == CAST_ANIMATION
+            }) && click_dispatches_at(trace, origin + 2).len() == 1
                 && fresh_animation_on_edge(trace, origin + 5)
                     .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
                 && knife_dispatches(trace).iter().any(|dispatch| {
@@ -2060,7 +2763,7 @@ fn copper_history(
 }
 
 #[test]
-#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine L 127.0.0.1:47594/3080"]
+#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine T 127.0.0.1:48594/4080"]
 fn tick_engine_copper_success_and_delayed_first_batch_history() {
     let normal = copper_history(Scenario::copper("tick-copper-normal").unwrap(), false)
         .unwrap_or_else(|error| panic!("{error}"));
@@ -2083,7 +2786,7 @@ fn tick_engine_copper_success_and_delayed_first_batch_history() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine L 127.0.0.1:47594/3080"]
+#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine T 127.0.0.1:48594/4080"]
 fn tick_engine_removed_target_refuses_prefix_zero_and_continues() {
     let scenario = Scenario::river("tick-target-removed").with_mutation(
         DispatchMutation::RemoveLoc {
@@ -2132,12 +2835,10 @@ fn tick_engine_removed_target_refuses_prefix_zero_and_continues() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine L 127.0.0.1:47594/3080"]
+#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine T 127.0.0.1:48594/4080"]
 fn tick_engine_accepted_make_without_click() {
     let scenario = Scenario::river("tick-make-without-click")
-        .with_mutation(DispatchMutation::Transport(
-            TransportMutation::DropSuffixAfterPacket(2),
-        ));
+        .with_mutation(DispatchMutation::CancelAfterPackets(2));
     run_case(scenario, |run| {
         let first = first_knife(&run.hook.trace()).map_err(|error| run.failure(error))?;
         let origin = first.receipt.dispatch_tick;
@@ -2148,6 +2849,44 @@ fn tick_engine_accepted_make_without_click() {
             &first,
             &[ClientProt289::OPHELDU.id, ClientProt289::IF_BUTTON.id],
         )?;
+        assert_make_without_click_outcome(run, origin)
+    })
+    .unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine T 127.0.0.1:48594/4080"]
+fn tick_engine_deferred_terminal_row_is_a_slip_after_three_foreign_events() {
+    let scenario = Scenario::river("tick-deferred-terminal-row").with_pre_batch_user_events(3);
+    run_case(scenario, |run| {
+        let first = first_knife(&run.hook.trace()).map_err(|error| run.failure(error))?;
+        let origin = first.receipt.dispatch_tick;
+        assert_batch(run, &first, 3, 4)?;
+        assert_knife_wire_order(
+            run,
+            &run.hook.trace(),
+            &first,
+            &[
+                ClientProt289::OPHELDU.id,
+                ClientProt289::IF_BUTTON.id,
+                ClientProt289::MOVE_OPCLICK.id,
+                ClientProt289::OPLOC1.id,
+            ],
+        )?;
+        assert_pre_batch_user_events(run, &first)?;
+        let initial = run
+            .statuses
+            .last()
+            .cloned()
+            .ok_or_else(|| run.failure("missing pre-cycle status"))?;
+        let initial_verified = initial.tick_verified.unwrap_or(0);
+        let initial_unobserved = initial.tick_unobserved.unwrap_or(0);
+        let initial_slips = initial.tick_slips.unwrap_or(0);
+        let initial_lost = initial.tick_lost.unwrap_or(0);
+        let initial_delayed = initial.tick_delayed.unwrap_or(0);
+        let initial_paused = initial.tick_paused.unwrap_or(0);
+        let initial_fallbacks = initial.tick_fallbacks.unwrap_or(0);
+        let initial_fallback_failed = initial.tick_fallback_failed.unwrap_or(0);
         run.wait_until(origin as u32, MAKE_WITHOUT_CLICK_BUDGET, |trace, statuses| {
             fresh_animation_on_edge(trace, origin + 1)
                 .is_some_and(|(sequence, _)| sequence == FLETCHING_ANIMATION)
@@ -2155,16 +2894,65 @@ fn tick_engine_accepted_make_without_click() {
                 && click_dispatches_at(trace, origin + 1).len() == 1
                 && fresh_animation_on_edge(trace, origin + 3)
                     .is_some_and(|(sequence, _)| sequence == ROLL_ANIMATION)
-                && statuses.last().is_some_and(|status| status.tick_cycle == Some(3))
+                && statuses.last().is_some_and(|status| {
+                    status.tick_slips == Some(initial_slips + 1)
+                        && status.tick_fallbacks == Some(initial_fallbacks + 1)
+                        && status.tick_verified == Some(initial_verified)
+                })
         })?;
         let trace = run.hook.trace();
         assert_click(run, &trace, origin + 1)?;
         assert_roll(run, origin + 3)?;
         if has_act_line(&trace, origin + 1) {
-            return Err(run.failure("accepted Make without the click unexpectedly produced the act line"));
+            return Err(run.failure("deferred terminal-row landing unexpectedly had an act line"));
+        }
+        let final_status = run
+            .statuses
+            .last()
+            .ok_or_else(|| run.failure("missing deferred-row terminal status"))?;
+        if final_status.tick_verified != Some(initial_verified)
+            || final_status.tick_unobserved != Some(initial_unobserved)
+            || final_status.tick_slips != Some(initial_slips + 1)
+            || final_status.tick_lost != Some(initial_lost)
+            || final_status.tick_delayed != Some(initial_delayed)
+            || final_status.tick_paused != Some(initial_paused)
+            || final_status.tick_fallbacks != Some(initial_fallbacks + 1)
+            || final_status.tick_fallback_failed != Some(initial_fallback_failed)
+        {
+            return Err(run.failure(format!(
+                "deferred terminal-row cycle did not end as exactly one slip and one fallback: initial={initial:?} final={final_status:?}"
+            )));
         }
         assert_log_unchanged(run)?;
         assert_running(run)
+    })
+    .unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine T 127.0.0.1:48594/4080"]
+fn tick_engine_proxy_drop_after_make_keeps_full_host_receipt() {
+    let scenario = Scenario::river("tick-make-proxy-drop")
+        .with_mutation(DispatchMutation::Transport(
+            TransportMutation::DropSuffixAfterPacket(2),
+        ));
+    run_case(scenario, |run| {
+        let first = first_knife(&run.hook.trace()).map_err(|error| run.failure(error))?;
+        let origin = first.receipt.dispatch_tick;
+        assert_batch(run, &first, 3, 4)?;
+        assert_knife_wire_order(
+            run,
+            &run.hook.trace(),
+            &first,
+            &[
+                ClientProt289::OPHELDU.id,
+                ClientProt289::IF_BUTTON.id,
+                ClientProt289::MOVE_OPCLICK.id,
+                ClientProt289::OPLOC1.id,
+            ],
+        )?;
+        assert_make_without_click_outcome(run, origin)?;
+        assert_proxy_drop_after_make(run, first.receipt.request_id)
     })
     .unwrap_or_else(|error| panic!("{error}"));
 }
@@ -2216,7 +3004,7 @@ fn lone_opener_history(name: &'static str, suppress: bool) -> Result<RunEvidence
 }
 
 #[test]
-#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine L 127.0.0.1:47594/3080"]
+#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and Engine T 127.0.0.1:48594/4080"]
 fn tick_engine_lone_opener_with_and_without_snapshot_suppression() {
     let visible = lone_opener_history("tick-lone-opener", false)
         .unwrap_or_else(|error| panic!("{error}"));
@@ -2232,42 +3020,64 @@ fn tick_engine_lone_opener_with_and_without_snapshot_suppression() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR and selected free-world local world.json"]
+#[ignore = "requires LIVE=1, GATHERER_ENGINE_DIR/NAV_PACK/CATALOG_ROOT, LIVE_EVIDENCE_DIR, selected local free-world world.json, and Engine T node.members=false phase"]
 fn tick_engine_free_world_disables_members_only_knife_arm() {
     run_case(Scenario::oak("tick-free-world-oak"), |run| {
         let start = run.start_tick.ok_or_else(|| run.failure("missing pre-Start tick"))?;
         run.wait_until(start, FREE_WORLD_BUDGET, |trace, statuses| {
-            has_members_line(trace, u64::from(start + FREE_WORLD_BUDGET))
-                && checked_click_pairs(trace, u64::from(start + 1)) == 1
-                && statuses
-                    .last()
-                    .and_then(|status| status.tick_method.as_deref())
-                    == Some("Knife (off: members-only-arm)")
+            has_fletching_members_line(
+                trace,
+                u64::from(start + 1),
+                u64::from(start + FREE_WORLD_BUDGET),
+            ) && checked_click_pairs(trace, u64::from(start + 1)) == 1
+                && statuses.last().is_some_and(|status| {
+                    status.tick_method.as_deref() == Some("Knife (off: members-only-arm)")
+                        && status.tick_fallbacks == Some(1)
+                        && status.tick_fallback_failed == Some(0)
+                })
         })?;
         let trace = run.hook.trace();
-        if trace.dispatches.iter().any(is_knife_arm) {
-            return Err(run.failure("free-world content emitted a members-only KnifeArm"));
+        let knife_dispatches = knife_dispatches(&trace);
+        if knife_dispatches.is_empty() {
+            return Err(run.failure("free-world Fletching refusal had no real KnifeArm"));
         }
-        if trace.wire.iter().any(|wire| {
-            wire.opcode == ClientProt289::OPHELDU.id || wire.opcode == ClientProt289::IF_BUTTON.id
-        }) {
-            return Err(run.failure("free-world content opened a Knife/Make menu"));
+        let knife_wires = wires_for_request(&trace, knife_dispatches[0].receipt.request_id);
+        if !knife_wires
+            .iter()
+            .any(|wire| wire.opcode == ClientProt289::OPHELDU.id)
+        {
+            return Err(run.failure("free-world KnifeArm did not encode OPHELDU"));
         }
         if trace
             .frames
             .iter()
             .any(|frame| frame.actual_chat_modal_root == 8_880)
         {
-            return Err(run.failure("free-world content opened an interface menu"));
+            return Err(run.failure("free-world Fletching refusal opened a Make menu"));
         }
-        if !has_members_line(&trace, u64::from(start + FREE_WORLD_BUDGET)) {
-            return Err(run.failure("free-world run did not expose the real members-only message"));
+        if !has_fletching_members_line(
+            &trace,
+            u64::from(start + 1),
+            u64::from(start + FREE_WORLD_BUDGET),
+        ) {
+            return Err(run.failure(
+                "free-world run did not expose the authored Fletching members-only message",
+            ));
         }
-        if checked_click_pairs(&trace, u64::from(start + 1)) != 1 {
-            return Err(run.failure("free-world run did not emit exactly one checked click"));
-        }
+        assert_click_target(run, &trace, start + 1, ClientProt289::OPLOC1.id)?;
         if run.latest_tick_method() != Some("Knife (off: members-only-arm)") {
             return Err(run.failure("tick_method did not report Knife (off: members-only-arm)"));
+        }
+        let final_status = run
+            .statuses
+            .last()
+            .ok_or_else(|| run.failure("missing free-world fallback status"))?;
+        if final_status.tick_fallbacks != Some(1)
+            || final_status.tick_fallback_failed != Some(0)
+        {
+            return Err(run.failure(format!(
+                "free-world refusal did not produce exactly one successful fallback: {final_status:?}"
+            )));
         }
         assert_running(run)
     })
@@ -2279,5 +3089,183 @@ impl LiveRun {
         self.statuses
             .last()
             .and_then(|status| status.tick_method.as_deref())
+    }
+}
+
+#[cfg(test)]
+mod packet_oracle_tests {
+    use super::*;
+
+    fn packet(opcode: u8, sequence: u64) -> EnginePacket {
+        EnginePacket {
+            sequence,
+            tick: 7,
+            username: "tmx-oracle".into(),
+            opcode,
+            name: format!("opcode-{opcode}"),
+            outcome: "accepted".into(),
+            reason: String::new(),
+            handler_accepted: true,
+            charged_user_event: false,
+            scripts: Vec::new(),
+        }
+    }
+
+    fn wire(opcode: u8, request_id: u64, length: usize) -> WireObservation {
+        WireObservation {
+            host_frame: 1,
+            game_tick: 7,
+            request_id: Some(request_id),
+            opcode,
+            encoded_length: length,
+        }
+    }
+
+    fn evidence(
+        wire: Vec<WireObservation>,
+        transport: Vec<ProxyObservation>,
+        packets: Vec<EnginePacket>,
+    ) -> RunEvidence {
+        RunEvidence {
+            case: "packet-oracle",
+            account: "tmx-oracle".into(),
+            profile: "test".into(),
+            world_members: "unknown".into(),
+            product_ids: Vec::new(),
+            start_tick: Some(7),
+            baseline: None,
+            trace: TickEngineTrace {
+                frames: Vec::new(),
+                dispatches: Vec::new(),
+                wire,
+            },
+            statuses: Vec::new(),
+            transport,
+            engine_packets: Some(Ok(packets)),
+        }
+    }
+
+    fn drop_observation(
+        request_id: u64,
+        packet_opcodes: Vec<u8>,
+        packet_lengths: Vec<usize>,
+        forwarded_bytes: usize,
+        dropped_bytes: usize,
+    ) -> ProxyObservation {
+        ProxyObservation {
+            request_id,
+            request_ids: vec![request_id],
+            mutation: "DropSuffixAfterPacket(2)".into(),
+            start_game_tick: 7,
+            start_host_frame: 1,
+            packet_requests: (1..=packet_opcodes.len())
+                .map(|packet_index| (request_id, packet_index))
+                .collect(),
+            packet_opcodes,
+            packet_lengths,
+            forwarded_bytes,
+            dropped_bytes,
+            release_edge_tick: None,
+            release_trigger_tick: None,
+            release_edge_frame: None,
+            released_host_frame: None,
+        }
+    }
+
+    #[test]
+    fn engine_correlation_accepts_byte_preserving_make_suffix_drop() {
+        let request = 11;
+        let make_opcodes = vec![
+            ClientProt289::OPHELDU.id,
+            ClientProt289::IF_BUTTON.id,
+            ClientProt289::MOVE_OPCLICK.id,
+            ClientProt289::OPLOC1.id,
+        ];
+        let make_lengths = vec![6, 4, 7, 5];
+        let mut wire_packets: Vec<_> = make_opcodes
+            .iter()
+            .zip(&make_lengths)
+            .map(|(opcode, length)| wire(*opcode, request, *length))
+            .collect();
+        let click_opcodes = [ClientProt289::MOVE_OPCLICK.id, ClientProt289::OPNPC1.id];
+        wire_packets.extend(
+            click_opcodes
+                .iter()
+                .map(|opcode| wire(*opcode, request + 1, 4)),
+        );
+        let mut engine_packets = vec![packet(make_opcodes[0], 1), packet(make_opcodes[1], 2)];
+        engine_packets.extend(
+            click_opcodes
+                .iter()
+                .enumerate()
+                .map(|(index, opcode)| packet(*opcode, index as u64 + 3)),
+        );
+        let transport = vec![drop_observation(
+            request,
+            make_opcodes,
+            make_lengths,
+            10,
+            12,
+        )];
+        assert!(correlate_engine_packets(&evidence(
+            wire_packets,
+            transport,
+            engine_packets,
+        ))
+        .is_ok());
+    }
+
+    #[test]
+    fn engine_correlation_rejects_proxy_dropped_packets_reported_by_engine() {
+        let request = 21;
+        let opcodes = vec![
+            ClientProt289::OPHELDU.id,
+            ClientProt289::IF_BUTTON.id,
+            ClientProt289::MOVE_OPCLICK.id,
+            ClientProt289::OPLOC1.id,
+        ];
+        let lengths = vec![6, 4, 7, 5];
+        let wire_packets = opcodes
+            .iter()
+            .zip(&lengths)
+            .map(|(opcode, length)| wire(*opcode, request, *length))
+            .collect();
+        let engine_packets = opcodes
+            .iter()
+            .enumerate()
+            .map(|(index, opcode)| packet(*opcode, index as u64 + 1))
+            .collect();
+        let transport = vec![drop_observation(request, opcodes, lengths, 10, 12)];
+        assert!(correlate_engine_packets(&evidence(
+            wire_packets,
+            transport,
+            engine_packets,
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn engine_correlation_rejects_non_packet_aligned_proxy_accounting() {
+        let request = 31;
+        let opcodes = vec![
+            ClientProt289::OPHELDU.id,
+            ClientProt289::IF_BUTTON.id,
+            ClientProt289::MOVE_OPCLICK.id,
+            ClientProt289::OPLOC1.id,
+        ];
+        let lengths = vec![6, 4, 7, 5];
+        let wire_packets = opcodes
+            .iter()
+            .zip(&lengths)
+            .map(|(opcode, length)| wire(*opcode, request, *length))
+            .collect();
+        let engine_packets = vec![packet(opcodes[0], 1), packet(opcodes[1], 2)];
+        let transport = vec![drop_observation(request, opcodes, lengths, 11, 11)];
+        assert!(correlate_engine_packets(&evidence(
+            wire_packets,
+            transport,
+            engine_packets,
+        ))
+        .is_err());
     }
 }
