@@ -371,7 +371,7 @@ pub(crate) fn eat_choice_with_floor(
     let eat_line = lines.eat.max(eat_floor);
     if hp <= 0
         || hp >= hp_max
-        || (danger == Some(0) && poison_fire == 0 && eat_floor <= lines.eat)
+        || (danger == Some(0) && poison_fire == 0 && eat_floor < lines.eat)
         || hp > eat_line
     {
         return None;

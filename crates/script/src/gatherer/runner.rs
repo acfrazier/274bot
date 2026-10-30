@@ -3723,8 +3723,9 @@ mod tests {
             })
             .collect();
         inventory.push(antipoison_item(3));
+        let bank_side = inventory.clone();
         snapshot.seed_inventory(inventory, 28);
-        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), bank_side);
         let clear = || survival_condition(PoisonState::Clear, 60, FoodSummary::default());
         let onset = || {
             survival_condition(
@@ -3756,37 +3757,25 @@ mod tests {
             tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
             gatherer.tick(tick).unwrap();
             assert!(matches!(
-                tick.cx
-                    .ledger
-                    .as_ref()
-                    .unwrap()
-                    .outbox
-                    .last()
-                    .map(|action| &action.effect),
-                Some(crate::native::HostEffect::Interaction(
-                    crate::shim::InteractReq::SetNoteMode { on: false, .. }
-                ))
-            ));
-            accept_last_interaction(tick);
-        });
-        with_tick(&snapshot, &mut ledger, 2, |tick| {
-            tick.cx.condition = Some(clear());
-            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
-            gatherer.tick(tick).unwrap();
-            assert!(matches!(
-                tick.cx
-                    .ledger
-                    .as_ref()
-                    .unwrap()
-                    .outbox
-                    .last()
-                    .map(|action| &action.effect),
+                tick.cx.ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
                 Some(crate::native::HostEffect::Interaction(
                     crate::shim::InteractReq::InvButton { id: 201, .. }
                 ))
             ));
             accept_last_interaction(tick);
         });
+        let outbox_len = ledger.as_ref().unwrap().outbox.len();
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.condition = Some(clear());
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            gatherer.tick(tick).unwrap();
+            assert_eq!(
+                tick.cx.ledger.as_ref().unwrap().outbox.len(),
+                outbox_len,
+                "the in-flight deposit must not send another click"
+            );
+        });
+        assert!(gatherer.active_transfer_in_flight());
         with_tick(&snapshot, &mut ledger, 3, |tick| {
             tick.cx.condition = Some(clear());
             tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
@@ -4174,7 +4163,10 @@ mod tests {
         assert!(
             !outbox.iter().any(|action| matches!(
                 &action.effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::WithdrawX { .. })
+                crate::native::HostEffect::Interaction(crate::shim::InteractReq::WithdrawX {
+                    bank_item_id: 302,
+                    ..
+                })
             )),
             "the boundary must not begin the second withdrawal"
         );
@@ -4404,7 +4396,7 @@ mod tests {
         use api::snapshot::StatView;
 
         let fixture = BaitFixture::new();
-        let gatherer = fixture.gatherer(GatherRetained::default());
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
         let mut snapshot = fixture.snapshot;
         snapshot.seed_inventory(
             vec![ItemView {
@@ -4451,6 +4443,9 @@ mod tests {
                 90,
                 20,
             ));
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            gatherer.tick(tick).unwrap();
         });
         assert!(gatherer.survival.parked().is_some());
 
@@ -4465,6 +4460,9 @@ mod tests {
                 84,
                 50,
             ));
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            gatherer.tick(tick).unwrap();
         });
         assert!(gatherer.survival.parked().is_some());
 
@@ -4479,6 +4477,9 @@ mod tests {
                 78,
                 80,
             ));
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            gatherer.tick(tick).unwrap();
         });
         assert!(gatherer.survival.parked().is_some());
 
@@ -4493,6 +4494,9 @@ mod tests {
                 73,
                 110,
             ));
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            gatherer.tick(tick).unwrap();
         });
         assert!(gatherer.survival.parked().is_none());
         assert_eq!(

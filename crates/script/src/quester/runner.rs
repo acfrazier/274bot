@@ -6251,6 +6251,7 @@ mod tests {
             cures: CureDoses::default(),
         };
 
+        let mut saw_withdraw = false;
         super::super::families::tests::with_tick_bank(
             &snapshot,
             Some(&memory),
@@ -6260,50 +6261,92 @@ mod tests {
                 tick.cx.condition = Some(condition(PoisonState::Clear, 60));
                 tick.cx.cure_poison = CurePoison::WhenNeeded;
                 script.tick(tick).unwrap();
-                if tick
-                    .cx
-                    .ledger
-                    .as_ref()
-                    .is_some_and(|ledger| !ledger.outbox.is_empty())
-                {
+                let (withdraw, interaction) =
+                    tick.cx
+                        .ledger
+                        .as_ref()
+                        .map_or((false, false), |ledger| {
+                            let last = ledger.outbox.last().map(|action| &action.effect);
+                            (
+                                matches!(
+                                    last,
+                                    Some(crate::native::HostEffect::Interaction(
+                                        crate::shim::InteractReq::WithdrawX { .. }
+                                    ))
+                                ),
+                                matches!(
+                                    last,
+                                    Some(crate::native::HostEffect::Interaction(_))
+                                ),
+                            )
+                        });
+                saw_withdraw |= withdraw;
+                if interaction {
                     accept_last_interaction(tick);
                 }
             },
         );
         assert!(script.provisioner.has_run());
 
-        super::super::families::tests::with_tick_bank(
-            &snapshot,
-            Some(&memory),
-            &mut ledger,
-            2,
-            |tick| {
-                tick.cx.condition = Some(condition(PoisonState::Clear, 60));
-                tick.cx.cure_poison = CurePoison::WhenNeeded;
-                script.tick(tick).unwrap();
-                assert!(matches!(
-                    tick.cx
-                        .ledger
-                        .as_ref()
-                        .unwrap()
-                        .outbox
-                        .last()
-                        .map(|action| &action.effect),
-                    Some(crate::native::HostEffect::Interaction(
-                        crate::shim::InteractReq::WithdrawX { .. }
-                    ))
-                ));
-                accept_last_interaction(tick);
-            },
-        );
+        let mut next_tick = 2;
+        if !script.provisioner.transfer_in_flight() {
+            for _ in 0..3 {
+                let poll_tick = next_tick;
+                next_tick += 1;
+                let outbox_before = ledger.as_ref().map_or(0, |ledger| ledger.outbox.len());
+                super::super::families::tests::with_tick_bank(
+                    &snapshot,
+                    Some(&memory),
+                    &mut ledger,
+                    poll_tick,
+                    |tick| {
+                        tick.cx.condition = Some(condition(PoisonState::Clear, 60));
+                        tick.cx.cure_poison = CurePoison::WhenNeeded;
+                        script.tick(tick).unwrap();
+                        let (withdraw, interaction) =
+                            tick.cx
+                                .ledger
+                                .as_ref()
+                                .map_or((false, false), |ledger| {
+                                    let new_action = ledger.outbox.len() > outbox_before;
+                                    let last =
+                                        ledger.outbox.last().map(|action| &action.effect);
+                                    (
+                                        new_action
+                                            && matches!(
+                                                last,
+                                                Some(crate::native::HostEffect::Interaction(
+                                                    crate::shim::InteractReq::WithdrawX { .. }
+                                                ))
+                                            ),
+                                        new_action
+                                            && matches!(
+                                                last,
+                                                Some(crate::native::HostEffect::Interaction(_))
+                                            ),
+                                    )
+                                });
+                        saw_withdraw |= withdraw;
+                        if interaction {
+                            accept_last_interaction(tick);
+                        }
+                    },
+                );
+                if script.provisioner.transfer_in_flight() {
+                    break;
+                }
+            }
+        }
+        assert!(saw_withdraw, "provisioning must reach its bank withdrawal");
         assert!(script.provisioner.transfer_in_flight());
         assert!(script.step.is_none());
-
+        let onset_tick = next_tick;
+        next_tick += 1;
         super::super::families::tests::with_tick_bank(
             &snapshot,
             Some(&memory),
             &mut ledger,
-            3,
+            onset_tick,
             |tick| {
                 tick.cx.condition = Some(condition(
                     PoisonState::Onset {
@@ -6362,11 +6405,13 @@ mod tests {
                 bank_session: 1,
             },
         );
+        let boundary_tick = next_tick;
+        next_tick += 1;
         super::super::families::tests::with_tick_bank(
             &snapshot,
             Some(&memory),
             &mut ledger,
-            4,
+            boundary_tick,
             |tick| {
                 tick.cx.condition = Some(condition(
                     PoisonState::Onset {
@@ -6398,11 +6443,13 @@ mod tests {
         snapshot.seed_tick(21);
         snapshot.seed_main_modal(-1, Vec::new());
         snapshot.seed_bank_observation(-1, 2, None, Vec::new());
+        let close_modal_tick = next_tick;
+        next_tick += 1;
         super::super::families::tests::with_tick_bank(
             &snapshot,
             Some(&memory),
             &mut ledger,
-            5,
+            close_modal_tick,
             |tick| {
                 tick.cx.condition = Some(condition(
                     PoisonState::Onset {
@@ -6418,11 +6465,13 @@ mod tests {
                 script.tick(tick).unwrap();
             },
         );
+        let drink_tick = next_tick;
+        next_tick += 1;
         super::super::families::tests::with_tick_bank(
             &snapshot,
             Some(&memory),
             &mut ledger,
-            6,
+            drink_tick,
             |tick| {
                 tick.cx.condition = Some(condition(
                     PoisonState::Onset {
@@ -6446,11 +6495,13 @@ mod tests {
 
         snapshot.seed_tick(22);
         snapshot.seed_inventory(vec![held_item], 28);
+        let immune_accept_tick = next_tick;
+        next_tick += 1;
         super::super::families::tests::with_tick_bank(
             &snapshot,
             Some(&memory),
             &mut ledger,
-            7,
+            immune_accept_tick,
             |tick| {
                 tick.cx.condition = Some(condition(PoisonState::Immune { until_lower: 80 }, 5));
                 tick.cx.cure_poison = CurePoison::WhenNeeded;
@@ -6458,11 +6509,12 @@ mod tests {
                 script.tick(tick).unwrap();
             },
         );
+        let settle_tick = next_tick;
         super::super::families::tests::with_tick_bank(
             &snapshot,
             Some(&memory),
             &mut ledger,
-            8,
+            settle_tick,
             |tick| {
                 tick.cx.condition = Some(condition(PoisonState::Immune { until_lower: 80 }, 5));
                 tick.cx.cure_poison = CurePoison::WhenNeeded;
