@@ -2215,6 +2215,10 @@ fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
         .expect("play")
         .bind_script_test_data(data);
     let _source = crate::quester_paths::registry_source_test_lock();
+    // Settle the initial asynchronous Path registry publication before the
+    // plan captures its revision. The queue-change check below must isolate
+    // the saved settings change, not a pending startup registry reload.
+    d.session_mut().flush_writes();
     d.poll();
     load(&mut d, &["alice", "bob"]);
     set_card(
