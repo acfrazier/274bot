@@ -556,7 +556,7 @@ test('types follow the family their ABI describes', () => {
 });
 
 test('refusal debt is unique and names each missing notImplValue export', () => {
-    assert.equal(contract.not_impl_debt.length, 130);
+    assert.equal(contract.not_impl_debt.length, 123);
     const selectors = contract.not_impl_debt.map(row => row.selector);
     assert.equal(new Set(selectors).size, selectors.length);
     for (const selector of [
@@ -564,8 +564,11 @@ test('refusal debt is unique and names each missing notImplValue export', () => 
         'BranchTask.success',
         'BranchTask.failure',
         'LeafTask.execute',
+        'events.on',
+        'events.off',
+        'registerScript',
     ]) {
-        assert.equal(selectors.filter(value => value === selector).length, 1, selector);
+        assert.equal(selectors.includes(selector), false, selector);
     }
     const newRefusals = [
         ['api/ai/quests/defs/murder/areas.js', ['ARHEIN', 'GUARD_START', 'GUARD_HANDIN', 'SALESMAN', 'SUSPECTS', 'MURDER_EVIDENCE']],

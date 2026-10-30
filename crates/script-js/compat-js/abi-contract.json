@@ -5895,19 +5895,21 @@
       "name": "registerScript",
       "kind": "function",
       "section": "manifest",
-      "source_module": null,
+      "source_module": "runtime/ScriptRegistry.js",
       "runtime": true,
       "signatures": [
         {
           "ordinal": 1,
-          "family_id": "bot",
+          "family_id": "runtime",
           "text": "/** Imperative registration (the loader calls this for default exports). */\nexport function registerScript(manifest: BotManifestInput, origin?: string): void;"
         }
       ],
       "members": [],
-      "family_id": "bot",
-      "source_modules": [],
-      "nav_consuming": false
+      "family_id": "runtime",
+      "source_modules": [
+        "runtime/ScriptRegistry.js"
+      ],
+      "nav_consuming": true
     },
     {
       "name": "BankRequirement",
@@ -9707,6 +9709,19 @@
       "mapping_kind": "direct-value"
     },
     {
+      "public_name": "registerScript",
+      "source_name": "registerScript",
+      "module": "runtime/ScriptRegistry.js",
+      "family_id": "runtime",
+      "shim": "script_registry.js",
+      "nav_consuming": true,
+      "source_modules": [
+        "runtime/ScriptRegistry.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
       "public_name": "Game",
       "source_name": "Game",
       "module": "api/game/Game.js",
@@ -10450,6 +10465,32 @@
     {
       "public_name": "AbstractBot",
       "source_name": "AbstractBot",
+      "module": "api/bot/Bot.js",
+      "family_id": "bot",
+      "shim": "bot.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "api/bot/Bot.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "BranchTask",
+      "source_name": "BranchTask",
+      "module": "api/bot/Bot.js",
+      "family_id": "bot",
+      "shim": "bot.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "api/bot/Bot.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "LeafTask",
+      "source_name": "LeafTask",
       "module": "api/bot/Bot.js",
       "family_id": "bot",
       "shim": "bot.js",
@@ -11593,19 +11634,6 @@
       "mapping_kind": "direct-value"
     },
     {
-      "public_name": "BranchTask",
-      "source_name": "BranchTask",
-      "module": null,
-      "shim": null,
-      "source_modules": [
-        "api/bot/Bot.js"
-      ],
-      "family_id": "bot",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-class"
-    },
-    {
       "public_name": "COINS",
       "source_name": "COINS",
       "module": null,
@@ -11665,19 +11693,6 @@
       "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-value"
-    },
-    {
-      "public_name": "LeafTask",
-      "source_name": "LeafTask",
-      "module": null,
-      "shim": null,
-      "source_modules": [
-        "api/bot/Bot.js"
-      ],
-      "family_id": "bot",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-class"
     },
     {
       "public_name": "NURMOF_VENDOR",
@@ -11951,17 +11966,6 @@
       "source_modules": [],
       "family_id": "acquisition",
       "nav_consuming": true,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "registerScript",
-      "source_name": "registerScript",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "bot",
-      "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -24208,33 +24212,6 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "bot",
-      "member": "failure",
-      "selector": "BranchTask.failure",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "bot",
-      "member": "success",
-      "selector": "BranchTask.success",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "bot",
-      "member": "validate",
-      "selector": "BranchTask.validate",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "acquisition",
       "member": "COINS",
       "selector": "COINS",
@@ -24274,15 +24251,6 @@
       "family_id": "acquisition",
       "member": "HARRY_VENDOR",
       "selector": "HARRY_VENDOR",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "bot",
-      "member": "execute",
-      "selector": "LeafTask.execute",
       "module": null,
       "state": "not-impl",
       "source": "declared_surface.js",
@@ -24424,24 +24392,6 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "events",
-      "member": "off",
-      "selector": "events.off",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "events",
-      "member": "on",
-      "selector": "events.on",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "acquisition",
       "member": "hasAll",
       "selector": "hasAll",
@@ -24514,15 +24464,6 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "bot",
-      "member": "registerScript",
-      "selector": "registerScript",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "walking",
       "member": "resolveDestination",
       "selector": "resolveDestination",
@@ -24572,14 +24513,14 @@
     {
       "family_id": "bot",
       "nav_consuming": false,
-      "declarations": 14,
+      "declarations": 13,
       "members": 49,
       "overloads": 0,
       "aliases": 4,
       "type_aliases": 4,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 5
+      "not_impl_debt": 0
     },
     {
       "family_id": "catalog-data",
@@ -24723,7 +24664,7 @@
       "type_aliases": 0,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 2
+      "not_impl_debt": 0
     },
     {
       "family_id": "execution",
@@ -24932,7 +24873,7 @@
     {
       "family_id": "runtime",
       "nav_consuming": true,
-      "declarations": 3,
+      "declarations": 4,
       "members": 8,
       "overloads": 0,
       "aliases": 0,

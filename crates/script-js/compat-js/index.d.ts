@@ -27,6 +27,7 @@ SOFTWARE.
 declare module '@rs2b0t/api' {
 export function defineBot<T extends {name: string; create: () => unknown}>(manifest: T): T;
 export type { BotManifest, BotManifestInput } from '*runtime/defineBot.js';
+export function registerScript(manifest: BotManifestInput, origin?: string): void;
 export { Game } from '*api/game/Game.js';
 export { Inventory, InvItem } from '*api/inventory/Inventory.js';
 export { Skills } from '*api/skills/Skills.js';
@@ -37,7 +38,7 @@ export { reader } from '*adapter/ClientAdapter.js';
 export { DEFAULT_BOOTH_NAME, DEFAULT_BOOTH_OP, MAP_SQUARE, sameMapSquare, locationOptions, boothFields, resolveGatheringLocation } from '*shim/gathering_locations.js';
 export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolAttackLevel, toolsNeedingEquip, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool, bestHeldToolNames, surplusHeldToolNames } from '*api/acquisition/Tools.js';
 export { Execution } from '*api/execution/Execution.js';
-export { LoopingBot, TaskBot, TreeBot, AbstractBot } from '*api/bot/Bot.js';
+export { LoopingBot, TaskBot, TreeBot, AbstractBot, BranchTask, LeafTask } from '*api/bot/Bot.js';
 export { Special } from '*api/combat/Special.js';
 export { ChatDialog } from '*api/ui/dialogue/ChatDialog.js';
 export { Quests } from '*api/ui/questlog/Quests.js';
@@ -70,13 +71,11 @@ export const AXE_SMITH_LEVEL: never;
 export class AcquireTask { constructor(...args: unknown[]); execute(...args: unknown[]): never; validate(...args: unknown[]): never; }
 export const BOB_VENDOR: never;
 export const BROKEN_AXE: never;
-export class BranchTask { failure(...args: unknown[]): never; success(...args: unknown[]): never; validate(...args: unknown[]): never; constructor(...args: unknown[]); }
 export const COINS: never;
 export const FORGETFUL_BANK_ODDS: never;
 export const FORGETFUL_BANK_SETTING: never;
 export const GERRANT_VENDOR: never;
 export const HARRY_VENDOR: never;
-export class LeafTask { execute(...args: unknown[]): never; constructor(...args: unknown[]); }
 export const NURMOF_VENDOR: never;
 export const PICKAXE_SHOP_COSTS: never;
 export const TOOL_ACQUIRE_OPTIONS: never;
@@ -102,7 +101,6 @@ export function planAxeAcquire(...args: unknown[]): never;
 export function planBrokenToolRepair(...args: unknown[]): never;
 export function planGatherToolAcquire(...args: unknown[]): never;
 export function planPickaxeAcquire(...args: unknown[]): never;
-export function registerScript(...args: unknown[]): never;
 export function resolveDestination(...args: unknown[]): never;
 }
 
