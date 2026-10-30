@@ -1,4 +1,4 @@
-use super::ledger::{BankDepositTrace, HostAction, HostEffect};
+use super::ledger::{BankDepositTrace, HostAction, HostCustody, HostEffect};
 use super::owner::Owner;
 use super::*;
 use crate::native_bank::{BankPickReceipt, BankPickRequest};
@@ -161,7 +161,7 @@ impl ActionContext<'_> {
         ledger.interaction = None;
         ledger.interaction_request = Some(request_id);
         ledger.outbox.push(HostAction {
-            owner,
+            custody: HostCustody::interaction(owner, request_id),
             request_id,
             batch: 0,
             effect: HostEffect::Interaction(request),
@@ -202,7 +202,7 @@ impl ActionContext<'_> {
             let request_id =
                 NonZeroU64::new(first_id.get() + offset as u64).expect("validated id range");
             ledger.outbox.push(HostAction {
-                owner: Arc::clone(&owner),
+                custody: HostCustody::owner(Arc::clone(&owner)),
                 request_id,
                 batch: first_id.get(),
                 effect: HostEffect::Interaction(request),
@@ -246,7 +246,7 @@ impl ActionContext<'_> {
         let ledger = self.ledger.as_mut().expect("owner checked");
         ledger.commit_id_range(request_id, 1);
         ledger.outbox.push(HostAction {
-            owner,
+            custody: HostCustody::owner(owner),
             request_id,
             batch: 0,
             effect: HostEffect::Interaction(request),
@@ -268,7 +268,7 @@ impl ActionContext<'_> {
         ledger.bank_pick = None;
         ledger.bank_pick_request = Some(request_id);
         ledger.outbox.push(HostAction {
-            owner,
+            custody: HostCustody::owner(owner),
             request_id,
             batch: 0,
             effect: HostEffect::BankPick(request),
@@ -333,7 +333,7 @@ impl ActionContext<'_> {
             .outbox
             .retain(|action| !matches!(&action.effect, HostEffect::AssessWalk(_)));
         ledger.outbox.push(HostAction {
-            owner,
+            custody: HostCustody::owner(owner),
             request_id,
             batch: 0,
             effect: HostEffect::AssessWalk(request),
@@ -390,7 +390,7 @@ impl ActionContext<'_> {
         ledger.walk = None;
         ledger.walk_events.clear();
         ledger.outbox.push(HostAction {
-            owner,
+            custody: HostCustody::owner(owner),
             request_id,
             batch: 0,
             effect: HostEffect::Walk(request),
@@ -422,6 +422,27 @@ impl ActionContext<'_> {
             .iter()
             .chain(ledger.batch_receipts.iter().flatten())
             .find(|receipt| receipt.request_id == request_id && receipt.evidence.run == self.run())
+    }
+
+    /// What the host's dispatch lifecycle has done with this action's single
+    /// interaction `request_id` ([`InteractionDispatch`]).
+    pub fn interaction_dispatch(&self, request_id: u64) -> InteractionDispatch<'_> {
+        if let Some(receipt) = self.interaction_receipt(request_id) {
+            return InteractionDispatch::Settled(receipt);
+        }
+        let owner = self
+            .ledger
+            .as_ref()
+            .and_then(|ledger| ledger.owner.as_ref())
+            .filter(|owner| {
+                owner.run == self.run() && owner.id.get() == self.action_id && owner.live()
+            });
+        match (owner, NonZeroU64::new(request_id)) {
+            (Some(owner), Some(request)) if !owner.interaction_unsent(request) => {
+                InteractionDispatch::Queued
+            }
+            _ => InteractionDispatch::Unsent,
+        }
     }
 
     pub fn cancel_request(&mut self, request_id: u64) {

@@ -1265,6 +1265,28 @@ pub struct InteractionReceipt {
     pub chat_since: i32,
 }
 
+/// Where one single interaction request is in the host's dispatch lifecycle
+/// ([`ActionContext::interaction_dispatch`]). The host takes queued native
+/// work only in an observation pass that may dispatch: connected, not held,
+/// the slot's dispatch open (`script_observe.rs:1344-1363`,
+/// `SlotScript::take_native_action`). It records the receipt of every
+/// interaction it takes in that same pass (`script_observe.rs:1649-1664`).
+/// A held pass does not dispatch: it drops queued gameplay instead
+/// (`SlotScript::seat_held_tick`, `GameplaySeat::hold` and `held_tick`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InteractionDispatch<'a> {
+    /// The host still holds the request: no pass that may dispatch has run
+    /// since it was queued. The wait belongs to the host's lifecycle.
+    Queued,
+    /// The host dropped the request without sending it (a held tick, a
+    /// guardian hold, a seat refusal, a session reset), or this action no
+    /// longer owns it. No receipt will come.
+    Unsent,
+    /// The host took the request in a pass that could dispatch it and
+    /// settled it: `accepted` is the dispatch result.
+    Settled(&'a InteractionReceipt),
+}
+
 impl<'a> ActionContext<'a> {
     pub fn run(&self) -> RunKey {
         self.evidence.run

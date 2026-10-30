@@ -12,6 +12,10 @@ pub(crate) struct Owner {
     quiet: AtomicU64,
     walk: AtomicU64,
     interaction: AtomicU64,
+    /// The host discarded `interaction` without dispatching it: a held tick,
+    /// a seat refusal or a session reset dropped its queued action
+    /// ([`super::ledger::HostAction`] custody). No receipt will come for it.
+    interaction_unsent: AtomicBool,
     batch: [AtomicU64; 5],
     batch_first: AtomicU64,
     batch_accepted: AtomicU8,
@@ -26,6 +30,7 @@ impl Owner {
             quiet: AtomicU64::new(0),
             walk: AtomicU64::new(0),
             interaction: AtomicU64::new(0),
+            interaction_unsent: AtomicBool::new(false),
             batch: std::array::from_fn(|_| AtomicU64::new(0)),
             batch_first: AtomicU64::new(0),
             batch_accepted: AtomicU8::new(0),
@@ -85,7 +90,22 @@ impl Owner {
     }
 
     pub fn set_interaction(&self, request: NonZeroU64) {
+        self.interaction_unsent.store(false, Ordering::Release);
         self.interaction.store(request.get(), Ordering::Release);
+    }
+
+    /// The host dropped `request` from its custody without dispatching it.
+    /// Only the owner's current single interaction is marked.
+    pub fn note_unsent(&self, request: NonZeroU64) {
+        if self.interaction.load(Ordering::Acquire) == request.get() {
+            self.interaction_unsent.store(true, Ordering::Release);
+        }
+    }
+
+    /// Whether the host discarded the current single interaction `request`.
+    pub fn interaction_unsent(&self, request: NonZeroU64) -> bool {
+        self.interaction.load(Ordering::Acquire) == request.get()
+            && self.interaction_unsent.load(Ordering::Acquire)
     }
 
     pub fn cancel_interaction(&self, request: NonZeroU64) {

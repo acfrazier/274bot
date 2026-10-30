@@ -107,12 +107,55 @@ pub struct BankDepositTrace {
 }
 
 pub struct HostAction {
-    pub(crate) owner: Arc<Owner>,
+    pub(crate) custody: HostCustody,
     pub request_id: NonZeroU64,
     pub batch: u64,
     pub effect: HostEffect,
     pub observed_walk_outcome_seq: u64,
     pub bank_deposit: Option<Arc<BankDepositTrace>>,
+}
+
+/// The owner of one queued host action, and the host's custody of a single
+/// interaction. The host takes queued work only through
+/// `SlotScript::take_native_action`, which releases the custody, and it
+/// records the interaction's receipt in that same observation pass. Every
+/// other way out of the queue drops the action unsent: a held tick
+/// (`SlotScript::seat_held_tick`, `GameplaySeat::held_tick`), a guardian
+/// hold (`GameplaySeat::hold`), a seat refusal, a session reset or a
+/// cancellation. Dropping armed custody marks the owner's interaction as
+/// unsent, so a machine can tell a request that still waits for an eligible
+/// dispatch pass from one that no pass will ever send.
+pub(crate) struct HostCustody {
+    owner: Arc<Owner>,
+    unsent: Option<NonZeroU64>,
+}
+
+impl HostCustody {
+    /// Custody of a single interaction: the request is marked unsent if it
+    /// leaves the queue other than through the host's take.
+    pub(crate) fn interaction(owner: Arc<Owner>, request: NonZeroU64) -> Self {
+        Self {
+            owner,
+            unsent: Some(request),
+        }
+    }
+
+    /// Owner-only custody: walks, batches, picks and assessments keep their
+    /// own receipt rules.
+    pub(crate) fn owner(owner: Arc<Owner>) -> Self {
+        Self {
+            owner,
+            unsent: None,
+        }
+    }
+}
+
+impl Drop for HostCustody {
+    fn drop(&mut self) {
+        if let Some(request) = self.unsent {
+            self.owner.note_unsent(request);
+        }
+    }
 }
 
 pub enum HostEffect {
@@ -173,26 +216,31 @@ pub struct QuietReadOwner {
 
 impl HostAction {
     pub fn live(&self) -> bool {
+        let owner = &self.custody.owner;
         match &self.effect {
             HostEffect::Interaction(_) | HostEffect::BankPick(_) | HostEffect::AssessWalk(_) => {
-                self.owner.interaction_live(self.request_id)
+                owner.interaction_live(self.request_id)
             }
-            HostEffect::Walk(_) => self.owner.walk_live(self.request_id),
-            HostEffect::ServerOrdered(_) => self.owner.batch_live(self.request_id),
+            HostEffect::Walk(_) => owner.walk_live(self.request_id),
+            HostEffect::ServerOrdered(_) => owner.batch_live(self.request_id),
         }
     }
     pub fn run(&self) -> RunKey {
-        self.owner.run
+        self.custody.owner.run
     }
     pub fn action_id(&self) -> NonZeroU64 {
-        self.owner.id
+        self.custody.owner.id
     }
     pub fn authority(&self) -> HostAuthority {
         HostAuthority {
-            owner: Arc::clone(&self.owner),
+            owner: Arc::clone(&self.custody.owner),
             request: self.request_id,
             walk: matches!(self.effect, HostEffect::Walk(_)),
         }
+    }
+    /// The host has taken this action for dispatch in an eligible pass.
+    pub(crate) fn release_custody(&mut self) {
+        self.custody.unsent = None;
     }
 }
 

@@ -30621,6 +30621,9 @@ mod native_walk;
 #[path = "script_server_ordered_tests.rs"]
 mod server_ordered;
 
+#[path = "script_talk_dispatch_tests.rs"]
+mod talk_dispatch;
+
 #[cfg(feature = "js")]
 #[path = "script_progress_tests.rs"]
 mod script_progress;

@@ -2204,7 +2204,10 @@ fn dialogue_open_keeps_waiting_after_npc_content_message() {
         1,
         "The captain looks up from his work as you address him.",
     )]);
-    complete_talk(&mut ledger, 2, false, false);
+    // The NPC's content message proves that the engine ran `opnpc1`, which
+    // it does only for a click that the host sent: the host accepted the
+    // Talk-to. The message anchors the page budget (tick 2 + 4 = tick 6).
+    complete_talk(&mut ledger, 2, true, false);
     assert!(with_tick(&progress, &mut ledger, 2, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })
@@ -3106,6 +3109,22 @@ fn continues(ledger: &Option<Box<ledger::Ledger>>) -> usize {
         .count()
 }
 
+/// Talk-to clicks queued in the outbox.
+fn talks(ledger: &Option<Box<ledger::Ledger>>) -> usize {
+    ledger
+        .as_ref()
+        .expect("dialogue test ledger")
+        .outbox
+        .iter()
+        .filter(|entry| {
+            matches!(
+                &entry.effect,
+                HostEffect::Interaction(InteractReq::Npc { .. })
+            )
+        })
+        .count()
+}
+
 /// Begin a continuation on `page` at tick 1 and send its first Continue at
 /// tick 2. Returns the handle; the Continue was requested on observed tick 2.
 fn continue_sent_at_tick_two(
@@ -3416,48 +3435,30 @@ fn a_talk_to_the_host_accepts_late_gets_the_page_budget_after_the_click() {
     ));
 }
 
-/// A Talk-to that the host never accepts ends at
-/// `DIALOGUE_TALK_ACCEPT_TICKS` after its emit tick, and the error carries the
-/// last game message since the click.
+/// The host still holds a Talk-to for as long as no pass that may dispatch
+/// has run (a held or disconnected host does not take queued work,
+/// `script_observe.rs:1344-1363`). That wait has no tick bound, sends no
+/// second click and does not run the page budget: here the host takes the
+/// click on tick 60 and the page budget then counts from that click.
 #[test]
-fn a_talk_to_the_host_never_accepts_ends_at_the_accept_bound_with_the_last_detail() {
+fn a_talk_to_the_host_still_holds_waits_without_a_tick_bound() {
     let page = cook_beside_player();
     let mut ledger = None;
     let handle = begin_cook_talk(&page, &mut ledger);
-    let mut later = cook_beside_player();
-    later.seed_chat_lines(vec![game_message(1, "Nothing interesting happens.")]);
-    for observed in 2..9 {
+    for observed in 2..60 {
         assert!(
-            with_tick(&later, &mut ledger, observed, |tick| {
+            with_tick(&page, &mut ledger, observed, |tick| {
                 tick.actions.poll(&handle, &mut tick.cx)
             })
             .is_pending(),
-            "observed tick {observed}"
+            "observed tick {observed}: the host still holds the click"
         );
     }
-    let result = with_tick(&later, &mut ledger, 9, |tick| {
-        tick.actions.poll(&handle, &mut tick.cx)
-    });
-    assert!(
-        matches!(
-            &result,
-            Poll::Ready(Err(ActionError::Failed(reason)))
-                if reason.as_ref()
-                    == "expected dialogue did not open: Talk-to Cook: the host had not accepted it by observed tick 9; last game message: Nothing interesting happens."
-        ),
-        "{result:?}"
-    );
-}
-
-/// A refused Talk-to is not an acceptance: the wait runs to the same bound and
-/// the error says that the host refused it.
-#[test]
-fn a_refused_talk_to_ends_at_the_accept_bound_and_says_so() {
-    let page = cook_beside_player();
-    let mut ledger = None;
-    let handle = begin_cook_talk(&page, &mut ledger);
-    complete_talk(&mut ledger, 1, false, false);
-    for observed in 2..9 {
+    assert_eq!(talks(&ledger), 1, "a held click is not sent again");
+    complete_talk(&mut ledger, 60, true, false);
+    // Arrival was observed before the click; the click tick is 60, so the engine's
+    // trigger is tick 61 and the page deadline is tick 65.
+    for observed in 60..65 {
         assert!(
             with_tick(&page, &mut ledger, observed, |tick| {
                 tick.actions.poll(&handle, &mut tick.cx)
@@ -3466,7 +3467,67 @@ fn a_refused_talk_to_ends_at_the_accept_bound_and_says_so() {
             "observed tick {observed}"
         );
     }
-    let result = with_tick(&page, &mut ledger, 9, |tick| {
+    assert!(matches!(
+        with_tick(&page, &mut ledger, 65, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref() == "expected dialogue did not open"
+    ));
+}
+
+/// A held tick drops queued gameplay unsent (`SlotScript::seat_held_tick`).
+/// The dropped Talk-to will never get a receipt, so the dialogue sends it
+/// again on its next poll, and the page budget counts from the new click.
+#[test]
+fn a_talk_to_the_host_dropped_unsent_is_sent_again() {
+    let page = cook_beside_player();
+    let mut ledger = None;
+    let handle = begin_cook_talk(&page, &mut ledger);
+    let first = ledger.as_ref().unwrap().outbox[0].request_id;
+    // The host's held tick drops the queued click.
+    ledger.as_mut().unwrap().outbox.clear();
+    assert!(with_tick(&page, &mut ledger, 9, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(talks(&ledger), 1, "one click is queued again");
+    let second = ledger.as_ref().unwrap().outbox[0].request_id;
+    assert_ne!(second, first, "the second click is a new request");
+    complete_talk(&mut ledger, 9, true, false);
+    // Arrival is observed again on tick 10; the trigger is tick 10 and the
+    // deadline tick 14.
+    for observed in 10..14 {
+        assert!(
+            with_tick(&page, &mut ledger, observed, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            })
+            .is_pending(),
+            "observed tick {observed}"
+        );
+    }
+    assert!(matches!(
+        with_tick(&page, &mut ledger, 14, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref() == "expected dialogue did not open"
+    ));
+}
+
+/// The host took the Talk-to in a pass that could dispatch it and refused it.
+/// That receipt is settled (`Ledger::complete_interaction` keeps the first
+/// one), so with no page open the wait ends on the next poll. The error names
+/// the NPC, the refusal tick and the last game message since the click.
+#[test]
+fn a_refused_talk_to_ends_the_wait_at_once_with_the_npc_and_last_message() {
+    let page = cook_beside_player();
+    let mut ledger = None;
+    let handle = begin_cook_talk(&page, &mut ledger);
+    complete_talk(&mut ledger, 1, false, false);
+    let mut later = cook_beside_player();
+    later.seed_chat_lines(vec![game_message(1, "Nothing interesting happens.")]);
+    let result = with_tick(&later, &mut ledger, 2, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     });
     assert!(
@@ -3474,8 +3535,92 @@ fn a_refused_talk_to_ends_at_the_accept_bound_and_says_so() {
             &result,
             Poll::Ready(Err(ActionError::Failed(reason)))
                 if reason.as_ref()
-                    == "expected dialogue did not open: Talk-to Cook: the host refused it and accepted no Talk-to by observed tick 9"
+                    == "expected dialogue did not open: Talk-to Cook: the host refused it on observed tick 1; last game message: Nothing interesting happens."
         ),
         "{result:?}"
     );
+    assert_eq!(talks(&ledger), 1, "a refused click is not sent again");
+}
+
+/// Press an unchanged page at tick 2 (bound: tick 12); the host accepts every
+/// press on its own tick, so a matured receipt is outstanding at tick 12.
+/// Returns the handle after the poll of tick 11.
+fn unchanged_page_pressed_up_to_the_bound(
+    page: &GameSnapshot,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+) -> crate::native::ActionHandle<Dialogue> {
+    let handle = continue_sent_at_tick_two(page, ledger);
+    complete_last_interaction(ledger, 2, true);
+    let mut accepted = 1;
+    for observed in 3..12 {
+        assert!(with_tick(page, ledger, observed, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        if continues(ledger) > accepted {
+            complete_last_interaction(ledger, observed, true);
+            accepted += 1;
+        }
+    }
+    assert_eq!(continues(ledger), 5, "presses on ticks 2, 4, 6, 8 and 10");
+    handle
+}
+
+/// Another operation spent tick 12's interaction allowance, so the repeat
+/// that the tick-10 receipt allows at the bound is deferred. The deferred
+/// repeat keeps its identity: the poll after the bound ends the wait with
+/// the first press's bound and sends nothing.
+#[test]
+fn a_repeat_deferred_at_the_bound_does_not_renew_it() {
+    let stuck = menu_page(100, &["A page that will not advance."], &[], 101);
+    let mut ledger = None;
+    let handle = unchanged_page_pressed_up_to_the_bound(&stuck, &mut ledger);
+    assert!(with_tick(&stuck, &mut ledger, 12, |tick| {
+        assert!(tick.cx.budget.event(false), "the tick's event was free");
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(continues(&ledger), 5, "the repeat at the bound is deferred");
+    assert!(matches!(
+        with_tick(&stuck, &mut ledger, 13, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(DialogueOutcome::Failed))
+    ));
+    assert_eq!(continues(&ledger), 5, "no press after the bound");
+}
+
+/// The same deferral, then a changed page: the new page is pressed and gets
+/// its own bound (tick 23), as any acknowledged page does.
+#[test]
+fn a_changed_page_after_a_deferred_repeat_gets_its_own_bound() {
+    let stuck = menu_page(100, &["A page that will not advance."], &[], 101);
+    let mut ledger = None;
+    let handle = unchanged_page_pressed_up_to_the_bound(&stuck, &mut ledger);
+    assert!(with_tick(&stuck, &mut ledger, 12, |tick| {
+        assert!(tick.cx.budget.event(false), "the tick's event was free");
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    let next = menu_page(100, &["The next page."], &[], 101);
+    assert!(with_tick(&next, &mut ledger, 13, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(continues(&ledger), 6);
+    for observed in 14..23 {
+        assert!(
+            with_tick(&next, &mut ledger, observed, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            })
+            .is_pending(),
+            "observed tick {observed}"
+        );
+    }
+    assert!(matches!(
+        with_tick(&next, &mut ledger, 23, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(DialogueOutcome::Failed))
+    ));
 }
