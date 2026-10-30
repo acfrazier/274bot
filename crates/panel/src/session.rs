@@ -800,7 +800,7 @@ fn selected_path_index(index: usize, path_len: usize, transport: bool) -> bool {
         return false;
     }
     let stride = remaining.div_ceil(sample_budget).max(1);
-    (index - near_end) % stride == 0
+    (index - near_end).is_multiple_of(stride)
 }
 
 fn visit_hull_targets(
@@ -921,10 +921,6 @@ fn trail_bounds(
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "collision facts need the exact scene, grid, reach and sidecar views"
-)]
 fn visit_collision_facts(
     world: &NavWorld,
     base_x: i32,

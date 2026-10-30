@@ -1741,6 +1741,10 @@ fn paint_client() -> client::client::Client {
     c
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The fixture supplies each independent navigation paint input to the real builder"
+)]
 fn set_budgeted_nav_paint(
     client: &mut Client,
     world: &NavWorld,
@@ -2664,8 +2668,8 @@ fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
     let world = open_world(64, 64);
     let tiles: Vec<WorldTile> = (0..302)
         .map(|index| {
-            let row = (index / 50) as i32;
-            let col = (index % 50) as i32;
+            let row = index / 50;
+            let col = index % 50;
             let x = if row % 2 == 0 { col } else { 49 - col };
             WorldTile {
                 x,

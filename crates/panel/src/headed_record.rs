@@ -1717,6 +1717,10 @@ fn write_encoder_frame(
         .map_err(RecordFailure::Io)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The writer receives independently owned channels and bounded sidecar metadata"
+)]
 fn run_writer(
     stdin_receiver: Receiver<ChildStdin>,
     receiver: Receiver<EncoderMessage>,
@@ -1812,6 +1816,10 @@ struct EncoderOutcome {
     frames_written: u64,
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The supervisor owns the recorder channels, shared outcomes, metadata and admission permit"
+)]
 fn run_supervisor(
     binary: PathBuf,
     mp4_path: Arc<PathBuf>,

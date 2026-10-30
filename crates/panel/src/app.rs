@@ -8338,10 +8338,12 @@ fn pump_async_shot_output(state: &mut PanelState) -> usize {
         }
     };
     #[cfg(feature = "render-diagnostics")]
-    let diagnostic_label = match {
+    let diagnostic_label = {
         let mut shots = state.shot_state.lock().unwrap();
         shots.try_clone_pending_diagnostic_label(&capture.label)
-    } {
+    };
+    #[cfg(feature = "render-diagnostics")]
+    let diagnostic_label = match diagnostic_label {
         Ok(label) => label,
         Err(error) => {
             fail_shot_output(state, &capture.label, error);
