@@ -1489,21 +1489,21 @@ fn run_cells(
                     }
                 }
                 if plan.chat_logged < 8 {
-                    for line in actor
+                    let baseline = plan.chat_baseline;
+                    let fresh = actor
                         .snapshot
                         .chat_lines()
                         .iter()
-                        .filter(|line| line.sequence > plan.chat_baseline)
-                    {
-                        if plan.chat_logged >= 8 {
-                            break;
-                        }
+                        .filter(|line| line.sequence > baseline)
+                        .map(|line| (line.sequence, line.text.clone()))
+                        .collect::<Vec<_>>();
+                    for (sequence, text) in fresh.into_iter().take(8 - plan.chat_logged) {
                         plan.chat_logged += 1;
-                        plan.chat_baseline = plan.chat_baseline.max(line.sequence);
+                        plan.chat_baseline = plan.chat_baseline.max(sequence);
                         actor.transitions.push(json!({
                             "event": "macro-event-chat",
                             "observed_tick": tick,
-                            "text": line.text,
+                            "text": text,
                         }));
                     }
                 }
