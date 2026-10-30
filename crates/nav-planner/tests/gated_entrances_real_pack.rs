@@ -599,7 +599,14 @@ fn morytania_sites_compare_proof_unknown_and_false_gate_routes() {
             FindOptions::default(),
             &proof,
         )
-        .expect("both directions of Morytania-side mausoleum access");
+        .unwrap_or_else(|error| {
+            panic!(
+                "Morytania-side mausoleum access {start:?} -> {target:?}: {error:?}; \
+                 start standable={}, target standable={}",
+                world.collision.standable(start),
+                world.collision.standable(target),
+            )
+        });
         println!("mausoleum access {start:?} -> {target:?}: {route:?}");
     }
     let mut unknown_routes = Vec::with_capacity(SITES.len());
