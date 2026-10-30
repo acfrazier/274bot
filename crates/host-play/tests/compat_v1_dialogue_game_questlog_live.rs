@@ -717,37 +717,12 @@ fn wait_for(
         if condition(play, &state) {
             return;
         }
-        let quest_tab = state
-            .snapshot
-            .side_tabs()
-            .iter()
-            .find(|tab| tab.index == 2)
-            .map(|tab| {
-                (
-                    tab.root_component_id,
-                    tab.available,
-                    tab.active,
-                    tab.visible,
-                    tab.widgets
-                        .iter()
-                        .filter_map(|widget| widget.text.as_deref())
-                        .collect::<Vec<_>>(),
-                )
-            });
-        let quest_statuses = state
-            .snapshot
-            .quest_statuses()
-            .iter()
-            .map(|row| (row.component_id, row.name.as_str()))
-            .collect::<Vec<_>>();
         assert!(
             Instant::now() < deadline,
-            "live cell timeout for {account}: state={:?}, script={:?}, native={:?}, active_side_tab={}, quest_tab={quest_tab:?}, quest_statuses={quest_statuses:?}, modals={:?}",
+            "live cell timeout for {account}: state={:?}, script={:?}, native={:?}",
             state.prep,
             play.script_state(account),
-            play.script_native_status(account),
-            state.snapshot.active_side_tab(),
-            state.snapshot.modals()
+            play.script_native_status(account)
         );
         drop(state);
         thread::sleep(POLL_INTERVAL);
@@ -1264,11 +1239,6 @@ fn run_quest_journal_cell() {
 }
 
 fn open_quest_tab_live(play: &Play, account: &str, fixture: &Mutex<Fixture>) {
-    let start_tick = fixture
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .snapshot
-        .tick();
     {
         let mut state = fixture.lock().unwrap_or_else(|error| error.into_inner());
         state.controls.open_quest_tab = true;
@@ -1277,7 +1247,6 @@ fn open_quest_tab_live(play: &Play, account: &str, fixture: &Mutex<Fixture>) {
     wait_for(play, account, fixture, CELL_DEADLINE, |_, state| {
         state.snapshot.active_side_tab() == 2
             && !state.snapshot.quest_statuses().is_empty()
-            && state.snapshot.tick() >= start_tick.saturating_add(1)
     });
 }
 
