@@ -8,6 +8,7 @@ use rustyscript::deno_core::v8;
 use rustyscript::Runtime;
 
 use crate::callback_v8;
+use crate::lineage_v8;
 
 const INVOKE_LISTENER: &str = "__rs2b0t_invoke_native_event_listener";
 
@@ -16,6 +17,7 @@ struct Listener {
     event: v8::Global<v8::Value>,
     callback: v8::Global<v8::Value>,
     is_frame: bool,
+    activity_id: Option<lineage_v8::ActivityId>,
 }
 
 struct Registry {
@@ -75,6 +77,7 @@ pub(crate) fn add_callback<'s>(
     callback: v8::Local<'s, v8::Value>,
 ) -> u32 {
     let is_frame = is_frame_event(scope, event);
+    let activity_id = lineage_v8::current_activity_id(scope);
     REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
         if let Some(existing) = registry.listeners.iter().flatten().find(|listener| {
@@ -89,6 +92,7 @@ pub(crate) fn add_callback<'s>(
             id,
             event: v8::Global::new(scope, event),
             callback: v8::Global::new(scope, callback),
+            activity_id,
             is_frame,
         };
         registry.listeners.push(Some(listener));
@@ -267,7 +271,7 @@ fn emit_value<'s>(
     let mut index = 0;
     let _dispatch = DispatchGuard::enter();
     loop {
-        let callback = REGISTRY.with(|registry| {
+        let listener = REGISTRY.with(|registry| {
             let registry = registry.borrow();
             while index < registry.listeners.len() {
                 let current = index;
@@ -276,16 +280,25 @@ fn emit_value<'s>(
                     continue;
                 };
                 if v8::Local::new(scope, &listener.event).strict_equals(event_key) {
-                    return Some(v8::Local::new(scope, &listener.callback));
+                    return Some((
+                        v8::Local::new(scope, &listener.callback),
+                        listener.activity_id,
+                    ));
                 }
             }
             None
         });
-        let Some(callback) = callback else {
+        let Some((callback, activity_id)) = listener else {
             break;
         };
         let arguments = [callback, payload, has_payload];
-        if helper.call(scope, receiver, &arguments).is_none() {
+        let invoked = match activity_id {
+            Some(activity_id) => lineage_v8::enter_activity(scope, activity_id, |scope| {
+                helper.call(scope, receiver, &arguments)
+            }),
+            None => Ok(helper.call(scope, receiver, &arguments)),
+        };
+        if !matches!(invoked, Ok(Some(_))) {
             return Err("event listener invocation failed".to_string());
         }
     }

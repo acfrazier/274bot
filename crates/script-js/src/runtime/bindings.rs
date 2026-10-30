@@ -10,6 +10,8 @@ use std::time::Instant;
 
 use super::shape::LoadShape;
 
+pub(crate) mod event_callbacks;
+pub(crate) mod tree_bot;
 /// Monotonic clock backing the prelude's `performance.now()` shim
 /// (rustyscript's default extensions define no `performance`). First
 /// call anchors at isolate-thread start.
@@ -203,6 +205,7 @@ pub(super) fn wire_runtime(
     siblings: &[(String, String)],
     game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
     named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 ) -> Result<(), String> {
     if shape == LoadShape::Reject {
         return Err("not a bot shape".to_string());
@@ -726,6 +729,9 @@ pub(super) fn wire_runtime(
             },
         )
         .map_err(|e| format!("register canvas onpaint done: {e}"))?;
+    event_callbacks::install(runtime, frame_interest)
+        .map_err(|error| format!("event callbacks: {error}"))?;
+    tree_bot::install(runtime).map_err(|error| format!("tree bot: {error}"))?;
     super::lineage_v8::eval::<()>(runtime, crate::shim::PRELUDE)
         .map_err(|e| format!("shim: {e}"))?;
     super::lineage_v8::eval::<()>(runtime, INTERACT_CAPTURE_SCRIPT)
