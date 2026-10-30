@@ -2776,8 +2776,10 @@ mod tests {
             );
             assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
             assert!(request.protect && request.food_guard);
-            let mut expected_allow = WalkAllow::default();
-            expected_allow.food = true;
+            let expected_allow = WalkAllow {
+                food: true,
+                ..WalkAllow::default()
+            };
             assert_eq!(request.allow, expected_allow);
             drop(handle);
             actions
