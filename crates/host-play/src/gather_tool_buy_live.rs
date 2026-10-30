@@ -366,10 +366,78 @@ impl PlayerInfoClock {
         }
     }
 
+    // Counter gaps measure observer loss and are already excluded from the samples.
     fn accepted(&self) -> bool {
         self.median_ms
             .is_some_and(|median| (570..=630).contains(&median))
-            && self.coalesced_observations == 0
+    }
+}
+
+#[test]
+fn player_info_clock_accepts_clean_engine_l_samples_with_coalesced_observations() {
+    for coalesced_before in [0_usize, 2] {
+        let mut clock = PlayerInfoClock::default();
+        let mut now = Instant::now();
+        let mut count = 1_u64;
+        clock.observe(1, count, now);
+        for _ in 0..coalesced_before {
+            count += 2;
+            now += Duration::from_millis(1_200);
+            clock.observe(1, count, now);
+        }
+        for _ in 0..TICK_SAMPLES {
+            count += 1;
+            now += Duration::from_millis(600);
+            clock.observe(1, count, now);
+        }
+        assert_eq!(clock.interarrival_ms.as_slice(), &[600; TICK_SAMPLES]);
+        assert_eq!(clock.median_ms, Some(600));
+        assert!(clock.accepted());
+
+        count += 2;
+        now += Duration::from_millis(1_200);
+        clock.observe(1, count, now);
+        assert_eq!(clock.coalesced_observations, coalesced_before + 1);
+        assert_eq!(clock.interarrival_ms.len(), TICK_SAMPLES);
+        assert_eq!(clock.median_ms, Some(600));
+        assert!(clock.accepted());
+    }
+}
+
+#[test]
+fn player_info_clock_rejects_clean_engine_q_samples() {
+    let mut clock = PlayerInfoClock::default();
+    let mut now = Instant::now();
+    let mut count = 1_u64;
+    clock.observe(1, count, now);
+    for _ in 0..TICK_SAMPLES {
+        count += 1;
+        now += Duration::from_millis(300);
+        clock.observe(1, count, now);
+    }
+    assert_eq!(clock.median_ms, Some(300));
+    assert!(!clock.accepted());
+}
+
+#[test]
+fn player_info_clock_rejects_too_few_clean_samples() {
+    for clean_samples in 0..TICK_SAMPLES {
+        let mut clock = PlayerInfoClock::default();
+        let mut now = Instant::now();
+        let mut count = 1_u64;
+        clock.observe(1, count, now);
+        count += 2;
+        now += Duration::from_millis(1_200);
+        clock.observe(1, count, now);
+        for _ in 0..clean_samples {
+            count += 1;
+            now += Duration::from_millis(600);
+            clock.observe(1, count, now);
+        }
+        assert_eq!(clock.interarrival_ms.len(), clean_samples);
+        assert_eq!(clock.coalesced_observations, 1);
+        assert_eq!(clock.median_ms, None);
+        assert!(!clock.accepted());
     }
 }
 
