@@ -428,12 +428,12 @@ impl NativeMachine for Combat {
         self.flags |= OBSERVED;
         self.counters.ticks = self.counters.ticks.saturating_add(1);
         if self.phase != Phase::Escape {
-            if let Some(receipt) = self
-                .pending_walk
-                .and_then(|id| cx.walk_receipt(id.get()))
-            {
+            if let Some(receipt) = self.pending_walk.and_then(|id| cx.walk_receipt(id.get())) {
                 if self.engaged.is_none()
-                    && self.request.stand.is_some_and(|stand| distance(frame.here, stand) > 1)
+                    && self
+                        .request
+                        .stand
+                        .is_some_and(|stand| distance(frame.here, stand) > 1)
                 {
                     if let Err(error) = receipt.clone().into_arrival() {
                         return Poll::Ready(Err(error));
