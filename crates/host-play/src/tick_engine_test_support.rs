@@ -2,9 +2,9 @@
 //! engine harness. The packet observer delegates every callback to the live
 //! slot observer; it changes no bytes, cipher state, or authority rules.
 
-use api::interact::server_ordered::{RowDispatch, ServerOrderedDispatch};
+use api::interact::server_ordered::ServerOrderedDispatch;
 use api::snapshot::{GameSnapshot, WorldTile};
-use client::client::{Client, LocalAnimationUpdate};
+use client::client::{client::LocalAnimationUpdate, Client};
 use client::io::PacketObserver;
 use host::SlotInput;
 use script::native::HostAuthority;

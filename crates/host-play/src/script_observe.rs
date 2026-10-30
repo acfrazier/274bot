@@ -30,6 +30,8 @@ use crate::debug_enabled;
 #[cfg(feature = "memory-profile")]
 use crate::memory_diagnostics;
 use crate::play_login::SlotArm;
+#[cfg(feature = "test-support")]
+use crate::tick_engine_test_support::TickEngineTestHook;
 #[cfg(test)]
 use std::sync::{Condvar, LazyLock, Weak};
 
@@ -1513,15 +1515,14 @@ where
                                 run_ordered_dispatch_hook(&authority);
                                 let selected = slot.compiled_game_data();
                                 #[cfg(feature = "test-support")]
-                                let test_dispatch =
-                                    crate::tick_engine_test_support::current().map(|hook| {
-                                        let guard = hook.begin_dispatch(
-                                            snapshot.write(),
-                                            &authority,
-                                            &envelope,
-                                        );
-                                        (hook, guard)
-                                    });
+                                let test_dispatch = TickEngineTestHook::current().map(|hook| {
+                                    let guard = hook.begin_dispatch(
+                                        snapshot.write(),
+                                        &authority,
+                                        &envelope,
+                                    );
+                                    (hook, guard)
+                                });
                                 let dispatch = super::dispatch_native_server_ordered(
                                     driver,
                                     super::OrderedDispatchContext {
@@ -1538,7 +1539,7 @@ where
                                 #[cfg(feature = "test-support")]
                                 if let Some((hook, guard)) = test_dispatch.as_ref() {
                                     hook.record_dispatch(
-                                        *dispatch,
+                                        dispatch,
                                         guard.request_debug(),
                                         guard.mutation_applied(),
                                     );

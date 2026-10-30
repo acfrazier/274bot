@@ -51,6 +51,8 @@ use crate::script_runtime::{
     script_paint_of, script_slot, script_slot_or_insert, slot_arrival_reach, step_nav_bot,
     take_manual_walk_ownership, NavBot, ScriptSlot, ScriptWall,
 };
+#[cfg(feature = "test-support")]
+use crate::tick_engine_test_support::TickEngineTestHook;
 use crate::{
     catalog_core, login_readiness, paired_core, public_worlds, Play, RandomClaim, RandomStatus,
 };
@@ -1526,7 +1528,7 @@ fn spawn_slot_thread(
                             let name = &obs_name;
                             #[cfg(feature = "test-support")]
                             if let Some(test_hook) =
-                                crate::tick_engine_test_support::TickEngineTestHook::bind_current_for_account(name)
+                                TickEngineTestHook::bind_current_for_account(name)
                             {
                                 test_hook.bind_client(c, name, Arc::clone(&slot_input));
                             }
@@ -1616,7 +1618,7 @@ fn spawn_slot_thread(
                             }
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
                             #[cfg(feature = "test-support")]
-                            if let Some(test_hook) = crate::tick_engine_test_support::current() {
+                            if let Some(test_hook) = TickEngineTestHook::current() {
                                 tick_engine_suppressed_openchat =
                                     test_hook.before_snapshot_observe(name, &mut nav_snapshot);
                             }
@@ -1903,7 +1905,7 @@ fn spawn_slot_thread(
                             // The observer borrows the account's bank memory
                             // for the compiled tick alone; the slot's own
                             // write for the frame already happened above.
-                            let mut observe = |c: &mut Client, tick_edge, evidence_dirty, state| {
+                            let mut observe = |c: &mut Client, tick_edge, evidence_dirty, state, snapshot: &mut GameSnapshot| {
                                 script_observe_cached_with_channels(
                                 c,
                                 name,
@@ -1915,9 +1917,9 @@ fn spawn_slot_thread(
                                 inv,
                                 state,
                                 #[cfg(feature = "test-support")]
-                                &mut nav_snapshot,
+                                snapshot,
                                 #[cfg(not(feature = "test-support"))]
-                                Some(&nav_snapshot),
+                                Some(&*snapshot),
                                 Some(slot_bank.memory()),
                                 #[cfg(feature = "js")]
                                 npc_boxes.as_deref(),
@@ -1952,9 +1954,10 @@ fn spawn_slot_thread(
                                 tick_edge,
                                 script_evidence_dirty(drain.dirty),
                                 nav_state,
+                                &mut nav_snapshot,
                             );
                             #[cfg(feature = "test-support")]
-                            if let Some(test_hook) = crate::tick_engine_test_support::current() {
+                            if let Some(test_hook) = TickEngineTestHook::current() {
                                 test_hook.after_frame(
                                     c,
                                     name,
@@ -2072,6 +2075,7 @@ fn spawn_slot_thread(
                                         nav_world_state_for_observe(
                                             here, &nav_snapshot, nav_facts, true, map_members,
                                         ),
+                                        &mut nav_snapshot,
                                     );
                                     c.set_journal_paint_hidden(c.ingame && completion.journal_paint_hidden);
                                 }
