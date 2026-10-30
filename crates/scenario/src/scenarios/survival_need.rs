@@ -15,6 +15,7 @@ const CHEST_LOC_ID: i32 = 377;
 const SINISTER_KEY_ID: i32 = 993;
 const RUNE_AXE_ID: i32 = 1359;
 const YEW_LOC_ID: i32 = 1309;
+const ATTACK_STAT_ID: i32 = 0;
 const WOODCUTTING_STAT_ID: i32 = 8;
 const HITPOINTS_STAT_ID: i32 = 3;
 const SURVIVAL_GATHERER_INJECT: &[ScriptSettingInject] = &[
@@ -44,38 +45,61 @@ const SURVIVAL_GATHERER_INJECT: &[ScriptSettingInject] = &[
 /// a held cure or food, and retain the live status row through the first fire.
 pub(crate) fn survival_need_scenario() -> Scenario {
     let mut steps = script_live_seed_steps();
-    steps.push(Step {
-        name: "prepare Attack 40, Woodcutting 99, Hitpoints 30, rune axe and sinister key",
-        kind: StepKind::Perform {
-            send: Box::new(|client, _| {
-                cheat(client, "setstat attack 40").is_sent()
-                    && cheat(client, "setstat woodcutting 99").is_sent()
-                    && cheat(client, "setstat hitpoints 30").is_sent()
-                    && cheat(client, "give rune_axe 1").is_sent()
-                    && cheat(client, "give sinister_key 1").is_sent()
-            }),
-        },
-        wait: Wait {
-            arm: Proof::Stat {
+    // `setstat` and `give` mutate the player in ClientCheatHandler.ts:340-354
+    // and :472-485; two observed ticks allow dispatch and the next PLAYER_INFO.
+    for (name, command, arm) in [
+        (
+            "seed Attack 40 before equipping the rune axe",
+            "setstat attack 40",
+            Proof::Stat {
+                id: ATTACK_STAT_ID,
+                min: 40,
+            },
+        ),
+        (
+            "seed Woodcutting 99 before Start",
+            "setstat woodcutting 99",
+            Proof::Stat {
                 id: WOODCUTTING_STAT_ID,
                 min: 99,
             },
-            budget_ticks: 40,
-        },
-    });
-    steps.push(Step {
-        name: "confirm the account-owned axe and key before Start",
-        kind: StepKind::Perform {
-            send: Box::new(|_, _| true),
-        },
-        wait: Wait {
-            arm: Proof::ItemId {
+        ),
+        (
+            "seed Hitpoints 30 before Start",
+            "setstat hitpoints 30",
+            Proof::Stat {
+                id: HITPOINTS_STAT_ID,
+                min: 30,
+            },
+        ),
+        (
+            "give the account-owned rune axe before Start",
+            "give rune_axe 1",
+            Proof::ItemId {
+                id: RUNE_AXE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "give the account-owned sinister key before Start",
+            "give sinister_key 1",
+            Proof::ItemId {
                 id: SINISTER_KEY_ID,
                 count: 1,
             },
-            budget_ticks: 40,
-        },
-    });
+        ),
+    ] {
+        steps.push(Step {
+            name,
+            kind: StepKind::Perform {
+                send: Box::new(move |client, _| cheat(client, command).is_sent()),
+            },
+            wait: Wait {
+                arm,
+                budget_ticks: 2,
+            },
+        });
+    }
     steps.push(Step {
         name: "equip the account-owned rune axe before Start",
         kind: StepKind::Perform {

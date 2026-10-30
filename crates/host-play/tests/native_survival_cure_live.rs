@@ -5,6 +5,7 @@
 mod quester_live;
 
 use api::condition::{Exposure, PoisonState};
+use api::interact::{Interactions, OpTarget, SendResult};
 use api::snapshot::{AnimationUpdateView, GameSnapshot, WorldTile};
 use quester_live::{Cell, LiveProfileControl, Mode, PathCell};
 use script::native::{NativePhase, ScriptStatus, StatusValue};
@@ -34,6 +35,12 @@ const DESERT_CAPTAIN_STAND: WorldTile = WorldTile {
     z: 3029,
     level: 0,
 };
+// m40_148.jm2:4888 places the chest at local (1,35) on level 0.
+const TWISTED_CHEST_TILE: WorldTile = WorldTile {
+    x: 40 * 64 + 1,
+    z: 148 * 64 + 35,
+    level: 0,
+};
 
 const WOODCUTTING_STAT: i32 = 8;
 const MINING_STAT: i32 = 14;
@@ -43,16 +50,28 @@ const COPPER_ORE_ID: i32 = 436;
 const ANTIPOISON_ALIAS: &str = "1doseantipoison";
 const RUNE_AXE_ALIAS: &str = "rune_axe";
 const RUNE_PICKAXE_ALIAS: &str = "rune_pickaxe";
+const SINISTER_KEY_ALIAS: &str = "sinister_key";
+const SINISTER_KEY_ID: i32 = 993;
+const TWISTED_CHEST_LOC_ID: i32 = 377;
+// agility_dungeon.rs2:113-120 adds nine reward items.
+const TWISTED_CHEST_REWARD_COUNT: i32 = 9;
+// p_delay(3) resumes at +4 ticks; queue(..., 0) runs on the next eligible
+// player queue pass: PlayerOps.ts:376-379, Player.ts:903-912.
+const TWISTED_CHEST_POISON_SIGNAL_TICKS: u32 = 5;
+// The debugproc's queue(..., 0) runs on the first eligible queue pass;
+// cheat_other.rs2:1-3, Player.ts:903-912.
+const DEBUGPROC_POISON_SIGNAL_TICKS: u32 = 2;
 const DESERT_STAGE_REPLY: &str = "get desertrescue: 3";
 const DESERT_CAPTAIN_OPENING_OPTIONS: [&str; 3] =
     ["Wow! A real captain!", "You there!", "Hey ugly!"];
 const POISON_CHAT: &str = "You have been poisoned!";
-// Poison Scorpion content declares severity 15 in content/scripts/_unpack/225/all.npc:2738-2767.
-// content/scripts/_test/scripts/cheats/cheat_other.rs2:1-3 queues poison_player for this account.
-const POISON_DEBUG_COMMAND: &str = "~poison 15";
+// Only the provisioning cell uses this Engine L debugproc to seed its
+// account's own state (`cheat_other.rs2:1-3`); other cells use the authored
+// Yanille chest. Both sources reach this chat through `poison.rs2:12-18`.
+const POISON_DEBUG_COMMAND: &str = "~poison 27";
 const CURE_CHAT: &str = "You drink some of your antipoison potion.";
-// Login arms one 30-tick poison timer, and its zero fire clears it.
-// One extra observed game tick proves the clear: poison.rs2:20-23,69-75.
+// Login schedules the poison timer at 30 ticks; the next observed game tick
+// proves its zero-value clear: poison.rs2:20-23,69-75.
 const TIMER_CLEAR_TICKS: u32 = 31;
 const Q_UNKNOWN: u8 = 11;
 const LETHAL_OUTLOOK: u16 = 330;
@@ -67,8 +86,17 @@ enum Activity {
     Dialogue,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PoisonSource {
+    TwistedChest,
+    AccountStateDebugProc,
+}
+
 struct Witness {
     activity: Activity,
+    poison_source: PoisonSource,
+    expected_key_at_start: i32,
+    expected_inventory_extra: i32,
     poison_during_provisioning: bool,
     skill_name: &'static str,
     skill_stat: i32,
@@ -83,6 +111,8 @@ struct Witness {
     baseline_resource: i32,
     baseline_tool: i32,
     expected_tool_at_start: i32,
+    key_id: i32,
+    baseline_key: i32,
     baseline_antipoison: i32,
     baseline_animation_serial: Option<u32>,
     login_tick: Option<u32>,
@@ -91,11 +121,10 @@ struct Witness {
     work_active_tick: Option<u32>,
     work_animation_tick: Option<u32>,
     work_animation: Option<AnimationUpdateView>,
-    poison_command_tick: Option<u32>,
-    poison_seed_animation: Option<AnimationUpdateView>,
+    poison_source_tick: Option<u32>,
     poison_seed_bank_open: Option<bool>,
     poison_seed_tool_count: Option<i32>,
-    poison_seed_modal: Option<i32>,
+    poison_source_modal: Option<i32>,
     poison_tick: Option<u32>,
     first_kind2_mark_tick: Option<u32>,
     need_tick: Option<u32>,
@@ -144,6 +173,7 @@ fn new_witness(
     skill_stat: i32,
     resource_id: Option<i32>,
     tool_alias: Option<&str>,
+    poison_source: PoisonSource,
     stand: WorldTile,
 ) -> Arc<Mutex<Witness>> {
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
@@ -154,6 +184,15 @@ fn new_witness(
             .unwrap_or_else(|| panic!("missing selected item alias {alias}"))
             .id
     };
+    let key_id = item_id(SINISTER_KEY_ALIAS);
+    let (expected_key_at_start, expected_inventory_extra) =
+        match (poison_source, activity) {
+            (PoisonSource::TwistedChest, Activity::Dialogue) => {
+                (0, TWISTED_CHEST_REWARD_COUNT)
+            }
+            (PoisonSource::TwistedChest, _) => (1, 0),
+            (PoisonSource::AccountStateDebugProc, _) => (0, 0),
+        };
     let resource_id = resource_id.inspect(|&id| {
         selected
             .item_by_id(id)
@@ -161,12 +200,16 @@ fn new_witness(
     });
     Arc::new(Mutex::new(Witness {
         activity,
+        poison_source,
+        expected_key_at_start,
+        expected_inventory_extra,
         poison_during_provisioning: false,
         skill_name,
         skill_stat,
         resource_id,
         tool_id: tool_alias.map(item_id),
         antipoison_id: item_id(ANTIPOISON_ALIAS),
+        key_id,
         stand,
         desert_stage_reply: None,
         desert_stage_reply_tick: None,
@@ -176,6 +219,7 @@ fn new_witness(
         baseline_tool: 0,
         expected_tool_at_start: i32::from(tool_alias.is_some()),
         baseline_antipoison: 0,
+        baseline_key: 0,
         baseline_animation_serial: None,
         login_tick: None,
         timer_phase_ready_tick: None,
@@ -183,11 +227,10 @@ fn new_witness(
         work_active_tick: None,
         work_animation_tick: None,
         work_animation: None,
-        poison_command_tick: None,
-        poison_seed_animation: None,
+        poison_source_tick: None,
         poison_seed_bank_open: None,
         poison_seed_tool_count: None,
-        poison_seed_modal: None,
+        poison_source_modal: None,
         poison_tick: None,
         first_kind2_mark_tick: None,
         need_tick: None,
@@ -509,80 +552,177 @@ fn add_poison_steps(
             budget_ticks,
         },
     };
-    let poison_witness = Arc::clone(&witness);
-    let poison = scenario::Step {
-        name: "invoke the severity-15 poison debug proc after the controlled timer phase",
+    let source = witness.lock().expect("survival witness").poison_source;
+    let mut inserted = vec![phase];
+    match source {
+        PoisonSource::TwistedChest => {
+            inserted.extend(twisted_chest_steps(Arc::clone(&witness), before_start));
+        }
+        PoisonSource::AccountStateDebugProc => {
+            inserted.extend(account_state_poison_steps(Arc::clone(&witness)));
+        }
+    }
+    let insertion = if before_start { start } else { start + 1 };
+    scenario.steps.splice(insertion..insertion, inserted);
+}
+
+fn teleport_step(name: &'static str, tile: WorldTile) -> scenario::Step {
+    let command = api::interact::tele_args(tile.level, tile.x, tile.z);
+    scenario::Step {
+        name,
+        kind: scenario::StepKind::Perform {
+            send: Box::new(move |client, _| api::interact::cheat(client, &command).is_sent()),
+        },
+        wait: scenario::Wait {
+            arm: scenario::Proof::Arrived {
+                x: tile.x,
+                z: tile.z,
+                level: tile.level,
+            },
+            budget_ticks: 10,
+        },
+    }
+}
+
+fn twisted_chest_steps(
+    witness: Arc<Mutex<Witness>>,
+    before_start: bool,
+) -> Vec<scenario::Step> {
+    let mut steps = vec![
+        teleport_step("teleport to the real Yanille twisted chest", TWISTED_CHEST_TILE),
+        scenario::Step {
+            name: "observe the real Yanille twisted chest",
+            kind: scenario::StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: scenario::Wait {
+                arm: scenario::Proof::LocIdNear {
+                    id: TWISTED_CHEST_LOC_ID,
+                    x: TWISTED_CHEST_TILE.x,
+                    z: TWISTED_CHEST_TILE.z,
+                    level: TWISTED_CHEST_TILE.level,
+                    radius: 2,
+                },
+                // The world map places the authored object on this tile;
+                // agility_dungeon.rs2:122 only changes its inactive stage.
+                budget_ticks: 10,
+            },
+        },
+    ];
+    let source_witness = Arc::clone(&witness);
+    steps.push(scenario::Step {
+        name: "use the account-owned sinister key on the real chest",
         kind: scenario::StepKind::Perform {
             send: Box::new(move |client, snapshot| {
-                let mut witness = poison_witness.lock().expect("survival witness");
+                if snapshot.modals().chat != -1 || active_hitmark(snapshot, None) != Some(false) {
+                    return false;
+                }
+                let Some(loc) = snapshot
+                    .locs()
+                    .iter()
+                    .find(|loc| loc.id == TWISTED_CHEST_LOC_ID)
+                else {
+                    return false;
+                };
+                let Some(key) = snapshot
+                    .inventory()
+                    .iter()
+                    .find(|item| item.def.id == SINISTER_KEY_ID && item.count > 0)
+                else {
+                    return false;
+                };
+                if !matches!(
+                    Interactions::new(snapshot, client).use_item_on(key, OpTarget::Loc(loc)),
+                    SendResult::Sent { .. }
+                ) {
+                    return false;
+                }
+                let mut witness = source_witness.lock().expect("survival witness");
+                witness.poison_source_tick = Some(snapshot.tick());
+                witness.poison_source_modal = Some(snapshot.modals().chat);
+                true
+            }),
+        },
+        wait: scenario::Wait {
+            // agility_dungeon.rs2:105 resumes after p_delay(3); the poison
+            // queue adds at most one tick (PlayerOps.ts:376-379, Player.ts:903-912).
+            arm: scenario::Proof::FreshChat {
+                needle: POISON_CHAT,
+            },
+            budget_ticks: TWISTED_CHEST_POISON_SIGNAL_TICKS,
+        },
+    });
+    if !before_start {
+        steps.push(scenario::Step {
+            name: "observe the antipoison drink before returning to work",
+            kind: scenario::StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: scenario::Wait {
+                arm: scenario::Proof::FreshChat { needle: CURE_CHAT },
+                budget_ticks: 10,
+            },
+        });
+    }
+    let stand = witness.lock().expect("survival witness").stand;
+    steps.push(teleport_step(
+        if before_start {
+            "return to the Desert Captain before Start"
+        } else {
+            "return to the authored work site after cure"
+        },
+        stand,
+    ));
+    steps
+}
+
+fn account_state_poison_steps(witness: Arc<Mutex<Witness>>) -> Vec<scenario::Step> {
+    let source_witness = Arc::clone(&witness);
+    vec![scenario::Step {
+        name: "seed account-owned poison state while the Quester bank is open",
+        kind: scenario::StepKind::Perform {
+            send: Box::new(move |client, snapshot| {
+                let mut witness = source_witness.lock().expect("survival witness");
                 let Some(login_tick) = witness.login_tick else {
                     return false;
                 };
                 if witness.timer_phase_ready_tick.is_none()
-                    || (!witness.poison_during_provisioning
-                        && witness.activity != Activity::Dialogue
-                        && witness.work_active_tick.is_none())
+                    || !witness.poison_during_provisioning
+                    || witness.provisioning_tick.is_none()
                     || snapshot.tick().saturating_sub(login_tick) < TIMER_CLEAR_TICKS
                     || snapshot.modals().chat != -1
                     || active_hitmark(snapshot, None) != Some(false)
+                    || snapshot.bank_component_id() < 0
+                    || !snapshot.bank_loaded()
+                    || !witness
+                        .tool_id
+                        .is_some_and(|id| item_count(snapshot, id) == witness.baseline_tool)
                 {
-                    return false;
-                }
-                let active = if witness.poison_during_provisioning {
-                    witness.provisioning_tick.is_some()
-                        && snapshot.bank_component_id() >= 0
-                        && snapshot.bank_loaded()
-                        && witness
-                            .tool_id
-                            .is_some_and(|id| item_count(snapshot, id) == witness.baseline_tool)
-                } else {
-                    match witness.activity {
-                        Activity::Woodcutting => {
-                            stat_xp(snapshot, witness.skill_stat) > witness.baseline_xp
-                        }
-                        Activity::Mining => snapshot
-                            .local_player()
-                            .and_then(|player| player.animation_update)
-                            .filter(|animation| {
-                                animation.sequence >= 0
-                                    && Some(animation.serial) != witness.baseline_animation_serial
-                            })
-                            .is_some_and(|animation| {
-                                witness.poison_seed_animation = Some(animation);
-                                true
-                            }),
-                        Activity::Dialogue => true,
-                    }
-                };
-                if !active {
                     return false;
                 }
                 if !api::interact::cheat(client, POISON_DEBUG_COMMAND).is_sent() {
                     return false;
                 }
-                if witness.poison_during_provisioning {
-                    witness.poison_seed_bank_open =
-                        Some(snapshot.bank_component_id() >= 0 && snapshot.bank_loaded());
-                    witness.poison_seed_tool_count =
-                        witness.tool_id.map(|id| item_count(snapshot, id));
-                }
-                witness.poison_command_tick = Some(snapshot.tick());
-                witness.poison_seed_modal = Some(snapshot.modals().chat);
+                witness.poison_seed_bank_open =
+                    Some(snapshot.bank_component_id() >= 0 && snapshot.bank_loaded());
+                witness.poison_seed_tool_count =
+                    witness.tool_id.map(|id| item_count(snapshot, id));
+                witness.poison_source_tick = Some(snapshot.tick());
+                witness.poison_source_modal = Some(snapshot.modals().chat);
                 true
             }),
         },
         wait: scenario::Wait {
-            // The debug proc queues poison_player; poison.rs2:12-18 emits this content signal.
-            // The test runs before the timer's first fire.
+            // cheat_other.rs2:1-3 queues poison with delay 0; the signal is
+            // emitted by poison.rs2:12-18 on the first eligible queue pass.
             arm: scenario::Proof::FreshChat {
                 needle: POISON_CHAT,
             },
-            budget_ticks: 3,
+            budget_ticks: DEBUGPROC_POISON_SIGNAL_TICKS,
         },
-    };
-    let insertion = if before_start { start } else { start + 1 };
-    scenario.steps.splice(insertion..insertion, [phase, poison]);
+    }]
 }
+
 
 fn capture_active_work(
     snapshot: &GameSnapshot,
@@ -926,9 +1066,17 @@ fn common_receipt(
     let phase_tick = witness
         .timer_phase_ready_tick
         .ok_or("controlled timer phase was not observed")?;
-    let seed_tick = witness
-        .poison_command_tick
-        .ok_or("poison command tick was not observed")?;
+    let source_tick = witness
+        .poison_source_tick
+        .ok_or("poison source tick was not observed")?;
+    let source_label = match witness.poison_source {
+        PoisonSource::TwistedChest => "yanille-twisted-chest",
+        PoisonSource::AccountStateDebugProc => "account-state-debugproc",
+    };
+    let source_signal_budget = match witness.poison_source {
+        PoisonSource::TwistedChest => TWISTED_CHEST_POISON_SIGNAL_TICKS,
+        PoisonSource::AccountStateDebugProc => DEBUGPROC_POISON_SIGNAL_TICKS,
+    };
     let poison_tick = witness
         .poison_tick
         .ok_or("poison line tick was not observed")?;
@@ -946,10 +1094,40 @@ fn common_receipt(
         .settled_tick
         .ok_or("antipoison immunity did not settle")?;
     check_need(witness)?;
+    let key_after = item_count(snapshot, witness.key_id);
+    let antipoison_after = item_count(snapshot, witness.antipoison_id);
+    let tool_after = witness.tool_id.map_or(0, |id| item_count(snapshot, id));
+    let resource_after = witness
+        .resource_id
+        .map_or(0, |id| item_count(snapshot, id));
+    let inventory_after = inventory_total(snapshot);
+    let inventory_at_start = witness.baseline_antipoison
+        + witness.baseline_tool
+        + witness.baseline_key
+        + witness.expected_inventory_extra;
+    let chest_rewards_after_start =
+        i32::from(witness.poison_source == PoisonSource::TwistedChest
+            && witness.activity != Activity::Dialogue)
+            * TWISTED_CHEST_REWARD_COUNT;
+    let chest_key_consumed_after_start =
+        i32::from(witness.poison_source == PoisonSource::TwistedChest
+            && witness.activity != Activity::Dialogue)
+            * witness.baseline_key;
+    let expected_inventory_after = inventory_at_start + chest_rewards_after_start
+        - chest_key_consumed_after_start
+        - witness.baseline_antipoison.saturating_sub(antipoison_after)
+        + tool_after.saturating_sub(witness.baseline_tool)
+        + resource_after.saturating_sub(witness.baseline_resource);
+    let inventory_matches = if witness.activity == Activity::Dialogue {
+        inventory_after == expected_inventory_after
+    } else {
+        inventory_after >= expected_inventory_after
+    };
     if phase_tick.saturating_sub(login_tick) < TIMER_CLEAR_TICKS
-        || seed_tick.saturating_sub(login_tick) < TIMER_CLEAR_TICKS
-        || seed_tick < phase_tick
-        || poison_tick < seed_tick
+        || source_tick.saturating_sub(login_tick) < TIMER_CLEAR_TICKS
+        || source_tick < phase_tick
+        || poison_tick < source_tick
+        || poison_tick.saturating_sub(source_tick) > source_signal_budget
         || need_tick < poison_tick
         || need_tick.saturating_sub(poison_tick) > 3
         || drink_tick < poison_tick
@@ -960,9 +1138,12 @@ fn common_receipt(
         || dose_drop_tick.saturating_sub(poison_tick) > 10
         || settled_tick < cure_tick
         || snapshot.tick().saturating_sub(poison_tick) < TIMER_CLEAR_TICKS
+        || witness.poison_source_modal != Some(-1)
+        || key_after != 0
+        || !inventory_matches
     {
         return Err(format!(
-            "cure ticks outside the content and runner bounds: login={login_tick}, phase={phase_tick}, seed={seed_tick}, poison={poison_tick}, need={need_tick}, drink={drink_tick}, cure={cure_tick}, drop={dose_drop_tick}, settled={settled_tick}, observed={}",
+            "cure/source ticks or inventory outside the content and runner bounds: login={login_tick}, phase={phase_tick}, source={source_tick}, source_budget={source_signal_budget}, poison={poison_tick}, need={need_tick}, drink={drink_tick}, cure={cure_tick}, drop={dose_drop_tick}, settled={settled_tick}, key_after={key_after}, inventory={inventory_after}/{expected_inventory_after}, observed={}",
             snapshot.tick()
         ));
     }
@@ -975,9 +1156,11 @@ fn common_receipt(
     Ok(json!({
         "login_tick": login_tick,
         "timer_phase_ready_tick": phase_tick,
-        "poison_command_tick": seed_tick,
-        "poison_command_chat_modal": witness.poison_seed_modal,
-        "ticks_after_login_at_seed": seed_tick.saturating_sub(login_tick),
+        "poison_source": source_label,
+        "poison_source_tick": source_tick,
+        "poison_source_chat_modal": witness.poison_source_modal,
+        "poison_source_signal_budget_ticks": source_signal_budget,
+        "ticks_after_login_at_source": source_tick.saturating_sub(login_tick),
         "poison_chat_tick": poison_tick,
         "lethal_need_tick": need_tick,
         "survival_report_at_need": {
@@ -1009,6 +1192,13 @@ fn common_receipt(
         "antipoison_drop_tick": dose_drop_tick,
         "immune_tick": witness.immune_tick,
         "antipoison_settled_tick": settled_tick,
+        "sinister_key_at_start": witness.baseline_key,
+        "sinister_key_after": key_after,
+        "chest_reward_count_at_start": witness.expected_inventory_extra,
+        "chest_rewards_after_start": chest_rewards_after_start,
+        "inventory_total_at_start": inventory_at_start,
+        "inventory_total_after": inventory_after,
+        "inventory_total_minimum_after": expected_inventory_after,
         "ticks_from_poison_to_settled": settled_tick.saturating_sub(poison_tick),
         "first_kind2_mark_tick": witness.first_kind2_mark_tick,
         "first_kind2_mark": "none through the first scheduled fire",
@@ -1033,36 +1223,35 @@ fn work_receipt(
 ) -> Result<Option<Value>, String> {
     check_mark(witness)?;
     check_deadline(witness, snapshot.tick(), deadline)?;
-    let Some(seed_tick) = witness.poison_command_tick else {
+    let Some(source_tick) = witness.poison_source_tick else {
         return Ok(None);
     };
     let Some(work_active_tick) = witness.work_active_tick else {
         if witness.poison_during_provisioning {
             return Ok(None);
         }
-        return Err("authored work did not start before poison seed".to_owned());
+        return Err("authored work did not start before poison source".to_owned());
     };
     let invalid_work_evidence = if witness.poison_during_provisioning {
         witness
             .provisioning_tick
-            .is_none_or(|tick| tick > seed_tick)
-            || work_active_tick <= seed_tick
+            .is_none_or(|tick| tick > source_tick)
+            || work_active_tick <= source_tick
             || witness.poison_seed_bank_open != Some(true)
             || witness.poison_seed_tool_count != Some(witness.baseline_tool)
     } else {
-        work_active_tick > seed_tick
+        work_active_tick > source_tick
             || (witness.activity == Activity::Mining
-                && (witness.work_animation_tick.is_none()
-                    || witness.poison_seed_animation.is_none()))
+                && (witness.work_animation_tick.is_none() || witness.work_animation.is_none()))
     };
     if invalid_work_evidence {
         return Err(format!(
-            "authored work evidence did not match poison timing: work={work_active_tick}, seed={seed_tick}, provision={:?}, bank_open={:?}, seed_tool_count={:?}, animation={:?}/{:?}",
+            "authored work evidence did not match poison-source timing: work={work_active_tick}, source={source_tick}, provision={:?}, bank_open={:?}, seed_tool_count={:?}, animation_tick={:?}, animation={:?}",
             witness.provisioning_tick,
             witness.poison_seed_bank_open,
             witness.poison_seed_tool_count,
             witness.work_animation_tick,
-            witness.poison_seed_animation
+            witness.work_animation
         ));
     }
     if witness.poison_during_provisioning && witness.tool_id.is_none() {
@@ -1107,7 +1296,6 @@ fn work_receipt(
     receipt["work_active_tick"] = json!(witness.work_active_tick);
     receipt["work_animation_tick"] = json!(witness.work_animation_tick);
     receipt["work_animation"] = json!(witness.work_animation);
-    receipt["poison_seed_animation"] = json!(witness.poison_seed_animation);
     receipt["provisioning_tick"] = json!(witness.provisioning_tick);
     receipt["poison_seed_bank_open"] = json!(witness.poison_seed_bank_open);
     receipt["poison_seed_tool_count"] = json!(witness.poison_seed_tool_count);
@@ -1154,7 +1342,7 @@ fn dialogue_receipt(
     let Some(settled) = witness.settled_tick else {
         return Ok(None);
     };
-    let Some(seed) = witness.poison_command_tick else {
+    let Some(source_tick) = witness.poison_source_tick else {
         return Ok(None);
     };
     let Some(page_tick) = witness.dialogue_page_tick else {
@@ -1170,7 +1358,7 @@ fn dialogue_receipt(
         || witness.need_page_open_tick != Some(change)
         || !matches_desert_captain_opening_options(&witness.need_page_options)
         || page_tick != change
-        || seed >= page_tick
+        || source_tick >= page_tick
         || witness.need_step.as_deref() != Some("survival-talk")
         || closed > change.saturating_add(2)
         || drink < closed
@@ -1188,7 +1376,7 @@ fn dialogue_receipt(
         || !matches_desert_captain_opening_options(&witness.dialogue_reopened_options)
     {
         return Err(format!(
-            "dialogue cure/resume order failed: change={change}, stage={:?}, page_tick={page_tick}, seed={seed}, modal={:?}, options={:?}, need_page={:?}, need_options={:?}, closed={closed}, drink={drink}, drink_modal={drink_modal}, cure={cure}, drop={drop}, immune={immune}, settled={settled}, reopened={reopened}, reopened_options={:?}, mark={:?}, step={:?}",
+            "dialogue cure/resume order failed: change={change}, stage={:?}, page_tick={page_tick}, source={source_tick}, modal={:?}, options={:?}, need_page={:?}, need_options={:?}, closed={closed}, drink={drink}, drink_modal={drink_modal}, cure={cure}, drop={drop}, immune={immune}, settled={settled}, reopened={reopened}, reopened_options={:?}, mark={:?}, step={:?}",
             witness.desert_stage_reply,
             witness.profile_change_modal,
             witness.profile_change_options,
@@ -1236,13 +1424,17 @@ fn observe_start(snapshot: &GameSnapshot, witness: &mut Witness) -> Result<Value
     witness.baseline_resource = witness.resource_id.map_or(0, |id| item_count(snapshot, id));
     witness.baseline_tool = witness.tool_id.map_or(0, |id| item_count(snapshot, id));
     witness.baseline_antipoison = item_count(snapshot, witness.antipoison_id);
+    witness.baseline_key = item_count(snapshot, witness.key_id);
     witness.baseline_animation_serial = snapshot
         .local_player()
         .and_then(|player| player.animation_update)
         .map(|animation| animation.serial);
     let hp = stat_base(snapshot, HITPOINTS_STAT);
     let skill = stat_base(snapshot, witness.skill_stat);
-    let inventory_expected = witness.baseline_antipoison + witness.baseline_tool;
+    let inventory_expected = witness.baseline_antipoison
+        + witness.baseline_tool
+        + witness.baseline_key
+        + witness.expected_inventory_extra;
     let inventory_observed = inventory_total(snapshot);
     let tile = snapshot.tile();
     if tile != Some((witness.stand.x, witness.stand.z, witness.stand.level))
@@ -1250,25 +1442,27 @@ fn observe_start(snapshot: &GameSnapshot, witness: &mut Witness) -> Result<Value
         || skill != BASE40_SKILL_LEVEL
         || witness.baseline_antipoison != 1
         || witness.baseline_tool != witness.expected_tool_at_start
+        || witness.baseline_key != witness.expected_key_at_start
         || witness.baseline_resource != 0
         || inventory_observed != inventory_expected
         || snapshot.modals().chat != -1
     {
         return Err(format!(
-            "own-state fixture mismatch: tile={tile:?}, expected={:?}, HP={hp}, {}={skill}, antipoison={}, tool={}, resource={}, inventory_total={inventory_observed}, expected_total={inventory_expected}, chat_modal={}",
+            "own-state fixture mismatch: tile={tile:?}, expected={:?}, HP={hp}, {}={skill}, antipoison={}, tool={}, key={}, resource={}, inventory_total={inventory_observed}, expected_total={inventory_expected}, chat_modal={}",
             witness.stand,
             witness.skill_name,
             witness.baseline_antipoison,
             witness.baseline_tool,
+            witness.baseline_key,
             witness.baseline_resource,
             snapshot.modals().chat,
         ));
     }
     Ok(json!({
-        "seed": if witness.expected_tool_at_start == 0 {
-            "account-owned stats, one antipoison dose and a banked work tool"
-        } else {
-            "account-owned stats, one antipoison dose and the work tool"
+        "seed": match (witness.activity, witness.expected_tool_at_start) {
+            (Activity::Dialogue, _) => "account-owned stats, one antipoison dose and nine herbs from the Yanille chest",
+            (_, 0) => "account-owned stats, one antipoison dose and a banked work tool",
+            _ => "account-owned stats, one antipoison dose, the work tool and a sinister key",
         },
         "start_tile": tile,
         "hitpoints_base": hp,
@@ -1278,6 +1472,8 @@ fn observe_start(snapshot: &GameSnapshot, witness: &mut Witness) -> Result<Value
         "resource_count": witness.baseline_resource,
         "antipoison": witness.baseline_antipoison,
         "tool": witness.baseline_tool,
+        "sinister_key": witness.baseline_key,
+        "chest_reward_count": witness.expected_inventory_extra,
         "no_food": inventory_observed == inventory_expected,
         "inventory_total": inventory_observed,
         "chat_sequence": witness.baseline_chat,
@@ -1363,7 +1559,11 @@ fn live_l_cure_when_needed_drains_willow_and_resumes_gatherer() {
         Activity::Woodcutting,
         "L-CURE-WHEN-NEEDED",
         GATHERER_STAND,
-        &[(RUNE_AXE_ALIAS, 1), (ANTIPOISON_ALIAS, 1)],
+        &[
+            (RUNE_AXE_ALIAS, 1),
+            (ANTIPOISON_ALIAS, 1),
+            (SINISTER_KEY_ALIAS, 1),
+        ],
         &[("cookquest", 0)],
         vec![],
         Mode::Stage {
@@ -1376,6 +1576,7 @@ fn live_l_cure_when_needed_drains_willow_and_resumes_gatherer() {
         WOODCUTTING_STAT,
         Some(WILLOW_LOG_ID),
         Some(RUNE_AXE_ALIAS),
+        PoisonSource::TwistedChest,
         GATHERER_STAND,
     );
     add_poison_steps(&mut cell.scenario, Arc::clone(&witness), false, 120);
@@ -1399,6 +1600,10 @@ fn live_l_cure_when_needed_drains_willow_and_resumes_gatherer() {
     );
     let proof = &receipt["family_receipt"];
     assert_eq!(proof["family"], "Gatherer");
+    assert_eq!(proof["poison_source"], "yanille-twisted-chest");
+    assert_eq!(proof["sinister_key_at_start"], 1);
+    assert_eq!(proof["sinister_key_after"], 0);
+    assert_eq!(proof["chest_rewards_after_start"], TWISTED_CHEST_REWARD_COUNT);
     assert_eq!(proof["stand"]["x"], GATHERER_STAND.x);
     assert_eq!(proof["stand"]["z"], GATHERER_STAND.z);
     assert!(
@@ -1436,7 +1641,11 @@ fn live_l_cure_when_needed_quester_mines_copper_and_resumes_gather() {
         Activity::Mining,
         "L-CURE-WHEN-NEEDED-QUESTER",
         MINING_STAND,
-        &[(RUNE_PICKAXE_ALIAS, 1), (ANTIPOISON_ALIAS, 1)],
+        &[
+            (RUNE_PICKAXE_ALIAS, 1),
+            (ANTIPOISON_ALIAS, 1),
+            (SINISTER_KEY_ALIAS, 1),
+        ],
         &[("cookquest", 0)],
         vec![],
         Mode::Stage {
@@ -1449,6 +1658,7 @@ fn live_l_cure_when_needed_quester_mines_copper_and_resumes_gather() {
         MINING_STAT,
         Some(COPPER_ORE_ID),
         Some(RUNE_PICKAXE_ALIAS),
+        PoisonSource::TwistedChest,
         MINING_STAND,
     );
     add_poison_steps(&mut cell.scenario, Arc::clone(&witness), false, 120);
@@ -1464,6 +1674,10 @@ fn live_l_cure_when_needed_quester_mines_copper_and_resumes_gather() {
     );
     let proof = &receipt["family_receipt"];
     assert_eq!(proof["family"], "Quester");
+    assert_eq!(proof["poison_source"], "yanille-twisted-chest");
+    assert_eq!(proof["sinister_key_at_start"], 1);
+    assert_eq!(proof["sinister_key_after"], 0);
+    assert_eq!(proof["chest_rewards_after_start"], TWISTED_CHEST_REWARD_COUNT);
     assert_eq!(proof["resumed_step_id"], "survival-work");
     assert_eq!(proof["stand"]["x"], MINING_STAND.x);
     assert_eq!(proof["stand"]["z"], MINING_STAND.z);
@@ -1475,7 +1689,7 @@ fn live_l_cure_when_needed_quester_mines_copper_and_resumes_gather() {
             > proof["resource_count_at_start"].as_i64().unwrap()
     );
     assert!(proof["work_animation_tick"].as_u64().is_some());
-    assert!(proof["poison_seed_animation"].is_object());
+    assert!(proof["work_animation"].is_object());
     assert_common_cure(proof, 120);
 }
 
@@ -1519,6 +1733,7 @@ fn live_l_cure_quester_interrupts_bank_provisioning_and_resumes_mining() {
         MINING_STAT,
         Some(COPPER_ORE_ID),
         Some(RUNE_PICKAXE_ALIAS),
+        PoisonSource::AccountStateDebugProc,
         MINING_STAND,
     );
     {
@@ -1540,6 +1755,8 @@ fn live_l_cure_quester_interrupts_bank_provisioning_and_resumes_mining() {
     );
     let proof = &receipt["family_receipt"];
     assert_eq!(proof["family"], "Quester");
+    assert_eq!(proof["poison_source"], "account-state-debugproc");
+    assert_eq!(proof["poison_source_chat_modal"], -1);
     assert_eq!(proof["resumed_step_id"], "survival-work");
     assert_eq!(proof["tool_count_at_start"], 0);
     assert_eq!(proof["poison_seed_tool_count"], 0);
@@ -1547,11 +1764,11 @@ fn live_l_cure_quester_interrupts_bank_provisioning_and_resumes_mining() {
     assert_eq!(proof["tool_count_after"], 1);
     assert!(
         proof["provisioning_tick"].as_u64().unwrap()
-            <= proof["poison_command_tick"].as_u64().unwrap()
+            <= proof["poison_source_tick"].as_u64().unwrap()
     );
     assert!(
         proof["work_active_tick"].as_u64().unwrap()
-            > proof["poison_command_tick"].as_u64().unwrap()
+            > proof["poison_source_tick"].as_u64().unwrap()
     );
     assert_common_cure(proof, 120);
 }
@@ -1585,10 +1802,7 @@ fn live_l_cure_quester_dialogue_updates_policy_on_desert_captain_page() {
         }]),
     );
     let mut cell = fixture(
-        Activity::Dialogue,
-        "L-CURE-QUESTER-DIALOGUE",
-        DESERT_CAPTAIN_STAND,
-        &[(ANTIPOISON_ALIAS, 1)],
+        &[(ANTIPOISON_ALIAS, 1), (SINISTER_KEY_ALIAS, 1)],
         &[("cookquest", 0), ("desertrescue", 3)],
         vec![],
         Mode::Stage {
@@ -1601,6 +1815,7 @@ fn live_l_cure_quester_dialogue_updates_policy_on_desert_captain_page() {
         MINING_STAT,
         None,
         None,
+        PoisonSource::TwistedChest,
         DESERT_CAPTAIN_STAND,
     );
     add_poison_steps(&mut cell.scenario, Arc::clone(&witness), true, 40);
@@ -1616,6 +1831,12 @@ fn live_l_cure_quester_dialogue_updates_policy_on_desert_captain_page() {
     );
     let proof = &receipt["family_receipt"];
     assert_eq!(proof["family"], "Quester");
+    assert_eq!(proof["poison_source"], "yanille-twisted-chest");
+    assert_eq!(proof["sinister_key_at_start"], 0);
+    assert_eq!(proof["sinister_key_after"], 0);
+    assert_eq!(proof["chest_reward_count_at_start"], TWISTED_CHEST_REWARD_COUNT);
+    assert_eq!(proof["inventory_total_at_start"], 1 + TWISTED_CHEST_REWARD_COUNT);
+    assert_eq!(proof["inventory_total_after"], TWISTED_CHEST_REWARD_COUNT);
     assert_eq!(proof["npc_config"], "desertminingcaptain");
     assert_eq!(proof["npc_stage"], DESERT_STAGE_REPLY);
     assert!(proof["npc_stage_tick"].as_u64().is_some());
