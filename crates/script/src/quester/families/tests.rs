@@ -2464,6 +2464,47 @@ fn same_tick_make_trigger_retries_the_same_location_next_tick() {
         );
     });
 }
+#[test]
+fn make_walks_to_far_anchor_when_the_loc_is_not_observed() {
+    compile_context_test(|compile| {
+        let anchor = tile(2982, 3315);
+        let plan = s2::compile_make(
+            test_args::<s2::MakeArgs>(serde_json::json!({
+                "loc": {"name": "spinningwheel", "op": "Spin"},
+                "anchor": {"tile": [2982, 3315, 0], "source": "review far-start probe"},
+                "product": "ball_of_wool",
+                "menu": {"obj": "wool", "source": "review far-start probe"},
+                "qty": 1
+            })),
+            compile,
+        )
+        .unwrap();
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(3092, 3243)));
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let mut run = with_step(tick, |cx| plan.begin(cx).unwrap());
+            assert!(tick.cx.budget.event(false));
+            for _ in 0..3 {
+                assert!(with_step(tick, |cx| run.poll(cx)).is_pending());
+            }
+            assert!(tick
+                .cx
+                .ledger
+                .as_ref()
+                .is_none_or(|ledger| ledger.outbox.is_empty()));
+            run
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.last().map(|entry| &entry.effect),
+            Some(HostEffect::Walk(request)) if request.target == anchor
+        ));
+    });
+}
 
 #[test]
 fn buy_and_make_approach_from_the_network_tile() {
