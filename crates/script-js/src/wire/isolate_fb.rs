@@ -5737,6 +5737,12 @@ fn decode_interact_rows<'a>(
                 on: row.action().is_some_and(|a| a == "on" || a == "true"),
             }),
             "set-camera-yaw" => out.push(script::shim::InteractReq::SetCameraYaw { yaw: row.x() }),
+            "say-public" => out.push(script::shim::InteractReq::SayPublic {
+                text: row
+                    .name()
+                    .ok_or_else(|| "say-public has no text".to_string())?
+                    .to_string(),
+            }),
             "note-progress" => out.push(script::shim::InteractReq::NoteProgress),
             "loop-settled" => out.push(script::shim::InteractReq::LoopSettled),
             "wait-enqueued" => out.push(script::shim::InteractReq::WaitEnqueued),
@@ -6435,6 +6441,7 @@ fn interact_off<'b>(
         InteractReq::Key { .. } => "key",
         InteractReq::Mouse { .. } => "mouse",
         InteractReq::RunPolicyOverride { .. } => "run-policy",
+        InteractReq::SayPublic { .. } => "say-public",
     });
     let kind_off = match req {
         InteractReq::OpenStand { kind, .. }
@@ -6464,6 +6471,7 @@ fn interact_off<'b>(
         | InteractReq::ChannelMessage { sender: name, .. }
         | InteractReq::DuelAccept { partner: name, .. } => Some(b.create_string(name)),
         InteractReq::ProgressRead { name, .. } => Some(b.create_string(name)),
+        InteractReq::SayPublic { text } => Some(b.create_string(text)),
         InteractReq::Obj { name, .. } => name.as_deref().map(|n| b.create_string(n)),
         _ => None,
     };
@@ -6940,6 +6948,9 @@ fn interact_off<'b>(
             if let Some(component_id) = component_id {
                 table.add_component_id(*component_id);
             }
+        }
+        InteractReq::SayPublic { .. } => {
+            table.add_name(name_off.expect("say-public text encoded"));
         }
         InteractReq::CloseModal
         | InteractReq::NoteProgress
