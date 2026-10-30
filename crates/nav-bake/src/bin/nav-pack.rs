@@ -158,11 +158,7 @@ fn crossing_export_json(
                 // A physical crossing is admissible when any represented
                 // source edge admits its exact takeoff.
                 row.admissible |= admissible;
-                if !row
-                    .quest_gate_alternatives
-                    .iter()
-                    .any(|alternative| *alternative == gates)
-                {
+                if !row.quest_gate_alternatives.contains(&gates) {
                     row.quest_gate_alternatives.push(gates);
                 }
             }

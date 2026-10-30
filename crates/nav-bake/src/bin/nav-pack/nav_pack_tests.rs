@@ -309,8 +309,10 @@ fn crossing_export_has_exact_schema_and_serde_quest_gate_values() {
         [7; 32],
         std::num::NonZeroU16::new(1).unwrap(),
     );
-    let mut graph = nav_planner::transport::TransportGraph::default();
-    graph.quest_family = Some(family);
+    let mut graph = nav_planner::transport::TransportGraph {
+        quest_family: Some(family),
+        ..Default::default()
+    };
     let mut edge = crossing_edge(
         nav_planner::transport::TransportKind::Ladder,
         at,
@@ -469,8 +471,10 @@ fn crossing_export_keeps_each_stage_window_alternative_for_one_crossing() {
         [8; 32],
         std::num::NonZeroU16::new(1).unwrap(),
     );
-    let mut graph = nav_planner::transport::TransportGraph::default();
-    graph.quest_family = Some(family);
+    let mut graph = nav_planner::transport::TransportGraph {
+        quest_family: Some(family),
+        ..Default::default()
+    };
     for (min, max) in [(1, 3), (5, 7)] {
         let mut edge = crossing_edge(
             nav_planner::transport::TransportKind::Ladder,
