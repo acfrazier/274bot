@@ -677,10 +677,6 @@ mod tests {
         live_len: u8,
         food_len: u8,
         free_slots: u8,
-        defence: u8,
-        worn_defence: [i16; 4],
-        style_def: u8,
-        active_protect: Style,
         map_members: bool,
         run: bool,
         other_prayers_on: bool,
@@ -824,9 +820,9 @@ mod tests {
         let old = std::mem::size_of::<LegacyRiskInput>();
         let new = std::mem::size_of::<RiskInput>();
         eprintln!("RiskInput legacy={old} new={new} delta={}", new - old);
-        assert_eq!(old, 124);
+        assert_eq!(old, 120);
         assert_eq!(new, 128);
-        assert_eq!(new - old, 4);
+        assert_eq!(new - old, 8);
         assert!(new <= 128);
     }
 
