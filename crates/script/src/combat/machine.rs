@@ -12,7 +12,10 @@ use super::style::magic::{self, CastMode, Refusal};
 use super::style::ranged;
 use super::tables::{CombatTab, CombatTables, PotionKind, PrayerRole};
 use super::threats::{StyleObs, ThreatSet};
-use crate::native::{ActionContext, ActionError, NativeMachine, WalkEnd, WalkRequest};
+use crate::native::{
+    ActionContext, ActionError, NativeMachine, ReturnStallRecovery, WalkEnd, WalkRequest,
+    QUEST_WALK_MAX_ATTEMPTS,
+};
 use crate::shim::InteractReq;
 use crate::survival::cure::{self, CureDecision, CureInputs};
 use api::prayer::PrayerObservation;
@@ -166,7 +169,7 @@ pub struct Combat {
     deadline: Duration,
     pending_walk: Option<NonZeroU64>,
     pending_walk_approach: bool,
-    approach_retry: crate::native::WalkRetryState,
+    approach_recovery: ReturnStallRecovery,
     threats: ThreatSet,
     schedule: Schedule,
     sweep: PrayerSweep,
@@ -321,7 +324,7 @@ impl NativeMachine for Combat {
                 .saturating_add(Duration::from_millis(u64::from(ticks) * 600)),
             pending_walk: None,
             pending_walk_approach: false,
-            approach_retry: crate::native::WalkRetryState::default(),
+            approach_recovery: ReturnStallRecovery::with_max_attempts(QUEST_WALK_MAX_ATTEMPTS),
             threats: ThreatSet::default(),
             schedule: Schedule::default(),
             sweep: PrayerSweep::new(),
@@ -425,9 +428,9 @@ impl NativeMachine for Combat {
                 .and_then(|id| cx.walk_receipt(id.get()))
             {
                 match receipt.clone().into_arrival() {
-                    Ok(_) => self.approach_retry.reset(),
+                    Ok(_) => self.approach_recovery.reset(),
                     Err(error) => {
-                        if self.approach_retry.observe_failure(receipt, evidence.tick) {
+                        if self.approach_recovery.observe_receipt(receipt) {
                             self.pending_walk = None;
                             self.pending_walk_approach = false;
                             return Poll::Pending;
@@ -445,9 +448,6 @@ impl NativeMachine for Combat {
         {
             self.pending_walk = None;
             self.pending_walk_approach = false;
-        }
-        if self.approach_retry.waiting_for_next_tick(evidence.tick) {
-            return Poll::Pending;
         }
         let events = self.threats.observe(&frame, &self.tables, tick);
         self.counters.damage = self.counters.damage.saturating_add(events.damage);
@@ -3081,9 +3081,9 @@ impl Combat {
         self.pending_walk = NonZeroU64::new(id);
         self.pending_walk_approach = approach;
         if approach {
-            self.approach_retry.action_submitted();
+            self.approach_recovery.action_submitted();
         } else {
-            self.approach_retry.reset();
+            self.approach_recovery.reset();
         }
         self.schedule.clear(tick, 1, false);
         self.flags |= EMITTED;

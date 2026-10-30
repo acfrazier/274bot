@@ -31,6 +31,7 @@ pub(crate) struct ThieveActionArgs {
 pub(crate) struct Thieve {
     args: ThieveActionArgs,
     core: ThieveCore,
+    area_anchor: Option<WorldTile>,
     walk: Option<PendingWalk>,
     walk_retry: super::WalkRetryState,
     reach: Option<Reach>,
