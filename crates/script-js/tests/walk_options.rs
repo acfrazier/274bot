@@ -90,9 +90,7 @@ fn public_traversal_preserves_prerequisite_consent_overrides() {
                 Some(true),
             ),
         ] {
-            let call = format!(
-                "Traversal.{method}({{ x: 3222, z: 3240, level: 0 }}, {options})"
-            );
+            let call = format!("Traversal.{method}({{ x: 3222, z: 3240, level: 0 }}, {options})");
             let (error, operations, arrived) = walk_with_bound(&call);
             assert_eq!(error, "", "{call}");
             let walks = world_walks(&operations);

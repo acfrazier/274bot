@@ -1289,6 +1289,11 @@ pub(crate) struct WalkToArgs {
     /// Per-walk named danger-zone exemptions.
     #[serde(default)]
     cross_zones: Vec<String>,
+    /// Additive prerequisite grants; an explicit false narrows global allow.
+    #[serde(default)]
+    allow_prereq_dialogue: Option<bool>,
+    #[serde(default)]
+    allow_quest_start: Option<bool>,
     /// Whether the caller passed `pathFollow` overrides.
     #[serde(default)]
     path_follow: bool,
@@ -1349,6 +1354,8 @@ pub(crate) struct WalkTo {
     allow_teleports: bool,
     avoid: Vec<InspectAvoidWire>,
     cross: Vec<String>,
+    allow_prereq_dialogue: Option<bool>,
+    allow_quest_start: Option<bool>,
     phase: WalkToPhase,
     logs: VecDeque<String>,
     result: Option<bool>,
@@ -1389,8 +1396,8 @@ impl Family for WalkTo {
             allow_teleports,
             avoid.clone(),
             cross.clone(),
-            None,
-            None,
+            args.allow_prereq_dialogue,
+            args.allow_quest_start,
             cx,
         ) {
             Ok(walk) => Begin::Run(Self {
@@ -1400,6 +1407,8 @@ impl Family for WalkTo {
                 allow_teleports,
                 avoid,
                 cross,
+                allow_prereq_dialogue: args.allow_prereq_dialogue,
+                allow_quest_start: args.allow_quest_start,
                 phase: WalkToPhase::Walking {
                     walk,
                     retried: false,
@@ -1515,8 +1524,8 @@ impl WalkTo {
                     self.allow_teleports,
                     self.avoid.clone(),
                     self.cross.clone(),
-                    None,
-                    None,
+                    self.allow_prereq_dialogue,
+                    self.allow_quest_start,
                     cx,
                 ) {
                     Ok(walk) => {
