@@ -13664,7 +13664,7 @@
       "selector": "Game.castOnNpc",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "runtime": "crates/script-js/src/shim/game.js:219",
+      "runtime": "crates/script-js/src/shim/game.js:218",
       "async": true,
       "family_id": "game-state",
       "nav_consuming": false
@@ -23357,7 +23357,7 @@
       "selector": "Game.castOnNpc",
       "module": "api/game/Game.js",
       "state": "not-impl",
-      "source": "crates/script-js/src/shim/game.js:219",
+      "source": "crates/script-js/src/shim/game.js:218",
       "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
       "overlay_id": "not-impl:api/game/Game.js:Game.castOnNpc"
     },
