@@ -262,8 +262,8 @@ impl NativeMachine for Thieve {
         let mut core_observation = observation;
         core_observation.inventory_ready &=
             !walk_pending && self.reach.is_none() && !chat_dialog_open;
-        let suspend_deadline = entered_waiting
-            || (self.anchor_spawn_attempt && self.core.has_pending_attempt());
+        let suspend_deadline =
+            entered_waiting || (self.anchor_spawn_attempt && self.core.has_pending_attempt());
         let decision = if suspend_deadline {
             self.core.poll_without_deadline(now, core_observation)
         } else {
@@ -348,8 +348,7 @@ impl NativeMachine for Thieve {
                         return Poll::Pending;
                     }
                     let since = *self.no_target_since.get_or_insert(cx.evidence().tick);
-                    if cx.evidence().tick.saturating_sub(since) >= self.args.no_target_wait_ticks
-                    {
+                    if cx.evidence().tick.saturating_sub(since) >= self.args.no_target_wait_ticks {
                         return Poll::Ready(Err(failed(NO_TARGET_FAILURE)));
                     }
                     return Poll::Pending;
