@@ -5737,7 +5737,7 @@
       "name": "BotManifestInput",
       "kind": "interface",
       "section": "manifest",
-      "source_module": null,
+      "source_module": "runtime/defineBot.js",
       "runtime": false,
       "signatures": [],
       "members": [
@@ -5745,11 +5745,11 @@
           "name": "name",
           "kind": "property",
           "path": "BotManifestInput.name",
-          "family_id": "bot",
+          "family_id": "runtime",
           "signatures": [
             {
               "ordinal": 1,
-              "family_id": "bot",
+              "family_id": "runtime",
               "text": "name: string;"
             }
           ]
@@ -5758,11 +5758,11 @@
           "name": "description",
           "kind": "property",
           "path": "BotManifestInput.description",
-          "family_id": "bot",
+          "family_id": "runtime",
           "signatures": [
             {
               "ordinal": 1,
-              "family_id": "bot",
+              "family_id": "runtime",
               "text": "description?: string;"
             }
           ]
@@ -5771,11 +5771,11 @@
           "name": "version",
           "kind": "property",
           "path": "BotManifestInput.version",
-          "family_id": "bot",
+          "family_id": "runtime",
           "signatures": [
             {
               "ordinal": 1,
-              "family_id": "bot",
+              "family_id": "runtime",
               "text": "version?: string;"
             }
           ]
@@ -5784,11 +5784,11 @@
           "name": "category",
           "kind": "property",
           "path": "BotManifestInput.category",
-          "family_id": "bot",
+          "family_id": "runtime",
           "signatures": [
             {
               "ordinal": 1,
-              "family_id": "bot",
+              "family_id": "runtime",
               "text": "/** Library category, e.g. \"Mining\"; defaults to \"Other\". */\ncategory?: string;"
             }
           ]
@@ -5797,11 +5797,11 @@
           "name": "tags",
           "kind": "property",
           "path": "BotManifestInput.tags",
-          "family_id": "bot",
+          "family_id": "runtime",
           "signatures": [
             {
               "ordinal": 1,
-              "family_id": "bot",
+              "family_id": "runtime",
               "text": "/** Free-form labels for search/filtering in the library (e.g. \"f2p\"). */\ntags?: string[];"
             }
           ]
@@ -5810,11 +5810,11 @@
           "name": "settingsSchema",
           "kind": "property",
           "path": "BotManifestInput.settingsSchema",
-          "family_id": "bot",
+          "family_id": "runtime",
           "signatures": [
             {
               "ordinal": 1,
-              "family_id": "bot",
+              "family_id": "runtime",
               "text": "settingsSchema?: SettingsSchema;"
             }
           ]
@@ -5823,26 +5823,28 @@
           "name": "create",
           "kind": "method",
           "path": "BotManifestInput.create",
-          "family_id": "bot",
+          "family_id": "runtime",
           "signatures": [
             {
               "ordinal": 1,
-              "family_id": "bot",
+              "family_id": "runtime",
               "text": "create(): AbstractBot;"
             }
           ]
         }
       ],
       "bases": [],
-      "family_id": "bot",
-      "source_modules": [],
-      "nav_consuming": false
+      "family_id": "runtime",
+      "source_modules": [
+        "runtime/defineBot.js"
+      ],
+      "nav_consuming": true
     },
     {
       "name": "BotManifest",
       "kind": "interface",
       "section": "manifest",
-      "source_module": null,
+      "source_module": "runtime/defineBot.js",
       "runtime": false,
       "signatures": [],
       "members": [
@@ -5850,11 +5852,11 @@
           "name": "__rs2b0tManifest",
           "kind": "property",
           "path": "BotManifest.__rs2b0tManifest",
-          "family_id": "bot",
+          "family_id": "runtime",
           "signatures": [
             {
               "ordinal": 1,
-              "family_id": "bot",
+              "family_id": "runtime",
               "text": "__rs2b0tManifest: 1;"
             }
           ]
@@ -5863,27 +5865,31 @@
       "bases": [
         "BotManifestInput"
       ],
-      "family_id": "bot",
-      "source_modules": [],
-      "nav_consuming": false
+      "family_id": "runtime",
+      "source_modules": [
+        "runtime/defineBot.js"
+      ],
+      "nav_consuming": true
     },
     {
       "name": "defineBot",
       "kind": "function",
       "section": "manifest",
-      "source_module": null,
+      "source_module": "runtime/defineBot.js",
       "runtime": true,
       "signatures": [
         {
           "ordinal": 1,
-          "family_id": "bot",
+          "family_id": "runtime",
           "text": "/** Default-export defineBot({...}) from your script's entry module. */\nexport function defineBot(manifest: BotManifestInput): BotManifest;"
         }
       ],
       "members": [],
-      "family_id": "bot",
-      "source_modules": [],
-      "nav_consuming": false
+      "family_id": "runtime",
+      "source_modules": [
+        "runtime/defineBot.js"
+      ],
+      "nav_consuming": true
     },
     {
       "name": "registerScript",
@@ -9692,9 +9698,11 @@
       "source_name": "defineBot",
       "module": null,
       "shim": null,
-      "source_modules": [],
-      "family_id": "bot",
-      "nav_consuming": false,
+      "source_modules": [
+        "runtime/defineBot.js"
+      ],
+      "family_id": "runtime",
+      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-value"
     },
@@ -11967,6 +11975,32 @@
       "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-function"
+    },
+    {
+      "public_name": "BotManifest",
+      "source_name": "BotManifest",
+      "module": "runtime/defineBot.js",
+      "family_id": "runtime",
+      "shim": "define_bot.js",
+      "nav_consuming": true,
+      "source_modules": [
+        "runtime/defineBot.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "type-re-export"
+    },
+    {
+      "public_name": "BotManifestInput",
+      "source_name": "BotManifestInput",
+      "module": "runtime/defineBot.js",
+      "family_id": "runtime",
+      "shim": "define_bot.js",
+      "nav_consuming": true,
+      "source_modules": [
+        "runtime/defineBot.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "type-re-export"
     }
   ],
   "typed_modules": [
@@ -12546,12 +12580,37 @@
       "nav_consuming": true
     },
     {
+      "module": "runtime/defineBot.js",
+      "family_id": "runtime",
+      "nav_consuming": true
+    },
+    {
+      "module": "runtime/randomevents/eventEvade.js",
+      "family_id": "runtime",
+      "nav_consuming": true
+    },
+    {
       "module": "runtime/RecoveryHints.js",
       "family_id": "runtime",
       "nav_consuming": true
     },
     {
       "module": "runtime/RunManager.js",
+      "family_id": "runtime",
+      "nav_consuming": true
+    },
+    {
+      "module": "runtime/Scheduler.js",
+      "family_id": "runtime",
+      "nav_consuming": true
+    },
+    {
+      "module": "runtime/ScriptActivity.js",
+      "family_id": "runtime",
+      "nav_consuming": true
+    },
+    {
+      "module": "runtime/ScriptRegistry.js",
       "family_id": "runtime",
       "nav_consuming": true
     },
@@ -12648,6 +12707,16 @@
       "nav_consuming": false
     },
     {
+      "id": "bot-manifest-module",
+      "module": "runtime/defineBot.js",
+      "selector": "$module",
+      "reason": "The host facade validates and marks manifests; this module publishes its ScriptMeta-based input and branded manifest types.",
+      "runtime": "crates/script-js/src/shim/define_bot.js:2",
+      "declaration": "import type { ScriptMeta } from './ScriptRegistry.js';\nexport interface BotManifestInput extends ScriptMeta {}\nexport interface BotManifest extends BotManifestInput { __rs2b0tManifest: 1; }\nexport function defineBot<T extends { name: string; create: () => unknown }>(manifest: T): T;\nexport function isBotManifest(value: unknown): value is BotManifest;",
+      "family_id": "runtime",
+      "nav_consuming": true
+    },
+    {
       "id": "native-quest-engine-not-impl",
       "module": "api/ai/quests/engine/QuestEngine.js",
       "selector": "QuestEngine",
@@ -12701,9 +12770,31 @@
       "id": "prelude-treebot",
       "module": "api/bot/Bot.js",
       "selector": "TreeBot",
-      "reason": "Prelude TreeBot inherits LoopingBot.loop unchanged; its concrete root throws unless overridden.",
-      "runtime": "crates/script-js/src/shim/modules.rs:222",
+      "reason": "Native TreeBot.loop traverses BranchTask decisions and awaits the selected LeafTask; subclasses provide root.",
+      "runtime": "crates/script-js/src/runtime/bindings/tree_bot.rs:22",
       "declaration": "export class TreeBot extends LoopingBot { root(): TreeNode; }",
+      "family_id": "bot",
+      "nav_consuming": false
+    },
+    {
+      "id": "abstract-branch-task-contract",
+      "module": "api/bot/Bot.js",
+      "selector": "BranchTask",
+      "preserveMembers": true,
+      "reason": "Native BranchTask bases intentionally omit abstract hooks; retain their published subclass contract.",
+      "runtime": "crates/script-js/src/shim/bot.js:9",
+      "declaration": "export abstract class BranchTask { abstract validate(): boolean; abstract success(): TreeNode; abstract failure(): TreeNode; }",
+      "family_id": "bot",
+      "nav_consuming": false
+    },
+    {
+      "id": "abstract-leaf-task-contract",
+      "module": "api/bot/Bot.js",
+      "selector": "LeafTask",
+      "preserveMembers": true,
+      "reason": "Native LeafTask bases intentionally omit abstract hooks; retain their published subclass contract.",
+      "runtime": "crates/script-js/src/shim/bot.js:12",
+      "declaration": "export abstract class LeafTask { abstract execute(): void | Promise<void>; }",
       "family_id": "bot",
       "nav_consuming": false
     },
@@ -12897,96 +12988,6 @@
       "runtime": "crates/script-js/src/shim/quest_engine.js:4",
       "declaration": "export const PROVISION_BANK: never;",
       "family_id": "quests",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl-value:runtime/Settings.js:GLOBAL_SETTINGS_CORE",
-      "module": "runtime/Settings.js",
-      "selector": "GLOBAL_SETTINGS_CORE",
-      "reason": "The settings schema has no native settings-state implementation.",
-      "runtime": "crates/script-js/src/shim/settings.js:81",
-      "declaration": "export const GLOBAL_SETTINGS_CORE: never;",
-      "family_id": "runtime",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl-value:runtime/Settings.js:NAV_SETTINGS",
-      "module": "runtime/Settings.js",
-      "selector": "NAV_SETTINGS",
-      "reason": "The navigation settings schema has no native settings-state implementation.",
-      "runtime": "crates/script-js/src/shim/settings.js:82",
-      "declaration": "export const NAV_SETTINGS: never;",
-      "family_id": "runtime",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl-value:runtime/Settings.js:GLOBAL_SETTINGS",
-      "module": "runtime/Settings.js",
-      "selector": "GLOBAL_SETTINGS",
-      "reason": "The settings schema has no native settings-state implementation.",
-      "runtime": "crates/script-js/src/shim/settings.js:83",
-      "declaration": "export const GLOBAL_SETTINGS: never;",
-      "family_id": "runtime",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl-value:runtime/Settings.js:MAP_PICKER_SETTINGS_NS",
-      "module": "runtime/Settings.js",
-      "selector": "MAP_PICKER_SETTINGS_NS",
-      "reason": "The map-picker settings namespace has no native storage implementation.",
-      "runtime": "crates/script-js/src/shim/settings.js:84",
-      "declaration": "export const MAP_PICKER_SETTINGS_NS: never;",
-      "family_id": "runtime",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl-value:runtime/Settings.js:MAP_PICKER_SETTINGS",
-      "module": "runtime/Settings.js",
-      "selector": "MAP_PICKER_SETTINGS",
-      "reason": "The map-picker settings schema has no native settings-state implementation.",
-      "runtime": "crates/script-js/src/shim/settings.js:85",
-      "declaration": "export const MAP_PICKER_SETTINGS: never;",
-      "family_id": "runtime",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl-value:runtime/Settings.js:LOADOUT_SETTINGS_NS",
-      "module": "runtime/Settings.js",
-      "selector": "LOADOUT_SETTINGS_NS",
-      "reason": "The loadout settings namespace has no native storage implementation.",
-      "runtime": "crates/script-js/src/shim/settings.js:86",
-      "declaration": "export const LOADOUT_SETTINGS_NS: never;",
-      "family_id": "runtime",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl-value:runtime/Settings.js:LOADOUT_SETTINGS",
-      "module": "runtime/Settings.js",
-      "selector": "LOADOUT_SETTINGS",
-      "reason": "The loadout settings schema has no native settings-state implementation.",
-      "runtime": "crates/script-js/src/shim/settings.js:87",
-      "declaration": "export const LOADOUT_SETTINGS: never;",
-      "family_id": "runtime",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl-value:runtime/Settings.js:PRICE_BOOK_SETTINGS_NS",
-      "module": "runtime/Settings.js",
-      "selector": "PRICE_BOOK_SETTINGS_NS",
-      "reason": "The price-book settings namespace has no native storage implementation.",
-      "runtime": "crates/script-js/src/shim/settings.js:88",
-      "declaration": "export const PRICE_BOOK_SETTINGS_NS: never;",
-      "family_id": "runtime",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl-value:runtime/Settings.js:PRICE_BOOK_SETTINGS",
-      "module": "runtime/Settings.js",
-      "selector": "PRICE_BOOK_SETTINGS",
-      "reason": "The price-book settings schema has no native settings-state implementation.",
-      "runtime": "crates/script-js/src/shim/settings.js:89",
-      "declaration": "export const PRICE_BOOK_SETTINGS: never;",
-      "family_id": "runtime",
       "nav_consuming": true
     },
     {
@@ -13188,17 +13189,6 @@
       "runtime": "crates/script-js/src/shim/game.js:195",
       "declaration": "combatStyleMode(style?: MeleeCombatStyle): number;",
       "family_id": "game-state",
-      "nav_consuming": false
-    },
-    {
-      "id": "event-ignored-randoms",
-      "module": "api/execution/EventSignal.js",
-      "selector": "EventSignal.ignoredRandoms",
-      "add": true,
-      "reason": "Host additionally publishes the active bot's ignored random-event names.",
-      "runtime": "crates/script-js/src/shim/event_signal.js:25",
-      "declaration": "ignoredRandoms(): string[];",
-      "family_id": "execution",
       "nav_consuming": false
     },
     {
@@ -13925,61 +13915,6 @@
       "nav_consuming": true
     },
     {
-      "id": "not-impl:api/bot/Bot.js:resolveLoopCadence",
-      "module": "api/bot/Bot.js",
-      "selector": "resolveLoopCadence",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: rs2b0t's loop-cadence pacing is not carried into native compatibility.",
-      "runtime": "crates/script-js/src/shim/bot.js:11",
-      "async": false,
-      "family_id": "bot",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/bot/Bot.js:BranchTask.validate",
-      "module": "api/bot/Bot.js",
-      "selector": "BranchTask.validate",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
-      "runtime": "crates/script-js/src/shim/bot.js:20",
-      "async": false,
-      "family_id": "bot",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/bot/Bot.js:BranchTask.success",
-      "module": "api/bot/Bot.js",
-      "selector": "BranchTask.success",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
-      "runtime": "crates/script-js/src/shim/bot.js:24",
-      "async": false,
-      "family_id": "bot",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/bot/Bot.js:BranchTask.failure",
-      "module": "api/bot/Bot.js",
-      "selector": "BranchTask.failure",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
-      "runtime": "crates/script-js/src/shim/bot.js:28",
-      "async": false,
-      "family_id": "bot",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/bot/Bot.js:LeafTask.execute",
-      "module": "api/bot/Bot.js",
-      "selector": "LeafTask.execute",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
-      "runtime": "crates/script-js/src/shim/bot.js:38",
-      "async": false,
-      "family_id": "bot",
-      "nav_consuming": false
-    },
-    {
       "id": "not-impl:adapter/ClientAdapter.js:invalidateLocSnapshots",
       "module": "adapter/ClientAdapter.js",
       "selector": "invalidateLocSnapshots",
@@ -14121,61 +14056,6 @@
       "async": false,
       "family_id": "client-adapter",
       "nav_consuming": false
-    },
-    {
-      "id": "not-impl:runtime/RunManager.js:resolveRunPolicy",
-      "module": "runtime/RunManager.js",
-      "selector": "resolveRunPolicy",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: run policy has no native state adapter.",
-      "runtime": "crates/script-js/src/shim/run_manager.js:9",
-      "async": false,
-      "family_id": "runtime",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl:runtime/RunManager.js:shouldEnableRun",
-      "module": "runtime/RunManager.js",
-      "selector": "shouldEnableRun",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: run policy has no native state adapter.",
-      "runtime": "crates/script-js/src/shim/run_manager.js:13",
-      "async": false,
-      "family_id": "runtime",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl:runtime/ScriptRunner.js:loopReadyOrDetached",
-      "module": "runtime/ScriptRunner.js",
-      "selector": "loopReadyOrDetached",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
-      "runtime": "crates/script-js/src/shim/script_runner.js:22",
-      "async": false,
-      "family_id": "runtime",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl:runtime/ScriptRunner.js:stopReasonOf",
-      "module": "runtime/ScriptRunner.js",
-      "selector": "stopReasonOf",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
-      "runtime": "crates/script-js/src/shim/script_runner.js:26",
-      "async": false,
-      "family_id": "runtime",
-      "nav_consuming": true
-    },
-    {
-      "id": "not-impl:runtime/Settings.js:settingOptionLabel",
-      "module": "runtime/Settings.js",
-      "selector": "settingOptionLabel",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: settings option labels have no native resolver.",
-      "runtime": "crates/script-js/src/shim/settings.js:78",
-      "async": false,
-      "family_id": "runtime",
-      "nav_consuming": true
     },
     {
       "id": "not-impl:api/ai/quests/defs/murder/areas.js:suspectOrder",
@@ -14461,102 +14341,6 @@
       "runtime": "crates/script-js/src/shim/paintLogic.js:133",
       "async": false,
       "family_id": "paint",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:input/Input.js:Input.useItemOnLoc",
-      "module": "input/Input.js",
-      "selector": "Input.useItemOnLoc",
-      "operation": "not-impl",
-      "preserveParameters": true,
-      "reason": "Unconditional not-impl: target item-on-location interaction is not provided by the native host.",
-      "runtime": "crates/script-js/src/shim/input.js:154",
-      "async": false,
-      "family_id": "input",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:input/Input.js:Input.useItemOnNpc",
-      "module": "input/Input.js",
-      "selector": "Input.useItemOnNpc",
-      "operation": "not-impl",
-      "preserveParameters": true,
-      "reason": "Unconditional not-impl: target item-on-NPC interaction is not provided by the native host.",
-      "runtime": "crates/script-js/src/shim/input.js:157",
-      "async": false,
-      "family_id": "input",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:input/Input.js:Input.useItemOnObj",
-      "module": "input/Input.js",
-      "selector": "Input.useItemOnObj",
-      "operation": "not-impl",
-      "preserveParameters": true,
-      "reason": "Unconditional not-impl: target item-on-object interaction is not provided by the native host.",
-      "runtime": "crates/script-js/src/shim/input.js:160",
-      "async": false,
-      "family_id": "input",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:input/Input.js:Input.useItemOnItem",
-      "module": "input/Input.js",
-      "selector": "Input.useItemOnItem",
-      "operation": "not-impl",
-      "preserveParameters": true,
-      "reason": "Unconditional not-impl: target item-on-item interaction is not provided by the native host.",
-      "runtime": "crates/script-js/src/shim/input.js:163",
-      "async": false,
-      "family_id": "input",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:input/Input.js:Input.castOnNpc",
-      "module": "input/Input.js",
-      "selector": "Input.castOnNpc",
-      "operation": "not-impl",
-      "preserveParameters": true,
-      "reason": "Unconditional not-impl: spell-on-NPC interaction is not provided by the native host.",
-      "runtime": "crates/script-js/src/shim/input.js:166",
-      "async": false,
-      "family_id": "input",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:input/Input.js:Input.castOnLoc",
-      "module": "input/Input.js",
-      "selector": "Input.castOnLoc",
-      "operation": "not-impl",
-      "preserveParameters": true,
-      "reason": "Unconditional not-impl: spell-on-location interaction is not provided by the native host.",
-      "runtime": "crates/script-js/src/shim/input.js:169",
-      "async": false,
-      "family_id": "input",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:input/Input.js:Input.castOnItem",
-      "module": "input/Input.js",
-      "selector": "Input.castOnItem",
-      "operation": "not-impl",
-      "preserveParameters": true,
-      "reason": "Unconditional not-impl: spell-on-item interaction is not provided by the native host.",
-      "runtime": "crates/script-js/src/shim/input.js:172",
-      "async": false,
-      "family_id": "input",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:input/Input.js:Input.continueDialog",
-      "module": "input/Input.js",
-      "selector": "Input.continueDialog",
-      "operation": "not-impl",
-      "preserveParameters": true,
-      "reason": "Unconditional not-impl: dialog continuation is not provided by the native host.",
-      "runtime": "crates/script-js/src/shim/input.js:175",
-      "async": false,
-      "family_id": "input",
       "nav_consuming": false
     },
     {
@@ -23758,56 +23542,6 @@
       "overlay_id": "not-impl:api/ai/clues/data/toolAcquire.js:gateItemShop"
     },
     {
-      "family_id": "bot",
-      "member": "resolveLoopCadence",
-      "selector": "resolveLoopCadence",
-      "module": "api/bot/Bot.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/bot.js:11",
-      "reason": "Unconditional not-impl: rs2b0t's loop-cadence pacing is not carried into native compatibility.",
-      "overlay_id": "not-impl:api/bot/Bot.js:resolveLoopCadence"
-    },
-    {
-      "family_id": "bot",
-      "member": "validate",
-      "selector": "BranchTask.validate",
-      "module": "api/bot/Bot.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/bot.js:20",
-      "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
-      "overlay_id": "not-impl:api/bot/Bot.js:BranchTask.validate"
-    },
-    {
-      "family_id": "bot",
-      "member": "success",
-      "selector": "BranchTask.success",
-      "module": "api/bot/Bot.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/bot.js:24",
-      "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
-      "overlay_id": "not-impl:api/bot/Bot.js:BranchTask.success"
-    },
-    {
-      "family_id": "bot",
-      "member": "failure",
-      "selector": "BranchTask.failure",
-      "module": "api/bot/Bot.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/bot.js:28",
-      "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
-      "overlay_id": "not-impl:api/bot/Bot.js:BranchTask.failure"
-    },
-    {
-      "family_id": "bot",
-      "member": "execute",
-      "selector": "LeafTask.execute",
-      "module": "api/bot/Bot.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/bot.js:38",
-      "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
-      "overlay_id": "not-impl:api/bot/Bot.js:LeafTask.execute"
-    },
-    {
       "family_id": "client-adapter",
       "member": "invalidateLocSnapshots",
       "selector": "invalidateLocSnapshots",
@@ -23936,56 +23670,6 @@
       "source": "crates/script-js/src/shim/client_adapter.js:17",
       "reason": "Unconditional not-impl: the combat-showing threshold has no native adapter.",
       "overlay_id": "not-impl:adapter/ClientAdapter.js:combatShowingThreshold"
-    },
-    {
-      "family_id": "runtime",
-      "member": "resolveRunPolicy",
-      "selector": "resolveRunPolicy",
-      "module": "runtime/RunManager.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/run_manager.js:9",
-      "reason": "Unconditional not-impl: run policy has no native state adapter.",
-      "overlay_id": "not-impl:runtime/RunManager.js:resolveRunPolicy"
-    },
-    {
-      "family_id": "runtime",
-      "member": "shouldEnableRun",
-      "selector": "shouldEnableRun",
-      "module": "runtime/RunManager.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/run_manager.js:13",
-      "reason": "Unconditional not-impl: run policy has no native state adapter.",
-      "overlay_id": "not-impl:runtime/RunManager.js:shouldEnableRun"
-    },
-    {
-      "family_id": "runtime",
-      "member": "loopReadyOrDetached",
-      "selector": "loopReadyOrDetached",
-      "module": "runtime/ScriptRunner.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/script_runner.js:22",
-      "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
-      "overlay_id": "not-impl:runtime/ScriptRunner.js:loopReadyOrDetached"
-    },
-    {
-      "family_id": "runtime",
-      "member": "stopReasonOf",
-      "selector": "stopReasonOf",
-      "module": "runtime/ScriptRunner.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/script_runner.js:26",
-      "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
-      "overlay_id": "not-impl:runtime/ScriptRunner.js:stopReasonOf"
-    },
-    {
-      "family_id": "runtime",
-      "member": "settingOptionLabel",
-      "selector": "settingOptionLabel",
-      "module": "runtime/Settings.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/settings.js:78",
-      "reason": "Unconditional not-impl: settings option labels have no native resolver.",
-      "overlay_id": "not-impl:runtime/Settings.js:settingOptionLabel"
     },
     {
       "family_id": "quests",
@@ -24248,86 +23932,6 @@
       "overlay_id": "not-impl:paint/paintLogic.js:PaintState.reset"
     },
     {
-      "family_id": "input",
-      "member": "useItemOnLoc",
-      "selector": "Input.useItemOnLoc",
-      "module": "input/Input.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/input.js:154",
-      "reason": "Unconditional not-impl: target item-on-location interaction is not provided by the native host.",
-      "overlay_id": "not-impl:input/Input.js:Input.useItemOnLoc"
-    },
-    {
-      "family_id": "input",
-      "member": "useItemOnNpc",
-      "selector": "Input.useItemOnNpc",
-      "module": "input/Input.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/input.js:157",
-      "reason": "Unconditional not-impl: target item-on-NPC interaction is not provided by the native host.",
-      "overlay_id": "not-impl:input/Input.js:Input.useItemOnNpc"
-    },
-    {
-      "family_id": "input",
-      "member": "useItemOnObj",
-      "selector": "Input.useItemOnObj",
-      "module": "input/Input.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/input.js:160",
-      "reason": "Unconditional not-impl: target item-on-object interaction is not provided by the native host.",
-      "overlay_id": "not-impl:input/Input.js:Input.useItemOnObj"
-    },
-    {
-      "family_id": "input",
-      "member": "useItemOnItem",
-      "selector": "Input.useItemOnItem",
-      "module": "input/Input.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/input.js:163",
-      "reason": "Unconditional not-impl: target item-on-item interaction is not provided by the native host.",
-      "overlay_id": "not-impl:input/Input.js:Input.useItemOnItem"
-    },
-    {
-      "family_id": "input",
-      "member": "castOnNpc",
-      "selector": "Input.castOnNpc",
-      "module": "input/Input.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/input.js:166",
-      "reason": "Unconditional not-impl: spell-on-NPC interaction is not provided by the native host.",
-      "overlay_id": "not-impl:input/Input.js:Input.castOnNpc"
-    },
-    {
-      "family_id": "input",
-      "member": "castOnLoc",
-      "selector": "Input.castOnLoc",
-      "module": "input/Input.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/input.js:169",
-      "reason": "Unconditional not-impl: spell-on-location interaction is not provided by the native host.",
-      "overlay_id": "not-impl:input/Input.js:Input.castOnLoc"
-    },
-    {
-      "family_id": "input",
-      "member": "castOnItem",
-      "selector": "Input.castOnItem",
-      "module": "input/Input.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/input.js:172",
-      "reason": "Unconditional not-impl: spell-on-item interaction is not provided by the native host.",
-      "overlay_id": "not-impl:input/Input.js:Input.castOnItem"
-    },
-    {
-      "family_id": "input",
-      "member": "continueDialog",
-      "selector": "Input.continueDialog",
-      "module": "input/Input.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/input.js:175",
-      "reason": "Unconditional not-impl: dialog continuation is not provided by the native host.",
-      "overlay_id": "not-impl:input/Input.js:Input.continueDialog"
-    },
-    {
       "family_id": "paint",
       "member": "cols",
       "selector": "PaintFrame.cols",
@@ -24394,87 +23998,6 @@
       "module": "adapter/ClientAdapter.js",
       "state": "not-impl",
       "source": "crates/script-js/src/shim/client_adapter.js:18",
-      "reason": "The exported value throws when accessed through notImplValue."
-    },
-    {
-      "family_id": "runtime",
-      "member": "GLOBAL_SETTINGS_CORE",
-      "selector": "GLOBAL_SETTINGS_CORE",
-      "module": "runtime/Settings.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/settings.js:81",
-      "reason": "The exported value throws when accessed through notImplValue."
-    },
-    {
-      "family_id": "runtime",
-      "member": "NAV_SETTINGS",
-      "selector": "NAV_SETTINGS",
-      "module": "runtime/Settings.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/settings.js:82",
-      "reason": "The exported value throws when accessed through notImplValue."
-    },
-    {
-      "family_id": "runtime",
-      "member": "GLOBAL_SETTINGS",
-      "selector": "GLOBAL_SETTINGS",
-      "module": "runtime/Settings.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/settings.js:83",
-      "reason": "The exported value throws when accessed through notImplValue."
-    },
-    {
-      "family_id": "runtime",
-      "member": "MAP_PICKER_SETTINGS_NS",
-      "selector": "MAP_PICKER_SETTINGS_NS",
-      "module": "runtime/Settings.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/settings.js:84",
-      "reason": "The exported value throws when accessed through notImplValue."
-    },
-    {
-      "family_id": "runtime",
-      "member": "MAP_PICKER_SETTINGS",
-      "selector": "MAP_PICKER_SETTINGS",
-      "module": "runtime/Settings.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/settings.js:85",
-      "reason": "The exported value throws when accessed through notImplValue."
-    },
-    {
-      "family_id": "runtime",
-      "member": "LOADOUT_SETTINGS_NS",
-      "selector": "LOADOUT_SETTINGS_NS",
-      "module": "runtime/Settings.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/settings.js:86",
-      "reason": "The exported value throws when accessed through notImplValue."
-    },
-    {
-      "family_id": "runtime",
-      "member": "LOADOUT_SETTINGS",
-      "selector": "LOADOUT_SETTINGS",
-      "module": "runtime/Settings.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/settings.js:87",
-      "reason": "The exported value throws when accessed through notImplValue."
-    },
-    {
-      "family_id": "runtime",
-      "member": "PRICE_BOOK_SETTINGS_NS",
-      "selector": "PRICE_BOOK_SETTINGS_NS",
-      "module": "runtime/Settings.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/settings.js:88",
-      "reason": "The exported value throws when accessed through notImplValue."
-    },
-    {
-      "family_id": "runtime",
-      "member": "PRICE_BOOK_SETTINGS",
-      "selector": "PRICE_BOOK_SETTINGS",
-      "module": "runtime/Settings.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/settings.js:89",
       "reason": "The exported value throws when accessed through notImplValue."
     },
     {
@@ -24685,6 +24208,33 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
+      "family_id": "bot",
+      "member": "failure",
+      "selector": "BranchTask.failure",
+      "module": null,
+      "state": "not-impl",
+      "source": "declared_surface.js",
+      "reason": "The current compatibility name map unconditionally refuses this declared member."
+    },
+    {
+      "family_id": "bot",
+      "member": "success",
+      "selector": "BranchTask.success",
+      "module": null,
+      "state": "not-impl",
+      "source": "declared_surface.js",
+      "reason": "The current compatibility name map unconditionally refuses this declared member."
+    },
+    {
+      "family_id": "bot",
+      "member": "validate",
+      "selector": "BranchTask.validate",
+      "module": null,
+      "state": "not-impl",
+      "source": "declared_surface.js",
+      "reason": "The current compatibility name map unconditionally refuses this declared member."
+    },
+    {
       "family_id": "acquisition",
       "member": "COINS",
       "selector": "COINS",
@@ -24724,6 +24274,15 @@
       "family_id": "acquisition",
       "member": "HARRY_VENDOR",
       "selector": "HARRY_VENDOR",
+      "module": null,
+      "state": "not-impl",
+      "source": "declared_surface.js",
+      "reason": "The current compatibility name map unconditionally refuses this declared member."
+    },
+    {
+      "family_id": "bot",
+      "member": "execute",
+      "selector": "LeafTask.execute",
       "module": null,
       "state": "not-impl",
       "source": "declared_surface.js",
@@ -25013,14 +24572,14 @@
     {
       "family_id": "bot",
       "nav_consuming": false,
-      "declarations": 17,
-      "members": 57,
+      "declarations": 14,
+      "members": 49,
       "overloads": 0,
       "aliases": 4,
       "type_aliases": 4,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 6
+      "not_impl_debt": 5
     },
     {
       "family_id": "catalog-data",
@@ -25248,7 +24807,7 @@
       "type_aliases": 0,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 8
+      "not_impl_debt": 0
     },
     {
       "family_id": "inventory",
@@ -25373,14 +24932,14 @@
     {
       "family_id": "runtime",
       "nav_consuming": true,
-      "declarations": 0,
-      "members": 0,
+      "declarations": 3,
+      "members": 8,
       "overloads": 0,
       "aliases": 0,
       "type_aliases": 0,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 14
+      "not_impl_debt": 0
     },
     {
       "family_id": "shop",

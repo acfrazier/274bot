@@ -84,14 +84,14 @@
         "T2.1"
       ],
       "counts": {
-        "declarations": 17,
-        "members": 57,
+        "declarations": 14,
+        "members": 49,
         "overloads": 0,
         "aliases": 4,
         "callbacks": 0,
         "type_aliases": 4,
         "name_aliases": 0,
-        "not_impl_debt": 6
+        "not_impl_debt": 5
       }
     },
     {
@@ -610,7 +610,7 @@
         "callbacks": 0,
         "type_aliases": 0,
         "name_aliases": 0,
-        "not_impl_debt": 8
+        "not_impl_debt": 0
       }
     },
     {
@@ -904,14 +904,14 @@
         "T5.1"
       ],
       "counts": {
-        "declarations": 0,
-        "members": 0,
+        "declarations": 3,
+        "members": 8,
         "overloads": 0,
         "aliases": 0,
         "callbacks": 0,
         "type_aliases": 0,
         "name_aliases": 0,
-        "not_impl_debt": 14
+        "not_impl_debt": 0
       }
     },
     {

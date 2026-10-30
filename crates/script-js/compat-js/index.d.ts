@@ -26,6 +26,7 @@ SOFTWARE.
 */
 declare module '@rs2b0t/api' {
 export function defineBot<T extends {name: string; create: () => unknown}>(manifest: T): T;
+export type { BotManifest, BotManifestInput } from '*runtime/defineBot.js';
 export { Game } from '*api/game/Game.js';
 export { Inventory, InvItem } from '*api/inventory/Inventory.js';
 export { Skills } from '*api/skills/Skills.js';
@@ -1236,11 +1237,6 @@ export type LoopCadence = {
     kind: 'time';
     ms: number;
 };
-/**
- * Map legacy `loopDelay` ms to an explicit cadence.
- * Why: `0` is the next client frame, `600` (the old "one tick" default) is the next server tick, anything else is wall-clock ms.
- */
-export function resolveLoopCadence(loopDelayMs?: number, override?: LoopCadence | null): never;
 export interface SettingsView {
     str(name: string, fallback?: string): string;
     num(name: string, fallback?: number): number;
@@ -1292,21 +1288,13 @@ export class TaskBot extends LoopingBot {
     add(...tasks: Task[]): void;
     loop(): Promise<number | void>;
 }
-/**
- * A decision node in a behaviour tree.
- * @see docs/reference/api-bots.md#treebot
- */
 export abstract class BranchTask {
-    abstract validate(): never;
-    abstract success(): never;
-    abstract failure(): never;
+    abstract validate(): boolean;
+    abstract success(): TreeNode;
+    abstract failure(): TreeNode;
 }
-/**
- * An action node in a behaviour tree.
- * @see docs/reference/api-bots.md#treebot
- */
 export abstract class LeafTask {
-    abstract execute(): never;
+    abstract execute(): void | Promise<void>;
 }
 export type TreeNode = BranchTask | LeafTask;
 export class TreeBot extends LoopingBot {
@@ -2551,7 +2539,6 @@ export const EventSignal: {
      */
     setInterrupt(p: (() => boolean) | null): void;
     pending(): boolean;
-    ignoredRandoms(): string[];
 };
 
 }
@@ -4668,15 +4655,7 @@ export const Input: {
     takeObj(lx: number, lz: number, objId: number, op: number): boolean;
     heldOp(objId: number, slot: number, comId: number, op: number): boolean;
     invButton(objId: number, slot: number, comId: number, op: number): boolean;
-    useItemOnLoc(useObjId: number, useSlot: number, useComId: number, lx: number, lz: number, typecode: number): never;
-    useItemOnNpc(useObjId: number, useSlot: number, useComId: number, index: number): never;
-    useItemOnObj(useObjId: number, useSlot: number, useComId: number, targetObjId: number, lx: number, lz: number): never;
-    useItemOnItem(useObjId: number, useSlot: number, useComId: number, targetObjId: number, targetSlot: number, targetComId: number): never;
-    castOnNpc(spellComId: number, index: number): never;
-    castOnLoc(spellComId: number, lx: number, lz: number, typecode: number): never;
-    castOnItem(spellComId: number, itemId: number, itemSlot: number, itemComId: number): never;
     walk(lx: number, lz: number): boolean;
-    continueDialog(): never;
 };
 
 }
@@ -4951,6 +4930,35 @@ export class BotHostImpl {
 
 }
 
+declare module '*runtime/defineBot.js' {
+import { ScriptMeta } from "*runtime/ScriptRegistry.js";
+export interface BotManifestInput extends ScriptMeta {
+}
+export interface BotManifest extends BotManifestInput {
+    __rs2b0tManifest: 1;
+}
+export function defineBot<T extends {
+    name: string;
+    create: () => unknown;
+}>(manifest: T): T;
+export function isBotManifest(value: unknown): value is BotManifest;
+
+}
+
+declare module '*runtime/randomevents/eventEvade.js' {
+interface Pt {
+    x: number;
+    z: number;
+    level: number;
+}
+/** Adjacent step-off candidates, farthest from `awayFrom` first. */
+export function stepOffCandidates(from: Pt, awayFrom: {
+    x: number;
+    z: number;
+}): Pt[];
+
+}
+
 declare module '*runtime/RecoveryHints.js' {
 import Tile from "*geometry/Tile.js";
 export const RecoveryHints: {
@@ -4975,11 +4983,6 @@ export interface RunPolicyOverride {
     runAuto?: boolean;
     energyMin?: number;
 }
-export function resolveRunPolicy(over?: RunPolicyOverride | null | undefined, globals?: {
-    runAuto: boolean;
-    energyMin: number;
-}): never;
-export function shouldEnableRun(s?: RunState): never;
 export const RunManager: {
     /** Last call wins as a whole snapshot. `null` returns to Global. Cleared when a script starts or stops. */
     override(policy: RunPolicyOverride | null): void;
@@ -4987,16 +4990,170 @@ export const RunManager: {
 
 }
 
+declare module '*runtime/Scheduler.js' {
+type ScriptState = 'running' | 'paused' | 'stopping' | 'stopped' | 'crashed';
+type LogLevel = 'info' | 'warn' | 'error';
+interface LogLine {
+    time: number;
+    level: LogLevel;
+    msg: string;
+}
+type WaiterSpec = {
+    kind: 'time';
+    dueAt: number;
+} | {
+    kind: 'tick';
+    dueTick: number;
+} | {
+    kind: 'cond';
+    cond: () => boolean;
+    timeoutAt: number | null;
+};
+type Waiter = WaiterSpec & {
+    resolve: (value: boolean) => void;
+    reject: (err: Error) => void;
+};
+class ScriptContext {
+    state: ScriptState;
+    waiters: Waiter[];
+    loopInFlight: boolean;
+    /** Wall-clock eligibility (0 = no wall-clock gate). */
+    nextLoopAt: number;
+    /** Server-tick eligibility via `BotHost.tickCount` (0 = no tick gate); when set, both this and `nextLoopAt` must pass before the next loop. */
+    nextLoopTick: number;
+    loopCount: number;
+    lastProgressAt: number;
+    lastReportedProgressAt: number;
+    watchdogWarned: boolean;
+    crashError: Error | null;
+    /** Why {@link ScriptRunner.stop} was called. Survives into the next run's log. */
+    stopReason: string | null;
+    activeEvent: string | null;
+    /** Expected work on the host queue, such as random-event handling. */
+    watchdogHold: string | null;
+    startedAt: number;
+    private pausedAt;
+    log: LogLine[];
+    private logListeners;
+    get aborted(): boolean;
+    addLog(level: LogLevel, msg: string): void;
+    onLog(cb: () => void): () => void;
+    progress(): void;
+    noteProgress(): void;
+    pause(): void;
+    resume(): void;
+    abortWaiters(): void;
+}
+export const Scheduler: {
+    active: ScriptContext | null;
+};
+
+}
+
+declare module '*runtime/ScriptActivity.js' {
+import { LoopingBot } from "*api/bot/Bot.js";
+import { ScriptMeta } from "*runtime/ScriptRegistry.js";
+export type ActivityOutcome = {
+    kind: 'finished' | 'failed' | 'interrupted';
+    reason: string;
+};
+export class ScriptActivity {
+    child: LoopingBot | null;
+    outcome: ActivityOutcome | null;
+    constructor(log: (message: string) => void);
+    get currentTask(): string | null;
+    start(meta: ScriptMeta, overrides: Record<string, unknown>): Promise<void>;
+    loop(): Promise<void>;
+    interrupt(reason: string): void;
+    stop(): void;
+}
+
+}
+
+declare module '*runtime/ScriptRegistry.js' {
+import { AbstractBot } from "*api/bot/Bot.js";
+import { SettingsSchema } from "*runtime/Settings.js";
+export interface ScriptMeta {
+    name: string;
+    description: string;
+    version?: string;
+    category?: string;
+    tags?: string[];
+    origin?: string;
+    settingsSchema?: SettingsSchema;
+    create(): AbstractBot;
+}
+export const ScriptRegistry: {
+    register(meta: ScriptMeta): void;
+    list(): ScriptMeta[];
+    get(name: string): ScriptMeta | undefined;
+};
+
+}
+
 declare module '*runtime/ScriptRunner.js' {
 import { PaintFrame } from "*paint/Paint.js";
-export function loopReadyOrDetached(): never;
-/**
- * Never let a blank reason read as "the script stopped for no reason".
- * Why: a missing reason is a caller bug, but throwing out of `stop()` would wedge the run in `running`, which broke every harness calling `runner.stop()` from page context.
- */
-export function stopReasonOf(reason?: string): never;
+import { ScriptMeta } from "*runtime/ScriptRegistry.js";
+type ScriptState = 'running' | 'paused' | 'stopping' | 'stopped' | 'crashed';
+type LogLevel = 'info' | 'warn' | 'error';
+interface LogLine {
+    time: number;
+    level: LogLevel;
+    msg: string;
+}
+type WaiterSpec = {
+    kind: 'time';
+    dueAt: number;
+} | {
+    kind: 'tick';
+    dueTick: number;
+} | {
+    kind: 'cond';
+    cond: () => boolean;
+    timeoutAt: number | null;
+};
+type Waiter = WaiterSpec & {
+    resolve: (value: boolean) => void;
+    reject: (err: Error) => void;
+};
+class ScriptContext {
+    state: ScriptState;
+    waiters: Waiter[];
+    loopInFlight: boolean;
+    /** Wall-clock eligibility (0 = no wall-clock gate). */
+    nextLoopAt: number;
+    /** Server-tick eligibility via `BotHost.tickCount` (0 = no tick gate); when set, both this and `nextLoopAt` must pass before the next loop. */
+    nextLoopTick: number;
+    loopCount: number;
+    lastProgressAt: number;
+    lastReportedProgressAt: number;
+    watchdogWarned: boolean;
+    crashError: Error | null;
+    /** Why {@link ScriptRunner.stop} was called. Survives into the next run's log. */
+    stopReason: string | null;
+    activeEvent: string | null;
+    /** Expected work on the host queue, such as random-event handling. */
+    watchdogHold: string | null;
+    startedAt: number;
+    private pausedAt;
+    log: LogLine[];
+    private logListeners;
+    get aborted(): boolean;
+    addLog(level: LogLevel, msg: string): void;
+    onLog(cb: () => void): () => void;
+    progress(): void;
+    noteProgress(): void;
+    pause(): void;
+    resume(): void;
+    abortWaiters(): void;
+}
 export const ScriptRunner: {
+    ctx: ScriptContext | null;
+    meta: ScriptMeta | null;
     paintControls(p: PaintFrame): void;
+    readonly state: string;
+    pause(): void;
+    resume(): void;
     /**
      * `reason` is mandatory so no caller can end a run without leaving a starting point for debugging.
      * Why: it is echoed on both the stopping and stopped lines and carried into the next run's log by {@link start}.
@@ -5034,8 +5191,6 @@ export interface SettingDef {
     /** For `string[]` settings: when this key's value is `'csv'`, render a CSV textarea with copy/paste buttons instead of the chip list. */
     csvToggle?: string;
 }
-/** Return an option's display label without changing its persisted value. */
-export function settingOptionLabel(def?: SettingDef, value?: string): never;
 export type SettingsSchema = Record<string, SettingDef>;
 export class SettingsBag {
     values: Record<string, unknown>;
@@ -5047,17 +5202,12 @@ export class SettingsBag {
     tile(key: string, fallback?: undefined): Tile | null;
     tile<F extends ___adapter_ClientAdapter_js.WorldTile | null>(key: string, fallback: F): Tile | F;
 }
-export const GLOBAL_SETTINGS_CORE: never;
-export const NAV_SETTINGS: never;
-export const GLOBAL_SETTINGS: never;
-export const MAP_PICKER_SETTINGS_NS: never;
-export const MAP_PICKER_SETTINGS: never;
-export const LOADOUT_SETTINGS_NS: never;
-export const LOADOUT_SETTINGS: never;
-export const PRICE_BOOK_SETTINGS_NS: never;
-export const PRICE_BOOK_SETTINGS: never;
+type SettingChangeListener = (name: string, key: string, value: string) => void;
 export const SettingsStore: {
     saved(name: string, key: string): string | undefined;
+    save(name: string, key: string, rawString: string): void;
+    /** Subscribe to SettingsStore.save (same tab); an open map picker uses it to track Global settings edits. Returns the unsubscribe. */
+    onChange(listener: SettingChangeListener): () => void;
     displayString(name: string, key: string, def: SettingDef): string;
     resolve(name: string, schema: SettingsSchema): Record<string, unknown>;
     globalBag(): SettingsBag;

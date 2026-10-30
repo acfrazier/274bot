@@ -320,6 +320,10 @@
     "shim": "game_messages.js"
   },
   {
+    "module": "runtime/defineBot.js",
+    "shim": "define_bot.js"
+  },
+  {
     "module": "runtime/RecoveryHints.js",
     "shim": "recovery_hints.js"
   },
@@ -386,6 +390,10 @@
   {
     "module": "runtime/Settings.js",
     "shim": "settings.js"
+  },
+  {
+    "module": "runtime/randomevents/eventEvade.js",
+    "shim": "event_evade.js"
   },
   {
     "module": "api/ai/quests/engine/QuestEngine.js",
@@ -484,7 +492,19 @@
     "shim": "script_runner.js"
   },
   {
+    "module": "runtime/ScriptRegistry.js",
+    "shim": "script_registry.js"
+  },
+  {
     "module": "runtime/BotHost.js",
     "shim": "bot_host.js"
+  },
+  {
+    "module": "runtime/Scheduler.js",
+    "shim": "scheduler.js"
+  },
+  {
+    "module": "runtime/ScriptActivity.js",
+    "shim": "script_activity.js"
   }
 ]

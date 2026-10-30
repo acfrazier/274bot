@@ -48,6 +48,14 @@
     "declaration": "export function defineBot<T extends {name: string; create: () => unknown}>(manifest: T): T;"
   },
   {
+    "id": "bot-manifest-module",
+    "module": "runtime/defineBot.js",
+    "selector": "$module",
+    "reason": "The host facade validates and marks manifests; this module publishes its ScriptMeta-based input and branded manifest types.",
+    "runtime": "crates/script-js/src/shim/define_bot.js:2",
+    "declaration": "import type { ScriptMeta } from './ScriptRegistry.js';\nexport interface BotManifestInput extends ScriptMeta {}\nexport interface BotManifest extends BotManifestInput { __rs2b0tManifest: 1; }\nexport function defineBot<T extends { name: string; create: () => unknown }>(manifest: T): T;\nexport function isBotManifest(value: unknown): value is BotManifest;"
+  },
+  {
     "id": "native-quest-engine-not-impl",
     "module": "api/ai/quests/engine/QuestEngine.js",
     "selector": "QuestEngine",
