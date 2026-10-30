@@ -2539,14 +2539,16 @@ fn cancelling_and_rewalking_the_same_destination_arms_the_new_walk() {
 fn native_cross_exemption_is_scoped_to_one_walk() {
     let mut rig = rig(Some(Arc::new(s2b_admission_contract::ice_world())), false);
     s2b_admission_contract::observed_loadout(&mut rig.snapshot);
+    let goal = WorldTile {
+        x: 255,
+        z: 0,
+        level: 0,
+    };
     {
         let mut shared = rig.shared.lock();
         shared.walks = 2;
-        shared.target = Some(WorldTile {
-            x: 255,
-            z: 0,
-            level: 0,
-        });
+        shared.target = Some(goal);
+        shared.later_target = Some(goal);
         shared.cross_first = vec![Arc::from("ice@120,0,0")];
     }
 
@@ -2567,11 +2569,18 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
         }),
         false,
     );
-    rig.observe(2);
+    rig.observe_at(2, goal);
     assert_eq!(rig.shared.lock().results.len(), 1);
     rig.shared.lock().options.allow_danger_zones = script::native::WalkBit::Forbid;
 
-    rig.observe(3);
+    rig.observe_at(
+        3,
+        WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+    );
     rig.wait_routed();
     {
         let navs = rig.navs.lock().unwrap();
@@ -2597,7 +2606,7 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
         }),
         false,
     );
-    rig.observe(4);
+    rig.observe_at(4, goal);
     let shared = rig.shared.lock();
     assert_eq!(shared.results.len(), 2);
     assert!(shared

@@ -553,7 +553,7 @@ fn durable_peer_changes_refresh_picker_danger_and_clear_one_shot() {
     let _guard = crate::test_support::imgui_context_guard();
     assert_eq!(
         super::GLOBAL_DANGER_WARNING,
-        "Global danger-zone override is enabled."
+        frontend_core::walk_permissions::GLOBAL_DANGER_WARNING
     );
     let _isolated = IsolatedStores::enter("picker-durable-danger");
     let mut ctx = crate::test_support::imgui_context();

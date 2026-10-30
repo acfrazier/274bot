@@ -398,6 +398,7 @@ fn frame(
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_world(WorldStateView::default());
+    snapshot.seed_tile(here);
     snapshot.seed_tick(tick);
     snapshot.seed_local_player(LocalPlayerView {
         player: PlayerView {

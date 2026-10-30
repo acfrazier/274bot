@@ -3524,7 +3524,15 @@ fn r3_engaged_origin_outside_its_envelope_fails_closed() {
 fn r3_incomplete_plan_stays_unknown() {
     let tables = tables();
     let risk = RiskTables::build(&tables);
-    let walk = route(80, 170);
+    // Enter the wide zone's envelope after starting inside its acquisition
+    // rectangle. This makes e > a rather than omitting that zone entirely.
+    let mut tiles = vec![tile(80), WorldTile { z: 99, ..tile(80) }, tile(80)];
+    tiles.extend((81..=170).map(tile));
+    let walk = Route {
+        dest: tile(170),
+        legs: vec![Leg::Walk { tiles }],
+        ticks: 92.0,
+    };
     let mut value = input(99, 99, 0, &tables);
     value.pos = tile(80);
     let make_dangerous_zones = || {
