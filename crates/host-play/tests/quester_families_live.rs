@@ -1436,6 +1436,7 @@ const MORT_IN: &str = "You walk into the gloomy atmosphere of Mort Myre.";
 const MORT_OUT: &str = "You skip gladly out of murky Mort Myre.";
 const HOLY_ADVICE: &str = "Okay, I will keep it equipped whenever I fight werewolves.";
 const DAGGER_RECLAIM: &str = "Luckily for you it washed up";
+const DAGGER_RECLAIM_OPENER: &str = "I've lost my wolfbane dagger.";
 const MORT_FOOD: &str = "The cleric hands you some food.";
 
 struct PrereqLiveCase {
@@ -1779,7 +1780,7 @@ mod prereq_failure_oracle_tests {
             }),
             fields: Arc::from([]),
         };
-        (oracle, snapshot, status, vec![DAGGER_RECLAIM.into()])
+        (oracle, snapshot, status, vec![DAGGER_RECLAIM_OPENER.into()])
     }
 
     #[test]
@@ -1789,6 +1790,14 @@ mod prereq_failure_oracle_tests {
             .observe(&snapshot, Some(&status), None, &pages)
             .unwrap()
             .is_some());
+    }
+
+    #[test]
+    fn prereq_negative_oracle_rejects_reclaim_effect_without_opener() {
+        let (oracle, snapshot, status, _) = fixture();
+        assert!(oracle
+            .observe(&snapshot, Some(&status), None, &[DAGGER_RECLAIM.into()])
+            .is_err());
     }
 
     #[test]
