@@ -322,13 +322,6 @@ impl<R> GameplaySeat<R> {
             id,
             state: WalkReleaseState::Reserved,
         });
-        #[cfg(feature = "test-hooks")]
-        api::host_log!(
-            api::hostlog::Category::NavEvent,
-            api::hostlog::Level::Info,
-            "[DEBUG-nav-seat] reserve run={:?} id={id:?}",
-            self.run,
-        );
         true
     }
 
@@ -354,14 +347,6 @@ impl<R> GameplaySeat<R> {
     /// Retire an armed physical walk after its matching host terminal. A
     /// queued AbortWalk keeps custody until that release is delivered.
     pub fn walk_terminal(&mut self, id: RequestId) {
-        #[cfg(feature = "test-hooks")]
-        api::host_log!(
-            api::hostlog::Category::NavEvent,
-            api::hostlog::Level::Info,
-            "[DEBUG-nav-seat] physical-terminal run={:?} id={id:?} slots={:?}",
-            self.run,
-            self.walk_releases.map(|slot| slot.map(|slot| (slot.id, slot.state))),
-        );
         if let Some(slot) = self.walk_releases.iter_mut().find(|slot| {
             slot.is_some_and(|reserved| {
                 reserved.id == id && reserved.state == WalkReleaseState::Armed
@@ -987,14 +972,6 @@ impl<R> GameplaySeat<R> {
     }
 
     fn retire_walk_terminal(&mut self, id: RequestId, kind: NativeKind) {
-        #[cfg(feature = "test-hooks")]
-        api::host_log!(
-            api::hostlog::Category::NavEvent,
-            api::hostlog::Level::Info,
-            "[DEBUG-nav-seat] machine-terminal run={:?} id={id:?} kind={kind:?} slots={:?}",
-            self.run,
-            self.walk_releases.map(|slot| slot.map(|slot| (slot.id, slot.state))),
-        );
         if kind != NativeKind::Walk {
             return;
         }

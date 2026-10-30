@@ -2320,34 +2320,48 @@ mod api_gather_seat {
             run: slot.runtime_generation,
             session: slot.work_epoch,
         });
-        let authority_run = slot.seat.as_ref().expect("native stub seat").run();
         let outer_request = request_id(token);
+        let request = InteractReq::WalkNear {
+            x: crossing.crossing.to.x,
+            z: crossing.crossing.to.z,
+            level: crossing.crossing.to.level,
+            radius: 2,
+            compat_tile_intent: true,
+            allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: Some(false),
+            request_id: token,
+            avoid: Vec::new(),
+            cross: Vec::new(),
+        };
         slot.consume_seat_batch(
             DecodedSeatBatch {
                 consumed_terminal_seq: 0,
-                starts: vec![SeatStartInput {
-                    id: outer_request,
-                    parent: None,
-                    run: authority_run.run,
-                    session: authority_run.session,
-                    kind: NativeKind::Walk,
-                    args: SeatStartArgs::Empty,
-                }],
+                starts: Vec::new(),
                 decisions: Vec::new(),
                 cancels: Vec::new(),
                 mirror_revokes: Vec::new(),
-                reqs: Vec::new(),
+                reqs: vec![SeatInteractDecoded {
+                    lineage: None,
+                    mirror_owner: None,
+                    request: request.clone(),
+                }],
             },
             0,
             &[],
         );
+        let (_, rows, _) = slot.drain_host_interacts();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].req, request);
+        let seat = slot.seat.as_ref().expect("compat physical seat");
+        assert!(seat.live().is_empty(), "legacy WalkTo has no native start");
         assert_eq!(
-            slot.seat
-                .as_ref()
-                .expect("native stub seat")
-                .lookup(outer_request),
-            api::script_contract::AuthorityStatus::Live,
+            seat.lookup(outer_request),
+            api::script_contract::AuthorityStatus::Pending
         );
+        assert_eq!(seat.reserved_releases(), 1);
 
         let state = Arc::new(crate::local_state::SlotState::new(
             Arc::new(NoStore),
@@ -2439,6 +2453,8 @@ mod api_gather_seat {
             "consent precedes every native handle"
         );
         assert!(slot.finish_compat_walk(token));
+        assert!(slot.take_compat_walk_terminal().is_none());
+        assert_eq!(slot.seat.as_ref().unwrap().reserved_releases(), 0);
     }
 
     fn stop(slot: &mut SlotScript, token: u64) {
