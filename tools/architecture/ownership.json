@@ -7677,6 +7677,14 @@
     {
       "path": "vendor/fr-client-rust/crates/client/src/render/backend/gpu_retained_tests.rs",
       "owner": "T4"
+    },
+    {
+      "path": "crates/host/tests/render_characterization/concrete_crowd.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/src/render/backend/gpu_compact_vertex_tests.rs",
+      "owner": "T4"
     }
   ]
 }

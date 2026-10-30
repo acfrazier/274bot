@@ -669,8 +669,8 @@ impl GpuFrame {
                         } else {
                             crate::render::RenderFaultKind::LockContention
                         };
-                        // record_fault writes exactly one host_log line for
-                        // this consumed reservation's incident, gate on or off.
+                        // The service counts every refusal and logs only the
+                        // start of each resource-fault episode for this head.
                         if let Err(error) =
                             service.record_fault(frame.identity(), kind, Instant::now())
                         {
@@ -1069,19 +1069,42 @@ mod tests {
         assert_eq!(retained, Some(SceneHandle::from_opaque(1)));
         // The client's checked vertex-cap failure returns ResourceLimited
         // from this same callback, without submitting a replacement image.
-        frame.submit(&service, &counters, &mut || SceneSubmit::ResourceLimited);
-        assert_eq!(frame.lease.snapshot().1.retained_scene(), retained);
-        assert_eq!(frame.lease.snapshot().1.state(), ReservationState::Idle);
+        for _ in 0..3 {
+            frame.submit(&service, &counters, &mut || SceneSubmit::ResourceLimited);
+            assert_eq!(frame.lease.snapshot().1.retained_scene(), retained);
+            assert_eq!(frame.lease.snapshot().1.state(), ReservationState::Idle);
+        }
         assert_eq!(frame.scenes, 1);
-        assert_eq!(service.fault_stats().totals(), [0, 0, 1]);
-        let lines = lock(&CAPTURE.0);
+        assert_eq!(service.fault_stats().totals(), [0, 0, 3]);
         assert_eq!(
-            lines.len(),
+            lock(&CAPTURE.0).len(),
             1,
-            "one host_log line per failed scene incident"
+            "one warning while the fault continues"
         );
-        assert_eq!(lines[0].0, Level::Warn);
+
+        // Each head owns its episode. Another head's recovery cannot reset it.
+        let mut peer = gpu_frame(&service, &pump, 933);
+        peer.submit(&service, &counters, &mut || SceneSubmit::ResourceLimited);
+        assert_eq!(lock(&CAPTURE.0).len(), 2);
+        peer.submit(&service, &counters, &mut || SceneSubmit::Submitted);
+        frame.submit(&service, &counters, &mut || SceneSubmit::ResourceLimited);
+        assert_eq!(lock(&CAPTURE.0).len(), 2);
+
+        frame.submit(&service, &counters, &mut || SceneSubmit::Submitted);
+        let recovered = frame.lease.snapshot().1.retained_scene();
+        assert_eq!(recovered, Some(SceneHandle::from_opaque(2)));
+        for _ in 0..2 {
+            frame.submit(&service, &counters, &mut || SceneSubmit::ResourceLimited);
+            assert_eq!(frame.lease.snapshot().1.retained_scene(), recovered);
+        }
+        assert_eq!(frame.lease.snapshot().1.state(), ReservationState::Idle);
+        assert_eq!(service.fault_stats().totals(), [0, 0, 7]);
+        let lines = lock(&CAPTURE.0);
+        assert_eq!(lines.len(), 3, "one warning per head and fault episode");
+        assert!(lines.iter().all(|line| line.0 == Level::Warn));
         assert!(lines[0].1.starts_with("render fault #1 ResourceLimit "));
+        assert!(lines[1].1.starts_with("render fault #4 ResourceLimit "));
+        assert!(lines[2].1.starts_with("render fault #6 ResourceLimit "));
     }
 
     #[test]

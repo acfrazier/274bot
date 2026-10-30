@@ -434,6 +434,8 @@ impl RenderService {
     ///
     /// Fault totals saturate; incident sequence exhaustion is reported without
     /// changing the counters or replacing the latest incident.
+    /// Resource-limit repeats still count, but log only once per head until
+    /// that head publishes a successful scene. Other fault kinds log each incident.
     pub fn record_fault(
         &self,
         reservation: ReservationIdentity,
@@ -442,9 +444,19 @@ impl RenderService {
     ) -> Result<(), RenderError> {
         let fault = {
             let mut state = lock_unpoisoned(&self.inner.state);
-            record_fault_locked(&mut state, reservation, kind, now)?
+            let fault = record_fault_locked(&mut state, reservation, kind, now)?;
+            let repeated = kind == RenderFaultKind::ResourceLimit
+                && state
+                    .heads
+                    .iter_mut()
+                    .flatten()
+                    .find(|entry| entry.identity == reservation.head)
+                    .is_some_and(|entry| std::mem::replace(&mut entry.resource_fault_logged, true));
+            (!repeated).then_some(fault)
         };
-        log_fault(fault);
+        if let Some(fault) = fault {
+            log_fault(fault);
+        }
         Ok(())
     }
 
@@ -536,6 +548,7 @@ impl RenderService {
             notifier,
             request: RequestState::Idle,
             focused: false,
+            resource_fault_logged: false,
             retained_scene: None,
         });
         state.configuration_locked = true;
@@ -904,6 +917,8 @@ struct HeadEntry {
     notifier: Arc<dyn Notifier>,
     request: RequestState,
     focused: bool,
+    // Reset only by a completed scene, not by lease release or acknowledgement.
+    resource_fault_logged: bool,
     retained_scene: Option<SceneHandle>,
 }
 
@@ -1615,6 +1630,7 @@ fn publish_scene_locked(
             ensure_publication_capacity(entry, 2)?;
             entry.retained_scene = Some(scene);
             publish_entry(entry, notices)?;
+            entry.resource_fault_logged = false;
             Ok(())
         }
         RequestState::Cancelled(Some(current)) if current == identity => {
@@ -3005,6 +3021,7 @@ mod tests {
             std::mem::offset_of!(HeadEntry, notifier) + std::mem::size_of::<Arc<dyn Notifier>>(),
             std::mem::offset_of!(HeadEntry, request) + std::mem::size_of::<RequestState>(),
             std::mem::offset_of!(HeadEntry, focused) + std::mem::size_of::<bool>(),
+            std::mem::offset_of!(HeadEntry, resource_fault_logged) + std::mem::size_of::<bool>(),
             std::mem::offset_of!(HeadEntry, retained_scene)
                 + std::mem::size_of::<Option<SceneHandle>>(),
         ];

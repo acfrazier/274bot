@@ -13,9 +13,13 @@ use api::native_input::{NativeInputAuthority, NativeInputPermit};
 use std::os::unix::io::{AsRawFd, RawFd};
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
+#[cfg(unix)]
+use std::os::unix::net::UnixStream as WakeStream;
 
 #[cfg(windows)]
 use std::net::TcpStream;
+#[cfg(windows)]
+use std::net::TcpStream as WakeStream;
 #[cfg(windows)]
 use std::os::windows::io::{AsRawSocket, RawSocket};
 
@@ -206,7 +210,8 @@ pub struct FrameBuf {
 }
 
 /// One KiB bounds fixed per-loaded-bot storage independently of pixel payloads.
-/// Production x86_64 measures 792 B, leaving 232 B (29%) for bounded layout growth.
+/// Shipped x86_64 measures 288 B (+112 B from 176 B), leaving 736 B of headroom.
+/// The profiled journal fixture measures 792 B, leaving 232 B (29%) of headroom.
 #[cfg(all(test, not(feature = "render-test-hooks")))]
 const PRODUCTION_MAILBOX_FIXED_STORAGE_CEILING_BYTES: usize = 1_024;
 
@@ -1937,11 +1942,6 @@ impl SlotInput {
         matches!(self.mouse.lock().unwrap().held, MouseOwner::Script { .. })
     }
 }
-
-#[cfg(unix)]
-type WakeStream = UnixStream;
-#[cfg(windows)]
-type WakeStream = TcpStream;
 
 /// Per-slot control wake: the panel/host-play side holds [`SlotWake`] ends
 /// and `wake()`s a parked slot thread (focus/draw/stop/spawn); the slot
