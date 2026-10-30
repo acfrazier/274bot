@@ -115,50 +115,101 @@ fn bound_is_order_independent() {
     }
 }
 
-fn exhaustive_tail(events: &[Event], hp: u8) -> f64 {
-    if events.is_empty() {
-        return f64::from(hp == 0);
+// Integer-scaled enumeration is independent of the product convolution.
+// Every stored f32 probability is an exact dyadic rational. Small fixtures
+// keep the product denominator within u128, including non-dyadic source input.
+fn exact_hit(event: Event) -> (u128, u128) {
+    let bits = event.hit.get().to_bits();
+    if bits == 0 {
+        return (0, 1);
     }
-    let event = events[0];
+    let mantissa = (bits & ((1u64 << 52) - 1)) | (1u64 << 52);
+    let exponent = ((bits >> 52) & 0x7ff) as i32 - 1023 - 52;
+    let common = mantissa.trailing_zeros().min((-exponent) as u32);
+    (
+        u128::from(mantissa >> common),
+        1u128 << (-exponent - common as i32),
+    )
+}
+
+fn exact_tail(events: &[Event], hp: u8) -> (u128, u128) {
+    let Some((&event, rest)) = events.split_first() else {
+        return (u128::from(hp == 0), 1);
+    };
     if event.kind != EventKind::Attack {
-        return exhaustive_tail(&events[1..], hp.saturating_sub(event.amount));
+        return exact_tail(rest, hp.saturating_sub(event.amount));
     }
-    let positive = event.hit.get() / (f64::from(event.amount) + 1.0);
-    (0..=event.amount)
-        .map(|damage| {
-            let chance = if damage == 0 {
-                1.0 - event.hit.get() + positive
-            } else {
-                positive
-            };
-            chance * exhaustive_tail(&events[1..], hp.saturating_sub(damage))
-        })
-        .sum()
+    let (hit, scale) = exact_hit(event);
+    let event_scale = scale * (u128::from(event.amount) + 1);
+    let mut numerator = 0;
+    let mut denominator = 1;
+    for damage in 0..=event.amount {
+        let weight = if damage == 0 {
+            event_scale - hit * u128::from(event.amount)
+        } else {
+            hit
+        };
+        let (tail, tail_scale) = exact_tail(rest, hp.saturating_sub(damage));
+        numerator += weight * tail;
+        denominator = event_scale * tail_scale;
+    }
+    (numerator, denominator)
+}
+
+fn exhaustive_tail(events: &[Event], hp: u8) -> f64 {
+    let (numerator, denominator) = exact_tail(events, hp);
+    numerator as f64 / denominator as f64
 }
 
 #[test]
 fn bound_dominating_kind_never_understates() {
-    // Enumerate every pair from 20 small kinds and every nonzero tail.
-    for h1 in [0.0_f64, 0.25, 0.5, 0.75, 1.0] {
-        for h2 in [0.0_f64, 0.25, 0.5, 0.75, 1.0] {
-            for m1 in 0..=3 {
-                for m2 in 0..=3 {
-                    let mixture = [attack(h1, m1), attack(h2, m2)];
-                    let envelope = [attack(h1.max(h2), m1.max(m2)); 2];
-                    for hp in 1..=7 {
-                        let mixed = death_bound(&mixture, hp).unwrap();
-                        let dominating = death_bound(&envelope, hp).unwrap();
-                        let exact = exhaustive_tail(&mixture, hp);
-                        assert!(
-                            (mixed.bound - exact).abs() <= f64::from(mixed.visits) * f64::EPSILON
-                        );
-                        assert!(
-                            dominating.bound + f64::from(dominating.visits) * f64::EPSILON >= exact
-                        );
-                    }
-                }
+    // Old: only pairs, checked with another rounded recursion.
+    // New: every size-1..=3 mixture on the grid, checked with integer weights.
+    let kinds: [Event; 20] =
+        std::array::from_fn(|index| attack((index / 4) as f64 / 4.0, (index % 4) as u8));
+    for len in 1..=3 {
+        for mut selection in 0usize..20usize.pow(len as u32) {
+            let mut mixture = [kinds[0]; 3];
+            for event in mixture.iter_mut().take(len) {
+                *event = kinds[selection % kinds.len()];
+                selection /= kinds.len();
+            }
+            let mixture = &mixture[..len];
+            let max_hit = mixture.iter().map(|event| event.hit.get()).fold(0.0, f64::max);
+            let max_amount = mixture.iter().map(|event| event.amount).max().unwrap();
+            let envelope = [attack(max_hit, max_amount); 3];
+            for hp in 1..=10 {
+                let mixed = death_bound(mixture, hp).unwrap();
+                let dominating = death_bound(&envelope[..len], hp).unwrap();
+                let exact = exhaustive_tail(mixture, hp);
+                assert!((mixed.bound - exact).abs() <= f64::from(mixed.visits) * f64::EPSILON);
+                assert!(dominating.bound + f64::from(dominating.visits) * f64::EPSILON >= exact);
             }
         }
+    }
+}
+
+#[test]
+fn bound_distinct_keys_and_fixed_events_match_exact_reference() {
+    // F1/F2: old tests had no exact reference for 3+ distinct keys or fixed
+    // companion events. Four keys, a duplicate, and both fixed kinds now do.
+    let certain = Event { kind: EventKind::Certain, ..attack(0.0, 2) };
+    let poison = Event { kind: EventKind::Poison, ..attack(0.0, 3) };
+    let mixture = [
+        attack(0.156, 6), attack(0.25, 1), attack(0.5, 2),
+        attack(0.75, 3), attack(0.25, 1), certain, poison,
+    ];
+    assert!(mixture[0].hit.get() > 0.156, "fixture exercises upward rounding");
+    let envelope = [attack(0.75, 6); 5];
+    for hp in 1..=20 {
+        let actual = death_bound(&mixture, hp).unwrap();
+        let exact = exhaustive_tail(&mixture, hp);
+        assert!((actual.bound - exact).abs() <= f64::from(actual.visits) * f64::EPSILON);
+        let dominating = death_bound(
+            &[envelope[0], envelope[1], envelope[2], envelope[3], envelope[4], certain, poison],
+            hp,
+        ).unwrap();
+        assert!(dominating.bound + f64::from(dominating.visits) * f64::EPSILON >= exact);
     }
 }
 

@@ -105,6 +105,29 @@ class Fixture(unittest.TestCase):
         return known_issues.check_release(self.items, self.order, release, section)
 
 
+class DeferredTest(Fixture):
+    def test_deferred_item_is_carried_but_not_a_release_issue(self):
+        self.ledger.write_text(LEDGER + """
+[[item]]
+id = "reach-pruning"
+kind = "deferred"
+area = "nav/admission"
+text = "Revisit only when a realistic route is refused solely by the sum."
+first = "1.1.0"
+target = "1.1.1"
+severity = "low"
+owner = "Main backlog review"
+""", encoding="utf-8")
+        self.items = known_issues.load_ledger(self.ledger, self.order)
+        deferred = self.items[-1]
+        self.assertEqual(deferred["kind"], known_issues.DEFERRED)
+        self.assertNotIn("Revisit", self.render("1.1.0"))
+        rows = known_issues.carried_rows(self.items, self.order, "1.1.1")
+        row = next(row for row in rows if row["id"] == "reach-pruning")
+        self.assertEqual(row["owner"], "Main backlog review")
+        self.assertTrue(row["ruling"])
+
+
 class RenderTest(Fixture):
     def test_render_small_ledger(self):
         out = self.render("1.0.1")

@@ -504,14 +504,11 @@ fn fringe_origin_walk_into_the_acquisition_set_is_a_judged_crossing() {
     assert!(admission::permits(&route, &world, &request, &assessment));
 }
 
-/// R3 M-B: a failed assessment (`Unknown(Overflow)` from a crossing whose
-/// summed volley/floor exceeds every HP) carries an incomplete plan. Every
-/// enforcing non-Proceed request refuses it; held, Proceed and compat v1
-/// keep admitting it.
+/// Old: display overflow made this Unknown with an incomplete plan.
+/// New: the timeline has a numeric death bound; display totals saturate.
 #[test]
-fn failed_assessment_is_refused_by_every_enforcing_request() {
-    // Forty-one overlapping ice warrior envelopes: the summed way-out floor
-    // exceeds the u8 report bound, so the estimate itself fails.
+fn saturated_display_is_refused_numerically_by_every_enforcing_request() {
+    // Forty-one overlapping ice warrior envelopes exceed the display floor.
     let spawns: Vec<i32> = (20..=60).collect();
     let world = corridor(100, &spawns);
     let route = find_through(&world, tile(0, 1), tile(99, 1));
@@ -521,8 +518,9 @@ fn failed_assessment_is_refused_by_every_enforcing_request() {
         "probe failed-assessment verdict={:?} complete={} reason={}",
         assessment.verdict, assessment.plan.complete, assessment.reason
     );
-    assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Overflow));
-    assert!(!assessment.plan.complete);
+    assert_eq!(assessment.verdict, Verdict::Unsurvivable);
+    assert!(assessment.bound > script::combat::risk::consts::DEATH_BOUND);
+    assert!(assessment.plan.complete);
     assert!(!held.enforce);
     assert!(admission::permits(&route, &world, &held, &assessment));
     for policy in [RiskPolicy::Avoid, RiskPolicy::Inherit, RiskPolicy::Proceed] {
@@ -547,17 +545,15 @@ fn failed_assessment_is_refused_by_every_enforcing_request() {
     }
     assert_eq!(
         admission::verdict_refusal(assessment.verdict),
-        WalkRefusal::Unknown(UnknownWhy::Overflow)
+        WalkRefusal::Unsurvivable
     );
 }
 
-/// R3 M-B on the real pack (reviewer probe `timing_long_assessments`):
-/// Lumbridge to Ardougne/Catherby through White Wolf Mountain at combat 50
-/// has a crossing whose way-out floor (547 HP) exceeds every HP. The
-/// estimate reports `Unknown(Overflow)`; enforcing Avoid must refuse it.
+/// A real long crossing formerly failed while narrowing the display floor.
+/// The bound now decides admission, independently of saturated display totals.
 #[test]
 #[ignore = "needs WORLD_NAV_PACK (a real 289 pack)"]
-fn real_pack_overflowed_assessment_is_refused_by_enforcing_avoid() {
+fn real_pack_display_overflow_is_judged_numerically_by_enforcing_avoid() {
     let path = std::env::var_os("WORLD_NAV_PACK").expect("WORLD_NAV_PACK");
     let world = NavWorld::load_pack(std::path::Path::new(&path)).unwrap();
     let state = WorldState::default().with_map_members(true);
@@ -592,7 +588,9 @@ fn real_pack_overflowed_assessment_is_refused_by_enforcing_avoid() {
             assessment.verdict,
             assessment.plan.complete
         );
-        assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Overflow));
+        assert_eq!(assessment.verdict, Verdict::Unsurvivable);
+        assert!(assessment.plan.complete);
+        assert!(assessment.bound > script::combat::risk::consts::DEATH_BOUND);
         assert!(!permitted);
     }
 }

@@ -483,7 +483,7 @@ fn u6_unknown_member_in_group_blocks_the_first_witness() {
 
 #[cfg(feature = "test-support")]
 #[test]
-fn u6_unknown_and_lethal_single_witnesses_are_refused_before_retry() {
+fn u6_unknown_witness_refuses_but_max_hit_boundary_gets_a_full_assessment() {
     let unknown_world = unknown_corridor(5);
     let lethal_world = known_corridor(&[5]);
     let lethal_hp = kind_facts(&lethal_world, 0).max_hit;
@@ -498,7 +498,7 @@ fn u6_unknown_and_lethal_single_witnesses_are_refused_before_retry() {
         let options = FindOptions::default();
         let keys = real_witness(&world, from, to, options, &state, &[]).unwrap();
         assert_eq!(keys, [ZoneKey::Zone(0)]);
-        assert!(!witness_admissible(&world, &input, &keys));
+        assert_eq!(witness_admissible(&world, &input, &keys), expected_unknown.is_none());
         if let Some(why) = expected_unknown {
             let kind = kind_facts(&world, 0);
             assert!(kind.unknown_for().is_some());
@@ -526,17 +526,23 @@ fn u6_unknown_and_lethal_single_witnesses_are_refused_before_retry() {
             );
             (result, seen)
         });
-        assert_eq!(searches, 1);
-        assert_eq!(kernels, 3);
-        assert_eq!(result.tried, 0);
-        assert_eq!(
-            result.refusal,
-            Some(WalkRefusal::NoRouteWithinBounds {
-                tried: 0,
-                last: None
-            })
-        );
-        assert!(result.assessment.is_none());
+        if expected_unknown.is_some() {
+            assert_eq!(searches, 1);
+            assert_eq!(kernels, 3);
+            assert_eq!(result.tried, 0);
+            assert_eq!(
+                result.refusal,
+                Some(WalkRefusal::NoRouteWithinBounds { tried: 0, last: None })
+            );
+            assert!(result.assessment.is_none());
+        } else {
+            // Old: no retry at hp == max_hit. New: assess the routed crossing.
+            assert_eq!(searches, 2);
+            assert_eq!(kernels, 5);
+            assert_eq!(result.tried, 1);
+            assert_eq!(result.refusal, Some(WalkRefusal::Unsurvivable));
+            assert!(result.assessment.is_some());
+        }
     }
 }
 
@@ -548,7 +554,7 @@ fn u6_unknown_and_lethal_single_witnesses_are_refused_before_retry() {
 /// known group, a group with one missing member, mixed key sets and keys
 /// this pack does not name.
 #[test]
-fn witness_verdicts_through_the_kind_view_match_the_round_two_rule() {
+fn witness_verdicts_check_supported_facts_without_a_max_hit_filter() {
     let combat = selected_combat();
     let kinds = vec![
         ice_kind(&combat),
@@ -636,18 +642,17 @@ fn witness_verdicts_through_the_kind_view_match_the_round_two_rule() {
     // facts), or a hazard's curated damage (unknown when uncurated).
     let table = world.graph.zones.as_ref().unwrap();
     let risks = &tables(&world).unwrap().risks;
-    let row_ok = |row: u16, input: &RiskInput| {
+    let row_ok = |row: u16, _input: &RiskInput| {
         let Some(zone) = table.zones().get(usize::from(row)) else {
             return false;
         };
         let kind = &table.kinds()[usize::from(zone.kind)];
         if kind.npc_id == -1 {
-            nav_planner::zones::curated::hazard_damage(kind.id.as_ref())
-                .is_some_and(|max| max < input.hp)
+            nav_planner::zones::curated::hazard_damage(kind.id.as_ref()).is_some()
         } else {
             risks
                 .npc(kind.npc_id)
-                .is_some_and(|facts| facts.unknown_for().is_none() && facts.max_hit < input.hp)
+                .is_some_and(|facts| facts.unknown_for().is_none())
         }
     };
     let round_two = |keys: &[ZoneKey], input: &RiskInput| {
@@ -687,15 +692,14 @@ fn witness_verdicts_through_the_kind_view_match_the_round_two_rule() {
             for (keys, max_hit) in cases {
                 let verdict = witness_admissible(&world, &input, keys);
                 let context = format!("keys {keys:?}, hp {hp}, members {map_members}");
-                assert_eq!(verdict, max_hit.is_some_and(|max| max < hp), "{context}");
+                assert_eq!(verdict, max_hit.is_some(), "{context}");
                 assert_eq!(verdict, round_two(keys, &input), "{context}");
                 admitted += usize::from(verdict);
             }
         }
     }
-    // Both verdicts occur, for each member flag: hp 7 and 20 admit 2 key
-    // sets each, hp 21 and 99 admit 5 each.
-    assert_eq!(admitted, 2 * (2 + 2 + 5 + 5));
+    // Five supported key sets at every HP, independent of membership.
+    assert_eq!(admitted, 2 * 6 * 5);
 }
 
 #[cfg(feature = "test-support")]
@@ -919,7 +923,7 @@ fn u6_named_retry_keeps_teleport_wilderness_avoid_and_quest_authority() {
 
 #[cfg(feature = "test-support")]
 #[test]
-fn c1_unknown_poison_refuses_crossing_but_not_safe_only_and_silence_does_not_clear() {
+fn c1_unknown_poison_is_charged_without_refusing_safe_crossings_or_forging_clear() {
     let world = known_corridor(&[20]);
     let from = tile(0, 1);
     let to = tile(20, 1);
@@ -940,19 +944,15 @@ fn c1_unknown_poison_refuses_crossing_but_not_safe_only_and_silence_does_not_cle
     });
     assert_eq!(kernels, 1, "endpoint completion needs no named retry");
     assert_eq!(crossing.tried, 0);
-    assert_eq!(
-        crossing.refusal,
-        Some(WalkRefusal::Unknown(UnknownWhy::Poison))
-    );
+    // Old: Unknown(Poison). New: the charged route at HP99 is admitted.
+    assert_eq!(crossing.refusal, None);
     let unknown_assessment = crossing.assessment.as_ref().unwrap();
     assert_eq!(
         unknown_assessment.input.poison,
         PoisonState::Unknown { since: 0 }
     );
-    assert!(unknown_assessment
-        .reason
-        .contains("Poison status is unknown until the bot can track it"));
-    assert!(!unknown_assessment.reason.contains("S2c"));
+    assert_eq!(unknown_assessment.verdict, Verdict::Survivable);
+    assert!(matches!(unknown_assessment.poison_test, risk::PoisonTest::PassesCharged { .. }));
 
     let override_admission = make_admission(RiskPolicy::Proceed, uncertain);
     let (overridden, override_kernels) = count_kernels(|| {
@@ -967,13 +967,8 @@ fn c1_unknown_poison_refuses_crossing_but_not_safe_only_and_silence_does_not_cle
     assert_eq!(override_kernels, 1);
     assert!(overridden.refusal.is_none());
     let override_assessment = overridden.assessment.as_ref().unwrap();
-    assert_eq!(
-        override_assessment.verdict,
-        Verdict::Unknown(UnknownWhy::Poison)
-    );
-    assert!(override_assessment
-        .reason
-        .starts_with("Poison status is unknown until the bot can track it; "));
+    assert_eq!(override_assessment.verdict, Verdict::Survivable);
+    assert!(override_assessment.reason.starts_with("walk proceeds without the check (Always)"));
 
     let safe_world = empty_corridor();
     let safe_to = tile(10, 1);
@@ -1149,16 +1144,12 @@ fn u7_endpoint_unknown_and_unsafe_crossings_keep_typed_refusals() {
     );
     assert!(matches!(
         unsafe_endpoint.refusal,
-        Some(WalkRefusal::Unsurvivable | WalkRefusal::FixableWith)
+        Some(WalkRefusal::Unsurvivable)
     ));
 }
 
 #[test]
 fn u7_refusal_mapping_preserves_typed_risk_refusals() {
-    assert_eq!(
-        verdict_refusal(Verdict::FixableWith),
-        WalkRefusal::FixableWith
-    );
     assert_eq!(
         verdict_refusal(Verdict::Unsurvivable),
         WalkRefusal::Unsurvivable
@@ -1770,6 +1761,29 @@ fn s2b_admission_route_and_publication_microbenchmarks() {
         }
     }
     summarize("long_2048_tiles_64_legs_7_crossings", samples, 0);
+
+    // The stale publication path runs the full probability assessment on the
+    // pump. Keep a separate cell from the missing-input publication above.
+    let worker_assessment = assess(&long_route, &long_world, &long_admission);
+    let mut changed = long_admission;
+    changed.input.hp -= 1;
+    let mut samples = Vec::with_capacity(SAMPLES);
+    for iteration in 0..(WARMUPS + SAMPLES) {
+        let started = Instant::now();
+        assert!(!fresh(&worker_assessment, changed.input));
+        let assessment = std::hint::black_box(assess(
+            &long_route,
+            &long_world,
+            &changed,
+        ));
+        let elapsed = started.elapsed().as_nanos();
+        assert!(assessment.plan.complete);
+        assert_eq!(assessment.input.hp, 98);
+        if iteration >= WARMUPS {
+            samples.push(elapsed);
+        }
+    }
+    summarize("publication_stale_reassessment", samples, 0);
 }
 
 #[cfg(feature = "test-support")]
@@ -1830,7 +1844,7 @@ impl EvidenceProvider for UnknownEvidence {
 
 #[cfg(feature = "test-support")]
 #[test]
-fn unknown_poison_witness_is_not_researched() {
+fn witness_retry_is_assessed_with_unknown_poison() {
     let world = known_corridor(&[12]);
     let from = tile(0, 1);
     let to = tile(23, 1);
@@ -1848,16 +1862,12 @@ fn unknown_poison_witness_is_not_researched() {
             || real_witness(&world, from, to, options, &state, &[]),
         )
     });
-    assert_eq!(
-        kernels, 3,
-        "strict plus diagnosis only; no doomed named retry"
-    );
-    assert_eq!(result.tried, 0);
+    // Old: three kernels, tried0 and NoRouteWithinBounds. New: one retry.
+    assert_eq!(kernels, 5);
+    assert_eq!(result.tried, 1);
     assert_eq!(result.blocked.as_ref(), &[ZoneKey::Zone(0)]);
-    assert!(matches!(
-        result.refusal,
-        Some(WalkRefusal::NoRouteWithinBounds { tried: 0, .. })
-    ));
+    assert!(result.assessment.is_some());
+    assert_ne!(result.refusal, Some(WalkRefusal::Unknown(UnknownWhy::Poison)));
 }
 
 #[test]
@@ -2098,10 +2108,8 @@ fn unknown_poison(hp: u8) -> RiskInput {
     input
 }
 
-/// SURVIVABLE-DEST-GRANTS: a `cross` walk names its transit grant and relies
-/// on the router's endpoint completion for the zone it ends in. That
-/// destination zone is granted, not judged, so Unknown poison (no S2c
-/// observer yet) does not refuse the walk the Path authored.
+/// A named grant lets the router enter. It does not omit any attack.
+/// Unknown poison is tested with the charged and clear timelines.
 #[test]
 fn named_cross_walk_admits_its_destination_zone_with_unknown_poison() {
     let world = known_corridor(&[5, 20]);
@@ -2126,7 +2134,7 @@ fn named_cross_walk_admits_its_destination_zone_with_unknown_poison() {
     assert_eq!(result.refusal, None);
     assert_eq!(routed(&result).dest, to);
     let assessment = result.assessment.as_ref().unwrap();
-    assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Poison));
+    assert_eq!(assessment.verdict, Verdict::Survivable);
     assert_eq!(
         assessment.plan.crossings.len(),
         2,
@@ -2135,13 +2143,11 @@ fn named_cross_walk_admits_its_destination_zone_with_unknown_poison() {
     assert_eq!(
         assessment.input.poison,
         PoisonState::Unknown { since: 0 },
-        "admission grants the zone; it never claims the poison clear"
+        "admission never claims that poison is clear"
     );
 }
 
-/// The destination grant is the route endpoint's zones only. A crossing of an
-/// unnamed zone on the way, separate from or merged into the destination's
-/// crossing, is still judged and refused while poison is Unknown.
+/// Naming extra zones cannot change the death bound or bypass a refusal.
 #[test]
 fn named_cross_walk_still_judges_an_ungranted_zone_on_the_way() {
     let state = WorldState::default();
@@ -2170,20 +2176,15 @@ fn named_cross_walk_still_judges_an_ungranted_zone_on_the_way() {
             ..make_admission(RiskPolicy::Inherit, unknown_poison(99))
         };
         let assessment = assess(&crossing, &world, &named);
-        assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Poison));
-        assert!(
-            !permits(&crossing, &world, &named, &assessment),
-            "{shape}: the unnamed zone at {} is judged",
-            spawns[1]
-        );
+        assert_eq!(assessment.verdict, Verdict::Survivable);
+        let named_passes = permits(&crossing, &world, &named, &assessment);
         let both = Admission {
             grants: ZoneExempt::named(&[ZoneKey::Zone(0), ZoneKey::Zone(1)]).unwrap(),
             ..named
         };
-        assert!(
-            permits(&crossing, &world, &both, &assessment),
-            "{shape}: naming it as well grants every crossing"
-        );
+        let both_assessment = assess(&crossing, &world, &both);
+        assert_eq!(assessment.bound, both_assessment.bound, "{shape}");
+        assert_eq!(named_passes, permits(&crossing, &world, &both, &both_assessment));
         let held = Admission {
             enforce: false,
             ..named
@@ -2322,20 +2323,22 @@ fn real_squire_ice_chain_admits_named_and_destination_zones_with_unknown_poison(
         assert!((route.dest.x - to.x).abs() <= 1 && (route.dest.z - to.z).abs() <= 1);
         assert_eq!(assessment.input.poison, PoisonState::Unknown { since: 0 });
         let zones = producer::zones_view(&world).unwrap().unwrap();
-        let named_only = assessment.plan.crossings.is_empty()
-            || risk::admission_passes(
-                producer::route_view(&*world, route).unwrap(),
-                assessment,
-                zones,
-                &tables(&world).unwrap().combat,
-                WalkAllow::default(),
-                risk::Grants::named(producer::bind_exempt(zones, grants).unwrap()),
-            )
-            .unwrap_or(false);
-        assert_eq!(
-            !named_only, endpoint_granted,
-            "{step}: whether only the endpoint grant admits it"
+        let named_assessment = risk::assess(
+            producer::route_view(&*world, route).unwrap(),
+            &Estimate {
+                zones: Some(zones),
+                wilderness: producer::wilderness_view(&world).unwrap(),
+                grants: Some(risk::Grants::named(producer::bind_exempt(zones, grants).unwrap())),
+                risks: &tables(&world).unwrap().risks,
+                combat: &tables(&world).unwrap().combat,
+                allow: WalkAllow::default(),
+                generation: 1,
+            },
+            assessment.input,
         );
+        assert_eq!(assessment.bound, named_assessment.bound, "{step}");
+        assert_eq!(assessment.verdict, named_assessment.verdict, "{step}: endpoint completion is not a physics grant");
+        let _ = endpoint_granted;
         from = route.dest;
     }
 }

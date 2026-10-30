@@ -105,12 +105,12 @@ function parseNpcStatDefaults(engineNpcTypeSource: string, revision: number): Np
     return defaults;
 }
 
-function requiredParamDefault(definitions: ReadonlyMap<string, { type?: string; default?: string }>, name: string): number {
+function requiredParamDefault(definitions: ReadonlyMap<string, { type?: string; default?: string }>, name: string, file = 'combat.param'): number {
     const definition = definitions.get(name);
     if (definition?.type?.toLowerCase() !== 'int') {
-        throw new Error(`npc_names: ${name} is missing an integer combat.param default`);
+        throw new Error(`npc_names: ${name} is missing an integer ${file} default`);
     }
-    return requiredParamInt(definition.default, `${name} combat.param default`);
+    return requiredParamInt(definition.default, `${name} ${file} default`);
 }
 
 /** Parse the pinned engine's six positional NPC stat defaults. */
@@ -118,7 +118,7 @@ export function parseNpcFiles(content: string, revision: 274 | 289, engineNpcTyp
     const definitions = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/combat.param'));
     const stats = parseNpcStatDefaults(engineNpcTypeSource, revision);
     const npcDefinitions = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/npc_combat.param'));
-    const damageCode = requiredParamDefault(npcDefinitions, 'damagetype');
+    const damageCode = requiredParamDefault(npcDefinitions, 'damagetype', 'npc_combat.param');
     const damageCodes = combatConstantCodes(content, 'scripts/skill_combat/configs/combat_damagetypes.constant', 'damagetype');
     const damageNames = [...damageCodes].filter(([, code]) => code === damageCode);
     if (damageNames.length !== 1) throw new Error(`npc_names: damagetype default ${damageCode} has no unique content constant`);

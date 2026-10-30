@@ -1,5 +1,5 @@
-//! One host route-admission seam. The estimate is advisory under Proceed;
-//! no runtime net or poison-clear observer is claimed before S2c integration.
+//! One host route-admission seam. Proceed keeps the bound informational.
+//! The runtime net stays gated until its fire accounting is qualified.
 //!
 //! This is the owner boundary for script's risk module (T5.1): the route,
 //! zone table, wilderness and exemptions it judges are served here as
@@ -190,7 +190,6 @@ pub(crate) fn route(
 pub fn verdict_refusal(verdict: Verdict) -> WalkRefusal {
     match verdict {
         Verdict::Survivable => WalkRefusal::Unsurvivable,
-        Verdict::FixableWith => WalkRefusal::FixableWith,
         Verdict::Unsurvivable => WalkRefusal::Unsurvivable,
         Verdict::Unknown(why) => WalkRefusal::Unknown(why),
     }
@@ -262,6 +261,8 @@ fn unknown_assessment(
 ) -> Arc<RouteAssessment> {
     Arc::new(RouteAssessment {
         verdict: Verdict::Unknown(why),
+        bound: 1.0,
+        poison_test: risk::PoisonTest::NotNeeded,
         plan: Default::default(),
         crossings: Box::new([]),
         more: 0,
@@ -372,18 +373,49 @@ fn assess_view(
             admission,
         );
     };
-    risk::assess(
+    let Ok(named) = producer::bind_exempt(zones, admission.grants) else {
+        return unknown_assessment(
+            UnknownWhy::NavIdentity,
+            "Route assessment unknown: navigation grant identity unavailable",
+            admission,
+        );
+    };
+    let assessment = risk::assess(
         route,
         &Estimate {
             zones: Some(zones),
             wilderness,
+            grants: Some(risk::Grants::request(named, wilderness)),
             risks: &tables.risks,
             combat: &tables.combat,
             allow: admission.allow,
             generation: admission.generation,
         },
         admission.input,
-    )
+    );
+    informational_assessment(assessment, admission)
+}
+
+fn informational_assessment(
+    mut assessment: Arc<RouteAssessment>,
+    admission: &Admission,
+) -> Arc<RouteAssessment> {
+    let mode = if admission.compat_v1 {
+        Some("rs2b0t compatibility")
+    } else if admission.policy == RiskPolicy::Proceed {
+        Some("Always")
+    } else {
+        None
+    };
+    if let Some(mode) = mode {
+        let assessment = Arc::get_mut(&mut assessment).expect("new assessment has one owner");
+        assessment.reason = Arc::from(format!(
+            "walk proceeds without the check ({mode}); the model's bound is {:.1}% for information; {}",
+            assessment.bound * 100.0,
+            assessment.reason,
+        ));
+    }
+    assessment
 }
 
 pub fn permits(
@@ -413,32 +445,13 @@ fn permits_view(
     if !assessment.plan.complete {
         return false;
     }
-    if assessment.verdict == Verdict::Survivable {
-        return true;
-    }
-    // Fleeing cannot be refused because an attacker or snapshot is unknown.
-    if assessment.plan.crossings.is_empty() {
-        return true;
-    }
-    let (Ok(Some(zones)), Some(tables), Ok(wilderness)) = (
-        producer::zones_view(world),
-        tables(world),
-        producer::wilderness_view(world),
-    ) else {
+    let Ok(Some(zones)) = producer::zones_view(world) else {
         return false;
     };
-    let Ok(named) = producer::bind_exempt(zones, admission.grants) else {
+    if assessment.plan.pack != Some(zones.pack()) || route.pack() != zones.pack() {
         return false;
-    };
-    risk::admission_passes(
-        route,
-        assessment,
-        zones,
-        &tables.combat,
-        admission.allow,
-        risk::Grants::request(named, wilderness),
-    )
-    .unwrap_or(false)
+    }
+    assessment.verdict == Verdict::Survivable || assessment.plan.crossings.is_empty()
 }
 
 fn retained_bot_route_view<'a>(
@@ -479,11 +492,19 @@ where
             admission,
         );
     };
-    risk::assess_cooperative(
+    let Ok(named) = producer::bind_exempt(zones, admission.grants) else {
+        return unknown_assessment(
+            UnknownWhy::NavIdentity,
+            "Route assessment unknown: navigation grant identity unavailable",
+            admission,
+        );
+    };
+    let assessment = risk::assess_cooperative(
         route,
         &Estimate {
             zones: Some(zones),
             wilderness,
+            grants: Some(risk::Grants::request(named, wilderness)),
             risks: &tables.risks,
             combat: &tables.combat,
             allow: admission.allow,
@@ -492,7 +513,8 @@ where
         admission.input,
         yield_unit,
     )
-    .await
+    .await;
+    informational_assessment(assessment, admission)
 }
 
 /// Cooperative counterpart of [`permits`] over the same borrowed route view.
@@ -501,50 +523,21 @@ pub(crate) async fn permits_view_cooperative<F, U>(
     world: &NavWorld,
     admission: &Admission,
     assessment: &RouteAssessment,
-    yield_unit: &mut F,
+    _yield_unit: &mut F,
 ) -> bool
 where
     F: FnMut() -> U + Send,
     U: Future<Output = ()> + Send,
 {
-    if !admission.enforce || admission.compat_v1 || admission.policy == RiskPolicy::Proceed {
-        return true;
-    }
-    if !assessment.plan.complete {
-        return false;
-    }
-    if assessment.verdict == Verdict::Survivable || assessment.plan.crossings.is_empty() {
-        return true;
-    }
-    let (Ok(Some(zones)), Some(tables), Ok(wilderness)) = (
-        producer::zones_view(world),
-        tables_cooperative(world, yield_unit).await,
-        producer::wilderness_view(world),
-    ) else {
-        return false;
-    };
-    let Ok(named) = producer::bind_exempt(zones, admission.grants) else {
-        return false;
-    };
-    risk::admission_passes_cooperative(
-        route,
-        assessment,
-        zones,
-        &tables.combat,
-        admission.allow,
-        risk::Grants::request(named, wilderness),
-        yield_unit,
-    )
-    .await
-    .unwrap_or(false)
+    permits_view(route, world, admission, assessment)
 }
 
-/// Check every member of a witness group; one unsupported or lethal member
-/// refuses the one-round expansion. This never relaxes any hard constraint.
+/// Check every member of a witness group for supported combat facts.
+/// The full route assessment, not this filter, decides whether damage is safe.
 /// Each raw witness key is bound to the world's zone view (the identity its
 /// lease serves) and judged through the facade kind view.
-pub fn witness_admissible(world: &NavWorld, input: &RiskInput, keys: &[ZoneKey]) -> bool {
-    if keys.is_empty() || keys.len() > 8 || matches!(input.poison, PoisonState::Unknown { .. }) {
+pub fn witness_admissible(world: &NavWorld, _input: &RiskInput, keys: &[ZoneKey]) -> bool {
+    if keys.is_empty() || keys.len() > 8 {
         return false;
     }
     let (Ok(Some(zones)), Some(tables)) = (producer::zones_view(world), tables(world)) else {
@@ -553,7 +546,7 @@ pub fn witness_admissible(world: &NavWorld, input: &RiskInput, keys: &[ZoneKey])
     let acceptable = |bound: BoundZoneKey| {
         zones.zone(bound).is_ok_and(|zone| {
             let kind = tables.risks.zone_kind(zone.kind());
-            kind.unknown_for().is_none() && kind.max_hit < input.hp
+            kind.unknown_for().is_none()
         })
     };
     keys.iter().all(|&key| {
@@ -582,8 +575,9 @@ pub fn fresh(assessment: &RouteAssessment, input: RiskInput) -> bool {
 pub fn log(slot: Option<&str>, assessment: &RouteAssessment, compat_v1: bool) {
     api::host_log!(api::hostlog::Category::NavEvent, api::hostlog::Level::Info,
         slot = slot.unwrap_or("?"),
-        "risk={:?} worst={} volley={} floor={} hp={}/{} food={:?} prayer={} poison={:?} compat_v1={} reason={}",
+        "risk={:?} bound={:.12} poison_test={:?} worst={} volley={} floor={} hp={}/{} food={:?} prayer={} poison={:?} compat_v1={} reason={}",
         assessment.verdict,
+        assessment.bound, assessment.poison_test,
         assessment.crossings.iter().map(|row| u32::from(row.worst)).sum::<u32>(),
         assessment.volley, assessment.crossings.iter().map(|row| row.floor_deep).max().unwrap_or(0),
         assessment.input.hp, assessment.input.hp_max,
@@ -602,6 +596,31 @@ pub(crate) fn publish(
     map_members: bool,
     slot: Option<&str>,
 ) {
+    // A poison fact takes precedence over the hold deadline on the same edge.
+    if bot.poison_hold.is_some()
+        && bot.condition.current().is_some_and(|fact| {
+            fact.tick == snapshot.tick() && !matches!(fact.poison, PoisonState::Unknown { .. })
+        })
+    {
+        let hold = bot.poison_hold.take().expect("live poison hold");
+        if let Some(wait) = hold.wait {
+            api::host_log!(api::hostlog::Category::NavEvent, api::hostlog::Level::Info,
+                slot = slot.unwrap_or("?"),
+                "poison_hold=end until_index={} started={} deadline={} remaining={} waited={} fact={:?}",
+                hold.until_index, wait.started, wait.deadline,
+                wait.deadline.wrapping_sub(wait.started),
+                (snapshot.tick() as u16).wrapping_sub(wait.started),
+                bot.condition.current().expect("current poison fact").poison,
+            );
+        } else {
+            api::host_log!(api::hostlog::Category::NavEvent, api::hostlog::Level::Info,
+                slot = slot.unwrap_or("?"),
+                "poison_hold=end until_index={} reason=fact_before_retreat fact={:?}",
+                hold.until_index, bot.condition.current().expect("current poison fact").poison,
+            );
+        }
+        bot.admission_pending = true;
+    }
     if !std::mem::take(&mut bot.admission_pending) {
         return;
     }
@@ -645,6 +664,22 @@ pub(crate) fn publish(
         .requested_route
         .map_or(route.destination(), |request| request.0);
     if permits_view(route, world, &admission, assessment) {
+        let enforced = admission.enforce
+            && !admission.compat_v1
+            && admission.policy != RiskPolicy::Proceed;
+        if let risk::PoisonTest::WaitForClear { until_index, .. } = assessment.poison_test {
+            if enforced
+                && bot.poison_hold.as_ref().is_none_or(|hold| hold.until_index != until_index)
+            {
+                bot.poison_hold = Some(crate::script_runtime::PoisonHold {
+                    until_index,
+                    wait: None,
+                    stand_sent: false,
+                });
+            }
+        } else {
+            bot.poison_hold = None;
+        }
         return;
     }
     let refusal = verdict_refusal(assessment.verdict);
@@ -695,6 +730,8 @@ pub(crate) fn refuse(
     let detail = if refusal == WalkRefusal::EscapeInProgress {
         bot.slot_escape()
             .map(|escape| Arc::from(escape_reason(escape)))
+    } else if matches!(refusal, WalkRefusal::PoisonUnsettled { .. }) {
+        Some(Arc::from(refusal.to_string()))
     } else {
         bot.assessment
             .as_ref()
@@ -728,3 +765,7 @@ pub(crate) fn refuse(
 #[cfg(test)]
 #[path = "admission_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "survivable_probability_live_tests.rs"]
+mod probability_live_tests;

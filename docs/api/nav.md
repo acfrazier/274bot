@@ -680,35 +680,42 @@ activation predicate, carves and stationary shapes. Pursuit continues through
 the engagement envelope, with transport holds and projectile tails included.
 Retreat stays in the same walk leg, and teleports are never credited as
 on-foot exits. A crossing with neither on-foot exit is `Unsurvivable` with
-`NoWayOut` in its reason.
+`NoWayOut` in its reason unless every zone is explicitly named in `cross`.
+An implicit endpoint-completion grant never removes that refusal.
 
 Live and estimated attackers are always summed, even when their identities may
 overlap. `attacker_count(live, estimated)` has no scene-cap parameter: a built,
 distance-limited or count-limited scene cannot certify coverage or erase a
 retained live row. Single-way flags stay false (no eligibility source yet).
 
-Food is simulated from actual counts, using the shared guard picker, a
-three-tick bite clock, delayed heals and exact threshold gating. Transport
-holds lock food input; a pending heal cannot land until the delay ends.
-Pre-entry top-up never wastes a heal. Message-delay and combo foods are excluded
-and named; only the six largest carried food kinds are retained. Protection
-requires the current level, points, compatible styles and ownership
-conditions, keeps one unprotected volley and never credits carried potions
-or already-launched damage. `FixableWith` reports the least additional
-reference-food count that makes the replay pass within free inventory slots.
-Unsupported facts, missing input, input locks and representational overflow
-remain explicit `Unknown` verdicts.
+Admission builds one attack timeline and computes an upper bound on death.
+Each exposed NPC contributes one attack per its own attack interval, including
+the first exposed tick. All zones and retained live attackers are summed.
+Curated hazards and already-launched hits contribute certain damage.
+The check credits no food, protection prayer, or escape action. It admits a
+crossing when the bound is at most 1%. Display-only damage and floor totals
+saturate at their field limits; they do not turn a numeric bound into overflow.
+Unsupported facts, missing input, input locks, and a schedule above the event
+limit remain explicit `Unknown` verdicts.
 
-`PoisonMemory` exposes pure transitions, not a live observer. Known poison
-retains the largest observed pulse through silence, decreasing marks and
-silent reapplication until a confirmed own antipoison decrement or observed
-death followed by respawn. A fresh onset chat line resets even established
-poison to Unknown: the old server poison expired and the new severity is not
-known until its first mark. Unknown poison requires the complete accepted-click
-phase evidence to clear; a hitmark kind above two invalidates the whole
-session until reconnect. Poison damages the entire route timeline, including
-safe gaps. Poison alone never refuses a route without crossings: the replay
-and antipoison information remain, but walking adds no new poison risk.
+Known poison retains its largest observed pulse until a confirmed cure or
+death and respawn. An onset line invalidates an older severity. The live
+slot observer publishes `PoisonWindow` only while poison is Unknown, with the
+remaining clean ticks, whether a click was accepted, and the last reset cause.
+It needs 31 clean observed game ticks after an accepted walk click or
+interaction to prove Clear. Interactions restart this window; movement counts.
+A hitmark kind above two invalidates the session until reconnect.
+
+For Unknown poison, admission first charges the selected content's worst pulse
+at tick zero and every 30 ticks throughout the route, including safe gaps.
+If that bound fails, it tests the same route without poison. A passing clear
+bound admits with `WaitForClear` at the last safe retreat index. The follower
+sends no hop past that index while the fact is Unknown. At the retreat tile it
+waits only the published remainder, not a new full window. A new fact is
+reassessed before the deadline; an unresolved deadline reports
+`PoisonUnsettled { waited, cause }`. If there is no safe retreat index, the
+clear bound admits without a hold. Poison alone never refuses a route without
+entering crossings.
 
 `RiskTables` is immutable and reused across assessments. Ordinary slot
 creation does not construct it. Host admission initializes combat/risk facts
@@ -767,11 +774,11 @@ No named grant or survivability retry relaxes a hard constraint.
 Proceed (including compat v1) uses the ordinary all-zone search and retains
 the honest assessment; compat publishes it only to hostlog. Avoid uses
 strict/endpoint routing. Effective Inherit may diagnose one witness and,
-only for at most eight known nonlethal keys, try one named re-search.
+only for at most eight known keys, try one named re-search.
 The host binds each witness key to the world's zone view
 (`nav_planner::producer::bind_key`; a group's members through
 `nav_planner::producer::group_members`) and reads its facts through `ZoneKindView`,
-as the estimate does. Every member of a group must be known and nonlethal;
+as the estimate does. Every member of a group must have supported facts;
 an empty group refuses.
 It is bounded best effort, not a search over survivability. Actual kernel
 searches include endpoint/area/bank diagnosis paths and are counted in tests.
@@ -780,16 +787,16 @@ stages; it is not a claim of one Dijkstra kernel. Refusal diagnosis repeats
 the strict call before its all-zone witness, and a named retry keeps the
 same staged routing. Both the top-level retry count and actual kernels are
 recorded, including reverse-proof shortcuts.
-Enforcing admission grants a crossing only when all of its zones are
-granted. Granted zones are the request's named or all-zone exemptions. A
-request that names grants (Path `cross`) also has the zones engaged at the
-route's endpoint granted, the router's endpoint completion
-(`risk::Grants::request`). The named retry's witness keys never are.
+Named grants permit the router to enter zones; they do not omit attacks or
+bypass the death-bound check. `Estimate.grants` carries those names into the
+assessment solely to distinguish a deliberately named no-exit endpoint.
+All-zone exemptions and the router's endpoint completion do not count as
+explicitly naming every zone in that crossing.
 
 Permission layers above the router stay separate: the global Danger routing level in Nav config, the WalkTo-only **Route through danger zones** checkbox (one admission for the current picker opening, never persisted), per-script Script prefs (**Allow teleports**, **Allow wilderness**, **Allow danger zones**, each granting that script's own walks when the global switch is off), and per-walk Path overrides (`cross` names, `guard`, `allow_*`).
 
 Refusals distinguish `NoRouteWithinBounds { tried, last }`, `Unsurvivable`,
-`FixableWith`, `Unknown` and `EscapeInProgress`; an ordinary hard no-path
+`Unknown`, `PoisonUnsettled`, and `EscapeInProgress`; an ordinary hard no-path
 does not invent an assessment. A found route carries an assessment even
 when refused. Manual success returns `WalkRoute { route, assessment }`,
 and the manual error retains the assessment/refusal and shared explanation
@@ -800,9 +807,8 @@ The focused risk projection never waits on a slot-held arm: it keeps its last
 shared answer until an available poll and clears it on a focus change.
 Missing scene facts remain `Unknown(MissingFacts)`, not invented overflow
 or unattributed damage.
-The poison recovery explanation is conditional: an override may admit an
-`Unknown(Poison)` assessment, while a refused crossing cannot provide its
-own recovery movement.
+Proceed/Always and compat v1 retain the bound for information and say that
+the walk proceeds without the check. They do not arm a poison hold.
 
 Before following a worker result, publication compares the observed HP,
 food, prayer, position, live actor/due identity, poison and cleanup debt.

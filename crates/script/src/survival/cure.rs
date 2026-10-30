@@ -266,6 +266,7 @@ mod tests {
             hp_max,
             hp_known: true,
             poison,
+            poison_window: None,
             food,
             cures: CureDoses::default(),
         }

@@ -472,3 +472,20 @@ listed = "0.2.8"
 target = "0.2.9"
 severity = "low"
 owner = "upstream rs2b0t GnomeMagicChopper (rs2b2t/rs2b0t#897)"
+
+[[item]]
+id = "risk-zone-reach-pruning"
+kind = "deferred"
+area = "nav/admission"
+text = """Reach-to-route pruning of risk zones stays deferred. The model sums
+  every exposed zone, including a monster that collision might prevent from
+  reaching the route. Revisit this only when the frozen-route and end-to-end
+  corpora show a realistic quest route at its seed policy's level that is
+  refused solely because of that sum, and that reach pruning would admit.
+  No reach data is stored in the pack. Any future section needs a hard byte
+  budget, bake-reported bytes, a sound collision check, and summed-count
+  fallback for zones that exceed the budget."""
+first = "0.2.9"
+target = "0.2.9"
+severity = "low"
+owner = "Main backlog review"

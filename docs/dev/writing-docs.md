@@ -96,7 +96,7 @@ After: "Each of these buttons opens its window. If the window is already open,
 the button brings it to the front."
 
 Before: "Refusals distinguish `NoRouteWithinBounds`, `Unsurvivable`,
-`FixableWith`, `Unknown` and `EscapeInProgress`."
+`Unknown`, `PoisonUnsettled`, and `EscapeInProgress`."
 After: "If 274bot will not walk a route, it says why: no route was found, the
 route is too dangerous, or you can fix it (for example, you lack the coins for
 a fare)."

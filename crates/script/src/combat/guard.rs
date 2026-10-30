@@ -2309,6 +2309,7 @@ mod tests {
                 q: Some(11),
                 hit_since_line: false,
             },
+            poison_window: None,
             food: api::condition::FoodSummary::default(),
             cures: api::condition::CureDoses::default(),
         };
@@ -2400,6 +2401,7 @@ mod tests {
                 q: Some(11),
                 hit_since_line: false,
             },
+            poison_window: None,
             food: api::condition::FoodSummary::default(),
             cures: api::condition::CureDoses::default(),
         };
@@ -2436,6 +2438,7 @@ mod tests {
                 q: Some(11),
                 hit_since_line: false,
             },
+            poison_window: None,
             food: api::condition::FoodSummary::default(),
             cures: api::condition::CureDoses::default(),
         };
@@ -2497,6 +2500,7 @@ mod tests {
                 q: Some(11),
                 hit_since_line: false,
             },
+            poison_window: None,
             food: api::condition::FoodSummary::default(),
             cures: api::condition::CureDoses {
                 antipoison: 1,
@@ -2555,6 +2559,7 @@ mod tests {
                 q: Some(11),
                 hit_since_line: false,
             },
+            poison_window: None,
             food: api::condition::FoodSummary::default(),
             cures: api::condition::CureDoses::default(),
         };

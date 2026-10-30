@@ -317,7 +317,7 @@ function facts_damage_type_requires_declared_default() {
         fs.writeFileSync(path.join(root, 'scripts/skill_combat/configs/npc_combat.param'), '[damagetype]\ntype=int\n');
         assert.throws(
             () => extractNpcNamesFacts(root, 289, engineNpcTypeSource, scripts, maxHits),
-            /damagetype combat\.param default is missing/,
+            /damagetype npc_combat\.param default is missing/,
         );
     } finally {
         fs.rmSync(root, { recursive: true, force: true });

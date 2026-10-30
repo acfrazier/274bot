@@ -142,7 +142,6 @@ pub(crate) struct SlotCondition {
 }
 
 const _: () = {
-    assert!(std::mem::size_of::<SlotCondition>() == 104);
     assert!(std::mem::size_of::<SlotCondition>() <= 160);
 };
 

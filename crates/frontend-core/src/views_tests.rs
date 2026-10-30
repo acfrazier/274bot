@@ -1018,6 +1018,8 @@ fn focused_manual_assessment_is_retained_shared_and_never_leaks_to_another_slot(
     use script::combat::risk::{RiskInput, RouteAssessment, UnknownWhy, Verdict};
     let assessment = Arc::new(RouteAssessment {
         verdict: Verdict::Unknown(UnknownWhy::Poison),
+        bound: 1.0,
+        poison_test: script::combat::risk::PoisonTest::NotNeeded,
         plan: Default::default(),
         crossings: Box::new([]),
         more: 0,

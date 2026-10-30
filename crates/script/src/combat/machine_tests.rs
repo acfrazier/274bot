@@ -707,6 +707,7 @@ fn combat_machine_cure_row_precedes_eat_row() {
                 q: Some(11),
                 hit_since_line: false,
             },
+            poison_window: None,
             food: api::condition::FoodSummary {
                 ordinary_count: 1,
                 ordinary_heal_total: 12,
@@ -836,6 +837,7 @@ fn combat_machine_drinks_antipoison_when_lethal() {
             q: Some(11),
             hit_since_line: false,
         },
+        poison_window: None,
         food: api::condition::FoodSummary::default(),
         cures: api::condition::CureDoses {
             antipoison: 1,
@@ -878,6 +880,7 @@ fn combat_machine_uses_strange_fruit_and_settles_by_count_drop() {
             q: Some(11),
             hit_since_line: false,
         },
+        poison_window: None,
         food: api::condition::FoodSummary::default(),
         cures: api::condition::CureDoses {
             strange_fruit: 1,
