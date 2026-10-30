@@ -883,10 +883,8 @@ impl Dialogue {
                 self.assess_request_id = cx.assess_walk(request)?;
                 self.walk_request_id = 0;
                 self.phase = Phase::Plan;
-                self.content_deadline_tick = cx
-                    .evidence()
-                    .tick
-                    .saturating_add(DIALOGUE_ASSESS_TICKS);
+                self.content_deadline_tick =
+                    cx.evidence().tick.saturating_add(DIALOGUE_ASSESS_TICKS);
             }
         }
         if previous != 0 && previous != self.walk_request_id {
