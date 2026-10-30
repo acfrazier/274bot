@@ -1653,14 +1653,16 @@ fn set_card(d: &mut HeadlessDriver, card: crate::FleetCard) {
     assert_eq!(terminal_app(d, set.request()), Some(done()));
 }
 
-fn set_quester_queue(d: &mut HeadlessDriver, profile: &str, quests: &[&str]) {
-    let registry_before = script::quester::registry::revision();
+fn stage_quester_queue(
+    d: &mut HeadlessDriver,
+    profile: &str,
+    quests: &[&str],
+) -> crate::operations::OperationId {
     let values = serde_json::json!({"quests": quests})
         .as_object()
         .expect("quest queue settings are an object")
         .clone();
-    let operation = d
-        .models
+    d.models
         .scripts
         .set_compiled_overrides(
             &mut d.session,
@@ -1668,17 +1670,12 @@ fn set_quester_queue(d: &mut HeadlessDriver, profile: &str, quests: &[&str]) {
             crate::scripts::CompiledCardId::QUESTER,
             values,
         )
-        .expect("save Quester queue settings");
-    eprintln!(
-        "registry after saving {profile} queue: {} -> {}",
-        registry_before,
-        script::quester::registry::revision()
-    );
+        .expect("save Quester queue settings")
+}
+
+fn set_quester_queue(d: &mut HeadlessDriver, profile: &str, quests: &[&str]) {
+    let operation = stage_quester_queue(d, profile, quests);
     d.session.flush_writes();
-    eprintln!(
-        "registry after flushing {profile} queue: {}",
-        script::quester::registry::revision()
-    );
     assert_eq!(
         d.session
             .operation(operation)
@@ -2273,7 +2270,7 @@ fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
 
     let alice = d.session().profile_identity_or_synthetic("alice");
     let bob = d.session().profile_identity_or_synthetic("bob");
-    set_quester_queue(&mut d, "alice", &["sheep"]);
+    let queue_operation = stage_quester_queue(&mut d, "alice", &["sheep"]);
     let plan = d.session().fleet_plan().expect("plan waits");
     let (registry, revision) = script::quester::registry::snapshot_with_revision();
     assert_eq!(
@@ -2292,7 +2289,11 @@ fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
             .scripts()
             .quester_start_zones_for_card(d.session(), name, plan.card.as_ref(), &registry)
             .expect("current disclosure");
-        assert_eq!(current, disclosure.zones, "{name} disclosure changed");
+        assert_eq!(
+            current != disclosure.zones,
+            name == "alice",
+            "{name} changed from the confirmed queue"
+        );
     }
     let command = d.session().fleet_plan().expect("plan waits").command();
     let run = d.submit(command, Targets::Plan).expect("run");
@@ -2323,6 +2324,14 @@ fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
     assert!(
         report.member(Subject::Profile(bob)).is_some(),
         "the unchanged Bob remains in the confirmed Start"
+    );
+    d.session_mut().flush_writes();
+    assert_eq!(
+        d.session()
+            .operation(queue_operation)
+            .expect("changed settings operation")
+            .outcome("alice"),
+        Some(&crate::operations::Outcome::Completed)
     );
 }
 
