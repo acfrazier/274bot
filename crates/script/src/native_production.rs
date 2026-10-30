@@ -26,8 +26,8 @@ const MENU_PACKET_ORDER_TICKS: u64 = 1;
 const MAKE_X_SIGNAL_TICKS: u64 = 2;
 // Make-X spinning queues the first product after three ticks and repeats after
 // two (`content/scripts/skill_crafting/scripts/spinning/spinning.rs2:87-110`).
-// Allow one extra observed tick for either queue to publish the product.
-const MAKE_X_PRODUCT_PROGRESS_TICKS: u64 = 4;
+// R4 still hit the held-target timeout with four ticks, so allow five ticks.
+const MAKE_X_PRODUCT_PROGRESS_TICKS: u64 = 5;
 // Smithing posts the product after its delay, then waits three ticks before it
 // returns or starts its next item. Fletching and pottery use two-tick queues.
 // Sources: `content/scripts/skill_smithing/scripts/smithing/smithing.rs2:269-286`,
@@ -991,23 +991,31 @@ mod tests {
         })
         .is_pending());
 
-        // The three-tick initial queue publishes its first product one observation later.
+        // The initial queue takes three ticks. Allow two observations for its output.
         assert!(with_tick(&menu_closed, &mut ledger, 8, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
-        let first_product = menu_snapshot_with_held(&client, 1);
-        assert!(with_tick(&first_product, &mut ledger, 9, |tick| {
+        assert!(with_tick(&menu_closed, &mut ledger, 9, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
-        // The repeated two-tick queue also needs its following product observation.
+        let first_product = menu_snapshot_with_held(&client, 1);
+        assert!(with_tick(&first_product, &mut ledger, 10, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        // Repeated queues take two ticks, then need two observations.
         assert!(with_tick(&first_product, &mut ledger, 12, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
+        assert!(with_tick(&first_product, &mut ledger, 13, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
         let second_product = menu_snapshot_with_held(&client, 2);
-        assert!(with_tick(&second_product, &mut ledger, 13, |tick| {
+        assert!(with_tick(&second_product, &mut ledger, 14, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
@@ -1015,8 +1023,12 @@ mod tests {
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
+        assert!(with_tick(&second_product, &mut ledger, 17, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
         let third_product = menu_snapshot_with_held(&client, 3);
-        assert!(with_tick(&third_product, &mut ledger, 17, |tick| {
+        assert!(with_tick(&third_product, &mut ledger, 18, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
