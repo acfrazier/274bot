@@ -623,16 +623,18 @@ fn inventory_receipt(snapshot: &GameSnapshot) -> Vec<Value> {
         .collect()
 }
 
-fn dialogue_texts(snapshot: &GameSnapshot) -> Vec<String> {
-    dialogue_texts_after(snapshot, i32::MIN)
-}
-
-fn dialogue_texts_after(snapshot: &GameSnapshot, _after: i32) -> Vec<String> {
+fn dialogue_texts_after(snapshot: &GameSnapshot, after: i32) -> Vec<String> {
     let mut texts: Vec<_> = snapshot
         .chat_options()
         .iter()
         .map(|option| option.text.clone())
-        .chain(snapshot.chat_lines().iter().map(|line| line.text.clone()))
+        .chain(
+            snapshot
+                .chat_lines()
+                .iter()
+                .filter(|line| line.sequence > after)
+                .map(|line| line.text.clone()),
+        )
         .collect();
     // chat.rs2 splits one speech across adjacent chat widgets. Preserve the
     // rendered page as well as individual choices and system messages.
@@ -655,7 +657,11 @@ fn dialogue_texts_after(snapshot: &GameSnapshot, _after: i32) -> Vec<String> {
 }
 
 fn remember_dialogue_texts(snapshot: &GameSnapshot, seen: &mut Vec<String>) {
-    for text in dialogue_texts(snapshot) {
+    remember_dialogue_texts_after(snapshot, i32::MIN, seen);
+}
+
+fn remember_dialogue_texts_after(snapshot: &GameSnapshot, after: i32, seen: &mut Vec<String>) {
+    for text in dialogue_texts_after(snapshot, after) {
         if !seen.iter().any(|old| old.eq_ignore_ascii_case(&text)) {
             seen.push(text);
         }
@@ -2007,8 +2013,12 @@ fn run_quester_prereq_case(case: PrereqLiveCase, expected_failure: Option<&'stat
     let mut pass_receipts = Vec::new();
     let selector = case.selector;
     let observe: ObserveFamily = Box::new(move |snapshot, status, lifecycle| {
-        remember_dialogue_texts(snapshot, &mut dialogue_seen);
         let baseline = start_sequence.load(Ordering::Relaxed);
+        if failure_oracle.is_some() {
+            remember_dialogue_texts_after(snapshot, baseline, &mut dialogue_seen);
+        } else {
+            remember_dialogue_texts(snapshot, &mut dialogue_seen);
+        }
         let here = tile(snapshot);
         if let Some(oracle) = failure_oracle.as_ref() {
             return oracle.observe(snapshot, status, lifecycle, &dialogue_seen);
