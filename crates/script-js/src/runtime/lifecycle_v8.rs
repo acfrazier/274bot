@@ -499,9 +499,7 @@ fn abort_waiters<'s>(
     }
     let length_key = cb::string(scope, "length");
     let length = cb::num(scope, f64::from(retained));
-    let compacted = cb::catching(scope, |scope| {
-        queue.set(scope, length_key, length)
-    })?;
+    let compacted = cb::catching(scope, |scope| queue.set(scope, length_key, length))?;
     if !compacted {
         return Err(cb::type_error(
             scope,

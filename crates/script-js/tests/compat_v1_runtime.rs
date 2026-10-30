@@ -1,7 +1,7 @@
 use api::identity::RequestId;
 use api::local_state::{
-    AccountKey, ContentScope, DomainEdit, DomainIdentity, DomainLease, ErrorCode,
-    LocalStateDomain, LocalStatePort, StoreVersion, SubmitReceipt, WriteSettlement,
+    AccountKey, ContentScope, DomainEdit, DomainIdentity, DomainLease, ErrorCode, LocalStateDomain,
+    LocalStatePort, StoreVersion, SubmitReceipt, WriteSettlement,
 };
 use script::local_state::{SlotState, StatePort};
 use script::surface::{RuntimeControlRequest, RuntimeRunState, ScriptRuntimeContext};

@@ -995,7 +995,9 @@ fn wait_for_game_tick(session: &mut LiveSession<'_>, target: u32) -> Result<(), 
             return Ok(());
         }
         if Instant::now() >= deadline {
-            return Err(format!("timed out waiting for game tick {target}; last tick {tick}"));
+            return Err(format!(
+                "timed out waiting for game tick {target}; last tick {tick}"
+            ));
         }
         thread::sleep(POLL_INTERVAL);
     }
@@ -1006,7 +1008,9 @@ fn run_runtime_frame_cell(receipt: &mut Receipt) -> Result<(), String> {
     start_script(&session, RUNTIME_FRAME_SOURCE.to_owned())?;
     wait_for_logs(&mut session, ACTION_DEADLINE, |logs| {
         logs.iter().any(|line| line == "RUNTIME:READY")
-            && logs.iter().any(|line| line.starts_with("RUNTIME:FRAME_GAP:"))
+            && logs
+                .iter()
+                .any(|line| line.starts_with("RUNTIME:FRAME_GAP:"))
             && logs.iter().any(|line| line == "RUNTIME:STOP")
     })?;
     wait_idle(&mut session)?;
@@ -1025,7 +1029,9 @@ fn run_runtime_frame_cell(receipt: &mut Receipt) -> Result<(), String> {
         })
         .ok_or_else(|| "runtime frame probe did not record a frame gap".to_string())?;
     if gap <= 1 {
-        return Err(format!("expected multiple client frames between ticks, saw {gap}"));
+        return Err(format!(
+            "expected multiple client frames between ticks, saw {gap}"
+        ));
     }
     if !session.receipt.logs[..stop_index]
         .iter()
