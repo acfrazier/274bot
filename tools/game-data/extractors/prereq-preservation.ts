@@ -524,7 +524,7 @@ function hasEntryPath(writer: Writer, graph: ScriptGraph) {
 
 function feasiblePaths(writer: Writer, graph: ScriptGraph, variable: string, range: RangeWire, constants: ReadonlyMap<string, number>) {
     const out: Guard[][] = [];
-    const reviewedGuard: Guard[] = writer.reviewed ? [{ expression: writer.reviewed.guard_text, polarity: writer.reviewed.polarity ?? false }] : [];
+    const reviewedGuard: Guard[] = writer.reviewed ? [{ expression: writer.reviewed.guard_text, polarity: false }] : [];
     const hasPath = hasEntryPath(writer, graph);
     const visit = (blockId: string, guards: Guard[], seen: Set<string>) => {
         const block = graph.byId.get(blockId)!;
@@ -562,22 +562,10 @@ function verifyReviewedWrites(content: string, row: Pick<PrereqRowWire, 'reviewe
         const guardBlock = graphBlocksForFile(content, guardFile).find((block) => {
             const first = Number(/:(\d+)/.exec(reviewed.guard)?.[1]);
             const last = Number(/:(\d+)-(\d+)/.exec(reviewed.guard)?.[2] ?? first);
-            return (block.kind === 'proc' || block.kind === 'label') && block.span.first <= first && block.span.last >= last;
+            return block.kind === 'proc' && block.span.first <= first && block.span.last >= last;
         });
-        if (!guardBlock) throw new Error(`prereq preservation: reviewed guard ${reviewed.guard} is not one callable body`);
-        if (reviewed.polarity !== undefined && typeof reviewed.polarity !== 'boolean') {
-            throw new Error(`prereq preservation: invalid guard polarity for ${reviewed.write}`);
-        }
-        // A labelled dialogue case can have a reviewed caller predicate, as
-        // distinct from the existing early-return predicate in a guard proc.
-        const call = guardBlock.kind === 'proc' ? `~${guardBlock.name}` : `@${writer.block.block.name}`;
-        if (guardBlock.kind === 'label') {
-            const [first, last = first] = reviewed.guard.split(':').at(-1)!.split('-').map(Number);
-            const text = fs.readFileSync(path.join(content, guardFile), 'utf8').split(/\r?\n/).slice(first - 1, last).join('\n');
-            if (!text.replace(/\s+/g, '').includes(reviewed.guard_text.replace(/\s+/g, ''))) {
-                throw new Error(`prereq preservation: ${reviewed.guard} no longer contains the reviewed caller guard`);
-            }
-        }
+        if (!guardBlock) throw new Error(`prereq preservation: reviewed guard ${reviewed.guard} is not one proc body`);
+        const procName = guardBlock.name;
         for (const citation of reviewed.called_from.split(';')) {
             const parsed = /^\s*(.+?):(\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*?)\s*$/.exec(citation);
             if (!parsed) throw new Error(`prereq preservation: invalid caller citation ${citation}`);
@@ -585,7 +573,7 @@ function verifyReviewedWrites(content: string, row: Pick<PrereqRowWire, 'reviewe
             for (const selection of parsed[2].split(',')) {
                 const [first, last = first] = selection.split('-').map(Number);
                 const text = sourceLines.slice(first - 1, last).join('\n');
-                if (!text.includes(call)) throw new Error(`prereq preservation: ${parsed[1]}:${selection} no longer calls ${call}`);
+                if (!text.includes(`~${procName}`)) throw new Error(`prereq preservation: ${parsed[1]}:${selection} no longer calls ~${procName}`);
             }
         }
         writer.reviewed = reviewed;

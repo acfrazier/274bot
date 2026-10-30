@@ -20,7 +20,7 @@ export type PrereqRowWire = {
     crossings: CrossingWire[];
     establishes: { quest: string; signal: string; values: RangeWire };
     after: { proves: RangeWire; after: RangeWire }[];
-    reviewed_writes: { write: string; sets: number; guard: string; guard_text: string; called_from: string; polarity?: boolean }[];
+    reviewed_writes: { write: string; sets: number; guard: string; guard_text: string; called_from: string }[];
     probe: { refuse: { page: string; then: string | { precondition: unknown }; proves: RangeWire; source: SourceWire }[] };
     target: { npc: number; op: number; anchor: TileWire; leash: number; source: SourceWire };
     preconditions: unknown[];
