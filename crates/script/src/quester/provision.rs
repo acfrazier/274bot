@@ -4603,7 +4603,7 @@ mod tests {
         let mark = ledger.as_ref().unwrap().bank_session;
         let lease = provisioner.bank_lease();
         ledger.as_mut().unwrap().outbox.clear();
-        poll_once(
+        let ended = poll_once(
             &mut provisioner,
             &snapshot,
             &mut ledger,
@@ -4614,7 +4614,17 @@ mod tests {
             &banks,
             &quests,
         );
-        (mark, lease, closes_sent(&ledger))
+        let closes = closes_sent(&ledger);
+        // A close keeps the session in Closing. Without one, it ends now.
+        if closes == 0 {
+            assert!(
+                matches!(ended, Poll::Ready(Ok(ProvisionEvent::Ready))),
+                "{start:?}: {ended:?}"
+            );
+        } else {
+            assert!(ended.is_pending(), "{start:?}: {ended:?}");
+        }
+        (mark, lease, closes)
     }
 
     #[test]
