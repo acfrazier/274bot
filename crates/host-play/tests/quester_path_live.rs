@@ -356,6 +356,7 @@ struct RootStepTrace {
     kind: String,
     event: String,
     repeated: bool,
+    occurrences: u32,
 }
 
 fn parse_root_step_trace(quest: &str, message: &str) -> Option<RootStepTrace> {
@@ -366,17 +367,16 @@ fn parse_root_step_trace(quest: &str, message: &str) -> Option<RootStepTrace> {
     if stage.is_empty() || step_id.is_empty() || kind.is_empty() {
         return None;
     }
-    let (event, repeated) = match event.rsplit_once(" (repeated ") {
+    let repetition = event.rsplit_once(" (repeated ").and_then(|(base, count)| {
+        let count = count
+            .strip_suffix(" additional times)")?
+            .parse::<u32>()
+            .ok()
+            .filter(|count| *count > 0)?;
         Some((base, count))
-            if count
-                .strip_suffix(" additional times)")
-                .and_then(|count| count.parse::<u32>().ok())
-                .is_some_and(|count| count > 0) =>
-        {
-            (base, true)
-        }
-        _ => (event, false),
-    };
+    });
+    let (event, occurrences, repeated) =
+        repetition.map_or((event, 1, false), |(base, count)| (base, count, true));
     if event != "begin" && event != "settled" && !event.starts_with("failed:") {
         return None;
     }
@@ -386,6 +386,7 @@ fn parse_root_step_trace(quest: &str, message: &str) -> Option<RootStepTrace> {
         kind: kind.to_owned(),
         event: event.to_owned(),
         repeated,
+        occurrences,
     })
 }
 
@@ -461,20 +462,16 @@ fn campaign_actor_receipts(
             insert_actor_receipt(&mut receipts, &receipt)?;
         }
     }
-    if receipts.values().any(|actor| {
-        actor["final_status"]["fields"]["block_reason"].as_str() == Some("no step for stage")
-    }) {
+    if !receipts.is_empty() {
         let (document, _) = scenario::quester::load_quester_path_document(quest)?;
-        for actor in receipts.values_mut().filter(|actor| {
-            actor["final_status"]["fields"]["block_reason"].as_str() == Some("no step for stage")
-        }) {
+        for actor in receipts.values_mut() {
             let role = document
                 .roles
                 .iter()
                 .find(|role| {
                     role.role.as_ref().map(|role| role.0.as_ref()) == actor["role"].as_str()
                 })
-                .ok_or("no-step evidence has no matching authored role")?;
+                .ok_or("gap evidence has no matching authored role")?;
             let steps = |steps: &[script::quester::path::StepDocument]| {
                 steps
                     .iter()
@@ -482,13 +479,14 @@ fn campaign_actor_receipts(
                         serde_json::json!({
                             "id": step.id, "kind": step.kind,
                             "settle": step.settle, "skip_if": step.skip_if,
+                            "max_attempts": step.max_attempts,
                         })
                     })
                     .collect::<Vec<_>>()
             };
             let status_path = actor["status_log"]
                 .as_str()
-                .ok_or("no-step receipt has no status log")?;
+                .ok_or("gap receipt has no status log")?;
             let statuses = std::fs::read_to_string(status_path)
                 .map_err(|error| format!("{status_path}: {error}"))?
                 .lines()
@@ -500,7 +498,7 @@ fn campaign_actor_receipts(
                     .as_array()
                     .and_then(|captures| captures.last())
                     .and_then(serde_json::Value::as_str)
-                    .ok_or("no-step receipt has no final capture")?,
+                    .ok_or("gap receipt has no final capture")?,
             )
             .with_extension("json");
             let end_state: serde_json::Value = serde_json::from_slice(
@@ -508,8 +506,8 @@ fn campaign_actor_receipts(
                     .map_err(|error| format!("{}: {error}", capture_path.display()))?,
             )
             .map_err(|error| format!("{}: {error}", capture_path.display()))?;
-            // Keep the raw receipt immutable. These are separately sourced,
-            // uncapped witnesses used only by the no-step oracle.
+            // Keep raw receipts immutable. These separately sourced witnesses
+            // establish no-step settlements and counted content misses.
             actor["gap_state_evidence"] = serde_json::json!({
                 "status_log": status_path,
                 "end_capture": capture_path,
@@ -529,36 +527,163 @@ fn campaign_actor_receipts(
     Ok(receipts)
 }
 
+#[derive(serde::Serialize)]
+struct CountedContentMiss<'a> {
+    stage: &'a str,
+    step_id: &'a str,
+    kind: &'a str,
+    attempt: u64,
+    max_attempts: u64,
+    tick: u64,
+}
+
+fn counted_content_misses<'a>(
+    quest: &str,
+    receipt: &'a serde_json::Value,
+) -> Option<Vec<CountedContentMiss<'a>>> {
+    let Some(evidence) = receipt.get("gap_state_evidence") else {
+        return Some(Vec::new());
+    };
+    let guide = &evidence["guide"];
+    let end = &evidence["end_state"];
+    let final_run = receipt["final_status"]["run"].as_str()?;
+    if guide["quest"].as_str() != Some(quest)
+        || end["account"] != receipt["account"]
+        || end["label"].as_str() != Some("end-fail")
+        || end["status"] != receipt["final_status"]
+    {
+        return None;
+    }
+    let mut misses = Vec::new();
+    let mut counts = std::collections::BTreeMap::new();
+    let mut last_tick = 0;
+    for row in evidence["statuses"].as_array()? {
+        let tick = row["tick"].as_u64()?;
+        if tick < last_tick || tick > end["tick"].as_u64()? {
+            return None;
+        }
+        last_tick = tick;
+        let status = &row["status"];
+        let fields = &status["fields"];
+        if fields["quest_id"].as_str() != Some(quest) {
+            continue;
+        }
+        if status["run"].as_str() != Some(final_run) {
+            return None;
+        }
+        if fields["step_attempt_outcome"].as_str() != Some("content_miss") {
+            continue;
+        }
+        let stage = fields["stage"].as_str()?;
+        let step_id = fields["step_id"].as_str()?;
+        let mut authored = guide["sequences"]
+            .as_array()?
+            .iter()
+            .filter(|sequence| sequence["stage"].as_str() == Some(stage))
+            .filter_map(|sequence| sequence["steps"].as_array())
+            .flatten()
+            .chain(guide["prelude"].as_array()?.iter())
+            .filter(|step| step["id"].as_str() == Some(step_id));
+        let step = authored.next()?;
+        if authored.next().is_some() {
+            return None;
+        }
+        let max_attempts = step["max_attempts"].as_u64()?;
+        let attempt = fields["step_attempts"].as_u64()?;
+        if attempt == 0 || attempt > max_attempts {
+            return None;
+        }
+        // A fresh native step scope starts at zero. Repeated publications of
+        // one receipt are not additional attempts; every new count must be +1.
+        let previous = counts.entry((stage, step_id)).or_insert(0_u64);
+        if attempt == *previous {
+            continue;
+        }
+        if attempt != previous.checked_add(1)? {
+            return None;
+        }
+        *previous = attempt;
+        misses.push(CountedContentMiss {
+            stage,
+            step_id,
+            kind: step["kind"].as_str()?,
+            attempt,
+            max_attempts,
+            tick,
+        });
+    }
+    Some(misses)
+}
+
+fn counted_miss_status(
+    fields: &serde_json::Value,
+    tick: u64,
+    misses: &[CountedContentMiss<'_>],
+) -> bool {
+    fields["step_attempt_outcome"].as_str() == Some("content_miss")
+        && misses.iter().any(|miss| {
+            fields["stage"].as_str() == Some(miss.stage)
+                && fields["step_id"].as_str() == Some(miss.step_id)
+                && fields["step_attempts"].as_u64() == Some(miss.attempt)
+                && tick >= miss.tick
+        })
+}
+
 struct StepSettlement<'a> {
     begin: &'a RootStepTrace,
     settled: bool,
+    begins: u64,
+    failures: u64,
 }
 
 fn prior_started_steps_settled(
     events: &[(usize, RootStepTrace)],
     boundary: usize,
     status_steps: &[serde_json::Value],
+    misses: &[CountedContentMiss<'_>],
 ) -> Option<Vec<serde_json::Value>> {
     let mut steps = std::collections::BTreeMap::<(&str, &str), StepSettlement<'_>>::new();
-    for (_, event) in events.iter().filter(|entry| entry.0 < boundary) {
-        if event.repeated && (event.event == "begin" || event.event.starts_with("failed:")) {
-            return None;
+    for (index, event) in events {
+        let key = (event.stage.as_str(), event.step_id.as_str());
+        // Native repeat summaries flush at the park, after a wait gap began.
+        // They can only extend an original step observed before the boundary.
+        if *index >= boundary && (!event.repeated || !steps.contains_key(&key)) {
+            continue;
         }
         match event.event.as_str() {
             "begin" => {
-                let key = (event.stage.as_str(), event.step_id.as_str());
-                if steps
-                    .insert(
+                if let Some(step) = steps.get_mut(&key) {
+                    if step.begin.kind != event.kind
+                        || (!event.repeated && (step.settled || step.begins != step.failures))
+                    {
+                        return None;
+                    }
+                    step.begins = step.begins.checked_add(u64::from(event.occurrences))?;
+                } else {
+                    if event.repeated {
+                        return None;
+                    }
+                    steps.insert(
                         key,
                         StepSettlement {
                             begin: event,
                             settled: false,
+                            begins: 1,
+                            failures: 0,
                         },
-                    )
-                    .is_some()
+                    );
+                }
+            }
+            "failed: content miss" => {
+                let step = steps.get_mut(&key)?;
+                if step.begin.kind != event.kind
+                    || (event.repeated && step.failures == 0)
+                    || (!event.repeated
+                        && (step.settled || step.begins != step.failures.checked_add(1)?))
                 {
                     return None;
                 }
+                step.failures = step.failures.checked_add(u64::from(event.occurrences))?;
             }
             outcome if outcome.starts_with("failed:") => return None,
             "settled" => {
@@ -589,16 +714,40 @@ fn prior_started_steps_settled(
             _ => {}
         }
     }
-    for step in steps.values_mut().filter(|step| !step.settled) {
-        if !status_steps.iter().any(|status| {
-            status["stage"].as_str() == Some(step.begin.stage.as_str())
-                && status["step_id"].as_str() == Some(step.begin.step_id.as_str())
-                && status["kind"].as_str() == Some(step.begin.kind.as_str())
-                && status["settled"].as_bool() == Some(true)
-        }) {
+    for step in steps.values_mut() {
+        let matching = misses.iter().filter(|miss| {
+            miss.stage == step.begin.stage
+                && miss.step_id == step.begin.step_id
+                && miss.kind == step.begin.kind
+        });
+        let mut total = 0;
+        for miss in matching {
+            total += 1;
+            if step.begins > miss.max_attempts {
+                return None;
+            }
+        }
+        if total != step.failures || step.begins != step.failures.checked_add(1)? {
             return None;
         }
-        step.settled = true;
+        if !step.settled {
+            if !status_steps.iter().any(|status| {
+                status["stage"].as_str() == Some(step.begin.stage.as_str())
+                    && status["step_id"].as_str() == Some(step.begin.step_id.as_str())
+                    && status["kind"].as_str() == Some(step.begin.kind.as_str())
+                    && status["settled"].as_bool() == Some(true)
+            }) {
+                return None;
+            }
+            step.settled = true;
+        }
+    }
+    if misses.iter().any(|miss| {
+        !steps
+            .get(&(miss.stage, miss.step_id))
+            .is_some_and(|step| step.begin.kind == miss.kind && miss.attempt <= step.failures)
+    }) {
+        return None;
     }
     Some(
         steps
@@ -742,6 +891,7 @@ fn no_step_state_proof(
     quest: &str,
     account: &str,
     receipt: &serde_json::Value,
+    misses: &[CountedContentMiss<'_>],
 ) -> Option<serde_json::Value> {
     let evidence = receipt.get("gap_state_evidence")?;
     let guide = &evidence["guide"];
@@ -770,14 +920,17 @@ fn no_step_state_proof(
         if fields["quest_id"].as_str() != Some(quest) {
             continue;
         }
+        let content_miss = counted_miss_status(fields, tick, misses);
         if status["run"].as_str() != Some(final_run)
-            || fields
-                .get("last_failure")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|failure| !failure.is_empty() && failure != gap.park_reason)
-            || fields
-                .get("attempts")
-                .is_some_and(|attempts| attempts.as_u64() != Some(0))
+            || (!content_miss
+                && (fields
+                    .get("last_failure")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|failure| !failure.is_empty() && failure != gap.park_reason)
+                    || fields
+                        .get("attempts")
+                        .is_some_and(|attempts| attempts.as_u64() != Some(0))
+                    || fields.get("step_attempt_outcome").is_some()))
         {
             return None;
         }
@@ -791,7 +944,7 @@ fn no_step_state_proof(
         {
             continue;
         }
-        if fields["attempts"].as_u64() != Some(0) {
+        if fields["attempts"].as_u64() != Some(0) && !content_miss {
             return None;
         }
         let sequence_index = usize::try_from(fields["sequence"].as_u64()?).ok()?;
@@ -954,16 +1107,22 @@ fn prove_actor_gap(
             parse_root_step_trace(quest, message).map(|event| (index, event))
         })
         .collect::<Vec<_>>();
+    let misses = counted_content_misses(quest, receipt)?;
     if root_events.iter().any(|(index, event)| {
-        *index < context_index
-            && event.repeated
-            && (event.event == "begin" || event.event.starts_with("failed:"))
+        *index >= context_index
+            || (event.repeated
+                && (event.event == "begin" || event.event.starts_with("failed:"))
+                && !misses.iter().any(|miss| {
+                    miss.stage == event.stage
+                        && miss.step_id == event.step_id
+                        && miss.kind == event.kind
+                }))
     }) {
         return None;
     }
 
     let state_proof = if gap.park_reason == "no step for stage" {
-        Some(no_step_state_proof(gap, quest, account, receipt)?)
+        Some(no_step_state_proof(gap, quest, account, receipt, &misses)?)
     } else {
         None
     };
@@ -1009,7 +1168,7 @@ fn prove_actor_gap(
             {
                 return None;
             }
-            prior_started_steps_settled(&root_events, target_begin.0, &[])?
+            prior_started_steps_settled(&root_events, target_begin.0, &[], &misses)?
         }
         "no step for stage" => {
             let expected_stage = gap.stage.as_deref()?;
@@ -1022,18 +1181,23 @@ fn prove_actor_gap(
                 &root_events,
                 context_index,
                 if trace_truncated { state_steps } else { &[] },
+                &misses,
             )?;
             let anchor_begin = root_events.iter().find(|(index, event)| {
                 *index < context_index
                     && event.stage == expected_stage
                     && event.step_id == gap.step_id
                     && event.event == "begin"
+                    && !event.repeated
             });
             if (!trace_truncated && anchor_begin.is_none())
                 || anchor_begin.is_some_and(|(begin, _)| {
-                    root_events
-                        .iter()
-                        .any(|(index, event)| *index > *begin && event.event == "begin")
+                    root_events.iter().any(|(index, event)| {
+                        *index > *begin
+                            && event.event == "begin"
+                            && !event.repeated
+                            && (event.stage != expected_stage || event.step_id != gap.step_id)
+                    })
                 })
             {
                 return None;
@@ -1061,6 +1225,7 @@ fn prove_actor_gap(
         "prior_steps": prior_steps,
         "step_observations": receipt["step_observations"],
         "state_evidence": state_proof,
+        "counted_content_misses": misses,
         "final_status": final_status,
     }))
 }
@@ -1622,13 +1787,13 @@ mod campaign_gap_tests {
                 .collect::<Vec<_>>()
         };
         let ordered = events(&[begin_0, settle_1, begin_1, settle_peer]);
-        let proof = prior_started_steps_settled(&ordered, usize::MAX, &[])
+        let proof = prior_started_steps_settled(&ordered, usize::MAX, &[], &[])
             .expect("sequential reused IDs have unambiguous advancing settlements");
         assert_eq!(proof.len(), 2);
         assert_eq!(proof[0]["stage"], "viking:0");
         assert_eq!(proof[1]["stage"], "viking:1");
         let ambiguous = events(&[begin_0, begin_1, settle_1, settle_peer]);
-        assert!(prior_started_steps_settled(&ambiguous, usize::MAX, &[]).is_none());
+        assert!(prior_started_steps_settled(&ambiguous, usize::MAX, &[], &[]).is_none());
     }
 
     fn receipts(actor: serde_json::Value) -> std::collections::BTreeMap<String, serde_json::Value> {
@@ -1637,6 +1802,236 @@ mod campaign_gap_tests {
 
     fn error_result() -> Result<serde_json::Value, String> {
         Err(format!("{ACCOUNT} Quester parked/blocked: phase Blocked"))
+    }
+
+    fn counted_miss_packet(
+        no_step: bool,
+    ) -> (CampaignGap, Vec<serde_json::Value>, serde_json::Value) {
+        let mut actor = no_step_receipt();
+        let mut evidence = actor["gap_state_evidence"].take();
+        let gap = if no_step {
+            CampaignGap {
+                step_id: PRIOR_STEP.into(),
+                park_reason: "no step for stage".into(),
+                stage: Some(STAGE.into()),
+            }
+        } else {
+            actor = actor_receipt(GAP_STEP, "wait exhausted", STAGE);
+            wait_gap()
+        };
+        let authored = &mut evidence["guide"]["sequences"][0]["steps"][1];
+        authored["kind"] = serde_json::json!("interact");
+        authored["max_attempts"] = serde_json::json!(3);
+        let row = |tick, attempt| {
+            let mut fields = serde_json::json!({
+                "quest_id": QUEST, "stage": STAGE, "step_id": PRIOR_STEP,
+                "sequence": 0, "step_index": 1, "needs_read": "False",
+                "action_state": "working", "attempts": attempt,
+                "step_attempts": attempt,
+            });
+            if attempt > 0 {
+                fields["step_attempt_outcome"] = serde_json::json!("content_miss");
+                fields["last_failure"] = serde_json::json!("content miss");
+            }
+            serde_json::json!({
+                "tick": tick,
+                "status": {
+                    "run": actor["final_status"]["run"], "phase": "Working", "fields": fields,
+                },
+            })
+        };
+        evidence["statuses"] = serde_json::json!([
+            row(10, 0), row(11, 1), row(12, 1), row(13, 2),
+            {"tick": 42, "status": actor["final_status"]},
+        ]);
+        evidence["end_state"]["status"] = actor["final_status"].clone();
+        actor["gap_state_evidence"] = evidence;
+        let mut logs = vec![
+            log(&format!("quester {QUEST}: run start stage={STAGE}")),
+            log(&format!(
+                "quester {QUEST}: stage {STAGE} step {PRIOR_STEP} (interact) begin"
+            )),
+            log(&format!(
+                "quester {QUEST}: stage {STAGE} step {PRIOR_STEP} (interact) failed: content miss"
+            )),
+            log(&format!(
+                "quester {QUEST}: stage {STAGE} step {PRIOR_STEP} (interact) settled"
+            )),
+        ];
+        if !no_step {
+            logs.extend([
+                log(&format!(
+                    "quester {QUEST}: stage {STAGE} step {GAP_STEP} (wait) begin"
+                )),
+                log(&format!(
+                    "quester {QUEST}: stage {STAGE} step {GAP_STEP} (wait) failed: wait exhausted"
+                )),
+            ]);
+        }
+        // The native trace emits each distinct line once, then flushes these
+        // additional-occurrence summaries immediately before the park.
+        logs.extend([
+            log(&format!(
+                "quester {QUEST}: stage {STAGE} step {PRIOR_STEP} (interact) begin (repeated 2 additional times)"
+            )),
+            log(&format!(
+                "quester {QUEST}: stage {STAGE} step {PRIOR_STEP} (interact) failed: content miss (repeated 1 additional times)"
+            )),
+            log(&format!(
+                "quester {QUEST}: park context step={} child_recipe= child=",
+                if no_step { "first-skipped-step" } else { GAP_STEP }
+            )),
+            log(&format!("quester {QUEST}: park: {}", gap.park_reason)),
+        ]);
+        (gap, logs, actor)
+    }
+
+    #[test]
+    fn counted_content_misses_within_budget_prove_both_gap_kinds() {
+        for no_step in [false, true] {
+            let (gap, logs, actor) = counted_miss_packet(no_step);
+            let proof = campaign_gap_proof(
+                &error_result(),
+                &[Some(gap)],
+                QUEST,
+                &logs,
+                &receipts(actor),
+            )
+            .expect("two native content misses followed by settlement fit a three-attempt budget");
+            let misses = proof["accounts"][0]["counted_content_misses"]
+                .as_array()
+                .unwrap();
+            assert_eq!(
+                misses.len(),
+                2,
+                "duplicate status publications are not new attempts"
+            );
+            assert_eq!(misses[0]["attempt"], 1);
+            assert_eq!(misses[1]["attempt"], 2);
+            assert_eq!(misses[1]["max_attempts"], 3);
+        }
+    }
+
+    #[test]
+    fn counted_content_misses_do_not_waive_other_failure_classes() {
+        for no_step in [false, true] {
+            for failure in [
+                "dialogue open failed",
+                "walk failed",
+                "transport failed",
+                "harness failed",
+                "infrastructure failed",
+                "step settle timeout",
+            ] {
+                let (gap, mut logs, actor) = counted_miss_packet(no_step);
+                logs[2] = log(&format!(
+                    "quester {QUEST}: stage {STAGE} step {PRIOR_STEP} (interact) failed: {failure}"
+                ));
+                assert!(
+                    campaign_gap_proof(
+                        &error_result(),
+                        &[Some(gap)],
+                        QUEST,
+                        &logs,
+                        &receipts(actor)
+                    )
+                    .is_none(),
+                    "{failure} must not inherit a content-miss allowance"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn counted_content_misses_require_exact_native_and_authored_authority() {
+        for no_step in [false, true] {
+            for mutation in [
+                "missing evidence",
+                "missing budget",
+                "over budget",
+                "no successful attempt left",
+                "missing outcome",
+                "unknown outcome",
+                "missing counter",
+                "wrong run",
+                "wrong step",
+                "wrong stage",
+                "counter jump",
+                "counter reversal",
+                "missing failure event",
+                "unaccounted begin",
+                "extra content miss",
+                "wrong root kind",
+            ] {
+                let (gap, mut logs, mut actor) = counted_miss_packet(no_step);
+                let evidence = &mut actor["gap_state_evidence"];
+                match mutation {
+                    "missing evidence" => *evidence = serde_json::Value::Null,
+                    "missing budget" => evidence["guide"]["sequences"][0]["steps"][1]["max_attempts"] =
+                        serde_json::Value::Null,
+                    "over budget" => evidence["guide"]["sequences"][0]["steps"][1]["max_attempts"] =
+                        serde_json::json!(1),
+                    "no successful attempt left" =>
+                        evidence["guide"]["sequences"][0]["steps"][1]["max_attempts"] =
+                            serde_json::json!(2),
+                    "missing outcome" | "unknown outcome" | "missing counter" | "wrong run"
+                    | "wrong step" | "wrong stage" => {
+                        for row in &mut evidence["statuses"].as_array_mut().unwrap()[1..=3] {
+                            let status = &mut row["status"];
+                            match mutation {
+                                "missing outcome" => {
+                                    status["fields"].as_object_mut().unwrap()
+                                        .remove("step_attempt_outcome");
+                                }
+                                "unknown outcome" => status["fields"]["step_attempt_outcome"] =
+                                    serde_json::json!("operational_failure"),
+                                "missing counter" => status["fields"]["step_attempts"] =
+                                    serde_json::Value::Null,
+                                "wrong run" => status["run"] = serde_json::json!("another run"),
+                                "wrong step" => status["fields"]["step_id"] =
+                                    serde_json::json!("later-step"),
+                                "wrong stage" => status["fields"]["stage"] =
+                                    serde_json::json!("viking:0"),
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
+                    "counter jump" => {
+                        evidence["guide"]["sequences"][0]["steps"][1]["max_attempts"] =
+                            serde_json::json!(4);
+                        evidence["statuses"][3]["status"]["fields"]["step_attempts"] =
+                            serde_json::json!(3);
+                    }
+                    "counter reversal" => evidence["statuses"][3]["status"]["fields"]["step_attempts"] =
+                        serde_json::json!(0),
+                    "missing failure event" => { logs.remove(2); }
+                    "unaccounted begin" => logs.push(log(&format!(
+                        "quester {QUEST}: stage {STAGE} step {PRIOR_STEP} (interact) begin"
+                    ))),
+                    "extra content miss" => {
+                        let mut extra = evidence["statuses"][3].clone();
+                        extra["tick"] = serde_json::json!(14);
+                        extra["status"]["fields"]["step_attempts"] = serde_json::json!(3);
+                        evidence["statuses"].as_array_mut().unwrap().insert(4, extra);
+                    }
+                    "wrong root kind" => logs[2] = log(&format!(
+                        "quester {QUEST}: stage {STAGE} step {PRIOR_STEP} (walk) failed: content miss"
+                    )),
+                    _ => unreachable!(),
+                }
+                assert!(
+                    campaign_gap_proof(
+                        &error_result(),
+                        &[Some(gap)],
+                        QUEST,
+                        &logs,
+                        &receipts(actor)
+                    )
+                    .is_none(),
+                    "{mutation} must fail closed (no_step={no_step})"
+                );
+            }
+        }
     }
 
     #[test]
