@@ -184,7 +184,8 @@ enum Job {
         deadline: Duration,
     },
     /// `bankPace`: the evidence accepted at the first poll; settles on the
-    /// next observed game tick of that run and session.
+    /// next observed game tick of that run. A kept reconnect holds the pause
+    /// and re-accepts it on the new session's first observed tick.
     Pace {
         accepted: Option<EvidenceStamp>,
     },
@@ -192,6 +193,12 @@ enum Job {
     Backpack(BackpackWait),
     /// `sortBank`.
     Sort(ActionHandle<Sort>),
+    /// A sort held across a kept reconnect; it resumes at its cursor and
+    /// reports its retained progress through the closed-bank path.
+    ResumeSort {
+        kind: NativeKind,
+        handle: ActionHandle<Sort>,
+    },
     /// Post one synchronous `log` notification, then continue with `then`.
     Log {
         message: String,
@@ -791,9 +798,17 @@ impl BankRow {
                         };
                         return Poll::Pending;
                     };
-                    if now.run != accepted.run {
-                        // A replaced session ends the pause without a game tick.
+                    if now.run.slot != accepted.run.slot || now.run.run != accepted.run.run {
+                        // Another run never inherits this pause.
                         return Poll::Ready(Err(ActionError::Cancelled));
+                    }
+                    if now.run.session != accepted.run.session {
+                        // A kept reconnect holds the request: the pause
+                        // restarts on the new session's own observed ticks.
+                        self.job = Job::Pace {
+                            accepted: Some(now),
+                        };
+                        return Poll::Pending;
                     }
                     if now.tick > accepted.tick {
                         return Poll::Ready(Ok(Value::Null));
@@ -861,18 +876,31 @@ impl BankRow {
                     }
                     Poll::Ready(Ok(value)) => return Poll::Ready(Ok(value)),
                     // A replaced session or a cancelled owner ends the sort
-                    // as the upstream closed-bank round does.
+                    // as the upstream closed-bank round does, with the
+                    // progress the machine retained.
                     Poll::Ready(Err(ActionError::Stale | ActionError::Cancelled)) => {
-                        return Poll::Ready(Ok(json!({
-                            "sorted": false,
-                            "moves": 0,
-                            "mode": null,
-                            "unmatched": [],
-                            "reason": "bank closed",
-                        })));
+                        return Poll::Ready(Ok(handle
+                            .inspect(Sort::closed_result)
+                            .unwrap_or_else(Sort::closed_empty)));
                     }
                     Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 },
+                Job::ResumeSort { kind, mut handle } => {
+                    match actions.resume_kept(kind, &mut handle, cx) {
+                        Ok(()) => self.job = Job::Sort(handle),
+                        Err(
+                            ActionError::Held | ActionError::Busy | ActionError::BudgetExhausted,
+                        ) => {
+                            self.job = Job::ResumeSort { kind, handle };
+                            return Poll::Pending;
+                        }
+                        Err(_) => {
+                            return Poll::Ready(Ok(handle
+                                .inspect(Sort::closed_result)
+                                .unwrap_or_else(Sort::closed_empty)));
+                        }
+                    }
+                }
                 Job::Log {
                     message,
                     asked,
@@ -1000,6 +1028,36 @@ fn same_backpack(side: &[ItemView], expected: &[BankPackRow]) -> bool {
         })
 }
 
+impl Job {
+    /// A resumable bank request across a kept reconnect (contract v5 R5-7,
+    /// R5-8.5): request state is held, session-bound primitives are re-keyed
+    /// or revalidated on the new session.
+    fn held_across_kept_reconnect(self, kind: NativeKind) -> Job {
+        match self {
+            Job::Opening(handle) | Job::ResumeOpening { handle, .. } => {
+                Job::ResumeOpening { kind, handle }
+            }
+            Job::Transfer(handle) | Job::ResumeTransfer { handle, .. } => {
+                Job::ResumeTransfer { kind, handle }
+            }
+            Job::ReturnWalk { handle, deadline } => {
+                // The old primitive belongs to the dropped session. Retain
+                // the trip's return cursor and deadline, then revalidate a
+                // fresh follow.
+                drop(handle);
+                Job::Return {
+                    deadline: Some(deadline),
+                }
+            }
+            // A sort keeps its progress: the resumed machine sees the dropped
+            // bank session and settles as a closed-bank round with the moves
+            // it already sent.
+            Job::Sort(handle) | Job::ResumeSort { handle, .. } => Job::ResumeSort { kind, handle },
+            job => job,
+        }
+    }
+}
+
 impl SlotScript {
     pub(super) fn bank_session_boundary(&mut self, reconnect: bool) {
         if let Some(bank) = &mut self.bank {
@@ -1019,36 +1077,8 @@ impl SlotScript {
                     }) else {
                         continue;
                     };
-                    row.job = match std::mem::replace(&mut row.job, Job::Finished) {
-                        Job::Opening(handle) | Job::ResumeOpening { handle, .. } => {
-                            Job::ResumeOpening { kind, handle }
-                        }
-                        Job::Transfer(handle) | Job::ResumeTransfer { handle, .. } => {
-                            Job::ResumeTransfer { kind, handle }
-                        }
-                        Job::ReturnWalk { handle, deadline } => {
-                            // The old primitive belongs to the dropped
-                            // session. Retain the trip's return cursor and
-                            // deadline, then revalidate a fresh follow.
-                            drop(handle);
-                            Job::Return {
-                                deadline: Some(deadline),
-                            }
-                        }
-                        // A sort's drags and arrange varp belong to the
-                        // dropped bank session; end as a closed-bank round.
-                        Job::Sort(handle) => {
-                            drop(handle);
-                            Job::Settled(json!({
-                                "sorted": false,
-                                "moves": 0,
-                                "mode": null,
-                                "unmatched": [],
-                                "reason": "bank closed",
-                            }))
-                        }
-                        job => job,
-                    };
+                    let job = std::mem::replace(&mut row.job, Job::Finished);
+                    row.job = job.held_across_kept_reconnect(kind);
                 }
             } else {
                 bank.clear_work();

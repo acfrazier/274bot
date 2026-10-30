@@ -91,13 +91,23 @@ enum Phase {
 
 impl Sort {
     fn result(&self) -> Value {
-        json!({
-            "sorted": self.sorted,
-            "moves": self.sent,
-            "mode": self.mode.map(mode_name),
-            "unmatched": self.unmatched,
-            "reason": self.reason,
-        })
+        sort_result(
+            self.sorted,
+            self.sent,
+            self.mode,
+            &self.unmatched,
+            self.reason,
+        )
+    }
+
+    /// The closed-bank round with the progress this sort already made.
+    pub(crate) fn closed_result(&self) -> Value {
+        sort_result(false, self.sent, self.mode, &self.unmatched, "bank closed")
+    }
+
+    /// The closed-bank round of a sort whose machine is already gone.
+    pub(crate) fn closed_empty() -> Value {
+        sort_result(false, 0, None, &[], "bank closed")
     }
 
     fn idle(&mut self, reason: &'static str) -> Value {
@@ -218,6 +228,14 @@ impl NativeMachine for Sort {
             }
         }
         loop {
+            // A dropped bank session (closed bank, kept reconnect) ends every
+            // in-session phase with the progress already made; restoring the
+            // arrange mode needs the open bank and is skipped.
+            if !matches!(self.phase, Phase::Start | Phase::Restore | Phase::Done)
+                && !self.same_session(cx)
+            {
+                return Poll::Ready(Ok(self.closed_result()));
+            }
             match self.phase {
                 Phase::Start => {
                     let snapshot = cx.snapshot();
@@ -243,11 +261,6 @@ impl NativeMachine for Sort {
                         self.reason = "round limit";
                         self.phase = Phase::Restore;
                         continue;
-                    }
-                    if !self.same_session(cx) {
-                        self.reason = "bank closed";
-                        self.sorted = false;
-                        return Poll::Ready(Ok(self.result()));
                     }
                     let planned = match self.plan(cx) {
                         Ok(planned) => planned,
@@ -336,11 +349,6 @@ impl NativeMachine for Sort {
                     }
                 }
                 Phase::Drag { mv, to_go } => {
-                    if !self.same_session(cx) {
-                        self.reason = "bank closed";
-                        self.sorted = false;
-                        return Poll::Ready(Ok(self.result()));
-                    }
                     if cx.interaction_event_spent() {
                         return Poll::Pending;
                     }
@@ -439,6 +447,31 @@ impl NativeMachine for Sort {
             }
         }
     }
+}
+
+/// The `BankSortResult` value as the seat terminal carries it. The bounded
+/// channel codec allows at most [`crate::channel::MAX_COLLECTION`] entries per
+/// array and a full 288-row bank can hold more unmatched ids, so `unmatched`
+/// travels as consecutive chunks; `bank_sort.js` joins them with one
+/// `Array.prototype.flat()`.
+fn sort_result(
+    sorted: bool,
+    moves: u32,
+    mode: Option<BankSortMode>,
+    unmatched: &[i32],
+    reason: &'static str,
+) -> Value {
+    let chunks: Vec<Value> = unmatched
+        .chunks(crate::channel::MAX_COLLECTION)
+        .map(|chunk| json!(chunk))
+        .collect();
+    json!({
+        "sorted": sorted,
+        "moves": moves,
+        "mode": mode.map(mode_name),
+        "unmatched": chunks,
+        "reason": reason,
+    })
 }
 
 /// Upstream `BankSortMode` strings (`bankSortPlan.ts:4`).

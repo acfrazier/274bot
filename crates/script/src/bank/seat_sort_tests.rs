@@ -298,3 +298,30 @@ fn sort_restores_the_original_arrange_mode() {
     assert_eq!(value["sorted"], true);
     assert_eq!(value["mode"], "swap");
 }
+
+/// A valid 288-row bank can leave more than the channel's 128-entry array
+/// limit unmatched; the result still crosses the seat channel intact.
+#[test]
+fn sort_results_with_more_unmatched_ids_than_one_channel_array_transport() {
+    for count in [128_usize, 129, 288] {
+        let ids: Vec<i32> = (0..count as i32).map(|id| 30_000 + id).collect();
+        let value = sort_result(false, 7, Some(BankSortMode::Insert), &ids, "no progress");
+        let bytes = crate::channel::encode(&value)
+            .unwrap_or_else(|error| panic!("{count} unmatched ids encode: {error}"));
+        let decoded = crate::channel::decode(&bytes).expect("the result decodes");
+        let joined: Vec<f64> = decoded["unmatched"]
+            .as_array()
+            .expect("chunks")
+            .iter()
+            .flat_map(|chunk| chunk.as_array().expect("one chunk").iter())
+            .map(|id| id.as_f64().expect("an id"))
+            .collect();
+        assert_eq!(
+            joined,
+            ids.iter().map(|&id| f64::from(id)).collect::<Vec<_>>()
+        );
+        assert_eq!(decoded["moves"].as_f64(), Some(7.0));
+        assert_eq!(decoded["mode"], "insert");
+        assert_eq!(decoded["reason"], "no progress");
+    }
+}
