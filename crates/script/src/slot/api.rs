@@ -241,12 +241,8 @@ impl SlotScript {
     }
 
     fn compat_walk_run_is_current(&self, run: RunKey) -> bool {
-        let current = self.native_run().unwrap_or(RunKey {
-            slot: self.incarnation,
-            run: self.runtime_generation,
-            session: self.work_epoch,
-        });
-        current == run
+        let current = self.native_run().or_else(|| self.seat_run());
+        current == Some(run)
             && matches!(
                 self.work_scope(),
                 Some(api::identity::Scope::Slot(key)) if key.incarnation().get() == run.slot

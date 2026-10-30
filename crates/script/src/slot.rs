@@ -705,6 +705,13 @@ impl SlotScript {
     pub fn local_state(&self) -> Option<&Arc<crate::local_state::SlotState>> {
         self.local_state.as_ref()
     }
+
+    /// The gameplay owner's key, including its actual host session.
+    /// Scene-only work invalidation does not replace this key.
+    pub fn seat_run(&self) -> Option<api::selected::RunKey> {
+        self.seat.as_ref().map(|seat| seat.run())
+    }
+
     /// The logical evidence run retained across scene reloads and an internal
     /// WalkTo generation. A connection boundary or replacement Start revokes it.
     pub fn manual_route_run(&self) -> Option<api::selected::RunKey> {
@@ -717,6 +724,7 @@ impl SlotScript {
         let run = self
             .manual_route_run()
             .or_else(|| self.native_run())
+            .or_else(|| self.seat_run())
             .unwrap_or(api::selected::RunKey {
                 slot: self.incarnation,
                 run: self.runtime_generation,
@@ -779,11 +787,14 @@ impl SlotScript {
         run: api::selected::RunKey,
         observation: &api::prereq_knowledge::RefusalObservation,
     ) -> bool {
-        let current = self.native_run().unwrap_or(api::selected::RunKey {
-            slot: self.incarnation,
-            run: self.runtime_generation,
-            session: self.work_epoch,
-        });
+        let current = self
+            .native_run()
+            .or_else(|| self.seat_run())
+            .unwrap_or(api::selected::RunKey {
+                slot: self.incarnation,
+                run: self.runtime_generation,
+                session: self.work_epoch,
+            });
         // A scene-only down observation advances the work epoch, not this
         // logical route. Actual owner boundaries clear the retained run.
         let manual_current = self.manual_route_run() == Some(run) && current.slot == run.slot;

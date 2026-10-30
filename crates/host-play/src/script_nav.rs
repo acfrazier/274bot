@@ -4389,11 +4389,14 @@ fn route_quest_context_with_data(
     let api::identity::Scope::Slot(key) = slot.work_scope()? else {
         return None;
     };
-    let run = slot.native_run().unwrap_or(api::selected::RunKey {
-        slot: key.incarnation().get(),
-        run: slot.runtime_generation(),
-        session: slot.work_epoch(),
-    });
+    let run = slot
+        .native_run()
+        .or_else(|| slot.seat_run())
+        .unwrap_or(api::selected::RunKey {
+            slot: key.incarnation().get(),
+            run: slot.runtime_generation(),
+            session: slot.work_epoch(),
+        });
     Some(RouteQuestContext {
         prereq_catalog: selected.try_prereq_steps(),
         selected,
