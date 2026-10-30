@@ -5777,6 +5777,7 @@ fn dialogue_open_clock_starts_after_approaching_the_npc() {
         emitted(&ledger),
         InteractReq::Npc { index: Some(7), .. }
     ));
+    accept_last(&mut ledger, 32, true);
     // Talk-to is sent at tick 32 after the long approach; only now does the
     // four-observed-tick open budget start. Captain Siad similarly writes this
     // game message before `p_delay(2)` and its first chat page

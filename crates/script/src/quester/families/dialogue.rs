@@ -507,9 +507,9 @@ impl NativeMachine for Dialogue {
                     return Poll::Ready(self.approach_failure());
                 };
                 if target.distance <= 2 && talk_reachable(cx, target.tile) {
-                    std::task::ready!(crate::native::defer_budget(self.open(cx)))?;
                     cx.cancel_request(self.walk_request_id);
                     self.walk_request_id = 0;
+                    std::task::ready!(crate::native::defer_budget(self.open(cx)))?;
                     return Poll::Pending;
                 }
                 let route_finished =
