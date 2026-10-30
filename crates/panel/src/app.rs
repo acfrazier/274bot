@@ -109,6 +109,17 @@ pub fn runner_config() -> window::PanelConfig {
     }
 }
 
+fn render_fixture_config(redraw: RedrawMode) -> window::PanelConfig {
+    // The memory fixture opens MultiBox after startup. Keep the recorder's
+    // first frame at that final geometry instead of exercising resize drops.
+    let (width, height) = os_window_size(true);
+    window::PanelConfig {
+        window_size: (f64::from(width), f64::from(height)),
+        redraw,
+        ..runner_config()
+    }
+}
+
 /// Apply the panel's single physical layout scale to ImGui's style and font.
 /// Call on an unscaled theme style; monitor changes restore that baseline first.
 pub fn apply_ui_scale(style: &mut dear_imgui_rs::Style, dpi: f32) {
@@ -8129,10 +8140,10 @@ fn run_panel_inner(
     let running = Rc::new(RefCell::new(running));
     let mut presented = false;
 
-    let mut cfg = runner_config();
-    if let Some(redraw) = redraw_override {
-        cfg.redraw = redraw;
-    }
+    let mut cfg = match redraw_override {
+        Some(redraw) => render_fixture_config(redraw),
+        None => runner_config(),
+    };
     let mut window_title = running
         .borrow()
         .as_ref()

@@ -1268,6 +1268,22 @@ fn runner_config_docks_without_viewports() {
     assert_eq!(c.window_size, (BASE_WINDOW_W as f64, BASE_WINDOW_H as f64));
 }
 
+#[test]
+fn headed_recording_fixture_starts_at_rail_open_geometry() {
+    let config = render_fixture_config(RedrawMode::WaitUntil { fps: 5.0 });
+    assert_eq!(
+        config.window_size,
+        (f64::from(BASE_WINDOW_W + RAIL_W), f64::from(BASE_WINDOW_H))
+    );
+    assert!(matches!(config.redraw, RedrawMode::WaitUntil { fps } if fps == 5.0));
+    assert!(!config.restore_previous_geometry);
+    assert_eq!(
+        runner_config().window_size,
+        (f64::from(BASE_WINDOW_W), f64::from(BASE_WINDOW_H)),
+        "ordinary panel startup must not inherit fixture geometry"
+    );
+}
+
 /// The panel's OS window for the M-003 rail-fit tests: a
 /// [`FakeFrame`](crate::test_support::FakeFrame) on a fixed work area,
 /// fitted through the production glue.
