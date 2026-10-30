@@ -27401,7 +27401,10 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
 }
 
 #[test]
-fn host_npc_hop_recovery_retargets_and_clears_after_landing() {
+fn host_gated_npc_hop_recovery_uses_retained_route_evidence() {
+    use nav_planner::quest_gates::QuestGates;
+    use nav_planner::test_support::{family, range, tbwt_evidence, window};
+
     let mut c = nav_client();
     {
         let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
@@ -27454,17 +27457,26 @@ fn host_npc_hop_recovery_retargets_and_clears_after_landing() {
         worn_req: Vec::new(),
         members_req: false,
         wildy_cap: None,
-        quest_gates: None,
+        quest_gates: Some(
+            QuestGates::new(family(1), [window("tbwt", "tbwt_main", Some(3), Some(3))])
+            .expect("typed gated NPC crossing"),
+        ),
     };
-    let route = Route {
+    let route = Arc::new(Route {
         legs: vec![Leg::Transport {
             edge: Box::new(edge.clone()),
         }],
         dest: edge.to,
         ticks: 1.0,
-    };
+    });
     let mut arm = WalkArm {
-        route: Some(Arc::new(route)),
+        route: Some(Arc::clone(&route)),
+        basis: Some(Arc::new(crate::admission::RouteBasis {
+            _route: crate::walk_plan::RoutePath::legacy(route),
+            options: FindOptions::default(),
+            avoid: Arc::from([]),
+            quest_evidence: Some(tbwt_evidence(range(Some(3), Some(3)))),
+        })),
         ..Default::default()
     };
     let mut d = NavRec::default();
