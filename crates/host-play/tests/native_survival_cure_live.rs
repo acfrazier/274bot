@@ -47,6 +47,9 @@ const DESERT_STAGE_REPLY: &str = "get desertrescue: 3";
 const DESERT_CAPTAIN_OPENING_OPTIONS: [&str; 3] =
     ["Wow! A real captain!", "You there!", "Hey ugly!"];
 const POISON_CHAT: &str = "You have been poisoned!";
+// Poison Scorpion content declares severity 15 in content/scripts/_unpack/225/all.npc:2738-2767.
+// content/scripts/_test/scripts/cheats/cheat_other.rs2:1-3 queues poison_player for this account.
+const POISON_DEBUG_COMMAND: &str = "~poison 15";
 const CURE_CHAT: &str = "You drink some of your antipoison potion.";
 // Login arms one 30-tick poison timer, and its zero fire clears it.
 // One extra observed game tick proves the clear: poison.rs2:20-23,69-75.
@@ -508,7 +511,7 @@ fn add_poison_steps(
     };
     let poison_witness = Arc::clone(&witness);
     let poison = scenario::Step {
-        name: "seed severity-27 poison after the controlled timer phase",
+        name: "invoke the severity-15 poison debug proc after the controlled timer phase",
         kind: scenario::StepKind::Perform {
             send: Box::new(move |client, snapshot| {
                 let mut witness = poison_witness.lock().expect("survival witness");
@@ -554,7 +557,7 @@ fn add_poison_steps(
                 if !active {
                     return false;
                 }
-                if !api::interact::cheat(client, "poison 27").is_sent() {
+                if !api::interact::cheat(client, POISON_DEBUG_COMMAND).is_sent() {
                     return false;
                 }
                 if witness.poison_during_provisioning {
@@ -569,8 +572,8 @@ fn add_poison_steps(
             }),
         },
         wait: scenario::Wait {
-            // poison.rs2:12-18 emits this content signal after the cheat seeds
-            // poison; the seed is run before the timer's first fire.
+            // The debug proc queues poison_player; poison.rs2:12-18 emits this content signal.
+            // The test runs before the timer's first fire.
             arm: scenario::Proof::FreshChat {
                 needle: POISON_CHAT,
             },
@@ -1353,7 +1356,7 @@ fn assert_common_cure(receipt: &Value, resumed_ticks: u64) {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, Engine L and isolated HOME"]
+#[ignore = "requires LIVE=1, Engine L debug procedures enabled (debug: true), and isolated HOME"]
 fn live_l_cure_when_needed_drains_willow_and_resumes_gatherer() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let mut cell = fixture(
@@ -1407,7 +1410,7 @@ fn live_l_cure_when_needed_drains_willow_and_resumes_gatherer() {
 static PATH_SOURCE_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
-#[ignore = "requires LIVE=1, Engine L and isolated HOME"]
+#[ignore = "requires LIVE=1, Engine L debug procedures enabled (debug: true), and isolated HOME"]
 fn live_l_cure_when_needed_quester_mines_copper_and_resumes_gather() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let _path_source_guard = PATH_SOURCE_LOCK.lock().expect("Quester path source lock");
@@ -1477,7 +1480,7 @@ fn live_l_cure_when_needed_quester_mines_copper_and_resumes_gather() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, Engine L and isolated HOME"]
+#[ignore = "requires LIVE=1, Engine L debug procedures enabled (debug: true), and isolated HOME"]
 fn live_l_cure_quester_interrupts_bank_provisioning_and_resumes_mining() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let _path_source_guard = PATH_SOURCE_LOCK.lock().expect("Quester path source lock");
@@ -1554,7 +1557,7 @@ fn live_l_cure_quester_interrupts_bank_provisioning_and_resumes_mining() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, Engine L and isolated HOME"]
+#[ignore = "requires LIVE=1, Engine L debug procedures enabled (debug: true), and isolated HOME"]
 fn live_l_cure_quester_dialogue_updates_policy_on_desert_captain_page() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let _path_source_guard = PATH_SOURCE_LOCK.lock().expect("Quester path source lock");
