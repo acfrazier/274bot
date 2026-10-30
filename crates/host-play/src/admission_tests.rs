@@ -790,9 +790,8 @@ fn u6_real_budget_one_corridor_still_runs_witness_and_named_retry() {
     assert_eq!(result.blocked.len(), 1);
     assert_eq!(
         result.refusal,
-        Some(WalkRefusal::NoRouteWithinBounds {
-            tried: 1,
-            last: None
+        Some(WalkRefusal::SearchIncomplete {
+            nodes_settled: None
         })
     );
     assert!(result.assessment.is_none());

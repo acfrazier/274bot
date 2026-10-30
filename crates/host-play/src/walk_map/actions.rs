@@ -68,6 +68,9 @@ pub enum ActionError {
     Stale,
     NoNavigation,
     NoPath,
+    SearchIncomplete {
+        detail: String,
+    },
     BlockedByZones {
         detail: Option<String>,
     },
@@ -103,6 +106,7 @@ impl fmt::Display for ActionError {
             Self::NoPath => {
                 f.write_str("No path to the selected destination with these routing options")
             }
+            Self::SearchIncomplete { detail } => write!(f, "Route search incomplete: {detail}"),
             Self::BlockedByZones { detail: Some(detail) } => write!(
                 f,
                 "{detail}; tick \"Route through danger zones\" to walk anyway"
@@ -134,6 +138,7 @@ impl ActionError {
             Self::Stale => "stale",
             Self::NoNavigation => "navigation unavailable",
             Self::NoPath => "no path",
+            Self::SearchIncomplete { .. } => "route search incomplete",
             Self::BlockedByZones { .. } => "blocked by danger zones",
             Self::InsufficientItems { .. } => "insufficient route supplies",
             Self::RiskRefused { .. } => "walk risk refused",
@@ -1026,25 +1031,25 @@ impl MapCommand {
             Some(name),
         );
         if let Err(crate::NoPath {
-            incomplete_search: true,
+            incomplete_search,
             refusal,
             detail,
             ..
         }) = &result
         {
-            let refusal = refusal.as_ref().copied().unwrap_or(
-                script::native::WalkRefusal::NoRouteWithinBounds {
-                    tried: 0,
-                    last: None,
-                },
-            );
-            return Err(ActionError::RiskRefused {
-                refusal,
-                detail: detail
-                    .as_deref()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| format!("{refusal:?}")),
-            });
+            if *incomplete_search
+                || matches!(
+                    refusal.as_ref(),
+                    Some(script::native::WalkRefusal::SearchIncomplete { .. })
+                )
+            {
+                return Err(ActionError::SearchIncomplete {
+                    detail: detail.as_deref().map(str::to_owned).unwrap_or_else(|| {
+                        "Search stopped before it could determine whether a route exists"
+                            .to_owned()
+                    }),
+                });
+            }
         }
         if let Err(crate::NoPath {
             detail,

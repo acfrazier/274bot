@@ -135,26 +135,39 @@ pub(crate) fn route(
         ..options
     };
     let mut outcome = search(options);
+    let incomplete_result = match &outcome {
+        crate::RouteOutcome::IncompleteSearch { search_result } => Some(*search_result),
+        _ => None,
+    };
     let mut tried = 0;
-    let blocked = if matches!(outcome, crate::RouteOutcome::NoPath)
-        && !admission.compat_v1
+    let blocked = if matches!(
+        &outcome,
+        crate::RouteOutcome::NoPath | crate::RouteOutcome::IncompleteSearch { .. }
+    ) && !admission.compat_v1
         && admission.policy != RiskPolicy::Proceed
     {
         witness().unwrap_or_default()
     } else {
         Vec::new()
     };
-    if matches!(outcome, crate::RouteOutcome::NoPath)
-        && admission.policy == RiskPolicy::Inherit
+    if matches!(
+        &outcome,
+        crate::RouteOutcome::NoPath | crate::RouteOutcome::IncompleteSearch { .. }
+    ) && admission.policy == RiskPolicy::Inherit
         && witness_admissible(world, &admission.input, &blocked)
     {
         if let Ok(zones) = ZoneExempt::named(&blocked).and_then(|named| options.zones.union(named))
         {
             tried = 1;
-            outcome = search(FindOptions { zones, ..options });
+            let retry = search(FindOptions { zones, ..options });
+            outcome = match (incomplete_result, retry) {
+                (Some(search_result), crate::RouteOutcome::NoPath) => {
+                    crate::RouteOutcome::IncompleteSearch { search_result }
+                }
+                (_, retry) => retry,
+            };
         }
     }
-    let incomplete_search = matches!(&outcome, crate::RouteOutcome::IncompleteSearch { .. });
     let route = match &outcome {
         crate::RouteOutcome::Routed(route) | crate::RouteOutcome::BankSession { route, .. } => {
             Some(route)
@@ -162,10 +175,15 @@ pub(crate) fn route(
         crate::RouteOutcome::IncompleteSearch { .. } | crate::RouteOutcome::NoPath => None,
     };
     let assessment = route.map(|route| assess(route, world, admission));
-    let refusal = if incomplete_search {
-        Some(WalkRefusal::NoRouteWithinBounds { tried, last: None })
-    } else {
-        match route.zip(assessment.as_ref()) {
+    let refusal = match &outcome {
+        crate::RouteOutcome::IncompleteSearch { search_result } => {
+            let nodes_settled = match search_result {
+                crate::walk_plan::RouteSearchResultKind::BudgetExhausted { settled } => *settled,
+                _ => None,
+            };
+            Some(WalkRefusal::SearchIncomplete { nodes_settled })
+        }
+        _ => match route.zip(assessment.as_ref()) {
             Some((route, assessment)) if !permits(route, world, admission, assessment) => {
                 Some(verdict_refusal(assessment.verdict))
             }
@@ -173,7 +191,7 @@ pub(crate) fn route(
                 Some(WalkRefusal::NoRouteWithinBounds { tried, last: None })
             }
             _ => None,
-        }
+        },
     };
     let blocked = if blocked.is_empty() && refusal.is_some() {
         assessment

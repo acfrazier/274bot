@@ -296,40 +296,49 @@ pub(super) fn route_or_bank_fetch(
 ) -> RouteOutcome {
     match find_with_avoid(&world.collision, &world.graph, from, to, opts, state, avoid) {
         Ok(route) => RouteOutcome::Routed(route),
-        Err(nav_planner::router::RouteError::BudgetExhausted) => RouteOutcome::IncompleteSearch {
-            search_result: RouteSearchResultKind::BudgetExhausted { settled: None },
-        },
-        Err(nav_planner::router::RouteError::NoPath) if opts.allow_bank_fetch => {
-            find_missing_item_reqs_with_avoid(
-                &world.collision,
-                &world.graph,
-                from,
-                to,
-                opts,
-                state,
-                avoid,
-            )
-            .and_then(|missing| {
-                plan_bank_fetch(
-                    &missing,
-                    state,
-                    &planning_rows(origin, bank, &missing),
-                    world.banks(),
-                    from,
-                    &world.collision,
-                    &world.graph,
-                    opts,
-                    avoid,
-                )
-                .ok()
+        Err(error) => {
+            let incomplete = error == nav_planner::router::RouteError::BudgetExhausted;
+            let fetched = opts.allow_bank_fetch
+                .then(|| {
+                    find_missing_item_reqs_with_avoid(
+                        &world.collision,
+                        &world.graph,
+                        from,
+                        to,
+                        opts,
+                        state,
+                        avoid,
+                    )
+                    .and_then(|missing| {
+                        plan_bank_fetch(
+                            &missing,
+                            state,
+                            &planning_rows(origin, bank, &missing),
+                            world.banks(),
+                            from,
+                            &world.collision,
+                            &world.graph,
+                            opts,
+                            avoid,
+                        )
+                        .ok()
+                    })
+                    .and_then(|fetch| session_route(world, from, to, fetch, opts, avoid))
+                })
+                .flatten();
+            fetched.unwrap_or_else(|| {
+                if incomplete {
+                    RouteOutcome::IncompleteSearch {
+                        search_result: RouteSearchResultKind::BudgetExhausted { settled: None },
+                    }
+                } else {
+                    RouteOutcome::NoPath
+                }
             })
-            .and_then(|fetch| session_route(world, from, to, fetch, opts, avoid))
-            .unwrap_or(RouteOutcome::NoPath)
         }
-        Err(nav_planner::router::RouteError::NoPath) => RouteOutcome::NoPath,
     }
-}
 
+}
 /// Re-find `to` against a planned session's post state (ADR 0005: find
 /// itself stays fail-closed; the session is what unblocks).
 fn session_route(

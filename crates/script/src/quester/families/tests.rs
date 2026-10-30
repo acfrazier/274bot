@@ -7778,7 +7778,7 @@ fn loc_walk_request_picks_the_wall_side_by_half_plane_for_every_angle() {
 }
 
 #[test]
-fn loc_wall_fallback_requires_typed_no_path() {
+fn loc_wall_fallback_accepts_typed_incomplete_search_not_text() {
     assert!(reach::loc_wall_route_failed(&mapped_walk_receipt(
         WalkEnd::NoPath,
         None,
@@ -7787,6 +7787,20 @@ fn loc_wall_fallback_requires_typed_no_path() {
         WalkEnd::NoPath,
         Some(Arc::from("a changed host diagnostic")),
     )));
+
+    let detail = Arc::from("search_result=BudgetExhausted nodes_settled=unavailable");
+    let mut incomplete = mapped_walk_receipt(WalkEnd::Refused, Some(Arc::clone(&detail)));
+    incomplete.refusal = Some(crate::native::WalkRefusal::SearchIncomplete {
+        nodes_settled: None,
+    });
+    assert!(reach::loc_wall_route_failed(&incomplete));
+    assert!(
+        !reach::loc_wall_route_failed(&mapped_walk_receipt(
+            WalkEnd::Refused,
+            Some(detail),
+        )),
+        "diagnostic text alone cannot trigger the bounded wall retry",
+    );
 
     for end in [
         WalkEnd::RouteEnded,

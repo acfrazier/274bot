@@ -298,39 +298,43 @@ pub fn arm_walk_on(
                 }
                 None => refusal_detail,
             };
-            // A held (non-enforcing) NoPath stays the pre-S2b bare refusal:
-            // it neither creates an arm nor stops one already walking. Only
-            // an enforcing refusal or a live escape is retained on the arm.
-            let retain =
-                admission.enforce || admission.escape.is_some_and(crate::admission::escape_live);
-            if let Some(name) =
-                focused.filter(|_| retain && (assessment.is_some() || admitted.refusal.is_some()))
-            {
-                if let Some(assessment) = assessment.as_ref() {
-                    crate::admission::log(Some(name), assessment, false);
+            // An incomplete search cannot decide whether the held walk is
+            // invalid. Keep the existing arm unchanged.
+            if !incomplete_search {
+                // A held (non-enforcing) NoPath stays the pre-S2b bare refusal:
+                // it neither creates an arm nor stops one already walking. Only
+                // an enforcing refusal or a live escape is retained on the arm.
+                let retain = admission.enforce
+                    || admission.escape.is_some_and(crate::admission::escape_live);
+                if let Some(name) =
+                    focused.filter(|_| retain && (assessment.is_some() || admitted.refusal.is_some()))
+                {
+                    if let Some(assessment) = assessment.as_ref() {
+                        crate::admission::log(Some(name), assessment, false);
+                    }
+                    let arm = travellers
+                        .lock()
+                        .unwrap()
+                        .entry(name.to_string())
+                        .or_insert_with(|| Arc::new(Mutex::new(WalkArm::default())))
+                        .clone();
+                    let mut arm = arm.lock().unwrap();
+                    if let Some(assessment) = assessment.as_ref() {
+                        arm.last_assessment = Some(Arc::clone(assessment));
+                    }
+                    if !admission.escape.is_some_and(crate::admission::escape_live) {
+                        arm.traveller.clear();
+                        arm.route = None;
+                        arm.bank_fetch = None;
+                        arm.basis = None;
+                        arm.assessment = None;
+                        arm.admission = Some(Box::new(admission));
+                        arm.route_generation = admission.generation;
+                        arm.admission_pending = false;
+                    }
+                    arm.refusal = admitted.refusal;
+                    arm.refusal_detail = detail.clone();
                 }
-                let arm = travellers
-                    .lock()
-                    .unwrap()
-                    .entry(name.to_string())
-                    .or_insert_with(|| Arc::new(Mutex::new(WalkArm::default())))
-                    .clone();
-                let mut arm = arm.lock().unwrap();
-                if let Some(assessment) = assessment.as_ref() {
-                    arm.last_assessment = Some(Arc::clone(assessment));
-                }
-                if !admission.escape.is_some_and(crate::admission::escape_live) {
-                    arm.traveller.clear();
-                    arm.route = None;
-                    arm.bank_fetch = None;
-                    arm.basis = None;
-                    arm.assessment = None;
-                    arm.admission = Some(Box::new(admission));
-                    arm.route_generation = admission.generation;
-                    arm.admission_pending = false;
-                }
-                arm.refusal = admitted.refusal;
-                arm.refusal_detail = detail.clone();
             }
             Err(NoPath {
                 assessment,

@@ -1543,9 +1543,11 @@ fn step_walk(
         };
     bot.assessment = assessment;
     if let crate::RouteOutcome::IncompleteSearch { search_result } = &outcome {
-        let refusal = script::native::WalkRefusal::NoRouteWithinBounds {
-            tried: 0,
-            last: None,
+        let refusal = script::native::WalkRefusal::SearchIncomplete {
+            nodes_settled: match search_result {
+                crate::walk_plan::RouteSearchResultKind::BudgetExhausted { settled } => *settled,
+                _ => None,
+            },
         };
         log_walk_arm_bot(|| {
             format!("bank access route search_result={search_result} destination={dest:?}")
