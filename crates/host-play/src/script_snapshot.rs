@@ -1669,7 +1669,6 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         api_combat_outcome: None,
         api_progress: None,
         seat_page: None,
-        side_modal_id: Some(modals.map_or(-1, |m| m.side)),
         client_adapter,
         projectiles: snapshot.map(|snapshot| snapshot.projectiles()),
     };
