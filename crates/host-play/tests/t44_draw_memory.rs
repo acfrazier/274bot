@@ -702,7 +702,9 @@ fn drawing_memory_verdict_with_process(
                         head.name
                     ));
                 }
-                if head.owner_bytes.is_none_or(|bytes| bytes.total() != 0) {
+                if head.owner_bytes.is_none_or(|bytes| {
+                    bytes.head_total() != 0 || bytes.process_total() != 0
+                }) {
                     return Err(format!(
                         "{}: no-head render-owner census was not all zero",
                         head.name
@@ -859,7 +861,7 @@ fn drawing_memory_verdict_with_process(
 
 fn render_bytes_json(bytes: RenderBytes) -> Value {
     json!({
-        "accounting_scope": "per-head backend: capture excludes shared host mesh; context_cpu includes shared Media",
+        "accounting_scope": "head_total excludes shared process rows; process_total is counted once per process; capture excludes shared host mesh; context_cpu includes shared Media",
         "cpu_surfaces": bytes.cpu_surfaces(),
         "cpu_retained_3d": bytes.cpu_retained_3d(),
         "output_pixels": bytes.output_pixels(),
@@ -884,7 +886,8 @@ fn render_bytes_json(bytes: RenderBytes) -> Value {
         "context_cpu": bytes.context_cpu(),
         "context_gpu": bytes.context_gpu(),
         "scalar_state": bytes.scalar_state(),
-        "backend_total_bytes": bytes.total(),
+        "backend_head_total_bytes": bytes.head_total(),
+        "process_shared_total_bytes": bytes.process_total(),
     })
 }
 

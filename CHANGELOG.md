@@ -23,9 +23,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   recording frames and encoder shutdown. These paths remain opt-in pending qualification.
 - GPU scene vertices use one third less memory without changing their image.
   The renderer keeps the existing CPU clipping and drawing order. GPU views
-  share one scene vertex buffer, capped at 128 MiB per process. A larger frame
-  reports a resource fault and keeps the last completed image. Navigation
-  debug paint follows the focused GPU view and releases its storage on focus loss.
+  share one scene vertex buffer, capped at 128 MiB per process. The last GPU
+  view releases that buffer and its budget charge. A larger frame reports a
+  resource fault and keeps the last completed image. Navigation debug paint
+  follows the focused GPU view and releases its storage on focus loss.
 - Source builds can now omit the JavaScript runtime with
   `--no-default-features`. These builds keep Gatherer, Grinch and Quester,
   their settings, and native Start, Pause, Stop and paint controls. They do

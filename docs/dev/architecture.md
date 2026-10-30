@@ -371,9 +371,13 @@ resumes, including on unwind.
 
 Budget scopes are explicit fixture inputs until qualification. Growing scene,
 model, nav, sprite and GPU storage reserves its byte charge before allocation,
-including old-plus-new replacement peaks and nested payloads. Each GPU head
-keeps its own vertex buffer. Host GPU heads share only the process-owned CPU
-capture mesh; its guard is returned before the scene lease is released.
+including old-plus-new replacement peaks and nested payloads. GPU heads share
+one process-owned scene vertex buffer, brightness uniform and scene bind group.
+Only scene submission accesses them, inside the consumed lease and GPU scene
+lock. The last GPU head releases the buffer, uniform and budget charge.
+The focused GPU head owns separate nav vertices and a target. Nav composites
+at `finish`, not into the clean retained scene. Host GPU heads also share the
+process-owned CPU capture mesh. Its guard returns before the scene lease ends.
 Transient world sprites are removed on success, resource refusal and unwind.
 Render-backed ground and dynamic sprite storage is released on draw-off;
 simulation ground stamps and persistent placements remain.
@@ -381,8 +385,10 @@ simulation ground stamps and persistent placements remain.
 `Renderer::render_bytes` traverses actual capacities only on request. It does
 not substitute budget counters for retained allocations. The identity- and
 sequence-checked mailbox adds its output pixels, nav inputs and render-backed
-world storage. Shared decoded stores and context storage are process rows,
-not per-head multipliers. Registered GPU consumer images are a separate
+world storage. Shared decoded stores, scene vertices and context storage are
+process rows, not per-head multipliers. `RenderBytes::head_total` excludes these
+rows. `process_total` reports them separately, for one count per process.
+Registered GPU consumer images are a separate
 logical-device domain: one 1,539,180-byte image per active or draining
 registration, zero without a registration. A held image survives later
 display paints and retirement but cannot prove a reattached head's identity.
