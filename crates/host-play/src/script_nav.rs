@@ -9711,6 +9711,65 @@ mod route_quest_provider_tests {
         (catalog, gates)
     }
 
+    #[test]
+    fn registered_refusal_content_survives_preceding_proved_ladder_gates() {
+        let (catalog, gates) = compat_gates();
+        let mut barrier = gates[0].clone();
+        barrier.truth = Truth::True;
+        barrier.leg = 7;
+        let mut route_gates = Vec::new();
+        for (leg, minimum, loc_id) in [(3, 5, 3444), (5, 8, 3445)] {
+            let mut ladder = barrier.clone();
+            let QuestGate::Window(window) = &mut ladder.gate else {
+                panic!("released A1 stage window");
+            };
+            window.values = api::selected::InclusiveRange {
+                min: Some(minimum),
+                max: Some(61),
+            };
+            ladder.leg = leg;
+            ladder.crossing.loc_id = loc_id;
+            ladder.crossing.kind = api::prereq_steps::CrossingKind::Ladder;
+            assert!(catalog
+                .for_gate(&ladder.gate, &ladder.crossing)
+                .is_none());
+            route_gates.push(ladder);
+        }
+        route_gates.push(barrier.clone());
+        let content = route_prereq_content(&catalog, run(), route_gates.into())
+            .expect("proved ladders must not discard the registered barrier's refusal content");
+        assert_eq!(content.gates.as_ref(), &[barrier.clone()]);
+        assert_eq!(content.gate_groups.len(), 1);
+        assert_eq!(content.gate_groups[0].leg, 7);
+        assert_eq!(content.crossing_passes.len(), 1);
+        assert_eq!(content.crossing_passes[0].crossing, barrier.crossing);
+        assert!(!content.refusal_texts.is_empty());
+        assert!(content
+            .refusal_texts
+            .iter()
+            .all(|(crossing, _)| *crossing == barrier.crossing));
+    }
+
+    #[test]
+    fn unproved_unregistered_crossings_do_not_get_partial_repair_content() {
+        let (catalog, gates) = compat_gates();
+        for truth in [Truth::False, Truth::Unknown] {
+            let mut unregistered = gates[0].clone();
+            unregistered.truth = truth;
+            unregistered.crossing.loc_id = 3444;
+            unregistered.crossing.kind = api::prereq_steps::CrossingKind::Ladder;
+            assert!(catalog
+                .for_gate(&unregistered.gate, &unregistered.crossing)
+                .is_none());
+            assert!(route_prereq_content(
+                &catalog,
+                run(),
+                Arc::from([unregistered, gates[0].clone()]),
+            )
+            .is_none());
+        }
+    }
+
     fn fail_compat(bot: &mut NavBot, end: script::native::WalkEnd) {
         let (target, radius, teleports, ..) = bot.requested_route.expect("direct route key");
         bot.note_failure(
