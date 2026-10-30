@@ -720,6 +720,7 @@ fn weaker_than(weaker: &Needs, stronger: &Needs) -> bool {
 struct TrajectoryInputs<'a> {
     src: &'a Sources,
     facts: &'a Facts,
+    loc_facts: &'a LocFacts,
     positions: &'a HashMap<i32, Vec<Placement>>,
     proofs: &'a HashSet<String>,
     supported: &'a HashSet<String>,
@@ -740,6 +741,7 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
     let TrajectoryInputs {
         src,
         facts,
+        loc_facts,
         positions,
         proofs,
         supported,
@@ -760,7 +762,6 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
         z: placement.z,
         level: placement.level,
     };
-    let empty_loc_facts = LocFacts::default();
     let mut result: Option<Trajectory> = None;
     let above = if complete { above } else { &[] };
     // NPC presence is always universally quantified. A typed stage window
@@ -785,13 +786,7 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
                 relative_landing_safe: false,
                 jumps: 0,
             },
-            facts: match facts.locs.get(&id) {
-                Some(Some(loc_facts)) => loc_facts,
-                Some(None) => return None,
-                // Missing configuration supplies no params. A loc_param read
-                // still fails closed because the default map is empty.
-                None => &empty_loc_facts,
-            },
+            facts: loc_facts,
             proofs,
             selectors,
             tool: None,
@@ -876,9 +871,12 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
         .collect();
     let mut locs: Vec<_> = positions.keys().copied().collect();
     locs.sort_unstable();
+    let empty_loc_facts = LocFacts::default();
     for id in locs {
-        let Some(Some(fact)) = facts.locs.get(&id) else {
-            continue;
+        let fact = match facts.locs.get(&id) {
+            Some(Some(fact)) => fact,
+            Some(None) => continue,
+            None => &empty_loc_facts,
         };
         let Some(def) = defs.loc(id) else {
             continue;
@@ -1074,6 +1072,7 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                         let trajectory_inputs = TrajectoryInputs {
                             src,
                             facts,
+                            loc_facts: fact,
                             positions,
                             proofs,
                             supported,
