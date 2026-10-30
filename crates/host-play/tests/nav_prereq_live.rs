@@ -1054,9 +1054,11 @@ fn wait_for_manual_walk_run(fixture: &LiveFixture) -> RunKey {
         "manual WalkTo card start",
         Duration::from_secs(30),
         |play| {
-            play.script_native_status(&fixture.name)
-                .filter(|status| status.card == script::CompiledId("WalkTo"))
-                .and_then(|_| play.script_native_run(&fixture.name))
+            // The internal WalkTo card emits no ScriptStatus.
+            // Require its new native owner, not an optional status payload.
+            play.script_native_run(&fixture.name).filter(|run| {
+                run.slot == fixture.seed_run.slot && run.run > fixture.seed_run.run
+            })
         },
     )
 }
