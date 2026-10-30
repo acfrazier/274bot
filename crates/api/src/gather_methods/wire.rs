@@ -6,10 +6,10 @@
 //! `line plane lx lz {l|n}id angle` grouped by map file.
 
 use super::catalog::{
-    entity_key, known_rows, Bucket, EntityKey, GatherCatalog, GatherMethod, GatherSkill, GatherSpot,
-    GatherTarget, GatherYield, LooseClass, LooseEntity, MethodExtra, RespawnFact, RespawnScale,
-    RockEntry, SpotId, TargetClass, TickArm, TickArmKind, TickArmTool, TickRollSignal, ToolUse,
-    ZoneEffect, ZoneRule, KIND_LOC, KIND_NPC, KIND_OBJ,
+    entity_key, known_rows, Bucket, EntityKey, GatherCatalog, GatherMethod, GatherSkill,
+    GatherSpot, GatherTarget, GatherYield, LooseClass, LooseEntity, MethodExtra, RespawnFact,
+    RespawnScale, RockEntry, SpotId, TargetClass, TickArm, TickArmKind, TickArmTool,
+    TickRollSignal, ToolUse, ZoneEffect, ZoneRule, KIND_LOC, KIND_NPC, KIND_OBJ,
 };
 use super::SceneRegionInput;
 use crate::game_data::GatherForbiddenState;
@@ -1186,10 +1186,16 @@ mod tests {
             let tools = method_mut(family, "mining.copper")["tick_arm"]["tool_facts"]
                 .as_array_mut()
                 .unwrap();
-            assert!(tools.len() > 1, "mining methods retain their per-pickaxe facts");
+            assert!(
+                tools.len() > 1,
+                "mining methods retain their per-pickaxe facts"
+            );
             tools[1] = tools[0].clone();
         });
-        assert!(duplicate_tool.is_err(), "tool facts must be unique and item-sorted");
+        assert!(
+            duplicate_tool.is_err(),
+            "tool facts must be unique and item-sorted"
+        );
     }
 
     #[test]

@@ -2626,7 +2626,16 @@ mod tests {
         assert!(protected.as_slice().contains(&kit.knife.id));
         assert!(protected.as_slice().contains(&kit.logs.id));
         let row = |id, count, container| ItemView {
-            def: def(id, prepared.selected.item_by_id(id).unwrap().name.as_deref().unwrap()),
+            def: def(
+                id,
+                prepared
+                    .selected
+                    .item_by_id(id)
+                    .unwrap()
+                    .name
+                    .as_deref()
+                    .unwrap(),
+            ),
             container,
             action_family: ItemActionFamily::Held,
             slot: 0,
@@ -2669,12 +2678,19 @@ mod tests {
         snapshot.seed_ingame(2);
         snapshot.seed_inventory(inventory, 28);
         let mut gatherer = Gatherer::new(
-            RunKey { slot: 1, run: 1, session: 1 },
+            RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
             config,
             Arc::clone(&prepared),
             GatherRetained::default(),
         );
-        gatherer.tool = ToolState { id: tool, worn: false };
+        gatherer.tool = ToolState {
+            id: tool,
+            worn: false,
+        };
         let mut ledger = None;
         with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.start_drop(tick));
         assert!(matches!(gatherer.active, Active::Drop(_)));

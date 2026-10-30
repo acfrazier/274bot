@@ -165,7 +165,7 @@
     },
     "script": {
       "clippy::large_enum_variant": {
-        "non_test": 7,
+        "non_test": 9,
         "test": 0
       },
       "clippy::manual_clamp": {
@@ -173,8 +173,12 @@
         "test": 0
       },
       "clippy::too_many_arguments": {
-        "non_test": 17,
+        "non_test": 21,
         "test": 2
+      },
+      "dead_code": {
+        "non_test": 19,
+        "test": 0
       }
     },
     "script-js": {

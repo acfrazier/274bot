@@ -156,7 +156,10 @@ fn tick_tool<'a>(
         .find(|tool| catalog.alias(crate::selected::EntityId::Obj(tool.item)) == Some(alias))
         .unwrap_or_else(|| panic!("{} has no tool {alias}", method.id.0.as_ref()))
         .item;
-    method.tick_arm.for_tool(item).expect("tool tick facts exist")
+    method
+        .tick_arm
+        .for_tool(item)
+        .expect("tool tick facts exist")
 }
 
 #[test]
@@ -285,7 +288,9 @@ fn r289_tick_arm_is_fully_classified_and_matches_reviewed_families() {
     }
 
     assert_eq!(
-        tick_method(&catalog, "fishing.category_633.op1").tick_arm.kind,
+        tick_method(&catalog, "fishing.category_633.op1")
+            .tick_arm
+            .kind,
         TickArmKind::None,
         "the one-shot karambwan vessel is not an armable loop"
     );

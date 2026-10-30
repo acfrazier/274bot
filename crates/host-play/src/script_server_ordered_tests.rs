@@ -2164,7 +2164,8 @@ fn knife_npc_request(rig: &mut Rig, type_id: usize, operation: u8) -> ServerOrde
     rig.client.gens.npc += 1;
     let mut request = knife_request(rig, true);
     let reference =
-        ExactNpcReference::from_snapshot(&rig.snapshot, &rig.snapshot.npcs()[0], operation).unwrap();
+        ExactNpcReference::from_snapshot(&rig.snapshot, &rig.snapshot.npcs()[0], operation)
+            .unwrap();
     if let ServerOrderedRequest::KnifeArm { shape, .. } = &mut request {
         *shape = KnifeArmShape::Continuing {
             click: ExactLocOrNpcRef::Npc(reference),
@@ -2182,7 +2183,10 @@ fn ordered_knife_continuing_npc_fishing_requires_selected_content_handler_proof(
         rig.pump(1);
         rig.pump(2);
         let receipt = rig.receipt();
-        assert!(receipt.terminal.is_none(), "{type_id}/{operation}: {receipt:?}");
+        assert!(
+            receipt.terminal.is_none(),
+            "{type_id}/{operation}: {receipt:?}"
+        );
         assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (3, 4));
         let packets = rig.decoded();
         let click = match operation {
@@ -2194,7 +2198,10 @@ fn ordered_knife_continuing_npc_fishing_requires_selected_content_handler_proof(
         assert_eq!(
             packets[3],
             (
-                click.validate_for_revision(rig.client.revision()).unwrap().opcode,
+                click
+                    .validate_for_revision(rig.client.revision())
+                    .unwrap()
+                    .opcode,
                 click.body().to_vec(),
             ),
         );
@@ -2210,7 +2217,10 @@ fn ordered_knife_npc_snapshot_action_without_content_handler_proof_emits_nothing
         rig.pump(1);
         rig.pump(2);
         let receipt = rig.receipt();
-        assert_eq!(receipt.terminal, Some(ServerOrderedError::ContractUnavailable));
+        assert_eq!(
+            receipt.terminal,
+            Some(ServerOrderedError::ContractUnavailable)
+        );
         assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
         assert_no_cipher_movement(&rig);
     }
@@ -2243,7 +2253,11 @@ fn ordered_knife_npc_exact_generation_type_tile_and_index_must_match() {
         rig.pump(1);
         rig.pump(2);
         let receipt = rig.receipt();
-        assert_eq!(receipt.terminal, Some(ServerOrderedError::StaleTarget), "{mismatch}");
+        assert_eq!(
+            receipt.terminal,
+            Some(ServerOrderedError::StaleTarget),
+            "{mismatch}"
+        );
         assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
         assert_no_cipher_movement(&rig);
     }

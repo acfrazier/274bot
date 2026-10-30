@@ -2,8 +2,6 @@
 //!
 //! This module is deliberately inert until the Gatherer integration slice uses it.
 
-#![allow(dead_code)]
-
 use std::num::NonZeroU64;
 
 use api::interact::server_ordered::ServerOrderedDispatch;
@@ -21,7 +19,15 @@ pub(crate) enum Shape {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RollSignal {
     Always,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Wave 3 (S4) maps the selected Never roll fact")
+    )]
     Never,
+    #[expect(
+        dead_code,
+        reason = "Wave 3 (S4) maps the selected Sometimes roll fact"
+    )]
     Sometimes,
 }
 
@@ -32,6 +38,10 @@ pub(crate) enum AnimClass {
     Roll,
     Cast,
     Null,
+    #[expect(
+        dead_code,
+        reason = "Wave 3 (S4) classifies unrelated observed animations"
+    )]
     Other,
 }
 
@@ -39,9 +49,25 @@ pub(crate) enum AnimClass {
 pub(crate) enum OffReason {
     UnstableTiming,
     ContentRefusal,
+    #[expect(
+        dead_code,
+        reason = "Wave 3 (S4) translates the members-only arm refusal"
+    )]
     MembersOnlyArm,
+    #[expect(
+        dead_code,
+        reason = "Wave 3 (S4) publishes missing optional arm supply"
+    )]
     NoArmSupply,
+    #[expect(
+        dead_code,
+        reason = "Wave 3 (S4) publishes tool-specific no-gain applicability"
+    )]
     NoGain,
+    #[expect(
+        dead_code,
+        reason = "Wave 3 (S4) publishes unsupported delay-variable applicability"
+    )]
     NoDelayVariable,
 }
 
@@ -85,18 +111,37 @@ pub(crate) struct TickPolicy {
 }
 
 impl TickPolicy {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Wave 3 (S4) publishes the run-level timing counters"
+        )
+    )]
     pub(crate) fn stats(&self) -> CycleStats {
         self.stats
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Wave 3 (S4) publishes the run-level cycle count")
+    )]
     pub(crate) const fn cycles(&self) -> u32 {
         self.cycles
     }
 
+    #[cfg(test)]
     pub(crate) const fn verdict_count(&self) -> u8 {
         self.verdict_count
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Wave 3 (S4) publishes the current timing off reason"
+        )
+    )]
     pub(crate) const fn off_reason(&self) -> Option<OffReason> {
         match self.off_until {
             Some(off) => Some(off.reason),
@@ -104,6 +149,13 @@ impl TickPolicy {
         }
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Wave 3 (S4) publishes the timing cooldown deadline"
+        )
+    )]
     pub(crate) const fn off_until(&self) -> Option<u64> {
         match self.off_until {
             Some(off) => Some(off.tick),
@@ -204,6 +256,13 @@ pub(crate) struct CycleSpec {
 }
 
 impl CycleSpec {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Wave 3 (S4) builds a cycle from selected timing facts"
+        )
+    )]
     pub(crate) const fn new(
         shape: Shape,
         roll_signal: RollSignal,
@@ -286,18 +345,9 @@ impl Bound {
         }
     }
 
-    fn contains(&self, offset: i8) -> bool {
-        self.lo <= offset && offset <= self.hi
-    }
-
     fn contains_tick(&self, target: u64, current: u64) -> bool {
         let offset = i128::from(target) - i128::from(current);
         offset >= i128::from(self.lo) && offset <= i128::from(self.hi)
-    }
-
-    fn contains_some_tick_at_or_before(&self, target: u64, current: u64) -> bool {
-        let target_offset = i128::from(target) - i128::from(current);
-        i128::from(self.lo) <= target_offset
     }
 
     fn rebase(&mut self, delta: u64) -> bool {
@@ -366,11 +416,6 @@ impl Evidence {
     fn product_contains(&self, tick: u64, current: u64) -> bool {
         self.product
             .is_some_and(|bound| bound.contains_tick(tick, current))
-    }
-
-    fn fletch_at_or_before(&self, tick: u64, current: u64) -> bool {
-        self.fletch
-            .is_some_and(|bound| bound.contains_some_tick_at_or_before(tick, current))
     }
 }
 
@@ -463,7 +508,19 @@ pub(crate) struct TickCycle {
 
 impl TickCycle {
     /// The current animation is a baseline, not a fresh event.
-    pub(crate) const fn new(spec: CycleSpec, tick: u64, anim_serial: u32, chat_cursor: i32) -> Self {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Wave 3 (S4) starts and parks the per-target timing cycle"
+        )
+    )]
+    pub(crate) const fn new(
+        spec: CycleSpec,
+        tick: u64,
+        anim_serial: u32,
+        chat_cursor: i32,
+    ) -> Self {
         Self {
             spec,
             phase: Phase::Native {
@@ -486,10 +543,24 @@ impl TickCycle {
     }
 
     /// Advance the consumer's chat cursor after it has read all newer chat rows.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Wave 3 (S4) advances the observed content-chat cursor"
+        )
+    )]
     pub(crate) const fn set_chat_cursor(&mut self, cursor: i32) {
         self.chat_cursor = cursor;
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Wave 3 (S4) retains the content-chat cursor across targets"
+        )
+    )]
     pub(crate) const fn chat_cursor(&self) -> i32 {
         self.chat_cursor
     }
@@ -511,7 +582,18 @@ impl TickCycle {
     }
 
     /// Drive one edge or wake without allocation.
-    pub(crate) fn drive(&mut self, signals: &CycleSignals<'_>, policy: &mut TickPolicy) -> CycleStep {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Wave 3 (S4) drives the timing cycle from GatherRun polls"
+        )
+    )]
+    pub(crate) fn drive(
+        &mut self,
+        signals: &CycleSignals<'_>,
+        policy: &mut TickPolicy,
+    ) -> CycleStep {
         let previous_tick = self.last_tick;
         let edge = previous_tick.checked_add(1) == Some(signals.tick);
         let skipped = signals.tick > previous_tick && !edge;
@@ -571,7 +653,9 @@ impl TickCycle {
                 self.start_fallback(signals.tick);
                 return self.fallback_step(signals.tick);
             }
-            if matches!(self.phase, Phase::Native { .. } | Phase::Idle { .. }) && off_reason.is_none() {
+            if matches!(self.phase, Phase::Native { .. } | Phase::Idle { .. })
+                && off_reason.is_none()
+            {
                 self.start_fallback(signals.tick);
             }
         }
@@ -584,6 +668,13 @@ impl TickCycle {
     }
 
     /// The consumer calls this only after its emission succeeds.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Wave 3 (S4) binds successful emissions to request ids"
+        )
+    )]
     pub(crate) fn note_emit(&mut self, tick: u64, step: CycleStep, request_id: u64) {
         let Some(request_id) = NonZeroU64::new(request_id) else {
             return;
@@ -593,9 +684,13 @@ impl TickCycle {
             (CycleStep::Batch, Phase::Sent { .. }) => {
                 self.pending_batch_id = Some(request_id);
             }
-            (CycleStep::Click, Phase::Armed { act: ActState::Owed(obligation), .. })
-                if obligation.request_id.is_none() =>
-            {
+            (
+                CycleStep::Click,
+                Phase::Armed {
+                    act: ActState::Owed(obligation),
+                    ..
+                },
+            ) if obligation.request_id.is_none() => {
                 obligation.request_id = Some(request_id);
             }
             (
@@ -612,6 +707,13 @@ impl TickCycle {
     }
 
     /// Pause a live cycle for the consumer's existing eat path.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Wave 3 (S4) pauses a live cycle for Gatherer eating"
+        )
+    )]
     pub(crate) fn pause(&mut self, policy: &mut TickPolicy) {
         let old = self.phase;
         let mut pending = None;
@@ -655,7 +757,8 @@ impl TickCycle {
                 }
             }
             Phase::Armed {
-                act: ActState::Owed(obligation), ..
+                act: ActState::Owed(obligation),
+                ..
             } => {
                 for _ in 0..count {
                     obligation.rebase();
@@ -779,7 +882,11 @@ impl TickCycle {
         self.off_step(tick, OffReason::ContentRefusal, policy)
     }
 
-    fn handle_skipped_edge(&mut self, signals: &CycleSignals<'_>, policy: &mut TickPolicy) -> CycleStep {
+    fn handle_skipped_edge(
+        &mut self,
+        signals: &CycleSignals<'_>,
+        policy: &mut TickPolicy,
+    ) -> CycleStep {
         let tick = signals.tick;
         match self.phase {
             Phase::Sent { .. } => {
@@ -803,14 +910,13 @@ impl TickCycle {
                 policy.record(Verdict::Unobserved, tick);
             }
             Phase::Native {
-                fallback,
-                pending,
-                ..
+                fallback, pending, ..
             } => {
                 let fallback = match fallback {
                     Some(obligation) if obligation.asked() => Some(obligation),
                     Some(_) => {
-                        policy.stats.fallback_failed = policy.stats.fallback_failed.saturating_add(1);
+                        policy.stats.fallback_failed =
+                            policy.stats.fallback_failed.saturating_add(1);
                         None
                     }
                     None => None,
@@ -843,10 +949,16 @@ impl TickCycle {
         matches!(
             self.phase,
             Phase::Native {
-                fallback: Some(Obligation { request_id: Some(_), .. }),
+                fallback: Some(Obligation {
+                    request_id: Some(_),
+                    ..
+                }),
                 ..
             } | Phase::Native {
-                pending: Some(Obligation { request_id: Some(_), .. }),
+                pending: Some(Obligation {
+                    request_id: Some(_),
+                    ..
+                }),
                 ..
             }
         )
@@ -896,14 +1008,13 @@ impl TickCycle {
                     return self.drive_idle(signals, policy);
                 }
                 if edge && tick == sent.saturating_add(1) {
-                    let act_evidence = self.spec.act_silent || self.evidence.contains_act(tick, tick);
+                    let act_evidence =
+                        self.spec.act_silent || self.evidence.contains_act(tick, tick);
                     if is_landing(fresh, act_evidence) {
                         let act = match self.spec.shape {
-                            Shape::Ending => ActState::Owed(Obligation::due(
-                                ObligationKind::EndingClick,
-                                1,
-                                1,
-                            )),
+                            Shape::Ending => {
+                                ActState::Owed(Obligation::due(ObligationKind::EndingClick, 1, 1))
+                            }
                             Shape::Continuing if act_evidence => {
                                 if self.spec.act_silent {
                                     ActState::Assumed
@@ -943,7 +1054,11 @@ impl TickCycle {
                 }
 
                 if edge && tick == sent.saturating_add(2) {
-                    if is_late_landing(self.spec.shape, fresh, self.evidence.contains_act(tick, tick)) {
+                    if is_late_landing(
+                        self.spec.shape,
+                        fresh,
+                        self.evidence.contains_act(tick, tick),
+                    ) {
                         if self.spec.shape == Shape::Continuing {
                             self.end_cycle(Verdict::Slip, tick, policy);
                             self.start_fallback(tick);
@@ -952,11 +1067,7 @@ impl TickCycle {
                         self.phase = Phase::Armed {
                             armed: tick,
                             roll_due: tick.saturating_add(2),
-                            act: ActState::Owed(Obligation::due(
-                                ObligationKind::EndingClick,
-                                1,
-                                1,
-                            )),
+                            act: ActState::Owed(Obligation::due(ObligationKind::EndingClick, 1, 1)),
                             late: true,
                             null_edge: false,
                         };
@@ -974,7 +1085,9 @@ impl TickCycle {
                 act,
                 late,
                 null_edge,
-            } => self.drive_armed(signals, fresh, edge, armed, roll_due, act, late, null_edge, policy),
+            } => self.drive_armed(
+                signals, fresh, edge, armed, roll_due, act, late, null_edge, policy,
+            ),
         }
     }
 
@@ -986,6 +1099,10 @@ impl TickCycle {
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the Native phase fields stay explicit at this allocation-free transition boundary"
+    )]
     fn drive_native(
         &mut self,
         signals: &CycleSignals<'_>,
@@ -1031,25 +1148,28 @@ impl TickCycle {
                         fallback,
                         pending,
                     };
-                    return self.service_fallback(tick, policy).unwrap_or(CycleStep::Wait);
+                    return self
+                        .service_fallback(tick, policy)
+                        .unwrap_or(CycleStep::Wait);
                 }
-                if tick == due && !rolled {
-                    if self.spec.roll_signal != RollSignal::Always && !signals.menu_open {
-                        if !pending_asked {
-                            self.phase = Phase::Native {
-                                roll_due: None,
-                                fallback,
-                                pending,
-                            };
-                            if fallback.is_some_and(|obligation| obligation.is_due_now()) {
-                                return self.fallback_step(tick);
-                            }
-                            return self.start_batch(tick, true, policy);
-                        }
+                if tick == due
+                    && !rolled
+                    && self.spec.roll_signal != RollSignal::Always
+                    && !signals.menu_open
+                    && !pending_asked
+                {
+                    self.phase = Phase::Native {
+                        roll_due: None,
+                        fallback,
+                        pending,
+                    };
+                    if fallback.is_some_and(|obligation| obligation.is_due_now()) {
+                        return self.fallback_step(tick);
                     }
-                    if self.spec.roll_signal == RollSignal::Always {
-                        roll_due = None;
-                    }
+                    return self.start_batch(tick, true, policy);
+                }
+                if tick == due && !rolled && self.spec.roll_signal == RollSignal::Always {
+                    roll_due = None;
                 }
                 if tick > due && !rolled {
                     roll_due = None;
@@ -1073,7 +1193,8 @@ impl TickCycle {
             }
 
             if fresh == Some(AnimClass::Cast) {
-                roll_due = Some(tick.saturating_add(u64::from(self.spec.native_arm.saturating_sub(1))));
+                roll_due =
+                    Some(tick.saturating_add(u64::from(self.spec.native_arm.saturating_sub(1))));
             }
         }
 
@@ -1088,6 +1209,10 @@ impl TickCycle {
         CycleStep::Wait
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the Armed phase fields stay explicit at this allocation-free transition boundary"
+    )]
     fn drive_armed(
         &mut self,
         signals: &CycleSignals<'_>,
@@ -1136,7 +1261,11 @@ impl TickCycle {
             if self.spec.roll_signal != RollSignal::Always && !signals.menu_open {
                 self.policy_record(
                     policy,
-                    if late { Verdict::Slip } else { Verdict::Unobserved },
+                    if late {
+                        Verdict::Slip
+                    } else {
+                        Verdict::Unobserved
+                    },
                     tick,
                 );
                 if policy.refresh_off(tick).is_some() {
@@ -1156,12 +1285,13 @@ impl TickCycle {
             }
         }
 
-        if !edge && tick == roll_due && (null_edge || self.evidence.product_contains(roll_due, tick)) {
-            if self.evidence.success(roll_due, tick)
-                || self.evidence.product_contains(roll_due, tick)
-            {
-                return self.finish_unobserved_roll(signals, tick, late, act, policy);
-            }
+        if !edge
+            && tick == roll_due
+            && (null_edge || self.evidence.product_contains(roll_due, tick))
+            && (self.evidence.success(roll_due, tick)
+                || self.evidence.product_contains(roll_due, tick))
+        {
+            return self.finish_unobserved_roll(signals, tick, late, act, policy);
         }
 
         if edge && tick == roll_due.saturating_add(1) {
@@ -1172,7 +1302,11 @@ impl TickCycle {
                 return self.finish_armed_roll(signals, tick, true, success, policy);
             }
             if self.evidence.product_contains(roll_due, tick) {
-                let verdict = if late { Verdict::Slip } else { Verdict::Unobserved };
+                let verdict = if late {
+                    Verdict::Slip
+                } else {
+                    Verdict::Unobserved
+                };
                 self.policy_record(policy, verdict, tick);
                 if late && self.spec.shape == Shape::Ending {
                     self.start_fallback(tick);
@@ -1220,7 +1354,11 @@ impl TickCycle {
     ) -> CycleStep {
         self.policy_record(
             policy,
-            if late { Verdict::Slip } else { Verdict::Unobserved },
+            if late {
+                Verdict::Slip
+            } else {
+                Verdict::Unobserved
+            },
             tick,
         );
         if policy.refresh_off(tick).is_some() {
@@ -1261,7 +1399,11 @@ impl TickCycle {
     ) -> CycleStep {
         self.policy_record(
             policy,
-            if late { Verdict::Slip } else { Verdict::Verified },
+            if late {
+                Verdict::Slip
+            } else {
+                Verdict::Verified
+            },
             tick,
         );
         if let Some(reason) = policy.refresh_off(tick) {
@@ -1295,7 +1437,10 @@ impl TickCycle {
                 ..
             } if obligation.is_due_now()
                 && (obligation.kind != ObligationKind::EndingClick || edge)
-                && self.last_emit_tick != tick => CycleStep::Click,
+                && self.last_emit_tick != tick =>
+            {
+                CycleStep::Click
+            }
             _ => CycleStep::Wait,
         }
     }
@@ -1352,17 +1497,12 @@ impl TickCycle {
                 fallback, pending, ..
             } => (pending, fallback),
             Phase::Armed {
-                act: ActState::Owed(obligation), ..
+                act: ActState::Owed(obligation),
+                ..
             } if obligation.asked() => (Some(obligation), None),
             _ => (None, None),
         };
-        let fallback = existing.or_else(|| {
-            Some(Obligation::due(
-                ObligationKind::Fallback,
-                0,
-                1,
-            ))
-        });
+        let fallback = existing.or_else(|| Some(Obligation::due(ObligationKind::Fallback, 0, 1)));
         self.phase = Phase::Native {
             roll_due: None,
             fallback,
@@ -1374,7 +1514,8 @@ impl TickCycle {
     fn end_cycle(&mut self, verdict: Verdict, tick: u64, policy: &mut TickPolicy) {
         let pending = match self.phase {
             Phase::Armed {
-                act: ActState::Owed(obligation), ..
+                act: ActState::Owed(obligation),
+                ..
             } if obligation.asked() => Some(obligation),
             Phase::Native { pending, .. } => pending,
             _ => None,
@@ -1400,8 +1541,7 @@ impl TickCycle {
 }
 
 fn is_landing(fresh: Option<AnimClass>, act_evidence: bool) -> bool {
-    matches!(fresh, Some(AnimClass::Fletching))
-        || (fresh == Some(AnimClass::Skill) && act_evidence)
+    matches!(fresh, Some(AnimClass::Fletching)) || (fresh == Some(AnimClass::Skill) && act_evidence)
 }
 
 fn is_late_landing(shape: Shape, fresh: Option<AnimClass>, act_evidence: bool) -> bool {
@@ -1415,9 +1555,7 @@ fn is_late_landing(shape: Shape, fresh: Option<AnimClass>, act_evidence: bool) -
 }
 
 fn is_rolled(fresh: Option<AnimClass>, act_line: bool, success: bool) -> bool {
-    fresh == Some(AnimClass::Roll)
-        || (fresh == Some(AnimClass::Skill) && !act_line)
-        || success
+    fresh == Some(AnimClass::Roll) || (fresh == Some(AnimClass::Skill) && !act_line) || success
 }
 
 #[cfg(test)]
@@ -1425,7 +1563,15 @@ mod tests {
     use super::*;
 
     fn continuing() -> CycleSpec {
-        CycleSpec::new(Shape::Continuing, RollSignal::Always, false, false, 4, 1, false)
+        CycleSpec::new(
+            Shape::Continuing,
+            RollSignal::Always,
+            false,
+            false,
+            4,
+            1,
+            false,
+        )
     }
 
     fn ending() -> CycleSpec {
@@ -1453,6 +1599,10 @@ mod tests {
             }
         }
 
+        #[expect(
+            clippy::too_many_arguments,
+            reason = "replay calls spell out each independently timed signal"
+        )]
         fn poll(
             &mut self,
             tick: u64,
@@ -1480,7 +1630,10 @@ mod tests {
             )
         }
 
-        #[allow(clippy::too_many_arguments)]
+        #[expect(
+            clippy::too_many_arguments,
+            reason = "replay calls spell out each independently timed signal and both receipt kinds"
+        )]
         fn poll_receipts(
             &mut self,
             tick: u64,
@@ -1525,7 +1678,20 @@ mod tests {
         }
 
         fn batch(&mut self, tick: u64, class: AnimClass) -> u64 {
-            assert_eq!(self.poll(tick, Some(class), false, false, false, false, false, false, false), CycleStep::Batch);
+            assert_eq!(
+                self.poll(
+                    tick,
+                    Some(class),
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false
+                ),
+                CycleStep::Batch
+            );
             self.next_request - 1
         }
 
@@ -1536,8 +1702,17 @@ mod tests {
         fn accept_click(&mut self, tick: u64) {
             let request = self.next_request - 1;
             self.poll_receipts(
-                tick, None, false, false, false, false, false, false, false,
-                None, Some((request, true)),
+                tick,
+                None,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                None,
+                Some((request, true)),
             );
         }
 
@@ -1620,7 +1795,17 @@ mod tests {
             let receipt = dispatch_receipt(request, tick, Shape::Continuing, 3);
             assert_eq!(
                 run.poll_receipts(
-                    tick, None, false, false, false, false, false, false, false, Some(&receipt), None,
+                    tick,
+                    None,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    Some(&receipt),
+                    None,
                 ),
                 CycleStep::Wait
             );
@@ -1640,7 +1825,15 @@ mod tests {
             );
             assert_eq!(
                 run.poll(
-                    tick + 2, None, false, false, false, false, false, false, false,
+                    tick + 2,
+                    None,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
                 ),
                 CycleStep::Wait
             );
@@ -1655,7 +1848,14 @@ mod tests {
                 false,
                 false,
             );
-            assert_eq!(step, if cycle == 2 { CycleStep::Wait } else { CycleStep::Batch });
+            assert_eq!(
+                step,
+                if cycle == 2 {
+                    CycleStep::Wait
+                } else {
+                    CycleStep::Batch
+                }
+            );
             if cycle < 2 {
                 request = run.next_request - 1;
             }
@@ -1670,8 +1870,34 @@ mod tests {
     fn packet_split_act_is_recovered_as_one_conservative_slip() {
         let mut run = replay(continuing());
         run.batch(101, AnimClass::Skill);
-        assert_eq!(run.poll(102, Some(AnimClass::Fletching), false, false, false, false, false, false, false), CycleStep::Click);
-        assert_eq!(run.poll(103, Some(AnimClass::Skill), true, false, false, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            run.poll(
+                102,
+                Some(AnimClass::Fletching),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Click
+        );
+        assert_eq!(
+            run.poll(
+                103,
+                Some(AnimClass::Skill),
+                true,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Click
+        );
         assert_eq!(run.policy.stats().verified, 0);
         assert_eq!(run.policy.stats().slipped, 1);
         assert_ring(&run, 1);
@@ -1681,8 +1907,24 @@ mod tests {
     fn landing_survives_until_inventory_wake_without_an_extra_emission() {
         let mut run = replay(continuing());
         run.batch(101, AnimClass::Skill);
-        assert_eq!(run.poll(102, Some(AnimClass::Fletching), true, false, false, false, false, false, false), CycleStep::Wait);
-        assert_eq!(run.poll(102, None, false, false, false, false, false, true, false), CycleStep::Wait);
+        assert_eq!(
+            run.poll(
+                102,
+                Some(AnimClass::Fletching),
+                true,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            run.poll(102, None, false, false, false, false, false, true, false),
+            CycleStep::Wait
+        );
         assert!(matches!(run.cycle.phase(), Phase::Armed { .. }));
         assert_ring(&run, 0);
     }
@@ -1691,7 +1933,10 @@ mod tests {
     fn retained_animation_is_not_a_landing_and_serial_is_the_freshness_key() {
         let mut run = Replay::new(continuing(), 100, 50);
         run.batch(101, AnimClass::Skill);
-        let retained = AnimInstruction { serial: 51, class: AnimClass::Fletching };
+        let retained = AnimInstruction {
+            serial: 51,
+            class: AnimClass::Fletching,
+        };
         let signals = CycleSignals {
             tick: 102,
             anim: Some(retained),
@@ -1706,19 +1951,28 @@ mod tests {
             checked_receipt: None,
         };
         assert_eq!(run.cycle.drive(&signals, &mut run.policy), CycleStep::Wait);
-        let signals = CycleSignals { tick: 103, ..signals };
+        let signals = CycleSignals {
+            tick: 103,
+            ..signals
+        };
         assert_eq!(run.cycle.drive(&signals, &mut run.policy), CycleStep::Click);
         run.cycle.note_emit(103, CycleStep::Click, run.next_request);
         run.next_request += 1;
         assert_eq!(run.policy.stats().lost, 1);
         assert_ring(&run, 1);
-        assert_eq!(run.poll(104, None, false, false, false, false, false, false, false), CycleStep::Wait);
+        assert_eq!(
+            run.poll(104, None, false, false, false, false, false, false, false),
+            CycleStep::Wait
+        );
 
         let mut fresh = replay(continuing());
         fresh.batch(101, AnimClass::Skill);
         let signals = CycleSignals {
             tick: 102,
-            anim: Some(AnimInstruction { serial: 52, class: AnimClass::Fletching }),
+            anim: Some(AnimInstruction {
+                serial: 52,
+                class: AnimClass::Fletching,
+            }),
             act_line: true,
             success_line: false,
             fletch: false,
@@ -1729,14 +1983,20 @@ mod tests {
             receipt: None,
             checked_receipt: None,
         };
-        assert_eq!(fresh.cycle.drive(&signals, &mut fresh.policy), CycleStep::Wait);
+        assert_eq!(
+            fresh.cycle.drive(&signals, &mut fresh.policy),
+            CycleStep::Wait
+        );
         assert!(matches!(fresh.cycle.phase(), Phase::Armed { .. }));
 
         let mut baseline = TickCycle::new(continuing(), 100, 50, 0);
         let mut policy = TickPolicy::default();
         let retained = CycleSignals {
             tick: 101,
-            anim: Some(AnimInstruction { serial: 50, class: AnimClass::Fletching }),
+            anim: Some(AnimInstruction {
+                serial: 50,
+                class: AnimClass::Fletching,
+            }),
             act_line: false,
             ..signals
         };
@@ -1758,19 +2018,92 @@ mod tests {
         assert_eq!(receipt.terminal, None);
         assert_eq!(
             run.poll_receipts(
-                101, None, false, false, false, false, false, false, false, Some(&receipt), None,
+                101,
+                None,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                Some(&receipt),
+                None,
             ),
             CycleStep::Wait
         );
-        assert_eq!(run.poll(102, Some(AnimClass::Fletching), false, false, false, false, false, false, false), CycleStep::Wait);
-        assert_eq!(run.poll(102, None, false, false, false, false, false, false, false), CycleStep::Wait);
-        assert_eq!(run.poll(103, None, false, false, false, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            run.poll(
+                102,
+                Some(AnimClass::Fletching),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            run.poll(102, None, false, false, false, false, false, false, false),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            run.poll(103, None, false, false, false, false, false, false, false),
+            CycleStep::Click
+        );
         let request = run.next_request - 1;
-        assert_eq!(run.poll_receipts(103, None, false, false, false, false, false, false, false, None, Some((request, true))), CycleStep::Wait);
+        assert_eq!(
+            run.poll_receipts(
+                103,
+                None,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                None,
+                Some((request, true))
+            ),
+            CycleStep::Wait
+        );
         assert_eq!(run.policy.stats().wire_events, 4);
-        run.poll_receipts(103, None, false, false, false, false, false, false, false, None, Some((request, true)));
-        assert_eq!(run.policy.stats().wire_events, 4, "duplicate receipts do not add packets");
-        assert_eq!(run.poll(104, Some(AnimClass::Roll), false, false, false, false, false, false, false), CycleStep::Batch);
+        run.poll_receipts(
+            103,
+            None,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            None,
+            Some((request, true)),
+        );
+        assert_eq!(
+            run.policy.stats().wire_events,
+            4,
+            "duplicate receipts do not add packets"
+        );
+        assert_eq!(
+            run.poll(
+                104,
+                Some(AnimClass::Roll),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Batch
+        );
         assert_eq!(run.policy.stats().verified, 1);
         assert_ring(&run, 1);
     }
@@ -1779,12 +2112,44 @@ mod tests {
     fn late_ending_landing_records_one_slip_at_its_roll() {
         let mut run = replay(ending());
         run.batch(101, AnimClass::Skill);
-        assert_eq!(run.poll(102, None, false, false, false, false, false, false, false), CycleStep::Wait);
-        assert_eq!(run.poll(103, Some(AnimClass::Fletching), false, false, false, false, false, false, false), CycleStep::Wait);
+        assert_eq!(
+            run.poll(102, None, false, false, false, false, false, false, false),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            run.poll(
+                103,
+                Some(AnimClass::Fletching),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Wait
+        );
         assert_eq!(run.policy.stats().slipped, 0);
-        assert_eq!(run.poll(104, None, false, false, false, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            run.poll(104, None, false, false, false, false, false, false, false),
+            CycleStep::Click
+        );
         run.accept_click(104);
-        assert_eq!(run.poll(105, Some(AnimClass::Roll), false, false, false, false, false, false, false), CycleStep::Batch);
+        assert_eq!(
+            run.poll(
+                105,
+                Some(AnimClass::Roll),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Batch
+        );
         assert_eq!(run.policy.stats().slipped, 1);
         assert_ring(&run, 1);
 
@@ -1792,21 +2157,65 @@ mod tests {
         let mut blind = replay(never);
         blind.batch(101, AnimClass::Skill);
         blind.poll(102, None, false, false, false, false, false, false, false);
-        blind.poll(103, Some(AnimClass::Fletching), false, false, false, false, false, false, false);
+        blind.poll(
+            103,
+            Some(AnimClass::Fletching),
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
         blind.poll(104, None, false, false, false, false, false, false, false);
         blind.accept_click(104);
-        assert_eq!(blind.poll(105, None, false, false, false, false, false, false, false), CycleStep::Batch);
+        assert_eq!(
+            blind.poll(105, None, false, false, false, false, false, false, false),
+            CycleStep::Batch
+        );
         assert_eq!(blind.policy.stats().slipped, 1);
         assert_ring(&blind, 1);
 
         let mut refused = replay(ending());
         refused.batch(101, AnimClass::Skill);
         refused.poll(102, None, false, false, false, false, false, false, false);
-        refused.poll(103, Some(AnimClass::Fletching), false, false, false, false, false, false, false);
-        assert_eq!(refused.poll(104, None, false, false, false, false, false, false, false), CycleStep::Click);
+        refused.poll(
+            103,
+            Some(AnimClass::Fletching),
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+        assert_eq!(
+            refused.poll(104, None, false, false, false, false, false, false, false),
+            CycleStep::Click
+        );
         let request = refused.next_request - 1;
-        assert_eq!(refused.poll_receipts(104, None, false, false, false, false, false, false, false, None, Some((request, false))), CycleStep::Wait);
-        assert_eq!(refused.poll(105, None, false, false, false, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            refused.poll_receipts(
+                104,
+                None,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                None,
+                Some((request, false))
+            ),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            refused.poll(105, None, false, false, false, false, false, false, false),
+            CycleStep::Click
+        );
         assert_eq!(refused.policy.stats().lost, 1);
         assert_ring(&refused, 1);
     }
@@ -1821,14 +2230,75 @@ mod tests {
             for cycle in 0..3 {
                 let sent = 101 + cycle * 4;
                 let receipt = dispatch_receipt(batch, sent, Shape::Ending, 2);
-                run.poll_receipts(sent, None, false, false, false, false, false, false, false, Some(&receipt), None);
-                assert_eq!(run.poll(sent + 1, None, false, false, false, false, false, false, false), CycleStep::Wait);
-                assert_eq!(run.poll(sent + 2, Some(AnimClass::Fletching), false, false, false, false, false, false, false), CycleStep::Wait);
+                run.poll_receipts(
+                    sent,
+                    None,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    Some(&receipt),
+                    None,
+                );
+                assert_eq!(
+                    run.poll(
+                        sent + 1,
+                        None,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false
+                    ),
+                    CycleStep::Wait
+                );
+                assert_eq!(
+                    run.poll(
+                        sent + 2,
+                        Some(AnimClass::Fletching),
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false
+                    ),
+                    CycleStep::Wait
+                );
                 assert_eq!(run.policy.stats().slipped, cycle as u32);
-                assert_eq!(run.poll(sent + 3, None, false, false, false, false, false, false, false), CycleStep::Click);
+                assert_eq!(
+                    run.poll(
+                        sent + 3,
+                        None,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false
+                    ),
+                    CycleStep::Click
+                );
                 run.accept_click(sent + 3);
                 let animation = (roll_signal == RollSignal::Always).then_some(AnimClass::Roll);
-                let step = run.poll(sent + 4, animation, false, false, false, false, false, false, false);
+                let step = run.poll(
+                    sent + 4,
+                    animation,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                );
                 assert_eq!(run.policy.stats().slipped, cycle as u32 + 1);
                 if cycle == 2 {
                     assert_eq!(step, CycleStep::Native(OffReason::UnstableTiming));
@@ -1845,13 +2315,44 @@ mod tests {
         let mut missing = replay(ending());
         missing.batch(101, AnimClass::Skill);
         missing.poll(102, None, false, false, false, false, false, false, false);
-        missing.poll(103, Some(AnimClass::Fletching), false, false, false, false, false, false, false);
-        assert_eq!(missing.poll(104, None, false, false, false, false, false, false, false), CycleStep::Click);
+        missing.poll(
+            103,
+            Some(AnimClass::Fletching),
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+        assert_eq!(
+            missing.poll(104, None, false, false, false, false, false, false, false),
+            CycleStep::Click
+        );
         missing.accept_click(104);
-        assert_eq!(missing.poll(105, None, false, false, false, false, false, false, false), CycleStep::Wait);
-        assert_eq!(missing.poll(106, None, false, false, false, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            missing.poll(105, None, false, false, false, false, false, false, false),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            missing.poll(106, None, false, false, false, false, false, false, false),
+            CycleStep::Click
+        );
         let fallback = missing.next_request - 1;
-        missing.poll_receipts(106, None, false, false, false, false, false, false, false, None, Some((fallback, false)));
+        missing.poll_receipts(
+            106,
+            None,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            None,
+            Some((fallback, false)),
+        );
         assert_eq!(missing.policy.stats().slipped, 0);
         assert_eq!(missing.policy.stats().lost, 1);
         assert_eq!(missing.policy.stats().fallback_failed, 1);
@@ -1860,30 +2361,109 @@ mod tests {
 
     #[test]
     fn normal_rock_null_and_bounded_success_is_delayed_not_refused() {
-        let spec = CycleSpec::new(Shape::Continuing, RollSignal::Always, true, true, 4, 0, false);
+        let spec = CycleSpec::new(
+            Shape::Continuing,
+            RollSignal::Always,
+            true,
+            true,
+            4,
+            0,
+            false,
+        );
         let mut run = replay(spec);
         run.batch(101, AnimClass::Skill);
-        assert_eq!(run.poll(101, None, false, true, false, false, false, false, false), CycleStep::Wait);
-        assert_eq!(run.poll(102, Some(AnimClass::Null), false, false, false, false, false, false, false), CycleStep::Wait);
-        assert_eq!(run.poll(102, None, false, false, false, false, false, false, true), CycleStep::Batch);
+        assert_eq!(
+            run.poll(101, None, false, true, false, false, false, false, false),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            run.poll(
+                102,
+                Some(AnimClass::Null),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            run.poll(102, None, false, false, false, false, false, false, true),
+            CycleStep::Batch
+        );
         assert_eq!(run.policy.stats().delayed, 1);
         assert_eq!(run.policy.stats().wire_events, 0);
         assert_ring(&run, 0);
 
         let mut line_at_edge = replay(spec);
         line_at_edge.batch(101, AnimClass::Skill);
-        line_at_edge.poll(102, Some(AnimClass::Null), false, true, false, false, false, false, false);
+        line_at_edge.poll(
+            102,
+            Some(AnimClass::Null),
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
         assert_eq!(line_at_edge.policy.stats().delayed, 1);
         assert_ring(&line_at_edge, 0);
 
         let mut product = replay(spec);
         product.batch(101, AnimClass::Skill);
-        product.poll(102, Some(AnimClass::Null), false, false, false, false, false, false, false);
-        assert_eq!(product.poll(102, None, false, false, false, false, false, true, true), CycleStep::Batch);
+        product.poll(
+            102,
+            Some(AnimClass::Null),
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+        assert_eq!(
+            product.poll(102, None, false, false, false, false, false, true, true),
+            CycleStep::Batch
+        );
         assert_eq!(product.policy.stats().delayed, 1);
-        assert_eq!(product.poll(103, Some(AnimClass::Fletching), true, false, false, false, false, false, false), CycleStep::Wait);
-        assert_eq!(product.poll(104, None, false, false, false, false, false, false, false), CycleStep::Wait);
-        assert_eq!(product.poll(105, Some(AnimClass::Skill), false, false, false, false, false, false, false), CycleStep::Batch);
+        assert_eq!(
+            product.poll(
+                103,
+                Some(AnimClass::Fletching),
+                true,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            product.poll(104, None, false, false, false, false, false, false, false),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            product.poll(
+                105,
+                Some(AnimClass::Skill),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Batch
+        );
         assert_eq!(product.policy.stats().verified, 1);
         assert_eq!(product.policy.stats().delayed, 1);
         assert_ring(&product, 1);
@@ -1891,32 +2471,120 @@ mod tests {
 
     #[test]
     fn transit_batch_then_fletch_ends_once_without_acknowledgement_inference() {
-        let spec = CycleSpec::new(Shape::Continuing, RollSignal::Always, true, false, 4, 1, false);
+        let spec = CycleSpec::new(
+            Shape::Continuing,
+            RollSignal::Always,
+            true,
+            false,
+            4,
+            1,
+            false,
+        );
         let mut run = replay(spec);
         run.batch(101, AnimClass::Skill);
         run.poll(101, None, false, true, false, false, false, false, false);
-        run.poll(102, Some(AnimClass::Null), false, false, false, false, false, false, true);
+        run.poll(
+            102,
+            Some(AnimClass::Null),
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            true,
+        );
         let transit_batch = run.next_request - 1;
-        assert_eq!(run.poll(103, Some(AnimClass::Fletching), false, false, false, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            run.poll(
+                103,
+                Some(AnimClass::Fletching),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Click
+        );
         let act_request = run.next_request - 1;
-        assert_eq!(run.poll_receipts(103, None, false, false, false, false, false, false, false, Some(&dispatch_receipt(transit_batch, 102, Shape::Continuing, 3)), Some((act_request, true))), CycleStep::Wait);
+        assert_eq!(
+            run.poll_receipts(
+                103,
+                None,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                Some(&dispatch_receipt(transit_batch, 102, Shape::Continuing, 3)),
+                Some((act_request, true))
+            ),
+            CycleStep::Wait
+        );
         run.poll(104, None, false, false, false, false, false, false, false);
-        assert_eq!(run.poll(105, None, false, false, true, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            run.poll(105, None, false, false, true, false, false, false, false),
+            CycleStep::Click
+        );
         assert_eq!(run.policy.stats().lost, 1);
         assert_ring(&run, 1);
     }
 
     #[test]
     fn host_refusal_of_the_idle_replacement_batch_gets_one_fallback() {
-        let spec = CycleSpec::new(Shape::Continuing, RollSignal::Always, true, true, 4, 0, false);
+        let spec = CycleSpec::new(
+            Shape::Continuing,
+            RollSignal::Always,
+            true,
+            true,
+            4,
+            0,
+            false,
+        );
         let mut run = replay(spec);
         run.batch(101, AnimClass::Skill);
         run.poll(101, None, false, true, false, false, false, false, false);
-        assert_eq!(run.poll(102, Some(AnimClass::Null), false, false, false, false, false, false, true), CycleStep::Batch);
+        assert_eq!(
+            run.poll(
+                102,
+                Some(AnimClass::Null),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                true
+            ),
+            CycleStep::Batch
+        );
         let replacement = run.next_request - 1;
         let receipt = dispatch_receipt(replacement, 102, Shape::Continuing, 0);
-        assert_eq!(run.poll_receipts(102, None, false, false, false, false, false, false, false, Some(&receipt), None), CycleStep::Wait);
-        assert_eq!(run.poll(103, None, false, false, false, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            run.poll_receipts(
+                102,
+                None,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                Some(&receipt),
+                None
+            ),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            run.poll(103, None, false, false, false, false, false, false, false),
+            CycleStep::Click
+        );
         run.accept_click(103);
         assert_eq!(run.policy.stats().delayed, 1);
         assert_eq!(run.policy.stats().lost, 1);
@@ -1927,20 +2595,63 @@ mod tests {
 
     #[test]
     fn bounded_intervals_expire_and_keep_their_packet_order() {
-        assert_eq!(Bound::label(Position::AfterPlayerInfo, true), Bound { lo: -1, hi: 0 });
-        assert_eq!(Bound::label(Position::AfterPlayerInfo, false), Bound { lo: 0, hi: 0 });
-        assert_eq!(Bound::label(Position::BeforePlayerInfo, true), Bound { lo: 0, hi: 1 });
-        assert_eq!(Bound::label(Position::BeforePlayerInfo, false), Bound { lo: 1, hi: 1 });
+        assert_eq!(
+            Bound::label(Position::AfterPlayerInfo, true),
+            Bound { lo: -1, hi: 0 }
+        );
+        assert_eq!(
+            Bound::label(Position::AfterPlayerInfo, false),
+            Bound { lo: 0, hi: 0 }
+        );
+        assert_eq!(
+            Bound::label(Position::BeforePlayerInfo, true),
+            Bound { lo: 0, hi: 1 }
+        );
+        assert_eq!(
+            Bound::label(Position::BeforePlayerInfo, false),
+            Bound { lo: 1, hi: 1 }
+        );
 
         let mut run = replay(continuing());
         run.poll(100, None, false, true, false, false, false, false, false);
         run.batch(101, AnimClass::Skill);
-        run.poll(102, Some(AnimClass::Fletching), true, false, false, false, false, false, false);
-        assert_eq!(run.poll(103, None, false, false, false, false, false, false, false), CycleStep::Wait);
+        run.poll(
+            102,
+            Some(AnimClass::Fletching),
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+        assert_eq!(
+            run.poll(103, None, false, false, false, false, false, false, false),
+            CycleStep::Wait
+        );
         assert!(!run.cycle.evidence.success(104, 103));
 
-        let mut product = replay(CycleSpec::new(Shape::Continuing, RollSignal::Never, false, false, 4, 1, false));
-        product.poll(101, Some(AnimClass::Cast), false, false, false, false, false, false, false);
+        let mut product = replay(CycleSpec::new(
+            Shape::Continuing,
+            RollSignal::Never,
+            false,
+            false,
+            4,
+            1,
+            false,
+        ));
+        product.poll(
+            101,
+            Some(AnimClass::Cast),
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
         product.poll(102, None, false, false, false, false, false, true, false);
         product.poll(103, None, false, false, false, false, false, false, false);
         product.poll(104, None, false, false, false, false, false, false, false);
@@ -1953,58 +2664,247 @@ mod tests {
         let mut run = replay(continuing());
         let batch_id = run.batch(101, AnimClass::Skill);
         let receipt = dispatch_receipt(batch_id, 101, Shape::Continuing, 2);
-        assert_eq!(run.poll_receipts(101, None, false, false, false, false, false, false, false, Some(&receipt), None), CycleStep::Wait);
-        assert_eq!(run.poll(102, Some(AnimClass::Fletching), false, false, false, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            run.poll_receipts(
+                101,
+                None,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                Some(&receipt),
+                None
+            ),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            run.poll(
+                102,
+                Some(AnimClass::Fletching),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Click
+        );
         let act_id = run.next_request - 1;
-        assert_eq!(run.poll_receipts(102, None, false, false, false, false, false, false, false, None, Some((act_id, true))), CycleStep::Wait);
+        assert_eq!(
+            run.poll_receipts(
+                102,
+                None,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                None,
+                Some((act_id, true))
+            ),
+            CycleStep::Wait
+        );
         assert_eq!(run.policy.stats().wire_events, 4);
-        assert_eq!(run.poll(103, None, false, false, false, false, false, false, false), CycleStep::Wait);
-        assert_eq!(run.poll(104, Some(AnimClass::Skill), false, false, false, false, false, false, false), CycleStep::Batch);
+        assert_eq!(
+            run.poll(103, None, false, false, false, false, false, false, false),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            run.poll(
+                104,
+                Some(AnimClass::Skill),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Batch
+        );
         assert_eq!(run.policy.stats().verified, 1);
         assert_ring(&run, 1);
 
         let mut prefix3 = replay(continuing());
         let id = prefix3.batch(101, AnimClass::Skill);
         let receipt = dispatch_receipt(id, 101, Shape::Continuing, 3);
-        prefix3.poll_receipts(101, None, false, false, false, false, false, false, false, Some(&receipt), None);
-        assert_eq!(prefix3.poll(102, Some(AnimClass::Fletching), false, false, false, false, false, false, false), CycleStep::Click);
+        prefix3.poll_receipts(
+            101,
+            None,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            Some(&receipt),
+            None,
+        );
+        assert_eq!(
+            prefix3.poll(
+                102,
+                Some(AnimClass::Fletching),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Click
+        );
         assert_eq!(prefix3.policy.stats().verified, 0);
         assert_ring(&prefix3, 0);
     }
 
     #[test]
     fn act_deadline_and_late_receipts_never_create_a_second_act_request() {
-        let mut mining = replay(CycleSpec::new(Shape::Continuing, RollSignal::Always, false, false, 4, 0, false));
+        let mut mining = replay(CycleSpec::new(
+            Shape::Continuing,
+            RollSignal::Always,
+            false,
+            false,
+            4,
+            0,
+            false,
+        ));
         mining.batch(101, AnimClass::Skill);
         // Spending the landing window leaves the Act Due, not Asked.
         mining.cycle.last_emit_tick = 102;
-        assert_eq!(mining.poll(102, Some(AnimClass::Fletching), false, false, false, false, false, false, false), CycleStep::Wait);
-        assert_eq!(mining.poll(103, None, false, false, false, false, false, false, false), CycleStep::Click);
-        assert_eq!(mining.poll(103, None, false, false, false, false, false, false, false), CycleStep::Wait);
+        assert_eq!(
+            mining.poll(
+                102,
+                Some(AnimClass::Fletching),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            mining.poll(103, None, false, false, false, false, false, false, false),
+            CycleStep::Click
+        );
+        assert_eq!(
+            mining.poll(103, None, false, false, false, false, false, false, false),
+            CycleStep::Wait
+        );
 
         let mut fishing = replay(continuing());
         fishing.batch(101, AnimClass::Skill);
         fishing.cycle.last_emit_tick = 102;
-        assert_eq!(fishing.poll(102, Some(AnimClass::Fletching), false, false, false, false, false, false, false), CycleStep::Wait);
-        assert_eq!(fishing.poll(103, None, false, false, false, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            fishing.poll(
+                102,
+                Some(AnimClass::Fletching),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            fishing.poll(103, None, false, false, false, false, false, false, false),
+            CycleStep::Click
+        );
         assert_eq!(fishing.policy.stats().lost, 1);
         assert_ring(&fishing, 1);
 
         let mut refused = replay(continuing());
         refused.batch(101, AnimClass::Skill);
-        assert_eq!(refused.poll(102, Some(AnimClass::Fletching), false, false, false, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            refused.poll(
+                102,
+                Some(AnimClass::Fletching),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Click
+        );
         let request = refused.next_request - 1;
-        assert_eq!(refused.poll_receipts(102, None, false, false, false, false, false, false, false, None, Some((request, false))), CycleStep::Wait);
-        assert_eq!(refused.poll(103, None, false, false, false, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            refused.poll_receipts(
+                102,
+                None,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                None,
+                Some((request, false))
+            ),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            refused.poll(103, None, false, false, false, false, false, false, false),
+            CycleStep::Click
+        );
         assert_eq!(refused.policy.stats().lost, 1);
         assert_ring(&refused, 1);
 
         let mut late_receipt = replay(continuing());
         late_receipt.batch(101, AnimClass::Skill);
-        assert_eq!(late_receipt.poll(102, Some(AnimClass::Fletching), false, false, false, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            late_receipt.poll(
+                102,
+                Some(AnimClass::Fletching),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Click
+        );
         let request = late_receipt.next_request - 1;
-        assert_eq!(late_receipt.poll(103, None, false, false, false, false, false, false, false), CycleStep::Wait);
-        assert_eq!(late_receipt.poll_receipts(103, None, false, false, false, false, false, false, false, None, Some((request, false))), CycleStep::Click);
+        assert_eq!(
+            late_receipt.poll(103, None, false, false, false, false, false, false, false),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            late_receipt.poll_receipts(
+                103,
+                None,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                None,
+                Some((request, false))
+            ),
+            CycleStep::Click
+        );
         assert_eq!(late_receipt.policy.stats().lost, 1);
         assert_ring(&late_receipt, 1);
     }
@@ -2014,29 +2914,124 @@ mod tests {
         let mut run = replay(continuing());
         let batch = run.batch(101, AnimClass::Skill);
         let receipt = dispatch_receipt(batch, 101, Shape::Continuing, 1);
-        assert_eq!(run.poll_receipts(101, None, false, false, false, false, false, false, false, Some(&receipt), None), CycleStep::Wait);
-        assert_eq!(run.poll(102, None, false, false, false, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            run.poll_receipts(
+                101,
+                None,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                Some(&receipt),
+                None
+            ),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            run.poll(102, None, false, false, false, false, false, false, false),
+            CycleStep::Click
+        );
         let fallback_id = run.next_request - 1;
-        assert_eq!(run.poll_receipts(102, None, false, false, false, false, false, false, false, None, Some((fallback_id, false))), CycleStep::Wait);
+        assert_eq!(
+            run.poll_receipts(
+                102,
+                None,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                None,
+                Some((fallback_id, false))
+            ),
+            CycleStep::Wait
+        );
         assert_eq!(run.policy.stats().fallback_failed, 1);
-        assert_eq!(run.poll(103, Some(AnimClass::Roll), false, false, false, false, true, false, false), CycleStep::Wait);
-        assert_eq!(run.poll(104, Some(AnimClass::Roll), false, false, false, false, false, false, false), CycleStep::Batch);
+        assert_eq!(
+            run.poll(
+                103,
+                Some(AnimClass::Roll),
+                false,
+                false,
+                false,
+                false,
+                true,
+                false,
+                false
+            ),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            run.poll(
+                104,
+                Some(AnimClass::Roll),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Batch
+        );
         assert_eq!(run.policy.stats().lost, 1);
         assert_ring(&run, 1);
     }
 
     #[test]
     fn continuing_late_batch_is_one_slip_for_all_observed_splits() {
-        for (act_line, menu_wake, roll_tick) in [(false, false, 105), (false, true, 105), (true, false, 105), (false, false, 106)] {
+        for (act_line, menu_wake, roll_tick) in [
+            (false, false, 105),
+            (false, true, 105),
+            (true, false, 105),
+            (false, false, 106),
+        ] {
             let mut run = replay(continuing());
             run.batch(101, AnimClass::Skill);
-            run.poll(102, None, false, false, false, false, menu_wake, false, false);
-            assert_eq!(run.poll(103, Some(AnimClass::Fletching), act_line, false, false, false, false, false, false), CycleStep::Click);
+            run.poll(
+                102, None, false, false, false, false, menu_wake, false, false,
+            );
+            assert_eq!(
+                run.poll(
+                    103,
+                    Some(AnimClass::Fletching),
+                    act_line,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false
+                ),
+                CycleStep::Click
+            );
             assert_eq!(run.policy.stats().slipped, 1);
             run.accept_click(103);
-            assert_eq!(run.poll(104, None, false, false, false, false, false, false, false), CycleStep::Wait);
+            assert_eq!(
+                run.poll(104, None, false, false, false, false, false, false, false),
+                CycleStep::Wait
+            );
             run.quiet_until(roll_tick);
-            assert_eq!(run.poll(roll_tick, Some(AnimClass::Skill), false, false, false, false, false, false, false), CycleStep::Batch);
+            assert_eq!(
+                run.poll(
+                    roll_tick,
+                    Some(AnimClass::Skill),
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false
+                ),
+                CycleStep::Batch
+            );
             assert_eq!(run.policy.stats().slipped, 1);
             assert_ring(&run, 1);
         }
@@ -2047,63 +3042,207 @@ mod tests {
         let mut run = replay(continuing());
         let batch = run.batch(101, AnimClass::Skill);
         let receipt = dispatch_receipt(batch, 101, Shape::Continuing, 2);
-        run.poll_receipts(101, None, false, false, false, false, false, false, false, Some(&receipt), None);
+        run.poll_receipts(
+            101,
+            None,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            Some(&receipt),
+            None,
+        );
         run.poll(102, None, false, false, false, false, false, false, false);
-        assert_eq!(run.poll(103, Some(AnimClass::Fletching), false, false, false, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            run.poll(
+                103,
+                Some(AnimClass::Fletching),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Click
+        );
         assert_eq!(run.policy.stats().slipped, 1);
         assert_ring(&run, 1);
     }
 
     #[test]
     fn late_fishing_fallback_waits_for_a_real_cast_and_never_invents_lava_cast() {
-        let fly = CycleSpec::new(Shape::Continuing, RollSignal::Always, false, false, 4, 1, false);
+        let fly = CycleSpec::new(
+            Shape::Continuing,
+            RollSignal::Always,
+            false,
+            false,
+            4,
+            1,
+            false,
+        );
         let mut run = replay(fly);
         run.batch(101, AnimClass::Skill);
         run.poll(102, None, false, false, false, false, false, false, false);
-        assert_eq!(run.poll(103, Some(AnimClass::Cast), false, false, false, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            run.poll(
+                103,
+                Some(AnimClass::Cast),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Click
+        );
         run.accept_click(103);
         run.quiet_until(106);
-        assert_eq!(run.poll(106, Some(AnimClass::Roll), false, false, false, false, false, false, false), CycleStep::Batch);
+        assert_eq!(
+            run.poll(
+                106,
+                Some(AnimClass::Roll),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Batch
+        );
 
-        let lava = CycleSpec::new(Shape::Continuing, RollSignal::Never, false, false, 5, 1, true);
+        let lava = CycleSpec::new(
+            Shape::Continuing,
+            RollSignal::Never,
+            false,
+            false,
+            5,
+            1,
+            true,
+        );
         let mut eel = replay(lava);
         eel.batch(101, AnimClass::Skill);
         eel.poll(102, None, false, false, false, false, false, false, false);
-        assert_eq!(eel.poll(103, Some(AnimClass::Cast), false, false, false, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            eel.poll(
+                103,
+                Some(AnimClass::Cast),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Click
+        );
         eel.accept_click(103);
         eel.quiet_until(108);
-        assert_eq!(eel.poll(108, None, false, false, false, false, false, false, false), CycleStep::Wait);
-        assert!(matches!(eel.cycle.phase(), Phase::Native { roll_due: None, .. }));
-        eel.poll(109, Some(AnimClass::Cast), false, false, false, false, false, false, false);
+        assert_eq!(
+            eel.poll(108, None, false, false, false, false, false, false, false),
+            CycleStep::Wait
+        );
+        assert!(matches!(
+            eel.cycle.phase(),
+            Phase::Native { roll_due: None, .. }
+        ));
+        eel.poll(
+            109,
+            Some(AnimClass::Cast),
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
         eel.quiet_until(113);
-        assert_eq!(eel.poll(113, None, false, false, false, false, false, false, false), CycleStep::Batch);
+        assert_eq!(
+            eel.poll(113, None, false, false, false, false, false, false, false),
+            CycleStep::Batch
+        );
     }
 
     #[test]
     fn lost_continuing_cycle_recovers_only_from_a_fresh_cast() {
-        let never = CycleSpec::new(Shape::Continuing, RollSignal::Never, false, false, 4, 1, false);
+        let never = CycleSpec::new(
+            Shape::Continuing,
+            RollSignal::Never,
+            false,
+            false,
+            4,
+            1,
+            false,
+        );
         let mut run = replay(never);
         run.batch(101, AnimClass::Skill);
         run.poll(102, None, false, false, false, false, false, false, false);
-        assert_eq!(run.poll(103, None, false, false, false, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            run.poll(103, None, false, false, false, false, false, false, false),
+            CycleStep::Click
+        );
         run.accept_click(103);
         run.poll(104, None, false, false, false, false, false, false, false);
-        run.poll(105, Some(AnimClass::Cast), false, false, false, false, false, false, false);
+        run.poll(
+            105,
+            Some(AnimClass::Cast),
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
         run.quiet_until(108);
-        assert_eq!(run.poll(108, None, false, false, false, false, false, false, false), CycleStep::Batch);
+        assert_eq!(
+            run.poll(108, None, false, false, false, false, false, false, false),
+            CycleStep::Batch
+        );
         assert_eq!(run.policy.stats().lost, 1);
         assert_ring(&run, 1);
 
-        let always = CycleSpec::new(Shape::Continuing, RollSignal::Always, false, false, 4, 1, false);
+        let always = CycleSpec::new(
+            Shape::Continuing,
+            RollSignal::Always,
+            false,
+            false,
+            4,
+            1,
+            false,
+        );
         let mut observed = replay(always);
         observed.batch(101, AnimClass::Skill);
         observed.poll(102, None, false, false, false, false, false, false, false);
         observed.poll(103, None, false, false, false, false, false, false, false);
         observed.accept_click(103);
         observed.poll(104, None, false, false, false, false, false, false, false);
-        observed.poll(105, Some(AnimClass::Cast), false, false, false, false, false, false, false);
+        observed.poll(
+            105,
+            Some(AnimClass::Cast),
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
         observed.quiet_until(108);
-        assert_eq!(observed.poll(108, None, false, false, false, false, false, false, false), CycleStep::Wait);
+        assert_eq!(
+            observed.poll(108, None, false, false, false, false, false, false, false),
+            CycleStep::Wait
+        );
     }
 
     #[test]
@@ -2112,12 +3251,31 @@ mod tests {
         let mut run = replay(spec);
         run.batch(101, AnimClass::Skill);
         run.poll(102, None, false, false, false, false, false, false, false);
-        assert_eq!(run.poll(103, None, false, false, false, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            run.poll(103, None, false, false, false, false, false, false, false),
+            CycleStep::Click
+        );
         run.accept_click(103);
-        assert_eq!(run.poll(104, None, false, false, false, false, false, false, false), CycleStep::Wait);
-        run.poll(105, Some(AnimClass::Cast), false, false, false, false, false, false, false);
+        assert_eq!(
+            run.poll(104, None, false, false, false, false, false, false, false),
+            CycleStep::Wait
+        );
+        run.poll(
+            105,
+            Some(AnimClass::Cast),
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
         run.quiet_until(108);
-        assert_eq!(run.poll(108, None, false, false, false, false, false, false, false), CycleStep::Batch);
+        assert_eq!(
+            run.poll(108, None, false, false, false, false, false, false, false),
+            CycleStep::Batch
+        );
         assert_eq!(run.policy.stats().lost, 1);
         assert_ring(&run, 1);
     }
@@ -2128,7 +3286,10 @@ mod tests {
         sent.batch(101, AnimClass::Skill);
         let skipped = CycleSignals {
             tick: 104,
-            anim: Some(AnimInstruction { serial: 55, class: AnimClass::Fletching }),
+            anim: Some(AnimInstruction {
+                serial: 55,
+                class: AnimClass::Fletching,
+            }),
             act_line: false,
             success_line: false,
             fletch: false,
@@ -2139,16 +3300,58 @@ mod tests {
             receipt: None,
             checked_receipt: None,
         };
-        assert_eq!(sent.cycle.drive(&skipped, &mut sent.policy), CycleStep::Wait);
+        assert_eq!(
+            sent.cycle.drive(&skipped, &mut sent.policy),
+            CycleStep::Wait
+        );
         assert_eq!(sent.cycle.anim_serial, 55);
         assert_eq!(sent.policy.stats().unobserved, 1);
-        assert_eq!(sent.poll(105, Some(AnimClass::Fletching), false, false, false, false, false, false, false), CycleStep::Wait);
-        assert_eq!(sent.poll(106, Some(AnimClass::Roll), false, false, false, false, false, false, false), CycleStep::Batch);
+        assert_eq!(
+            sent.poll(
+                105,
+                Some(AnimClass::Fletching),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            sent.poll(
+                106,
+                Some(AnimClass::Roll),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Batch
+        );
         assert_ring(&sent, 0);
 
         let mut armed = replay(continuing());
         armed.batch(101, AnimClass::Skill);
-        assert_eq!(armed.poll(102, Some(AnimClass::Fletching), false, false, false, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            armed.poll(
+                102,
+                Some(AnimClass::Fletching),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Click
+        );
         let asked = armed.next_request - 1;
         let skip_fletch = CycleSignals {
             tick: 104,
@@ -2163,10 +3366,29 @@ mod tests {
             receipt: None,
             checked_receipt: None,
         };
-        assert_eq!(armed.cycle.drive(&skip_fletch, &mut armed.policy), CycleStep::Click);
+        assert_eq!(
+            armed.cycle.drive(&skip_fletch, &mut armed.policy),
+            CycleStep::Click
+        );
         assert_eq!(armed.cycle.pending_obligation_id(), Some(asked));
-        armed.poll_receipts(104, None, false, false, false, false, false, false, false, None, Some((asked, true)));
-        assert_eq!(armed.policy.stats().wire_events, 2, "a retained Asked receipt still contributes its packets");
+        armed.poll_receipts(
+            104,
+            None,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            None,
+            Some((asked, true)),
+        );
+        assert_eq!(
+            armed.policy.stats().wire_events,
+            2,
+            "a retained Asked receipt still contributes its packets"
+        );
         assert_eq!(armed.cycle.pending_obligation_id(), None);
         assert_eq!(armed.policy.stats().unobserved, 1);
         assert_eq!(armed.policy.stats().slipped, 0);
@@ -2174,9 +3396,19 @@ mod tests {
 
         let mut due = replay(continuing());
         // Observe fletch without reporting a successful fallback emission.
-        let un_emitted = CycleSignals { tick: 101, fletch: true, ..skip_fletch };
-        assert_eq!(due.cycle.drive(&un_emitted, &mut due.policy), CycleStep::Click);
-        assert_eq!(due.poll(104, None, false, false, false, false, false, false, false), CycleStep::Wait);
+        let un_emitted = CycleSignals {
+            tick: 101,
+            fletch: true,
+            ..skip_fletch
+        };
+        assert_eq!(
+            due.cycle.drive(&un_emitted, &mut due.policy),
+            CycleStep::Click
+        );
+        assert_eq!(
+            due.poll(104, None, false, false, false, false, false, false, false),
+            CycleStep::Wait
+        );
         assert_eq!(due.policy.stats().fallback_failed, 1);
         assert_ring(&due, 0);
     }
@@ -2187,8 +3419,36 @@ mod tests {
         let mut batch = run.batch(101, AnimClass::Skill);
         for tick in [101, 105] {
             let receipt = dispatch_receipt(batch, tick, Shape::Continuing, 0);
-            assert_eq!(run.poll_receipts(tick, None, false, false, false, false, false, false, false, Some(&receipt), None), CycleStep::Wait);
-            assert_eq!(run.poll(tick + 1, None, false, false, false, false, false, false, false), CycleStep::Click);
+            assert_eq!(
+                run.poll_receipts(
+                    tick,
+                    None,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    Some(&receipt),
+                    None
+                ),
+                CycleStep::Wait
+            );
+            assert_eq!(
+                run.poll(
+                    tick + 1,
+                    None,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false
+                ),
+                CycleStep::Click
+            );
             run.accept_click(tick + 1);
             if tick == 101 {
                 assert_ring(&run, 1);
@@ -2213,7 +3473,11 @@ mod tests {
         assert_eq!(policy.verdict_count(), 12);
         assert_eq!(policy.off_reason(), None);
         policy.record(Verdict::Slip, 15);
-        assert_eq!(policy.off_reason(), None, "the first slip has left the ring");
+        assert_eq!(
+            policy.off_reason(),
+            None,
+            "the first slip has left the ring"
+        );
         policy.record(Verdict::Slip, 16);
         assert_eq!(policy.off_until(), Some(96));
         assert_eq!(policy.verdict_count(), 0);
@@ -2267,7 +3531,10 @@ mod tests {
         assert_ring(&run, 1);
 
         let mut native = replay(continuing());
-        assert_eq!(native.poll(101, None, false, false, false, true, false, false, false), CycleStep::Native(OffReason::ContentRefusal));
+        assert_eq!(
+            native.poll(101, None, false, false, false, true, false, false, false),
+            CycleStep::Native(OffReason::ContentRefusal)
+        );
         assert_eq!(native.policy.stats().lost, 0);
         assert_eq!(native.policy.stats().fallback_failed, 0);
         assert_ring(&native, 0);
@@ -2280,11 +3547,34 @@ mod tests {
         sent.cycle.pause(&mut sent.policy);
         assert_eq!(sent.policy.stats().paused, 1);
         assert_ring(&sent, 0);
-        assert_eq!(sent.poll(102, Some(AnimClass::Roll), false, false, false, false, false, false, false), CycleStep::Batch);
+        assert_eq!(
+            sent.poll(
+                102,
+                Some(AnimClass::Roll),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Batch
+        );
 
         let mut armed = replay(continuing());
         armed.batch(101, AnimClass::Skill);
-        armed.poll(102, Some(AnimClass::Fletching), true, false, false, false, false, false, false);
+        armed.poll(
+            102,
+            Some(AnimClass::Fletching),
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
         armed.cycle.pause(&mut armed.policy);
         assert_eq!(armed.policy.stats().paused, 1);
         assert_ring(&armed, 0);
@@ -2303,7 +3593,15 @@ mod tests {
 
     #[test]
     fn bounded_only_roll_is_unobserved_and_never_a_verified_animation() {
-        let lava = CycleSpec::new(Shape::Continuing, RollSignal::Never, false, false, 5, 1, true);
+        let lava = CycleSpec::new(
+            Shape::Continuing,
+            RollSignal::Never,
+            false,
+            false,
+            5,
+            1,
+            true,
+        );
         let mut wake = replay(lava);
         wake.cycle.phase = Phase::Armed {
             armed: 101,
@@ -2313,7 +3611,10 @@ mod tests {
             null_edge: false,
         };
         wake.cycle.last_tick = 103;
-        assert_eq!(wake.poll(103, None, false, false, false, false, false, true, false), CycleStep::Batch);
+        assert_eq!(
+            wake.poll(103, None, false, false, false, false, false, true, false),
+            CycleStep::Batch
+        );
         assert_eq!(wake.policy.stats().unobserved, 1);
         assert_eq!(wake.policy.stats().verified, 0);
         assert_ring(&wake, 0);
@@ -2327,7 +3628,10 @@ mod tests {
             null_edge: false,
         };
         late.cycle.last_tick = 103;
-        assert_eq!(late.poll(104, None, false, false, false, false, false, true, false), CycleStep::Wait);
+        assert_eq!(
+            late.poll(104, None, false, false, false, false, false, true, false),
+            CycleStep::Wait
+        );
         assert_eq!(late.policy.stats().unobserved, 1);
         assert_eq!(late.policy.stats().verified, 0);
         assert_ring(&late, 0);
@@ -2337,14 +3641,40 @@ mod tests {
     fn fletch_during_live_cycle_falls_back_once_and_cast_resumes_from_observation() {
         let mut run = replay(continuing());
         run.batch(101, AnimClass::Skill);
-        assert_eq!(run.poll(102, None, false, false, true, false, false, false, false), CycleStep::Click);
+        assert_eq!(
+            run.poll(102, None, false, false, true, false, false, false, false),
+            CycleStep::Click
+        );
         assert_eq!(run.policy.stats().lost, 1);
         assert_ring(&run, 1);
         run.accept_click(102);
         run.poll(103, None, false, false, false, false, false, false, false);
-        run.poll(104, Some(AnimClass::Cast), false, false, false, false, false, false, false);
+        run.poll(
+            104,
+            Some(AnimClass::Cast),
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
         run.quiet_until(107);
-        assert_eq!(run.poll(107, Some(AnimClass::Roll), false, false, false, false, false, false, false), CycleStep::Batch);
+        assert_eq!(
+            run.poll(
+                107,
+                Some(AnimClass::Roll),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Batch
+        );
         assert_eq!(run.policy.stats().lost, 1);
         assert_ring(&run, 1);
     }
@@ -2352,9 +3682,38 @@ mod tests {
     #[test]
     fn stale_menu_blocks_roll_emission_until_a_fresh_roll_after_close() {
         let mut run = replay(continuing());
-        assert_eq!(run.poll(101, Some(AnimClass::Skill), false, false, false, false, true, false, false), CycleStep::Wait);
-        assert_eq!(run.poll(102, None, false, false, false, false, false, false, false), CycleStep::Wait);
-        assert_eq!(run.poll(103, Some(AnimClass::Skill), false, false, false, false, false, false, false), CycleStep::Batch);
+        assert_eq!(
+            run.poll(
+                101,
+                Some(AnimClass::Skill),
+                false,
+                false,
+                false,
+                false,
+                true,
+                false,
+                false
+            ),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            run.poll(102, None, false, false, false, false, false, false, false),
+            CycleStep::Wait
+        );
+        assert_eq!(
+            run.poll(
+                103,
+                Some(AnimClass::Skill),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            ),
+            CycleStep::Batch
+        );
         assert_eq!(run.policy.cycles(), 1);
         assert_ring(&run, 0);
     }
@@ -2363,7 +3722,17 @@ mod tests {
     fn parked_cycle_keeps_asked_id_cursor_evidence_and_receipt_owner() {
         let mut run = replay(continuing());
         run.batch(101, AnimClass::Skill);
-        run.poll(102, Some(AnimClass::Fletching), false, false, false, false, false, false, false);
+        run.poll(
+            102,
+            Some(AnimClass::Fletching),
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
         let asked = run.next_request - 1;
         run.cycle.evidence.act_line = Some(Bound { lo: 0, hi: 1 });
         run.cycle.set_chat_cursor(27);

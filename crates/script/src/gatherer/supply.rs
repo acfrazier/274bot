@@ -665,6 +665,13 @@ impl SupplyPlan {
 
     /// The optional technique kit cannot reach one held knife and log.
     /// It never becomes a gating missing item or a trip by itself.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Wave 3 (S4) publishes optional tick-kit unavailability"
+        )
+    )]
     pub fn kit_missing(&self) -> bool {
         self.kit_missing
     }
@@ -875,6 +882,10 @@ impl SupplyPlan {
     }
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "the bounded ten-item supply plan stays inline rather than allocating per trip"
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SupplyPlanResult {
     Pending,
@@ -884,6 +895,10 @@ pub enum SupplyPlanResult {
 
 /// What trip admission decided ([`SupplyPlan::plan`]; the verbs are
 /// design-bank-snapshot §2.4's Gatherer column).
+#[expect(
+    clippy::large_enum_variant,
+    reason = "trip admission retains its bounded supply plan without a heap allocation"
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SupplyVerdict {
     /// The pack and worn kit lack nothing a trip would fetch.
@@ -1209,7 +1224,10 @@ mod tests {
                 let SupplyVerdict::Trip(plan) = SupplyPlan::plan(&prepared, &stats, stock) else {
                     panic!("a bank holding the usable kit must admit its trip");
                 };
-                assert_eq!(targets(&plan), vec![(kit.knife.id, 1), (kit.logs.id, logs.min(3))]);
+                assert_eq!(
+                    targets(&plan),
+                    vec![(kit.knife.id, 1), (kit.logs.id, logs.min(3))]
+                );
                 assert!(!plan.kit_missing());
                 assert_eq!(plan.missing(), None);
             }
@@ -1221,7 +1239,8 @@ mod tests {
                     SupplyVerdict::NotDue,
                     "a known incomplete kit is not a trip or a gating missing item"
                 );
-                let plan = SupplyPlan::build(&prepared, &stats, stock, |id| bank.count(id).unwrap_or(0));
+                let plan =
+                    SupplyPlan::build(&prepared, &stats, stock, |id| bank.count(id).unwrap_or(0));
                 assert!(plan.kit_missing());
                 assert_eq!(plan.missing(), None);
                 assert!(targets(&plan).is_empty());
@@ -1245,7 +1264,10 @@ mod tests {
             item(kit.logs.id, &kit.logs.name, 1, ItemContainer::Inventory),
         ];
         let stock = with_bank(&stocked, &[], &empty);
-        assert_eq!(SupplyPlan::plan(&prepared, &stats, stock), SupplyVerdict::NotDue);
+        assert_eq!(
+            SupplyPlan::plan(&prepared, &stats, stock),
+            SupplyVerdict::NotDue
+        );
         let plan = SupplyPlan::build(&prepared, &stats, stock, |_| 0);
         assert!(!plan.kit_missing());
         assert!(targets(&plan).is_empty());
