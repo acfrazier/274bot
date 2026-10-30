@@ -139,7 +139,9 @@ pub(crate) fn observe_compat_walk(
                     "walk prerequisite handover was refused: {error:?}"
                 ))),
             );
-            slot.finish_compat_walk(request_id);
+            // No runner owns this terminal. Let the ordinary observer retire
+            // the admitted physical walk's release reservation.
+            return false;
         }
         return true;
     }

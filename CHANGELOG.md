@@ -70,6 +70,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   forbids it. Combat escapes and other safety walks never stop to talk.
   Scripted `walkTo` and `walkResilient` preserve these per-walk choices,
   including after the existing boat-fare recovery.
+  Scripted walks retain their original walk identity during a prerequisite
+  step and release it when the walk ends, including a refused handover.
   Food from Drezel remains ordinary inventory and follows existing bank
   behavior. No prerequisite step drops it.
 - Bots now wait and try again when another player is using a shortcut,

@@ -280,7 +280,7 @@ impl SlotScript {
                 "compatibility walk has no active isolate seat".into(),
             ));
         };
-        if owner.lookup(request_id) != api::script_contract::AuthorityStatus::Live {
+        if !owner.has_armed_walk(request_id) {
             return Err(StartError::Unavailable(
                 "compatibility walk request is no longer live".into(),
             ));
