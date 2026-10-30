@@ -368,13 +368,9 @@ fn fresh_refusal_match(
         let sequence = match matching_line {
             Some(line) if page_matches || line.sequence == latest_sequence => line.sequence,
             Some(_) => continue,
-            None if page_matches => {
-                snapshot
-                    .chat_lines()
-                    .iter()
-                    .find(|line| line.sequence > after)?
-                    .sequence
-            }
+            // The caller already rejected the acknowledged page. NPC pages
+            // need not also append an ordinary chat-ring message.
+            None if page_matches => latest_sequence,
             None => continue,
         };
         return Some(RefusalMatch {
