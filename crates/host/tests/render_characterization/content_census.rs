@@ -314,6 +314,358 @@ fn model_measure(model: &Model, trigger: &str) -> Result<ModelMeasure, String> {
         points,
     })
 }
+const PLAYER_APPEARANCE_SLOT_COUNT: usize = 12;
+const PLAYER_IDK_BODY_SLOT_BY_PART: [usize; 7] = [8, 11, 4, 6, 9, 7, 10];
+const PLAYER_IDK_BODY_PART_COUNT: usize = 7;
+const ILLUSTRATIVE_CROWD_PLAYER_COUNT: usize = 250;
+
+#[derive(Clone, Default)]
+struct FaceMaximum {
+    faces: usize,
+    trigger: Option<String>,
+}
+
+impl FaceMaximum {
+    fn record_model(&mut self, model: &Model, trigger: String) -> Result<(), String> {
+        let faces = usize::try_from(model.num_faces)
+            .map_err(|_| format!("{trigger}: negative or unrepresentable face count {}", model.num_faces))?;
+        self.record_faces(faces, trigger);
+        Ok(())
+    }
+
+    fn record_faces(&mut self, faces: usize, trigger: String) {
+        let replace = match self.trigger.as_deref() {
+            None => true,
+            Some(current) => faces > self.faces || (faces == self.faces && trigger.as_str() < current),
+        };
+        if replace {
+            self.faces = faces;
+            self.trigger = Some(trigger);
+        }
+    }
+
+    fn merge(&mut self, other: &Self) {
+        if let Some(trigger) = &other.trigger {
+            self.record_faces(other.faces, trigger.clone());
+        }
+    }
+
+    fn json(&self) -> Value {
+        json!({
+            "max_faces": self.faces,
+            "trigger": self.trigger,
+        })
+    }
+}
+
+fn empty_player_slot_maxima() -> [FaceMaximum; PLAYER_APPEARANCE_SLOT_COUNT] {
+    std::array::from_fn(|_| FaceMaximum::default())
+}
+
+fn checked_face_sum(faces: &[usize], label: &str) -> Result<usize, String> {
+    faces.iter().try_fold(0usize, |sum, &value| {
+        sum.checked_add(value)
+            .ok_or_else(|| format!("{label}: face upper overflowed"))
+    })
+}
+
+fn checked_slot_face_sum(
+    slots: &[FaceMaximum; PLAYER_APPEARANCE_SLOT_COUNT],
+    label: &str,
+) -> Result<usize, String> {
+    slots.iter().enumerate().try_fold(0usize, |sum, (slot, maximum)| {
+        sum.checked_add(maximum.faces)
+            .ok_or_else(|| format!("{label}: slot-face sum overflowed at slot {slot}"))
+    })
+}
+
+fn transmog_branch_max(appearance_faces: usize, npc_faces: usize) -> (usize, &'static str) {
+    if npc_faces > appearance_faces {
+        (npc_faces, "npc_transmog")
+    } else {
+        (appearance_faces, "appearance_slots")
+    }
+}
+
+struct PlayerGenderFaceUpper {
+    slot_maxima: [FaceMaximum; PLAYER_APPEARANCE_SLOT_COUNT],
+    appearance_slot_faces: usize,
+    transmog_base_faces: usize,
+    transmog_base_branch: &'static str,
+    face_upper: usize,
+}
+
+impl PlayerGenderFaceUpper {
+    fn new(
+        slot_maxima: [FaceMaximum; PLAYER_APPEARANCE_SLOT_COUNT],
+        npc_faces: &FaceMaximum,
+        spot_faces: &FaceMaximum,
+        loc_faces: &FaceMaximum,
+        gender: &str,
+    ) -> Result<Self, String> {
+        let appearance_slot_faces = checked_slot_face_sum(&slot_maxima, gender)?;
+        let (transmog_base_faces, transmog_base_branch) =
+            transmog_branch_max(appearance_slot_faces, npc_faces.faces);
+        let face_upper = checked_face_sum(
+            &[transmog_base_faces, spot_faces.faces, loc_faces.faces],
+            &format!("{gender} player face upper"),
+        )?;
+        Ok(Self {
+            slot_maxima,
+            appearance_slot_faces,
+            transmog_base_faces,
+            transmog_base_branch,
+            face_upper,
+        })
+    }
+
+    fn json(&self) -> Value {
+        json!({
+            "appearance_slot_face_upper": self.appearance_slot_faces,
+            "slot_maxima": self.slot_maxima.iter().enumerate().map(|(slot, maximum)| json!({
+                "appearance_slot": slot,
+                "max_faces": maximum.faces,
+                "trigger": maximum.trigger,
+            })).collect::<Vec<_>>(),
+            "transmog_base_face_upper": self.transmog_base_faces,
+            "transmog_base_branch": self.transmog_base_branch,
+            "face_upper": self.face_upper,
+        })
+    }
+}
+
+fn loc_declares_model_for_shape(loc: &client::config::LocType, shape: i32) -> bool {
+    let Some(models) = loc.model.as_deref() else {
+        return false;
+    };
+    if let Some(shapes) = loc.shape.as_deref() {
+        let Some(index) = shapes
+            .iter()
+            .position(|&candidate| candidate == shape)
+        else {
+            return false;
+        };
+        return models
+            .get(index)
+            .is_some_and(|&model_id| model_id != -1);
+    }
+    shape == 10 && !models.is_empty()
+}
+
+fn configured_model_ids_load(model_ids: &[i32]) -> bool {
+    model_ids
+        .iter()
+        .all(|&model_id| model_id >= 0 && Model::load(model_id).is_some())
+}
+
+fn resolve_sequence_replacement_faces(
+    cache: &Cache,
+    gender: usize,
+    appearance_value: i32,
+    idk_face_counts: &[Option<usize>],
+    idk_model_lists_load: &[bool],
+    object_wear_face_counts: &[Vec<Option<usize>>; 2],
+    object_wear_model_lists_load: &[Vec<bool>; 2],
+) -> Result<(usize, &'static str, Option<usize>), String> {
+    if appearance_value < 256 {
+        return Ok((0, "empty", None));
+    }
+    if appearance_value < 512 {
+        let id = usize::try_from(appearance_value - 256)
+            .map_err(|_| format!("invalid IDK appearance value {appearance_value}"))?;
+        let Some(idk) = cache.idks.get(id) else {
+            return Err(format!("sequence IDK appearance value {appearance_value} is out of range"));
+        };
+        if idk.model.is_none() {
+            return Ok((0, "idk_without_body_model", Some(id)));
+        }
+        if !idk_model_lists_load.get(id).copied().unwrap_or(false) {
+            return Err(format!("sequence IDK {id} body model list is incomplete"));
+        }
+        let faces = idk_face_counts
+            .get(id)
+            .copied()
+            .flatten()
+            .ok_or_else(|| format!("sequence IDK {id} body composite is unavailable"))?;
+        return Ok((faces, "idk_body", Some(id)));
+    }
+
+    let id = usize::try_from(appearance_value - 512)
+        .map_err(|_| format!("invalid object appearance value {appearance_value}"))?;
+    let Some(obj) = cache.objs.get(id) else {
+        return Err(format!("sequence object appearance value {appearance_value} is out of range"));
+    };
+    let primary_wear_model = if gender == 0 {
+        obj.manwear
+    } else {
+        obj.womanwear
+    };
+    if primary_wear_model == -1 {
+        return Ok((0, "object_without_wear_model", Some(id)));
+    }
+    if !object_wear_model_lists_load
+        .get(gender)
+        .and_then(|models| models.get(id))
+        .copied()
+        .unwrap_or(false)
+    {
+        return Err(format!("sequence object {id} wear model is incomplete for gender {gender}"));
+    }
+    let faces = object_wear_face_counts
+        .get(gender)
+        .and_then(|models| models.get(id))
+        .copied()
+        .flatten()
+        .ok_or_else(|| format!("sequence object {id} wear composite is unavailable for gender {gender}"))?;
+    Ok((faces, "object_wear", Some(id)))
+}
+
+fn dynamic_face_uppers_json(
+    player_slots: [[FaceMaximum; PLAYER_APPEARANCE_SLOT_COUNT]; 2],
+    object_wear_maxima: [FaceMaximum; 2],
+    npc_faces: &FaceMaximum,
+    spot_faces: &FaceMaximum,
+    loc_faces: &FaceMaximum,
+    sequence_hand_replacements: Vec<Value>,
+    male_body_kit_case: Value,
+) -> Result<Value, String> {
+    let male = PlayerGenderFaceUpper::new(
+        player_slots[0].clone(),
+        npc_faces,
+        spot_faces,
+        loc_faces,
+        "male player",
+    )?;
+    let female = PlayerGenderFaceUpper::new(
+        player_slots[1].clone(),
+        npc_faces,
+        spot_faces,
+        loc_faces,
+        "female player",
+    )?;
+    let (maximum_gender, player_face_upper) = if female.face_upper > male.face_upper {
+        ("female", female.face_upper)
+    } else {
+        ("male", male.face_upper)
+    };
+    let npc_face_upper = checked_face_sum(
+        &[npc_faces.faces, spot_faces.faces],
+        "NPC plus attached spot face upper",
+    )?;
+    Ok(json!({
+        "classification": "sound_unqualified_per_entity_source_face_upper",
+        "face_scope": "composite Model.num_faces before raster clipping and per-face culling",
+        "player": {
+            "formula": "max(sum(per-slot maxima for appearance slots 0..11), largest NPC transmog composite) + largest spot model + largest temporary loc model",
+            "face_upper": player_face_upper,
+            "maximum_gender": maximum_gender,
+            "male": male.json(),
+            "female": female.json(),
+            "illustrative_legal_case": male_body_kit_case,
+            "global_object_wear_max_faces_by_gender": {
+                "male": object_wear_maxima[0].json(),
+                "female": object_wear_maxima[1].json(),
+            },
+            "largest_npc_transmog_candidate": npc_faces.json(),
+            "largest_attached_spot_candidate": spot_faces.json(),
+            "largest_temporary_loc_candidate": loc_faces.json(),
+            "sequence_hand_replacements": sequence_hand_replacements,
+            "object_wear_slot_scope": "The largest loaded object WEAR composite for each gender is admitted in every appearance slot as a sound overestimate because the client ObjType table does not retain wearpos/wearpos2/wearpos3 slot metadata.",
+        },
+        "npc": {
+            "formula": "largest NPC composite + largest attached spot model",
+            "npc_face_upper": npc_face_upper,
+            "largest_npc_composite": npc_faces.json(),
+            "largest_attached_spot": spot_faces.json(),
+        },
+        "projectile": {
+            "formula": "largest spot model",
+            "projectile_face_upper": spot_faces.faces,
+            "largest_spot": spot_faces.json(),
+        },
+        "map_spot": {
+            "formula": "largest spot model",
+            "map_spot_face_upper": spot_faces.faces,
+            "largest_spot": spot_faces.json(),
+        },
+        "source_citations": [
+            "engine/src/engine/entity/Player.ts:1322-1345 maps the seven gendered body-part values to appearance slots 8, 11, 4, 6, 9, 7, and 10; lines 1370-1413 emit equipped objects as 0x200 + id and use wearpos2/wearpos3 to suppress occupied slots.",
+            "vendor/fr-client-rust/crates/client/src/client/client.rs:7159-7173 selects the first non-disabled IDK for each of seven creation-screen part positions; vendor/fr-client-rust/crates/client/src/dash3d/client_player.rs:565-581 decodes appearance values 256..511 as IDK IDs 0..255; vendor/fr-client-rust/crates/client/src/config/idk_type.rs:26-33 and 104-126 define the part/model/disable fields and compose source models.",
+            "vendor/fr-client-rust/crates/client/src/dash3d/client_player.rs:494-524 replaces right-hand slot 3 and left-hand slot 5 from SeqType; the same file's lines 557-585 select IDK body composites and ObjType WEAR composites by appearance value.",
+            "vendor/fr-client-rust/crates/client/src/config/idk_type.rs:104-126 composes the IDK body model list; vendor/fr-client-rust/crates/client/src/config/obj_type.rs:848-894 composes the gender-specific object WEAR model list.",
+            "vendor/fr-client-rust/crates/client/src/config/npc_type.rs:183-267 builds the NPC composite and applies vertex animation; vendor/fr-client-rust/crates/client/src/config/spot_type.rs:96-122 resolves the spot model.",
+            "vendor/fr-client-rust/crates/client/src/dash3d/client_player.rs:272-301 and 310-330 append the attached spot and temporary loc; vendor/fr-client-rust/crates/client/src/dash3d/model.rs:1222-1347 and 1351-1477 sum source num_faces and copy each source face once when combining.",
+            "vendor/fr-client-rust/crates/client/src/dash3d/model.rs:1507-1538 copies num_faces unchanged; the same file's lines 1889-1921 animate model labels/vertices without changing num_faces, as used by vendor/fr-client-rust/crates/client/src/config/npc_type.rs:183-267.",
+            "vendor/fr-client-rust/crates/client/src/dash3d/model.rs:2200-2265 rotate, translate, recolour, mirror, and resize coordinates or face attributes without changing num_faces.",
+            "vendor/fr-client-rust/crates/client/src/config/loc_type.rs:451-482 applies hill-skew by copying and adjusting vertex coordinates; vendor/fr-client-rust/crates/client/src/dash3d/model.rs:1541-1548 retains the source num_faces.",
+            "vendor/fr-client-rust/crates/client/src/config/loc_type.rs:498-520 returns no model for a matched shape with no paired model ID or the -1 sentinel.",
+        ],
+    }))
+}
+
+fn male_idk_body_kit_case(
+    cache: &Cache,
+    selected_parts: [Option<(usize, usize)>; PLAYER_IDK_BODY_PART_COUNT],
+) -> Result<Value, String> {
+    let mut face_counts = Vec::with_capacity(PLAYER_IDK_BODY_PART_COUNT);
+    let mut body_kit_parts = Vec::with_capacity(PLAYER_IDK_BODY_PART_COUNT);
+    for (body_part, selected) in selected_parts.into_iter().enumerate() {
+        let appearance_slot = PLAYER_IDK_BODY_SLOT_BY_PART[body_part];
+        if let Some((id, faces)) = selected {
+            let idk = cache
+                .idks
+                .get(id)
+                .ok_or_else(|| format!("selected male body IDK {id} is missing"))?;
+            let appearance_value = 256usize
+                .checked_add(id)
+                .filter(|&value| value < 512)
+                .ok_or_else(|| format!("male body IDK {id} cannot be encoded"))?;
+            body_kit_parts.push(json!({
+                "body_part_index": body_part,
+                "appearance_slot": appearance_slot,
+                "appearance_value": appearance_value,
+                "idk_id": id,
+                "idk_source_model_ids": idk.model.as_deref().unwrap_or(&[]),
+                "faces": faces,
+                "trigger": format!("idk:{id}:body:part:{}:gender:0", body_part),
+            }));
+            face_counts.push(faces);
+        } else {
+            body_kit_parts.push(json!({
+                "body_part_index": body_part,
+                "appearance_slot": appearance_slot,
+                "appearance_value": 0,
+                "idk_id": Value::Null,
+                "idk_source_model_ids": [],
+                "faces": 0,
+                "trigger": Value::Null,
+            }));
+            face_counts.push(0);
+        }
+    }
+    let per_entity_face_sum = checked_face_sum(&face_counts, "male legal IDK body kit")?;
+    let crowd_face_sum = per_entity_face_sum
+        .checked_mul(ILLUSTRATIVE_CROWD_PLAYER_COUNT)
+        .ok_or_else(|| "illustrative 250-player IDK crowd face sum overflow".to_string())?;
+    Ok(json!({
+        "case_name": "male_first_non_disabled_creation_screen_idk_kit_no_equipment",
+        "gender": "male",
+        "description": "One legal male creation-screen body kit: first non-disabled appearance-encodable IDK for each of seven part indices; no equipped objects, spot, or temporary loc.",
+        "per_entity_appearance_face_sum": per_entity_face_sum,
+        "illustrative_250_player_crowd": {
+            "player_count": ILLUSTRATIVE_CROWD_PLAYER_COUNT,
+            "composition_case": "male_first_non_disabled_creation_screen_idk_kit_no_equipment",
+            "per_player_appearance_face_sum": per_entity_face_sum,
+            "aggregate_appearance_face_sum": crowd_face_sum,
+            "footprint_scope": "appearance body kit only; no equipped objects, attached spot, or temporary loc",
+            "is_reachability_claim": false,
+        },
+        "equipment": [],
+        "body_kit_parts": body_kit_parts,
+    }))
+}
+
+
 fn placement_model_measure(
     cache: &Cache,
     placement: &EntityPlacement,
@@ -1407,6 +1759,7 @@ fn add_source_hashes(ledger: &mut InputLedger) -> BTreeMap<&'static str, Vec<u8>
         "vendor/fr-client-rust/crates/client/src/render/graphic_sprites.rs",
         "vendor/fr-client-rust/crates/client/src/client/client.rs",
         "vendor/fr-client-rust/crates/client/src/core/world.rs",
+        "vendor/fr-client-rust/crates/client/src/client/actor_289.rs",
         "vendor/fr-client-rust/crates/client/src/map_cache.rs",
         "vendor/fr-client-rust/crates/client/src/dash3d/client_proj.rs",
         "crates/nav-planner/src/router.rs",
@@ -1436,6 +1789,22 @@ fn add_source_hashes(ledger: &mut InputLedger) -> BTreeMap<&'static str, Vec<u8>
                 selected.insert(*relative, bytes);
             }
         }
+    }
+    if let Some(engine) = std::env::var_os("ENGINE_DIR").map(PathBuf::from) {
+        for (identity, relative) in [
+            ("engine/src/network/rsbuf/build.ts", "src/network/rsbuf/build.ts"),
+            ("engine/src/network/rsbuf/info.ts", "src/network/rsbuf/info.ts"),
+            ("engine/src/engine/entity/Player.ts", "src/engine/entity/Player.ts"),
+        ] {
+            if let Some(bytes) = ledger.read(&format!("source:{identity}"), &engine.join(relative)) {
+                selected.insert(identity, bytes);
+            }
+        }
+    } else {
+        ledger.fail(
+            "dynamic_count_source_unavailable",
+            "ENGINE_DIR is required for the actor-count and appearance authorities",
+        );
     }
     selected
 }
@@ -1703,6 +2072,105 @@ fn nav_source_bounds(
 }
 
 #[derive(Default)]
+struct AdmittedSceneGeometry {
+    shared_dynamic_count_upper: usize,
+    dynamic_classes: Vec<Value>,
+    dynamic_faces_upper: usize,
+    scene_faces_upper: usize,
+    vertex_payload_bytes_upper: usize,
+}
+
+fn aggregate_admitted_geometry(
+    static_faces: usize,
+    shared_count: usize,
+    mut classes: [(&str, usize, usize); 3],
+    triangles_per_face: usize,
+    vertex_bytes: usize,
+) -> Result<AdmittedSceneGeometry, String> {
+    classes.sort_by_key(|&(_, _, faces)| std::cmp::Reverse(faces));
+    let bytes_per_face = triangles_per_face
+        .checked_mul(3)
+        .and_then(|vertices| vertices.checked_mul(vertex_bytes))
+        .ok_or_else(|| "admitted geometry bytes per face overflowed".to_string())?;
+    let mut remaining = shared_count;
+    let mut dynamic_faces_upper = 0usize;
+    let mut dynamic_classes = Vec::with_capacity(classes.len());
+    for (class, count_upper, faces_per_entity) in classes {
+        let count = remaining.min(count_upper);
+        remaining -= count;
+        let faces = count.checked_mul(faces_per_entity)
+            .ok_or_else(|| format!("{class}: admitted face product overflowed"))?;
+        dynamic_faces_upper = dynamic_faces_upper.checked_add(faces)
+            .ok_or_else(|| "admitted dynamic face sum overflowed".to_string())?;
+        let bytes = faces.checked_mul(bytes_per_face)
+            .ok_or_else(|| format!("{class}: clipped vertex byte product overflowed"))?;
+        dynamic_classes.push(json!({
+            "class": class,
+            "count_upper": count_upper,
+            "count_in_maximizing_shared_allocation": count,
+            "faces_per_entity_upper": faces_per_entity,
+            "aggregate_faces_upper": faces,
+            "clipped_vertex_bytes_upper": bytes,
+        }));
+    }
+    let scene_faces_upper = static_faces.checked_add(dynamic_faces_upper)
+        .ok_or_else(|| "admitted scene face upper overflowed".to_string())?;
+    let vertex_payload_bytes_upper = scene_faces_upper.checked_mul(bytes_per_face)
+        .ok_or_else(|| "admitted scene vertex byte upper overflowed".to_string())?;
+    Ok(AdmittedSceneGeometry {
+        shared_dynamic_count_upper: shared_count,
+        dynamic_classes,
+        dynamic_faces_upper,
+        scene_faces_upper,
+        vertex_payload_bytes_upper,
+    })
+}
+
+fn admitted_scene_geometry(
+    sources: &BTreeMap<&'static str, Vec<u8>>,
+    faces: &Value,
+    static_faces: usize,
+) -> Result<AdmittedSceneGeometry, String> {
+    let build = source_bytes(sources, "engine/src/network/rsbuf/build.ts")?;
+    let info = std::str::from_utf8(source_bytes(sources, "engine/src/network/rsbuf/info.ts")?)
+        .map_err(|error| format!("actor info source: {error}"))?;
+    for guard in [
+        "if (player.build.players.len() >= BuildArea.PREFERRED_PLAYERS)",
+        "if (player.build.npcs.len() >= BuildArea.PREFERRED_NPCS)",
+    ] {
+        if !info.contains(guard) {
+            return Err(format!("actor info count guard is unavailable: {guard}"));
+        }
+    }
+    let players = source_usize_const(build, "static readonly PREFERRED_PLAYERS =")?
+        .checked_add(1)
+        .ok_or_else(|| "nearby players plus local player count overflowed".to_string())?;
+    let npcs = source_usize_const(build, "static readonly PREFERRED_NPCS =")?;
+    let read_faces = |class: &str, field: &str| {
+        faces.get(class).and_then(|value| value.get(field))
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| format!("missing complete face upper {class}.{field}"))
+    };
+    let player_faces = read_faces("player", "face_upper")?;
+    let npc_faces = read_faces("npc", "npc_face_upper")?;
+    let transient_faces = read_faces("projectile", "projectile_face_upper")?
+        .max(read_faces("map_spot", "map_spot_face_upper")?);
+    let layout = client::render::world::render_test_content_layout();
+    aggregate_admitted_geometry(
+        static_faces,
+        layout.max_dynamic_sprites,
+        [
+            ("player_including_local", players, player_faces),
+            ("npc", npcs, npc_faces),
+            ("projectile_or_map_spot", layout.max_dynamic_sprites, transient_faces),
+        ],
+        layout.max_model_triangles_per_face,
+        layout.capture_vertex_bytes,
+    )
+}
+
+#[derive(Default)]
 struct SceneCaptureBounds {
     submitted_static: StaticGeometryMaximum,
     legal_loaded_terrain_faces: usize,
@@ -1720,6 +2188,7 @@ struct SceneCaptureBounds {
     conservative_scene_triangles_upper: usize,
     conservative_capture_payload_bytes_upper: usize,
     conservative_capture_peak_bytes_upper: usize,
+    admitted: AdmittedSceneGeometry,
 }
 
 fn scene_capture_bounds(
@@ -1727,6 +2196,8 @@ fn scene_capture_bounds(
     scene_maxima: &BTreeMap<String, SceneMaximum>,
     map_stats: &BTreeMap<String, Value>,
     submitted_static: StaticGeometryMaximum,
+    sources: &BTreeMap<&'static str, Vec<u8>>,
+    dynamic_faces: &Value,
 ) -> Result<SceneCaptureBounds, String> {
     let layout = client::render::world::render_test_content_layout();
     let family_faces = |name: &str| {
@@ -1831,6 +2302,7 @@ fn scene_capture_bounds(
         conservative_scene_triangles_upper,
         conservative_capture_payload_bytes_upper,
         conservative_capture_peak_bytes_upper,
+        admitted: admitted_scene_geometry(sources, dynamic_faces, submitted_static.total_faces)?,
     })
 }
 
@@ -2637,9 +3109,8 @@ fn resource_rows(
                 "components_share_one_window": false,
                 "used_only_for_conservative_upper": true
             },
-            "dynamic_envelope": {
+            "loose_storage_only_envelope": {
                 "sprite_arena_storage_capacity_slots": capture.dynamic_sprite_storage_capacity,
-                "legal_population_bound_established": false,
                 "faces_per_sprite_loose_composition_upper": capture.dynamic_faces_per_sprite_upper,
                 "all_storage_slots_times_loose_face_upper": capture.conservative_dynamic_faces_upper
             },
@@ -2653,9 +3124,7 @@ fn resource_rows(
     });
     let vertex_known = capture_bounds.and_then(|capture| {
         let atlas = atlas_layout?;
-        let final_capacity = capture
-            .conservative_capture_payload_bytes_upper
-            .checked_next_power_of_two()?;
+        let final_capacity = capture.admitted.vertex_payload_bytes_upper.checked_next_power_of_two()?;
         let previous_capacity = if final_capacity > 1 {
             final_capacity / 2
         } else {
@@ -2671,7 +3140,21 @@ fn resource_rows(
             "maximum_submitted_static_clipped_vertex_payload_bytes": static_payload,
             "maximum_submitted_static_next_power_of_two_capacity_bytes": static_capacity,
             "maximum_submitted_static_payload_fits_binding_limit": static_payload <= VERTEX_BINDING_LIMIT_BYTES,
-            "conservative_unqualified_vertex_payload_bytes_upper": capture.conservative_capture_payload_bytes_upper,
+            "admitted_geometry": {
+                "classification": "sound_count_and_face_upper_not_a_reachability_claim",
+                "shared_dynamic_count_upper": capture.admitted.shared_dynamic_count_upper,
+                "dynamic_classes": capture.admitted.dynamic_classes,
+                "dynamic_faces_upper": capture.admitted.dynamic_faces_upper,
+                "static_faces_upper": capture.submitted_static.total_faces,
+                "scene_faces_upper": capture.admitted.scene_faces_upper,
+                "vertex_payload_bytes_upper": capture.admitted.vertex_payload_bytes_upper,
+                "count_source_citations": [
+                    "engine/src/network/rsbuf/build.ts:55-56 and info.ts:100-102,340-342 cap nearby players at 250 and NPCs at 255",
+                    "render/draw.rs:852-868 submits the local player in addition to nearby players",
+                    "core/world.rs:34,982-987 and render/world.rs:692-714 share 5000 admitted dynamic sprites among players, NPCs, projectiles, and map spots",
+                ],
+            },
+            "conservative_unqualified_vertex_payload_bytes_upper": capture.admitted.vertex_payload_bytes_upper,
             "conservative_upper_next_power_of_two_storage_capacity_bytes": final_capacity,
             "conservative_upper_replacement_peak_bytes": replacement_peak,
             "binding_limit_bytes": VERTEX_BINDING_LIMIT_BYTES,
@@ -2807,7 +3290,7 @@ fn resource_rows(
         ),
         (
             RenderResource::Vertex,
-            "Exact static measurement is the co-located maximum 50x50 submitted footprint; content_upper_bytes remains a conservative unqualified dynamic composition, before next-power-of-two GPU storage and old/new replacement peak.",
+            "Maximum co-located 50x50 static faces plus the face-maximizing allocation of the shared admitted dynamic count among player, NPC, and projectile/map-spot face uppers; multiply by two clipped triangles, three vertices, and the capture vertex layout. B_vertex is next_power_of_two(total payload), not a per-buffer binding size.",
             capture_trigger.clone(),
             "The submitted static geometry, capture vertex layout, or requested device storage limit is unavailable.",
         ),
@@ -2893,7 +3376,7 @@ fn resource_rows(
                     owner_bounds.is_some(),
                 ),
                 RenderResource::Vertex => (
-                    capture_bounds.map_or(Value::Null, |capture| json!(capture.conservative_capture_payload_bytes_upper)),
+                    capture_bounds.map_or(Value::Null, |capture| json!(capture.admitted.vertex_payload_bytes_upper)),
                     vertex_known.clone().unwrap_or(Value::Null),
                     vertex_known.is_some(),
                 ),
@@ -2967,6 +3450,7 @@ fn render_budget_content_census() {
     let world_layout = client::render::world::render_test_content_layout();
     let mut model_record_count = None;
     let mut model_parts = None;
+    let mut dynamic_face_uppers = None;
     let mut item_sprite_ids = None;
     let mut anim_record_count = None;
 
@@ -3258,6 +3742,21 @@ fn render_budget_content_census() {
         let mut objs = FamilyMaximum::default();
         let mut idks = FamilyMaximum::default();
         let mut spots = FamilyMaximum::default();
+        let mut loc_face_max = FaceMaximum::default();
+        let mut npc_face_max = FaceMaximum::default();
+        let mut spot_face_max = FaceMaximum::default();
+        let mut player_slot_maxima =
+            std::array::from_fn(|_| empty_player_slot_maxima());
+        let mut male_body_kit_parts = [None; 7];
+        let mut object_wear_face_maxima = std::array::from_fn(|_| FaceMaximum::default());
+        let mut object_wear_face_counts: [Vec<Option<usize>>; 2] =
+            std::array::from_fn(|_| vec![None; cache.objs.len()]);
+        let mut object_wear_model_lists_load: [Vec<bool>; 2] =
+            std::array::from_fn(|_| vec![true; cache.objs.len()]);
+        let mut idk_face_counts = vec![None; cache.idks.len()];
+        let mut idk_model_lists_load = vec![true; cache.idks.len()];
+        let mut sequence_hand_replacements = Vec::<Value>::new();
+        let mut dynamic_face_upper_complete = true;
         let rotations = [
             LocAngle::WEST,
             LocAngle::NORTH,
@@ -3274,25 +3773,59 @@ fn render_budget_content_census() {
             };
             for shape in shapes {
                 for rotation in rotations {
+                    let trigger = format!("loc:{}:shape:{shape}:rotation:{rotation}", loc.id);
+                    let declares_model = loc_declares_model_for_shape(loc, shape);
                     let Some(model) = loc.get_model_shared(cache, shape, rotation, 0, 0, 0, 0, -1)
                     else {
+                        if declares_model {
+                            inputs.fail(
+                                "dynamic_temporary_loc_model_unavailable",
+                                format!("{trigger}: configured source model could not be composed"),
+                            );
+                            dynamic_face_upper_complete = false;
+                        }
                         continue;
                     };
-                    let trigger = format!("loc:{}:shape:{shape}:rotation:{rotation}", loc.id);
-                    if let Err(error) = locs.record(&model, trigger) {
+                    if let Err(error) = locs.record(&model, trigger.clone()) {
                         inputs.fail("loc_family_measurement_failed", error);
+                    }
+                    if let Err(error) = loc_face_max.record_model(&model, trigger) {
+                        inputs.fail("dynamic_temporary_loc_face_measurement_failed", error);
+                        dynamic_face_upper_complete = false;
                     }
                 }
             }
         }
         for npc in &cache.npcs {
+            let model_list_load = npc
+                .model
+                .as_deref()
+                .map_or(true, configured_model_ids_load);
+            if !model_list_load {
+                inputs.fail(
+                    "dynamic_npc_model_source_unavailable",
+                    format!("npc:{}: one or more configured composite model parts are unavailable", npc.id),
+                );
+                dynamic_face_upper_complete = false;
+            }
             if let Some(model) = npc.get_temp_model(cache, -1, -1, None) {
-                if let Err(error) = npcs.record(&model, format!("npc:{}", npc.id)) {
+                let trigger = format!("npc:{}", npc.id);
+                if let Err(error) = npcs.record(&model, trigger.clone()) {
                     inputs.fail("npc_family_measurement_failed", error);
                 }
+                if let Err(error) = npc_face_max.record_model(&model, trigger) {
+                    inputs.fail("dynamic_npc_face_measurement_failed", error);
+                    dynamic_face_upper_complete = false;
+                }
+            } else if npc.model.is_some() {
+                inputs.fail(
+                    "dynamic_npc_composite_unavailable",
+                    format!("npc:{}: configured body composite could not be loaded", npc.id),
+                );
+                dynamic_face_upper_complete = false;
             }
         }
-        for obj in &cache.objs {
+        for (obj_index, obj) in cache.objs.iter().enumerate() {
             let mut counts = BTreeSet::from([1i32]);
             if let Some(thresholds) = &obj.countco {
                 for threshold in thresholds {
@@ -3317,15 +3850,59 @@ fn render_budget_content_census() {
                     }
                 }
             }
-            for gender in 0..=1 {
-                if let Some(model) = obj.get_wear_model_no_check(gender) {
-                    if let Err(error) =
-                        objs.record(&model, format!("obj:{}:wear-gender:{gender}", obj.id))
-                    {
-                        inputs.fail("obj_family_measurement_failed", error);
+            for gender in 0..=1usize {
+                let (wear, wear2, wear3) = if gender == 0 {
+                    (obj.manwear, obj.manwear2, obj.manwear3)
+                } else {
+                    (obj.womanwear, obj.womanwear2, obj.womanwear3)
+                };
+                if wear != -1 {
+                    let ids = [wear, wear2, wear3];
+                    let count = if wear2 == -1 {
+                        1
+                    } else if wear3 == -1 {
+                        2
+                    } else {
+                        3
+                    };
+                    object_wear_model_lists_load[gender][obj_index] =
+                        configured_model_ids_load(&ids[..count]);
+                    if !object_wear_model_lists_load[gender][obj_index] {
+                        inputs.fail(
+                            "dynamic_player_object_wear_source_unavailable",
+                            format!("obj:{}: one or more gender {gender} WEAR model parts are unavailable", obj.id),
+                        );
+                        dynamic_face_upper_complete = false;
                     }
                 }
-                if let Some(model) = obj.get_head_model_no_check(gender) {
+                let trigger = format!("obj:{}:wear-gender:{gender}", obj.id);
+                if let Some(model) = obj.get_wear_model_no_check(gender as i32) {
+                    if let Err(error) = objs.record(&model, trigger.clone()) {
+                        inputs.fail("obj_family_measurement_failed", error);
+                    }
+                    match usize::try_from(model.num_faces) {
+                        Ok(faces) => {
+                            object_wear_face_counts[gender][obj_index] = Some(faces);
+                            object_wear_face_maxima[gender]
+                                .record_faces(faces, trigger);
+                        }
+                        Err(_) => {
+                            inputs.fail(
+                                "dynamic_player_object_wear_face_measurement_failed",
+                                format!("{trigger}: negative or unrepresentable face count {}", model.num_faces),
+                            );
+                            dynamic_face_upper_complete = false;
+                        }
+                    }
+                } else if wear != -1 {
+                    object_wear_model_lists_load[gender][obj_index] = false;
+                    inputs.fail(
+                        "dynamic_player_object_wear_composite_unavailable",
+                        format!("{trigger}: configured WEAR composite could not be loaded"),
+                    );
+                    dynamic_face_upper_complete = false;
+                }
+                if let Some(model) = obj.get_head_model_no_check(gender as i32) {
                     if let Err(error) =
                         objs.record(&model, format!("obj:{}:head-gender:{gender}", obj.id))
                     {
@@ -3335,9 +3912,67 @@ fn render_budget_content_census() {
             }
         }
         for (id, idk) in cache.idks.iter().enumerate() {
+            let model_list_load = idk
+                .model
+                .as_deref()
+                .map_or(true, configured_model_ids_load);
+            idk_model_lists_load[id] = model_list_load;
+            let body_gender_slot = match idk.part {
+                0..=6 => Some((0, idk.part as usize)),
+                7..=13 => Some((1, (idk.part - 7) as usize)),
+                _ => None,
+            }
+            .filter(|_| !idk.disable && id < 256);
+            if body_gender_slot.is_some() && idk.model.is_some() && !model_list_load {
+                inputs.fail(
+                    "dynamic_player_idk_body_source_unavailable",
+                    format!("idk:{id}: one or more configured BODY model parts are unavailable"),
+                );
+                dynamic_face_upper_complete = false;
+            }
             if let Some(model) = idk.get_model_no_check() {
                 if let Err(error) = idks.record(&model, format!("idk:{id}:body")) {
                     inputs.fail("idk_family_measurement_failed", error);
+                }
+                if model_list_load {
+                    match usize::try_from(model.num_faces) {
+                        Ok(faces) => idk_face_counts[id] = Some(faces),
+                        Err(_) if body_gender_slot.is_some() => {
+                            inputs.fail(
+                                "dynamic_player_idk_body_face_measurement_failed",
+                                format!("idk:{id}: negative or unrepresentable face count {}", model.num_faces),
+                            );
+                            dynamic_face_upper_complete = false;
+                        }
+                        Err(_) => {}
+                    }
+                }
+                if let Some((gender, body_part)) = body_gender_slot {
+                    if let Some(faces) = idk_face_counts[id] {
+                        let slot = PLAYER_IDK_BODY_SLOT_BY_PART[body_part];
+                        player_slot_maxima[gender][slot].record_faces(
+                            faces,
+                            format!("idk:{id}:body:part:{}:gender:{gender}", idk.part),
+                        );
+                    } else if idk.model.is_some() {
+                        inputs.fail(
+                            "dynamic_player_idk_body_composite_unavailable",
+                            format!("idk:{id}: configured BODY composite could not be measured"),
+                        );
+                        dynamic_face_upper_complete = false;
+                    }
+                }
+            } else if body_gender_slot.is_some() && idk.model.is_some() {
+                inputs.fail(
+                    "dynamic_player_idk_body_composite_unavailable",
+                    format!("idk:{id}: configured BODY composite could not be loaded"),
+                );
+                dynamic_face_upper_complete = false;
+            }
+            if let Some((0, body_part)) = body_gender_slot {
+                if male_body_kit_parts[body_part].is_none() {
+                    male_body_kit_parts[body_part] =
+                        Some((id, idk_face_counts[id].unwrap_or_default()));
                 }
             }
             if let Some(model) = idk.get_head_no_check() {
@@ -3347,9 +3982,128 @@ fn render_budget_content_census() {
             }
         }
         for spot in &cache.spots {
+            let trigger = format!("spot:{}", spot.id);
             if let Some(model) = spot.get_temp_model2(cache) {
-                if let Err(error) = spots.record(&model, format!("spot:{}", spot.id)) {
+                if let Err(error) = spots.record(&model, trigger.clone()) {
                     inputs.fail("spot_family_measurement_failed", error);
+                }
+                if let Err(error) = spot_face_max.record_model(&model, trigger) {
+                    inputs.fail("dynamic_spot_face_measurement_failed", error);
+                    dynamic_face_upper_complete = false;
+                }
+            } else {
+                inputs.fail(
+                    "dynamic_spot_model_unavailable",
+                    format!("{trigger}: configured projectile/map/player spot model could not be loaded"),
+                );
+                dynamic_face_upper_complete = false;
+            }
+        }
+        for gender in 0..=1 {
+            for maximum in &mut player_slot_maxima[gender] {
+                maximum.merge(&object_wear_face_maxima[gender]);
+            }
+        }
+        if cache.seqs.is_empty() {
+            inputs.fail(
+                "dynamic_sequence_table_unavailable",
+                "sequence table is empty, so hand replacement candidates cannot be enumerated",
+            );
+            dynamic_face_upper_complete = false;
+        }
+        for (sequence_id, sequence) in cache.seqs.iter().enumerate() {
+            for gender in 0..=1 {
+                let gender_name = if gender == 0 { "male" } else { "female" };
+                for (hand, slot, appearance_value) in [
+                    ("right", 3usize, sequence.replaceheldright),
+                    ("left", 5usize, sequence.replaceheldleft),
+                ] {
+                    if appearance_value < 0 {
+                        continue;
+                    }
+                    match resolve_sequence_replacement_faces(
+                        cache,
+                        gender,
+                        appearance_value,
+                        &idk_face_counts,
+                        &idk_model_lists_load,
+                        &object_wear_face_counts,
+                        &object_wear_model_lists_load,
+                    ) {
+                        Ok((faces, source_kind, source_id)) => {
+                            let trigger = match source_id {
+                                Some(source_id) => format!(
+                                    "seq:{sequence_id}:replaceheld{hand}:value:{appearance_value}:{source_kind}:{source_id}:gender:{gender}"
+                                ),
+                                None => format!(
+                                    "seq:{sequence_id}:replaceheld{hand}:value:{appearance_value}:empty"
+                                ),
+                            };
+                            player_slot_maxima[gender][slot]
+                                .record_faces(faces, trigger.clone());
+                            sequence_hand_replacements.push(json!({
+                                "gender": gender_name,
+                                "appearance_slot": slot,
+                                "hand": hand,
+                                "sequence_id": sequence_id,
+                                "appearance_value": appearance_value,
+                                "source_kind": source_kind,
+                                "source_id": source_id,
+                                "max_faces": faces,
+                                "trigger": trigger,
+                            }));
+                        }
+                        Err(error) => {
+                            inputs.fail(
+                                "dynamic_sequence_hand_replacement_unavailable",
+                                format!("seq:{sequence_id}:replaceheld{hand}: {error}"),
+                            );
+                            dynamic_face_upper_complete = false;
+                        }
+                    }
+                }
+            }
+        }
+        for (source, maximum) in [
+            ("NPC composite", &npc_face_max),
+            ("spot model", &spot_face_max),
+            ("temporary loc model", &loc_face_max),
+        ] {
+            if maximum.trigger.is_none() {
+                inputs.fail(
+                    "dynamic_face_upper_source_unavailable",
+                    format!("no complete {source} face maximum was measured"),
+                );
+                dynamic_face_upper_complete = false;
+            }
+        }
+        let male_body_kit_case = match male_idk_body_kit_case(cache, male_body_kit_parts) {
+            Ok(case) => Some(case),
+            Err(error) => {
+                inputs.fail("dynamic_player_legal_body_kit_case_unavailable", error);
+                dynamic_face_upper_complete = false;
+                None
+            }
+        };
+        if dynamic_face_upper_complete {
+            match male_body_kit_case {
+                Some(male_body_kit_case) => match dynamic_face_uppers_json(
+                    player_slot_maxima,
+                    object_wear_face_maxima,
+                    &npc_face_max,
+                    &spot_face_max,
+                    &loc_face_max,
+                    sequence_hand_replacements,
+                    male_body_kit_case,
+                ) {
+                    Ok(uppers) => dynamic_face_uppers = Some(uppers),
+                    Err(error) => inputs.fail("dynamic_face_upper_aggregation_failed", error),
+                },
+                None => {
+                    inputs.fail(
+                        "dynamic_player_legal_body_kit_case_unavailable",
+                        "no serialized legal IDK body kit was available",
+                    );
                 }
             }
         }
@@ -3455,6 +4209,10 @@ fn render_budget_content_census() {
             "config_unavailable",
             "cannot enumerate transformed model families without the pinned config JAG",
         );
+        inputs.fail(
+            "dynamic_face_upper_unavailable",
+            "cannot derive dynamic entity face uppers without the pinned config JAG",
+        );
     }
 
     let nav_bounds = match nav_font.as_ref() {
@@ -3467,9 +4225,9 @@ fn render_budget_content_census() {
         },
         None => None,
     };
-    let capture_bounds = match submitted_static_geometry {
-        Some(submitted_static) => {
-            match scene_capture_bounds(&families, &scene_maxima, &map_stats, submitted_static) {
+    let capture_bounds = match (submitted_static_geometry, dynamic_face_uppers.as_ref()) {
+        (Some(submitted_static), Some(dynamic_faces)) => {
+            match scene_capture_bounds(&families, &scene_maxima, &map_stats, submitted_static, &source_inputs, dynamic_faces) {
                 Ok(bounds) => Some(bounds),
                 Err(error) => {
                     inputs.fail("scene_capture_bound_failed", error);
@@ -3477,10 +4235,10 @@ fn render_budget_content_census() {
                 }
             }
         }
-        None => {
+        _ => {
             inputs.fail(
                 "scene_capture_bound_failed",
-                "co-located submitted static geometry is unavailable",
+                "co-located submitted static geometry or complete dynamic face uppers are unavailable",
             );
             None
         }
@@ -3607,6 +4365,7 @@ fn render_budget_content_census() {
         "inputs": inputs.hashes,
         "failures": inputs.failures,
         "model_families": families.iter().map(|(name, family)| (name.clone(), family.json())).collect::<BTreeMap<_, _>>(),
+        "dynamic_face_uppers": dynamic_face_uppers,
         "model_total_retained_bytes": model_total_bytes,
         "map_inventory": map_stats,
         "resources": resources,
@@ -4172,4 +4931,95 @@ fn submitted_fifty_tile_footprint_is_distinct_from_loaded_104_tile_scene() {
         [submitted.containing_loaded_origin_x, submitted.containing_loaded_origin_z],
         [0, 0]
     );
+}
+
+#[test]
+fn dynamic_face_upper_sums_independent_slot_maxima_and_attachments() {
+    let mut slots = empty_player_slot_maxima();
+    slots[3].record_faces(17, "obj:47:wear-gender:0".to_string());
+    slots[3].record_faces(12, "idk:9:body:part:4:gender:0".to_string());
+    slots[5].record_faces(23, "seq:8:replaceheldleft:value:559:object_wear:47".to_string());
+    assert_eq!(checked_slot_face_sum(&slots, "test player").unwrap(), 40);
+    assert_eq!(checked_face_sum(&[40, 11, 13], "test attachments").unwrap(), 64);
+    assert_eq!(
+        slots[3].trigger.as_deref(),
+        Some("obj:47:wear-gender:0")
+    );
+}
+
+#[test]
+fn dynamic_face_upper_uses_transmog_branch_max_not_sum() {
+    let (base_faces, branch) = transmog_branch_max(40, 90);
+    assert_eq!(base_faces, 90);
+    assert_eq!(branch, "npc_transmog");
+    assert_eq!(checked_face_sum(&[base_faces, 11, 13], "test player").unwrap(), 114);
+    assert_eq!(transmog_branch_max(90, 40), (90, "appearance_slots"));
+}
+
+#[test]
+fn dynamic_face_upper_checked_aggregation_rejects_overflow() {
+    let mut slots = empty_player_slot_maxima();
+    slots[0].faces = usize::MAX;
+    slots[1].faces = 1;
+    assert!(checked_slot_face_sum(&slots, "test slots").is_err());
+    assert!(checked_face_sum(&[usize::MAX, 1], "test attachments").is_err());
+}
+
+#[test]
+fn loc_shape_without_a_paired_model_is_not_declared() {
+    let mut loc = client::config::LocType::default();
+    loc.shape = Some(vec![10, 4]);
+    loc.model = Some(vec![42]);
+    assert!(!loc_declares_model_for_shape(&loc, 4));
+    loc.model = Some(vec![42, 43]);
+    assert!(loc_declares_model_for_shape(&loc, 4));
+    loc.model = Some(vec![42, -1]);
+    assert!(!loc_declares_model_for_shape(&loc, 4));
+    loc.shape = Some(vec![10]);
+    loc.model = Some(vec![42]);
+    assert!(loc_declares_model_for_shape(&loc, 10));
+    loc.shape = None;
+    assert!(loc_declares_model_for_shape(&loc, 10));
+    assert!(!loc_declares_model_for_shape(&loc, 4));
+}
+
+#[test]
+fn admitted_geometry_maximizes_faces_under_the_shared_count() {
+    let upper = aggregate_admitted_geometry(
+        7,
+        10,
+        [("player", 2, 8), ("npc", 3, 5), ("projectile_or_map_spot", 10, 2)],
+        2,
+        24,
+    ).unwrap();
+    assert_eq!(upper.dynamic_faces_upper, 41);
+    assert_eq!(upper.scene_faces_upper, 48);
+    assert_eq!(upper.vertex_payload_bytes_upper, 48 * 144);
+    assert_eq!(upper.dynamic_classes[0]["count_in_maximizing_shared_allocation"], 2);
+    assert_eq!(upper.dynamic_classes[1]["count_in_maximizing_shared_allocation"], 3);
+    assert_eq!(upper.dynamic_classes[2]["count_in_maximizing_shared_allocation"], 5);
+}
+
+#[test]
+fn admitted_geometry_does_not_assume_player_faces_are_largest() {
+    let upper = aggregate_admitted_geometry(
+        0,
+        10,
+        [("player", 2, 1), ("npc", 3, 2), ("projectile_or_map_spot", 10, 8)],
+        2,
+        24,
+    ).unwrap();
+    assert_eq!(upper.dynamic_faces_upper, 80);
+    assert_eq!(upper.dynamic_classes[0]["class"], "projectile_or_map_spot");
+}
+
+#[test]
+fn admitted_geometry_rejects_face_overflow() {
+    assert!(aggregate_admitted_geometry(
+        usize::MAX,
+        1,
+        [("player", 1, 1), ("npc", 0, 0), ("projectile_or_map_spot", 0, 0)],
+        2,
+        24,
+    ).is_err());
 }
