@@ -159,7 +159,7 @@ fn warm_quester_script_section_shares_its_zone_text_without_allocating() {
         mainland: false,
     });
     play.bind_script_test_data(data);
-    let mut core = OperatorSession::new(InstancePermit::SkipLock);
+    let mut core = OperatorSession::<()>::new(InstancePermit::SkipLock);
     core.set_spawn_workers(false);
     vault.start_session(&mut core, play);
     let mut scripts = new_scripts(directory);
