@@ -46,6 +46,19 @@ digest **and** schema; sources are rechecked before publication. A refused build
 removes staging and leaves the previous assets intact. The final manifest's
 digest is computed externally, never embedded in its own bytes.
 
+## Combat facts
+
+The NPC extract declares `combat_facts_version`.
+The API refuses older combat data and requests regeneration before it reads required combat fields.
+Do not add runtime defaults for missing combat facts.
+
+The extractor reads all six NPC combat levels and the signed combat bonuses.
+It also reads attack intervals, weapon damage styles, and style bonuses.
+Each wearable item has a complete signed attack, defence, and strength bonus row.
+An omitted parameter uses only its declared content default.
+The extractor reads NPC stat defaults from the pinned engine decoder.
+Missing or malformed required facts stop generation.
+
 ## Server-ordered content contracts
 
 The revision 289 core includes a generated `server_ordered` catalog.
