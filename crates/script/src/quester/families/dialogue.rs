@@ -18,26 +18,36 @@ use std::task::Poll;
 /// later script that deliberately closes and reopens the chat authors its
 /// engine hole (`gap_ticks`).
 pub const DIALOG_GAP_TICKS: u64 = 1;
-/// The observed-tick budget for the first chat page. For NPC Talk, only
-/// content paths that reach a chat page count toward the bound. A scan covered
-/// 797 `[opnpc1,...]` handlers; the largest pre-page delay on those paths is
+/// The observed-tick budget for the first chat page after the engine-side
+/// approach ends. Before that clock starts, NPC Talk waits for both an
+/// accepted click receipt and the existing `reach::npc_adjacent` observation.
+/// The largest pre-page delay in the 797 scanned `[opnpc1,...]` handlers is
 /// `p_delay(2)` in Captain Siad (`quest_desertrescue/scripts/captain_siad.rs2:1-11`)
 /// and the seven Underground Pass slaves
-/// (`quest_upass/scripts/upass_slave.rs2:1-56`).
-/// The engine resumes `P_DELAY` at `currentTick + 1 + N`
-/// (`PlayerOps.ts:376-379`, `World.ts:692-696`), so this is two content ticks
-/// plus one scheduling tick. One observed game tick is one `PLAYER_INFO`
-/// (`host/src/slot.rs:22-25`); allow one more tick for a packet miss, consistent
-/// with the client's five-packet read limit (`client.rs:12798-12803`).
-/// NPC-script messages are progress signals, not dialogue-open failures.
+/// (`quest_upass/scripts/upass_slave.rs2:1-56`). `P_DELAY` resumes at
+/// `currentTick + 1 + N` (`PlayerOps.ts:376-379`, `World.ts:692-696`).
+/// The engine reads Talk input before player processing (`World.ts:350-355`),
+/// moves one tile per walking cycle or two while running
+/// (`PathingEntity.ts:135-149`), and writes chat-open packets after the tick
+/// packet (`NetworkPlayer.ts:171-177`). Allow four observed ticks after
+/// adjacency: the content delay and scheduling cycles plus one packet-miss
+/// tick under the client's five-packet read limit (`client.rs:12798-12803`).
+/// The poll checks for a page before its deadline, so a page on the deadline
+/// tick is still observed. NPC-script messages are progress signals, not
+/// dialogue-open failures.
 pub const DIALOGUE_OPEN_TICKS: u64 = 4;
-/// The NPC's content `wanderrange` determines the number of allowed replans.
-/// Brundt has `wanderrange=2` (`viking.npc:769-803`). Each route gets four
-/// observed ticks: the Viking gap-2 run took four ticks for its eight-tile
-/// route (`gap-2/debug.log:211-221`); the engine advances one tile walking or
-/// two running per world cycle (`PathingEntity.ts:135-149`), and each observed
-/// tick is one `PLAYER_INFO` (`host/src/slot.rs:22-25`).
-pub(super) const DIALOGUE_APPROACH_WALK_TICKS: u16 = 4;
+/// An NPC's legal wander square contains `(2 * wanderrange + 1)^2` tiles.
+/// Set the replan cap to the number of non-home tiles in this square. The
+/// engine chooses destinations within that square (`Npc.ts:705-728`) and has
+/// a 1/8 chance to choose a destination each tick (`Npc.ts:720-726`). The cap
+/// remains finite even when the NPC revisits a tile.
+/// Brundt's `wanderrange=2` is sourced at `viking.npc:769-803`.
+/// Walk one tile per observed engine cycle, conservatively; running advances
+/// two tiles per cycle (`PathingEntity.ts:135-149`). Add two slack ticks: one
+/// for the engine to read the input after `processClientsIn` and one for the
+/// next `PLAYER_INFO` position observation (`World.ts:350-355`,
+/// `NetworkPlayer.ts:171-177`, `host/src/slot.rs:22-25`).
+pub(super) const DIALOGUE_APPROACH_SLACK_TICKS: u32 = 2;
 pub const DRIVE_STEPS: u32 = 120;
 pub const PAGE_ACK_MS: u64 = 3_000;
 /// Ticks before acting on a page that changed text on the same root (a same-
@@ -301,16 +311,21 @@ pub struct Dialogue {
     gap_position: Option<api::WorldTile>,
     gap_chat_mark: i32,
     gap_rearms_left: u64,
-    gap_rearm_tick: Option<u64>,
+    /// Records Talk arrival while opening, then the last close-gap rearm tick.
+    gap_rearm_or_talk_arrival_tick: Option<u64>,
     ack_page: PageAcknowledgement,
     npc_index: i32,
     npc_action: Arc<str>,
     deadline_ms: u64,
-    /// Deadline for content-timed opening and approach phases.
+    /// Deadline for the current approach route or first-page wait.
     content_deadline_tick: u64,
     walk_request_id: u64,
-    /// Additional approach routes allowed by the target NPC's wander range.
+    /// Remaining routes to replan after the NPC wanders.
     approach_replans_left: u16,
+    /// Planned walking ticks plus slack from Talk request to adjacent stand.
+    talk_approach_budget_ticks: u32,
+    /// An explicit refusal has started the one recovery approach.
+    refusal_recovery_active: bool,
     talk_request_id: Option<u64>,
     talk_baseline: Option<PageAcknowledgement>,
     talk_chat_mark: Option<i32>,
@@ -354,7 +369,7 @@ impl NativeMachine for Dialogue {
                 })
                 .saturating_add(4)
                 .min(DRIVE_STEPS as u64),
-            gap_rearm_tick: None,
+            gap_rearm_or_talk_arrival_tick: None,
             ack_page: PageAcknowledgement::default(),
             npc_index: -1,
             npc_action: Arc::from("Talk-to"),
@@ -362,6 +377,8 @@ impl NativeMachine for Dialogue {
             content_deadline_tick: 0,
             walk_request_id: 0,
             approach_replans_left,
+            talk_approach_budget_ticks: 0,
+            refusal_recovery_active: false,
             surface: Surface::Unselected,
             talk_request_id: None,
             talk_baseline: None,
@@ -487,7 +504,7 @@ impl NativeMachine for Dialogue {
                 let Some(target) = target else {
                     cx.cancel_request(self.walk_request_id);
                     self.walk_request_id = 0;
-                    return Poll::Ready(Ok(DialogueOutcome::Failed));
+                    return Poll::Ready(self.approach_failure());
                 };
                 if target.distance <= 2 && talk_reachable(cx, target.tile) {
                     std::task::ready!(crate::native::defer_budget(self.open(cx)))?;
@@ -502,10 +519,11 @@ impl NativeMachine for Dialogue {
                 {
                     cx.cancel_request(self.walk_request_id);
                     self.walk_request_id = 0;
-                    return Poll::Ready(Ok(DialogueOutcome::Failed));
+                    return Poll::Ready(self.approach_failure());
                 }
                 if route_finished {
                     let reachable = talk_reachable(cx, target.tile);
+                    let route_budget = dialogue_approach_tick_budget(cx, &target);
                     let request = reach::walk_request(
                         target.tile,
                         if reachable { 1 } else { 0 },
@@ -516,12 +534,16 @@ impl NativeMachine for Dialogue {
                         std::task::ready!(crate::native::defer_budget(cx.walk(request)))?;
                     self.approach_replans_left -= 1;
                     self.walk_request_id = request_id;
+                    self.content_deadline_tick =
+                        cx.evidence().tick.saturating_add(u64::from(route_budget));
                 }
                 Poll::Pending
             }
             Phase::Open => {
                 if obs.ready {
                     self.talk_chat_mark = None;
+                    self.refusal_recovery_active = false;
+                    self.gap_rearm_or_talk_arrival_tick = None;
                     return self.drive(cx, &obs);
                 }
                 // NPC content can send a game message before its first chat page.
@@ -535,13 +557,15 @@ impl NativeMachine for Dialogue {
                         self.cancel_talk_request(cx);
                         return Poll::Ready(Err(dialogue_refusal_error()));
                     };
-                    let Some(target) = (self.approach_replans_left > 0)
-                        .then(|| nearest_talk(cx, npc_id))
-                        .flatten()
-                    else {
+                    if self.refusal_recovery_active {
+                        self.cancel_talk_request(cx);
+                        return Poll::Ready(Err(dialogue_refusal_error()));
+                    }
+                    let Some(target) = nearest_talk(cx, npc_id) else {
                         self.cancel_talk_request(cx);
                         return Poll::Ready(Err(dialogue_refusal_error()));
                     };
+                    let route_budget = dialogue_approach_tick_budget(cx, &target);
                     let reachable = talk_reachable(cx, target.tile);
                     let walk_request_id = std::task::ready!(crate::native::defer_budget(cx.walk(
                         reach::walk_request(
@@ -552,19 +576,18 @@ impl NativeMachine for Dialogue {
                         )
                     )))?;
                     self.cancel_talk_request(cx);
-                    self.approach_replans_left -= 1;
+                    self.refusal_recovery_active = true;
                     self.walk_request_id = walk_request_id;
-                    self.content_deadline_tick = cx
-                        .evidence()
-                        .tick
-                        .saturating_add(dialogue_approach_tick_budget(self.approach_replans_left));
-                    self.surface = Surface::Unselected;
-                    self.phase = Phase::Approach;
+                    self.content_deadline_tick =
+                        cx.evidence().tick.saturating_add(u64::from(route_budget));
+                    self.gap_rearm_or_talk_arrival_tick = None;
                     self.chat_advanced = false;
                     self.chat_page_owned = false;
                     self.chat_advance_request_id = None;
                     return Poll::Pending;
                 }
+                self.observe_talk_arrival(cx, obs.tick);
+                self.update_talk_open_deadline(cx);
                 if obs.tick >= self.content_deadline_tick {
                     static REASON: std::sync::LazyLock<Arc<str>> =
                         std::sync::LazyLock::new(|| Arc::from("expected dialogue did not open"));
@@ -662,9 +685,11 @@ impl NativeMachine for Dialogue {
                         self.gap_inventory = inventory;
                         self.gap_position = position;
                         self.gap_chat_mark = chat_mark;
-                        if self.gap_rearms_left > 0 && self.gap_rearm_tick != Some(obs.tick) {
+                        if self.gap_rearms_left > 0
+                            && self.gap_rearm_or_talk_arrival_tick != Some(obs.tick)
+                        {
                             self.gap_rearms_left -= 1;
-                            self.gap_rearm_tick = Some(obs.tick);
+                            self.gap_rearm_or_talk_arrival_tick = Some(obs.tick);
                             self.due_tick = obs.tick.saturating_add(self.gap_ticks());
                         }
                     }
@@ -674,13 +699,13 @@ impl NativeMachine for Dialogue {
                             .local_player()
                             .is_some_and(|player| player.value.player.actor.animation >= 0);
                         if animation_active && self.gap_rearms_left > 0 {
-                            if self.gap_rearm_tick == Some(obs.tick) {
+                            if self.gap_rearm_or_talk_arrival_tick == Some(obs.tick) {
                                 return Poll::Pending;
                             }
                             // Scripted work can close chat before its final page.
                             // Share the evidence-tick limit with changed evidence.
                             self.gap_rearms_left -= 1;
-                            self.gap_rearm_tick = Some(obs.tick);
+                            self.gap_rearm_or_talk_arrival_tick = Some(obs.tick);
                             self.due_tick = obs.tick.saturating_add(self.gap_ticks());
                             return Poll::Pending;
                         }
@@ -763,6 +788,51 @@ impl Dialogue {
         self.talk_chat_mark = None;
     }
 
+    fn approach_failure(&self) -> Result<DialogueOutcome, ActionError> {
+        if self.refusal_recovery_active {
+            Err(dialogue_refusal_error())
+        } else {
+            Ok(DialogueOutcome::Failed)
+        }
+    }
+
+    fn observe_talk_arrival(&mut self, cx: &ActionContext<'_>, tick: u64) {
+        if self.gap_rearm_or_talk_arrival_tick.is_some() {
+            return;
+        }
+        let Some(target) = self.npc_id().and_then(|id| nearest_talk(cx, id)) else {
+            return;
+        };
+        if reach::npc_adjacent(cx, target.npc) {
+            self.gap_rearm_or_talk_arrival_tick = Some(tick);
+        }
+    }
+
+    fn update_talk_open_deadline(&mut self, cx: &ActionContext<'_>) {
+        let Some(request_id) = self.talk_request_id else {
+            return;
+        };
+        let Some(receipt) = cx.interaction_receipt(request_id) else {
+            return;
+        };
+        if !receipt.accepted {
+            return;
+        }
+        self.content_deadline_tick = self.content_deadline_tick.max(
+            receipt
+                .evidence
+                .tick
+                .saturating_add(u64::from(self.talk_approach_budget_ticks)),
+        );
+        if let Some(arrival_tick) = self.gap_rearm_or_talk_arrival_tick {
+            self.content_deadline_tick = receipt
+                .evidence
+                .tick
+                .max(arrival_tick)
+                .saturating_add(DIALOGUE_OPEN_TICKS);
+        }
+    }
+
     /// The conversation's used-`prefer` mask, for the acceptance tests.
     #[cfg(test)]
     pub(super) fn answers_used(&self) -> u32 {
@@ -797,28 +867,27 @@ impl Dialogue {
             }
             return Ok(());
         }
+        let mut talk_approach_budget_ticks = DIALOGUE_APPROACH_SLACK_TICKS;
         let npc_id = self.npc_id();
         if let Some(target) = npc_id.and_then(|id| nearest_talk(cx, id)) {
             let reachable = talk_reachable(cx, target.tile);
             if target.distance > 2 || !reachable {
-                // A nearby NPC across a closed wall/door is not ready to
-                // talk. Route to its side instead of accepting a blocked
-                // adjacent tile and cancelling before the door traversal.
+                let route_budget = dialogue_approach_tick_budget(cx, &target);
                 self.walk_request_id = cx.walk(reach::walk_request(
                     target.tile,
                     if reachable { 1 } else { 0 },
                     None,
                     cx.evidence(),
                 ))?;
+                self.gap_rearm_or_talk_arrival_tick = None;
                 self.phase = Phase::Approach;
-                self.content_deadline_tick = cx
-                    .evidence()
-                    .tick
-                    .saturating_add(dialogue_approach_tick_budget(self.approach_replans_left));
+                self.content_deadline_tick =
+                    cx.evidence().tick.saturating_add(u64::from(route_budget));
                 return Ok(());
             }
             self.npc_index = target.index;
             self.npc_action = Arc::from(target.action);
+            talk_approach_budget_ticks = dialogue_approach_tick_budget(cx, &target);
         }
         let DialogueTarget::Npc { name, .. } = &self.args.target else {
             self.surface = Surface::Unselected;
@@ -837,9 +906,14 @@ impl Dialogue {
         self.talk_baseline = talk_baseline;
         self.talk_request_id = Some(talk_request_id);
         self.talk_chat_mark = Some(reach::last_chat_seq(cx));
+        self.talk_approach_budget_ticks = talk_approach_budget_ticks;
+        self.gap_rearm_or_talk_arrival_tick = None;
         self.surface = Surface::Chat;
         self.phase = Phase::Open;
-        self.content_deadline_tick = cx.evidence().tick.saturating_add(DIALOGUE_OPEN_TICKS);
+        self.content_deadline_tick = cx
+            .evidence()
+            .tick
+            .saturating_add(u64::from(talk_approach_budget_ticks));
         Ok(())
     }
 
@@ -1325,6 +1399,7 @@ fn observe_main<'a>(
 }
 
 struct TalkTarget<'a> {
+    npc: &'a api::snapshot::NpcView,
     index: i32,
     action: &'a str,
     tile: api::WorldTile,
@@ -1350,16 +1425,18 @@ fn dialogue_approach_replan_budget(cx: &ActionContext<'_>, npc_id: i32) -> u16 {
     let Some(npc) = data.npc_name(npc_id) else {
         return 0;
     };
-    u16::try_from(npc.wanderrange.max(0))
-        .unwrap_or(u16::MAX)
-        .saturating_mul(DIALOGUE_APPROACH_WALK_TICKS)
+    let range = u64::try_from(npc.wanderrange.max(0)).unwrap_or(u64::MAX);
+    let side = range.saturating_mul(2).saturating_add(1);
+    u16::try_from(side.saturating_mul(side).saturating_sub(1)).unwrap_or(u16::MAX)
 }
 
-fn dialogue_approach_tick_budget(replans_left: u16) -> u64 {
-    // The content replan budget allows this many routes, plus the initial one.
-    u64::from(replans_left)
-        .saturating_add(1)
-        .saturating_mul(u64::from(DIALOGUE_APPROACH_WALK_TICKS))
+fn dialogue_approach_tick_budget(cx: &ActionContext<'_>, target: &TalkTarget<'_>) -> u32 {
+    // The live reach flood supplies the planned path depth. Without one, use
+    // the observed NPC distance as a geometric fallback; it cannot include
+    // unseen detours.
+    let steps = reach::npc_route_steps(cx, target.npc)
+        .unwrap_or_else(|| u32::try_from(target.distance.max(0)).unwrap_or(u32::MAX));
+    steps.saturating_add(DIALOGUE_APPROACH_SLACK_TICKS)
 }
 
 fn dialogue_refusal_error() -> ActionError {
@@ -1381,6 +1458,7 @@ fn nearest_talk<'a>(cx: &'a ActionContext<'_>, wanted: i32) -> Option<TalkTarget
                 .flatten()
                 .find(|action| action.len() >= 4 && action[..4].eq_ignore_ascii_case("talk"))?;
             Some(TalkTarget {
+                npc,
                 index: npc.index as i32,
                 action,
                 tile: npc.tile,

@@ -88,10 +88,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - Quester's anchored prewalk for an unseen loc now accepts any standable tile
   within the anchor radius, leaving the final, live-loc approach to select an
   accessible interaction side.
-- Talk steps now approach NPCs within the configured interaction distance
-  before opening their dialogue. Damage from a quest dialogue no longer looks
-  like an attack when no visible NPC or player targets the bot. A failed walk
-  also reports where its route ended.
+- Talk steps now budget one observed tick per planned walking tile plus two
+  slack ticks. A moving NPC gets a replan cap equal to the number of non-home
+  tiles in its content-defined wander square. A server refusal gives every NPC
+  one bounded approach retry, including NPCs that do not wander. The first-page
+  clock starts after the accepted Talk receipt and the adjacent-position check.
+  Its four-tick budget accepts a page on the deadline tick. Damage from a quest
+  dialogue no longer looks like an attack when no visible NPC or player targets
+  the bot. A failed walk also reports where its route ended.
 
 ### Scripting
 

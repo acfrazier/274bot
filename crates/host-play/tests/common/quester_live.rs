@@ -40,12 +40,12 @@
 //! folder served through the existing `FolderSource` registry, shadowing the
 //! embedded release index). It runs with the Base40 qualification profile
 //! under a fixed deadline.
-//! `QUESTER_TICK_MS` is supported only by the single-account generic Path
-//! smoke. `::speed` changes world-wide tick speed; use it only on isolated
-//! Engine Q, never on shared Engine A or the builder. The shared runner waits
-//! for a fresh exact system-chat confirmation and restores `::speed 600` on
-//! teardown. `QUESTER_SUSTAIN_RUN=1` enables the existing `~energy` sustain,
-//! defaulting on when `QUESTER_TICK_MS` is set.
+//! `QUESTER_TICK_MS` is supported by single-account Path and family cells.
+//! `::speed` changes world-wide tick speed, so use it only on isolated Engine
+//! Q, never on shared Engine A or the builder. The shared runner waits for a
+//! fresh exact system-chat confirmation and restores `::speed 600` on teardown.
+//! `QUESTER_SUSTAIN_RUN=1` enables the existing `~energy` sustain. It defaults
+//! on when `QUESTER_TICK_MS` is set.
 //!
 //! Persistence cells (`tests/quester_hint_live.rs`) add `QUESTER_LIVE_ACCOUNT`
 //! with `QUESTER_LIVE_PASSWORD` (one fixed account instead of a minted one)
@@ -1105,7 +1105,12 @@ fn run_cells(
             ));
         }
     }
-    let fast_settings = if quester_path {
+    let tick_speed_requested = std::env::var_os("QUESTER_TICK_MS").is_some();
+    let apply_fast_settings = quester_path || tick_speed_requested;
+    if apply_fast_settings && (mode.is_pair() || cells.len() != 1) {
+        return Err("QUESTER_TICK_MS requires a single-account Quester live cell".into());
+    }
+    let fast_settings = if apply_fast_settings {
         scenario::quester::QuesterFastSettings::from_env()?
     } else {
         scenario::quester::QuesterFastSettings {
@@ -1113,9 +1118,6 @@ fn run_cells(
             sustain_run: false,
         }
     };
-    if quester_path && (mode.is_pair() || cells.len() != 1) {
-        return Err("QUESTER_TICK_MS requires a single-account quester_path cell".into());
-    }
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Err("Quester live cells require LIVE=1".into());
     }
@@ -1151,7 +1153,7 @@ fn run_cells(
     for cell in &mut cells {
         cell.scenario.settings.nav.engine_speed_ms = None;
     }
-    if quester_path {
+    if apply_fast_settings {
         scenario::quester::apply_quester_fast_settings(&mut cells[0].scenario, fast_settings);
     }
     let scenario_deadline = cells
