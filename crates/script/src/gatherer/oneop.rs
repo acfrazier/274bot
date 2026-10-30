@@ -9,7 +9,7 @@ use std::task::Poll;
 /// that tick (`anti_poison.rs2:8`), so a processed drink is seen by the next
 /// observed tick. The engine drops a held op without any reply while the
 /// player is delayed (`OpHeldHandler.ts:16-19`), for example in the tick after
-/// a mining success's `p_delay(0)` (`mining.rs2:138`, `PlayerOps.ts:377-378`).
+/// a mining success's `p_delay(0)` (`mining.rs2:139`, `PlayerOps.ts:377-378`).
 /// This is the drink lock the walk guard and the combat schedule already use
 /// (`combat/schedule.rs` `OpKind::Drink`), and it outlasts the drink's own
 /// `p_delay(1)` (`consume_effects.rs2:124-126`), so a second click cannot land
@@ -29,6 +29,13 @@ pub enum OneOpKind {
     Drink {
         item_id: i32,
         before_doses: i32,
+    },
+    /// Strange fruit: an `Eat` op that cures poison and heals nothing
+    /// (`strange_fruit.rs2:1-12` deletes the slot and only restores energy), so
+    /// it settles on the count drop alone, never on a hitpoints rise.
+    CureFruit {
+        item_id: i32,
+        before_count: i32,
     },
     CloseModal,
     ContinueDialog,
@@ -66,7 +73,12 @@ impl OneOpArgs {
         }
     }
 
-    /// Close a page that blocks a survival held click.
+    /// Close a page that blocks a survival held click. An enter-amount prompt
+    /// counts: the client refuses every held click while it is open
+    /// (`api::interact` `precondition`), and the engine refuses a protected
+    /// script while the suspended count-dialog script keeps `protect` set
+    /// (`Player.ts:2173-2178`, `:2213-2221`). The engine's `closeModal` clears
+    /// `protect` before it checks for an open modal (`Player.ts:760-766`).
     pub fn close_modal_if_open(snapshot: api::snapshot::SnapshotView<'_>) -> Option<Self> {
         let main = snapshot
             .main_modal()
@@ -74,7 +86,8 @@ impl OneOpArgs {
         let chat = snapshot
             .chat_modal()
             .is_some_and(|modal| modal.value.root >= 0);
-        (main || chat).then(Self::close_modal)
+        let count = snapshot.count_dialog_open().is_some_and(|open| open.value);
+        (main || chat || count).then(Self::close_modal)
     }
 
     pub fn wear(name: Arc<str>, item_id: i32, action: &str) -> Self {
@@ -118,6 +131,26 @@ impl OneOpArgs {
             kind: OneOpKind::Drink {
                 item_id,
                 before_doses,
+            },
+            bound_ticks: DRINK_SETTLE_TICKS,
+        }
+    }
+
+    /// Eat a held Strange fruit as a poison cure. It shares the drink's
+    /// settle bound: the fruit's slot is deleted in the server tick that runs
+    /// the op (`strange_fruit.rs2:6`), and a dropped op is clicked again after
+    /// the same lock.
+    pub fn cure_fruit(name: &str, item_id: i32, before_count: i32) -> Self {
+        Self {
+            request: InteractReq::Held {
+                name: name.into(),
+                action: "Eat".into(),
+                slot: None,
+                target_item_id: None,
+            },
+            kind: OneOpKind::CureFruit {
+                item_id,
+                before_count,
             },
             bound_ticks: DRINK_SETTLE_TICKS,
         }
@@ -192,14 +225,18 @@ impl NativeMachine for OneOp {
             }
             OneOpKind::Drink {
                 item_id,
-                before_doses,
+                before_doses: before_count,
+            }
+            | OneOpKind::CureFruit {
+                item_id,
+                before_count,
             } => cx.snapshot().inventory().is_some_and(|rows| {
                 rows.value
                     .iter()
                     .filter(|row| row.def.id == item_id)
                     .map(|row| row.count)
                     .sum::<i32>()
-                    < before_doses
+                    < before_count
             }),
             OneOpKind::CloseModal => {
                 let snapshot = cx.snapshot();
@@ -209,6 +246,7 @@ impl NativeMachine for OneOp {
                     && snapshot
                         .chat_modal()
                         .is_none_or(|modal| modal.value.root < 0)
+                    && !snapshot.count_dialog_open().is_some_and(|open| open.value)
             }
             OneOpKind::ContinueDialog => cx.snapshot().chat_modal().is_some_and(|modal| {
                 // A chained unlock page acknowledges this page; the runner must

@@ -214,6 +214,25 @@ fn held_fruit(inventory: &[ItemView], tables: &CombatTables) -> Option<i32> {
         .then_some(item_id)
 }
 
+/// A predicate for held cures that [`cure_choice`] can use: any dose of
+/// antipoison or super antipoison, or Strange fruit. Runners keep these out of
+/// bank deposits so a later poison still finds them. The fruit's id is
+/// resolved once per predicate.
+pub(crate) fn cure_items(tables: &CombatTables) -> impl Fn(i32) -> bool + '_ {
+    let fruit = tables
+        .selected()
+        .item_by_alias("macro_triffidfruit")
+        .map(|fruit| fruit.id);
+    move |item_id| {
+        fruit == Some(item_id)
+            || [PotionKind::Antipoison, PotionKind::SuperAntipoison]
+                .into_iter()
+                .filter_map(|kind| tables.potion(kind))
+                .flat_map(|family| family.doses.iter().flatten())
+                .any(|dose| dose.id == item_id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

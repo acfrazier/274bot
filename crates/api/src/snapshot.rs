@@ -510,6 +510,12 @@ impl GameSnapshot {
         self.modals.side = root;
     }
 
+    /// Offline fixture seed for the client's enter-amount prompt
+    /// (`dialog_input_open`), which has no modal root of its own.
+    pub fn seed_count_dialog(&mut self, open: bool) {
+        self.count_dialog_open = open;
+    }
+
     pub fn seed_equipment(&mut self, rows: Vec<ItemView>) {
         self.equipment = rows;
         self.equipment_available = true;

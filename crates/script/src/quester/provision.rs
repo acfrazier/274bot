@@ -217,6 +217,16 @@ impl Provisioner {
         self.acquire_run.as_mut()?.take_trace_event()
     }
 
+    /// Prayers the acquisition run raised, so a survival cancel can still
+    /// clear them after it drops the run.
+    pub(super) fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
+        self.acquire_run
+            .as_ref()
+            .map_or_else(crate::combat::RaisedPrayers::empty, |run| {
+                run.prayer_cleanup()
+            })
+    }
+
     pub fn status_revision(&self) -> u64 {
         self.revision
     }

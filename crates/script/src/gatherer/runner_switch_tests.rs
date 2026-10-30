@@ -1832,11 +1832,7 @@ fn power_gatherer_rejects_bank_edit_at_lower_mine() {
     assert!(gatherer.pending.is_none());
 }
 
-#[test]
-fn gatherer_interrupts_gather_step_for_drink_at_line() {
-    use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
-
-    let (mut gatherer, mut snapshot) = fixture();
+fn antipoison_dose() -> ItemView {
     let dose_id = crate::combat::guard::shared_tables()
         .unwrap()
         .potion(crate::combat::tables::PotionKind::Antipoison)
@@ -1844,7 +1840,7 @@ fn gatherer_interrupts_gather_step_for_drink_at_line() {
         .doses[0]
         .unwrap()
         .id;
-    let dose = ItemView {
+    ItemView {
         def: def(dose_id, "Antipoison"),
         container: ItemContainer::Inventory,
         action_family: ItemActionFamily::Held,
@@ -1852,52 +1848,84 @@ fn gatherer_interrupts_gather_step_for_drink_at_line() {
         count: 1,
         actions: Vec::new(),
         component_id: 0,
-    };
+    }
+}
+
+fn held_lobster(slot: i32) -> ItemView {
     let lobster_id = api::game_data::for_revision(api::selected::ClientRevision::R289)
         .unwrap()
         .item_by_alias("lobster")
         .unwrap()
         .id;
-    let food = ItemView {
+    ItemView {
         def: def(lobster_id, "Lobster"),
         container: ItemContainer::Inventory,
         action_family: ItemActionFamily::Held,
-        slot: 1,
+        slot,
         count: 1,
         actions: vec![Some("Eat".into())],
         component_id: 0,
-    };
-    snapshot.seed_inventory(vec![dose, food], 28);
-    snapshot.seed_tick(20);
+    }
+}
 
-    let condition = |poison, hp| BotCondition {
-        tick: 20,
-        session: SessionMark::Live,
+fn cure_condition(
+    tick: u32,
+    poison: api::condition::PoisonState,
+    hp: u8,
+) -> api::condition::BotCondition {
+    api::condition::BotCondition {
+        tick,
+        session: api::condition::SessionMark::Live,
         hp,
         hp_max: 99,
         hp_known: true,
         poison,
-        food: FoodSummary::default(),
-        cures: CureDoses::default(),
-    };
-    let mut ledger = None;
+        food: api::condition::FoodSummary::default(),
+        cures: api::condition::CureDoses::default(),
+    }
+}
 
+const ONSET_AT_LINE: api::condition::PoisonState = api::condition::PoisonState::Onset {
+    since: 20,
+    q: Some(11),
+    hit_since_line: false,
+};
+
+/// The last interaction the runner emitted, as (`Held` action, request id).
+fn last_held(ledger: &Option<Box<crate::native::ledger::Ledger>>) -> Option<(String, u64)> {
+    let action = ledger.as_ref()?.outbox.last()?;
+    match &action.effect {
+        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held {
+            action: name,
+            ..
+        }) => Some((name.clone(), action.authority().request_id().get())),
+        _ => None,
+    }
+}
+
+/// Start gathering at frame 20, then poison the bot at the line so the
+/// runner cancels the gather step and drinks in tick 2.
+fn poisoned_while_gathering(
+    inventory: Vec<ItemView>,
+) -> (
+    Gatherer,
+    api::snapshot::GameSnapshot,
+    Option<Box<crate::native::ledger::Ledger>>,
+) {
+    use api::condition::PoisonState;
+
+    let (mut gatherer, mut snapshot) = fixture();
+    snapshot.seed_inventory(inventory, 28);
+    snapshot.seed_tick(20);
+    let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 1, |tick| {
-        tick.cx.condition = Some(condition(PoisonState::Clear, 60));
+        tick.cx.condition = Some(cure_condition(20, PoisonState::Clear, 60));
         tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
         gatherer.tick(tick).unwrap();
     });
     assert!(matches!(gatherer.active, Active::Gather(_)));
-
     with_tick(&snapshot, &mut ledger, 2, |tick| {
-        tick.cx.condition = Some(condition(
-            PoisonState::Onset {
-                since: 20,
-                q: Some(11),
-                hit_since_line: false,
-            },
-            5,
-        ));
+        tick.cx.condition = Some(cure_condition(20, ONSET_AT_LINE, 5));
         tick.cx.poison_unknown_pulse = 11;
         tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
         gatherer.tick(tick).unwrap();
@@ -1907,32 +1935,50 @@ fn gatherer_interrupts_gather_step_for_drink_at_line() {
         gatherer.survival.report().decision,
         crate::survival::Decision::Drinking
     );
-    assert!(matches!(
-        ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
-        Some(crate::native::HostEffect::Interaction(
-            crate::shim::InteractReq::Held { action, .. }
-        )) if action == "Drink"
-    ));
+    assert_eq!(
+        last_held(&ledger).map(|(action, _)| action).as_deref(),
+        Some("Drink")
+    );
+    (gatherer, snapshot, ledger)
+}
 
-    snapshot.seed_tick(21);
-    snapshot.seed_inventory(vec![], 28);
-    with_tick(&snapshot, &mut ledger, 3, |tick| {
-        tick.cx.condition = Some(BotCondition {
-            tick: 21,
-            session: SessionMark::Live,
-            hp: 5,
-            hp_max: 99,
-            hp_known: true,
-            poison: PoisonState::Immune { until_lower: 80 },
-            food: FoodSummary::default(),
-            cures: CureDoses::default(),
-        });
+/// Tick a poisoned or cured Gatherer at `observed` with the cure's condition.
+fn tick_with(
+    gatherer: &mut Gatherer,
+    snapshot: &GameSnapshot,
+    ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+    observed: u64,
+    poison: api::condition::PoisonState,
+) -> ScriptFlow {
+    with_tick(snapshot, ledger, observed, |tick| {
+        tick.cx.condition = Some(cure_condition(u32::try_from(observed).unwrap(), poison, 5));
+        tick.cx.poison_unknown_pulse = 11;
         tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
-        gatherer.tick(tick).unwrap();
-    });
+        gatherer.tick(tick).unwrap()
+    })
+}
+
+const CURED: api::condition::PoisonState = api::condition::PoisonState::Immune { until_lower: 80 };
+
+#[test]
+fn gatherer_interrupts_gather_step_for_drink_at_line() {
+    let (mut gatherer, mut snapshot, mut ledger) =
+        poisoned_while_gathering(vec![antipoison_dose()]);
+    let drink = last_held(&ledger);
+    snapshot.seed_inventory(vec![], 28);
+    // The drink sent at observed tick 2 delays the player through the next
+    // two server ticks (`consume_effects.rs2:124-126`, `PlayerOps.ts:376-378`),
+    // so the runner sends no gather click the engine would drop, and resumes
+    // in tick 5 when the drink lock ends.
+    for observed in 3..=4 {
+        tick_with(&mut gatherer, &snapshot, &mut ledger, observed, CURED);
+        assert!(matches!(gatherer.active, Active::None), "tick {observed}");
+        assert_eq!(last_held(&ledger), drink, "tick {observed}");
+    }
+    tick_with(&mut gatherer, &snapshot, &mut ledger, 5, CURED);
     assert!(
         matches!(gatherer.active, Active::Gather(_)),
-        "gathering resumes once the cure is observed to settle"
+        "gathering resumes once the cure settles and the drink lock ends"
     );
     assert_eq!(
         gatherer.survival.report().decision,
@@ -1942,9 +1988,90 @@ fn gatherer_interrupts_gather_step_for_drink_at_line() {
     assert!(!gatherer.needs_validate);
 }
 
+/// A cure and a bite are both due (design A6.4): the drink goes first, and the
+/// bite waits for the drink's lock instead of landing in the drink's
+/// `p_delay(1)`, where the engine drops it (`OpHeldHandler.ts:16-19`).
 #[test]
 fn gatherer_boundary_drinks_before_bite() {
-    gatherer_interrupts_gather_step_for_drink_at_line();
+    let (mut gatherer, mut snapshot, mut ledger) =
+        poisoned_while_gathering(vec![antipoison_dose(), held_lobster(1)]);
+    let drink = last_held(&ledger);
+    snapshot.seed_inventory(vec![held_lobster(1)], 28);
+    // The bite reads the frame's Hitpoints row: 5 of 99, below the Gatherer's
+    // default eat floor of half its base.
+    let mut stats = snapshot.stats().to_vec();
+    stats.push(StatView {
+        index: 3,
+        name: "hitpoints".into(),
+        effective: 5,
+        base: 99,
+        xp: 0,
+        used: true,
+    });
+    snapshot.seed_stats(stats);
+    for observed in 3..=4 {
+        tick_with(&mut gatherer, &snapshot, &mut ledger, observed, CURED);
+        assert_eq!(
+            last_held(&ledger),
+            drink,
+            "no bite inside the drink lock at tick {observed}"
+        );
+        assert!(!matches!(gatherer.active, Active::Gather(_)));
+        assert_eq!(
+            gatherer.survival.report().decision,
+            crate::survival::Decision::Drinking
+        );
+    }
+    tick_with(&mut gatherer, &snapshot, &mut ledger, 5, CURED);
+    assert_eq!(
+        last_held(&ledger).map(|(action, _)| action).as_deref(),
+        Some("Eat"),
+        "the bite follows when the drink lock ends"
+    );
+    assert!(matches!(gatherer.active, Active::Tend(_)));
+}
+
+/// The engine drops a held click while the player is delayed, for example in
+/// the tick after a mining success's `p_delay(0)` (`mining.rs2:139`,
+/// `OpHeldHandler.ts:16-19`). The drink then shows no dose drop by its
+/// three-tick bound. The Gatherer clicks again in that tick and, once cured,
+/// resumes gathering in the same run: an unsettled survival click is a
+/// deferral, not `oneop-failed`.
+#[test]
+fn gatherer_resends_a_dropped_drink_and_resumes() {
+    let (mut gatherer, mut snapshot, mut ledger) =
+        poisoned_while_gathering(vec![antipoison_dose()]);
+    let first = last_held(&ledger).expect("first drink");
+    // The host sent the click; the delayed engine dropped it, so the dose
+    // stays held and the line stays an onset until the drink's bound.
+    for observed in 3..=5 {
+        let flow = tick_with(
+            &mut gatherer,
+            &snapshot,
+            &mut ledger,
+            observed,
+            ONSET_AT_LINE,
+        );
+        assert!(matches!(flow, ScriptFlow::Continue), "tick {observed}");
+        assert!(gatherer.failure.is_none(), "tick {observed}");
+    }
+    let second = last_held(&ledger).expect("second drink");
+    assert_eq!(second.0, "Drink");
+    assert_ne!(second.1, first.1, "the drink is clicked again in tick 5");
+    assert!(matches!(gatherer.active, Active::Tend(_)));
+
+    // The second drink lands: dose drop and immunity at the next tick. The
+    // run then gathers again once the new drink lock ends (tick 8).
+    snapshot.seed_inventory(vec![], 28);
+    for observed in 6..=8 {
+        let flow = tick_with(&mut gatherer, &snapshot, &mut ledger, observed, CURED);
+        assert!(matches!(flow, ScriptFlow::Continue), "tick {observed}");
+    }
+    assert!(gatherer.failure.is_none());
+    assert!(
+        matches!(gatherer.active, Active::Gather(_)),
+        "the interrupted gathering resumes after the resent drink"
+    );
 }
 
 #[test]

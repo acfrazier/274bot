@@ -558,15 +558,22 @@ pub fn protected_ids(prepared: &Prepared, tool_id: i32) -> ProtectedIds {
 }
 
 /// Return every observed positive-count inventory item ID except gathering
-/// tools, prepared supplies and content-defined unbankable items. Bankable
-/// incidental non-products are deposited too.
+/// tools, prepared supplies, held poison cures and content-defined unbankable
+/// items. Bankable incidental non-products are deposited too. The deposit
+/// moves only these ids (`DepositProducts` is `only: Some(products)`,
+/// `native_bank.rs` `deposit_spec`), so a held antipoison dose or Strange
+/// fruit stays in the pack for the next poison.
 pub fn bank_deposit_ids(prepared: &Prepared, tool_id: i32, inventory: &[ItemView]) -> Arc<[i32]> {
     let mut protected = protected_ids(prepared, tool_id);
     protected.keep_unbankable(&prepared.selected, inventory);
+    let cure = crate::combat::guard::shared_tables_ref().map(crate::survival::cure::cure_items);
     let mut ids = Vec::with_capacity(inventory.len());
     for item in inventory {
         let id = item.def.id;
         if id < 0 || item.count <= 0 || protected.as_slice().contains(&id) || ids.contains(&id) {
+            continue;
+        }
+        if cure.as_ref().is_some_and(|cure| cure(id)) {
             continue;
         }
         let gathering_tool = prepared.methods.iter().any(|&index| {
@@ -1628,6 +1635,44 @@ mod tests {
             bank_deposit_ids(&prepared, tools[0].item, &inventory).as_ref(),
             &[405]
         );
+    }
+
+    /// A bank trip keeps every held poison cure (Argon review finding 2):
+    /// antipoison and super antipoison doses of any count and Strange fruit
+    /// are not deposit products, so the next poison still finds them.
+    #[test]
+    fn bank_deposit_keeps_held_poison_cures() {
+        let prepared = prepare(crate::native::SettingsBag::new());
+        let tables = crate::combat::guard::shared_tables().unwrap();
+        let mut inventory = vec![item(405, "Casket", 1, ItemContainer::Inventory)];
+        let mut cures = Vec::new();
+        for kind in [
+            crate::combat::tables::PotionKind::Antipoison,
+            crate::combat::tables::PotionKind::SuperAntipoison,
+        ] {
+            for dose in tables.potion(kind).unwrap().doses.iter().flatten() {
+                cures.push(dose.id);
+                inventory.push(item(dose.id, "Cure dose", 1, ItemContainer::Inventory));
+            }
+        }
+        let fruit = prepared
+            .selected
+            .item_by_alias("macro_triffidfruit")
+            .unwrap()
+            .id;
+        cures.push(fruit);
+        inventory.push(item(fruit, "Strange fruit", 1, ItemContainer::Inventory));
+        assert_eq!(
+            cures.len(),
+            9,
+            "four doses of each antipoison and the fruit"
+        );
+
+        let deposit_ids = bank_deposit_ids(&prepared, -1, &inventory);
+        assert_eq!(deposit_ids.as_ref(), &[405]);
+        for id in cures {
+            assert!(!deposit_ids.contains(&id), "cure {id} would be deposited");
+        }
     }
 
     #[test]

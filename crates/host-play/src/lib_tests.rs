@@ -32327,40 +32327,46 @@ export default class T extends LoopingBot {
             },
         );
 
-        snapshot.seed_tick(42);
+        // The drink sent at tick 41 delays the player through ticks 42 and 43
+        // (`consume_effects.rs2:124-126`, `PlayerOps.ts:376-378`). The runner
+        // holds its work through the drink lock and resumes at tick 44.
         snapshot.seed_inventory(Vec::new(), 28);
-        let mut context = script::ScriptCtx {
-            driver: &mut driver,
-            tick: 42,
-            here: Some((3200, 3200, 0)),
-            walk: None,
-            walk_with: None,
-            inv: None,
-            snapshot: Some(&snapshot),
-            obj_names: None,
-            compiled: script::CompiledTick {
-                selected: Some(&selected),
-                condition: Some(condition(
-                    42,
-                    PoisonState::Immune { until_lower: 80 },
-                    60,
-                    0,
-                )),
-                poison_unknown_pulse: Some(11),
-                cure_poison: CurePoison::WhenNeeded,
-                ..script::CompiledTick::default()
-            },
-        };
-        slot.on_game_tick(&mut context);
-
-        let status = slot.native_status().expect("resumed native status");
-        assert_eq!(slot.state(), script::RunState::Running);
-        assert_eq!(slot.native_run(), Some(run));
-        assert_eq!(status.run, run);
-        assert_eq!(status.phase, NativePhase::Working);
-        assert!(status.failure.is_none());
-        assert!(slot.lifecycle_receipt().is_none());
-        assert!(slot.take_native_action().is_none());
+        for tick in 42..=44 {
+            snapshot.seed_tick(u32::try_from(tick).unwrap());
+            let mut context = script::ScriptCtx {
+                driver: &mut driver,
+                tick,
+                here: Some((3200, 3200, 0)),
+                walk: None,
+                walk_with: None,
+                inv: None,
+                snapshot: Some(&snapshot),
+                obj_names: None,
+                compiled: script::CompiledTick {
+                    selected: Some(&selected),
+                    condition: Some(condition(
+                        tick,
+                        PoisonState::Immune { until_lower: 80 },
+                        60,
+                        0,
+                    )),
+                    poison_unknown_pulse: Some(11),
+                    cure_poison: CurePoison::WhenNeeded,
+                    ..script::CompiledTick::default()
+                },
+            };
+            slot.on_game_tick(&mut context);
+            let status = slot.native_status().expect("resumed native status");
+            assert_eq!(slot.state(), script::RunState::Running);
+            assert_eq!(slot.native_run(), Some(run));
+            assert_eq!(status.run, run);
+            assert!(status.failure.is_none());
+            assert!(slot.lifecycle_receipt().is_none());
+            assert!(slot.take_native_action().is_none(), "tick {tick}");
+            if tick == 44 {
+                assert_eq!(status.phase, NativePhase::Working);
+            }
+        }
     }
 
     #[test]

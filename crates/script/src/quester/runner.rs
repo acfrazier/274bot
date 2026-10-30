@@ -1573,12 +1573,21 @@ impl Quester {
         self.gang_reader.cancel();
     }
 
+    /// Drop the Provisioner's runs for survival, keeping the prayers its
+    /// acquisition run raised for the owned prayer cleanup.
+    fn cancel_provisioner_for_survival(&mut self) {
+        self.prayer_cleanup_owned
+            .merge(self.provisioner.prayer_cleanup());
+        self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
+        self.provisioner.cancel();
+    }
+
     fn cancel_step_for_survival(&mut self, tick: &mut NativeTick<'_>) {
         self.capture_prayer_cleanup();
         if let Some(mut step) = self.step.take() {
             step.cancel(tick.actions);
         }
-        self.provisioner.cancel();
+        self.cancel_provisioner_for_survival();
         self.last_outcome = None;
         self.cancel_detached_work_for_survival(tick);
         self.advances = false;
@@ -1610,10 +1619,12 @@ impl Quester {
         if let Some(close) = OneOpArgs::close_modal_if_open(tick.cx.snapshot()) {
             args = close;
         }
+        let kind = args.kind;
         match tick.actions.begin::<OneOp>(args, &mut tick.cx) {
             Ok(handle) => {
                 self.survival_action = Some(handle);
                 self.survival_deferred = false;
+                self.survival.record_sent(kind, &tick.cx);
                 self.dirty = true;
             }
             Err(
@@ -1631,59 +1642,67 @@ impl Quester {
         }
     }
 
+    /// Cancel the work a survival click or park replaces (design A6.5 Quester
+    /// items 3, 5 and 6). A park also ends a settle wait and asks for a fresh
+    /// read, as the un-park's `Interrupt::Resume` shape does: the park can
+    /// outlast the settle deadline.
+    fn cancel_work_for_survival(&mut self, tick: &mut NativeTick<'_>, park: bool) {
+        if self.step.is_some() || park {
+            self.cancel_step_for_survival(tick);
+        } else if self.provisioner.has_run() {
+            self.cancel_provisioner_for_survival();
+            self.cancel_detached_work_for_survival(tick);
+        } else {
+            self.cancel_detached_work_for_survival(tick);
+        }
+    }
+
     fn poll_survival(&mut self, tick: &mut NativeTick<'_>) {
         let before = self.survival.report();
+        let was_parked = self.survival.parked().is_some();
         let want = self.survival.want(&tick.cx, 0);
+        if was_parked && self.survival.parked().is_none() {
+            // The un-park resumes the way `Interrupt::Resume` does (design
+            // A6.5 item 2): a fresh read, with no step.
+            self.needs_read = true;
+        }
+        if self.survival_action.is_none() {
+            match want {
+                crate::survival::step::SurvivalWant::Nothing => {
+                    if !self.survival_interrupting {
+                        self.survival_deferred = false;
+                    }
+                }
+                crate::survival::step::SurvivalWant::Hold => self.survival_deferred = true,
+                crate::survival::step::SurvivalWant::Click(args) => {
+                    self.cancel_prayer_clear_for_survival(tick);
+                    if self.guarded_survival_step() {
+                        self.survival.defer();
+                        self.survival_deferred = true;
+                    } else if self.survival_transfer_in_flight() {
+                        self.interrupt_survival_transfer(tick);
+                        self.survival.defer();
+                        self.survival_deferred = true;
+                    } else {
+                        self.cancel_work_for_survival(tick, false);
+                        self.begin_survival_click(args, tick);
+                    }
+                }
+                crate::survival::step::SurvivalWant::Need(need) => {
+                    if self.guarded_survival_step() {
+                        self.survival_deferred = true;
+                    } else if self.survival_transfer_in_flight() {
+                        self.interrupt_survival_transfer(tick);
+                        self.survival_deferred = true;
+                    } else {
+                        self.cancel_work_for_survival(tick, true);
+                        self.survival.park(need, &tick.cx);
+                    }
+                }
+            }
+        }
         if self.survival.report() != before {
             self.dirty = true;
-        }
-        if self.survival_action.is_some() {
-            return;
-        }
-        match want {
-            crate::survival::step::SurvivalWant::Nothing => {
-                if !self.survival_interrupting {
-                    self.survival_deferred = false;
-                }
-            }
-            crate::survival::step::SurvivalWant::Click(args) => {
-                self.cancel_prayer_clear_for_survival(tick);
-                if self.guarded_survival_step() {
-                    self.survival_deferred = true;
-                } else if self.survival_transfer_in_flight() {
-                    self.interrupt_survival_transfer(tick);
-                    self.survival_deferred = true;
-                } else {
-                    if self.step.is_some() {
-                        self.cancel_step_for_survival(tick);
-                    } else if self.provisioner.has_run() {
-                        self.provisioner.cancel();
-                        self.cancel_detached_work_for_survival(tick);
-                    } else {
-                        self.cancel_detached_work_for_survival(tick);
-                    }
-                    self.begin_survival_click(args, tick);
-                }
-            }
-            crate::survival::step::SurvivalWant::Need(need) => {
-                if self.guarded_survival_step() {
-                    self.survival_deferred = true;
-                } else if self.survival_transfer_in_flight() {
-                    self.interrupt_survival_transfer(tick);
-                    self.survival_deferred = true;
-                } else {
-                    if self.step.is_some() {
-                        self.cancel_step_for_survival(tick);
-                    } else if self.provisioner.has_run() {
-                        self.provisioner.cancel();
-                        self.cancel_detached_work_for_survival(tick);
-                    } else {
-                        self.cancel_detached_work_for_survival(tick);
-                    }
-                    self.survival.park(need, &tick.cx);
-                    self.dirty = true;
-                }
-            }
         }
     }
 
@@ -1728,7 +1747,7 @@ impl Quester {
         if self.step.is_some() {
             self.cancel_step_for_survival(tick);
         } else if self.provisioner.has_run() {
-            self.provisioner.cancel();
+            self.cancel_provisioner_for_survival();
             self.cancel_detached_work_for_survival(tick);
         }
         self.survival_deferred = true;
@@ -3287,8 +3306,16 @@ impl Script for Quester {
             self.publish(tick.output);
             return Ok(ScriptFlow::Continue);
         }
-        self.poll_survival(tick);
-        if self.poll_survival_action(tick) {
+        // Poll the survival op first: when it settles (a page closed, a drink
+        // applied or one the engine dropped after its lock), the survival poll
+        // below takes this tick's interaction event for the next click instead
+        // of losing a tick (design A6.5 drink bound: tick 0 close, tick 1 drink).
+        let survival_op_live = self.poll_survival_action(tick);
+        if !self.parked {
+            self.poll_survival(tick);
+        }
+        if survival_op_live || self.survival_action.is_some() {
+            self.publish(tick.output);
             return Ok(ScriptFlow::Continue);
         }
         if self.prayer_cleanup_pending
@@ -5403,9 +5430,11 @@ mod tests {
             assert!(script.step.is_some());
             assert!(script.survival_action.is_none());
             assert!(script.survival_deferred);
+            // The walk guard or the combat machine owns the drink; the runner
+            // reports the need, not a drink of its own (design A6.6).
             assert_eq!(
                 script.survival.report().decision,
-                crate::survival::Decision::Drinking
+                crate::survival::Decision::Needed
             );
             return;
         }
@@ -5457,19 +5486,8 @@ mod tests {
                 );
                 script.tick(tick).unwrap();
             });
-            super::super::families::tests::with_tick(&snapshot, &mut ledger, 4, |tick| {
-                tick.cx.condition = Some(condition(
-                    PoisonState::Onset {
-                        since: 20,
-                        q: Some(11),
-                        hit_since_line: false,
-                    },
-                    5,
-                ));
-                tick.cx.poison_unknown_pulse = 11;
-                tick.cx.cure_poison = CurePoison::WhenNeeded;
-                script.tick(tick).unwrap();
-            });
+            // The close settled in tick 3 and the drink takes the same tick
+            // (design A6.5: tick 0 close, tick 1 drink).
             assert!(matches!(
                 ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
                 Some(crate::native::HostEffect::Interaction(
@@ -5501,7 +5519,18 @@ mod tests {
         assert!(script.step.is_none());
         assert!(script.survival_action.is_none());
 
+        // The drink sent at observed tick 2 delays the player through the next
+        // two server ticks (`consume_effects.rs2:124-126`,
+        // `PlayerOps.ts:376-378`), so the step waits for the drink lock
+        // instead of sending clicks the engine drops.
         super::super::families::tests::with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.cx.condition = Some(condition(PoisonState::Immune { until_lower: 80 }, 5));
+            script.tick(tick).unwrap();
+        });
+        assert_eq!(counts.began.load(Ordering::Relaxed), 1);
+        assert!(script.step.is_none());
+
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 5, |tick| {
             tick.cx.condition = Some(condition(PoisonState::Immune { until_lower: 80 }, 5));
             script.tick(tick).unwrap();
         });
@@ -5518,14 +5547,166 @@ mod tests {
         quester_survival_cancels_step_and_restarts("gather");
     }
 
+    /// The survival cancel leaves the state `Interrupt::Resume` leaves (design
+    /// A6.5 Quester item 3): no step, a fresh read owed, no settle wait, and
+    /// no retained progress, so `advance` restarts the step.
     #[test]
     fn quester_cancel_through_resume_path_restarts_step() {
-        quester_survival_cancels_step_and_restarts("gather");
+        use crate::survival::CurePoison;
+        use api::condition::PoisonState;
+        use std::sync::atomic::Ordering;
+
+        let (mut script, snapshot, counts) = survival_step_fixture("gather");
+        let mut ledger = None;
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.cx.condition = Some(survival_condition(PoisonState::Clear, 60));
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            script.tick(tick).unwrap();
+        });
+        assert!(script.step.is_some());
+        script.needs_read = false;
+        script.settling = true;
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.condition = Some(survival_condition(
+                PoisonState::Onset {
+                    since: 20,
+                    q: Some(11),
+                    hit_since_line: false,
+                },
+                5,
+            ));
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            script.tick(tick).unwrap();
+        });
+        assert_eq!(counts.cancelled.load(Ordering::Relaxed), 1);
+        assert!(script.step.is_none());
+        assert!(script.needs_read);
+        assert!(!script.settling);
+        assert!(script.progress.is_none());
+        assert!(script.survival_action.is_some());
+    }
+
+    /// A park can outlast a settle wait's deadline. Parking with no step ends
+    /// the settle wait and owes a fresh read, and the un-park owes one too, as
+    /// `Interrupt::Resume` does (design A6.5 item 2; Argon review finding 10).
+    /// Before, the deadline expired during the park and the first tick after
+    /// the un-park failed the step with "step settle timeout".
+    #[test]
+    fn quester_park_ends_a_settle_wait_and_unpark_rereads() {
+        use crate::survival::CurePoison;
+        use api::condition::PoisonState;
+
+        let (mut script, mut snapshot, counts) = survival_step_fixture("gather");
+        snapshot.seed_inventory(vec![], 28);
+        let mut ledger = None;
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.cx.condition = Some(survival_condition(PoisonState::Clear, 60));
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            script.tick(tick).unwrap();
+        });
+        // The step completed and the Quester waits for its outcome.
+        script.step = None;
+        script.settling = true;
+        script.settle_deadline = Duration::from_secs(1);
+        script.needs_read = false;
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.condition = Some(survival_condition(
+                PoisonState::Onset {
+                    since: 20,
+                    q: Some(11),
+                    hit_since_line: false,
+                },
+                5,
+            ));
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            script.tick(tick).unwrap();
+        });
+        assert!(script.survival.parked().is_some());
+        assert!(!script.settling, "the park ends the settle wait");
+        assert_eq!(script.settle_deadline, Duration::ZERO);
+        assert!(script.needs_read);
+
+        script.needs_read = false;
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.cx.condition = Some(survival_condition(
+                PoisonState::Immune { until_lower: 80 },
+                60,
+            ));
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            script.tick(tick).unwrap();
+        });
+        assert!(script.survival.parked().is_none());
+        assert!(!script.parked);
+        assert!(script.last_error.is_none());
+        // The fresh read is taken at once in this fixture, and `advance`
+        // begins the step again in the same tick instead of waiting out the
+        // old settle deadline.
+        assert_eq!(counts.began.load(std::sync::atomic::Ordering::Relaxed), 2);
+        assert!(script.step.is_some());
     }
 
     #[test]
     fn quester_closes_dialogue_page_before_drink() {
         quester_survival_cancels_step_and_restarts("talk");
+    }
+
+    /// An enter-amount prompt (a Make-X count after `if_close`) has no modal
+    /// root, yet the client refuses every held click while it is open and the
+    /// engine keeps the suspended script's `protect` (`Player.ts:2173-2178`).
+    /// Survival closes it first (Argon review finding 4), then drinks in the
+    /// tick the close settles.
+    #[test]
+    fn quester_closes_count_dialog_before_drink() {
+        use crate::survival::CurePoison;
+        use api::condition::PoisonState;
+
+        let onset = PoisonState::Onset {
+            since: 20,
+            q: Some(11),
+            hit_since_line: false,
+        };
+        let (mut script, mut snapshot, _) = survival_step_fixture("gather");
+        let mut ledger = None;
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.cx.condition = Some(survival_condition(PoisonState::Clear, 60));
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            script.tick(tick).unwrap();
+        });
+        snapshot.seed_count_dialog(true);
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.condition = Some(survival_condition(onset, 5));
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            script.tick(tick).unwrap();
+        });
+        assert!(matches!(
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .last()
+                .map(|action| &action.effect),
+            Some(crate::native::HostEffect::Interaction(
+                crate::shim::InteractReq::CloseModal
+            ))
+        ));
+
+        snapshot.seed_count_dialog(false);
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.cx.condition = Some(survival_condition(onset, 5));
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            script.tick(tick).unwrap();
+        });
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+            Some(crate::native::HostEffect::Interaction(
+                crate::shim::InteractReq::Held { action, .. }
+            )) if action == "Drink"
+        ));
+        assert!(!script.parked);
     }
 
     #[test]
@@ -5536,9 +5717,9 @@ mod tests {
 
     /// The engine drops a held op while the player is delayed
     /// (`OpHeldHandler.ts:16-19`), as in the tick after a mining success's
-    /// `p_delay(0)` (`mining.rs2:138`). The drink then shows no dose drop, and
-    /// the Quester must click again after the drink lock, not after the
-    /// generic eight-tick one-op bound.
+    /// `p_delay(0)` (`mining.rs2:139`). The drink then shows no dose drop, and
+    /// the Quester must click again in the tick the three-tick drink lock
+    /// ends, not one tick later and not after the generic eight-tick bound.
     #[test]
     fn quester_resends_a_dropped_drink_after_the_drink_lock() {
         use crate::survival::CurePoison;
@@ -5589,7 +5770,7 @@ mod tests {
 
         // The client sent it and the host accepted it; the delayed engine
         // dropped it, so the dose stays held.
-        let mut drinks = 1;
+        let mut drinks_by_tick = Vec::new();
         for observed in 3..=6 {
             super::super::families::tests::with_tick(&snapshot, &mut ledger, observed, |tick| {
                 tick.cx.condition = Some(survival_condition(onset, 5));
@@ -5611,11 +5792,12 @@ mod tests {
                 }
                 script.tick(tick).unwrap();
             });
-            drinks = note_drink(&ledger);
+            drinks_by_tick.push((observed, note_drink(&ledger)));
         }
         assert_eq!(
-            drinks, 2,
-            "a drink with no dose drop is clicked again by the tick after the three-tick drink lock"
+            drinks_by_tick,
+            vec![(3, 1), (4, 1), (5, 2), (6, 2)],
+            "a drink with no dose drop is clicked again in the tick its three-tick lock ends"
         );
     }
 
@@ -5805,7 +5987,20 @@ mod tests {
             );
             script.tick(tick).unwrap();
         });
+        // The drink sent at observed tick 3 delays the player through the next
+        // two server ticks (`consume_effects.rs2:124-126`,
+        // `PlayerOps.ts:376-378`), so the prayer clicks wait for the drink
+        // lock and restart at tick 6.
         super::super::families::tests::with_tick(&snapshot, &mut ledger, 5, |tick| {
+            tick.cx.condition = Some(condition(PoisonState::Immune { until_lower: 80 }));
+            tick.cx.cure_poison = CurePoison::WhenNeeded;
+            script.tick(tick).unwrap();
+        });
+        assert!(
+            script.clear_prayers.is_none(),
+            "no prayer click inside the drink lock"
+        );
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 6, |tick| {
             tick.cx.condition = Some(condition(PoisonState::Immune { until_lower: 80 }));
             tick.cx.cure_poison = CurePoison::WhenNeeded;
             script.tick(tick).unwrap();
@@ -5814,7 +6009,7 @@ mod tests {
             script.clear_prayers.is_some(),
             "cleanup restarts after the drink"
         );
-        super::super::families::tests::with_tick(&snapshot, &mut ledger, 6, |tick| {
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 7, |tick| {
             tick.cx.condition = Some(condition(PoisonState::Immune { until_lower: 80 }));
             tick.cx.cure_poison = CurePoison::WhenNeeded;
             script.tick(tick).unwrap();

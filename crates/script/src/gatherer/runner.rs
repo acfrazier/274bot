@@ -5,7 +5,7 @@ use super::gather::{
     observe_target, GatherEnd, GatherResult, GatherRun, GatherRunArgs, TargetObservation,
     DEFAULT_STALL_TICKS,
 };
-use super::oneop::{OneOp, OneOpArgs};
+use super::oneop::{OneOp, OneOpArgs, OneOpKind};
 use super::select::{
     resource_return_target, select, tile_loaded, AvoidedTile, FishingSurvey, PlacementClass,
     ResourceReturn, ReturnObservation, SelectedTarget, Selection, TargetPlan,
@@ -280,6 +280,9 @@ pub struct Gatherer {
     survival: crate::survival::SurvivalStep,
     survival_deferred: bool,
     survival_interrupting: bool,
+    /// The `Active::Tend` handle is a survival click (drink, fruit, bite or
+    /// the close before one), not a wear or a stray-page op.
+    survival_tend: bool,
     respawn_deadline: Option<std::time::Duration>,
     respawn_settle: Option<u64>,
     proving_runs: u8,
@@ -341,6 +344,7 @@ impl Gatherer {
             survival: crate::survival::SurvivalStep::default(),
             survival_deferred: false,
             survival_interrupting: false,
+            survival_tend: false,
             respawn_deadline: None,
             respawn_settle: None,
             proving_runs: 0,
@@ -842,6 +846,7 @@ impl Gatherer {
         self.scratch.observation_walk = false;
         self.survival_deferred = false;
         self.survival_interrupting = false;
+        self.survival_tend = false;
         self.target = None;
     }
 
@@ -1710,6 +1715,21 @@ impl Gatherer {
             },
             Active::Tend(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Tend(handle),
+                Poll::Ready(Ok(settled)) if std::mem::take(&mut self.survival_tend) => {
+                    self.needs_validate = true;
+                    if settled {
+                        self.set_event("survival operation settled");
+                    } else {
+                        // The engine drops a held click while the player is
+                        // delayed (`OpHeldHandler.ts:16-19`), for example in
+                        // the tick after a mining success's `p_delay(0)`
+                        // (`mining.rs2:139`). That is a deferral: the poll
+                        // after this one clicks again, and the interrupted
+                        // work resumes when survival wants nothing more.
+                        self.survival_deferred = true;
+                        self.set_event("survival click not applied; clicking again");
+                    }
+                }
                 Poll::Ready(Ok(settled)) => {
                     if settled {
                         self.needs_validate = true;
@@ -1719,6 +1739,7 @@ impl Gatherer {
                     }
                 }
                 Poll::Ready(Err(error)) => {
+                    self.survival_tend = false;
                     self.action_failure(error);
                 }
             },
@@ -1910,12 +1931,16 @@ impl Gatherer {
         if let Some(close) = OneOpArgs::close_modal_if_open(tick.cx.snapshot()) {
             args = close;
         }
+        let kind = args.kind;
         match tick.actions.begin::<OneOp>(args, &mut tick.cx) {
             Ok(handle) => {
                 self.active = Active::Tend(handle);
+                self.survival_tend = true;
                 self.survival_deferred = false;
-                self.set_event(match self.survival.report().decision {
-                    crate::survival::Decision::Drinking => "drinking at boundary",
+                self.survival.record_sent(kind, &tick.cx);
+                self.set_event(match (kind, self.survival.report().decision) {
+                    (OneOpKind::CloseModal, _) => "closing a page before survival",
+                    (_, crate::survival::Decision::Drinking) => "drinking at boundary",
                     _ => "eating at boundary",
                 });
             }
@@ -1926,26 +1951,38 @@ impl Gatherer {
 
     fn poll_survival(&mut self, tick: &mut NativeTick<'_>) -> bool {
         let before = self.survival.report();
+        let was_parked = self.survival.parked().is_some();
         let eat_floor = self.survival_eat_floor(tick);
         let want = self.survival.want(&tick.cx, eat_floor);
-        if self.survival.report() != before {
-            self.dirty = true;
+        if was_parked && self.survival.parked().is_none() {
+            // The un-park resumes work the way `Interrupt::Resume` does
+            // (design A6.5 item 2). The park was not idle gathering, so the
+            // no-yield window restarts too.
+            self.needs_validate = true;
+            self.rebaseline_gameplay = true;
+            self.scratch.last_yield_tick = tick.cx.evidence().tick;
         }
-        match want {
+        let wanted = match want {
             crate::survival::step::SurvivalWant::Nothing => {
                 if self.active_matches_none() {
                     self.survival_deferred = false;
                 }
                 self.survival.parked().is_some()
             }
+            crate::survival::step::SurvivalWant::Hold => {
+                self.survival_deferred = true;
+                true
+            }
             crate::survival::step::SurvivalWant::Click(args) => {
-                if matches!(self.active, Active::Walk(_) | Active::Tend(_)) {
+                if matches!(self.active, Active::Tend(_)) {
                     self.survival_deferred = true;
-                    true
+                } else if matches!(self.active, Active::Walk(_)) {
+                    self.survival.defer();
+                    self.survival_deferred = true;
                 } else if self.active_transfer_in_flight() {
                     self.interrupt_active_transfer(tick);
+                    self.survival.defer();
                     self.survival_deferred = true;
-                    true
                 } else {
                     if !self.active_matches_none() {
                         self.cancel_active();
@@ -1953,8 +1990,8 @@ impl Gatherer {
                         self.rebaseline_gameplay = true;
                     }
                     self.begin_survival_click(args, tick);
-                    true
                 }
+                true
             }
             crate::survival::step::SurvivalWant::Need(need) => {
                 if matches!(self.active, Active::Walk(_) | Active::Tend(_)) {
@@ -1971,11 +2008,14 @@ impl Gatherer {
                         self.rebaseline_gameplay = true;
                     }
                     self.survival.park(need, &tick.cx);
-                    self.dirty = true;
                     true
                 }
             }
+        };
+        if self.survival.report() != before {
+            self.dirty = true;
         }
+        wanted
     }
 
     fn begin_idle(&mut self, tick: &mut NativeTick<'_>, handoff: bool) {
@@ -3805,6 +3845,13 @@ mod tests {
         });
         assert!(gatherer.survival_interrupting);
         assert!(gatherer.active_transfer_in_flight());
+        // The drink waits for the transfer's boundary, so the status row shows
+        // the need, not a drink in progress (design A6.6; Argon review
+        // finding 13).
+        assert_eq!(
+            gatherer.survival.report().decision,
+            crate::survival::Decision::Needed
+        );
         assert_eq!(
             ledger
                 .as_ref()
@@ -4534,6 +4581,12 @@ mod tests {
         );
         assert!(gatherer.survival.report().need.is_none());
         assert!(!gatherer.survival_deferred);
+        // The un-park resumes as `Interrupt::Resume` does (design A6.5 item 2;
+        // Argon review finding 10): the park did not count against the
+        // fishing no-yield window (800 ticks, `WAIT_GAMEPLAY_TICKS`) or the
+        // idle gameplay baseline.
+        assert_eq!(gatherer.scratch.last_yield_tick, 110);
+        assert!(gatherer.rebaseline_gameplay || gatherer.last_gameplay_tick == 110);
     }
 
     #[test]

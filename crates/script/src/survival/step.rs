@@ -7,10 +7,11 @@ use api::hostlog::{Category, Emit, Level};
 
 use crate::combat::frame::Frame;
 use crate::combat::policy::{self, EatChoice};
-use crate::combat::schedule::Schedule;
+use crate::combat::schedule::{InputEffect, OpKind, Schedule};
 use crate::combat::select;
+use crate::combat::tables::CombatTables;
 use crate::combat::threats::ThreatSet;
-use crate::gatherer::oneop::OneOpArgs;
+use crate::gatherer::oneop::{OneOpArgs, OneOpKind};
 use crate::native::ActionContext;
 use crate::survival::cure::{cure_choice, CureDecision, CureInputs, CureWhy};
 use crate::survival::math::{self, NeedWhy, SurvivalNeed};
@@ -52,13 +53,46 @@ pub enum Owner {
 pub enum SurvivalWant {
     Nothing,
     Click(OneOpArgs),
+    /// A held click is due, but the engine still delays the player after the
+    /// last survival click it ran, so a click now would be dropped
+    /// (`OpHeldHandler.ts:16-19`). The runner sends nothing and keeps its
+    /// work held this tick.
+    Hold,
     Need(SurvivalNeed),
+}
+
+/// Observed ticks after a survival click in which its server delays are
+/// replayed into the decision schedule. It outlasts every delay that
+/// [`Schedule::admitted`] sets for a drink, a Strange fruit or a food (the
+/// longest is a food's `message_delay + 2`), and it keeps the 16-bit frame
+/// ticks of [`Schedule`] far from their wrap.
+const CLICK_REPLAY_TICKS: u64 = 16;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClickKind {
+    Drink,
+    Fruit,
+    Food,
+}
+
+/// The last held survival click the runner sent, with the frame tick the
+/// schedule replays it at and the low 16 bits of the observed tick that bound
+/// the replay. Both are compared by wrapping subtraction, so a reset of either
+/// count ends the replay instead of extending it. Revision-289 item ids fit in
+/// 16 bits; the record stays 8 bytes so the step keeps its 192-byte bound.
+#[derive(Debug, Clone, Copy)]
+struct SentClick {
+    kind: ClickKind,
+    frame_tick: u16,
+    observed: u16,
+    item_id: u16,
 }
 
 /// A runner's compact threat history, park and current report.
 #[derive(Default)]
 pub struct SurvivalStep {
     threats: ThreatSet,
+    sent: Option<SentClick>,
     park: Option<SurvivalNeed>,
     last: SurvivalReport,
 }
@@ -80,6 +114,16 @@ impl SurvivalStep {
         };
         let tick = frame.tick;
         self.threats.observe(&frame, tables, tick);
+        let (schedule, replayed) = self.schedule(tick, low_ticks(cx.evidence().tick), tables);
+        if schedule.locked(tick) {
+            // The drink's `p_delay(1)` (`consume_effects.rs2:124-126`,
+            // `consume_messages.dbrow` `message_delay,1`) keeps the player
+            // delayed through the next two server ticks (`PlayerOps.ts:376-378`,
+            // `World.ts:692` clears it only after that tick's client input), so
+            // the engine would drop any click sent now. Keep the report of the
+            // click in flight.
+            return SurvivalWant::Hold;
+        }
         let danger = self.threats.danger(&frame, tables, tick, false, false);
         let exposure = math::exposure(&self.threats, tables, tick);
         let condition = cx.condition();
@@ -87,7 +131,6 @@ impl SurvivalStep {
         let outlook = condition
             .map(|condition| poison_math::remaining(condition.poison, exposure, tick, q_unknown));
         let poison_fire = outlook.map_or(0, |outlook| i32::from(outlook.per_fire_now));
-        let schedule = Schedule::default();
         let cure = cure_choice(&CureInputs {
             cond: condition,
             danger,
@@ -124,7 +167,7 @@ impl SurvivalStep {
             | CureDecision::Needed { why, .. } => Some(why),
             CureDecision::None => None,
         };
-        if let Some((args, decision)) = click(cure, frame.inventory, hp) {
+        if let Some((args, decision)) = click(cure, frame.inventory) {
             self.last = SurvivalReport {
                 decision,
                 why,
@@ -135,27 +178,36 @@ impl SurvivalStep {
             return SurvivalWant::Click(args);
         }
         if let Some(hp) = hp {
-            if let Some(choice) = policy::eat_choice(
-                &frame,
-                tables,
-                &schedule,
-                danger,
-                poison_fire,
-                hp,
-                hp_max,
-                tick,
-                eat_floor,
-            ) {
-                if let Some(args) = eat_args(choice, frame.inventory, hp) {
-                    self.last = SurvivalReport {
-                        decision: Decision::Eating,
-                        why,
-                        need,
-                        tried: 0,
-                        owner: Owner::Step,
-                    };
-                    return SurvivalWant::Click(args);
-                }
+            let bite = |schedule: &Schedule| {
+                policy::eat_choice(
+                    &frame,
+                    tables,
+                    schedule,
+                    danger,
+                    poison_fire,
+                    hp,
+                    hp_max,
+                    tick,
+                    eat_floor,
+                )
+                .and_then(|choice| eat_args(choice, frame.inventory, hp))
+            };
+            let timed = bite(&schedule);
+            // A bite that only the next-food clock of the last survival click
+            // holds back (`consume.rs2:122-127`) is still this tick's work.
+            let waiting = timed.is_none()
+                && replayed
+                && !schedule.ready(OpKind::Eat, tick)
+                && bite(&Schedule::default()).is_some();
+            if timed.is_some() || waiting {
+                self.last = SurvivalReport {
+                    decision: Decision::Eating,
+                    why,
+                    need,
+                    tried: 0,
+                    owner: Owner::Step,
+                };
+                return timed.map_or(SurvivalWant::Hold, SurvivalWant::Click);
             }
         }
 
@@ -209,6 +261,90 @@ impl SurvivalStep {
             _ => SurvivalReport::default(),
         };
         SurvivalWant::Nothing
+    }
+
+    /// The server delays of the last survival click, replayed at the frame
+    /// tick it was sent. The runner's own `OneOp` waits for the click's
+    /// receipt, so the replayed operation is settled at once and only its
+    /// delays remain. The second value is true when a click was replayed.
+    fn schedule(&mut self, tick: u16, observed: u16, tables: &CombatTables) -> (Schedule, bool) {
+        let mut schedule = Schedule::default();
+        let Some(sent) = self.sent else {
+            return (schedule, false);
+        };
+        let in_window = u64::from(observed.wrapping_sub(sent.observed)) <= CLICK_REPLAY_TICKS
+            && u64::from(tick.wrapping_sub(sent.frame_tick)) <= CLICK_REPLAY_TICKS;
+        if !in_window {
+            self.sent = None;
+            return (schedule, false);
+        }
+        match sent.kind {
+            ClickKind::Drink => schedule.admitted(
+                OpKind::Drink,
+                sent.frame_tick,
+                0,
+                false,
+                InputEffect::Standard,
+            ),
+            ClickKind::Fruit => schedule.admitted(
+                OpKind::Drink,
+                sent.frame_tick,
+                0,
+                false,
+                InputEffect::CureFruit,
+            ),
+            ClickKind::Food => {
+                let Some(food) = tables.food(i32::from(sent.item_id)) else {
+                    self.sent = None;
+                    return (schedule, false);
+                };
+                schedule.admitted(
+                    OpKind::Eat,
+                    sent.frame_tick,
+                    0,
+                    false,
+                    InputEffect::Food(food),
+                );
+            }
+        }
+        schedule.settle(OpKind::Drink);
+        schedule.settle(OpKind::Eat);
+        (schedule, true)
+    }
+
+    /// Record a drink, Strange fruit or bite the runner has just sent, so the
+    /// next decisions wait for the delays the engine applies to it: the
+    /// drink's 3-tick lock (`combat/schedule.rs` `OpKind::Drink`) and a
+    /// food's next-food clock (`consume.rs2:122-127`). Other operations
+    /// (closing a page) leave the record unchanged.
+    pub fn record_sent(&mut self, kind: OneOpKind, cx: &ActionContext<'_>) {
+        let Some(frame) = Frame::borrow(cx.snapshot()) else {
+            return;
+        };
+        let (kind, item_id) = match kind {
+            OneOpKind::Drink { item_id, .. } => (ClickKind::Drink, item_id),
+            OneOpKind::CureFruit { item_id, .. } => (ClickKind::Fruit, item_id),
+            OneOpKind::Eat { item_id, .. } => (ClickKind::Food, item_id),
+            OneOpKind::Wear { .. } | OneOpKind::CloseModal | OneOpKind::ContinueDialog => return,
+        };
+        let Ok(item_id) = u16::try_from(item_id) else {
+            return;
+        };
+        self.sent = Some(SentClick {
+            kind,
+            item_id,
+            frame_tick: frame.tick,
+            observed: low_ticks(cx.evidence().tick),
+        });
+    }
+
+    /// The runner defers this frame's click to a walk, a fight or a bank
+    /// transfer's boundary (design A6.6): report the need, not a click in
+    /// progress.
+    pub fn defer(&mut self) {
+        if matches!(self.last.decision, Decision::Drinking | Decision::Eating) {
+            self.last.decision = Decision::Needed;
+        }
     }
 
     pub fn parked(&self) -> Option<SurvivalNeed> {
@@ -334,7 +470,6 @@ impl fmt::Display for SurvivalReport {
 fn click(
     cure: CureDecision,
     inventory: &[api::snapshot::ItemView],
-    hp: Option<i32>,
 ) -> Option<(OneOpArgs, Decision)> {
     match cure {
         CureDecision::Drink { item, .. } => {
@@ -343,8 +478,7 @@ fn click(
         }
         CureDecision::EatFruit { item, .. } => {
             let (name, count) = held_item(inventory, item)?;
-            let hp = hp?;
-            Some((OneOpArgs::eat(name, item, count, hp), Decision::Eating))
+            Some((OneOpArgs::cure_fruit(name, item, count), Decision::Eating))
         }
         CureDecision::None | CureDecision::Needed { .. } => None,
     }
@@ -358,6 +492,11 @@ fn eat_args(
     let item = choice.ordinary.or(choice.combo)?;
     let (name, count) = held_item(inventory, item)?;
     Some(OneOpArgs::eat(name, item, count, hp))
+}
+
+/// The low 16 bits of an observed tick count.
+fn low_ticks(tick: u64) -> u16 {
+    (tick & u64::from(u16::MAX)) as u16
 }
 
 fn held_item(inventory: &[api::snapshot::ItemView], item_id: i32) -> Option<(&str, i32)> {
@@ -479,14 +618,29 @@ mod tests {
         policy: CurePoison,
         tick_number: u64,
     ) -> SurvivalWant {
+        want_with_floor(step, snapshot, condition, policy, tick_number, 0)
+    }
+
+    fn want_with_floor(
+        step: &mut SurvivalStep,
+        snapshot: &GameSnapshot,
+        condition: &BotCondition,
+        policy: CurePoison,
+        tick_number: u64,
+        eat_floor: i32,
+    ) -> SurvivalWant {
         let mut ledger = None;
         with_tick(snapshot, &mut ledger, tick_number, |tick| {
             tick.cx.condition = Some(*condition);
             tick.cx.poison_unknown_pulse = 11;
             tick.cx.cure_poison = policy;
-            step.want(&tick.cx, 0)
+            step.want(&tick.cx, eat_floor)
         })
     }
+
+    /// The Gatherer's default eat floor for 99 Hitpoints
+    /// (`gatherer/runner.rs` `survival_eat_floor`: half the base, rounded up).
+    const GATHERER_FLOOR: i32 = 50;
 
     #[test]
     fn survival_step_parks_on_need_not_on_cure_reason() {
@@ -572,6 +726,182 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    fn lobster() -> ItemView {
+        let id = crate::combat::guard::shared_tables()
+            .unwrap()
+            .selected()
+            .item_by_alias("lobster")
+            .unwrap()
+            .id;
+        held(id, "Lobster")
+    }
+
+    fn low_hp_snapshot(inventory: Vec<ItemView>) -> GameSnapshot {
+        let mut snapshot = snapshot(inventory);
+        snapshot.seed_stats(vec![StatView {
+            index: 3,
+            name: "hitpoints".into(),
+            base: 99,
+            effective: 5,
+            xp: 0,
+            used: true,
+        }]);
+        snapshot
+    }
+
+    fn record(step: &mut SurvivalStep, snapshot: &GameSnapshot, kind: OneOpKind, tick: u64) {
+        let mut ledger = None;
+        with_tick(snapshot, &mut ledger, tick, |tick| {
+            step.record_sent(kind, &tick.cx)
+        });
+    }
+
+    /// A cure and a bite due together (design A6.4): after the drink the step
+    /// holds the bite through the drink's lock (Argon review finding 3). The
+    /// drink's `p_delay(1)` delays the player through the next two server
+    /// ticks (`consume_effects.rs2:124-126`, `consume_messages.dbrow`
+    /// `message_delay,1`, `PlayerOps.ts:376-378`), and the engine drops a
+    /// held click while delayed (`OpHeldHandler.ts:16-19`).
+    #[test]
+    fn survival_step_holds_the_bite_through_the_drink_lock() {
+        let id = dose_id();
+        let cured = condition(5, PoisonState::Immune { until_lower: 80 });
+        let snapshot = low_hp_snapshot(vec![lobster()]);
+        let mut step = SurvivalStep::default();
+        record(
+            &mut step,
+            &snapshot,
+            OneOpKind::Drink {
+                item_id: id,
+                before_doses: 1,
+            },
+            20,
+        );
+        for tick in 21..=22 {
+            assert!(
+                matches!(
+                    want_with_floor(
+                        &mut step,
+                        &snapshot,
+                        &cured,
+                        CurePoison::WhenNeeded,
+                        tick,
+                        GATHERER_FLOOR
+                    ),
+                    SurvivalWant::Hold
+                ),
+                "tick {tick}"
+            );
+        }
+        let SurvivalWant::Click(args) = want_with_floor(
+            &mut step,
+            &snapshot,
+            &cured,
+            CurePoison::WhenNeeded,
+            23,
+            GATHERER_FLOOR,
+        ) else {
+            panic!("the bite follows the drink lock");
+        };
+        assert!(matches!(args.kind, OneOpKind::Eat { .. }));
+        assert_eq!(step.report().decision, Decision::Eating);
+    }
+
+    /// Two bites in a row: the second waits for the server's next-food clock
+    /// (`consume.rs2:122-127` returns without eating while
+    /// `%eat_delay >= map_clock`), and the step holds the runner meanwhile.
+    #[test]
+    fn survival_step_holds_a_second_bite_for_the_next_food_clock() {
+        let food = lobster();
+        let delay = crate::combat::guard::shared_tables()
+            .unwrap()
+            .food(food.def.id)
+            .unwrap()
+            .eat_delay_arg
+            .expect("lobster uses the shared next-food clock");
+        let ready = 20 + u64::try_from(delay).unwrap() + 1;
+        let cured = condition(5, PoisonState::Clear);
+        let snapshot = low_hp_snapshot(vec![food.clone(), food.clone()]);
+        let mut step = SurvivalStep::default();
+        record(
+            &mut step,
+            &snapshot,
+            OneOpKind::Eat {
+                item_id: food.def.id,
+                before_count: 3,
+                before_hp: 5,
+            },
+            20,
+        );
+        for tick in 21..ready {
+            assert!(
+                matches!(
+                    want_with_floor(
+                        &mut step,
+                        &snapshot,
+                        &cured,
+                        CurePoison::WhenNeeded,
+                        tick,
+                        GATHERER_FLOOR
+                    ),
+                    SurvivalWant::Hold
+                ),
+                "tick {tick}"
+            );
+        }
+        assert!(matches!(
+            want_with_floor(
+                &mut step,
+                &snapshot,
+                &cured,
+                CurePoison::WhenNeeded,
+                ready,
+                GATHERER_FLOOR
+            ),
+            SurvivalWant::Click(OneOpArgs {
+                kind: OneOpKind::Eat { .. },
+                ..
+            })
+        ));
+    }
+
+    /// Strange fruit cures poison and heals nothing (`strange_fruit.rs2:1-12`).
+    /// Its op settles on the count drop alone with the drink's three-tick
+    /// bound, so natural regeneration cannot settle it (Argon review
+    /// finding 12).
+    #[test]
+    fn survival_step_eats_strange_fruit_as_a_count_settled_cure() {
+        let fruit = crate::combat::guard::shared_tables()
+            .unwrap()
+            .selected()
+            .item_by_alias("macro_triffidfruit")
+            .unwrap()
+            .id;
+        let poisoned = condition(
+            5,
+            PoisonState::Onset {
+                since: 20,
+                q: Some(11),
+                hit_since_line: false,
+            },
+        );
+        let snapshot = snapshot(vec![held(fruit, "Strange fruit")]);
+        let mut step = SurvivalStep::default();
+        let SurvivalWant::Click(args) =
+            want(&mut step, &snapshot, &poisoned, CurePoison::WhenNeeded, 20)
+        else {
+            panic!("a held Strange fruit is a cure");
+        };
+        assert_eq!(
+            args.kind,
+            OneOpKind::CureFruit {
+                item_id: fruit,
+                before_count: 1
+            }
+        );
+        assert_eq!(args.bound_ticks, 3);
     }
 
     #[test]
