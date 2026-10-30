@@ -4407,7 +4407,7 @@ fn route_quest_context_with_data(
 }
 
 pub(crate) fn manual_route_state(
-    slot: &script::SlotScript,
+    slot: &mut script::SlotScript,
     snapshot: &GameSnapshot,
     base: &WorldState,
     world: &NavWorld,
@@ -4421,11 +4421,7 @@ pub(crate) fn manual_route_state(
         .compiled_game_data()
         .or_else(|| profile_data.cloned())?;
     let mut context = route_quest_context_with_data(slot, u64::from(snapshot.tick()), selected)?;
-    if let Some(run) = slot.manual_route_run().filter(|run| {
-        run.slot == context.stamp.run.slot && run.session == context.stamp.run.session
-    }) {
-        context.stamp.run = run;
-    }
+    context.stamp.run = slot.capture_manual_route_run();
     let mut state = base.clone();
     state.establishable = context
         .prereq_catalog
@@ -9373,7 +9369,7 @@ mod route_quest_provider_tests {
         Arc::get_mut(&mut world).unwrap().graph.quest_family = Some(family(&selected));
         let snapshot = GameSnapshot::new();
         let (captured_run, catalog, route_state) = manual_route_state(
-            &slot,
+            &mut slot,
             &snapshot,
             &WorldState::empty(),
             &world,
@@ -9400,7 +9396,7 @@ mod route_quest_provider_tests {
         let mut slot = script::SlotScript::new();
         slot.bind_incarnation(42);
         assert!(manual_route_state(
-            &slot,
+            &mut slot,
             &GameSnapshot::new(),
             &WorldState::empty(),
             &tiny_world(),

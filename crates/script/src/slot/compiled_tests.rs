@@ -99,6 +99,16 @@ fn manual_walk_handover_starts_internal_card_and_refuses_an_empty_diagnosis_once
     assert_eq!(slot.manual_route_run(), Some(route_run));
     assert_eq!(slot.manual_route_bank_fetch(), Some(false));
 
+    slot.on_is_up(false);
+    assert_eq!(slot.manual_route_bank_fetch(), None);
+    slot.on_is_up(true);
+    slot.align_seat_session(Some(api::identity::SessionKey::new(
+        api::identity::SlotKey::from_incarnation(route_run.slot).unwrap(),
+        55,
+    )));
+    assert_eq!(slot.manual_route_run(), Some(route_run));
+    assert_eq!(slot.manual_route_bank_fetch(), Some(false));
+
     let walk_run = slot.native_run().expect("internal WalkTo run is active");
     let mut retained = slot
         .retained

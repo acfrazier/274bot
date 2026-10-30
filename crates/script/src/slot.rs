@@ -705,23 +705,36 @@ impl SlotScript {
     pub fn local_state(&self) -> Option<&Arc<crate::local_state::SlotState>> {
         self.local_state.as_ref()
     }
-    /// The logical evidence run for a manual route when an internal WalkTo
-    /// helper has advanced the compiled runtime generation.
+    /// The logical evidence run retained across scene reloads and an internal
+    /// WalkTo generation. A connection boundary or replacement Start revokes it.
     pub fn manual_route_run(&self) -> Option<api::selected::RunKey> {
         self.manual_route_run
-            .filter(|run| run.slot == self.incarnation && run.session == self.work_epoch)
+            .filter(|run| run.slot == self.incarnation)
+    }
+
+    /// Capture the manual route's causal stamp before its traveller starts.
+    pub fn capture_manual_route_run(&mut self) -> api::selected::RunKey {
+        let run = self
+            .manual_route_run()
+            .or_else(|| self.native_run())
+            .unwrap_or(api::selected::RunKey {
+                slot: self.incarnation,
+                run: self.runtime_generation,
+                session: self.work_epoch,
+            });
+        self.set_manual_route_run(Some(run));
+        run
     }
 
     pub(crate) fn set_manual_route_run(&mut self, run: Option<api::selected::RunKey>) {
-        self.manual_route_run =
-            run.filter(|run| run.slot == self.incarnation && run.session == self.work_epoch);
+        self.manual_route_run = run.filter(|run| run.slot == self.incarnation);
     }
     pub fn manual_route_bank_fetch(&self) -> Option<bool> {
         self.manual_route_bank_fetch.filter(|_| {
             self.state == RunState::Running
-                && self.native_run().is_some_and(|run| {
-                    run.slot == self.incarnation && run.session == self.work_epoch
-                })
+                && self
+                    .native_run()
+                    .is_some_and(|run| run.slot == self.incarnation)
                 && self
                     .compiled
                     .as_ref()
@@ -771,19 +784,10 @@ impl SlotScript {
             run: self.runtime_generation,
             session: self.work_epoch,
         });
-        let manual_current = self.manual_route_run() == Some(run)
-            && current.slot == run.slot
-            && current.session == run.session;
+        // A scene-only down observation advances the work epoch, not this
+        // logical route. Actual owner boundaries clear the retained run.
+        let manual_current = self.manual_route_run() == Some(run) && current.slot == run.slot;
         if (current != run && !manual_current) || observation.fact.observed.run != run {
-            api::host_log!(
-                api::hostlog::Category::ScriptLifecycle,
-                api::hostlog::Level::Info,
-                "[DEBUG-nav-refusal-identity] current={current:?} requested={run:?} manual={:?} raw_manual={:?} work_epoch={} observed={:?}",
-                self.manual_route_run(),
-                self.manual_route_run,
-                self.work_epoch,
-                observation.fact.observed.run
-            );
             return false;
         }
         let Some(api::identity::Scope::Slot(key)) = self.work_scope() else {
@@ -1693,8 +1697,6 @@ impl SlotScript {
                 self.complete_bank_op(false);
             }
             self.work_epoch = self.work_epoch.wrapping_add(1);
-            self.manual_route_run = None;
-            self.manual_route_bank_fetch = None;
         }
         if !self.has_instance() {
             return;
@@ -1734,6 +1736,8 @@ impl SlotScript {
         self.native_runtime.revoke();
         self.evidence_wait_run = None;
         self.native_runtime.clock.observe(Instant::now(), false);
+        self.manual_route_run = None;
+        self.manual_route_bank_fetch = None;
         self.on_is_up(false);
 
         let discarded_walks = if reconnect {

@@ -708,31 +708,12 @@ fn handover_manual_refusal(
         .content
         .refusal_observation(*leg, *crossing, gates, *matched)
     else {
-        api::host_log!(
-            api::hostlog::Category::NavEvent,
-            api::hostlog::Level::Info,
-            slot = context.slot.as_ref(),
-            "[DEBUG-nav-refusal-attribution] conversion-rejected leg={} crossing={:?} expected={:?} gates={:?} matched={:?}",
-            leg,
-            crossing,
-            context.content.gates,
-            gates,
-            matched,
-        );
         return false;
     };
     if !context
         .start
         .record_gate_refusal(context.slot.as_ref(), context.route_run, &observation)
     {
-        api::host_log!(
-            api::hostlog::Category::NavEvent,
-            api::hostlog::Level::Info,
-            slot = context.slot.as_ref(),
-            "[DEBUG-nav-refusal-attribution] record-rejected run={:?} observation={:?}",
-            context.route_run,
-            observation,
-        );
         return false;
     }
     api::host_log!(
