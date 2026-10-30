@@ -686,6 +686,28 @@ impl FollowLeg {
     }
 }
 
+/// Actual encrypted-sink cost for this follow's walk dispatches. Refusals
+/// and other no-write outcomes leave the tick's allowance available.
+#[derive(Default)]
+struct WalkPacketBudget {
+    last_commit_tick: Option<u32>,
+}
+
+impl WalkPacketBudget {
+    fn allows(&self, tick: u32, observed: Option<u64>) -> bool {
+        observed.is_none() || self.last_commit_tick != Some(tick)
+    }
+
+    fn record(&mut self, tick: u32, before: Option<u64>, after: Option<u64>) {
+        if before
+            .zip(after)
+            .is_some_and(|(before, after)| after > before)
+        {
+            self.last_commit_tick = Some(tick);
+        }
+    }
+}
+
 /// The legs still to work and current hop state. Budgets are captured at
 /// start; callbacks stay with the caller's options.
 struct FollowRun {
@@ -701,6 +723,8 @@ struct FollowRun {
     max_hops: u32,
     close_enough: i32,
     budget: u32,
+    /// Shared by every walk hop and stalled resend in this follow.
+    walk_packet_budget: WalkPacketBudget,
     /// Ticks the current transport leg has waited for its loc to appear.
     loc_wait: u32,
     /// Refused clicks this follow may still sit out while nothing was
@@ -740,6 +764,7 @@ impl FollowRun {
             max_hops: options.max_hops,
             close_enough: options.close_enough,
             budget: options.budget_ticks_per_hop,
+            walk_packet_budget: WalkPacketBudget::default(),
             loc_wait: 0,
             settle_left: SCENE_SETTLE_TRIES,
             settle_until: None,

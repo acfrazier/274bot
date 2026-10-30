@@ -175,7 +175,7 @@ pub(crate) fn record_interaction(
     let Some(capture) = capture_for(account) else {
         return;
     };
-    let request_value = interaction_value(request);
+    let request_value = interaction_value(request, snapshot);
     let mut capture = capture.lock().unwrap_or_else(|e| e.into_inner());
     let sequence = capture.actions.len() as u64 + 1;
     capture.actions.push(json!({
@@ -292,7 +292,7 @@ pub(crate) fn record_shim_interactions(
             "snapshot_tick": snapshot.tick(),
             "batch": 0,
             "request_id": null,
-            "request": interaction_value(request),
+            "request": interaction_value(request, snapshot),
             "accepted": null,
             "wire_decoded": false,
             "wire_opcodes": [],
@@ -493,7 +493,7 @@ pub(crate) fn record_maze_injection_failure(account: &str, reason: impl Into<Str
     }
 }
 
-fn interaction_value(request: &InteractReq) -> Value {
+fn interaction_value(request: &InteractReq, snapshot: &GameSnapshot) -> Value {
     match request {
         InteractReq::Npc {
             name,
@@ -539,6 +539,37 @@ fn interaction_value(request: &InteractReq) -> Value {
             "action": action,
             "id": id,
         }),
+        InteractReq::Loc {
+            x,
+            z,
+            level,
+            action,
+            id,
+        } => {
+            let name = snapshot
+                .locs()
+                .iter()
+                .find(|loc| {
+                    loc.tile.x == *x
+                        && loc.tile.z == *z
+                        && loc.tile.level == *level
+                        && id.is_none_or(|id| loc.id == id)
+                        && loc
+                            .actions
+                            .iter()
+                            .any(|candidate| candidate.as_deref() == Some(action.as_str()))
+                })
+                .and_then(|loc| loc.name.as_deref());
+            json!({
+                "op": "loc",
+                "x": x,
+                "z": z,
+                "level": level,
+                "name": name,
+                "action": action,
+                "id": id,
+            })
+        }
         InteractReq::IfButton { component_id } => {
             json!({"op": "if-button", "component_id": component_id})
         }
@@ -849,6 +880,7 @@ pub(crate) struct DriverPacketCounts {
     complete: bool,
     started: bool,
     finished: bool,
+    tick_progressed: bool,
 }
 
 impl Default for DriverPacketCounts {
@@ -865,6 +897,7 @@ impl DriverPacketCounts {
             complete: true,
             started: false,
             finished: false,
+            tick_progressed: false,
         }
     }
 
@@ -885,6 +918,10 @@ impl DriverPacketCounts {
     #[cfg(all(feature = "live-harness", feature = "test-support"))]
     pub(crate) fn finish(&mut self, client: &Client, tick: u32) {
         self.observe(client, tick);
+        self.mark_finished();
+    }
+
+    fn mark_finished(&mut self) {
         self.finished = true;
     }
 
@@ -904,6 +941,8 @@ impl DriverPacketCounts {
         if let Some((previous_tick, previous_count)) = self.last {
             if tick < previous_tick {
                 self.complete = false;
+            } else if tick > previous_tick {
+                self.tick_progressed = true;
             }
             if let Some(delta) = count.checked_sub(previous_count) {
                 *self.packets_by_tick.entry(previous_tick).or_default() += delta;
@@ -912,6 +951,16 @@ impl DriverPacketCounts {
             }
         }
         self.last = Some((tick, count));
+    }
+
+    /// Prove a finalized window with real monotone sink counts and no commits.
+    pub(crate) fn trustworthy_idle_window(&self) -> bool {
+        self.started
+            && self.finished()
+            && self.complete
+            && self.tick_progressed
+            && !self.packets_by_tick.is_empty()
+            && self.packets_by_tick.values().all(|count| *count == 0)
     }
 
     pub(crate) fn includes_interactions(&self, interactions: &DriverPacketTrace) -> bool {
@@ -939,6 +988,7 @@ mod tests {
 
     #[test]
     fn ground_receipt_preserves_optional_selected_id() {
+        let snapshot = GameSnapshot::new();
         for id in [Some(1053), Some(1055), Some(1057), None] {
             let request = InteractReq::Obj {
                 x: 5,
@@ -948,13 +998,68 @@ mod tests {
                 action: "Take".into(),
                 id,
             };
-            let value = interaction_value(&request);
+            let value = interaction_value(&request, &snapshot);
+            assert_eq!(value["op"], "obj");
             assert_eq!(value["id"], json!(id));
             assert_eq!(value["x"], 5);
             assert_eq!(value["z"], 6);
             assert_eq!(value["level"], 0);
             assert_eq!(value["action"], "Take");
         }
+    }
+
+    #[test]
+    fn loc_receipt_preserves_structured_target_identity() {
+        let tile = WorldTile {
+            x: 5,
+            z: 6,
+            level: 0,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_locs(vec![api::snapshot::LocView {
+            typecode: 10,
+            info: 0,
+            id: 1309,
+            name: Some("Yew".into()),
+            description: None,
+            actions: vec![Some("Chop down".into())],
+            tile,
+            distance: 0,
+            layer: api::snapshot::LocLayer::Ground,
+            shape: 10,
+            angle: 0,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: false,
+            block_range: false,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 0,
+        }]);
+        let request = InteractReq::Loc {
+            x: tile.x,
+            z: tile.z,
+            level: tile.level,
+            action: "Chop down".into(),
+            id: Some(1309),
+        };
+
+        assert_eq!(
+            interaction_value(&request, &snapshot),
+            json!({
+                "op": "loc",
+                "x": 5,
+                "z": 6,
+                "level": 0,
+                "name": "Yew",
+                "action": "Chop down",
+                "id": 1309,
+            })
+        );
     }
 
     #[test]
@@ -1093,5 +1198,62 @@ mod tests {
         empty.record_count(Some(10), 7);
         empty.record_count(Some(10), 8);
         assert!(!empty.value().2);
+    }
+
+    #[test]
+    fn probe_sink_trusts_only_finalized_monotone_zero_commit_idle_windows() {
+        let mut idle = DriverPacketCounts::new();
+        idle.record_count(Some(10), 7);
+        idle.record_count(Some(10), 8);
+        assert!(!idle.trustworthy_idle_window());
+        idle.mark_finished();
+        assert!(idle.trustworthy_idle_window());
+        let (rows, maximum, complete) = idle.value();
+        assert_eq!(
+            rows,
+            json!([{"tick": 7, "count": 0, "source": "real-encrypted-sink-commits"}])
+        );
+        assert_eq!(maximum, 0);
+        assert!(!complete);
+
+        let mut unavailable = DriverPacketCounts::new();
+        unavailable.record_count(Some(10), 7);
+        unavailable.record_count(None, 8);
+        unavailable.record_count(Some(10), 9);
+        unavailable.mark_finished();
+        assert!(!unavailable.trustworthy_idle_window());
+
+        let mut reset = DriverPacketCounts::new();
+        reset.record_count(Some(10), 7);
+        reset.record_count(Some(9), 8);
+        reset.record_count(Some(9), 9);
+        reset.mark_finished();
+        assert!(!reset.trustworthy_idle_window());
+
+        let mut rewound = DriverPacketCounts::new();
+        rewound.record_count(Some(10), 7);
+        rewound.record_count(Some(10), 8);
+        rewound.record_count(Some(10), 7);
+        rewound.record_count(Some(10), 9);
+        rewound.mark_finished();
+        assert!(!rewound.trustworthy_idle_window());
+
+        let mut unfinished = DriverPacketCounts::new();
+        unfinished.record_count(Some(10), 7);
+        unfinished.record_count(Some(10), 8);
+        assert!(!unfinished.trustworthy_idle_window());
+
+        let mut active = DriverPacketCounts::new();
+        active.record_count(Some(10), 7);
+        active.record_count(Some(11), 8);
+        active.mark_finished();
+        assert!(!active.trustworthy_idle_window());
+        assert!(active.value().2);
+
+        let mut no_progress = DriverPacketCounts::new();
+        no_progress.record_count(Some(10), 7);
+        no_progress.record_count(Some(10), 7);
+        no_progress.mark_finished();
+        assert!(!no_progress.trustworthy_idle_window());
     }
 }

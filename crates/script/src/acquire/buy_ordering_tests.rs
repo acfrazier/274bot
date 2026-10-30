@@ -508,6 +508,166 @@ fn own_trade_page_needs_a_later_unspent_tick_and_no_idle_page_is_adopted() {
 }
 
 #[test]
+fn a_fresh_unreachable_trade_reply_retries_without_waiting_for_a_shop_page() {
+    let mut client = client_with_shop(false);
+    let npcs = vec![npc_row(7, 123, 2)];
+    let closed = snapshot(&client, Vec::new(), npcs.clone());
+    let mut ledger = None;
+    let handle = start_machine(&closed, &mut ledger, 1);
+    let mut log = ActionLog::default();
+    assert!(poll_machine(&closed, &handle, &mut ledger, 2).is_pending());
+    drain_trade(&mut ledger, &mut log, 2, 7);
+
+    let mut rejected = snapshot(&client, Vec::new(), npcs);
+    rejected.seed_chat_lines(vec![ChatLineView {
+        type_: 0,
+        username: None,
+        text: "I can't reach that!".to_owned(),
+        sequence: 1,
+    }]);
+    assert!(poll_machine(&rejected, &handle, &mut ledger, 3).is_pending());
+    drain_trade(&mut ledger, &mut log, 3, 7);
+    assert_eq!(log.trades, [7, 7]);
+    assert_eq!(log.closes, 0, "a rejected Trade never opened a page");
+    assert!(log.buttons.is_empty());
+
+    assert!(poll_machine(&rejected, &handle, &mut ledger, 4).is_pending());
+    assert_no_queued_action(&ledger);
+    open_shop(&mut client);
+    let page = snapshot(&client, Vec::new(), Vec::new());
+    assert!(poll_machine(&page, &handle, &mut ledger, 5).is_pending());
+    drain_button(&mut ledger, &mut log, 5, 1);
+    assert_eq!(
+        log.trades,
+        [7, 7],
+        "the old refusal cannot reject the retry"
+    );
+    drop(handle);
+}
+
+#[test]
+fn rejected_reconciliation_trade_does_not_settle_or_repeat_the_buy() {
+    let (_listener, mut client) = attached_client_with_shop(false);
+    let npcs = vec![npc_row(7, 123, 2)];
+    let closed = snapshot(&client, Vec::new(), npcs.clone());
+    let mut ledger = None;
+    let handle = start_machine(&closed, &mut ledger, 5);
+    let mut log = ActionLog::default();
+    assert!(poll_machine(&closed, &handle, &mut ledger, 2).is_pending());
+    drain_trade(&mut ledger, &mut log, 2, 7);
+    open_shop(&mut client);
+    let page = snapshot(&client, Vec::new(), Vec::new());
+    assert!(poll_machine(&page, &handle, &mut ledger, 3).is_pending());
+    drain_button(&mut ledger, &mut log, 3, 5);
+
+    client.apply_if_close();
+    let closed = snapshot(&client, Vec::new(), npcs.clone());
+    assert!(poll_machine(&closed, &handle, &mut ledger, 4).is_pending());
+    drain_trade(&mut ledger, &mut log, 4, 7);
+    let mut rejected = snapshot(&client, Vec::new(), npcs);
+    rejected.seed_chat_lines(vec![ChatLineView {
+        type_: 0,
+        username: None,
+        text: "I can't reach that!".to_owned(),
+        sequence: 1,
+    }]);
+    assert!(poll_machine(&rejected, &handle, &mut ledger, 5).is_pending());
+    drain_trade(&mut ledger, &mut log, 5, 7);
+    assert_eq!(handle.inspect(|machine| machine.bought), Some(0));
+    assert_eq!(
+        handle.inspect(|machine| machine.pending.as_ref().is_some_and(|buy| !buy.resolved)),
+        Some(true)
+    );
+    assert_eq!(log.buttons, [5]);
+
+    open_shop(&mut client);
+    let supplied = snapshot(&client, vec![item(4, "Pot", 5)], Vec::new());
+    assert!(poll_machine(&supplied, &handle, &mut ledger, 6).is_pending());
+    close_with_api(&mut client, &mut ledger, &mut log, 6);
+    client.apply_if_close();
+    let counted = snapshot(&client, vec![item(4, "Pot", 5)], Vec::new());
+    let Poll::Ready(Ok(receipt)) = poll_machine(&counted, &handle, &mut ledger, 7) else {
+        panic!("the counted final close must finish the reconciled purchase");
+    };
+    assert_eq!(receipt.bought, 5);
+    assert_eq!(log.trades, [7, 7, 7]);
+    assert_eq!(log.buttons, [5]);
+    assert_eq!(log.closes, 1);
+    drop(handle);
+}
+
+#[test]
+fn explicit_trade_rejections_keep_the_original_three_attempt_limit() {
+    let client = client_with_shop(false);
+    let npcs = vec![npc_row(7, 123, 2)];
+    let closed = snapshot(&client, Vec::new(), npcs.clone());
+    let mut ledger = None;
+    let handle = start_machine(&closed, &mut ledger, 1);
+    let mut log = ActionLog::default();
+    assert!(poll_machine(&closed, &handle, &mut ledger, 2).is_pending());
+    drain_trade(&mut ledger, &mut log, 2, 7);
+    for sequence in 1..=3 {
+        let tick = 2 + sequence as u64;
+        let mut rejected = snapshot(&client, Vec::new(), npcs.clone());
+        rejected.seed_chat_lines(vec![ChatLineView {
+            type_: 0,
+            username: None,
+            text: "I can't reach that!".to_owned(),
+            sequence,
+        }]);
+        let result = poll_machine(&rejected, &handle, &mut ledger, tick);
+        if sequence < 3 {
+            assert!(result.is_pending());
+            drain_trade(&mut ledger, &mut log, tick, 7);
+        } else {
+            assert!(matches!(
+                result,
+                Poll::Ready(Err(ActionError::Failed(message)))
+                    if message.as_ref() == "no usable shop after 3 Trade attempts"
+            ));
+        }
+    }
+    assert_eq!(log.trades, [7, 7, 7]);
+    assert!(log.buttons.is_empty());
+    assert_eq!(log.closes, 0);
+    drop(handle);
+}
+
+#[test]
+fn a_late_engine_rejection_ends_the_unanswered_trade_without_a_late_page() {
+    let client = client_with_shop(false);
+    let npcs = vec![npc_row(7, 123, 2)];
+    let closed = snapshot(&client, Vec::new(), npcs.clone());
+    let mut ledger = None;
+    let handle = start_machine(&closed, &mut ledger, 1);
+    let mut log = ActionLog::default();
+    assert!(poll_machine(&closed, &handle, &mut ledger, 2).is_pending());
+    drain_trade(&mut ledger, &mut log, 2, 7);
+    let expired = 3 + shop_open::OPEN_CAP_TICKS;
+    assert!(poll_machine(&closed, &handle, &mut ledger, expired).is_pending());
+    assert_no_queued_action(&ledger);
+    assert_eq!(
+        log.trades,
+        [7],
+        "a timeout alone cannot authorize another Trade"
+    );
+
+    let mut rejected = snapshot(&client, Vec::new(), npcs);
+    rejected.seed_chat_lines(vec![ChatLineView {
+        type_: 0,
+        username: None,
+        text: "I can't reach that!".to_owned(),
+        sequence: 1,
+    }]);
+    assert!(poll_machine(&rejected, &handle, &mut ledger, expired + 1).is_pending());
+    drain_trade(&mut ledger, &mut log, expired + 1, 7);
+    assert_eq!(log.trades, [7, 7]);
+    assert_eq!(log.closes, 0);
+    assert!(log.buttons.is_empty());
+    drop(handle);
+}
+
+#[test]
 fn late_trade_page_is_closed_and_counted_before_retry_trade() {
     let (_listener, mut client) = attached_client_with_shop(false);
     let npcs = vec![npc_row(7, 123, 2)];

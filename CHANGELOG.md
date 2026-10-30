@@ -32,6 +32,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   connection checks remain active.
 - Bank-only navigation no longer loads the shop catalog. Shop users still
   prepare the shared catalog before the first purchase.
+- A fresh "can't reach" reply now lets a shop purchase retry its rejected
+  Trade. A timeout alone still cannot start another Trade while the first
+  response is unconfirmed.
 
 ### Combat
 
@@ -66,6 +69,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Navigation
 
+- Active route walks send at most one movement packet per observed game tick.
+  A refused click that sends no packet does not use that tick's allowance.
 - Bots now wait and try again when another player is using a shortcut,
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
   used") stays held for at most 9 game ticks after a refusal, so the bot

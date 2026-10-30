@@ -214,6 +214,20 @@ impl CloseWait {
     }
 }
 
+#[derive(Clone, Copy)]
+struct OpeningTrade {
+    tick: u64,
+    chat_mark: i32,
+}
+
+impl OpeningTrade {
+    fn rejected(&self, facts: &Facts) -> bool {
+        !facts.usable
+            && facts.tick.is_some_and(|tick| tick > self.tick)
+            && facts.cant_reach_seq > self.chat_mark
+    }
+}
+
 /// One keeper type and one desired backpack count.
 #[derive(Debug, Clone)]
 pub struct BuyRequest {
@@ -248,8 +262,8 @@ enum Phase {
     Close(ClosePurpose, CloseWait),
     Open,
     Walk(Box<Walk>),
-    /// A previous opening Trade must produce its page before a retry can
-    /// close that page. A timeout never authorises an overlapping Trade.
+    /// An unanswered opening Trade must produce its page before a retry
+    /// closes it. Only a fresh engine rejection can end it without a page.
     DrainTrade(CloseWait),
     Buy,
     AwaitBatch,
@@ -270,7 +284,7 @@ pub struct BuyMachine {
     cancelled: bool,
     phase: Phase,
     open: OpenCore,
-    trade_tick: Option<u64>,
+    opening_trade: Option<OpeningTrade>,
     keeper_index: Option<i32>,
     pending: Option<Dispatch>,
     reconciling: bool,
@@ -310,7 +324,7 @@ impl NativeMachine for BuyMachine {
             cancelled: false,
             phase,
             open: OpenCore::default(),
-            trade_tick: None,
+            opening_trade: None,
             keeper_index: None,
             pending: None,
             reconciling: false,
@@ -383,7 +397,7 @@ impl NativeMachine for BuyMachine {
                     match purpose {
                         ClosePurpose::Final => return Poll::Ready(self.receipt()),
                         ClosePurpose::Initial | ClosePurpose::Retry => {
-                            self.trade_tick = None;
+                            self.opening_trade = None;
                             self.phase = Phase::Open;
                         }
                     }
@@ -424,13 +438,17 @@ impl NativeMachine for BuyMachine {
                     }
                 }
                 Phase::DrainTrade(wait) => {
-                    let usable = self.trade_tick.is_some_and(|sent| {
-                        cx.evidence().tick > sent
-                            && !cx.interaction_event_spent()
-                            && cx
-                                .snapshot()
-                                .shop()
-                                .is_some_and(|shop| shop.value.open && !shop.value.stock.is_empty())
+                    let facts = open_facts(cx);
+                    if self
+                        .opening_trade
+                        .is_some_and(|trade| trade.rejected(&facts))
+                    {
+                        self.opening_trade = None;
+                        self.phase = Phase::Open;
+                        continue;
+                    }
+                    let usable = self.opening_trade.is_some_and(|trade| {
+                        cx.evidence().tick > trade.tick && !facts.trade_taken && facts.usable
                     });
                     if !usable {
                         // No second Trade is sent while the first response is
@@ -438,7 +456,7 @@ impl NativeMachine for BuyMachine {
                         wait.observe(wait.closes_at, cx.evidence().tick)?;
                         return Poll::Pending;
                     }
-                    self.trade_tick = None;
+                    self.opening_trade = None;
                     if self.reconciling {
                         self.observe_dispatch(cx, SettlementWitness::FreshPage)?;
                         self.reconciling = false;
@@ -553,7 +571,7 @@ impl NativeMachine for BuyMachine {
                         // on the server. A foreign replacement modal must first
                         // take our CloseModal path, just like the shop page.
                         self.open = OpenCore::default();
-                        self.trade_tick = None;
+                        self.opening_trade = None;
                         self.phase = Phase::Open;
                         continue;
                     }
@@ -662,8 +680,8 @@ impl BuyMachine {
     }
 
     fn accept_page(&mut self, cx: &ActionContext<'_>) -> Result<(), ActionError> {
-        debug_assert!(self.trade_tick.is_some());
-        self.trade_tick = None;
+        debug_assert!(self.opening_trade.is_some());
+        self.opening_trade = None;
         self.page_closes = cx
             .snapshot()
             .shop()
@@ -705,11 +723,19 @@ impl BuyMachine {
         })
     }
 
-    fn open_facts(&self, cx: &ActionContext<'_>) -> Facts {
+    fn open_facts(&mut self, cx: &ActionContext<'_>) -> Facts {
         let mut facts = open_facts(cx);
+        if self
+            .opening_trade
+            .is_some_and(|trade| trade.rejected(&facts))
+        {
+            // A fresh unreachable reply ends the opening Trade, unlike a
+            // timeout or raw close count. Retain the attempt and buy budgets.
+            self.opening_trade = None;
+        }
         // Idle's ready path is not page adoption: only this opening Trade's
         // response may make the page usable to the stage.
-        facts.usable &= self.trade_tick.is_some();
+        facts.usable &= self.opening_trade.is_some();
         facts
     }
 
@@ -756,7 +782,7 @@ impl BuyMachine {
             Decision::Opened => Poll::Ready(Ok(true)),
             Decision::Failed(reason) => Poll::Ready(Err(ActionError::Failed(Arc::from(reason)))),
             Decision::Trade(keeper) => {
-                if self.trade_tick.is_some() {
+                if self.opening_trade.is_some() {
                     self.phase =
                         Phase::DrainTrade(CloseWait::new(self.page_closes, cx.evidence().tick));
                     return Poll::Ready(Ok(false));
@@ -768,7 +794,10 @@ impl BuyMachine {
                 })))?;
                 self.keeper_index.get_or_insert(keeper.index);
                 self.open.traded(facts, &keeper);
-                self.trade_tick = facts.tick;
+                self.opening_trade = facts.tick.map(|tick| OpeningTrade {
+                    tick,
+                    chat_mark: facts.chat_seq,
+                });
                 Poll::Ready(Ok(false))
             }
             Decision::Walk(tile) => {

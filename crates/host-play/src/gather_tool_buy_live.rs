@@ -1082,12 +1082,13 @@ fn trade_analysis(
     (records, failures)
 }
 
-fn wear_action(actions: &[Value], item_id: i32) -> (Option<Value>, Vec<String>) {
+fn wear_action(actions: &[Value], frames: &[Value], item_id: i32) -> (Option<Value>, Vec<String>) {
     let mut failures = Vec::new();
     let rows = actions
         .iter()
         .filter(|action| {
-            action["request"]["op"] == "wear"
+            action["request"]["op"] == "held"
+                && action["request"]["action"].as_str() == Some("Wield")
                 && action["request"]["name"]
                     .as_str()
                     .is_some_and(|name| name.eq_ignore_ascii_case("Iron axe"))
@@ -1095,20 +1096,51 @@ fn wear_action(actions: &[Value], item_id: i32) -> (Option<Value>, Vec<String>) 
         .collect::<Vec<_>>();
     if rows.len() != 1 {
         failures.push(format!(
-            "expected one Iron axe Wear action, observed {}",
+            "expected one Iron axe Held/Wield action, observed {}",
             rows.len()
         ));
     }
     let row = rows.first().map(|action| {
+        let request_slot = action["request"]["slot"].as_i64();
+        let observed_inventory_entry = request_slot.and_then(|slot| {
+            action["snapshot"]["inventory"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|entry| {
+                    entry["id"].as_i64() == Some(i64::from(item_id))
+                        && entry["slot"].as_i64() == Some(slot)
+                        && entry["count"].as_i64().unwrap_or(0) > 0
+                })
+        });
+        let observed_slot = observed_inventory_entry.and_then(|entry| entry["slot"].as_i64());
         let inventory = count_rows(&action["snapshot"]["inventory"], i64::from(item_id));
-        let equipment = count_rows(&action["snapshot"]["equipment"], i64::from(item_id));
+        let dispatch_equipment =
+            count_rows(&action["snapshot"]["equipment"], i64::from(item_id));
+        let later_frame = action["snapshot_tick"].as_u64().and_then(|action_tick| {
+            frames.iter().find(|frame| {
+                frame["snapshot_tick"]
+                    .as_u64()
+                    .is_some_and(|tick| tick > action_tick)
+                    && count_rows(&frame["equipment"], i64::from(item_id)) == 1
+                    && count_rows(&frame["inventory"], i64::from(item_id)) == 0
+            })
+        });
+        let later_inventory = later_frame
+            .map(|frame| count_rows(&frame["inventory"], i64::from(item_id)))
+            .unwrap_or(0);
+        let equipment = later_frame
+            .map(|frame| count_rows(&frame["equipment"], i64::from(item_id)))
+            .unwrap_or(0);
         if !action["accepted"].as_bool().unwrap_or(false)
             || !action["wire_decoded"].as_bool().unwrap_or(false)
-            || equipment != 1
-            || inventory != 0
+            || observed_inventory_entry.is_none()
+            || inventory != 1
+            || dispatch_equipment != 0
+            || later_frame.is_none()
         {
             failures.push(format!(
-                "Wear must be accepted and leave one axe worn: inventory={inventory}, equipment={equipment}, action={action}"
+                "Held/Wield must be accepted, match the observed Iron axe inventory slot, and show a later equipment transition: request_slot={request_slot:?}, observed_slot={observed_slot:?}, inventory={inventory}, dispatch_equipment={dispatch_equipment}, later_inventory={later_inventory}, later_equipment={equipment}, action={action}"
             ));
         }
         json!({
@@ -1116,6 +1148,9 @@ fn wear_action(actions: &[Value], item_id: i32) -> (Option<Value>, Vec<String>) 
             "game_tick": action["snapshot_tick"],
             "inventory_axe": inventory,
             "equipment_axe": equipment,
+            "inventory_slot": request_slot,
+            "observed_inventory_slot": observed_slot,
+            "later_frame_tick": later_frame.and_then(|frame| frame["snapshot_tick"].as_u64()),
             "accepted": action["accepted"],
             "wire_decoded": action["wire_decoded"],
             "wire_opcodes": action["wire_opcodes"],
@@ -1135,7 +1170,8 @@ fn gather_action(
         .iter()
         .find(|action| {
             let request = &action["request"];
-            if request["op"] != if case.is_axe() { "obj" } else { "npc" }
+            let expected_op = if case.is_axe() { "loc" } else { "npc" };
+            if request["op"] != expected_op
                 || request["action"].as_str() != Some(case.gather_action())
             {
                 return false;
@@ -1144,10 +1180,14 @@ fn gather_action(
                 if request["name"].as_str() != Some(case.gather_object()) {
                     return false;
                 }
-                let id = request["id"].as_i64();
-                let x = request["x"].as_i64();
-                let z = request["z"].as_i64();
-                let level = request["level"].as_i64();
+                let (Some(id), Some(x), Some(z), Some(level)) = (
+                    request["id"].as_i64(),
+                    request["x"].as_i64(),
+                    request["z"].as_i64(),
+                    request["level"].as_i64(),
+                ) else {
+                    return false;
+                };
                 let tick = action["snapshot_tick"].as_u64().unwrap_or(0);
                 let observed_tree = frames.iter().any(|frame| {
                     frame["snapshot_tick"]
@@ -1158,11 +1198,11 @@ fn gather_action(
                             .into_iter()
                             .flatten()
                             .any(|loc| {
-                                loc["id"].as_i64() == id
+                                loc["id"].as_i64() == Some(id)
                                     && loc["name"].as_str() == Some(case.gather_object())
-                                    && loc["tile"][0].as_i64() == x
-                                    && loc["tile"][1].as_i64() == z
-                                    && loc["tile"][2].as_i64() == level
+                                    && loc["tile"]["x"].as_i64() == Some(x)
+                                    && loc["tile"]["z"].as_i64() == Some(z)
+                                    && loc["tile"]["level"].as_i64() == Some(level)
                                     && loc["actions"].as_array().is_some_and(|actions| {
                                         actions
                                             .iter()
@@ -1198,6 +1238,206 @@ fn gather_action(
                 && (x - start.x).abs().max((z - start.z).abs()) <= radius
         })
         .cloned()
+}
+
+fn idle_driver_packet_window(case: Case, transition: ParkTransition) -> bool {
+    case == Case::NoCoins && matches!(transition, ParkTransition::None | ParkTransition::Relog)
+}
+
+#[test]
+fn axe_wear_requires_observed_inventory_slot_and_later_equipment_transition() {
+    let action = json!({
+        "sequence": 12,
+        "snapshot_tick": 229,
+        "request": {"op": "held", "name": "Iron axe", "action": "Wield", "slot": 1},
+        "accepted": true,
+        "wire_decoded": true,
+        "wire_opcodes": [177],
+        "snapshot": {
+            "inventory": [{"id": IRON_AXE_ID, "slot": 1, "count": 1}],
+            "equipment": [],
+        },
+    });
+    let frames = vec![
+        json!({
+            "snapshot_tick": 229,
+            "inventory": [{"id": IRON_AXE_ID, "slot": 1, "count": 1}],
+            "equipment": [],
+        }),
+        json!({
+            "snapshot_tick": 230,
+            "inventory": [],
+            "equipment": [{"id": IRON_AXE_ID, "slot": 3, "count": 1}],
+        }),
+    ];
+
+    let (wear, failures) = wear_action(&[action.clone()], &frames, IRON_AXE_ID);
+    assert!(failures.is_empty(), "{failures:?}");
+    let wear = wear.expect("the accepted Held/Wield action is classified");
+    assert_eq!(wear["inventory_axe"], 1);
+    assert_eq!(wear["equipment_axe"], 1);
+    assert_eq!(wear["inventory_slot"], 1);
+    assert_eq!(wear["observed_inventory_slot"], 1);
+    assert_eq!(wear["later_frame_tick"], 230);
+
+    let mut wrong_slot = action.clone();
+    wrong_slot["snapshot"]["inventory"][0]["slot"] = json!(0);
+    let (_, failures) = wear_action(&[wrong_slot], &frames, IRON_AXE_ID);
+    assert!(
+        failures
+            .iter()
+            .any(|failure| failure.contains("observed Iron axe inventory slot")),
+        "{failures:?}"
+    );
+
+    let (_, failures) = wear_action(&[action], &frames[..1], IRON_AXE_ID);
+    assert!(
+        failures
+            .iter()
+            .any(|failure| failure.contains("later equipment transition")),
+        "{failures:?}"
+    );
+}
+
+#[test]
+fn axe_gather_uses_normalized_loc_request_and_observed_world_tile() {
+    let action = json!({
+        "snapshot_tick": 529,
+        "request": {
+            "op": "loc",
+            "x": 3025,
+            "z": 3169,
+            "level": 0,
+            "name": "Tree",
+            "action": "Chop down",
+            "id": 1276,
+        },
+        "accepted": true,
+        "snapshot": {"tile": [3027, 3174, 0]},
+    });
+    let frame = json!({
+        "snapshot_tick": 529,
+        "nearby_locs": [{
+            "id": 1276,
+            "name": "Tree",
+            "tile": {"x": 3025, "z": 3169, "level": 0},
+            "actions": ["Chop down"],
+        }],
+    });
+
+    let gather = gather_action(
+        &[action.clone()],
+        &[frame.clone()],
+        Case::AxeWear,
+        TREE_START,
+        12,
+    )
+    .expect("the normalized Loc action matches the observed tree");
+    assert_eq!(gather["request"]["op"], "loc");
+    assert_eq!(gather["request"]["id"], 1276);
+
+    let debug_only = json!({
+        "snapshot_tick": 529,
+        "request": {"debug": "Loc { x: 3025, z: 3169, level: 0, action: \"Chop down\", id: Some(1276) }"},
+        "accepted": true,
+        "snapshot": {"tile": [3027, 3174, 0]},
+    });
+    assert!(
+        gather_action(&[debug_only], &[frame], Case::AxeWear, TREE_START, 12).is_none(),
+        "unparsed debug text is not accepted as structured target evidence"
+    );
+}
+
+#[test]
+fn only_no_coin_idle_and_relog_windows_use_idle_packet_proof() {
+    assert!(idle_driver_packet_window(
+        Case::NoCoins,
+        ParkTransition::None
+    ));
+    assert!(idle_driver_packet_window(
+        Case::NoCoins,
+        ParkTransition::Relog
+    ));
+    assert!(!idle_driver_packet_window(
+        Case::NoCoins,
+        ParkTransition::Resume
+    ));
+    assert!(!idle_driver_packet_window(
+        Case::AxeWear,
+        ParkTransition::None
+    ));
+    assert!(!idle_driver_packet_window(
+        Case::Harpoon,
+        ParkTransition::None
+    ));
+}
+
+#[test]
+fn park_observation_collects_play_facts_before_locking_trace() {
+    let status = ScriptStatus {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 2,
+            session: 3,
+        },
+        card: script::CompiledId("test"),
+        phase: NativePhase::Blocked,
+        active_settings: 1,
+        pending_settings: None,
+        fields: Arc::from([]),
+        failure: None,
+    };
+    let fixture = Fixture {
+        coins: ItemFact {
+            alias: "coins".into(),
+            id: COIN_ID,
+            name: "Coins".into(),
+        },
+        tool: ItemFact {
+            alias: "harpoon".into(),
+            id: HARPOON_ID,
+            name: "Harpoon".into(),
+        },
+        keeper: KeeperFact {
+            config: "harry".into(),
+            name: "Harry".into(),
+            id: 1,
+            placement_tile: HARRY_CATHERBY,
+            access_tiles: Vec::new(),
+        },
+        baseline: 0,
+        cost: 0,
+        sell: 0,
+        delta: 0,
+        quote: 0,
+        reserve: 0,
+    };
+    let trace = Mutex::new(LiveTrace {
+        frames: vec![json!({
+            "bank_open": false,
+            "session_generation": 4,
+            "inventory": [],
+        })],
+        ..LiveTrace::default()
+    });
+    let play_state = Mutex::new(());
+    let observation = park_observation(&status, &trace, &[], &fixture, || {
+        let _play_guard = play_state.lock();
+        assert!(
+            trace.try_lock().is_some(),
+            "Play facts must be collected before the trace mutex is acquired"
+        );
+        ParkPlaySnapshot {
+            slot_state: script::RunState::Running,
+            bank_origin: "Session".into(),
+            bank_rows: Vec::new(),
+        }
+    });
+    assert_eq!(observation.run_slot, Some(1));
+    assert_eq!(observation.slot_running, Some(true));
+    assert_eq!(observation.bank_origin.as_deref(), Some("Session"));
+    assert_eq!(observation.bank_rows.as_deref(), Some(&[][..]));
+    assert_eq!(observation.no_bank_trip, Some(true));
 }
 
 fn field_text<'a>(status: &'a ScriptStatus, key: &str) -> Option<&'a str> {
@@ -1299,17 +1539,22 @@ fn status_value(status: &ScriptStatus) -> Value {
     })
 }
 
+struct ParkPlaySnapshot {
+    slot_state: script::RunState,
+    bank_origin: String,
+    bank_rows: Vec<(i32, i32)>,
+}
+
 fn park_observation(
-    play: &super::Play,
-    account: &str,
     status: &ScriptStatus,
-    trace: &LiveTrace,
+    trace: &Mutex<LiveTrace>,
     actions: &[Value],
     fixture: &Fixture,
+    read_play: impl FnOnce() -> ParkPlaySnapshot,
 ) -> ParkObservation {
+    let play = read_play();
+    let trace = trace.lock();
     let frame = trace.frames.last();
-    let bank = play.bank_rows(account);
-    let slot_state = play.script_state(account);
     let bank_open = frame.and_then(|frame| frame["bank_open"].as_bool());
     ParkObservation {
         run_slot: Some(status.run.slot),
@@ -1317,16 +1562,16 @@ fn park_observation(
         run_session: Some(status.run.session),
         phase: Some(format!("{:?}", status.phase)),
         phase_label: field_text(status, "phase").map(str::to_owned),
-        slot_state: Some(format!("{slot_state:?}")),
-        slot_running: Some(slot_state == script::RunState::Running),
+        slot_state: Some(format!("{:?}", play.slot_state)),
+        slot_running: Some(play.slot_state == script::RunState::Running),
         failure: status
             .failure
             .as_ref()
             .map(|failure| failure.message.to_string()),
         block_reason: field_text(status, "block_reason").map(str::to_owned),
         bank_seen: field_text(status, "bank_seen").map(str::to_owned),
-        bank_origin: Some(origin_name(bank.origin)),
-        bank_rows: Some(bank.rows.clone()),
+        bank_origin: Some(play.bank_origin),
+        bank_rows: Some(play.bank_rows),
         bank_open,
         session_generation: frame.and_then(|frame| frame["session_generation"].as_u64()),
         tool_in_pack: frame
@@ -1804,10 +2049,16 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                             .skip(start_index)
                             .cloned()
                             .collect::<Vec<_>>();
-                        let observation = {
-                            let guard = trace.lock();
-                            park_observation(&play, &account, status, &guard, &actions, &fixture)
-                        };
+                        let observation =
+                            park_observation(status, &trace, &actions, &fixture, || {
+                                let slot_state = play.script_state(&account);
+                                let bank = play.bank_rows(&account);
+                                ParkPlaySnapshot {
+                                    slot_state,
+                                    bank_origin: origin_name(bank.origin),
+                                    bank_rows: bank.rows,
+                                }
+                            });
                         trace.lock().park_no_walk = observation.no_walk;
                         trace.lock().park_lifecycle.initial = Some(observation.clone());
                         let expected = observation.bank_seen.as_deref().and_then(|seen| {
@@ -2093,10 +2344,15 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                         .skip(start_index)
                         .cloned()
                         .collect::<Vec<_>>();
-                    let observation = {
-                        let guard = trace.lock();
-                        park_observation(&play, &account, status, &guard, &actions, &fixture)
-                    };
+                    let observation = park_observation(status, &trace, &actions, &fixture, || {
+                        let slot_state = play.script_state(&account);
+                        let bank = play.bank_rows(&account);
+                        ParkPlaySnapshot {
+                            slot_state,
+                            bank_origin: origin_name(bank.origin),
+                            bank_rows: bank.rows,
+                        }
+                    });
                     let initial = trace
                         .lock()
                         .park_lifecycle
@@ -2155,10 +2411,15 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                         .skip(start_index)
                         .cloned()
                         .collect::<Vec<_>>();
-                    let observation = {
-                        let guard = trace.lock();
-                        park_observation(&play, &account, status, &guard, &actions, &fixture)
-                    };
+                    let observation = park_observation(status, &trace, &actions, &fixture, || {
+                        let slot_state = play.script_state(&account);
+                        let bank = play.bank_rows(&account);
+                        ParkPlaySnapshot {
+                            slot_state,
+                            bank_origin: origin_name(bank.origin),
+                            bank_rows: bank.rows,
+                        }
+                    });
                     let initial = trace
                         .lock()
                         .park_lifecycle
@@ -2252,7 +2513,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
     let (trades, mut trade_failures) =
         trade_analysis(&gather_actions, &fixture, expected_shop_actions);
     let (wear, mut wear_failures) = if case.is_axe() {
-        wear_action(&gather_actions, fixture.tool.id)
+        wear_action(&gather_actions, &game_frames, fixture.tool.id)
     } else {
         (None, Vec::new())
     };
@@ -2295,7 +2556,13 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
         &game_frames,
         fixture.tool.id,
     ));
-    let (_, max_driver_packets, driver_trace_complete) = frame_packets.lock().value();
+    let (driver_packets, max_driver_packets, active_driver_trace_complete) =
+        frame_packets.lock().value();
+    let driver_trace_complete = if idle_driver_packet_window(case, transition) {
+        frame_packets.lock().trustworthy_idle_window()
+    } else {
+        active_driver_trace_complete
+    };
     if !driver_trace_complete {
         failures.push("Driver packet trace was incomplete".into());
     }
@@ -2563,7 +2830,6 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
     if let Some(reason) = action_capture["invalid_reason"].as_str() {
         failures.push(format!("action capture invalid: {reason}"));
     }
-    let (driver_packets, max_driver_packets, driver_trace_complete) = frame_packets.lock().value();
     let mut receipt = json!({
         "scenario": scenario_name,
         "case": case.name(),
