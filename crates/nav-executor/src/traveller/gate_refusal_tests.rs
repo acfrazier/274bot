@@ -254,7 +254,7 @@ fn pass_requires_the_exact_direction_message_and_landing() {
             delay_ticks: 2,
         },
     ]);
-    let mut run = start_sent_hop(edge.clone(), &snapshot, &options);
+    let mut run = start_sent_hop(edge, &snapshot, &options);
     let mut driver = FollowRec::default();
 
     client.add_chat(0, "You step back through the barrier.", "");
@@ -432,7 +432,7 @@ fn unmatched_direction_pass_keeps_generic_arrival_policy() {
         }]),
         ..TravelOptions::default()
     };
-    let mut run = start_sent_hop(edge.clone(), &snapshot, &options);
+    let mut run = start_sent_hop(edge, &snapshot, &options);
     let mut driver = FollowRec::default();
 
     client.add_chat(0, "You step back through the barrier.", "");
