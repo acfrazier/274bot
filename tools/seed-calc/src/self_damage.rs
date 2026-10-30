@@ -1150,6 +1150,20 @@ mod tests {
         let expected_stop = (95.0_f64 / 256.0).powi(5);
         assert_eq!(run.death_probability, 0.0);
         assert!((run.budget_stops["rockslide-1-attempts-exhausted"] - expected_stop).abs() < 1e-12);
+        let state_after_four_fails = State {
+            hp: 28,
+            regen_phase: 8,
+            food: 0,
+            food_cooldown: 0,
+        };
+        let expected_after_four_fails =
+            (95.0_f64 / 256.0).powi(4) * (161.0_f64 / 256.0);
+        let actual_after_four_fails = run
+            .live
+            .get(&state_after_four_fails)
+            .copied()
+            .unwrap_or_default();
+        assert!((actual_after_four_fails - expected_after_four_fails).abs() < 1e-12);
     }
 
     #[test]
