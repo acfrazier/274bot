@@ -841,14 +841,12 @@ fn qualify_probability_poison_starts() {
     let world = NavWorld::load_pack(Path::new(&std::env::var_os("WORLD_NAV_PACK").unwrap())).unwrap();
     world.bind_named_bank_facts(&selected).unwrap();
     let state = WorldState::default().with_map_members(true);
-    let mut input = RiskInput {
-        hp: 40,
-        hp_max: 40,
-        defence: 40,
-        worn_defence: [188, 202, 198, 190],
-        combat: Some(46),
-        ..RiskInput::default()
-    };
+    let mut input = RiskInput::default();
+    input.hp = 40;
+    input.hp_max = 40;
+    input.defence = 40;
+    input.worn_defence = [188, 202, 198, 190];
+    input.combat = Some(46);
     input.set_map_members(true);
     input.set_missing_facts(false);
     let short = poison_start(
