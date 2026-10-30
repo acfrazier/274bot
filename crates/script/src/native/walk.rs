@@ -20,14 +20,26 @@ pub const WALK_DEADLINE: Duration = Duration::from_secs(10 * 60);
 const QUEST_LIST_STATUS_WAIT_TICKS: u64 = 1;
 
 pub struct Walk {
-    // The host consumes its dispatch payload, so replay fields must remain
-    // owned here. Keep them inline instead of allocating a second box.
-    request: WalkRequest,
-    request_id: u64,
+    // Retain only fields missing from the correlation core, which already
+    // owns the target, radius and request ID.
+    replay: Box<WalkReplay>,
     quest_list_wait_since: Option<u64>,
     quest_list_retry_used: bool,
     deadline: Duration,
     wait: WalkSlot,
+}
+
+struct WalkReplay {
+    required_after: api::quest_progress::EvidenceStamp,
+    loc_id: Option<i32>,
+    arrival: ArrivalKind,
+    candidate_goals: Option<super::WalkGoals>,
+    options: super::WalkOptions,
+    evidence: Option<Arc<dyn api::quest_progress::EvidenceProvider>>,
+    cross: Box<[Arc<str>]>,
+    protect: bool,
+    food_guard: bool,
+    allow: super::WalkAllow,
 }
 
 struct Frame<'a> {
@@ -131,16 +143,28 @@ impl Walk {
         cx: &mut ActionContext<'_>,
     ) -> Result<(), ActionError> {
         let required_after = cx.evidence();
-        let mut request = self.request.clone();
-        request.required_after = required_after;
+        let (_, key) = self.wait.request().expect("walk correlation remains active");
+        let request = WalkRequest {
+            target: key.tile,
+            radius: u16::try_from(key.radius).expect("walk radius originated as u16"),
+            loc_id: self.replay.loc_id,
+            arrival: self.replay.arrival,
+            required_after,
+            candidate_goals: self.replay.candidate_goals.clone(),
+            options: self.replay.options,
+            evidence: self.replay.evidence.clone(),
+            cross: self.replay.cross.clone(),
+            protect: self.replay.protect,
+            food_guard: self.replay.food_guard,
+            allow: self.replay.allow,
+        };
         let request_id = cx.walk(request)?;
-        self.request.required_after = required_after;
-        self.request_id = request_id;
+        self.replay.required_after = required_after;
         self.quest_list_wait_since = None;
         self.quest_list_retry_used = true;
         self.wait.begin(
             NonZeroU64::new(request_id).expect("host request is nonzero"),
-            walk_key(&self.request),
+            key,
             HostOutcome::empty(),
         );
         Ok(())
@@ -153,7 +177,19 @@ impl NativeMachine for Walk {
 
     fn begin(request: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
         let key = walk_key(&request);
-        let request_id = cx.walk(request.clone())?;
+        let replay = Box::new(WalkReplay {
+            required_after: request.required_after,
+            loc_id: request.loc_id,
+            arrival: request.arrival,
+            candidate_goals: request.candidate_goals.clone(),
+            options: request.options,
+            evidence: request.evidence.clone(),
+            cross: request.cross.clone(),
+            protect: request.protect,
+            food_guard: request.food_guard,
+            allow: request.allow,
+        });
+        let request_id = cx.walk(request)?;
         let mut wait = WalkSlot::new();
         wait.begin(
             NonZeroU64::new(request_id).expect("host request is nonzero"),
@@ -161,8 +197,7 @@ impl NativeMachine for Walk {
             HostOutcome::empty(),
         );
         Ok(Self {
-            request,
-            request_id,
+            replay,
             quest_list_wait_since: None,
             quest_list_retry_used: false,
             deadline: cx.active_now().saturating_add(WALK_DEADLINE),
@@ -171,17 +206,18 @@ impl NativeMachine for Walk {
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
+        let (request_id, key) = self.wait.request().expect("walk correlation remains active");
         if let Some(receipt) = cx
-            .walk_receipt(self.request_id)
+            .walk_receipt(request_id)
             .filter(|receipt| receipt.end == WalkEnd::UserInput)
         {
             return Poll::Ready(Ok(receipt.clone()));
         }
         if cx.active_now() >= self.deadline {
-            cx.cancel_request(self.request_id);
+            cx.cancel_request(request_id);
             return Poll::Ready(Ok(WalkReceipt {
                 goal: None,
-                request_id: self.request_id,
+                request_id,
                 evidence: cx.evidence(),
                 end: WalkEnd::Failed,
                 blocked: None,
@@ -191,17 +227,17 @@ impl NativeMachine for Walk {
                 escape: None,
             }));
         }
-        if !cx.evidence().meets(self.request.required_after) {
+        if !cx.evidence().meets(self.replay.required_after) {
             return Poll::Pending;
         }
 
-        let needs_quest_evidence = cx.walk_receipt(self.request_id).is_some_and(|receipt| {
-            receipt.evidence.meets(self.request.required_after)
+        let needs_quest_evidence = cx.walk_receipt(request_id).is_some_and(|receipt| {
+            receipt.evidence.meets(self.replay.required_after)
                 && matches!(&receipt.end, WalkEnd::NeedsEvidence(_))
         });
         if needs_quest_evidence {
             let receipt = cx
-                .walk_receipt(self.request_id)
+                .walk_receipt(request_id)
                 .expect("quest-evidence receipt remains correlated")
                 .clone();
             if self.quest_list_retry_used {
@@ -235,7 +271,7 @@ impl NativeMachine for Walk {
                     api::hostlog::Category::NavTrace,
                     api::hostlog::Level::Debug,
                     "walk-quest-list-observation request={} tick={} gates={gates:?} gate_status_observed={} rows={quest_rows:?}",
-                    self.request_id,
+                    request_id,
                     tick,
                     gate_status_observed,
                 );
@@ -256,8 +292,8 @@ impl NativeMachine for Walk {
             return Poll::Ready(Ok(refused));
         }
         let receipt = cx
-            .walk_receipt(self.request_id)
-            .filter(|receipt| receipt.evidence.meets(self.request.required_after));
+            .walk_receipt(request_id)
+            .filter(|receipt| receipt.evidence.meets(self.replay.required_after));
         let outcome = receipt.map_or_else(HostOutcome::empty, |receipt| HostOutcome {
             seq: receipt.evidence.sequence,
             generation: receipt.evidence.run.run,
@@ -267,17 +303,17 @@ impl NativeMachine for Walk {
                 WalkEnd::Arrived | WalkEnd::RouteEnded | WalkEnd::Blocked
             ),
             blocked: receipt.end == WalkEnd::Blocked,
-            key: walk_key(&self.request),
+            key,
         });
         let frame = Frame {
             snapshot: cx.snapshot(),
             outcome,
-            loc_id: self.request.loc_id,
-            arrival: self.request.arrival,
-            candidate_goals: self.request.candidate_goals.is_some(),
+            loc_id: self.replay.loc_id,
+            arrival: self.replay.arrival,
+            candidate_goals: self.replay.candidate_goals.is_some(),
             goal: receipt.and_then(|receipt| receipt.goal),
         };
-        if !self.wait.poll(self.request_id, &frame) {
+        if !self.wait.poll(request_id, &frame) {
             return Poll::Pending;
         }
         if let Some(receipt) = receipt {
@@ -292,11 +328,11 @@ impl NativeMachine for Walk {
             return Poll::Pending;
         }
 
-        if frame.arrived(walk_key(&self.request)) {
+        if frame.arrived(key) {
             let detail = receipt.and_then(|receipt| receipt.detail.clone());
             return Poll::Ready(Ok(WalkReceipt {
                 goal: frame.goal,
-                request_id: self.request_id,
+                request_id,
                 evidence: cx.evidence(),
                 end: WalkEnd::Arrived,
                 blocked: None,
@@ -641,6 +677,12 @@ mod tests {
 
     fn assert_observed_quest_replans(quest: &str, display: &str) {
         let _quests = prepared_quests();
+        println!(
+            "Walk={} WalkReplay={} retained_bytes={}",
+            std::mem::size_of::<Walk>(),
+            std::mem::size_of::<WalkReplay>(),
+            std::mem::size_of::<Walk>() + std::mem::size_of::<WalkReplay>(),
+        );
         let run = RunKey {
             slot: 1,
             run: 1,
@@ -666,21 +708,22 @@ mod tests {
         observed.seed_local_player(local_player(target));
         let mut ledger = None;
         let handle = with_tick(&initial, &mut ledger, 1, |tick| {
-            tick.actions
-                .begin::<Walk>(
-                    crate::quester::families::reach::walk_request(
-                        target,
-                        1,
-                        None,
-                        EvidenceStamp {
-                            run,
-                            tick: 1,
-                            sequence: 1,
-                        },
-                    ),
-                    &mut tick.cx,
-                )
-                .unwrap()
+            let mut request = crate::quester::families::reach::walk_request(
+                target,
+                1,
+                None,
+                EvidenceStamp {
+                    run,
+                    tick: 1,
+                    sequence: 1,
+                },
+            );
+            request.options.allow_wilderness = super::super::WalkBit::Allow;
+            request.cross = Box::from([Arc::from("test-zone")]);
+            request.protect = true;
+            request.allow.food = false;
+            request.allow.escape = false;
+            tick.actions.begin::<Walk>(request, &mut tick.cx).unwrap()
         });
         let original = post_needs_evidence_receipt(&mut ledger, 1, quest);
 
@@ -711,6 +754,15 @@ mod tests {
             };
             assert_eq!(request.required_after.tick, 2);
             assert_eq!(request.target, target);
+            assert_eq!(request.radius, 1);
+            assert_eq!(
+                request.options.allow_wilderness,
+                super::super::WalkBit::Allow
+            );
+            assert_eq!(request.cross.as_ref(), [Arc::<str>::from("test-zone")]);
+            assert!(request.protect);
+            assert!(!request.allow.food);
+            assert!(!request.allow.escape);
             queued.request_id.get()
         };
         let retried = post_user_input_walk_receipt(&mut ledger, 2);
