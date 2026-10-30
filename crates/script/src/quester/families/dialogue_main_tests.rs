@@ -1044,6 +1044,82 @@ fn dialogue_answer_after_same_tick_talk_defers_and_retries() {
 }
 
 #[test]
+fn dialogue_approach_retries_from_the_latest_npc_tile() {
+    let origin = api::WorldTile {
+        x: 5,
+        z: 5,
+        level: 0,
+    };
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(origin));
+    before.seed_npcs(vec![dialogue_npc(5)]);
+
+    let mut moved_npc = dialogue_npc(5);
+    moved_npc.tile.x += 1;
+    moved_npc.network.x += 1;
+    let mut after_failure = snapshot();
+    after_failure.seed_local_player(super::tests::local_player(origin));
+    after_failure.seed_npcs(vec![moved_npc]);
+
+    let mut ledger = None;
+    let (handle, first_poll) = with_tick(&before, &mut ledger, 1, |tick| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(npc_args(), &mut tick.cx)
+            .unwrap();
+        let result = tick.actions.poll(&handle, &mut tick.cx);
+        (handle, result)
+    });
+    assert!(first_poll.is_pending());
+    let first = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .rev()
+        .find(|entry| matches!(&entry.effect, HostEffect::Walk(_)))
+        .unwrap();
+    let first_request_id = first.request_id.get();
+    assert!(matches!(
+        &first.effect,
+        HostEffect::Walk(request) if request.target.x == 7
+    ));
+
+    assert_eq!(
+        super::tests::post_walk_receipt(
+            &mut ledger,
+            2,
+            crate::native::WalkEnd::RouteEnded,
+            Some("first dialogue route ended"),
+        ),
+        first_request_id
+    );
+    assert!(with_tick(&after_failure, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(with_tick(&after_failure, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+
+    let retry = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .rev()
+        .find(|entry| matches!(&entry.effect, HostEffect::Walk(_)))
+        .unwrap();
+    assert_ne!(retry.request_id.get(), first_request_id);
+    assert!(matches!(
+        &retry.effect,
+        HostEffect::Walk(request)
+            if request.target.x == 8 && request.required_after.tick == 3
+    ));
+}
+
+#[test]
 fn dialogue_approach_open_retries_after_its_walk_spends_budget() {
     let mut before = snapshot();
     before.seed_local_player(super::tests::local_player(api::WorldTile {

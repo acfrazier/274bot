@@ -584,11 +584,9 @@ impl StepRun for BuyRun {
                 return Poll::Pending;
             }
             self.retry.reset();
-            self.buy = Some(
-                cx.tick
-                    .actions
-                    .begin::<BuyMachine>(self.request.clone(), &mut cx.tick.cx)?,
-            );
+            self.buy = Some(std::task::ready!(crate::native::defer_budget(
+                cx.tick.actions.begin::<BuyMachine>(self.request.clone(), &mut cx.tick.cx)
+            ))?);
             // BuyMachine emits on its first poll: poll it now (TICK-FIX #4,
             // C-BUY-PHASE).
             if !cx.tick.cx.may_continue_this_tick() {

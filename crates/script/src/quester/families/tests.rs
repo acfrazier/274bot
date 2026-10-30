@@ -1927,11 +1927,19 @@ fn non_straight_wall_door_route_end_before_arrival_does_not_open_the_door() {
         assessment: None,
         escape: None,
     });
+    assert!(with_tick_reach(&s, &reach, &mut ledger, 3, |t| t
+        .actions
+        .poll(&handle, &mut t.cx))
+    .is_pending());
+    assert!(with_tick_reach(&s, &reach, &mut ledger, 4, |t| t
+        .actions
+        .poll(&handle, &mut t.cx))
+    .is_pending());
+    let retry = ledger.as_ref().unwrap().outbox.last().unwrap();
+    assert_ne!(retry.request_id.get(), request_id);
     assert!(matches!(
-        with_tick_reach(&s, &reach, &mut ledger, 3, |t| t
-            .actions
-            .poll(&handle, &mut t.cx)),
-        Poll::Ready(Err(ActionError::Blocked(reason))) if reason.as_ref() == "route stopped short"
+        &retry.effect,
+        HostEffect::Walk(request) if request.target == door.tile && request.radius == 1
     ));
     assert!(
         !ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
@@ -6522,7 +6530,11 @@ fn refused_talk_approach_blocks_without_requeueing_the_walk() {
         })
         .is_pending());
         let request_id = post_user_input_walk_receipt(&mut ledger, 66);
-        ledger.as_mut().unwrap().walk.as_mut().unwrap().end = end.clone();
+        let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
+        receipt.end = end.clone();
+        if matches!(&end, WalkEnd::Failed) {
+            receipt.refusal = Some(crate::native::WalkRefusal::Unsurvivable);
+        }
         let result = with_tick(&snapshot, &mut ledger, 66, |tick| {
             with_step(tick, |cx| run.poll(cx))
         });
@@ -7430,7 +7442,11 @@ fn anchored_use_on_wall_walk_uses_network_side_then_falls_back_once() {
                     && request.radius == 0
                     && request.loc_id.is_none()
         ));
-        post_user_input_walk_receipt(&mut ledger, 3);
+        let initial_request_id = ledger.as_ref().unwrap().outbox.last().unwrap().request_id.get();
+        assert_eq!(
+            post_user_input_walk_receipt(&mut ledger, 3),
+            initial_request_id
+        );
         {
             let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
             receipt.end = WalkEnd::NoPath;
@@ -7475,28 +7491,50 @@ fn anchored_use_on_wall_walk_uses_network_side_then_falls_back_once() {
                     && request.radius == 1
                     && request.loc_id.is_none()
         ));
+        let fallback_request_id = ledger.as_ref().unwrap().outbox.last().unwrap().request_id.get();
+        assert_ne!(fallback_request_id, initial_request_id);
 
-        post_user_input_walk_receipt(&mut ledger, 6);
+        assert_eq!(
+            post_user_input_walk_receipt(&mut ledger, 6),
+            fallback_request_id
+        );
         {
             let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
             receipt.end = WalkEnd::NoPath;
             receipt.detail = None;
         }
-        let result = with_tick(&snapshot, &mut ledger, 6, |tick| {
+        assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 7, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.last().map(|entry| &entry.effect),
+            Some(HostEffect::Walk(request))
+                if request.target == wall_tile && request.radius == 1
+        ));
+        let final_request_id = ledger.as_ref().unwrap().outbox.last().unwrap().request_id.get();
+        assert_ne!(final_request_id, fallback_request_id);
+        assert_eq!(
+            post_user_input_walk_receipt(&mut ledger, 8),
+            final_request_id
+        );
+        {
+            let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
+            receipt.end = WalkEnd::NoPath;
+            receipt.detail = Some(Arc::from("final fallback route failure"));
+        }
+        let result = with_tick(&snapshot, &mut ledger, 8, |tick| {
             with_step(tick, |step| run.poll(step))
         });
-        assert!(matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))));
-        assert_eq!(
-            ledger
-                .as_ref()
-                .unwrap()
-                .outbox
-                .iter()
-                .filter(|entry| matches!(&entry.effect, HostEffect::Walk(_)))
-                .count(),
-            1,
-            "only the fallback walk remains active"
-        );
+        assert!(matches!(
+            result,
+            Poll::Ready(Err(ActionError::Blocked(reason)))
+                if reason.as_ref() == "final fallback route failure"
+        ));
         assert!(!ledger
             .as_ref()
             .unwrap()
@@ -7546,8 +7584,12 @@ fn anchored_interact_wall_walk_falls_back_to_the_loc_tile_once() {
                     && request.radius == 0
                     && request.loc_id.is_none()
         ));
+        let initial_request_id = ledger.as_ref().unwrap().outbox.last().unwrap().request_id.get();
 
-        post_user_input_walk_receipt(&mut ledger, 3);
+        assert_eq!(
+            post_user_input_walk_receipt(&mut ledger, 3),
+            initial_request_id
+        );
         {
             let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
             receipt.end = WalkEnd::NoPath;
@@ -7592,28 +7634,50 @@ fn anchored_interact_wall_walk_falls_back_to_the_loc_tile_once() {
                     && request.radius == 1
                     && request.loc_id.is_none()
         ));
+        let fallback_request_id = ledger.as_ref().unwrap().outbox.last().unwrap().request_id.get();
+        assert_ne!(fallback_request_id, initial_request_id);
 
-        post_user_input_walk_receipt(&mut ledger, 6);
+        assert_eq!(
+            post_user_input_walk_receipt(&mut ledger, 6),
+            fallback_request_id
+        );
         {
             let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
             receipt.end = WalkEnd::NoPath;
             receipt.detail = None;
         }
-        let result = with_tick(&snapshot, &mut ledger, 6, |tick| {
+        assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 7, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.last().map(|entry| &entry.effect),
+            Some(HostEffect::Walk(request))
+                if request.target == wall_tile && request.radius == 1
+        ));
+        let final_request_id = ledger.as_ref().unwrap().outbox.last().unwrap().request_id.get();
+        assert_ne!(final_request_id, fallback_request_id);
+        assert_eq!(
+            post_user_input_walk_receipt(&mut ledger, 8),
+            final_request_id
+        );
+        {
+            let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
+            receipt.end = WalkEnd::NoPath;
+            receipt.detail = Some(Arc::from("final fallback route failure"));
+        }
+        let result = with_tick(&snapshot, &mut ledger, 8, |tick| {
             with_step(tick, |step| run.poll(step))
         });
-        assert!(matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))));
-        assert_eq!(
-            ledger
-                .as_ref()
-                .unwrap()
-                .outbox
-                .iter()
-                .filter(|entry| matches!(&entry.effect, HostEffect::Walk(_)))
-                .count(),
-            1,
-            "only the fallback walk remains active"
-        );
+        assert!(matches!(
+            result,
+            Poll::Ready(Err(ActionError::Blocked(reason)))
+                if reason.as_ref() == "final fallback route failure"
+        ));
         assert!(!ledger
             .as_ref()
             .unwrap()
@@ -7662,8 +7726,39 @@ fn approach_retry_buy_plan(cx: &CompileContext<'_>) -> Arc<dyn StepPlan> {
 
 fn approach_retry_buy_snapshot(start: WorldTile) -> GameSnapshot {
     let anchor = tile(3200, 3200);
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let keeper = data.npc_by_config("generalshopkeeper1").unwrap();
     let mut snapshot = ready();
     snapshot.seed_local_player(local_player_with_network(anchor, start));
+    snapshot.seed_npcs(vec![api::snapshot::NpcView {
+        index: 7,
+        r#type: Some(usize::try_from(keeper.id).unwrap()),
+        name: Some("Shopkeeper".into()),
+        actions: vec![Some("Trade".into())],
+        tile: anchor,
+        distance: 2,
+        animation: -1,
+        animation_frame: 0,
+        pose_animation: -1,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        spot_animation_stamp: -1,
+        health: 0,
+        total_health: 0,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
+        level: 0,
+        size: 1,
+        network: anchor,
+        x: anchor.x,
+        z: anchor.z,
+        yaw: 0,
+    }]);
     snapshot
 }
 
@@ -7708,7 +7803,7 @@ fn interact_retries_a_failed_approach_and_dispatches_after_arrival() {
         .is_pending());
         assert_eq!(walk_request_count(&ledger), 1);
 
-        snapshot.seed_local_player(local_player(tile(3165, 3309)));
+        snapshot.seed_local_player(local_player(tile(3160, 3308)));
         assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
             with_step(tick, |step| run.poll(step))
         })
@@ -7718,7 +7813,8 @@ fn interact_retries_a_failed_approach_and_dispatches_after_arrival() {
         assert_eq!(planned_after, 4, "the new plan uses the observed tick");
         assert_eq!(latest_retry_walk_target(&ledger), target);
 
-        snapshot.seed_local_player(local_player(target));
+        let stand = tile(target.x + 3, target.z);
+        snapshot.seed_local_player(local_player(stand));
         assert_eq!(
             post_walk_receipt(&mut ledger, 5, WalkEnd::Arrived, None),
             second_request
@@ -7781,7 +7877,10 @@ fn buy_retries_a_failed_approach_and_starts_at_the_shop() {
             with_step(tick, |step| run.poll(step))
         })
         .is_pending());
-        assert_eq!(walk_request_count(&ledger), 2);
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::Npc { action, .. } if action == "Trade"
+        ));
     });
 }
 
@@ -7810,6 +7909,7 @@ fn approach_retries_park_with_the_last_detail_after_three_attempts() {
             })
             .is_pending());
             let mut active_request = latest_walk_request(&ledger).0;
+            let mut requests = vec![active_request];
 
             for attempt in 1u8..=3 {
                 let failure_tick = u64::from(attempt) * 2 + 1;
@@ -7837,6 +7937,7 @@ fn approach_retries_park_with_the_last_detail_after_three_attempts() {
                     assert_ne!(retry_request, active_request);
                     assert_eq!(planned_after, failure_tick + 1);
                     active_request = retry_request;
+                    requests.push(retry_request);
                 } else {
                     assert!(
                         matches!(result, Poll::Ready(Err(ActionError::Blocked(reason))) if reason.as_ref() == detail),
@@ -7844,7 +7945,7 @@ fn approach_retries_park_with_the_last_detail_after_three_attempts() {
                     );
                 }
             }
-            assert_eq!(walk_request_count(&ledger), 3);
+            assert_eq!(requests.len(), 3, "{family} should use its complete retry budget");
         }
     });
 }

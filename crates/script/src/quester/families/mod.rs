@@ -2014,7 +2014,7 @@ struct InteractRun {
     settle_duration: Duration,
     walk: Option<ActionHandle<Walk>>,
     walk_retry: crate::native::WalkRetryState,
-    /// The wall tile for the one allowed retry of an initial facing-side walk.
+    /// The alternate wall-side tile selected for the approach, retained across retries.
     wall_fallback_tile: Option<WorldTile>,
     /// A retry tile whose walk request has not yet obtained budget.
     wall_fallback_pending: Option<WorldTile>,
@@ -2357,10 +2357,8 @@ impl InteractRun {
                         .walk_retry
                         .observe_failure(&receipt, cx.tick.cx.evidence().tick)
                     {
-                        if let Some(tile) = self.wall_fallback_tile.take() {
-                            if reach::loc_wall_route_failed(&receipt) {
-                                self.wall_fallback_pending = Some(tile);
-                            }
+                        if reach::loc_wall_route_failed(&receipt) {
+                            self.wall_fallback_pending = self.wall_fallback_tile.clone();
                         }
                         self.walk = None;
                         return Poll::Pending;
@@ -3063,7 +3061,7 @@ struct UseOnRun {
     settle_duration: Duration,
     walk: Option<ActionHandle<Walk>>,
     walk_retry: crate::native::WalkRetryState,
-    /// The wall tile for the one allowed retry of an initial facing-side walk.
+    /// The alternate wall-side tile selected for the approach, retained across retries.
     wall_fallback_tile: Option<WorldTile>,
     /// A retry tile whose walk request has not yet obtained budget.
     wall_fallback_pending: Option<WorldTile>,
@@ -3253,10 +3251,8 @@ impl StepRun for UseOnRun {
                             .walk_retry
                             .observe_failure(&receipt, cx.tick.cx.evidence().tick)
                         {
-                            if let Some(tile) = self.wall_fallback_tile.take() {
-                                if reach::loc_wall_route_failed(&receipt) {
-                                    self.wall_fallback_pending = Some(tile);
-                                }
+                            if reach::loc_wall_route_failed(&receipt) {
+                                self.wall_fallback_pending = self.wall_fallback_tile.clone();
                             }
                             self.walk = None;
                             self.chase = None;

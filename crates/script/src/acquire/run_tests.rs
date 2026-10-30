@@ -365,11 +365,22 @@ fn quester_bank_access_retries_a_failed_walk_on_the_next_tick() {
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
         HostEffect::Walk(_)
     ));
-    crate::quester::families::tests::post_walk_receipt(
-        &mut ledger,
-        3,
-        WalkEnd::NoPath,
-        Some("first bank route failed"),
+    let first_request_id = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .last()
+        .unwrap()
+        .request_id
+        .get();
+    assert_eq!(
+        crate::quester::families::tests::post_walk_receipt(
+            &mut ledger,
+            3,
+            WalkEnd::NoPath,
+            Some("first bank route failed"),
+        ),
+        first_request_id
     );
     assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 3, OpenGate::Open).is_pending());
     let walk_count = |ledger: &TestLedger| {
@@ -389,7 +400,19 @@ fn quester_bank_access_retries_a_failed_walk_on_the_next_tick() {
     };
     snapshot.seed_local_player(crate::quester::families::tests::local_player(moved));
     assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 4, OpenGate::Open).is_pending());
-    assert_eq!(walk_count(&ledger), 2);
+    assert_ne!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .rev()
+            .find(|action| matches!(&action.effect, HostEffect::Walk(_)))
+            .unwrap()
+            .request_id
+            .get(),
+        first_request_id
+    );
     let retry = ledger
         .as_ref()
         .unwrap()

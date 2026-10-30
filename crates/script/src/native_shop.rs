@@ -809,9 +809,12 @@ mod tests {
             z: 3200,
             level: 0,
         };
-        let mut before = snapshot(&client, Vec::new(), vec![npc_row()]);
+        let mut keeper = npc_row();
+        keeper.distance = 10;
+        let mut before = snapshot(&client, Vec::new(), vec![keeper]);
         before.seed_local_player(local_player(origin));
-        let origin_reach = reach_from(origin);
+        let mut origin_reach = reach_from(origin);
+        origin_reach.step.fill(0);
         let mut ledger = None;
         let handle = start_machine(&before, &mut ledger);
 
@@ -819,8 +822,15 @@ mod tests {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(first.is_pending());
-        assert_eq!(walks(&ledger), 1);
-        post_walk_receipt(&mut ledger, 3, WalkEnd::NoPath, Some("first route failed"));
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+            HostEffect::Walk(_)
+        ));
+        let first_request_id = ledger.as_ref().unwrap().outbox.last().unwrap().request_id.get();
+        assert_eq!(
+            post_walk_receipt(&mut ledger, 3, WalkEnd::NoPath, Some("first route failed")),
+            first_request_id
+        );
 
         let moved = WorldTile { x: 3191, ..origin };
         let mut after_failure = snapshot(&client, Vec::new(), vec![npc_row()]);
@@ -830,14 +840,33 @@ mod tests {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(failed.is_pending());
-        assert_eq!(walks(&ledger), 1, "retry starts on a later tick");
+        assert!(
+            !ledger.as_ref().unwrap().outbox.iter().any(|entry| {
+                matches!(&entry.effect, HostEffect::Walk(_))
+                    && entry.request_id.get() != first_request_id
+            }),
+            "retry starts on a later tick"
+        );
 
         let retry = with_tick_reach(&after_failure, &moved_reach, &mut ledger, 4, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(retry.is_pending());
-        assert_eq!(walks(&ledger), 2);
-        post_walk_receipt(&mut ledger, 5, WalkEnd::Arrived, None);
+        let retry_request_id = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .rev()
+            .find(|entry| matches!(&entry.effect, HostEffect::Walk(_)))
+            .unwrap()
+            .request_id
+            .get();
+        assert_ne!(retry_request_id, first_request_id);
+        assert_eq!(
+            post_walk_receipt(&mut ledger, 5, WalkEnd::Arrived, None),
+            retry_request_id
+        );
 
         let target = WorldTile {
             x: 3200,
@@ -851,7 +880,6 @@ mod tests {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(result.is_pending());
-        assert_eq!(walks(&ledger), 2);
         assert!(matches!(
             &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
             HostEffect::Interaction(InteractReq::Npc {

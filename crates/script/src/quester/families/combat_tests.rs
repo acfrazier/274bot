@@ -3888,7 +3888,7 @@ fn assert_stand_goals(request: &crate::native::WalkRequest, stand: api::WorldTil
 }
 
 #[test]
-fn target_gone_walk_without_observed_arrival_blocks_reengagement() {
+fn target_gone_walk_replans_after_route_end_before_reengaging() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let stand = api::WorldTile {
         x: 2632,
@@ -3908,16 +3908,24 @@ fn target_gone_walk_without_observed_arrival_blocks_reengagement() {
         run.on_combat_report(report(CombatEnd::TargetGone), cx)
     })
     .is_pending());
+    let first_request_id = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .last()
+        .unwrap()
+        .request_id
+        .get();
 
     let result = with_step_context(&snapshot, &mut ledger, 13, |cx| {
         run.on_return_walk(
             WalkReceipt {
                 goal: None,
-                request_id: 1,
+                request_id: first_request_id,
                 evidence: cx.tick.cx.evidence(),
                 end: WalkEnd::RouteEnded,
                 blocked: None,
-                detail: None,
+                detail: Some(Arc::from("first route ended short")),
                 refusal: None,
                 assessment: None,
                 escape: None,
@@ -3925,9 +3933,22 @@ fn target_gone_walk_without_observed_arrival_blocks_reengagement() {
             cx,
         )
     });
-    assert!(matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))));
+    assert!(result.is_pending());
     assert_eq!(run.target_gone_restarts, 0);
+    assert!(matches!(&run.phase, Phase::ReturningToStand));
     assert!(run.action.is_none());
+
+    assert!(with_step_context(&snapshot, &mut ledger, 14, |cx| run.poll(cx)).is_pending());
+    let retry = ledger.as_ref().unwrap().outbox.last().unwrap();
+    assert_ne!(retry.request_id.get(), first_request_id);
+    assert!(matches!(
+        &retry.effect,
+        crate::native::HostEffect::Walk(request)
+            if request.target == stand && request.radius == 1
+    ));
+    assert_eq!(run.target_gone_restarts, 0);
+    assert!(matches!(&run.phase, Phase::ReturningToStand));
+    assert!(matches!(run.action.as_ref(), Some(Action::Walk(_))));
 }
 
 #[test]
@@ -4318,7 +4339,7 @@ fn combat_loot_reaches_below_quantity_and_skips_at_the_requested_count() {
 }
 
 #[test]
-fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
+fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next_item() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let here = api::WorldTile {
         x: 3200,
@@ -4469,7 +4490,70 @@ fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
     });
 
     assert!(with_step_context(&snapshot, &mut ledger, 15, |cx| run.poll(cx)).is_pending());
-    assert_eq!(run.loot_index, 2, "the unreachable item is skipped");
+    assert_eq!(run.loot_index, 1, "the item remains active during route retries");
+    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
+    assert!(with_step_context(&snapshot, &mut ledger, 16, |cx| run.poll(cx)).is_pending());
+    let second_request_id = ledger.as_ref().unwrap().outbox.last().unwrap().request_id.get();
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Walk(request) if request.target == door
+    ));
+    ledger.as_mut().unwrap().outbox.clear();
+    ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
+        goal: None,
+        request_id: second_request_id,
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 17,
+            sequence: 17,
+        },
+        end: WalkEnd::Failed,
+        blocked: None,
+        detail: Some(Arc::from("second door recovery route failed")),
+        refusal: None,
+        assessment: None,
+        escape: None,
+    });
+    assert!(with_step_context(&snapshot, &mut ledger, 17, |cx| run.poll(cx)).is_pending());
+    assert_eq!(run.loot_index, 1, "a second route failure still retries");
+
+    assert!(with_step_context(&snapshot, &mut ledger, 18, |cx| run.poll(cx)).is_pending());
+    let third_request_id = ledger.as_ref().unwrap().outbox.last().unwrap().request_id.get();
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Walk(request) if request.target == door
+    ));
+    ledger.as_mut().unwrap().outbox.clear();
+    ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
+        goal: None,
+        request_id: third_request_id,
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 19,
+            sequence: 19,
+        },
+        end: WalkEnd::Failed,
+        blocked: None,
+        detail: Some(Arc::from("door recovery retry budget exhausted")),
+        refusal: None,
+        assessment: None,
+        escape: None,
+    });
+    assert!(with_step_context(&snapshot, &mut ledger, 19, |cx| run.poll(cx)).is_pending());
+    assert_eq!(
+        run.loot_index, 2,
+        "the unreachable item is skipped only after its retry budget is exhausted"
+    );
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
