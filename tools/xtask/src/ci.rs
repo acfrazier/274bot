@@ -1275,10 +1275,7 @@ mod tests {
             names.join(" ")
         );
         let mut process = Command::new("bash");
-        process
-            .arg("-c")
-            .arg(check)
-            .env("CARGO_HOME", "preserved");
+        process.arg("-c").arg(check).env("CARGO_HOME", "preserved");
         for name in names {
             process.env(name, "cargo-injected");
         }
