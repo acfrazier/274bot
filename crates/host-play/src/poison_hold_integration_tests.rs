@@ -585,9 +585,9 @@ fn poison_hold_sends_no_hop_into_exposure() {
             "route cannot enter the zone during hold"
         );
     }
+    assert!(rig.driver.walks.iter().all(|&(x, _)| x <= 40));
     rig.observe(31, tile(40), None, None);
     rig.pump(tile(40), true);
-    assert!(rig.driver.walks.iter().all(|&(x, _)| x <= 40));
     assert!(rig.driver.walks.iter().any(|&(x, _)| x > 40));
 }
 
