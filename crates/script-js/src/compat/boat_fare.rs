@@ -606,6 +606,10 @@ impl Talk {
 }
 
 /// Frozen `searchBananaCrate` (`crate.ts:36–60`).
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Retain the bounded walk policy inline instead of allocating for each crate approach."
+)]
 enum SearchCrate {
     Walk(Resilient),
     Settle(u32),
@@ -703,6 +707,10 @@ struct Pick {
     phase: PickPhase,
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Retain the bounded walk policy inline instead of allocating for each banana approach."
+)]
 enum PickPhase {
     Walk(Resilient),
     Settle(u32),
