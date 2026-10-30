@@ -13,7 +13,7 @@ use script::quester::registry::{self, FolderSource};
 use script::survival::{
     cure::CureWhy,
     math::{NeedWhy, SurvivalNeed},
-    Decision, Owner,
+    Decision, Owner, SurvivalReport,
 };
 use serde_json::{json, Map, Value};
 use std::path::PathBuf;
@@ -33,12 +33,20 @@ const MINING_STAND: WorldTile = WorldTile {
     z: 3420,
     level: 0,
 };
-// m51_52.jm2:4980-4981 places copper rock loc 2090 (`pack/loc.pack:2091`) at
-// (3282,3367) and (3282,3368) in the Varrock east mine. The stand is the clear
-// mine-floor tile east of them (no loc, no blocking flag).
+// m51_52.jm2:5202, :5203 and :5234 place copper rock locs 2090, 2090 and 2091
+// (`pack/loc.pack:2091-2092`, `copperrock1` and `copperrock2`) at local (25,33),
+// (25,35) and (26,34): world (3289,3361), (3289,3363) and (3290,3362) in the
+// Varrock east mine. The stand (25,34) has no loc (the loc rows 5201-5204
+// skip z 34) and no flag on its map row (`0 25 34: h10 o22 u50`), and the
+// three rocks touch it on its north, south and east sides. Copper rocks
+// respawn in `10 * (4000 - playercount) / 4000` ticks
+// (`skill_mining/configs/mine.dbrow:34`, `scale_by_playercount`), so the
+// three rocks keep the Quester mining through the 31-tick login timer wait
+// without a step off the stand. A fourth copper rock sits at (3288,3361)
+// (`m51_52.jm2:5171`).
 const COPPER_STAND: WorldTile = WorldTile {
-    x: 3283,
-    z: 3368,
+    x: 3289,
+    z: 3362,
     level: 0,
 };
 const DESERT_CAPTAIN_STAND: WorldTile = WorldTile {
@@ -712,12 +720,15 @@ fn add_poison_steps(
                         Activity::Woodcutting => {
                             stat_xp(snapshot, witness.skill_stat) > witness.baseline_xp
                         }
-                        Activity::Mining => witness.work_animation.is_some_and(|animation| {
+                        Activity::Mining => witness.work_animation.is_some_and(|first| {
+                            // Any current mining animation is the work signal. The
+                            // serial changes at every swing, so the first swing's
+                            // serial cannot stay current through the 31-tick wait.
                             snapshot
                                 .local_player()
                                 .and_then(|player| player.animation_update)
                                 .is_some_and(|current| {
-                                    current.serial == animation.serial && current.sequence >= 0
+                                    current.sequence >= 0 && current.sequence == first.sequence
                                 })
                         }),
                         Activity::Dialogue => true,
@@ -962,17 +973,25 @@ fn capture_active_work(
     }
 }
 
-fn typed_lethal_need(slot: &host_play::SlotStatus) -> bool {
-    slot.survival.decision == Decision::Needed
-        && slot.survival.why == Some(CureWhy::Lethal)
-        && slot.survival.owner == Owner::Step
+/// The step owner's report of a typed lethal cure need, in either state that
+/// holds it. `Needed` is the report while the onset latch is open; `Drinking`
+/// is the report when the latch closed at the line's own edge and the bot
+/// goes straight to the drink (design A6.5 item 3, A1.4 item 6).
+fn lethal_cure_report(report: &SurvivalReport) -> bool {
+    matches!(report.decision, Decision::Needed | Decision::Drinking)
+        && report.why == Some(CureWhy::Lethal)
+        && report.owner == Owner::Step
         && matches!(
-            slot.survival.need,
+            report.need,
             Some(SurvivalNeed::Cure {
                 why: NeedWhy::Lethal,
                 ..
             })
         )
+}
+
+fn typed_lethal_need(slot: &host_play::SlotStatus) -> bool {
+    lethal_cure_report(&slot.survival)
 }
 
 fn capture_need(
@@ -1200,8 +1219,25 @@ fn check_deadline(witness: &Witness, tick: u32, deadline: u32) -> Result<u32, St
     Ok(elapsed)
 }
 
+/// The condition at the first lethal-need report. `Needed` is the open-latch
+/// edge: the outlook is pending and the line is unlatched. `Drinking` is the
+/// straight-to-drink report the design allows when the latch closed at the
+/// line's own edge (A6.5 item 3, A1.4 item 6): the poison is still the onset
+/// of this line, latched or not, and the outlook is already the widened
+/// lethal one. Both need the same HP, food, dose and no hit at the edge.
 fn check_need(witness: &Witness) -> Result<(), String> {
-    if witness.need_report_decision.as_deref() != Some("Needed")
+    let latch_ok = match witness.need_report_decision.as_deref() {
+        Some("Needed") => {
+            witness.need_outlook_pending == Some(true)
+                && witness.need_unlatched_poison == Some(true)
+        }
+        Some("Drinking") => witness
+            .need_condition_poison
+            .as_deref()
+            .is_some_and(|poison| poison.starts_with("Onset")),
+        _ => false,
+    };
+    if !latch_ok
         || witness.need_report_why.as_deref() != Some("Some(Lethal)")
         || !witness
             .need_report
@@ -1210,14 +1246,12 @@ fn check_need(witness: &Witness) -> Result<(), String> {
         || witness.need_report_owner.as_deref() != Some("Step")
         || witness.need_outlook_total != Some(LETHAL_OUTLOOK)
         || witness.need_outlook_per_fire != Some(Q_UNKNOWN)
-        || witness.need_outlook_pending != Some(true)
         || witness.need_hp != Some(30)
         || witness.need_hp_max != Some(30)
         || witness.need_food != Some(0)
         || witness.need_antipoison != Some(1)
         || witness.need_in_combat != Some(false)
         || witness.need_no_hit_at_edge != Some(true)
-        || witness.need_unlatched_poison != Some(true)
     {
         return Err(format!(
             "lethal poison need did not match the controlled edge: status={:?}, report={:?}/{:?}/{:?}/{:?}, condition={:?}, outlook={:?}/{:?}/{:?}, hp={:?}/{:?}, food={:?}, antipoison={:?}, combat={:?}, no_hit={:?}",
@@ -1239,6 +1273,48 @@ fn check_need(witness: &Witness) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// The ticks of one cure, each seen: the poison line, the first lethal need
+/// report (`Needed` or `Drinking`), the drink request, the drink line, the
+/// dose drop and the settle. The need must match the controlled edge.
+struct CureTicks {
+    poison: u32,
+    need: u32,
+    drink: u32,
+    cure: u32,
+    dose_drop: u32,
+    settled: u32,
+}
+
+fn cure_ticks(witness: &Witness) -> Result<CureTicks, String> {
+    let poison = witness
+        .poison_tick
+        .ok_or("poison line tick was not observed")?;
+    let need = witness.need_tick.ok_or(
+        "neither a lethal Needed nor a lethal Drinking report was observed after the poison line",
+    )?;
+    let drink = witness
+        .drink_decision_tick
+        .ok_or("survival did not request the antipoison click")?;
+    let cure = witness
+        .cure_tick
+        .ok_or("antipoison drink line was not observed")?;
+    let dose_drop = witness
+        .dose_drop_tick
+        .ok_or("antipoison dose drop was not observed")?;
+    let settled = witness
+        .settled_tick
+        .ok_or("antipoison immunity did not settle")?;
+    check_need(witness)?;
+    Ok(CureTicks {
+        poison,
+        need,
+        drink,
+        cure,
+        dose_drop,
+        settled,
+    })
 }
 
 fn common_receipt(
@@ -1272,23 +1348,14 @@ fn common_receipt(
         PoisonSource::TwistedChest => TWISTED_CHEST_POISON_SIGNAL_TICKS,
         PoisonSource::AccountStateDebugProc => DEBUGPROC_POISON_SIGNAL_TICKS,
     };
-    let poison_tick = witness
-        .poison_tick
-        .ok_or("poison line tick was not observed")?;
-    let need_tick = witness.need_tick.ok_or("lethal need was not observed")?;
-    let drink_tick = witness
-        .drink_decision_tick
-        .ok_or("survival did not request the antipoison click")?;
-    let cure_tick = witness
-        .cure_tick
-        .ok_or("antipoison drink line was not observed")?;
-    let dose_drop_tick = witness
-        .dose_drop_tick
-        .ok_or("antipoison dose drop was not observed")?;
-    let settled_tick = witness
-        .settled_tick
-        .ok_or("antipoison immunity did not settle")?;
-    check_need(witness)?;
+    let CureTicks {
+        poison: poison_tick,
+        need: need_tick,
+        drink: drink_tick,
+        cure: cure_tick,
+        dose_drop: dose_drop_tick,
+        settled: settled_tick,
+    } = cure_ticks(witness)?;
     let key_after = item_count(snapshot, witness.key_id);
     let antipoison_after = item_count(snapshot, witness.antipoison_id);
     let tool_after = witness.tool_id.map_or(0, |id| item_count(snapshot, id));
@@ -1834,7 +1901,7 @@ fn live_l_cure_when_needed_quester_mines_copper_and_resumes_gather() {
                 "resource":"copper",
                 "anchor":{
                     "tile":[COPPER_STAND.x, COPPER_STAND.z, COPPER_STAND.level],
-                    "source":"C:maps/m51_52.jm2:4980-4981; C:pack/loc.pack:2091"
+                    "source":"C:maps/m51_52.jm2:5202-5203,5234; C:pack/loc.pack:2091-2092"
                 },
                 "until":{"obj":{"id":436},"qty":100}
             },
@@ -2246,5 +2313,198 @@ mod oracle_tests {
     #[test]
     fn a_receipt_before_the_first_scheduled_fire_is_not_a_pass() {
         assert!(check_cure_outcome(Some(40), Some(42), &[], 70).is_err());
+    }
+
+    fn lethal_report(decision: Decision) -> SurvivalReport {
+        SurvivalReport {
+            decision,
+            why: Some(CureWhy::Lethal),
+            need: Some(SurvivalNeed::Cure {
+                or_food: 26,
+                ref_heal: 3,
+                why: NeedWhy::Lethal,
+            }),
+            tried: 0,
+            owner: Owner::Step,
+        }
+    }
+
+    /// A Gatherer-shaped witness after one cure, filled the way `capture_need`
+    /// and `observe_frame` fill it from `report`. The condition is the onset of
+    /// the poison line at tick 33: unlatched for a `Needed` edge, latched at
+    /// the edge for a straight `Drinking` report. Ticks are harness ticks of
+    /// the final session.
+    fn cured_witness(report: &SurvivalReport, latched: bool) -> Witness {
+        let witness = new_witness(
+            Activity::Woodcutting,
+            "Woodcutting",
+            WOODCUTTING_STAT,
+            Some(WILLOW_LOG_ID),
+            Some(RUNE_AXE_ALIAS),
+            PoisonSource::AccountStateDebugProc,
+            GATHERER_STAND,
+        );
+        let mut witness = Arc::try_unwrap(witness)
+            .ok()
+            .expect("one owner")
+            .into_inner()
+            .expect("witness");
+        let onset = PoisonState::Onset {
+            since: 33,
+            q: latched.then_some(Q_UNKNOWN),
+            hit_since_line: false,
+        };
+        let outlook =
+            api::condition::poison_math::remaining(onset, Exposure::Unknown, 33, Q_UNKNOWN);
+        witness.poison_tick = Some(33);
+        witness.need_tick = Some(34);
+        witness.need_report_decision = Some(format!("{:?}", report.decision));
+        witness.need_report_why = Some(format!("{:?}", report.why));
+        witness.need_report = Some(format!("{:?}", report.need));
+        witness.need_report_owner = Some(format!("{:?}", report.owner));
+        witness.need_condition_poison = Some(format!("{onset:?}"));
+        witness.need_unlatched_poison = Some(!latched);
+        witness.need_outlook_total = Some(outlook.total);
+        witness.need_outlook_per_fire = Some(outlook.per_fire_now);
+        witness.need_outlook_pending = Some(outlook.pending);
+        witness.need_hp = Some(30);
+        witness.need_hp_max = Some(30);
+        witness.need_food = Some(0);
+        witness.need_antipoison = Some(1);
+        witness.need_in_combat = Some(false);
+        witness.need_no_hit_at_edge = Some(true);
+        witness.drink_decision_tick = Some(34);
+        witness.cure_tick = Some(35);
+        witness.dose_drop_tick = Some(35);
+        witness.immune_tick = Some(35);
+        witness.settled_tick = Some(36);
+        witness
+    }
+
+    /// The whole cure oracle on one witness: the sequence, then the damage
+    /// rule and the first scheduled fire at the observed tick.
+    fn cure_verdict(witness: &Witness, observed_tick: u32) -> Result<(), String> {
+        cure_ticks(witness)?;
+        check_cure_outcome(
+            witness.poison_tick,
+            witness.cure_tick,
+            &witness.poison_marks,
+            observed_tick,
+        )
+    }
+
+    #[test]
+    fn the_round_gatherer_receipt_passes() {
+        // `round-merlot/gatherer-20261030T192811Z`, receipt SHA-256
+        // c5d0b2006dfdbc62b59dc6cc1527557959a539ec364648a18de0707bcb652023.
+        // The Gatherer went from `survival=None` straight to `Drinking:
+        // poisoned: would die; needs antipoison or 26 food`, with no `Needed`
+        // status (status.jsonl). The poison line was at tick 33; the drink
+        // packet went at script tick 54, the harness tick 34 under the
+        // cell's fixed offset of 20; the end state was Hitpoints 30/30, so no
+        // hit. The old oracle waited for a `Needed` report that never came and
+        // ran out at tick 154. The receipt itself does not record the need
+        // frame, so its condition fields are the ones the Drinking rule asks
+        // for: the onset of the line, latched at the edge.
+        let report = lethal_report(Decision::Drinking);
+        assert!(lethal_cure_report(&report));
+        let witness = cured_witness(&report, true);
+        assert_eq!(check_need(&witness), Ok(()));
+        assert_eq!(cure_verdict(&witness, 154), Ok(()));
+    }
+
+    #[test]
+    fn the_open_latch_needed_edge_still_passes() {
+        let report = lethal_report(Decision::Needed);
+        assert!(lethal_cure_report(&report));
+        let witness = cured_witness(&report, false);
+        assert_eq!(cure_verdict(&witness, 154), Ok(()));
+    }
+
+    #[test]
+    fn a_run_with_no_need_and_no_drink_fails() {
+        // Poison line seen, then neither a Needed nor a Drinking report, no
+        // drink request, no cure line: the shape of an uncured run.
+        let mut witness = cured_witness(&lethal_report(Decision::Drinking), true);
+        witness.need_tick = None;
+        witness.drink_decision_tick = None;
+        witness.cure_tick = None;
+        witness.dose_drop_tick = None;
+        witness.immune_tick = None;
+        witness.settled_tick = None;
+        let error = cure_verdict(&witness, 154).expect_err("no need and no drink");
+        assert!(error.contains("neither a lethal Needed nor a lethal Drinking"));
+        // Reports that are not a lethal cure need record no need either.
+        for decision in [Decision::None, Decision::Eating, Decision::Parked] {
+            assert!(!lethal_cure_report(&lethal_report(decision)));
+        }
+    }
+
+    #[test]
+    fn a_run_that_drinks_with_no_poison_fails() {
+        // A drink request, a drink line and a settle, with no poison line:
+        // `observe_frame` records drink and need ticks only after the line, so
+        // this witness is what a drink without poison would have to look like.
+        let mut witness = cured_witness(&lethal_report(Decision::Drinking), true);
+        witness.poison_tick = None;
+        let error = cure_verdict(&witness, 154).expect_err("drink with no poison");
+        assert!(error.contains("poison line"));
+        assert!(check_cure_outcome(None, Some(35), &[], 154).is_err());
+    }
+
+    #[test]
+    fn a_drink_without_a_lethal_need_report_fails() {
+        let mut witness = cured_witness(&lethal_report(Decision::Drinking), true);
+        witness.need_tick = None;
+        assert!(cure_verdict(&witness, 154).is_err());
+    }
+
+    #[test]
+    fn a_need_report_must_be_typed_lethal_and_owned_by_the_step() {
+        let mut wrong_why = lethal_report(Decision::Drinking);
+        wrong_why.why = Some(CureWhy::BelowLine);
+        assert!(!lethal_cure_report(&wrong_why));
+        let mut no_why = lethal_report(Decision::Drinking);
+        no_why.why = None;
+        assert!(!lethal_cure_report(&no_why));
+        for owner in [Owner::None, Owner::Guard, Owner::Combat] {
+            let mut report = lethal_report(Decision::Drinking);
+            report.owner = owner;
+            assert!(!lethal_cure_report(&report));
+        }
+        let mut food = lethal_report(Decision::Needed);
+        food.need = Some(SurvivalNeed::Food {
+            count: 2,
+            ref_heal: 3,
+        });
+        assert!(!lethal_cure_report(&food));
+        let mut emergency = lethal_report(Decision::Drinking);
+        emergency.need = Some(SurvivalNeed::Cure {
+            or_food: 0,
+            ref_heal: 3,
+            why: NeedWhy::Emergency,
+        });
+        assert!(!lethal_cure_report(&emergency));
+    }
+
+    #[test]
+    fn the_need_edge_conditions_hold_for_each_decision() {
+        // `Needed` is the open latch: a latched line is not that edge.
+        let needed_latched = cured_witness(&lethal_report(Decision::Needed), true);
+        assert!(check_need(&needed_latched).is_err());
+        // `Drinking` accepts either latch of the line's own onset...
+        let drinking_open = cured_witness(&lethal_report(Decision::Drinking), false);
+        assert_eq!(check_need(&drinking_open), Ok(()));
+        // ...but not a poison that is no longer the line's onset.
+        let mut not_onset = cured_witness(&lethal_report(Decision::Drinking), true);
+        not_onset.need_condition_poison = Some(format!("{:?}", PoisonState::Clear));
+        assert!(check_need(&not_onset).is_err());
+        // Either decision needs the controlled HP, dose and no hit at the edge.
+        let mut hurt = cured_witness(&lethal_report(Decision::Drinking), true);
+        hurt.need_hp = Some(24);
+        assert!(check_need(&hurt).is_err());
+        let mut hit = cured_witness(&lethal_report(Decision::Drinking), true);
+        hit.need_no_hit_at_edge = Some(false);
+        assert!(check_need(&hit).is_err());
     }
 }
