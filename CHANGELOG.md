@@ -92,11 +92,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   poll that misses several ticks no longer extends it.
 
 - Walk failure details and debug logs now name the search result. A map walk
-  that stops at its node budget reports
-  `search_result=BudgetExhausted nodes_settled=unavailable (incomplete search)`.
-  The bot does not report missing supplies from an incomplete search. It still
-  reports missing supplies after a complete `NoPath` search when an item-gated
-  route exists.
+  that stops at its node budget reports `search_result=BudgetExhausted` and the
+  settled-node count when known. When no more specific cause is found, native
+  walk receipts report `Refused` with a typed `SearchIncomplete` refusal, not
+  `NoPath`. An incomplete search does not publish a missing-supply list. A
+  complete `NoPath` can still report missing supplies when an item-gated route
+  was found.
 
 ### Scripting
 

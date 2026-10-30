@@ -135,10 +135,6 @@ pub(crate) fn route(
         ..options
     };
     let mut outcome = search(options);
-    let incomplete_result = match &outcome {
-        crate::RouteOutcome::IncompleteSearch { search_result } => Some(*search_result),
-        _ => None,
-    };
     let mut tried = 0;
     let blocked = if matches!(
         &outcome,
@@ -160,12 +156,7 @@ pub(crate) fn route(
         {
             tried = 1;
             let retry = search(FindOptions { zones, ..options });
-            outcome = match (incomplete_result, retry) {
-                (Some(search_result), crate::RouteOutcome::NoPath) => {
-                    crate::RouteOutcome::IncompleteSearch { search_result }
-                }
-                (_, retry) => retry,
-            };
+            outcome = retry;
         }
     }
     let route = match &outcome {

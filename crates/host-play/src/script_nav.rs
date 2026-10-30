@@ -2023,6 +2023,9 @@ impl RouteJob {
                     Ok(Some(gates)) if !gates.is_empty() => {
                         script::native::WalkEnd::NeedsEvidence(Arc::from(gates))
                     }
+                    Ok(_) if self.budget_settled.is_some() => {
+                        script::native::WalkEnd::Refused
+                    }
                     Ok(_) => script::native::WalkEnd::Failed,
                     Err(_) => script::native::WalkEnd::Refused,
                 });
@@ -2286,6 +2289,11 @@ impl RouteJob {
                     nodes_settled: Some(settled),
                 });
             }
+        }
+        // A relaxed missing-item search can run after a strict budget stop.
+        // Its requirements do not prove that a supply-gated route exists.
+        if self.budget_settled.is_some() {
+            self.missing.clear();
         }
         let search_result =
             matches!(&outcome, RouteJobOutcome::NoPath).then(|| self.search_result_kind());
