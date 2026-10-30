@@ -95,17 +95,22 @@ impl Owner {
     }
 
     /// The host dropped `request` from its custody without dispatching it.
-    /// Only the owner's current single interaction is marked.
+    /// Only the owner's current single interaction is marked: a cancelled or
+    /// superseded request is already not queued ([`Self::interaction_queued`]).
     pub fn note_unsent(&self, request: NonZeroU64) {
         if self.interaction.load(Ordering::Acquire) == request.get() {
             self.interaction_unsent.store(true, Ordering::Release);
         }
     }
 
-    /// Whether the host discarded the current single interaction `request`.
-    pub fn interaction_unsent(&self, request: NonZeroU64) -> bool {
-        self.interaction.load(Ordering::Acquire) == request.get()
-            && self.interaction_unsent.load(Ordering::Acquire)
+    /// Whether `request` is this live owner's current single interaction and
+    /// the host has not discarded it. A cancelled request (`cancel_interaction`
+    /// cleared it) or a superseded one (`set_interaction` replaced it) is not
+    /// queued, whatever happens later to its dropped action's custody.
+    pub fn interaction_queued(&self, request: NonZeroU64) -> bool {
+        self.live()
+            && self.interaction.load(Ordering::Acquire) == request.get()
+            && !self.interaction_unsent.load(Ordering::Acquire)
     }
 
     pub fn cancel_interaction(&self, request: NonZeroU64) {

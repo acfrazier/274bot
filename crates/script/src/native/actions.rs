@@ -425,23 +425,33 @@ impl ActionContext<'_> {
     }
 
     /// What the host's dispatch lifecycle has done with this action's single
-    /// interaction `request_id` ([`InteractionDispatch`]).
+    /// interaction `request_id` ([`InteractionDispatch`]). The settled receipt
+    /// comes first. Without one, the request is `Queued` only while it is
+    /// still this action's current single interaction and the host has not
+    /// discarded it: a cancelled request (`cancel_request` cleared it) or a
+    /// superseded one (a later emit, pick or assessment replaced it) is
+    /// `Unsent`: its queued action, if one remains, has lost its authority
+    /// (`HostAction::live`), so the host drops it and no receipt will come.
     pub fn interaction_dispatch(&self, request_id: u64) -> InteractionDispatch<'_> {
         if let Some(receipt) = self.interaction_receipt(request_id) {
             return InteractionDispatch::Settled(receipt);
         }
-        let owner = self
+        let queued = self
             .ledger
             .as_ref()
-            .and_then(|ledger| ledger.owner.as_ref())
-            .filter(|owner| {
-                owner.run == self.run() && owner.id.get() == self.action_id && owner.live()
+            .zip(NonZeroU64::new(request_id))
+            .is_some_and(|(ledger, request)| {
+                ledger.interaction_request == Some(request)
+                    && ledger.owner.as_ref().is_some_and(|owner| {
+                        owner.run == self.run()
+                            && owner.id.get() == self.action_id
+                            && owner.interaction_queued(request)
+                    })
             });
-        match (owner, NonZeroU64::new(request_id)) {
-            (Some(owner), Some(request)) if !owner.interaction_unsent(request) => {
-                InteractionDispatch::Queued
-            }
-            _ => InteractionDispatch::Unsent,
+        if queued {
+            InteractionDispatch::Queued
+        } else {
+            InteractionDispatch::Unsent
         }
     }
 
@@ -949,8 +959,8 @@ mod tests {
         assert!(!owner.quiet(request));
     }
 
-    #[test]
-    fn cancelling_a_drained_interaction_revokes_its_host_authority() {
+    /// One live machine owner and its action context at tick 1.
+    fn with_live_owner(f: impl FnOnce(&mut ActionContext<'_>, &Arc<Owner>)) {
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let pin = selected.selected_pin().unwrap();
         let evidence = EvidenceStamp {
@@ -987,20 +997,111 @@ mod tests {
             budget: &mut budget,
             eligible: true,
         };
-        let request = cx.emit(InteractReq::CloseModal).unwrap();
-        let drained = cx.ledger.as_mut().unwrap().outbox.pop().unwrap();
-        let authority = drained.authority();
-        assert!(drained.live());
-        cx.cancel_request(request);
-        assert!(!drained.live(), "cancelled input must not reach the host");
-        assert!(
-            !authority.live(),
-            "a captured continuation must lose authority"
-        );
-        assert!(
-            owner.live(),
-            "request cancellation must not cancel the machine"
-        );
+        f(&mut cx, &owner);
+    }
+
+    #[test]
+    fn cancelling_a_drained_interaction_revokes_its_host_authority() {
+        with_live_owner(|cx, owner| {
+            let request = cx.emit(InteractReq::CloseModal).unwrap();
+            let drained = cx.ledger.as_mut().unwrap().outbox.pop().unwrap();
+            let authority = drained.authority();
+            assert!(drained.live());
+            assert_eq!(
+                cx.interaction_dispatch(request),
+                InteractionDispatch::Queued
+            );
+            cx.cancel_request(request);
+            assert!(!drained.live(), "cancelled input must not reach the host");
+            assert!(
+                !authority.live(),
+                "a captured continuation must lose authority"
+            );
+            assert!(
+                owner.live(),
+                "request cancellation must not cancel the machine"
+            );
+            assert_eq!(
+                cx.interaction_dispatch(request),
+                InteractionDispatch::Unsent,
+                "a cancelled request is no longer queued while its action still exists"
+            );
+            drop(drained);
+            assert_eq!(
+                cx.interaction_dispatch(request),
+                InteractionDispatch::Unsent
+            );
+        });
+    }
+
+    #[test]
+    fn a_cancelled_queued_interaction_is_unsent_while_its_owner_stays_live() {
+        with_live_owner(|cx, owner| {
+            let request = cx.emit(InteractReq::CloseModal).unwrap();
+            assert_eq!(
+                cx.interaction_dispatch(request),
+                InteractionDispatch::Queued
+            );
+            // Cancelling clears the owner's current interaction before the
+            // queued action (and its armed custody) leaves the outbox.
+            cx.cancel_request(request);
+            assert!(cx.ledger.as_ref().unwrap().outbox.is_empty());
+            assert!(owner.live());
+            assert_eq!(
+                cx.interaction_dispatch(request),
+                InteractionDispatch::Unsent,
+                "no action and no receipt remain for a cancelled request"
+            );
+        });
+    }
+
+    #[test]
+    fn an_old_guard_dropping_after_a_new_request_starts_leaves_each_state_exact() {
+        with_live_owner(|cx, owner| {
+            let old = cx.emit(InteractReq::CloseModal).unwrap();
+            let old_action = cx.ledger.as_mut().unwrap().outbox.pop().unwrap();
+            cx.budget.observe(2);
+            let new = cx.emit(InteractReq::CloseModal).unwrap();
+            assert!(owner.live());
+            assert!(
+                !old_action.live(),
+                "the host must not send a superseded request"
+            );
+            assert_eq!(
+                cx.interaction_dispatch(old),
+                InteractionDispatch::Unsent,
+                "a superseded request that was never sent is not queued"
+            );
+            assert_eq!(cx.interaction_dispatch(new), InteractionDispatch::Queued);
+            // The old action leaves the host unsent after the new one started:
+            // its custody must not touch the new request.
+            drop(old_action);
+            assert_eq!(cx.interaction_dispatch(old), InteractionDispatch::Unsent);
+            assert_eq!(cx.interaction_dispatch(new), InteractionDispatch::Queued);
+            // The host takes the new request and settles it in the same pass.
+            let mut taken = cx.ledger.as_mut().unwrap().outbox.pop().unwrap();
+            assert!(taken.live());
+            taken.release_custody();
+            let authority = taken.authority();
+            drop(taken);
+            assert_eq!(cx.interaction_dispatch(new), InteractionDispatch::Queued);
+            let receipt = InteractionReceipt {
+                request_id: new,
+                evidence: cx.evidence,
+                accepted: true,
+                chat_since: 0,
+            };
+            cx.ledger
+                .as_mut()
+                .unwrap()
+                .complete_interaction(&authority, receipt);
+            assert_eq!(
+                cx.interaction_dispatch(new),
+                InteractionDispatch::Settled(&receipt),
+                "the receipt settles the request first"
+            );
+            assert_eq!(cx.interaction_dispatch(old), InteractionDispatch::Unsent);
+        });
     }
 
     #[test]

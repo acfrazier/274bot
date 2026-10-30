@@ -1280,7 +1280,8 @@ pub enum InteractionDispatch<'a> {
     Queued,
     /// The host dropped the request without sending it (a held tick, a
     /// guardian hold, a seat refusal, a session reset), or this action no
-    /// longer owns it. No receipt will come.
+    /// longer owns it (cancelled, or superseded by a later request) and has
+    /// no receipt for it. No receipt will come.
     Unsent,
     /// The host took the request in a pass that could dispatch it and
     /// settled it: `accepted` is the dispatch result.

@@ -122,9 +122,12 @@ pub struct HostAction {
 /// other way out of the queue drops the action unsent: a held tick
 /// (`SlotScript::seat_held_tick`, `GameplaySeat::held_tick`), a guardian
 /// hold (`GameplaySeat::hold`), a seat refusal, a session reset or a
-/// cancellation. Dropping armed custody marks the owner's interaction as
-/// unsent, so a machine can tell a request that still waits for an eligible
-/// dispatch pass from one that no pass will ever send.
+/// cancellation. Dropping armed custody marks the owner's current interaction
+/// as unsent, so a machine can tell a request that still waits for an eligible
+/// dispatch pass from one that no pass will ever send. A cancelled or
+/// superseded request is no longer the owner's current interaction, so the
+/// mark ignores it: `ActionContext::interaction_dispatch` already reports it
+/// unsent from that ownership.
 pub(crate) struct HostCustody {
     owner: Arc<Owner>,
     unsent: Option<NonZeroU64>,
