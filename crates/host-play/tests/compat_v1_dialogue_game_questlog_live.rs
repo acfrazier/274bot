@@ -868,7 +868,16 @@ fn run_make_one_cell() {
         "MAKE_RESULT:",
         &mut success_logs,
     );
-    assert_eq!(log_json(&success_logs, "MAKE_RESULT:"), json!(true));
+    let state = fixture.lock().unwrap_or_else(|error| error.into_inner());
+    assert_eq!(
+        log_json(&success_logs, "MAKE_RESULT:"),
+        json!(true),
+        "makeOne final state: roots={:?}, shortbows={}, tick={}, samples={:?}",
+        modal_roots(&state.snapshot),
+        inventory_count(&state.snapshot, "Shortbow"),
+        state.snapshot.tick(),
+        &state.modal_samples
+    );
     wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| {
         inventory_count(&state.snapshot, "Shortbow") == 1
     });
