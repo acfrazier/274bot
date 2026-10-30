@@ -226,9 +226,6 @@ fn compat_v1_game_state__game_castonnpc__contract() {
     }];
     snapshot.tick = 3;
     post_native_seat_page(&iso, &mut buffer, &snapshot, &[], &terminal, &[], &values);
-    let _ = iso.drain_seat_batches();
-    snapshot.tick = 4;
-    post_native_seat_page(&iso, &mut buffer, &snapshot, &[], &[], &[], &[]);
     let terminal_batches = iso.drain_seat_batches();
     assert!(
         terminal_batches

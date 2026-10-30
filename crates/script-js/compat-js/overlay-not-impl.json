@@ -27,24 +27,6 @@
     "async": false
   },
   {
-    "id": "not-impl:api/ui/dialogue/ChatDialog.js:ChatDialog.makeOne",
-    "module": "api/ui/dialogue/ChatDialog.js",
-    "selector": "ChatDialog.makeOne",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script-js/src/shim/chat_dialog.js:66",
-    "async": true
-  },
-  {
-    "id": "not-impl:api/ui/questlog/Quests.js:Quests.journal",
-    "module": "api/ui/questlog/Quests.js",
-    "selector": "Quests.journal",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script-js/src/shim/quests.js:25",
-    "async": false
-  },
-  {
     "id": "not-impl:api/walking/Traversal.js:Traversal.remaining",
     "module": "api/walking/Traversal.js",
     "selector": "Traversal.remaining",

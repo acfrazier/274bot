@@ -3765,7 +3765,7 @@ export const ChatDialog: {
     makeProducts(): string[];
     make(match?: string): Promise<boolean>;
     /** Pick Make-1 for the product whose name contains `match` (or the first); knife-delay tick manip uses it and it never touches Make-X or the count dialog. */
-    makeOne(match?: string): Promise<never>;
+    makeOne(match?: string): Promise<boolean>;
     /** Click Make-X, enter `count`, and wait for the amount dialog to close (#177). */
     makeX(match: string, count: number): Promise<boolean>;
     isMainMakePanel(): boolean;
@@ -3801,7 +3801,7 @@ export const Quests: {
      * Open the quest's journal scroll and return its text lines.
      * Why: it flashes the main modal, the only client view of mid-stage text, so prefer an item or message oracle when one proves progress.
      */
-    journal(name?: string): never;
+    journal(name: string): Promise<string[]>;
     /** Total quest points, transmitted varp `qp` (index 101). */
     points(): number;
 };
