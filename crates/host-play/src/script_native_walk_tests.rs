@@ -2343,6 +2343,69 @@ fn an_unroutable_native_walk_delivers_one_no_path_terminal() {
 }
 
 #[test]
+fn native_area_walk_budget_stop_is_refused_as_incomplete_not_no_path() {
+    const WIDTH: usize = 1200;
+    const HEIGHT: usize = 1000;
+    const SPLIT_X: usize = 700;
+    let cells = WIDTH * HEIGHT;
+    let mut blocked = vec![0u64; cells.div_ceil(64)];
+    for z in 0..HEIGHT {
+        let index = z * WIDTH + SPLIT_X;
+        blocked[index >> 6] |= 1 << (index & 63);
+    }
+    let world = NavWorld::from_parts(
+        nav_planner::collision::WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: WIDTH,
+            height: HEIGHT,
+            walk: vec![0; cells],
+            blocked,
+            flags: None,
+        },
+        nav_planner::transport::TransportGraph::default(),
+        Vec::new(),
+    );
+    let target = WorldTile {
+        x: WIDTH as i32 - 1,
+        z: 0,
+        level: 0,
+    };
+    let mut rig = rig(Some(Arc::new(world)), false);
+    {
+        let mut shared = rig.shared.lock();
+        shared.target = Some(target);
+        shared.candidate_goals = Some(script::native::WalkGoals::new(vec![target]).unwrap());
+        shared.arrival = nav_planner::arrival::ArrivalKind::Area;
+    }
+
+    rig.observe(1);
+    wait_for_native_route_outcome(&rig);
+    rig.observe(2);
+
+    let shared = rig.shared.lock();
+    let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
+    assert_eq!(receipt.end, WalkEnd::Refused, "{:?}", receipt.detail);
+    assert_eq!(
+        receipt.refusal,
+        Some(script::native::WalkRefusal::SearchIncomplete {
+            nodes_settled: Some(524_288),
+        }),
+    );
+    assert!(
+        receipt
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("search_result=BudgetExhausted nodes_settled=524288")),
+        "{:?}",
+        receipt.detail,
+    );
+}
+
+#[test]
 fn native_walk_failure_receipt_names_missing_route_supplies() {
     let world = toll_nav_world();
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();

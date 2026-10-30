@@ -7123,6 +7123,80 @@ fn anchored_interact_wall_walk_falls_back_to_the_loc_tile_once() {
 }
 
 #[test]
+fn anchored_interact_wall_retries_typed_incomplete_route() {
+    compile_context_test(|cx| {
+        let wall_tile = tile(3167, 3308);
+        let network = tile(wall_tile.x + 3, wall_tile.z);
+        let rendered = tile(wall_tile.x - 3, wall_tile.z);
+        let (mut snapshot, mut wall, _) = use_on_footprint_fixture(cx, network);
+        wall.id = resolve_loc(cx, "death_harold_door").unwrap();
+        wall.actions = vec![Some("Open".into())];
+        wall.layer = LocLayer::Wall;
+        wall.shape = 0;
+        wall.angle = 2;
+        wall.distance = 3;
+        snapshot.seed_local_player(local_player_with_network(rendered, network));
+        snapshot.seed_locs(vec![wall]);
+        let plan = compile_interact(
+            test_args::<InteractArgs>(serde_json::json!({
+                "target": {"loc": "death_harold_door"},
+                "op": "Open",
+                "anchor": {"tile": [3166, 3308, 0], "source": "network tile fixture"},
+                "radius": 6
+            })),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |step| plan.begin(step).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+
+        post_user_input_walk_receipt(&mut ledger, 3);
+        {
+            let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
+            receipt.end = WalkEnd::Refused;
+            receipt.refusal = Some(crate::native::WalkRefusal::SearchIncomplete {
+                nodes_settled: Some(524_288),
+            });
+            receipt.detail = Some(Arc::from(
+                "search_result=BudgetExhausted nodes_settled=524288",
+            ));
+        }
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.last().map(|entry| &entry.effect),
+            Some(HostEffect::Walk(request))
+                if request.target == wall_tile && request.radius == 1
+        ));
+        assert_eq!(
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .filter(|entry| matches!(&entry.effect, HostEffect::Walk(_)))
+                .count(),
+            2,
+            "the incomplete first walk starts its bounded fallback walk",
+        );
+        assert!(!ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .any(|entry| matches!(&entry.effect, HostEffect::Interaction(_))));
+    });
+}
+
+#[test]
 fn anchored_use_on_loc_starts_the_settle_window_after_its_initial_stand_approach() {
     compile_context_test(|cx| {
         let origin = tile(3167, 3308);

@@ -311,6 +311,60 @@ fn u6_three_zone_witness_runs_one_real_named_retry_and_counts_kernels() {
     assert_eq!(routed(&result).dest, to);
 }
 
+#[test]
+fn complete_no_path_zone_retry_replaces_an_incomplete_first_search() {
+    let world = known_corridor(&[3]);
+    let from = tile(0, 1);
+    let to = tile(23, 1);
+    let state = WorldState::default();
+    let avoid = [];
+    let options = FindOptions::default();
+    let mut admission = make_admission(
+        RiskPolicy::Inherit,
+        RiskInput {
+            prayer: 99,
+            prayer_base: 99,
+            ..input(99)
+        },
+    );
+    admission.allow.prayer = true;
+    let mut searches = Vec::new();
+    let result = route(
+        &world,
+        &admission,
+        options,
+        |opts| {
+            searches.push(opts);
+            if searches.len() == 1 {
+                crate::RouteOutcome::IncompleteSearch {
+                    search_result: crate::walk_plan::RouteSearchResultKind::BudgetExhausted {
+                        settled: Some(524_288),
+                    },
+                }
+            } else {
+                crate::RouteOutcome::NoPath
+            }
+        },
+        || real_witness(&world, from, to, options, &state, &avoid),
+    );
+
+    assert_eq!(searches.len(), 2, "one complete named-zone retry runs");
+    assert_eq!(searches[0].zones, ZoneExempt::NONE);
+    assert_eq!(
+        searches[1].zones,
+        ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap()
+    );
+    assert_eq!(result.tried, 1);
+    assert!(matches!(result.outcome, crate::RouteOutcome::NoPath));
+    assert_eq!(
+        result.refusal,
+        Some(WalkRefusal::NoRouteWithinBounds {
+            tried: 1,
+            last: None
+        })
+    );
+}
+
 #[cfg(feature = "test-support")]
 #[test]
 fn u6_nine_zone_witness_is_bounded_and_never_researched() {

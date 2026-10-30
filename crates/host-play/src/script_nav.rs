@@ -6232,62 +6232,57 @@ impl ScriptRouteRequest {
         }
     }
 
-    fn drive_route_job_output_for_test(self) -> (RouteJobOutput, Vec<WorldTile>, Arc<NavWorld>) {
-        fn identity(index: u64) -> WorkIdentity {
-            WorkIdentity::new(
-                RequestId::from_raw(RequestId::HOST_FIRST + index)
-                    .expect("test route identity is valid"),
-                api::identity::ProcessIncarnation::from_start_nonce(
-                    std::num::NonZeroU64::new(1).expect("test incarnation is nonzero"),
-                ),
-                Scope::Slot(
-                    api::identity::SlotKey::from_incarnation(1)
-                        .expect("test slot incarnation is valid"),
-                ),
-                None,
-            )
-            .expect("test route identity is valid")
-        }
-
-        fn drive_stage(worker: &mut RouteWorkJob) -> RouteStageResult {
-            use api::identity::Deadline;
-            use api::work::{MonotonicClock, SharedCancellation, SliceBudget, SystemClock};
-
-            let clock = SystemClock;
-            let cancellation = SharedCancellation::new();
-            for _ in 0..250_000 {
-                let budget = SliceBudget::new(
-                    std::num::NonZeroU32::new(64).expect("slice budget is nonzero"),
-                    Deadline::after(clock.now(), std::time::Duration::from_millis(10)),
-                );
-                let mut context = StepContext::new(&clock, budget, &cancellation);
-                match worker.step(&mut context) {
-                    StepOutcome::Yielded => {}
-                    StepOutcome::Completed(result) => return result,
-                    StepOutcome::Failed(error) => panic!("route stage failed: {error}"),
-                }
-            }
-            panic!("route stage exceeded the bounded slice count");
-        }
-
-        let world = Arc::clone(&self.world);
-        let mut job = RouteJob::prepare(
-            "route-rule-test",
-            Box::new(self),
-            RouteDemandKind::Walk { authority: None },
+    fn route_test_identity(index: u64) -> WorkIdentity {
+        WorkIdentity::new(
+            RequestId::from_raw(RequestId::HOST_FIRST + index)
+                .expect("test route identity is valid"),
+            api::identity::ProcessIncarnation::from_start_nonce(
+                std::num::NonZeroU64::new(1).expect("test incarnation is nonzero"),
+            ),
+            Scope::Slot(
+                api::identity::SlotKey::from_incarnation(1)
+                    .expect("test slot incarnation is valid"),
+            ),
+            None,
         )
-        .expect("test route request prepares");
-        job.identity = Some(identity(0));
+        .expect("test route identity is valid")
+    }
+
+    fn drive_route_stage_for_test(worker: &mut RouteWorkJob) -> RouteStageResult {
+        use api::identity::Deadline;
+        use api::work::{MonotonicClock, SharedCancellation, SliceBudget, SystemClock};
+
+        let clock = SystemClock;
+        let cancellation = SharedCancellation::new();
+        for _ in 0..250_000 {
+            let budget = SliceBudget::new(
+                std::num::NonZeroU32::new(64).expect("slice budget is nonzero"),
+                Deadline::after(clock.now(), std::time::Duration::from_millis(10)),
+            );
+            let mut context = StepContext::new(&clock, budget, &cancellation);
+            match worker.step(&mut context) {
+                StepOutcome::Yielded => {}
+                StepOutcome::Completed(result) => return result,
+                StepOutcome::Failed(error) => panic!("route stage failed: {error}"),
+            }
+        }
+        panic!("route stage exceeded the bounded slice count");
+    }
+
+    fn drive_prepared_route_job_for_test(
+        job: RouteJob,
+        world: Arc<NavWorld>,
+    ) -> (RouteJobOutput, Vec<WorldTile>, Arc<NavWorld>) {
         let mut next = Some(Box::new(job));
         for stage_index in 0..64u64 {
             let job = next.take().expect("the prior route stage continued");
             let mut worker = RouteWorkJob::new(job);
-            match drive_stage(&mut worker) {
+            match Self::drive_route_stage_for_test(&mut worker) {
                 RouteStageResult::Continue(mut job) => {
                     assert!(job.search_cursor.is_none());
                     job.prepare_continuation()
                         .expect("test route continuation prepares");
-                    job.identity = Some(identity(stage_index + 1));
+                    job.identity = Some(Self::route_test_identity(stage_index + 1));
                     next = Some(job);
                 }
                 RouteStageResult::Complete(output) => {
@@ -6302,6 +6297,18 @@ impl ScriptRouteRequest {
             }
         }
         panic!("route job exceeded the bounded stage count");
+    }
+
+    fn drive_route_job_output_for_test(self) -> (RouteJobOutput, Vec<WorldTile>, Arc<NavWorld>) {
+        let world = Arc::clone(&self.world);
+        let mut job = RouteJob::prepare(
+            "route-rule-test",
+            Box::new(self),
+            RouteDemandKind::Walk { authority: None },
+        )
+        .expect("test route request prepares");
+        job.identity = Some(Self::route_test_identity(0));
+        Self::drive_prepared_route_job_for_test(job, world)
     }
 
     /// Drive admission through the production route job and preserve its output.
@@ -7589,8 +7596,8 @@ mod diagnostic_tests {
     }
 
     #[test]
-    fn first_goal_area_budget_stop_skips_supply_diagnosis() {
-        let (world, from, to) = first_goal_probe_world(2200, 2000, 2050, 2199, true);
+    fn first_goal_area_budget_stop_does_not_publish_supply_diagnosis() {
+        let (world, from, to) = first_goal_probe_world(1200, 1000, 700, 1199, true);
         let search = nav_planner::router::find_first_with(
             &world.collision,
             &world.graph,
@@ -7603,22 +7610,29 @@ mod diagnostic_tests {
         assert_eq!(search.proof(), nav_planner::router::ReverseProof::Abandoned);
         let settled = search.settled();
 
+        let mut request = first_goal_area_request(Arc::clone(&world), from, to);
+        request.opts.allow_bank_fetch = true;
+        request.bank_origin = Origin::Hint;
+        request.admission = crate::admission::Admission::manual(
+            request.opts,
+            Default::default(),
+            1,
+            crate::WalkGlobals::default(),
+        );
         let mut job = RouteJob::prepare(
             "first-goal-budget-test",
-            first_goal_area_request(world, from, to),
+            request,
             RouteDemandKind::Walk { authority: None },
         )
         .unwrap();
-        job.identity = Some(stage_identity(2));
+        job.identity = Some(stage_identity(0));
         assert!(matches!(job.search_mode, RouteSearchMode::First));
         job.handle_strict_first_search(Err(RouteError::BudgetExhausted), None, settled)
             .unwrap();
         assert_eq!(job.budget_settled, Some(settled));
-        job.schedule_carry_diagnostics().unwrap();
-        assert_eq!(job.search_purpose, RouteSearchPurpose::Entrance);
+        let (output, _, _) =
+            ScriptRouteRequest::drive_prepared_route_job_for_test(job, Arc::clone(&world));
 
-        let output = job.finish();
-        assert!(output.missing.is_empty());
         assert_eq!(
             output.search_result,
             Some(RouteSearchResultKind::BudgetExhausted {
@@ -7631,11 +7645,32 @@ mod diagnostic_tests {
                 nodes_settled: Some(settled),
             }),
         );
+        assert!(
+            output.missing.is_empty(),
+            "incomplete bank planning must not publish a relaxed supply list",
+        );
         assert!(!output
             .detail
             .as_deref()
             .unwrap_or_default()
             .contains("Insufficient route supplies"),);
+
+        let mut bot = NavBot::default();
+        bot.route_generation = output.generation;
+        bot.walk_request_id = output.request_id;
+        bot.walk_outcome_generation = output.generation;
+        bot.walk_outcome_request_id = output.request_id;
+        bot.requested_route = Some((to, 0, false, false, true, ZoneExempt::NONE));
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "first-goal-budget-test".to_owned(),
+            bot,
+        )])));
+        apply_route_output(&navs, "first-goal-budget-test", output, None);
+        let navs = navs.lock().unwrap();
+        assert!(
+            navs["first-goal-budget-test"].walk_missing_carry.is_empty(),
+            "budget-stopped route must not post walk_missing_carry",
+        );
     }
 
     pub(super) fn tiny_stage_request() -> Box<ScriptRouteRequest> {
