@@ -10,7 +10,9 @@ use std::time::Instant;
 
 use super::shape::LoadShape;
 
+#[path = "bindings/event_callbacks.rs"]
 pub(crate) mod event_callbacks;
+#[path = "bindings/tree_bot.rs"]
 pub(crate) mod tree_bot;
 /// Monotonic clock backing the prelude's `performance.now()` shim
 /// (rustyscript's default extensions define no `performance`). First
