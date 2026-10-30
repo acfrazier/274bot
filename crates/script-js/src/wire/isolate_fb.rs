@@ -47,12 +47,11 @@ pub use generated::rs_2b_0t::isolate::{
     ApiCombatOutcome, ApiGather, ApiGatherOutcome, ApiProgress, AvoidRect, BankApproach, BankStand,
     Booth, Carry, ChatLine, ChatModalTexts, ChatOption, ClientAdapterFacts, Collision, CombatFight,
     CombatProjectile, CombatStyle, InspectHop, Interact, InteractBatch, MainModalTexts, MakeButton,
-    MakeProduct, MirrorRevoke, NativeRequest, NearestBooth, NpcBox, ProjectionLoc, ProjectionScene,
-    ProgressFlagRow, PuzzleBoard, QuestProgressRow, QuestStatus, Reach, Row, SceneEntity, SeatAbortReason,
-    SeatCancel,
-    SeatCancelReason, SeatDecide, SeatKind, SeatLive, SeatOutcome, SeatOutcomeKind, SeatPhase,
-    SeatPrompt, SeatRefusal, SeatResult, SettingRow, SideTabIface, Snapshot, Stat, StatusField, Tile,
-    Varp, WalkCancelReason, WidgetFact, WidgetText,
+    MakeProduct, MirrorRevoke, NativeRequest, NearestBooth, NpcBox, ProgressFlagRow, ProjectionLoc,
+    ProjectionScene, PuzzleBoard, QuestProgressRow, QuestStatus, Reach, Row, SceneEntity,
+    SeatAbortReason, SeatCancel, SeatCancelReason, SeatDecide, SeatKind, SeatLive, SeatOutcome,
+    SeatOutcomeKind, SeatPhase, SeatPrompt, SeatRefusal, SeatResult, SettingRow, SideTabIface,
+    Snapshot, Stat, StatusField, Tile, Varp, WalkCancelReason, WidgetFact, WidgetText,
 };
 
 impl From<script::native::WalkCancelReason> for WalkCancelReason {
@@ -1442,7 +1441,11 @@ impl SnapshotFingerprint {
                 npc_count: facts.npc_count,
                 run_controls: facts.run_controls,
                 login_message: facts.login_message.to_string(),
-                menu_entries: facts.menu_entries.iter().map(|entry| entry.to_string()).collect(),
+                menu_entries: facts
+                    .menu_entries
+                    .iter()
+                    .map(|entry| entry.to_string())
+                    .collect(),
                 last_walk_path_local: facts.last_walk_path_local.to_vec(),
                 session_generation: facts.session_generation,
                 modal_close_generation: facts.modal_close_generation,
@@ -4187,7 +4190,6 @@ fn projection_scene_off<'b>(
     table.add_locs(locs);
     table.finish()
 }
-
 
 fn client_adapter_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
@@ -7373,11 +7375,7 @@ pub(crate) mod tests {
             !unchanged.has_side_modal_id(),
             "an unchanged root is omitted"
         );
-        assert_eq!(
-            unchanged.side_modal_id(),
-            None,
-            "the reader sees omission"
-        );
+        assert_eq!(unchanged.side_modal_id(), None, "the reader sees omission");
         crate::observed::apply(&unchanged);
         assert_eq!(
             crate::observed::with(side),
