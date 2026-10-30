@@ -5044,7 +5044,11 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
             dispatch(&mut session, &mut app, action);
         }
         if app.quit {
-            return Ok(0);
+            return if session.live_name.is_some() {
+                Err("live run stopped before completion".into())
+            } else {
+                Ok(0)
+            };
         }
     })();
 
