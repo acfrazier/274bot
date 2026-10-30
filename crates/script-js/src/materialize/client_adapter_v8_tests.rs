@@ -126,8 +126,9 @@ globalThis.__clientAdapterRepeat = (count) => {
 
 "#;
 
-fn seed_item_icon() {
-    api::snapshot::set_client_adapter_cache_for_tests(Arc::new(Cache::default()));
+fn seed_item_icon() -> Arc<Cache> {
+    let cache = Arc::new(Cache::default());
+    api::snapshot::set_client_adapter_cache_for_tests(Arc::clone(&cache));
     let mut sprite = Pix32::new(2, 2);
     sprite.ohi = -1;
     sprite.data.copy_from_slice(&[11, 22, 33, 44]);
@@ -135,15 +136,16 @@ fn seed_item_icon() {
         .lock()
         .expect("model store")
         .put_sprite(Arc::new(sprite), 999_999);
+    cache
 }
 
-fn setup() -> Runtime {
+fn setup() -> (Runtime, Arc<Cache>) {
     crate::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     super::super::install(&mut runtime).unwrap();
-    seed_item_icon();
+    let cache = seed_item_icon();
     runtime.eval::<()>(SETUP).unwrap();
-    runtime
+    (runtime, cache)
 }
 
 fn collected_used_heap(runtime: &mut Runtime) -> usize {
@@ -170,7 +172,7 @@ fn materialized_rows_have_fast_properties_and_bounded_v8_heap() {
     }
 
     v8::V8::set_flags_from_string("--allow-natives-syntax");
-    let mut runtime = setup();
+    let (mut runtime, _cache) = setup();
     let diagnostics: serde_json::Value =
         serde_json::from_str(&runtime.eval::<String>("__clientAdapterFast()").unwrap())
             .expect("ClientAdapter diagnostics JSON");

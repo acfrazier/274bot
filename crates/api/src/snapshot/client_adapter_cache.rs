@@ -1,11 +1,11 @@
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, Weak};
 
 use client::config::{Cache, ObjType};
 use client::dash3d::store::ModelStore;
 use client::graphics::{Pix32, Pix3DDraw};
 use parking_lot::RwLock;
 
-static CLIENT_CACHE: LazyLock<RwLock<Option<Arc<Cache>>>> = LazyLock::new(|| RwLock::new(None));
+static CLIENT_CACHE: LazyLock<RwLock<Option<Weak<Cache>>>> = LazyLock::new(|| RwLock::new(None));
 static ITEM_ICON_PIX3D: LazyLock<Mutex<Pix3DDraw>> =
     LazyLock::new(|| Mutex::new(Pix3DDraw::default()));
 
@@ -13,11 +13,11 @@ pub(super) fn publish(cache: &Arc<Cache>) {
     let mut current = CLIENT_CACHE.write();
     if current
         .as_ref()
-        .is_some_and(|current| Arc::ptr_eq(current, cache))
+        .is_some_and(|current| current.as_ptr() == Arc::as_ptr(cache))
     {
         return;
     }
-    *current = Some(Arc::clone(cache));
+    *current = Some(Arc::downgrade(cache));
 }
 
 /// Shared immutable item pixels for a synchronous ClientAdapter read.
@@ -69,14 +69,14 @@ impl ClientAdapterCache {
     }
 }
 
-/// Clone the process-wide cache handle; it is refreshed by GameSnapshot from
-/// the same Client whose facts are posted to the isolate.
+/// Upgrade the process-wide cache handle; GameSnapshot refreshes it from the
+/// same Client whose facts are posted to the isolate.
 #[doc(hidden)]
 pub fn client_adapter_cache() -> Option<ClientAdapterCache> {
     CLIENT_CACHE
         .read()
         .as_ref()
-        .cloned()
+        .and_then(Weak::upgrade)
         .map(ClientAdapterCache)
 }
 
