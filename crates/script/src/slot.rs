@@ -674,6 +674,7 @@ impl SlotScript {
             source_identity: None,
             runtime_generation: 0,
             last_settings_fp: None,
+            native_input: NativeInputAuthority::new(),
             runtime_context: Arc::new(ScriptRuntimeContext::new(0)),
             recovery_hints: Arc::new(RecoveryHintsCell::new()),
         }
