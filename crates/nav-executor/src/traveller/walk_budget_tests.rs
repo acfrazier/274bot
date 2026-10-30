@@ -62,6 +62,53 @@ fn winding_walk_uses_short_aims_for_a_long_detour() {
 }
 
 #[test]
+fn click_ahead_hop_budget_counts_from_player_tile() {
+    let mut client = scene_client();
+    let mut snapshot = snap_at(&mut client, 0, 0);
+    let mut driver = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let tiles = detour(40, 40, 2);
+    let route = walk_route(tiles.clone());
+    let mut options = TravelOptions {
+        budget_ticks_per_hop: 4,
+        ..TravelOptions::default()
+    };
+
+    assert!(traveller
+        .follow(&mut driver, &snapshot, route.clone(), &mut options)
+        .is_none());
+    let first_hop = traveller.follow.as_ref().unwrap().walk.as_ref().unwrap();
+    assert_eq!(first_hop.aim, tiles[15]);
+    assert_eq!(first_hop.budget_ticks, 15);
+
+    for index in 1..=13 {
+        let tile = tiles[index];
+        plant_player(&mut client, tile.x - 3200, tile.z - 3200);
+        bump_rebuild(&mut client, &mut snapshot);
+        assert!(
+            traveller
+                .follow(&mut driver, &snapshot, route.clone(), &mut options)
+                .is_none(),
+            "route step {index} must keep the walk active"
+        );
+    }
+
+    let hop = traveller.follow.as_ref().unwrap().walk.as_ref().unwrap();
+    assert!(
+        hop.cursor > 13,
+        "click-ahead advances the cursor past player index 13"
+    );
+    assert_eq!(hop.aim, tiles[31]);
+    assert_eq!(
+        hop.budget_ticks, 18,
+        "the budget must include all steps from player index 13 to aim index 31"
+    );
+}
+
+#[test]
 fn short_server_path_turn_can_finish_after_scaled_budget_before_dev_bound() {
     let mut client = scene_client();
     let mut snapshot = snap_at(&mut client, 0, 0);

@@ -85,6 +85,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   this log limit.
 - Walk budgets now include the planned path length at one walking tick
   per step. They count observed game ticks, not repeated status polls.
+  They count from the player's tile even when click-ahead advances the cursor.
   Movement can extend a walk by 25% of its original allowance, rounded up
   to a whole tick, and retains at least the previous 60-tick limit.
   This lets the server finish turns without letting pacing or movement

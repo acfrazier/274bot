@@ -71,11 +71,16 @@ pub(super) fn player_path_index(
 }
 
 /// Fifteen-step aims and the 20-step end cutoff keep each walk request within
-/// the client's 25-turn cap (`client.rs:5129-5131`) and the engine's
-/// 25-waypoint limits (`MoveClickDecoder.ts:21`, `PathingEntity.ts:42`).
-/// At one tile per tick (`PathingEntity.ts:144-149`), 20 steps plus the
-/// 2-tile click-ahead radius (`walk.rs:138-143`) stay within the 60-tick
-/// hop budget (`traveller.rs:481,488`).
+/// `Client::tryMove`'s 25-turn cap
+/// (`vendor/fr-client-rust/crates/client/src/client/client.rs`). The
+/// revision-289 engine caps MoveClick paths at 25 waypoints in
+/// `MoveClickDecoder.decode`
+/// (`src/network/game/client/codec/MoveClickDecoder.ts`) and allocates 25 in
+/// `PathingEntity.waypoints` (`src/engine/entity/PathingEntity.ts`).
+/// `PathingEntity.processMovement` advances one tile per walking tick in that
+/// engine file. The `CLICK_AHEAD` radius is 2 and
+/// `DEFAULT_HOP_BUDGET_TICKS` is 60, so 20 steps plus the click-ahead radius
+/// stay within both limits.
 pub(super) fn pick_aim(
     tiles: &[WorldTile],
     here_index: Option<usize>,
@@ -486,7 +491,12 @@ impl FollowRun {
                 SendResult::Sent { .. } => {
                     // Walk speed consumes one route step per game tick:
                     // engine/src/engine/entity/PathingEntity.ts:144-149.
-                    let planned_steps = idx.saturating_sub(here_i);
+                    // Click-ahead can put the player behind the cursor. Count
+                    // those remaining steps from the player's actual route tile.
+                    let planned_start = here_index
+                        .or_else(|| tiles.iter().position(|tile| *tile == here))
+                        .unwrap_or(here_i);
+                    let planned_steps = idx.saturating_sub(planned_start);
                     hop.budget_ticks = self
                         .budget
                         .max(u32::try_from(planned_steps).unwrap_or(u32::MAX));
