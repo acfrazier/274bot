@@ -92,7 +92,7 @@ fn npc_args() -> DialogueArgs {
         name: Arc::from("Aubury"),
     })
 }
-fn content_npc_id(config: &str) -> i32 {
+pub(super) fn content_npc_id(config: &str) -> i32 {
     api::game_data::for_revision(ClientRevision::R289)
         .unwrap()
         .npc_by_config(config)
@@ -110,7 +110,7 @@ fn content_wander_range(config: &str) -> i32 {
         .wanderrange
 }
 
-fn npc_args_for(id: i32, name: &str) -> DialogueArgs {
+pub(super) fn npc_args_for(id: i32, name: &str) -> DialogueArgs {
     args(DialogueTarget::Npc {
         id,
         name: Arc::from(name),
@@ -3269,7 +3269,7 @@ fn answer_once_rejects_more_prefer_entries_than_the_mask_width() {
 }
 
 /// Continue requests the driver has emitted, accepted or not.
-fn continues(ledger: &Option<Box<ledger::Ledger>>) -> usize {
+pub(super) fn continues(ledger: &Option<Box<ledger::Ledger>>) -> usize {
     ledger
         .as_ref()
         .expect("dialogue test ledger")
@@ -3285,7 +3285,7 @@ fn continues(ledger: &Option<Box<ledger::Ledger>>) -> usize {
 }
 
 /// Talk-to clicks queued in the outbox.
-fn talks(ledger: &Option<Box<ledger::Ledger>>) -> usize {
+pub(super) fn talks(ledger: &Option<Box<ledger::Ledger>>) -> usize {
     ledger
         .as_ref()
         .expect("dialogue test ledger")
@@ -3533,7 +3533,7 @@ fn a_poll_that_jumps_over_the_bound_still_acknowledges_a_changed_page() {
 }
 
 /// The Cook beside a player one tile away, as the open-wait tests use.
-fn cook_beside_player() -> GameSnapshot {
+pub(super) fn cook_beside_player() -> GameSnapshot {
     let mut page = snapshot();
     page.seed_local_player(super::tests::local_player(api::WorldTile {
         x: 6,

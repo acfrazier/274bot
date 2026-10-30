@@ -1435,11 +1435,28 @@ pub fn log_hold_resume(action: &str, resume: HoldResume) {
         HoldResume::Kept(text) => ("kept its request", text),
         HoldResume::Reissued(text) => ("re-issued its request once", text),
     };
+    #[cfg(test)]
+    RESUME_LOG.with(|lines| {
+        lines.borrow_mut().push(format!(
+            "native action {action} resumed after a guardian hold and {what}: {text}"
+        ));
+    });
     api::host_log!(
         api::hostlog::Category::ScriptLifecycle,
         api::hostlog::Level::Info,
         "native action {action} resumed after a guardian hold and {what}: {text}"
     );
+}
+
+#[cfg(test)]
+thread_local! {
+    static RESUME_LOG: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The resume lines this test thread has logged ([`log_hold_resume`]).
+#[cfg(test)]
+pub(crate) fn take_resume_log() -> Vec<String> {
+    RESUME_LOG.with(|lines| std::mem::take(&mut *lines.borrow_mut()))
 }
 
 pub trait NativeMachine: Send + 'static {

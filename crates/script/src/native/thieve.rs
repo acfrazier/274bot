@@ -345,30 +345,34 @@ impl NativeMachine for Thieve {
         let Some(request_id) = self.core.pending_request_id() else {
             return Ok(HoldResume::Kept("no attempt is pending"));
         };
+        let (unsent, queued) = match cx.interaction_dispatch(request_id) {
+            InteractionDispatch::Unsent => (true, false),
+            InteractionDispatch::Queued => (false, true),
+            InteractionDispatch::Settled(_) => (false, false),
+        };
+        if unsent {
+            cx.cancel_request(request_id);
+            self.discard_reach();
+            self.core.abandon_attempt(cx.active_now());
+            self.pending_action = None;
+            self.pending_target_id = None;
+        }
         let goal_met = cx
             .snapshot()
             .stock()
             .held(self.args.item_id)
             .is_some_and(|held| held >= self.args.goal_qty);
-        if goal_met {
-            return Ok(HoldResume::Kept("the item count already meets the goal"));
-        }
-        match cx.interaction_dispatch(request_id) {
-            InteractionDispatch::Unsent => {
-                cx.cancel_request(request_id);
-                self.discard_reach();
-                self.core.abandon_attempt(cx.active_now());
-                self.pending_action = None;
-                self.pending_target_id = None;
-                Ok(HoldResume::Reissued("thieving attempt"))
-            }
-            InteractionDispatch::Queued => {
-                Ok(HoldResume::Kept("the host still holds the attempt's request"))
-            }
-            InteractionDispatch::Settled(_) => Ok(HoldResume::Kept(
+        Ok(if goal_met {
+            HoldResume::Kept("the item count already meets the goal")
+        } else if unsent {
+            HoldResume::Reissued("thieving attempt")
+        } else if queued {
+            HoldResume::Kept("the host still holds the attempt's request")
+        } else {
+            HoldResume::Kept(
                 "the server took the attempt; its own window resolves or times it out before any retry",
-            )),
-        }
+            )
+        })
     }
 }
 
@@ -1611,5 +1615,146 @@ mod tests {
                 crate::native::HostEffect::Walk(request) if request.target == door_tile
             )
         }));
+    }
+
+    // --- QUESTER-READ-KEEPS-STEP-R2: a guardian hold interrupts an attempt ---
+
+    use crate::native::ledger::TickBudget;
+    use crate::quester::families::tests::{
+        host_accepts, host_drops_queued_work, host_takes_queued_work, with_tick_budget,
+    };
+
+    fn begin_thieve_at_anchor(
+        snapshot: &GameSnapshot,
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+        budget: &mut TickBudget,
+    ) -> crate::native::ActionHandle<Thieve> {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let handle = with_tick_budget(snapshot, ledger, budget, 1, |tick| {
+            tick.actions
+                .begin::<Thieve>(args(anchor, 12), &mut tick.cx)
+                .unwrap()
+        });
+        assert!(with_tick_budget(snapshot, ledger, budget, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        assert_eq!(npc_click_count(ledger), 1, "the first attempt is queued");
+        handle
+    }
+
+    fn poll_thieve(
+        handle: &crate::native::ActionHandle<Thieve>,
+        snapshot: &GameSnapshot,
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+        budget: &mut TickBudget,
+        tick: u64,
+    ) -> Poll<Result<i32, ActionError>> {
+        with_tick_budget(snapshot, ledger, budget, tick, |tick| {
+            tick.actions.poll(handle, &mut tick.cx)
+        })
+    }
+
+    /// R1, Thieve, request dropped unsent: the attempt never reached the
+    /// server. Left alone the core ends the action at its receipt deadline
+    /// (`ReceiptTimeout`), 2.5 s on the active clock; instead the attempt is
+    /// forgotten and dispatched once more after the settle tick.
+    #[test]
+    fn a_pickpocket_dropped_unsent_by_a_guardian_hold_is_attempted_again_once() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let snapshot = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
+        let (mut ledger, mut budget) = (None, TickBudget::default());
+        let handle = begin_thieve_at_anchor(&snapshot, &mut ledger, &mut budget);
+        let first = ledger.as_ref().unwrap().outbox[0].request_id;
+        budget.hold_begin();
+        assert_eq!(host_drops_queued_work(&mut ledger), 1);
+        budget.hold_end();
+
+        assert!(poll_thieve(&handle, &snapshot, &mut ledger, &mut budget, 9).is_pending());
+        assert_eq!(npc_click_count(&ledger), 0, "the settle tick sends nothing");
+        assert!(poll_thieve(&handle, &snapshot, &mut ledger, &mut budget, 10).is_pending());
+        assert_eq!(npc_click_count(&ledger), 1, "one attempt is dispatched again");
+        assert_ne!(ledger.as_ref().unwrap().outbox[0].request_id, first);
+        assert!(poll_thieve(&handle, &snapshot, &mut ledger, &mut budget, 11).is_pending());
+        assert_eq!(npc_click_count(&ledger), 1, "and no second one");
+        let log = crate::native::take_resume_log();
+        assert!(
+            log.iter()
+                .any(|line| line.contains("re-issued its request once: thieving attempt")),
+            "{log:?}"
+        );
+    }
+
+    /// R1, no re-issue when the goal was already reached: the item the
+    /// dropped attempt would have stolen is in the pack, so the action
+    /// completes instead of attempting again or timing out.
+    #[test]
+    fn a_dropped_pickpocket_is_not_attempted_again_when_the_goal_is_held() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let before = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
+        let after = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![held(995, 1, 0)]);
+        let (mut ledger, mut budget) = (None, TickBudget::default());
+        let handle = begin_thieve_at_anchor(&before, &mut ledger, &mut budget);
+        budget.hold_begin();
+        assert_eq!(host_drops_queued_work(&mut ledger), 1);
+        budget.hold_end();
+
+        assert!(poll_thieve(&handle, &after, &mut ledger, &mut budget, 9).is_pending());
+        let done = poll_thieve(&handle, &after, &mut ledger, &mut budget, 10);
+        assert!(matches!(done, Poll::Ready(Ok(1))), "{done:?}");
+        assert_eq!(npc_click_count(&ledger), 0, "nothing is dispatched again");
+        let log = crate::native::take_resume_log();
+        assert!(
+            log.iter()
+                .any(|line| line.contains("kept its request: the item count already meets the goal")),
+            "{log:?}"
+        );
+    }
+
+    /// R1, Thieve, accepted then interrupted: the server took the attempt and
+    /// the guardian's interaction replaced it. The core already holds the right
+    /// rule for that: it neither dispatches over a pending attempt nor skips
+    /// its window; it times the attempt out and then dispatches once. The hold
+    /// adds nothing on top of it, so no second request appears before then.
+    #[test]
+    fn an_accepted_pickpocket_is_retried_once_by_its_own_window_after_a_hold() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let snapshot = game_snapshot(anchor, vec![npc(19, 1, 1)], vec![]);
+        let (mut ledger, mut budget) = (None, TickBudget::default());
+        let handle = begin_thieve_at_anchor(&snapshot, &mut ledger, &mut budget);
+        let taken = host_takes_queued_work(&mut ledger);
+        host_accepts(&mut ledger, &taken[0].0, 2);
+        budget.hold_begin();
+        budget.hold_end();
+
+        assert!(poll_thieve(&handle, &snapshot, &mut ledger, &mut budget, 9).is_pending());
+        assert_eq!(npc_click_count(&ledger), 0);
+        let mut sent = 0;
+        for tick in 10..16 {
+            let result = poll_thieve(&handle, &snapshot, &mut ledger, &mut budget, tick);
+            assert!(result.is_pending(), "tick {tick}: {result:?}");
+            sent += npc_click_count(&ledger);
+            host_takes_queued_work(&mut ledger);
+        }
+        assert_eq!(
+            sent, 1,
+            "the window times the attempt out and dispatches exactly one more"
+        );
     }
 }

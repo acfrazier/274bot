@@ -18,16 +18,13 @@ pub const WALK_DEADLINE: Duration = Duration::from_secs(10 * 60);
 
 pub struct Walk {
     key: WalkKey,
-    loc_id: Option<i32>,
-    arrival: ArrivalKind,
-    // Retain only arrival mode. The host retains the goals and reports their tier.
-    candidate_goals: bool,
     request_id: u64,
-    required_after: EvidenceStamp,
     deadline: Duration,
     wait: WalkSlot,
-    /// The request as sent, to send again if the host drops it unsent in a
-    /// guardian hold ([`NativeMachine::after_hold`]).
+    /// The request as sent. The machine reads the loc identity, arrival mode,
+    /// candidate goals and required evidence from it, and sends it again if
+    /// the host drops it unsent in a guardian hold
+    /// ([`NativeMachine::after_hold`]).
     request: Box<WalkRequest>,
 }
 
@@ -99,10 +96,6 @@ impl NativeMachine for Walk {
             radius: i32::from(request.radius),
             allow_teleports: request.options.allow_teleports.explicit(),
         };
-        let loc_id = request.loc_id;
-        let arrival = request.arrival;
-        let required_after = request.required_after;
-        let candidate_goals = request.candidate_goals.is_some();
         let retained = Box::new(request.clone());
         let request_id = cx.walk(request)?;
         let mut wait = WalkSlot::new();
@@ -113,11 +106,7 @@ impl NativeMachine for Walk {
         );
         Ok(Self {
             key,
-            loc_id,
-            arrival,
-            candidate_goals,
             request_id,
-            required_after,
             deadline: cx.active_now().saturating_add(WALK_DEADLINE),
             wait,
             request: retained,
@@ -141,12 +130,12 @@ impl NativeMachine for Walk {
         let frame = Frame {
             snapshot: cx.snapshot(),
             outcome: HostOutcome::empty(),
-            loc_id: self.loc_id,
-            arrival: self.arrival,
-            candidate_goals: self.candidate_goals,
+            loc_id: self.request.loc_id,
+            arrival: self.request.arrival,
+            candidate_goals: self.request.candidate_goals.is_some(),
             goal: None,
         };
-        if !self.candidate_goals && frame.arrived(self.key) {
+        if !frame.candidate_goals && frame.arrived(self.key) {
             return Ok(HoldResume::Kept("the player already stands at the goal"));
         }
         let request_id = cx.walk((*self.request).clone())?;
@@ -181,12 +170,12 @@ impl NativeMachine for Walk {
                 escape: None,
             }));
         }
-        if !cx.evidence().meets(self.required_after) {
+        if !cx.evidence().meets(self.request.required_after) {
             return Poll::Pending;
         }
         let receipt = cx
             .walk_receipt(self.request_id)
-            .filter(|receipt| receipt.evidence.meets(self.required_after));
+            .filter(|receipt| receipt.evidence.meets(self.request.required_after));
         let outcome = receipt.map_or_else(HostOutcome::empty, |receipt| HostOutcome {
             seq: receipt.evidence.sequence,
             generation: receipt.evidence.run.run,
@@ -201,9 +190,9 @@ impl NativeMachine for Walk {
         let frame = Frame {
             snapshot: cx.snapshot(),
             outcome,
-            loc_id: self.loc_id,
-            arrival: self.arrival,
-            candidate_goals: self.candidate_goals,
+            loc_id: self.request.loc_id,
+            arrival: self.request.arrival,
+            candidate_goals: self.request.candidate_goals.is_some(),
             goal: receipt.and_then(|receipt| receipt.goal),
         };
         if !self.wait.poll(self.request_id, &frame) {
