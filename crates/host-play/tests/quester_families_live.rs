@@ -1646,7 +1646,9 @@ impl PrereqFailureOracle {
         };
         if native.phase != script::native::NativePhase::Blocked {
             if native.failure.is_some() {
-                return Err(format!("negative prerequisite has failure outside Blocked: {native:?}"));
+                return Err(format!(
+                    "negative prerequisite has failure outside Blocked: {native:?}"
+                ));
             }
             return Ok(None);
         }
@@ -1655,7 +1657,10 @@ impl PrereqFailureOracle {
             .as_ref()
             .ok_or("blocked prerequisite cell has no native failure")?;
         if failure.code.as_ref() != "parked"
-            || !self.messages.iter().any(|message| message == failure.message.as_ref())
+            || !self
+                .messages
+                .iter()
+                .any(|message| message == failure.message.as_ref())
         {
             return Err(format!(
                 "expected exact prerequisite refusal {:?}, got {failure:?}",
@@ -1666,7 +1671,10 @@ impl PrereqFailureOracle {
             return Err("blocked prerequisite left an open modal".into());
         }
         let inventory_after = inventory_receipt(snapshot);
-        let inventory_before = self.start_inventory.lock().map_err(|_| "start inventory poisoned")?;
+        let inventory_before = self
+            .start_inventory
+            .lock()
+            .map_err(|_| "start inventory poisoned")?;
         if inventory_before.as_ref() != Some(&inventory_after) {
             return Err(format!("denied prerequisite changed inventory: before={inventory_before:?}, after={inventory_after:?}"));
         }
@@ -1756,7 +1764,11 @@ mod prereq_failure_oracle_tests {
         );
         *oracle.start_inventory.lock().unwrap() = Some(inventory_receipt(&snapshot));
         let status = ScriptStatus {
-            run: RunKey { slot: 1, run: 1, session: 1 },
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
             card: script::CompiledId("Quester"),
             phase: NativePhase::Blocked,
             active_settings: 1,
@@ -1773,7 +1785,10 @@ mod prereq_failure_oracle_tests {
     #[test]
     fn prereq_negative_oracle_accepts_exact_native_blocked_refusal() {
         let (oracle, snapshot, status, pages) = fixture();
-        assert!(oracle.observe(&snapshot, Some(&status), None, &pages).unwrap().is_some());
+        assert!(oracle
+            .observe(&snapshot, Some(&status), None, &pages)
+            .unwrap()
+            .is_some());
     }
 
     #[test]
@@ -1781,7 +1796,9 @@ mod prereq_failure_oracle_tests {
         let (oracle, snapshot, mut status, pages) = fixture();
         status.failure.as_mut().unwrap().message =
             format!("{} with a different cause", oracle.messages[0]).into();
-        assert!(oracle.observe(&snapshot, Some(&status), None, &pages).is_err());
+        assert!(oracle
+            .observe(&snapshot, Some(&status), None, &pages)
+            .is_err());
     }
 
     #[test]
@@ -1793,7 +1810,9 @@ mod prereq_failure_oracle_tests {
             } else {
                 snapshot.seed_chat_modal(1, vec![]);
             }
-            assert!(oracle.observe(&snapshot, Some(&status), None, &pages).is_err());
+            assert!(oracle
+                .observe(&snapshot, Some(&status), None, &pages)
+                .is_err());
         }
     }
 
@@ -1801,7 +1820,9 @@ mod prereq_failure_oracle_tests {
     fn prereq_negative_oracle_rejects_changed_inventory() {
         let (oracle, mut snapshot, status, pages) = fixture();
         snapshot.seed_inventory(vec![], 28);
-        assert!(oracle.observe(&snapshot, Some(&status), None, &pages).is_err());
+        assert!(oracle
+            .observe(&snapshot, Some(&status), None, &pages)
+            .is_err());
     }
 
     #[test]
@@ -1809,7 +1830,9 @@ mod prereq_failure_oracle_tests {
         for repair in [HOLY_ADVICE, MORT_FOOD] {
             let (oracle, snapshot, status, mut pages) = fixture();
             pages.push(repair.into());
-            assert!(oracle.observe(&snapshot, Some(&status), None, &pages).is_err());
+            assert!(oracle
+                .observe(&snapshot, Some(&status), None, &pages)
+                .is_err());
         }
     }
 
@@ -1822,7 +1845,9 @@ mod prereq_failure_oracle_tests {
             label: "Block",
             value: StatusValue::Text(status.failure.as_ref().unwrap().message.clone()),
         }]);
-        assert!(oracle.observe(&snapshot, Some(&status), None, &pages).is_err());
+        assert!(oracle
+            .observe(&snapshot, Some(&status), None, &pages)
+            .is_err());
     }
 }
 

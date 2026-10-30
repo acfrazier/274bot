@@ -983,7 +983,14 @@ pub fn run_quester_path(cell: Cell) -> Result<Value, String> {
 
 /// Run an inline native family fixture without a second launcher or capture driver.
 pub fn run_family(cell: Cell, start: StartFamily, observe: ObserveFamily) -> Result<Value, String> {
-    run_inner(cell, Some(start), Some(observe), None, false, FamilyBlockedPolicy::Reject)
+    run_inner(
+        cell,
+        Some(start),
+        Some(observe),
+        None,
+        false,
+        FamilyBlockedPolicy::Reject,
+    )
 }
 
 /// Let an explicit negative-family oracle inspect native Blocked with a failure.
@@ -993,7 +1000,14 @@ pub fn run_family_expected_blocked(
     start: StartFamily,
     observe: ObserveFamily,
 ) -> Result<Value, String> {
-    run_inner(cell, Some(start), Some(observe), None, false, FamilyBlockedPolicy::Observe)
+    run_inner(
+        cell,
+        Some(start),
+        Some(observe),
+        None,
+        false,
+        FamilyBlockedPolicy::Observe,
+    )
 }
 
 /// Run the Path with a cell-specific success oracle and polling observations.
@@ -1002,7 +1016,14 @@ pub fn run_observed(
     observe: ObserveFamily,
     observe_tick: ObserveTick,
 ) -> Result<Value, String> {
-    run_inner(cell, None, Some(observe), Some(observe_tick), false, FamilyBlockedPolicy::Reject)
+    run_inner(
+        cell,
+        None,
+        Some(observe),
+        Some(observe_tick),
+        false,
+        FamilyBlockedPolicy::Reject,
+    )
 }
 
 fn run_inner(
@@ -1067,7 +1088,15 @@ pub fn run_pair(pair: PairCell) -> Result<Value, String> {
             }
         })
         .collect();
-    run_cells(cells, RunPlan::Pair(mode), None, None, None, false, FamilyBlockedPolicy::Reject)
+    run_cells(
+        cells,
+        RunPlan::Pair(mode),
+        None,
+        None,
+        None,
+        false,
+        FamilyBlockedPolicy::Reject,
+    )
 }
 
 fn has_native_start(script: Option<&str>, family_override: bool) -> bool {
@@ -2890,7 +2919,11 @@ mod tests {
     #[test]
     fn prereq_negative_oracle_guard_requires_opt_in_and_native_blocked() {
         let mut status = ScriptStatus {
-            run: api::selected::RunKey { slot: 1, run: 1, session: 1 },
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
             card: script::CompiledId("Quester"),
             phase: NativePhase::Blocked,
             active_settings: 1,
