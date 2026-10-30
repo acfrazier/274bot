@@ -1951,8 +1951,8 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             .borders(ratatui::widgets::Borders::ALL)
             .inner(area);
         rows.iter()
-            .skip(usize::from(inner.y) + 2)
-            .take(usize::from(inner.height.saturating_sub(2)))
+            .skip(usize::from(inner.y))
+            .take(usize::from(inner.height))
             .map(|row| {
                 row.chars()
                     .skip(usize::from(inner.x))
