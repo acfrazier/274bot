@@ -758,12 +758,20 @@ fn execute(
         match operation {
             Operation::Bounded(step) => run_bounded(&mut run, step, base_hp, food_policy),
             Operation::SwingAcquire {
-                id,
                 restarts,
                 stop,
                 swing,
                 recovery,
-            } => run_swing_acquire(&mut run, id, *restarts, stop, *swing, recovery, base_hp, food_policy),
+                ..
+            } => run_swing_acquire(
+                &mut run,
+                *restarts,
+                stop,
+                *swing,
+                recovery,
+                base_hp,
+                food_policy,
+            ),
         }
     }
     run
@@ -833,7 +841,6 @@ fn run_bounded(run: &mut Run, step: &BoundedStep, base_hp: u8, food_policy: Opti
 
 fn run_swing_acquire(
     run: &mut Run,
-    _id: &str,
     restarts: u8,
     stop: &str,
     swing: Hazard,
