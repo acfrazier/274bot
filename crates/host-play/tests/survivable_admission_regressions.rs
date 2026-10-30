@@ -192,12 +192,7 @@ fn probe_gated_default_is_never_for_every_preference_source() {
             let route = find(&world, from, to);
             let mut risk_input = input(99, PoisonState::default());
             risk_input.pos = from;
-            let request = Admission::manual(
-                globals.manual_options(false),
-                risk_input,
-                1,
-                globals,
-            );
+            let request = Admission::manual(globals.manual_options(false), risk_input, 1, globals);
             let assessment = admission::assess(&route, &world, &request);
             assert!(
                 admission::permits(&route, &world, &request, &assessment),

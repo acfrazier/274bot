@@ -238,19 +238,14 @@ pub const fn combat_roll(stat: u16, bonus: i16) -> Option<u32> {
 ///
 /// `equip.rs2:275-279` sums signed worn bonuses. `combat.rs2:51-61`
 /// supplies the style bonus. Prayer and boosts receive no credit.
-pub fn defence_rolls(
-    defence: u8,
-    style_def: u8,
-    worn: [i16; 4],
-) -> Result<[u32; 4], UnknownWhy> {
+pub fn defence_rolls(defence: u8, style_def: u8, worn: [i16; 4]) -> Result<[u32; 4], UnknownWhy> {
     let effective = u32::from(defence)
         .checked_add(8)
         .and_then(|stat| stat.checked_add(u32::from(style_def)))
         .ok_or(UnknownWhy::MissingFacts)?;
     let mut rolls = [0; 4];
     for (roll, bonus) in rolls.iter_mut().zip(worn) {
-        let factor = u32::try_from(i32::from(bonus) + 64)
-            .map_err(|_| UnknownWhy::MissingFacts)?;
+        let factor = u32::try_from(i32::from(bonus) + 64).map_err(|_| UnknownWhy::MissingFacts)?;
         *roll = effective
             .checked_mul(factor)
             .ok_or(UnknownWhy::MissingFacts)?;
@@ -467,6 +462,7 @@ mod tests {
             huntrange: 0,
             vislevel: 1,
             hitpoints: 10,
+            max_dealt: Some(1000),
             damagetype: None,
             headicon: None,
             attack: 30,
@@ -721,10 +717,7 @@ mod tests {
             }
         }
         assert_eq!(worn, [188, 202, 198, 190]);
-        assert_eq!(
-            defence_rolls(40, 0, worn),
-            Ok([12096, 12768, 12576, 12192])
-        );
+        assert_eq!(defence_rolls(40, 0, worn), Ok([12096, 12768, 12576, 12192]));
     }
 
     #[test]
@@ -764,14 +757,26 @@ mod tests {
         let combat = combat();
         let mut row = npc();
         row.attack = -1;
-        assert_eq!(KindRisk::from_npc(&row, &combat).unknown, UnknownKind::Overflow);
+        assert_eq!(
+            KindRisk::from_npc(&row, &combat).unknown,
+            UnknownKind::Overflow
+        );
         row.attack = 65_536;
-        assert_eq!(KindRisk::from_npc(&row, &combat).unknown, UnknownKind::Overflow);
+        assert_eq!(
+            KindRisk::from_npc(&row, &combat).unknown,
+            UnknownKind::Overflow
+        );
         row.attack = 1;
         row.attackbonus = -65;
-        assert_eq!(KindRisk::from_npc(&row, &combat).unknown, UnknownKind::Overflow);
+        assert_eq!(
+            KindRisk::from_npc(&row, &combat).unknown,
+            UnknownKind::Overflow
+        );
         row.attackbonus = 32_768;
-        assert_eq!(KindRisk::from_npc(&row, &combat).unknown, UnknownKind::Overflow);
+        assert_eq!(
+            KindRisk::from_npc(&row, &combat).unknown,
+            UnknownKind::Overflow
+        );
     }
 
     #[test]

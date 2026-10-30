@@ -550,9 +550,9 @@ fn input_problem(input: &RiskInput, tables: &CombatTables) -> Option<UnknownWhy>
             .any(|live| {
                 live.actor.kind != crate::combat::ActorKind::Npc
                     || live.rate == 0
-                    || tables.npc(live.ident).is_none_or(|row| {
-                        KindRisk::from_npc(row, tables).unknown_for().is_some()
-                    })
+                    || tables
+                        .npc(live.ident)
+                        .is_none_or(|row| KindRisk::from_npc(row, tables).unknown_for().is_some())
             })
     {
         return Some(UnknownWhy::AlreadyEngaged);

@@ -199,8 +199,7 @@ fn endpoint_fixture(
             }
             let mut risk_input = input;
             risk_input.pos = origin;
-            let context =
-                Admission::manual(options, risk_input, 0, WalkGlobals::default());
+            let context = Admission::manual(options, risk_input, 0, WalkGlobals::default());
             let assessment = admission::assess(&route, world, &context);
             if assessment.verdict == Verdict::Unknown(UnknownWhy::Poison)
                 && !assessment.plan.intervals.is_empty()

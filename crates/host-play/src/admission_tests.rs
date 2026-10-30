@@ -645,9 +645,9 @@ fn witness_verdicts_through_the_kind_view_match_the_round_two_rule() {
             nav_planner::zones::curated::hazard_damage(kind.id.as_ref())
                 .is_some_and(|max| max < input.hp)
         } else {
-            risks.npc(kind.npc_id).is_some_and(|facts| {
-                facts.unknown_for().is_none() && facts.max_hit < input.hp
-            })
+            risks
+                .npc(kind.npc_id)
+                .is_some_and(|facts| facts.unknown_for().is_none() && facts.max_hit < input.hp)
         }
     };
     let round_two = |keys: &[ZoneKey], input: &RiskInput| {

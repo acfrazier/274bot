@@ -1147,14 +1147,8 @@ mod tests {
         assert_eq!(tables.weapon_style(31).unwrap().tab, None);
         assert_eq!(tables.weapon_style(31).unwrap().category, 1);
         assert_eq!(tables.weapon_style(30).unwrap().attackrate, 5);
-        assert_eq!(
-            tables.weapon_style_slot(30, 0).unwrap().style_bonus.2,
-            2
-        );
-        assert_eq!(
-            tables.weapon_style_slot(30, 1).unwrap().style_bonus.2,
-            7
-        );
+        assert_eq!(tables.weapon_style_slot(30, 0).unwrap().style_bonus.2, 2);
+        assert_eq!(tables.weapon_style_slot(30, 1).unwrap().style_bonus.2, 7);
         assert!(tables.weapon_style_slot(30, 2).is_none());
         assert!(tables.weapon_style_slot(31, 0).is_some());
         assert_eq!(tables.combat_tab_root(CombatTab::HeavySword), Some(901));

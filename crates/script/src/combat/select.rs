@@ -548,6 +548,7 @@ mod tests {
             vislevel: 0,
             headicon: None,
             hitpoints: 0,
+            max_dealt: Some(1000),
             damagetype: None,
             dragonfire,
             attack: 1,

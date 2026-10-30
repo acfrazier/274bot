@@ -654,13 +654,16 @@ fn capture_live(frame: &Frame<'_>, threats: &ThreatSet, input: &mut RiskInput) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use api::ItemDefView;
     use api::snapshot::{
         ActorView, CombatView, HitmarkView, ItemActionFamily, ItemContainer, ItemView,
         LocalPlayerView, PlayerView, StatView, VarpView, WorldStateView,
     };
+    use api::ItemDefView;
 
-    #[expect(dead_code, reason = "preserve the pre-P1-A input layout for an exact size comparison")]
+    #[expect(
+        dead_code,
+        reason = "preserve the pre-P1-A input layout for an exact size comparison"
+    )]
     struct LegacyRiskInput {
         pos: WorldTile,
         live: [LiveRow; 4],
@@ -690,8 +693,7 @@ mod tests {
     }
 
     fn combat_tables() -> std::sync::Arc<CombatTables> {
-        let selected =
-            api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         CombatTables::build(selected).unwrap()
     }
 
@@ -978,26 +980,14 @@ mod tests {
             },
         ];
         // Old: capture supplied no style Defence. New: the selected style slot yields its fact.
-        let input = capture_input(
-            &tables,
-            &stats,
-            &selected_mode,
-            &equipment,
-            [false; 15],
-        );
+        let input = capture_input(&tables, &stats, &selected_mode, &equipment, [false; 15]);
         assert_eq!(input.style_def, expected);
 
         let missing_mode = [VarpView {
             index: 173,
             value: 0,
         }];
-        let input = capture_input(
-            &tables,
-            &stats,
-            &missing_mode,
-            &equipment,
-            [false; 15],
-        );
+        let input = capture_input(&tables, &stats, &missing_mode, &equipment, [false; 15]);
         assert_eq!(input.style_def, 0);
     }
 
