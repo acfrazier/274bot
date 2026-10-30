@@ -98,22 +98,20 @@ fn tables() -> Arc<CombatTables> {
     CombatTables::build(api::game_data::for_revision(ClientRevision::R289).unwrap()).unwrap()
 }
 fn input(hp: u8, cap: u8, food: u8, tables: &CombatTables) -> RiskInput {
-    let mut value = RiskInput {
-        hp,
-        hp_max: cap,
-        prayer: 1,
-        prayer_base: 1,
-        combat: Some(1),
-        pos: tile(80),
-        poison: PoisonState::Clear,
-        missing_facts: false,
-        input_locked: false,
-        unattributed: false,
-        overflow: false,
-        food_len: 1,
-        free_slots: 28 - food,
-        ..RiskInput::default()
-    };
+    let mut value = RiskInput::default();
+    value.hp = hp;
+    value.hp_max = cap;
+    value.prayer = 1;
+    value.prayer_base = 1;
+    value.combat = Some(1);
+    value.pos = tile(80);
+    value.poison = PoisonState::Clear;
+    value.set_missing_facts(false);
+    value.set_input_locked(false);
+    value.set_unattributed(false);
+    value.set_overflow(false);
+    value.food_len = 1;
+    value.free_slots = 28 - food;
     value.food_ids[0] = tables.selected().item_by_alias("lobster").unwrap().id;
     value.food_counts[0] = food;
     value
@@ -1020,7 +1018,7 @@ fn replay_refreshed_poisoned_charges_max_pulse() {
 fn u9_compact_layout_and_limit_round_trips() {
     assert!(std::mem::size_of::<RiskInput>() <= 128);
     assert!(std::mem::size_of::<PoisonState>() <= 8);
-    assert!(std::mem::size_of::<KindRisk>() <= 8);
+    assert!(std::mem::size_of::<KindRisk>() <= 12);
     // T5.1: the retained zone identity is a pack-bound key (16 bytes), so a
     // row is 40 bytes, up from 24.
     assert!(std::mem::size_of::<ZoneInterval>() <= 40);
@@ -1160,13 +1158,12 @@ fn r1_m3_scene_counts_cannot_reduce_the_uncapped_union() {
 fn u2_unknown_classes_fail_closed_through_the_real_assessment() {
     let tables = tables();
     let wilderness = WildernessRules::default();
-    for (config, members, class) in [
-        ("barbarian", false, UnknownKind::Bespoke),
-        ("red_dragon", false, UnknownKind::Dragonfire),
-        ("trail_hard2", false, UnknownKind::CounterProtect),
-        ("ikov_firewarrior", false, UnknownKind::Magic),
-        ("wizard", false, UnknownKind::Mixed),
-        ("poisonspider", true, UnknownKind::Poison),
+    for (config, class) in [
+        ("barbarian", UnknownKind::Bespoke),
+        ("red_dragon", UnknownKind::Dragonfire),
+        ("trail_hard2", UnknownKind::CounterProtect),
+        ("ikov_firewarrior", UnknownKind::Magic),
+        ("wizard", UnknownKind::Mixed),
     ] {
         let npc = tables.selected().npc_by_config(config).unwrap();
         let fx = Fixture::new(
@@ -1187,8 +1184,7 @@ fn u2_unknown_classes_fail_closed_through_the_real_assessment() {
             wilderness.clone(),
         );
         let risks = RiskTables::build(&tables);
-        let mut value = input(90, 90, 10, &tables);
-        value.map_members = members;
+        let value = input(90, 90, 10, &tables);
         let assessment = assess(
             fx.route(&route(88, 112)),
             &context(&fx, &risks, &tables),
@@ -1205,6 +1201,10 @@ fn u2_unknown_classes_fail_closed_through_the_real_assessment() {
             "{config}"
         );
     }
+    let poison = tables.selected().npc_by_config("poisonspider").unwrap();
+    let poison_risk = KindRisk::from_npc(poison, &tables);
+    assert_eq!(poison_risk.unknown, UnknownKind::Known);
+    assert_eq!(poison_risk.unknown_for(), None);
 
     // No strength= line: the engine default is 1 (NpcType.ts:106). Max hit 1
     // is select.rs:204 at strength 1 and strengthbonus 0. No packed 289 row
@@ -1221,7 +1221,7 @@ fn u2_unknown_classes_fail_closed_through_the_real_assessment() {
 /// T5.1 representation closure: risk reads each zone's facts through that
 /// zone's facade kind view, keyed by NPC id, never through the pack's kind
 /// rows or their order. Here kind rows are stored in an order unrelated to
-/// their zones, one kind serves three zones, and NPC, poison, mixed,
+/// their zones, one kind serves three zones, and NPC, magic, mixed,
 /// curated-hazard, uncurated-hazard and missing-facts kinds all appear, so a
 /// lookup by any other row or kind index misclassifies some zone.
 #[test]
@@ -1238,6 +1238,7 @@ fn t5_1_each_zone_classifies_as_the_kind_its_pack_row_names() {
             Style::Unknown,
             unknown,
             0,
+            0,
             false,
             false,
             false,
@@ -1245,7 +1246,7 @@ fn t5_1_each_zone_classifies_as_the_kind_its_pack_row_names() {
         )
     };
     let ice = KindRisk::from_npc(npc("icewarrior"), &tables);
-    let spider = KindRisk::from_npc(npc("poisonspider"), &tables);
+    let magic = KindRisk::from_npc(npc("ikov_firewarrior"), &tables);
     let wizard = KindRisk::from_npc(npc("wizard"), &tables);
     let missing = KindRisk::new(
         0,
@@ -1255,23 +1256,24 @@ fn t5_1_each_zone_classifies_as_the_kind_its_pack_row_names() {
         Style::Unknown,
         UnknownKind::MissingFacts,
         0,
+        0,
         false,
         false,
         false,
         false,
     );
     let kinds = vec![
-        kind("poisonspider", npc("poisonspider").id),
+        kind("ikov-firewarrior", npc("ikov_firewarrior").id),
         kind("ikov-lava-bridge", -1),
         kind("uncurated-hazard", -1),
         kind("wizard", npc("wizard").id),
         kind("missing-facts", i32::from(i16::MAX)),
         known_kind(&tables),
     ];
-    // (kind row of zone row i, its class on a members world, its facts)
+    // (kind row of zone row i, its class and facts)
     let rows = [
         (5, None, ice),
-        (0, Some(UnknownKind::Poison), spider),
+        (0, Some(UnknownKind::Magic), magic),
         (5, None, ice),
         (3, Some(UnknownKind::Mixed), wizard),
         (1, None, hazard(20, UnknownKind::Known)),
@@ -1315,12 +1317,12 @@ fn t5_1_each_zone_classifies_as_the_kind_its_pack_row_names() {
         );
         let read = risks.zone_kind(view.kind());
         assert_eq!(read, *facts, "zone row {row}");
-        assert_eq!(read.unknown_for(true), *class, "zone row {row}");
+        assert_eq!(read.unknown_for(), *class, "zone row {row}");
     }
 
     let walk = route(0, 10 + 30 * rows.len() as i32);
     let mut value = input(99, 99, 0, &tables);
-    value.map_members = true;
+    value.set_map_members(true);
     let plan = build_plan(fx.path(&walk), zones, &risks, fx.wilderness(), &value).unwrap();
     let mut seen = [false; 8];
     for interval in plan.intervals.iter() {
@@ -1358,11 +1360,11 @@ fn t5_1_each_zone_classifies_as_the_kind_its_pack_row_names() {
     let assessment = assess(fx.route(&walk), &cx, value);
     assert_eq!(
         assessment.verdict,
-        Verdict::Unknown(UnknownWhy::Kind(UnknownKind::Poison)),
-        "the first unsupported zone on the walk is the poison spider"
+        Verdict::Unknown(UnknownWhy::Kind(UnknownKind::Magic)),
+        "the first unsupported zone on the walk is the magic firewarrior"
     );
     assert!(
-        assessment.reason.contains("poisonspider: Some(Poison)"),
+        assessment.reason.contains("ikov_firewarrior: Some(Magic)"),
         "{}",
         assessment.reason
     );
@@ -2146,6 +2148,7 @@ fn u1_u3_four_zone_crossing_keeps_distinct_ranges_rates_and_summed_hits() {
             Style::Melee,
             UnknownKind::Known,
             0,
+            640,
             true,
             false,
             false,
@@ -2387,6 +2390,7 @@ fn u1_shaped_and_ap_exposure_uses_local_ceiling_and_takeoff_hold() {
         fact.style,
         fact.unknown,
         fact.poison,
+        fact.attack_roll,
         fact.shared_attack(),
         fact.forcemulti(),
         true,
@@ -2537,7 +2541,7 @@ fn u4_mixed_food_topup_windows_exclusions_and_exact_threshold() {
     );
     value.food_ids = [delayed, -1, -1, -1, -1, -1];
     value.food_counts = [10, 0, 0, 0, 0, 0];
-    value.more_food = true;
+    value.set_more_food(true);
     value.food_len = 1;
     let assessed = assess(fx.route(&walk), &cx, value);
     assert!(assessed.reason.contains("karambwan"), "{}", assessed.reason);
@@ -3104,6 +3108,7 @@ fn u1_ap_single_tile_at_an_odd_route_index_keeps_the_final_flight() {
         fact.style,
         fact.unknown,
         fact.poison,
+        fact.attack_roll,
         fact.shared_attack(),
         fact.forcemulti(),
         true,

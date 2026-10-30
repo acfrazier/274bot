@@ -2841,24 +2841,22 @@ mod tests {
         )
         .unwrap();
         let plan = crate::combat::risk::RoutePlan::default();
-        let mut input = crate::combat::risk::RiskInput {
-            hp: 8,
-            hp_max: 40,
-            pos: tile(10, 100),
-            poison: api::condition::PoisonState::Poisoned {
-                per_tick: 6,
-                last_mark: 0,
-                hit_since_mark: false,
-            },
-            food_len: 1,
-            // `RiskInput::default()` marks the capture incomplete; this scene
-            // is a complete quiet observation.
-            missing_facts: false,
-            unattributed: false,
-            input_locked: false,
-            overflow: false,
-            ..crate::combat::risk::RiskInput::default()
+        let mut input = crate::combat::risk::RiskInput::default();
+        input.hp = 8;
+        input.hp_max = 40;
+        input.pos = tile(10, 100);
+        input.poison = api::condition::PoisonState::Poisoned {
+            per_tick: 6,
+            last_mark: 0,
+            hit_since_mark: false,
         };
+        input.food_len = 1;
+        // `RiskInput::default()` marks the capture incomplete; this scene
+        // is a complete quiet observation.
+        input.set_missing_facts(false);
+        input.set_unattributed(false);
+        input.set_input_locked(false);
+        input.set_overflow(false);
         input.food_ids[0] = food_id("lobster");
         input.food_counts[0] = 1;
         let line = crate::combat::risk::eat_line(

@@ -72,21 +72,20 @@ fn corridor(width: usize, spawns: &[i32]) -> NavWorld {
 }
 
 fn input(hp: u8, poison: PoisonState) -> RiskInput {
-    RiskInput {
-        pos: tile(0, 1),
-        poison,
-        tick: 10,
-        hp,
-        hp_max: 99,
-        prayer: 10,
-        prayer_base: 10,
-        combat: Some(50),
-        missing_facts: false,
-        unattributed: false,
-        input_locked: false,
-        overflow: false,
-        ..RiskInput::default()
-    }
+    let mut input = RiskInput::default();
+    input.pos = tile(0, 1);
+    input.poison = poison;
+    input.tick = 10;
+    input.hp = hp;
+    input.hp_max = 99;
+    input.prayer = 10;
+    input.prayer_base = 10;
+    input.combat = Some(50);
+    input.set_missing_facts(false);
+    input.set_unattributed(false);
+    input.set_input_locked(false);
+    input.set_overflow(false);
+    input
 }
 
 fn find(world: &NavWorld, from: WorldTile, to: WorldTile) -> Route {
@@ -191,12 +190,11 @@ fn probe_gated_default_is_never_for_every_preference_source() {
         let world = corridor(40, &[20]);
         for (from, to) in [(tile(0, 1), tile(20, 1)), (tile(20, 1), tile(0, 1))] {
             let route = find(&world, from, to);
+            let mut risk_input = input(99, PoisonState::default());
+            risk_input.pos = from;
             let request = Admission::manual(
                 globals.manual_options(false),
-                RiskInput {
-                    pos: from,
-                    ..input(99, PoisonState::default())
-                },
+                risk_input,
                 1,
                 globals,
             );
@@ -416,12 +414,11 @@ fn reentering_after_an_origin_escape_is_a_crossing() {
         dest: tile(2, 1),
         ticks: 20.0,
     };
+    let mut risk_input = input(99, PoisonState::default());
+    risk_input.pos = tile(2, 1);
     let request = Admission {
         enforce: true,
-        ..default_admission(RiskInput {
-            pos: tile(2, 1),
-            ..input(99, PoisonState::default())
-        })
+        ..default_admission(risk_input)
     };
     let assessment = admission::assess(&route, &world, &request);
     assert!(assessment.plan.complete);
@@ -466,14 +463,15 @@ fn fringe_origin_walk_into_the_acquisition_set_is_a_judged_crossing() {
     let world = corridor(70, &[spawn]);
     let r = ice_r(&world);
     let dest = tile(69, 1);
-    let enforcing = |from: WorldTile, hp: u8| Admission {
-        policy: RiskPolicy::Inherit,
-        enforce: true,
-        grants: ZoneExempt::NONE,
-        ..default_admission(RiskInput {
-            pos: from,
-            ..input(hp, PoisonState::Clear)
-        })
+    let enforcing = |from: WorldTile, hp: u8| {
+        let mut risk_input = input(hp, PoisonState::Clear);
+        risk_input.pos = from;
+        Admission {
+            policy: RiskPolicy::Inherit,
+            enforce: true,
+            grants: ZoneExempt::NONE,
+            ..default_admission(risk_input)
+        }
     };
     for from_x in [spawn - r, spawn - r - 1] {
         let from = tile(from_x, 1);
@@ -583,13 +581,12 @@ fn real_pack_overflowed_assessment_is_refused_by_enforcing_avoid() {
             &[],
         )
         .expect("real router route");
+        let mut risk_input = input(60, PoisonState::Clear);
+        risk_input.pos = from;
         let request = Admission {
             policy: RiskPolicy::Avoid,
             enforce: true,
-            ..default_admission(RiskInput {
-                pos: from,
-                ..input(60, PoisonState::Clear)
-            })
+            ..default_admission(risk_input)
         };
         let assessment = admission::assess(&route, &world, &request);
         let permitted = admission::permits(&route, &world, &request, &assessment);

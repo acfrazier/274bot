@@ -276,12 +276,11 @@ fn unknown_assessment(
 
 /// Absent observations are missing facts, not witnessed overflow or damage.
 pub fn unavailable(map_members: bool) -> RiskInput {
-    RiskInput {
-        map_members,
-        overflow: false,
-        unattributed: false,
-        ..RiskInput::default()
-    }
+    let mut input = RiskInput::default();
+    input.set_map_members(map_members);
+    input.set_overflow(false);
+    input.set_unattributed(false);
+    input
 }
 
 /// Capture one admission from the host's current condition, never a retained
@@ -302,11 +301,9 @@ pub fn capture(
             },
             |fact| fact.poison,
         );
-    let mut input = RiskInput {
-        poison,
-        off_debt,
-        ..unavailable(map_members)
-    };
+    let mut input = unavailable(map_members);
+    input.poison = poison;
+    input.set_off_debt(off_debt);
     if let Ok(tables) = script::combat::guard::shared_tables() {
         let stamp = EvidenceStamp {
             run: api::selected::RunKey {
@@ -323,7 +320,7 @@ pub fn capture(
             input = RiskInput::capture(&frame, &tables, &threats, poison, off_debt);
         }
     }
-    input.map_members = map_members;
+    input.set_map_members(map_members);
     input
 }
 
@@ -556,7 +553,7 @@ pub fn witness_admissible(world: &NavWorld, input: &RiskInput, keys: &[ZoneKey])
     let acceptable = |bound: BoundZoneKey| {
         zones.zone(bound).is_ok_and(|zone| {
             let kind = tables.risks.zone_kind(zone.kind());
-            kind.unknown_for(input.map_members).is_none() && kind.max_hit < input.hp
+            kind.unknown_for().is_none() && kind.max_hit < input.hp
         })
     };
     keys.iter().all(|&key| {

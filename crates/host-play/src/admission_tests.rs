@@ -152,21 +152,20 @@ fn empty_corridor() -> NavWorld {
 }
 
 fn input(hp: u8) -> RiskInput {
-    RiskInput {
-        pos: tile(0, 1),
-        poison: PoisonState::Clear,
-        tick: 10,
-        hp,
-        hp_max: 99,
-        prayer: 10,
-        prayer_base: 10,
-        combat: Some(50),
-        missing_facts: false,
-        unattributed: false,
-        input_locked: false,
-        overflow: false,
-        ..RiskInput::default()
-    }
+    let mut input = RiskInput::default();
+    input.pos = tile(0, 1);
+    input.poison = PoisonState::Clear;
+    input.tick = 10;
+    input.hp = hp;
+    input.hp_max = 99;
+    input.prayer = 10;
+    input.prayer_base = 10;
+    input.combat = Some(50);
+    input.set_missing_facts(false);
+    input.set_unattributed(false);
+    input.set_input_locked(false);
+    input.set_overflow(false);
+    input
 }
 
 fn make_admission(policy: RiskPolicy, input: RiskInput) -> Admission {
@@ -236,9 +235,9 @@ fn routed(result: &RouteAdmission) -> &Route {
 fn unavailable_snapshots_preserve_missing_facts_without_inventing_events() {
     for map_members in [false, true] {
         let input = unavailable(map_members);
-        assert!(input.missing_facts);
-        assert!(!input.overflow && !input.unattributed);
-        assert_eq!(input.map_members, map_members);
+        assert!(input.missing_facts());
+        assert!(!input.overflow() && !input.unattributed());
+        assert_eq!(input.map_members(), map_members);
         assert_eq!(input.poison, PoisonState::Unknown { since: 0 });
     }
 }
@@ -257,14 +256,10 @@ fn u6_three_zone_witness_runs_one_real_named_retry_and_counts_kernels() {
     let state = WorldState::default();
     let avoid = [];
     let options = FindOptions::default();
-    let mut admission = make_admission(
-        RiskPolicy::Inherit,
-        RiskInput {
-            prayer: 99,
-            prayer_base: 99,
-            ..input(99)
-        },
-    );
+    let mut risk_input = input(99);
+    risk_input.prayer = 99;
+    risk_input.prayer_base = 99;
+    let mut admission = make_admission(RiskPolicy::Inherit, risk_input);
     admission.allow.prayer = true;
     let ((result, searches), kernels) = count_kernels(|| {
         let mut seen = Vec::new();
@@ -388,14 +383,10 @@ fn u6_group_witness_checks_all_members_and_retries_by_canonical_group() {
     let state = WorldState::default();
     let avoid = [];
     let options = FindOptions::default();
-    let mut admission = make_admission(
-        RiskPolicy::Inherit,
-        RiskInput {
-            prayer: 99,
-            prayer_base: 99,
-            ..input(99)
-        },
-    );
+    let mut risk_input = input(99);
+    risk_input.prayer = 99;
+    risk_input.prayer_base = 99;
+    let mut admission = make_admission(RiskPolicy::Inherit, risk_input);
     admission.allow.prayer = true;
     let ((result, searches), kernels) = count_kernels(|| {
         let mut seen = Vec::new();
@@ -510,7 +501,7 @@ fn u6_unknown_and_lethal_single_witnesses_are_refused_before_retry() {
         assert!(!witness_admissible(&world, &input, &keys));
         if let Some(why) = expected_unknown {
             let kind = kind_facts(&world, 0);
-            assert!(kind.unknown_for(input.map_members).is_some());
+            assert!(kind.unknown_for().is_some());
             assert_eq!(why, UnknownWhy::MissingFacts);
         } else {
             let max_hit = kind_facts(&world, 0).max_hit;
@@ -655,7 +646,7 @@ fn witness_verdicts_through_the_kind_view_match_the_round_two_rule() {
                 .is_some_and(|max| max < input.hp)
         } else {
             risks.npc(kind.npc_id).is_some_and(|facts| {
-                facts.unknown_for(input.map_members).is_none() && facts.max_hit < input.hp
+                facts.unknown_for().is_none() && facts.max_hit < input.hp
             })
         }
     };
@@ -691,10 +682,8 @@ fn witness_verdicts_through_the_kind_view_match_the_round_two_rule() {
     let mut admitted = 0;
     for map_members in [false, true] {
         for hp in [1, 6, 7, 20, 21, 99] {
-            let input = RiskInput {
-                map_members,
-                ..input(hp)
-            };
+            let mut input = input(hp);
+            input.set_map_members(map_members);
             for (keys, max_hit) in cases {
                 let verdict = witness_admissible(&world, &input, keys);
                 let context = format!("keys {keys:?}, hp {hp}, members {map_members}");
@@ -1298,7 +1287,7 @@ fn u11_native_publication_reassesses_stale_input_then_refuses_before_follow() {
         .assessment
         .as_ref()
         .is_some_and(|fresh_assessment| !Arc::ptr_eq(fresh_assessment, &worker_assessment)));
-    assert!(bot.last_assessment.as_ref().unwrap().input.missing_facts);
+    assert!(bot.last_assessment.as_ref().unwrap().input.missing_facts());
     assert_eq!(
         bot.risk_refusal.as_deref().map(|entry| entry.1),
         Some(WalkRefusal::Unknown(UnknownWhy::MissingFacts))
@@ -1847,13 +1836,9 @@ fn unknown_poison_witness_is_not_researched() {
     let to = tile(23, 1);
     let options = FindOptions::default();
     let state = WorldState::default();
-    let request = make_admission(
-        RiskPolicy::Inherit,
-        RiskInput {
-            poison: PoisonState::default(),
-            ..input(99)
-        },
-    );
+    let mut risk_input = input(99);
+    risk_input.poison = PoisonState::default();
+    let request = make_admission(RiskPolicy::Inherit, risk_input);
     let (result, kernels) = count_kernels(|| {
         route(
             &world,
@@ -1947,20 +1932,14 @@ fn held_inherited_admission_keeps_the_exact_legacy_router_outcome() {
             (tile(0, 1), tile(23, 1)),
         ] {
             let expected = real_search(&world, from, to, options, &state, &[]);
+            let mut risk_input = input(1);
+            risk_input.pos = from;
+            risk_input.poison = PoisonState::default();
+            risk_input.set_unattributed(true);
             let request = Admission {
                 policy: globals.risk_policy(Default::default(), Default::default()),
                 enforce: globals.enforces_risk(Default::default(), Default::default()),
-                ..Admission::manual(
-                    options,
-                    RiskInput {
-                        pos: from,
-                        poison: PoisonState::default(),
-                        unattributed: true,
-                        ..input(1)
-                    },
-                    1,
-                    globals,
-                )
+                ..Admission::manual(options, risk_input, 1, globals)
             };
             let actual = route(
                 &world,
@@ -2007,13 +1986,9 @@ fn named_retry_from_a_fringe_origin_still_judges_the_crossing() {
     let state = WorldState::default();
     let options = FindOptions::default();
     for (hp, refusal) in [(12, Some(WalkRefusal::Unsurvivable)), (99, None)] {
-        let request = make_admission(
-            RiskPolicy::Inherit,
-            RiskInput {
-                pos: from,
-                ..input(hp)
-            },
-        );
+        let mut risk_input = input(hp);
+        risk_input.pos = from;
+        let request = make_admission(RiskPolicy::Inherit, risk_input);
         let result = route(
             &world,
             &request,
@@ -2064,12 +2039,11 @@ fn held_manual_no_path_leaves_walk_arms_untouched() {
             ..Default::default()
         })),
     );
+    let mut risk_input = input(99);
+    risk_input.pos = tile(0, 1);
     let held = Admission::manual(
         FindOptions::default(),
-        RiskInput {
-            pos: tile(0, 1),
-            ..input(99)
-        },
+        risk_input,
         1,
         crate::WalkGlobals::default(),
     );
@@ -2119,10 +2093,9 @@ fn held_manual_no_path_leaves_walk_arms_untouched() {
 }
 
 fn unknown_poison(hp: u8) -> RiskInput {
-    RiskInput {
-        poison: PoisonState::Unknown { since: 0 },
-        ..input(hp)
-    }
+    let mut input = input(hp);
+    input.poison = PoisonState::Unknown { since: 0 };
+    input
 }
 
 /// SURVIVABLE-DEST-GRANTS: a `cross` walk names its transit grant and relies
@@ -2269,18 +2242,17 @@ fn real_squire_walk(
     )
     .unwrap();
     let globals = crate::WalkGlobals::default();
+    let mut risk_input = unknown_poison(40);
+    risk_input.pos = from;
+    risk_input.combat = Some(40);
+    risk_input.hp_max = 40;
     let admission = Admission {
         policy: globals.risk_policy(Default::default(), Default::default()),
         // A nonempty `cross` arms enforcement while the default is held.
         enforce: true,
         grants: opts.zones,
         allow: WalkAllow::default(),
-        input: RiskInput {
-            pos: from,
-            combat: Some(40),
-            hp_max: 40,
-            ..unknown_poison(40)
-        },
+        input: risk_input,
         generation: 1,
         compat_v1: false,
         escape: None,
@@ -2707,7 +2679,7 @@ mod compact_final_route_tests {
         let final_route = compact_route_path(&world, from, dest);
         let admission = make_admission(RiskPolicy::Proceed, input(80));
         let before = assess_route_path(&final_route, &world, &admission);
-        assert!(!before.input.missing_facts);
+        assert!(!before.input.missing_facts());
         let mut snapshot = post_wear_snapshot(from);
         let mut food = wearable_item(379);
         food.container = api::snapshot::ItemContainer::Inventory;
@@ -2721,7 +2693,7 @@ mod compact_final_route_tests {
         let after = bot.assessment.as_ref().expect("reassessed final route");
         assert!(!Arc::ptr_eq(&before, after));
         assert!(
-            after.input.missing_facts,
+            after.input.missing_facts(),
             "post-wear facts must replace stale input"
         );
         assert_eq!(bot.admission.as_deref().unwrap().input, after.input);
@@ -2746,7 +2718,7 @@ mod compact_final_route_tests {
         let final_route = compact_route_path(&world, from, dest);
         let admission = make_admission(RiskPolicy::Inherit, input(80));
         let before = assess_route_path(&final_route, &world, &admission);
-        assert!(!before.input.missing_facts);
+        assert!(!before.input.missing_facts());
         let snapshot = post_wear_snapshot(from);
         let mut bot = compact_bank_bot(final_route, Arc::clone(&before), admission, dest);
 
@@ -2759,7 +2731,7 @@ mod compact_final_route_tests {
             capture(&snapshot, false, bot.condition.current(), false)
         );
         assert!(
-            after.input.missing_facts,
+            after.input.missing_facts(),
             "incomplete post-wear facts fail closed"
         );
         assert!(!bot.admission_pending);

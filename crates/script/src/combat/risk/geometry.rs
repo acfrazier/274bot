@@ -261,7 +261,7 @@ pub(super) fn row_index(row: &ZoneInterval) -> u16 {
 fn in_envelope(tile: WorldTile, zone: ZoneView<'_>, risk: &KindRisk, input: &RiskInput) -> bool {
     if zone.has_shape()
         || zone.kind().npc_id().is_none_or(|id| id < 0)
-        || risk.unknown_for(input.map_members).is_some()
+        || risk.unknown_for().is_some()
     {
         zone.contains(tile)
     } else {
@@ -331,7 +331,7 @@ where
         risk.max_hit,
         risk.rate,
         risk.style,
-        risk.unknown_for(input.map_members),
+        risk.unknown_for(),
         risk.ap(),
         kind.npc_id().is_none_or(|id| id < 0),
     )

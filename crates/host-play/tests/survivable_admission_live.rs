@@ -197,15 +197,10 @@ fn endpoint_fixture(
             if route.ticks > 20.0 {
                 continue;
             }
-            let context = Admission::manual(
-                options,
-                RiskInput {
-                    pos: origin,
-                    ..input
-                },
-                0,
-                WalkGlobals::default(),
-            );
+            let mut risk_input = input;
+            risk_input.pos = origin;
+            let context =
+                Admission::manual(options, risk_input, 0, WalkGlobals::default());
             let assessment = admission::assess(&route, world, &context);
             if assessment.verdict == Verdict::Unknown(UnknownWhy::Poison)
                 && !assessment.plan.intervals.is_empty()
@@ -344,7 +339,7 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
     }
     wait_for(&mut client, &mut snapshot, &mut pump, |s| {
         let input = admission::capture(s, profile.map_members(), None, false);
-        s.scene_state() == 2 && input.hp == 99 && !input.missing_facts
+        s.scene_state() == 2 && input.hp == 99 && !input.missing_facts()
     });
     let state = WorldState::from_snapshot(&snapshot).with_map_members(profile.map_members());
     let input = admission::capture(&snapshot, state.map_members, None, false);
@@ -708,18 +703,12 @@ fn compat_corridor_fixture(
         .legs
         .iter()
         .all(|leg| matches!(leg, nav_planner::router::Leg::Walk { .. })));
+    let mut risk_input = input;
+    risk_input.pos = origin;
     let assessment = admission::assess(
         &route,
         world,
-        &Admission::manual(
-            options,
-            RiskInput {
-                pos: origin,
-                ..input
-            },
-            0,
-            WalkGlobals::default(),
-        ),
+        &Admission::manual(options, risk_input, 0, WalkGlobals::default()),
     );
     assert!(
         !assessment.plan.intervals.is_empty(),
@@ -798,7 +787,7 @@ impl CompatLive {
             {
                 self.phase = 2;
             }
-            3 if input.hp == self.base_hp && food == 6 && !input.missing_facts => {
+            3 if input.hp == self.base_hp && food == 6 && !input.missing_facts() => {
                 // Real account-only debug damage. No client/snapshot HP replacement.
                 assert!(interact::cheat(
                     client,

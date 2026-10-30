@@ -5389,7 +5389,7 @@ impl ScriptWalkArm {
             }
             let displaced = bot.pending_route.take();
             let displaced_kind = displaced.as_ref().and_then(|demand| demand.kind());
-            admission.input.off_debt = bot.walk_guard_off.is_some();
+            admission.input.set_off_debt(bot.walk_guard_off.is_some());
             admission.grants = opts.zones;
             admission.generation = bot.route_generation.wrapping_add(1);
             match bot.admission.as_deref_mut() {

@@ -117,7 +117,7 @@ where
     F: FnMut() -> U,
     U: Future<Output = ()>,
 {
-    if !allow.prayer || input.other_prayers_on || input.off_debt {
+    if !allow.prayer || input.other_prayers_on() || input.off_debt() {
         return false;
     }
     let intervals = rows(plan, c);
@@ -539,10 +539,10 @@ where
 }
 
 fn input_problem(input: &RiskInput, tables: &CombatTables) -> Option<UnknownWhy> {
-    if input.overflow || input.live_len > 4 || input.food_len > 6 {
+    if input.overflow() || input.live_len > 4 || input.food_len > 6 {
         return Some(UnknownWhy::Overflow);
     }
-    if input.unattributed
+    if input.unattributed()
         || input
             .live
             .iter()
@@ -551,18 +551,16 @@ fn input_problem(input: &RiskInput, tables: &CombatTables) -> Option<UnknownWhy>
                 live.actor.kind != crate::combat::ActorKind::Npc
                     || live.rate == 0
                     || tables.npc(live.ident).is_none_or(|row| {
-                        KindRisk::from_npc(row, tables)
-                            .unknown_for(input.map_members)
-                            .is_some()
+                        KindRisk::from_npc(row, tables).unknown_for().is_some()
                     })
             })
     {
         return Some(UnknownWhy::AlreadyEngaged);
     }
-    if input.missing_facts || input.hp == 0 || input.hp_max == 0 {
+    if input.missing_facts() || input.hp == 0 || input.hp_max == 0 {
         return Some(UnknownWhy::MissingFacts);
     }
-    if input.input_locked {
+    if input.input_locked() {
         return Some(UnknownWhy::InputLock);
     }
     None
@@ -1631,7 +1629,7 @@ where
             .unwrap_or("ordinary food");
         let _ = write!(reason, "needs {count} {name}; ");
     }
-    if input.more_food {
+    if input.more_food() {
         let _ = write!(reason, "only six largest carried food kinds replayed; ");
     }
     for (id, count) in input.food_iter() {
