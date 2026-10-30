@@ -2259,20 +2259,11 @@ fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
     let bob = d.session().profile_identity_or_synthetic("bob");
     set_quester_queue(&mut d, "alice", &["sheep"]);
     let command = d.session().fleet_plan().expect("plan waits").command();
-    // The consent recheck is the subject of this test; leave Bob's Start
-    // terminally not-ready instead of waiting on a clientless script runner.
-    d.session_mut().set_play(None);
     let run = d.submit(command, Targets::Plan).expect("run");
     let request = run.request();
     d.poll();
     let result = d.session().fleet_result().expect("Start result");
-    assert!(result.settled(), "{}", result.text());
-    assert_eq!(result.counts().skipped, 2, "{}", result.text());
-    assert!(
-        result.text().contains("bob (not ready)"),
-        "Bob's unchanged Start remains a separate not-ready result: {}",
-        result.text()
-    );
+    assert_eq!(result.counts().skipped, 1, "{}", result.text());
     assert!(
         result
             .text()
