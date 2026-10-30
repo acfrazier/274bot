@@ -162,15 +162,16 @@ impl StepRun for Run {
         if !self.opened {
             let here = cx.tick.cx.snapshot().here();
             if !here.is_some_and(|obs| reach::within(obs.value, self.tile, self.radius)) {
-                self.walk = Some(cx.tick.actions.begin::<Walk>(
-                    reach::walk_request(
-                        self.tile,
-                        self.radius.max(1) as u16,
-                        None,
-                        cx.required_after,
-                    ),
-                    &mut cx.tick.cx,
-                )?);
+                let mut request = reach::walk_request(
+                    self.tile,
+                    self.radius.max(1) as u16,
+                    None,
+                    cx.required_after,
+                );
+                // The gate above is the authored anchor radius; any
+                // standable tile inside it is close enough to open the door.
+                request.arrival = nav_planner::contract::ArrivalKind::Area;
+                self.walk = Some(cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?);
                 return Poll::Pending;
             }
             if self.reach.is_none() {

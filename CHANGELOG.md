@@ -100,6 +100,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   stands, and the second failure ends the step with its detail. Inside the
   anchor, the bot waits one NPC respawn window for a target and then stops
   with "no thieving target appeared at the anchor".
+- Anchor walks in thieving, gather, use-on and the Tribal Totem door steps now
+  accept any standable tile inside the authored radius. Before, the walk
+  required a path onto the anchor tile itself, so a bot that stopped short
+  could end with "walk route ended before arrival" while already inside the
+  area.
 
 ### Scripting
 

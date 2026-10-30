@@ -354,11 +354,13 @@ impl StepRun for Run {
         };
         if let Some(anchor) = self.approach {
             if !super::reach::within(here.value, anchor, i32::from(self.radius)) {
+                let mut request =
+                    super::reach::walk_request(anchor, self.radius, None, cx.required_after);
+                // The approach gate is the authored anchor radius; any
+                // standable tile inside the gather area is enough.
+                request.arrival = nav_planner::contract::ArrivalKind::Area;
                 self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                    cx.tick.actions.begin::<Walk>(
-                        super::reach::walk_request(anchor, self.radius, None, cx.required_after),
-                        &mut cx.tick.cx,
-                    ),
+                    cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
                 ))?);
                 self.approach = None;
                 return Poll::Pending;

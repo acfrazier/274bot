@@ -464,7 +464,13 @@ impl Thieve {
         cx: &mut ActionContext<'_>,
     ) -> Result<(), ActionError> {
         let required_after = cx.evidence();
-        let request_id = cx.walk(reach::walk_request(target, radius, None, required_after))?;
+        let mut request = reach::walk_request(target, radius, None, required_after);
+        // The action's own gate is the Chebyshev radius (`reach::within`):
+        // any standable tile inside it is enough to look for a workman, so
+        // the anchor walk must not demand a path onto the anchor tile. A
+        // visible workman still uses the reach machine's `Reach` arrival.
+        request.arrival = nav_planner::contract::ArrivalKind::Area;
+        let request_id = cx.walk(request)?;
         self.walk = Some(PendingWalk {
             request_id,
             required_after,
