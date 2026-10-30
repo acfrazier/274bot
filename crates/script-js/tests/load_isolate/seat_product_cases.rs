@@ -887,13 +887,11 @@ export function tick(api) {
         progress.parent, None,
         "a local Hunt hook is not a seat parent"
     );
-    assert!(
-        matches!(
-            &progress.args,
-            SeatStartArgs::QuestProgress { name, journal_only }
-                if name == "unlisted-product-fixture" && !journal_only
-        )
-    );
+    assert!(matches!(
+        &progress.args,
+        SeatStartArgs::QuestProgress { name, journal_only }
+            if name == "unlisted-product-fixture" && !journal_only
+    ));
     let progress_id = progress.id;
     let progress_token = progress_id.get();
 

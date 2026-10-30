@@ -27,9 +27,9 @@
 //! read from each.
 
 use crate::wire::{
-    ApiCombatOutcome, ApiGather, ApiGatherOutcome, ApiProgress,
-    JournalEvidence as JournalEvidenceWire, CombatStyle, QuestProgressRow, QuestStatus, Row,
-    SceneEntity, Snapshot, Stat,
+    ApiCombatOutcome, ApiGather, ApiGatherOutcome, ApiProgress, CombatStyle,
+    JournalEvidence as JournalEvidenceWire, QuestProgressRow, QuestStatus, Row, SceneEntity,
+    Snapshot, Stat,
 };
 use api::line_of_sight::CollisionQuery;
 use api::quest_progress::{EvidenceStamp, ProgressFlag};

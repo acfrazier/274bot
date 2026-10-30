@@ -2734,14 +2734,13 @@ export const Game: {
     setAutoRetaliate(on: boolean): boolean;
     myName(): string | null;
     openSideTab(tab: number): Promise<boolean>;
-    castOnNpc(spell?: string, npc?: Npc): Promise<never>;
+    castOnNpc(spell: string, npc: Npc): Promise<boolean>;
     /** Cast a targeted spell at a piece of scenery. */
     castOnLoc(spell: string, loc: Loc): Promise<boolean>;
     /** Cast a targeted spell at a pack item, the `TGT_HELD` menu action Superheat Item needs. */
     castOnItem(spell: string, item: InvItem): Promise<boolean>;
     /** Cast a standard spellbook teleport by name. Returns when the click is sent; the caller checks arrival. */
     teleport(name: string): Promise<boolean>;
-    autoRetaliate(): boolean;
 };
 
 }

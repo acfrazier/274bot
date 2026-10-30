@@ -1986,10 +1986,8 @@ impl SlotScript {
             .as_ref()
             .map_or(0, |bank| bank.result_values(&mut result_values));
         if let (Some(api), Some(seat)) = (self.api.as_deref(), self.seat.as_ref()) {
-            result_values_len += api.result_values(
-                seat.results(),
-                &mut result_values[result_values_len..],
-            );
+            result_values_len +=
+                api.result_values(seat.results(), &mut result_values[result_values_len..]);
         }
         if let (Some(seat), Some(details)) = (self.seat.as_ref(), details.as_ref()) {
             native.seat_page = Some(
@@ -2050,10 +2048,8 @@ impl SlotScript {
             .as_ref()
             .map_or(0, |bank| bank.result_values(&mut result_values));
         if let (Some(api), Some(seat)) = (self.api.as_deref(), self.seat.as_ref()) {
-            result_values_len += api.result_values(
-                seat.results(),
-                &mut result_values[result_values_len..],
-            );
+            result_values_len +=
+                api.result_values(seat.results(), &mut result_values[result_values_len..]);
         }
         if let (Some(seat), Some(details)) = (self.seat.as_ref(), details.as_ref()) {
             native.seat_page = Some(

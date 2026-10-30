@@ -3,6 +3,9 @@
 
 mod common;
 
+use api::identity::ExecutionId;
+use api::script_contract::ChildOrigin;
+use api::selected::{ClientRevision, RunKey};
 use script::native::request::NativeKind;
 use script::native::seat::{SeatEntry, SeatResult, SeatTerminal};
 use script::native::NativePhase;
@@ -13,12 +16,10 @@ use script_js::wire::{
 };
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::Value;
-use api::identity::ExecutionId;
-use api::script_contract::ChildOrigin;
-use api::selected::{ClientRevision, RunKey};
 
 const MODULES_JSON: &str = include_str!("../compat-js/modules.json");
 const ABI_CONTRACT: &str = include_str!("../compat-js/abi-contract.json");
+const INDEX_D_TS: &str = include_str!("../compat-js/index.d.ts");
 
 const CAST_SRC: &str = r#"
 import { Game } from '../../api/game/Game.js';
@@ -260,7 +261,10 @@ fn compat_v1_game_state__game_autoretaliate__removed() {
     iso.join();
 
     assert_eq!(facts["own"], false, "Game has no own autoRetaliate member");
-    assert_eq!(facts["descriptor"], true, "Game has no autoRetaliate descriptor");
+    assert_eq!(
+        facts["descriptor"], true,
+        "Game has no autoRetaliate descriptor"
+    );
     assert_eq!(facts["keys"], false, "Game has no autoRetaliate key");
     let removed = facts["removed"].as_str().expect("generic proxy error");
     let unknown = facts["unknown"].as_str().expect("generic proxy error");
@@ -270,9 +274,18 @@ fn compat_v1_game_state__game_autoretaliate__removed() {
         "a removed member follows the generic unknown-key proxy trap"
     );
     assert_eq!(facts["plain"], true, "plain-object reads remain undefined");
-    assert_eq!(facts["retaliate"], true, "autoRetaliateOn reads posted native state");
-    assert_eq!(facts["setRetaliate"], true, "setAutoRetaliate remains available");
-    assert_eq!(facts["spellTargets"], true, "the supported spell-target methods remain");
+    assert_eq!(
+        facts["retaliate"], true,
+        "autoRetaliateOn reads posted native state"
+    );
+    assert_eq!(
+        facts["setRetaliate"], true,
+        "setAutoRetaliate remains available"
+    );
+    assert_eq!(
+        facts["spellTargets"], true,
+        "the supported spell-target methods remain"
+    );
     assert_eq!(facts["style"], true, "setCombatStyle remains available");
     assert_eq!(
         interactions,
@@ -285,6 +298,9 @@ fn compat_v1_game_state__game_autoretaliate__removed() {
         ("modules.json", MODULES_JSON),
         ("abi-contract.json", ABI_CONTRACT),
     ] {
-        assert!(!mentions(text, "autoRetaliate"), "{file} still promises autoRetaliate");
+        assert!(
+            !mentions(text, "autoRetaliate"),
+            "{file} still promises autoRetaliate"
+        );
     }
 }

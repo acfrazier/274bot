@@ -5,10 +5,10 @@ use std::task::Poll;
 use api::game_data::{SelectedGameData, SpellFact};
 use api::snapshot::NpcView;
 
+use crate::combat::CastNpcRequest;
 use crate::combat::{frame::Frame, style::magic};
 use crate::interact::InteractReq;
 use crate::native::{ActionContext, ActionError, NativeMachine};
-use crate::combat::CastNpcRequest;
 
 #[derive(Debug, Clone, Copy)]
 struct AwaitingCast {
@@ -52,10 +52,7 @@ impl CastNpc {
     }
 
     fn timed_out(sent_tick: u64, cx: &ActionContext<'_>) -> bool {
-        cx.evidence()
-            .tick
-            .saturating_sub(sent_tick)
-            >= u64::from(magic::CAST_TICKS)
+        cx.evidence().tick.saturating_sub(sent_tick) >= u64::from(magic::CAST_TICKS)
     }
 }
 
@@ -82,8 +79,8 @@ impl NativeMachine for CastNpc {
         let Some(spell_index) = spell_index else {
             return Err(unavailable("selected spell component is unknown"));
         };
-        let npc_index = usize::try_from(request.index)
-            .map_err(|_| unavailable("invalid NPC identity"))?;
+        let npc_index =
+            usize::try_from(request.index).map_err(|_| unavailable("invalid NPC identity"))?;
         let snapshot = cx.snapshot();
         let Some(frame) = Frame::borrow(snapshot) else {
             return Err(unavailable("combat snapshot is incomplete"));

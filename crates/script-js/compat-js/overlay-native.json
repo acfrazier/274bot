@@ -134,15 +134,6 @@
     "runtime": "crates/script-js/src/shim/firemaking.js:108"
   },
   {
-    "id": "game-native-retaliate-alias",
-    "module": "api/game/Game.js",
-    "selector": "Game.autoRetaliate",
-    "add": true,
-    "reason": "Host additionally exposes its posted auto-retaliate reader under this name.",
-    "runtime": "crates/script-js/src/shim/game.js:73",
-    "declaration": "autoRetaliate(): boolean;"
-  },
-  {
     "id": "game-current-combat-mode",
     "module": "api/game/Game.js",
     "selector": "Game.combatStyleMode",

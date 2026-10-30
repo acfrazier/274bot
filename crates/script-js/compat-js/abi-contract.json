@@ -13170,17 +13170,6 @@
       "nav_consuming": false
     },
     {
-      "id": "game-native-retaliate-alias",
-      "module": "api/game/Game.js",
-      "selector": "Game.autoRetaliate",
-      "add": true,
-      "reason": "Host additionally exposes its posted auto-retaliate reader under this name.",
-      "runtime": "crates/script-js/src/shim/game.js:73",
-      "declaration": "autoRetaliate(): boolean;",
-      "family_id": "game-state",
-      "nav_consuming": false
-    },
-    {
       "id": "game-current-combat-mode",
       "module": "api/game/Game.js",
       "selector": "Game.combatStyleMode",
@@ -13669,17 +13658,6 @@
       "runtime": "crates/script-js/src/shim/client_adapter.js:253",
       "async": false,
       "family_id": "client-adapter",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/game/Game.js:Game.castOnNpc",
-      "module": "api/game/Game.js",
-      "selector": "Game.castOnNpc",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "runtime": "crates/script-js/src/shim/game.js:208",
-      "async": true,
-      "family_id": "game-state",
       "nav_consuming": false
     },
     {
@@ -23528,16 +23506,6 @@
       "overlay_id": "not-impl:adapter/ClientAdapter.js:reader.bankComId"
     },
     {
-      "family_id": "game-state",
-      "member": "castOnNpc",
-      "selector": "Game.castOnNpc",
-      "module": "api/game/Game.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/game.js:208",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "overlay_id": "not-impl:api/game/Game.js:Game.castOnNpc"
-    },
-    {
       "family_id": "shop",
       "member": "buyById",
       "selector": "Shop.buyById",
@@ -25212,7 +25180,7 @@
       "type_aliases": 1,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 1
+      "not_impl_debt": 0
     },
     {
       "family_id": "gathering",

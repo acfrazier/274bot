@@ -104,26 +104,18 @@ fn no_posted_continue_is_false_without_a_press() {
 }
 
 #[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_dialogue__chatdialog_makeone__contract() {
     let iso = LoadIsolate::spawn(MAKE_ONE_SRC.into(), LoadShape::CompatClass, vec![]).unwrap();
     let buttons = [
-        MakeButtonInput {
-            qty: 5,
-            com_id: 80,
-        },
-        MakeButtonInput {
-            qty: 1,
-            com_id: 81,
-        },
+        MakeButtonInput { qty: 5, com_id: 80 },
+        MakeButtonInput { qty: 1, com_id: 81 },
         MakeButtonInput {
             qty: -1,
             com_id: 82,
         },
     ];
-    let other_buttons = [MakeButtonInput {
-        qty: 1,
-        com_id: 90,
-    }];
+    let other_buttons = [MakeButtonInput { qty: 1, com_id: 90 }];
     let products = [
         MakeProductInput {
             object_id: 1737,
@@ -150,9 +142,10 @@ fn compat_v1_dialogue__chatdialog_makeone__contract() {
     );
     assert_eq!(iso.probe("__made").unwrap(), Value::Null);
 
-    inventory[0].count = 3;
+    let mut updated_inventory = [ItemRowInput::nc(Some("Ball of wool"), 3)];
+    updated_inventory[0].id = 1737;
     snap.main_modal_id = 3001;
-    snap.inv = &inventory;
+    snap.inv = &updated_inventory;
     post_tick(&iso, &mut snap, 2);
     assert_eq!(iso.probe("__made").unwrap(), true);
     assert!(
@@ -162,10 +155,7 @@ fn compat_v1_dialogue__chatdialog_makeone__contract() {
     iso.join();
 
     let refused = LoadIsolate::spawn(MAKE_ONE_SRC.into(), LoadShape::CompatClass, vec![]).unwrap();
-    let no_make_one = [MakeButtonInput {
-        qty: 5,
-        com_id: 80,
-    }];
+    let no_make_one = [MakeButtonInput { qty: 5, com_id: 80 }];
     let products = [MakeProductInput {
         object_id: 1737,
         name: "Ball of wool",

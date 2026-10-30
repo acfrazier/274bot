@@ -300,7 +300,10 @@ fn journal_only_reads_exact_quest_and_waits_for_observed_close() {
         if slot.has_native_actions() {
             break;
         }
-        assert!(Instant::now() < deadline, "journal-only preparation stalled");
+        assert!(
+            Instant::now() < deadline,
+            "journal-only preparation stalled"
+        );
         std::thread::yield_now();
     }
     finish_journal(&mut slot, &mut snapshot, "Bring eggs: 12 eggs");

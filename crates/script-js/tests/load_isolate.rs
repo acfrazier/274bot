@@ -6939,7 +6939,6 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-
 // Task 9 fix — Row FB has name+count only; countById cannot observe ids.
 #[test]
 fn kernel_facade_inventory_count_by_id_throws_not_impl() {

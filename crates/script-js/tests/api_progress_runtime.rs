@@ -116,12 +116,7 @@ fn isolate() -> LoadIsolate {
     iso
 }
 fn journal_isolate() -> LoadIsolate {
-    let iso = LoadIsolate::spawn(
-        JOURNAL_SCRIPT.into(),
-        LoadShape::NativeTick,
-        vec![],
-    )
-    .unwrap();
+    let iso = LoadIsolate::spawn(JOURNAL_SCRIPT.into(), LoadShape::NativeTick, vec![]).unwrap();
     tick(&iso, 1, None);
     iso
 }
@@ -179,7 +174,9 @@ fn take_single_read(requests: &[InteractReq]) -> (u64, String) {
     let reads: Vec<_> = requests
         .iter()
         .filter_map(|request| match request {
-            InteractReq::ProgressRead { request_id, name, .. } => Some((*request_id, name.clone())),
+            InteractReq::ProgressRead {
+                request_id, name, ..
+            } => Some((*request_id, name.clone())),
             _ => None,
         })
         .collect();
@@ -319,6 +316,7 @@ fn invalid_progress_arguments_refuse_without_emitting_a_host_row() {
 }
 
 #[test]
+#[expect(non_snake_case, reason = "the census names this contract test")]
 fn compat_v1_questlog__quests_journal__contract() {
     let iso = journal_isolate();
 
@@ -363,7 +361,11 @@ fn compat_v1_questlog__quests_journal__contract() {
         result: Some(Arc::new(JournalEvidence {
             quest: Arc::from("cook"),
             root: 8134,
-            lines: vec![Arc::<str>::from("First journal line"), Arc::from("Second line")].into(),
+            lines: vec![
+                Arc::<str>::from("First journal line"),
+                Arc::from("Second line"),
+            ]
+            .into(),
             colour: Some(0xf8f800),
             acquired: evidence(10),
             closed: evidence(12),

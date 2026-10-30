@@ -1496,6 +1496,7 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::api_session::CombatSession>(),
     entry::<crate::api_session::CombatStop>(),
     entry::<crate::api_session::ProgressQuery>(),
+    entry::<crate::api_session::CastNpc>(),
     entry::<crate::quest_journal::QuestJournal>(),
     entry::<crate::reach_entity::EntityOp>(),
     entry::<crate::reach_entity::LocOp>(),
@@ -1726,8 +1727,12 @@ pub(crate) enum SeatStartPayload {
     Empty,
     Gather(std::sync::Arc<script::native::SettingsBag>),
     Combat(std::sync::Arc<script::api_combat::CombatSessionRequest>),
-    QuestProgress(std::sync::Arc<str>),
+    QuestProgress {
+        name: std::sync::Arc<str>,
+        journal_only: bool,
+    },
     Bank(script::bank::request::BankSeatArgs),
+    CastNpc(script::combat::CastNpcRequest),
 }
 
 impl SeatStartPayload {
@@ -1736,8 +1741,14 @@ impl SeatStartPayload {
             Self::Empty => isolate_fb::SeatStartArgsRef::Empty,
             Self::Gather(settings) => isolate_fb::SeatStartArgsRef::Gather(settings),
             Self::Combat(request) => isolate_fb::SeatStartArgsRef::Combat(request),
-            Self::QuestProgress(name) => isolate_fb::SeatStartArgsRef::QuestProgress(name),
+            Self::QuestProgress { name, journal_only } => {
+                isolate_fb::SeatStartArgsRef::QuestProgress {
+                    name,
+                    journal_only: *journal_only,
+                }
+            }
             Self::Bank(args) => isolate_fb::SeatStartArgsRef::Bank(args),
+            Self::CastNpc(request) => isolate_fb::SeatStartArgsRef::CastNpc(request),
         }
     }
 }
@@ -2731,10 +2742,21 @@ impl Host {
                 *request_id,
                 SeatStartPayload::Combat(std::sync::Arc::clone(request)),
             ),
-            InteractReq::ProgressRead { request_id, name } => (
+            InteractReq::ProgressRead {
+                request_id,
+                name,
+                journal_only,
+            } => (
                 *request_id,
-                SeatStartPayload::QuestProgress(std::sync::Arc::from(name.as_str())),
+                SeatStartPayload::QuestProgress {
+                    name: std::sync::Arc::from(name.as_str()),
+                    journal_only: *journal_only,
+                },
             ),
+            InteractReq::CastNpc {
+                request_id,
+                request,
+            } => (*request_id, SeatStartPayload::CastNpc(*request)),
             _ => return false,
         };
         if let Ok(id) = RequestId::isolate(raw_id) {
@@ -3420,6 +3442,7 @@ fn native_kind_for_family(family: &str) -> Option<native::request::NativeKind> {
         "gather" => NativeKind::Gather,
         "combat" => NativeKind::Combat,
         "quest-progress" => NativeKind::QuestProgress,
+        "cast-npc" => NativeKind::CastNpc,
         "hunt-fight" | "hunt-hold" | "hunt-retreat" | "hunt-walkspot" | "hunt-enter" => {
             NativeKind::Hunt
         }
@@ -3439,6 +3462,9 @@ fn seat_start_payload(
             native::request::NativeKind::QuestProgress,
             InteractReq::ProgressRead { request_id, .. },
         ) => *request_id == id.get(),
+        (native::request::NativeKind::CastNpc, InteractReq::CastNpc { request_id, .. }) => {
+            *request_id == id.get()
+        }
         _ => false,
     });
     match kind {
@@ -3464,10 +3490,25 @@ fn seat_start_payload(
             let Some(position) = position else {
                 return Err("native QuestProgress start is missing its quest name".into());
             };
-            let InteractReq::ProgressRead { name, .. } = ops.remove(position) else {
+            let InteractReq::ProgressRead {
+                name, journal_only, ..
+            } = ops.remove(position)
+            else {
                 unreachable!("matched ProgressRead")
             };
-            Ok(SeatStartPayload::QuestProgress(std::sync::Arc::from(name)))
+            Ok(SeatStartPayload::QuestProgress {
+                name: std::sync::Arc::from(name),
+                journal_only,
+            })
+        }
+        native::request::NativeKind::CastNpc => {
+            let Some(position) = position else {
+                return Err("native CastNpc start is missing typed cast arguments".into());
+            };
+            let InteractReq::CastNpc { request, .. } = ops.remove(position) else {
+                unreachable!("matched CastNpc")
+            };
+            Ok(SeatStartPayload::CastNpc(request))
         }
         _ => Ok(SeatStartPayload::Empty),
     }

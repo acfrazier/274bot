@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use api::interact::{self, Interactions, OpTarget};
+use api::interact::{self, Interactions, OpTarget, SendResult};
 use api::snapshot::{GameSnapshot, ReadContext};
 use client::client::Client;
 use host_play::{mint_live_entries, mint_live_names, run_with_template, Play, ProfileOptions};
@@ -101,10 +101,7 @@ impl Cell {
     }
 
     fn seed_commands(self) -> Vec<String> {
-        let mut commands = vec![
-            "setstat defence 98".into(),
-            "setstat hitpoints 99".into(),
-        ];
+        let mut commands = vec!["setstat defence 98".into(), "setstat hitpoints 99".into()];
         match self {
             Self::MakeOne => commands.extend([
                 "setstat fletching 20".into(),
@@ -115,10 +112,7 @@ impl Cell {
                 "setstat magic 20".into(),
                 interact::tele_args(0, 3_255, 3_278),
             ]),
-            Self::QuestJournal => commands.extend([
-                "give logs 1".into(),
-                "give knife 1".into(),
-            ]),
+            Self::QuestJournal => commands.extend(["give logs 1".into(), "give knife 1".into()]),
         }
         commands
     }
@@ -146,6 +140,7 @@ struct Controls {
     add_runes: bool,
     open_other_quest: bool,
     logout: bool,
+}
 
 struct Fixture {
     cell: Cell,
@@ -202,7 +197,7 @@ impl Fixture {
 
     fn frame(&mut self, client: &mut Client, held: bool) {
         self.snapshot.rebuild(client);
-        self.record_observations();
+        self.record_observations(client);
         if self.error.is_some() || self.prep == PrepPhase::Ready {
             if !held {
                 self.drive_controls(client);
@@ -217,7 +212,7 @@ impl Fixture {
         }
     }
 
-    fn record_observations(&mut self) {
+    fn record_observations(&mut self, client: &Client) {
         if self.cell == Cell::CastNpc {
             let rows = self
                 .snapshot
@@ -272,7 +267,11 @@ impl Fixture {
         if self.controls.open_other_quest
             && self.wrong_quest_name.as_deref().is_some_and(|name| {
                 modal.main == QUEST_JOURNAL_ROOT
-                    && self.snapshot.main_modal_texts().iter().any(|text| text.trim() == name)
+                    && self
+                        .snapshot
+                        .main_modal_texts()
+                        .iter()
+                        .any(|text| text.trim() == name)
             })
         {
             self.wrong_page_ready = true;
@@ -356,10 +355,6 @@ impl Fixture {
             | PrepPhase::WaitInitialTutorial
             | PrepPhase::WaitLogout
             | PrepPhase::WaitRelog
-            | PrepPhase::ReseedTutorial
-            | PrepPhase::WaitReseed
-            | PrepPhase::Seed
-            | PrepPhase::WaitSeed
             | PrepPhase::Ready => {}
         }
         Ok(())
@@ -396,23 +391,25 @@ impl Fixture {
     }
 
     fn drive_controls(&mut self, client: &mut Client) {
-        if self.controls.open_make_menu {
-            if !self.make_menu_attempted {
-                let inventory = self.snapshot.inventory();
-                let knife = inventory.iter().find(|item| item.def.name == "Knife");
-                let logs = inventory.iter().find(|item| item.def.name == "Logs");
-                let Some((knife, logs)) = knife.zip(logs) else {
-                    self.error = Some("real knife/log pair is absent".into());
-                    return;
-                };
-                let result = Interactions::new(&self.snapshot, client)
-                    .use_item_on(knife, OpTarget::Item(logs));
-                if !result.is_sent() {
-                    self.error = Some(format!("real knife-on-logs use refused: {result:?}"));
-                    return;
-                }
-                self.make_menu_attempted = true;
+        if self.controls.open_make_menu && !self.make_menu_attempted {
+            let inventory = self.snapshot.inventory();
+            let knife = inventory
+                .iter()
+                .find(|item| item.def.name.as_deref() == Some("Knife"));
+            let logs = inventory
+                .iter()
+                .find(|item| item.def.name.as_deref() == Some("Logs"));
+            let Some((knife, logs)) = knife.zip(logs) else {
+                self.error = Some("real knife/log pair is absent".into());
+                return;
+            };
+            let result =
+                Interactions::new(&self.snapshot, client).use_item_on(knife, OpTarget::Item(logs));
+            if !matches!(&result, SendResult::Sent { .. }) {
+                self.error = Some(format!("real knife-on-logs use refused: {result:?}"));
+                return;
             }
+            self.make_menu_attempted = true;
         }
         if self.controls.close_main_modal && !self.close_sent {
             if self.snapshot.modals().main >= 0 {
@@ -443,7 +440,7 @@ impl Fixture {
                 self.quest_tab_sent = false;
             } else {
                 let result = Interactions::new(&self.snapshot, client).click_side_tab(2);
-                if !result.is_sent() {
+                if !matches!(&result, SendResult::Sent { .. }) {
                     self.error = Some(format!("quest-tab selection refused: {result:?}"));
                     return;
                 }
@@ -483,12 +480,13 @@ impl Fixture {
         };
         let component_id = row.component_id;
         let name = row.name.clone();
-        let Some(widget) = ReadContext::new(&self.snapshot).component(component_id) else {
+        let ctx = ReadContext::new(&self.snapshot);
+        let Some(widget) = ctx.component(component_id) else {
             self.error = Some("Doric's Quest row has no live widget".into());
             return;
         };
         let result = Interactions::new(&self.snapshot, client).if_button(widget);
-        if !result.is_sent() {
+        if !matches!(&result, SendResult::Sent { .. }) {
             self.error = Some(format!("Doric's Quest row click refused: {result:?}"));
             return;
         }
@@ -501,7 +499,12 @@ fn inventory_count(snapshot: &GameSnapshot, name: &str) -> i32 {
     snapshot
         .inventory()
         .iter()
-        .filter(|item| item.def.name.eq_ignore_ascii_case(name))
+        .filter(|item| {
+            item.def
+                .name
+                .as_deref()
+                .is_some_and(|item_name| item_name.eq_ignore_ascii_case(name))
+        })
         .map(|item| item.count.max(0))
         .sum()
 }
@@ -530,27 +533,49 @@ fn save_receipt(name: &str, value: &Value) -> PathBuf {
     let dir = evidence_dir();
     std::fs::create_dir_all(&dir).expect("create live evidence directory");
     let path = dir.join(name);
-    std::fs::write(&path, serde_json::to_vec_pretty(value).expect("serialize receipt"))
-        .expect("write live receipt");
+    std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(value).expect("serialize receipt"),
+    )
+    .expect("write live receipt");
     path
 }
 
 fn verify_live_environment() {
     assert_eq!(required("LIVE"), "1", "ignored live cells require LIVE=1");
-    assert_eq!(required("BOT_CPU"), "1", "headless live capture requires BOT_CPU=1");
-    assert_eq!(required("BOT_NAV_BUILD"), "skip", "use the explicit v17 nav pack");
+    assert_eq!(
+        required("BOT_CPU"),
+        "1",
+        "headless live capture requires BOT_CPU=1"
+    );
+    assert_eq!(
+        required("BOT_NAV_BUILD"),
+        "skip",
+        "use the explicit v17 nav pack"
+    );
     let prefix = required("BOT_LIVE_NAME_PREFIX");
     assert!(
         (1..=4).contains(&prefix.len()) && prefix.bytes().all(|byte| byte.is_ascii_alphanumeric()),
         "BOT_LIVE_NAME_PREFIX must be one to four ASCII alphanumeric characters"
     );
     let catalog_root = required_path("RS2B0T");
-    assert!(catalog_root.is_dir(), "RS2B0T is not a directory: {}", catalog_root.display());
+    assert!(
+        catalog_root.is_dir(),
+        "RS2B0T is not a directory: {}",
+        catalog_root.display()
+    );
     let evidence = evidence_dir();
     let home = required_path("HOME");
-    assert!(!evidence.starts_with(&home), "evidence must be outside the throwaway HOME");
+    assert!(
+        !evidence.starts_with(&home),
+        "evidence must be outside the throwaway HOME"
+    );
     let nav_pack = required_path("WORLD_NAV_PACK");
-    assert!(nav_pack.is_file(), "WORLD_NAV_PACK is not a file: {}", nav_pack.display());
+    assert!(
+        nav_pack.is_file(),
+        "WORLD_NAV_PACK is not a file: {}",
+        nav_pack.display()
+    );
     assert!(
         nav_pack.ends_with("274bot-289-v17.navpack"),
         "live cells require the explicit revision-289 v17 nav pack"
@@ -570,7 +595,10 @@ fn verify_product_commit() -> (String, String) {
             .output()
             .expect("git live commit check");
         assert!(output.status.success(), "git {:?} failed", args);
-        String::from_utf8(output.stdout).expect("git output is UTF-8").trim().to_owned()
+        String::from_utf8(output.stdout)
+            .expect("git output is UTF-8")
+            .trim()
+            .to_owned()
     };
     let head = output(&["rev-parse", "HEAD"]);
     let product_full = output(&["rev-parse", "--verify", &format!("{product}^{{commit}}")]);
@@ -580,7 +608,10 @@ fn verify_product_commit() -> (String, String) {
         .args(["merge-base", "--is-ancestor", &product_full, &head])
         .status()
         .expect("check product commit ancestry");
-    assert!(ancestor.success(), "product commit {product_full} is not an ancestor of {head}");
+    assert!(
+        ancestor.success(),
+        "product commit {product_full} is not an ancestor of {head}"
+    );
     (product_full, head)
 }
 
@@ -614,7 +645,11 @@ fn start_fixture(cell: Cell) -> (script::IsolatedEnv, Play, String, Arc<Mutex<Fi
         .expect("prepare cached Engine L client template");
 
     let entries = mint_live_entries(&mint_live_names(1));
-    assert_eq!(entries.len(), 1, "mint one live account using the caller prefix");
+    assert_eq!(
+        entries.len(),
+        1,
+        "mint one live account using the caller prefix"
+    );
     let (account, password) = &entries[0];
     let state = Arc::new(Mutex::new(Fixture::new(cell)));
     let callback_state = Arc::clone(&state);
@@ -650,8 +685,10 @@ fn start_fixture(cell: Cell) -> (script::IsolatedEnv, Play, String, Arc<Mutex<Fi
     )
     .expect("spawn fresh live account");
     play.focus(account);
-    wait_for(&play, account, &state, PREP_DEADLINE, |_, fixture| fixture.ready);
-(isolated, play, account.clone(), state)
+    wait_for(&play, account, &state, PREP_DEADLINE, |_, fixture| {
+        fixture.ready
+    });
+    (isolated, play, account.clone(), state)
 }
 
 fn wait_for(
@@ -759,7 +796,8 @@ fn log_json(logs: &[String], prefix: &str) -> Value {
         .iter()
         .find_map(|line| line.strip_prefix(prefix))
         .unwrap_or_else(|| panic!("missing {prefix:?} in logs {logs:?}"));
-    serde_json::from_str(row).unwrap_or_else(|error| panic!("invalid {prefix} JSON {row:?}: {error}"))
+    serde_json::from_str(row)
+        .unwrap_or_else(|error| panic!("invalid {prefix} JSON {row:?}: {error}"))
 }
 fn packet_count(opcodes: &[Value], opcode: u8, start_tick: u64, end_tick: u64) -> usize {
     opcodes
@@ -779,12 +817,13 @@ fn tick_boundary(receipt: &Value, name: &str) -> u64 {
         .unwrap_or_else(|| panic!("missing observed tick boundary {name}"))
 }
 
-
 fn run_make_one_cell() {
     let (_isolated, play, account, fixture) = start_fixture(Cell::MakeOne);
     let start_commit = verify_product_commit();
     request_make_menu(&fixture);
-    wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| state.make_menu_ready);
+    wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| {
+        state.make_menu_ready
+    });
     let before = inventory_count(&fixture.lock().unwrap().snapshot, "Shortbow");
     assert_eq!(before, 0, "fresh account has no Shortbow");
     let make_page_root = fixture.lock().unwrap().snapshot.modals().main;
@@ -822,12 +861,17 @@ fn run_make_one_cell() {
         &mut missing_logs,
     );
     assert_eq!(log_json(&missing_logs, "MAKE_RESULT:"), json!(false));
-    assert_eq!(inventory_count(&fixture.lock().unwrap().snapshot, "Shortbow"), 1);
+    assert_eq!(
+        inventory_count(&fixture.lock().unwrap().snapshot, "Shortbow"),
+        1
+    );
     let missing_end_tick = fixture.lock().unwrap().snapshot.tick();
     stop_script(&play, &account, &fixture);
 
     request_make_menu(&fixture);
-    wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| state.make_menu_ready);
+    wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| {
+        state.make_menu_ready
+    });
     let cancel_start_tick = fixture.lock().unwrap().snapshot.tick();
     let mut cancel_logs = Vec::new();
     start_script(&play, &account, MAKE_SOURCE);
@@ -848,7 +892,9 @@ fn run_make_one_cell() {
     assert_eq!(after_cancel, 1, "cancelled MakeOne produced no shortbow");
 
     request_make_menu(&fixture);
-    wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| state.make_menu_ready);
+    wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| {
+        state.make_menu_ready
+    });
     let replacement_start_tick = fixture.lock().unwrap().snapshot.tick();
     let mut replacement_logs = Vec::new();
     start_script(&play, &account, MAKE_SOURCE);
@@ -880,8 +926,14 @@ fn run_make_one_cell() {
     let replacement_end_tick = fixture.lock().unwrap().snapshot.tick();
     let replacement_page_root = fixture.lock().unwrap().snapshot.modals().main;
     let after_replacement = inventory_count(&fixture.lock().unwrap().snapshot, "Shortbow");
-    assert_eq!(after_replacement, 1, "replacing the make page made no product");
-    assert_ne!(replacement_page_root, make_page_root, "the make page was replaced");
+    assert_eq!(
+        after_replacement, 1,
+        "replacing the make page made no product"
+    );
+    assert_ne!(
+        replacement_page_root, make_page_root,
+        "the make page was replaced"
+    );
     stop_script(&play, &account, &fixture);
 
     let receipt = json!({
@@ -924,15 +976,33 @@ fn run_cast_npc_cell() {
     let product = verify_product_commit();
     let mut logs = Vec::new();
     start_script(&play, &account, CAST_SOURCE);
-    wait_for_log(&play, &account, &fixture, CELL_DEADLINE, "CAST_MISSING_RUNES:", &mut logs);
+    wait_for_log(
+        &play,
+        &account,
+        &fixture,
+        CELL_DEADLINE,
+        "CAST_MISSING_RUNES:",
+        &mut logs,
+    );
     assert_eq!(log_json(&logs, "CAST_MISSING_RUNES:"), json!(false));
     {
         let mut state = fixture.lock().unwrap_or_else(|error| error.into_inner());
         state.controls.add_runes = true;
     }
-    wait_for_log(&play, &account, &fixture, CELL_DEADLINE, "CAST_RESULT:", &mut logs);
+    wait_for_log(
+        &play,
+        &account,
+        &fixture,
+        CELL_DEADLINE,
+        "CAST_RESULT:",
+        &mut logs,
+    );
     let cast = log_json(&logs, "CAST_RESULT:");
-    assert_eq!(cast["cast"], json!(true), "real Wind Strike dispatch must be acknowledged");
+    assert_eq!(
+        cast["cast"],
+        json!(true),
+        "real Wind Strike dispatch must be acknowledged"
+    );
     assert!(cast["before"]["air"].as_i64().unwrap_or_default() >= 100);
     assert!(cast["before"]["mind"].as_i64().unwrap_or_default() >= 100);
     assert_eq!(
@@ -959,7 +1029,10 @@ fn run_cast_npc_cell() {
                 && row["id"] == target["id"]
                 && row["index"] == target["index"]
         });
-    assert!(target_seen, "cast target must be an observed real NPC: {target}");
+    assert!(
+        target_seen,
+        "cast target must be an observed real NPC: {target}"
+    );
     stop_script(&play, &account, &fixture);
 
     let receipt = json!({
@@ -986,7 +1059,9 @@ fn run_quest_journal_cell() {
         let mut state = fixture.lock().unwrap_or_else(|error| error.into_inner());
         state.controls.open_other_quest = true;
     }
-    wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| state.wrong_page_ready);
+    wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| {
+        state.wrong_page_ready
+    });
     let wrong_title = fixture
         .lock()
         .unwrap_or_else(|error| error.into_inner())
@@ -1016,7 +1091,9 @@ fn run_quest_journal_cell() {
     close_main_modal(&play, &account, &fixture);
 
     request_make_menu(&fixture);
-    wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| state.make_menu_ready);
+    wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| {
+        state.make_menu_ready
+    });
     let foreign_start_tick = fixture.lock().unwrap().snapshot.tick();
     let mut foreign_logs = Vec::new();
     start_script(&play, &account, JOURNAL_SOURCE);
@@ -1046,7 +1123,10 @@ fn run_quest_journal_cell() {
         &mut valid_logs,
     );
     let lines = log_json(&valid_logs, "JOURNAL_RESULT:");
-    assert!(lines.is_array() && !lines.as_array().unwrap().is_empty(), "real journal lines required: {lines}");
+    assert!(
+        lines.is_array() && !lines.as_array().unwrap().is_empty(),
+        "real journal lines required: {lines}"
+    );
     stop_script(&play, &account, &fixture);
     wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| {
         state.snapshot.modals().main == -1
@@ -1074,10 +1154,14 @@ fn run_quest_journal_cell() {
         state.relogged = false;
         state.controls.logout = true;
     }
-    wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| state.relogged);
+    wait_for(&play, &account, &fixture, CELL_DEADLINE, |_, state| {
+        state.relogged
+    });
     take_logs(&play, &account, &mut stopped_logs);
     assert!(
-        !stopped_logs.iter().any(|line| line.starts_with("JOURNAL_RESULT:")),
+        !stopped_logs
+            .iter()
+            .any(|line| line.starts_with("JOURNAL_RESULT:")),
         "stopped pre-capture read must not publish stale journal lines: {stopped_logs:?}"
     );
     open_quest_tab_live(&play, &account, &fixture);
@@ -1130,7 +1214,11 @@ fn run_quest_journal_cell() {
 }
 
 fn open_quest_tab_live(play: &Play, account: &str, fixture: &Mutex<Fixture>) {
-    let start_tick = fixture.lock().unwrap_or_else(|error| error.into_inner()).snapshot.tick();
+    let start_tick = fixture
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .snapshot
+        .tick();
     {
         let mut state = fixture.lock().unwrap_or_else(|error| error.into_inner());
         state.controls.open_quest_tab = true;
@@ -1166,15 +1254,22 @@ fn run_captured(test_name: &str, cell: Cell, body: fn()) {
         .stderr(std::fs::File::create(&trace).expect("create driver trace"))
         .status()
         .expect("spawn isolated compatibility live cell");
-    assert!(status.success(), "live child failed; inspect {}", trace.display());
+    assert!(
+        status.success(),
+        "live child failed; inspect {}",
+        trace.display()
+    );
 
     let text = std::fs::read_to_string(&trace).expect("read driver trace");
     let receipt_path = evidence.join("receipt.json");
-    let mut receipt: Value = serde_json::from_slice(
-        &std::fs::read(&receipt_path).expect("read child receipt"),
-    )
-    .expect("parse child receipt");
-    assert_eq!(receipt["cell"], json!(cell.name()), "child receipt cell mismatch");
+    let mut receipt: Value =
+        serde_json::from_slice(&std::fs::read(&receipt_path).expect("read child receipt"))
+            .expect("parse child receipt");
+    assert_eq!(
+        receipt["cell"],
+        json!(cell.name()),
+        "child receipt cell mismatch"
+    );
     let account = receipt["account"].as_str().expect("receipt account");
     let mut opcodes = Vec::new();
     let mut accepted_requests = 0usize;
@@ -1201,17 +1296,22 @@ fn run_captured(test_name: &str, cell: Cell, body: fn()) {
             accepted_requests += 1;
         }
     }
-    assert!(accepted_requests > 0, "no native requests were accepted: {text}");
+    assert!(
+        accepted_requests > 0,
+        "no native requests were accepted: {text}"
+    );
 
     let revision = client::io::ClientRevision::R289;
     if cell == Cell::CastNpc {
-        let opcode = client::io::map_client_prot(revision, client::io::ClientProt::OPNPCU)
-            .id as u8;
+        let opcode = client::io::map_client_prot(revision, client::io::ClientProt::OPNPCU).id as u8;
         let casts = opcodes
             .iter()
             .filter(|entry| entry["opcode"].as_u64() == Some(u64::from(opcode)))
             .count();
-        assert_eq!(casts, 1, "exactly one funded Wind Strike dispatch; trace={opcodes:?}");
+        assert_eq!(
+            casts, 1,
+            "exactly one funded Wind Strike dispatch; trace={opcodes:?}"
+        );
         receipt["driver"]["opnpcu_opcode"] = json!(opcode);
         receipt["driver"]["opnpcu_dispatches"] = json!(casts);
     }
@@ -1244,11 +1344,16 @@ fn run_captured(test_name: &str, cell: Cell, body: fn()) {
                 tick_boundary(&receipt, "replacement_end")
             )
         });
-        assert_eq!(counts["success"], 1, "one successful Make-1 dispatch; trace={opcodes:?}");
-        assert_eq!(counts["missing"], 0, "missing menu must not dispatch; trace={opcodes:?}");
         assert_eq!(
-            counts["replacement"],
-            1,
+            counts["success"], 1,
+            "one successful Make-1 dispatch; trace={opcodes:?}"
+        );
+        assert_eq!(
+            counts["missing"], 0,
+            "missing menu must not dispatch; trace={opcodes:?}"
+        );
+        assert_eq!(
+            counts["replacement"], 1,
             "page replacement begins with one real Make-1 dispatch; trace={opcodes:?}"
         );
         receipt["driver"]["if_button_opcode"] = json!(button);
@@ -1332,12 +1437,24 @@ fn run_captured(test_name: &str, cell: Cell, body: fn()) {
             }
         });
         for phase in ["wrong_title", "foreign_modal"] {
-            assert_eq!(counts[phase]["open"], 0, "{phase} must not open quest journal; trace={opcodes:?}");
-            assert_eq!(counts[phase]["close"], 0, "{phase} must not close a modal; trace={opcodes:?}");
+            assert_eq!(
+                counts[phase]["open"], 0,
+                "{phase} must not open quest journal; trace={opcodes:?}"
+            );
+            assert_eq!(
+                counts[phase]["close"], 0,
+                "{phase} must not close a modal; trace={opcodes:?}"
+            );
         }
         for phase in ["valid", "post_relog"] {
-            assert_eq!(counts[phase]["open"], 1, "{phase} must open the journal once; trace={opcodes:?}");
-            assert_eq!(counts[phase]["close"], 1, "{phase} must close the journal once; trace={opcodes:?}");
+            assert_eq!(
+                counts[phase]["open"], 1,
+                "{phase} must open the journal once; trace={opcodes:?}"
+            );
+            assert_eq!(
+                counts[phase]["close"], 1,
+                "{phase} must close the journal once; trace={opcodes:?}"
+            );
         }
         receipt["driver"]["if_button_opcode"] = json!(button);
         receipt["driver"]["close_modal_opcode"] = json!(close);
@@ -1347,8 +1464,11 @@ fn run_captured(test_name: &str, cell: Cell, body: fn()) {
     receipt["driver"]["accepted_requests"] = json!(accepted_requests);
     receipt["driver"]["packet_events"] = json!(opcodes);
     receipt["driver"]["all_requests_accepted"] = json!(true);
-    std::fs::write(&receipt_path, serde_json::to_vec_pretty(&receipt).expect("serialize receipt"))
-        .expect("update live receipt with packet trace");
+    std::fs::write(
+        &receipt_path,
+        serde_json::to_vec_pretty(&receipt).expect("serialize receipt"),
+    )
+    .expect("update live receipt with packet trace");
     println!(
         "PASS {}: receipt={} trace={}",
         cell.name(),
@@ -1360,17 +1480,29 @@ fn run_captured(test_name: &str, cell: Cell, body: fn()) {
 #[test]
 #[ignore = "requires LIVE=1, BOT_CPU=1, aubaine Engine L, isolated HOME, explicit v17 nav pack, and three fresh-account runs"]
 fn compat_v1_dialogue_make_one_live() {
-    run_captured("compat_v1_dialogue_make_one_live", Cell::MakeOne, run_make_one_cell);
+    run_captured(
+        "compat_v1_dialogue_make_one_live",
+        Cell::MakeOne,
+        run_make_one_cell,
+    );
 }
 
 #[test]
 #[ignore = "requires LIVE=1, BOT_CPU=1, aubaine Engine L, isolated HOME, explicit v17 nav pack, and three fresh-account runs"]
 fn compat_v1_game_cast_on_npc_live() {
-    run_captured("compat_v1_game_cast_on_npc_live", Cell::CastNpc, run_cast_npc_cell);
+    run_captured(
+        "compat_v1_game_cast_on_npc_live",
+        Cell::CastNpc,
+        run_cast_npc_cell,
+    );
 }
 
 #[test]
 #[ignore = "requires LIVE=1, BOT_CPU=1, aubaine Engine L, isolated HOME, explicit v17 nav pack, and three fresh-account runs"]
 fn compat_v1_quest_journal_live() {
-    run_captured("compat_v1_quest_journal_live", Cell::QuestJournal, run_quest_journal_cell);
+    run_captured(
+        "compat_v1_quest_journal_live",
+        Cell::QuestJournal,
+        run_quest_journal_cell,
+    );
 }

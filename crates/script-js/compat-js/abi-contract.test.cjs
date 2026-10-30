@@ -534,7 +534,7 @@ test('callback source citations resolve and identify each member', { skip: !froz
         assert.ok(normalizedEvidence.includes(memberToken), `${row.member} appears at a cited source line`);
     }
     assert.ok(citationCount > 0);
-    assert.equal(citationCount, 219, 'checked callback citation range parts');
+    assert.equal(citationCount, 223, 'checked callback citation range parts');
 });
 
 
@@ -556,7 +556,7 @@ test('types follow the family their ABI describes', () => {
 });
 
 test('refusal debt is unique and names each missing notImplValue export', () => {
-    assert.equal(contract.not_impl_debt.length, 153);
+    assert.equal(contract.not_impl_debt.length, 152);
     const selectors = contract.not_impl_debt.map(row => row.selector);
     assert.equal(new Set(selectors).size, selectors.length);
     for (const selector of [

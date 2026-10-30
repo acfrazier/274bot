@@ -97,10 +97,10 @@ impl ::flatbuffers::SimpleToVerifyInSlice for WalkCancelReason {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_SEAT_KIND: u8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
-pub const ENUM_MAX_SEAT_KIND: u8 = 25;
+pub const ENUM_MAX_SEAT_KIND: u8 = 26;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_SEAT_KIND: [SeatKind; 26] = [
+pub const ENUM_VALUES_SEAT_KIND: [SeatKind; 27] = [
   SeatKind::None,
   SeatKind::Gather,
   SeatKind::Combat,
@@ -127,6 +127,7 @@ pub const ENUM_VALUES_SEAT_KIND: [SeatKind; 26] = [
   SeatKind::Clue,
   SeatKind::Duel,
   SeatKind::CakeStall,
+  SeatKind::CastNpc,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -160,9 +161,10 @@ impl SeatKind {
   pub const Clue: Self = Self(23);
   pub const Duel: Self = Self(24);
   pub const CakeStall: Self = Self(25);
+  pub const CastNpc: Self = Self(26);
 
   pub const ENUM_MIN: u8 = 0;
-  pub const ENUM_MAX: u8 = 25;
+  pub const ENUM_MAX: u8 = 26;
   pub const ENUM_VALUES: &'static [Self] = &[
     Self::None,
     Self::Gather,
@@ -190,6 +192,7 @@ impl SeatKind {
     Self::Clue,
     Self::Duel,
     Self::CakeStall,
+    Self::CastNpc,
   ];
   /// Returns the variant's name or "" if unknown.
   pub fn variant_name(self) -> Option<&'static str> {
@@ -220,6 +223,7 @@ impl SeatKind {
       Self::Clue => Some("Clue"),
       Self::Duel => Some("Duel"),
       Self::CakeStall => Some("CakeStall"),
+      Self::CastNpc => Some("CastNpc"),
       _ => None,
     }
   }
@@ -6400,6 +6404,340 @@ impl ::core::fmt::Debug for QuestProgressRow<'_> {
       ds.finish()
   }
 }
+pub enum JournalEvidenceOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct JournalEvidence<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for JournalEvidence<'a> {
+  type Inner = JournalEvidence<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> JournalEvidence<'a> {
+  pub const VT_QUEST: ::flatbuffers::VOffsetT = 4;
+  pub const VT_ROOT: ::flatbuffers::VOffsetT = 6;
+  pub const VT_LINES: ::flatbuffers::VOffsetT = 8;
+  pub const VT_HAS_COLOUR: ::flatbuffers::VOffsetT = 10;
+  pub const VT_COLOUR: ::flatbuffers::VOffsetT = 12;
+  pub const VT_ACQUIRED_SLOT: ::flatbuffers::VOffsetT = 14;
+  pub const VT_ACQUIRED_RUN: ::flatbuffers::VOffsetT = 16;
+  pub const VT_ACQUIRED_SESSION: ::flatbuffers::VOffsetT = 18;
+  pub const VT_ACQUIRED_TICK: ::flatbuffers::VOffsetT = 20;
+  pub const VT_ACQUIRED_SEQUENCE: ::flatbuffers::VOffsetT = 22;
+  pub const VT_CLOSED_SLOT: ::flatbuffers::VOffsetT = 24;
+  pub const VT_CLOSED_RUN: ::flatbuffers::VOffsetT = 26;
+  pub const VT_CLOSED_SESSION: ::flatbuffers::VOffsetT = 28;
+  pub const VT_CLOSED_TICK: ::flatbuffers::VOffsetT = 30;
+  pub const VT_CLOSED_SEQUENCE: ::flatbuffers::VOffsetT = 32;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    JournalEvidence { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args JournalEvidenceArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<JournalEvidence<'bldr>> {
+    let mut builder = JournalEvidenceBuilder::new(_fbb);
+    builder.add_closed_sequence(args.closed_sequence);
+    builder.add_closed_tick(args.closed_tick);
+    builder.add_closed_session(args.closed_session);
+    builder.add_closed_run(args.closed_run);
+    builder.add_closed_slot(args.closed_slot);
+    builder.add_acquired_sequence(args.acquired_sequence);
+    builder.add_acquired_tick(args.acquired_tick);
+    builder.add_acquired_session(args.acquired_session);
+    builder.add_acquired_run(args.acquired_run);
+    builder.add_acquired_slot(args.acquired_slot);
+    builder.add_colour(args.colour);
+    if let Some(x) = args.lines { builder.add_lines(x); }
+    builder.add_root(args.root);
+    if let Some(x) = args.quest { builder.add_quest(x); }
+    builder.add_has_colour(args.has_colour);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn quest(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(JournalEvidence::VT_QUEST, None)}
+  }
+  #[inline]
+  pub fn root(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(JournalEvidence::VT_ROOT, Some(-1)).unwrap()}
+  }
+  #[inline]
+  pub fn lines(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>(JournalEvidence::VT_LINES, None)}
+  }
+  #[inline]
+  pub fn has_colour(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(JournalEvidence::VT_HAS_COLOUR, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn colour(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(JournalEvidence::VT_COLOUR, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn acquired_slot(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(JournalEvidence::VT_ACQUIRED_SLOT, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn acquired_run(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(JournalEvidence::VT_ACQUIRED_RUN, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn acquired_session(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(JournalEvidence::VT_ACQUIRED_SESSION, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn acquired_tick(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(JournalEvidence::VT_ACQUIRED_TICK, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn acquired_sequence(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(JournalEvidence::VT_ACQUIRED_SEQUENCE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn closed_slot(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(JournalEvidence::VT_CLOSED_SLOT, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn closed_run(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(JournalEvidence::VT_CLOSED_RUN, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn closed_session(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(JournalEvidence::VT_CLOSED_SESSION, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn closed_tick(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(JournalEvidence::VT_CLOSED_TICK, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn closed_sequence(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(JournalEvidence::VT_CLOSED_SEQUENCE, Some(0)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for JournalEvidence<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("quest", Self::VT_QUEST, false)?
+     .visit_field::<i32>("root", Self::VT_ROOT, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<&'_ str>>>>("lines", Self::VT_LINES, false)?
+     .visit_field::<bool>("has_colour", Self::VT_HAS_COLOUR, false)?
+     .visit_field::<i32>("colour", Self::VT_COLOUR, false)?
+     .visit_field::<u64>("acquired_slot", Self::VT_ACQUIRED_SLOT, false)?
+     .visit_field::<u64>("acquired_run", Self::VT_ACQUIRED_RUN, false)?
+     .visit_field::<u64>("acquired_session", Self::VT_ACQUIRED_SESSION, false)?
+     .visit_field::<u64>("acquired_tick", Self::VT_ACQUIRED_TICK, false)?
+     .visit_field::<u64>("acquired_sequence", Self::VT_ACQUIRED_SEQUENCE, false)?
+     .visit_field::<u64>("closed_slot", Self::VT_CLOSED_SLOT, false)?
+     .visit_field::<u64>("closed_run", Self::VT_CLOSED_RUN, false)?
+     .visit_field::<u64>("closed_session", Self::VT_CLOSED_SESSION, false)?
+     .visit_field::<u64>("closed_tick", Self::VT_CLOSED_TICK, false)?
+     .visit_field::<u64>("closed_sequence", Self::VT_CLOSED_SEQUENCE, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct JournalEvidenceArgs<'a> {
+    pub quest: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub root: i32,
+    pub lines: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>,
+    pub has_colour: bool,
+    pub colour: i32,
+    pub acquired_slot: u64,
+    pub acquired_run: u64,
+    pub acquired_session: u64,
+    pub acquired_tick: u64,
+    pub acquired_sequence: u64,
+    pub closed_slot: u64,
+    pub closed_run: u64,
+    pub closed_session: u64,
+    pub closed_tick: u64,
+    pub closed_sequence: u64,
+}
+impl<'a> Default for JournalEvidenceArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    JournalEvidenceArgs {
+      quest: None,
+      root: -1,
+      lines: None,
+      has_colour: false,
+      colour: 0,
+      acquired_slot: 0,
+      acquired_run: 0,
+      acquired_session: 0,
+      acquired_tick: 0,
+      acquired_sequence: 0,
+      closed_slot: 0,
+      closed_run: 0,
+      closed_session: 0,
+      closed_tick: 0,
+      closed_sequence: 0,
+    }
+  }
+}
+
+pub struct JournalEvidenceBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> JournalEvidenceBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_quest(&mut self, quest: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(JournalEvidence::VT_QUEST, quest);
+  }
+  #[inline]
+  pub fn add_root(&mut self, root: i32) {
+    self.fbb_.push_slot::<i32>(JournalEvidence::VT_ROOT, root, -1);
+  }
+  #[inline]
+  pub fn add_lines(&mut self, lines: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<&'b  str>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(JournalEvidence::VT_LINES, lines);
+  }
+  #[inline]
+  pub fn add_has_colour(&mut self, has_colour: bool) {
+    self.fbb_.push_slot::<bool>(JournalEvidence::VT_HAS_COLOUR, has_colour, false);
+  }
+  #[inline]
+  pub fn add_colour(&mut self, colour: i32) {
+    self.fbb_.push_slot::<i32>(JournalEvidence::VT_COLOUR, colour, 0);
+  }
+  #[inline]
+  pub fn add_acquired_slot(&mut self, acquired_slot: u64) {
+    self.fbb_.push_slot::<u64>(JournalEvidence::VT_ACQUIRED_SLOT, acquired_slot, 0);
+  }
+  #[inline]
+  pub fn add_acquired_run(&mut self, acquired_run: u64) {
+    self.fbb_.push_slot::<u64>(JournalEvidence::VT_ACQUIRED_RUN, acquired_run, 0);
+  }
+  #[inline]
+  pub fn add_acquired_session(&mut self, acquired_session: u64) {
+    self.fbb_.push_slot::<u64>(JournalEvidence::VT_ACQUIRED_SESSION, acquired_session, 0);
+  }
+  #[inline]
+  pub fn add_acquired_tick(&mut self, acquired_tick: u64) {
+    self.fbb_.push_slot::<u64>(JournalEvidence::VT_ACQUIRED_TICK, acquired_tick, 0);
+  }
+  #[inline]
+  pub fn add_acquired_sequence(&mut self, acquired_sequence: u64) {
+    self.fbb_.push_slot::<u64>(JournalEvidence::VT_ACQUIRED_SEQUENCE, acquired_sequence, 0);
+  }
+  #[inline]
+  pub fn add_closed_slot(&mut self, closed_slot: u64) {
+    self.fbb_.push_slot::<u64>(JournalEvidence::VT_CLOSED_SLOT, closed_slot, 0);
+  }
+  #[inline]
+  pub fn add_closed_run(&mut self, closed_run: u64) {
+    self.fbb_.push_slot::<u64>(JournalEvidence::VT_CLOSED_RUN, closed_run, 0);
+  }
+  #[inline]
+  pub fn add_closed_session(&mut self, closed_session: u64) {
+    self.fbb_.push_slot::<u64>(JournalEvidence::VT_CLOSED_SESSION, closed_session, 0);
+  }
+  #[inline]
+  pub fn add_closed_tick(&mut self, closed_tick: u64) {
+    self.fbb_.push_slot::<u64>(JournalEvidence::VT_CLOSED_TICK, closed_tick, 0);
+  }
+  #[inline]
+  pub fn add_closed_sequence(&mut self, closed_sequence: u64) {
+    self.fbb_.push_slot::<u64>(JournalEvidence::VT_CLOSED_SEQUENCE, closed_sequence, 0);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> JournalEvidenceBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    JournalEvidenceBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<JournalEvidence<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for JournalEvidence<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("JournalEvidence");
+      ds.field("quest", &self.quest());
+      ds.field("root", &self.root());
+      ds.field("lines", &self.lines());
+      ds.field("has_colour", &self.has_colour());
+      ds.field("colour", &self.colour());
+      ds.field("acquired_slot", &self.acquired_slot());
+      ds.field("acquired_run", &self.acquired_run());
+      ds.field("acquired_session", &self.acquired_session());
+      ds.field("acquired_tick", &self.acquired_tick());
+      ds.field("acquired_sequence", &self.acquired_sequence());
+      ds.field("closed_slot", &self.closed_slot());
+      ds.field("closed_run", &self.closed_run());
+      ds.field("closed_session", &self.closed_session());
+      ds.field("closed_tick", &self.closed_tick());
+      ds.field("closed_sequence", &self.closed_sequence());
+      ds.finish()
+  }
+}
 pub enum ApiProgressOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -6420,6 +6758,7 @@ impl<'a> ApiProgress<'a> {
   pub const VT_KIND: ::flatbuffers::VOffsetT = 6;
   pub const VT_REASON: ::flatbuffers::VOffsetT = 8;
   pub const VT_ROW: ::flatbuffers::VOffsetT = 10;
+  pub const VT_JOURNAL: ::flatbuffers::VOffsetT = 12;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -6432,6 +6771,7 @@ impl<'a> ApiProgress<'a> {
   ) -> ::flatbuffers::WIPOffset<ApiProgress<'bldr>> {
     let mut builder = ApiProgressBuilder::new(_fbb);
     builder.add_request_id(args.request_id);
+    if let Some(x) = args.journal { builder.add_journal(x); }
     if let Some(x) = args.row { builder.add_row(x); }
     if let Some(x) = args.reason { builder.add_reason(x); }
     builder.add_kind(args.kind);
@@ -6467,6 +6807,13 @@ impl<'a> ApiProgress<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<QuestProgressRow>>(ApiProgress::VT_ROW, None)}
   }
+  #[inline]
+  pub fn journal(&self) -> Option<JournalEvidence<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<JournalEvidence>>(ApiProgress::VT_JOURNAL, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for ApiProgress<'_> {
@@ -6479,6 +6826,7 @@ impl ::flatbuffers::Verifiable for ApiProgress<'_> {
      .visit_field::<u8>("kind", Self::VT_KIND, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("reason", Self::VT_REASON, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<QuestProgressRow>>("row", Self::VT_ROW, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<JournalEvidence>>("journal", Self::VT_JOURNAL, false)?
      .finish();
     Ok(())
   }
@@ -6488,6 +6836,7 @@ pub struct ApiProgressArgs<'a> {
     pub kind: u8,
     pub reason: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub row: Option<::flatbuffers::WIPOffset<QuestProgressRow<'a>>>,
+    pub journal: Option<::flatbuffers::WIPOffset<JournalEvidence<'a>>>,
 }
 impl<'a> Default for ApiProgressArgs<'a> {
   #[inline]
@@ -6497,6 +6846,7 @@ impl<'a> Default for ApiProgressArgs<'a> {
       kind: 0,
       reason: None,
       row: None,
+      journal: None,
     }
   }
 }
@@ -6523,6 +6873,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ApiProgressBuilder<'a, 'b, A>
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<QuestProgressRow>>(ApiProgress::VT_ROW, row);
   }
   #[inline]
+  pub fn add_journal(&mut self, journal: ::flatbuffers::WIPOffset<JournalEvidence<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<JournalEvidence>>(ApiProgress::VT_JOURNAL, journal);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ApiProgressBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     ApiProgressBuilder {
@@ -6544,6 +6898,7 @@ impl ::core::fmt::Debug for ApiProgress<'_> {
       ds.field("kind", &self.kind());
       ds.field("reason", &self.reason());
       ds.field("row", &self.row());
+      ds.field("journal", &self.journal());
       ds.finish()
   }
 }
@@ -11285,6 +11640,8 @@ impl<'a> SeatArgs<'a> {
   pub const VT_COMBAT: ::flatbuffers::VOffsetT = 6;
   pub const VT_PROGRESS_NAME: ::flatbuffers::VOffsetT = 8;
   pub const VT_BANK: ::flatbuffers::VOffsetT = 10;
+  pub const VT_PROGRESS_JOURNAL_ONLY: ::flatbuffers::VOffsetT = 12;
+  pub const VT_CAST_NPC: ::flatbuffers::VOffsetT = 14;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -11296,10 +11653,12 @@ impl<'a> SeatArgs<'a> {
     args: &'args SeatArgsArgs<'args>
   ) -> ::flatbuffers::WIPOffset<SeatArgs<'bldr>> {
     let mut builder = SeatArgsBuilder::new(_fbb);
+    if let Some(x) = args.cast_npc { builder.add_cast_npc(x); }
     if let Some(x) = args.bank { builder.add_bank(x); }
     if let Some(x) = args.progress_name { builder.add_progress_name(x); }
     if let Some(x) = args.combat { builder.add_combat(x); }
     if let Some(x) = args.gather_settings { builder.add_gather_settings(x); }
+    builder.add_progress_journal_only(args.progress_journal_only);
     builder.finish()
   }
 
@@ -11332,6 +11691,20 @@ impl<'a> SeatArgs<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<BankSeatArgs>>(SeatArgs::VT_BANK, None)}
   }
+  #[inline]
+  pub fn progress_journal_only(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(SeatArgs::VT_PROGRESS_JOURNAL_ONLY, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn cast_npc(&self) -> Option<CastNpcArgs<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<CastNpcArgs>>(SeatArgs::VT_CAST_NPC, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for SeatArgs<'_> {
@@ -11344,6 +11717,8 @@ impl ::flatbuffers::Verifiable for SeatArgs<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<CombatFight>>("combat", Self::VT_COMBAT, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("progress_name", Self::VT_PROGRESS_NAME, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<BankSeatArgs>>("bank", Self::VT_BANK, false)?
+     .visit_field::<bool>("progress_journal_only", Self::VT_PROGRESS_JOURNAL_ONLY, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<CastNpcArgs>>("cast_npc", Self::VT_CAST_NPC, false)?
      .finish();
     Ok(())
   }
@@ -11353,6 +11728,8 @@ pub struct SeatArgsArgs<'a> {
     pub combat: Option<::flatbuffers::WIPOffset<CombatFight<'a>>>,
     pub progress_name: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub bank: Option<::flatbuffers::WIPOffset<BankSeatArgs<'a>>>,
+    pub progress_journal_only: bool,
+    pub cast_npc: Option<::flatbuffers::WIPOffset<CastNpcArgs<'a>>>,
 }
 impl<'a> Default for SeatArgsArgs<'a> {
   #[inline]
@@ -11362,6 +11739,8 @@ impl<'a> Default for SeatArgsArgs<'a> {
       combat: None,
       progress_name: None,
       bank: None,
+      progress_journal_only: false,
+      cast_npc: None,
     }
   }
 }
@@ -11388,6 +11767,14 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SeatArgsBuilder<'a, 'b, A> {
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<BankSeatArgs>>(SeatArgs::VT_BANK, bank);
   }
   #[inline]
+  pub fn add_progress_journal_only(&mut self, progress_journal_only: bool) {
+    self.fbb_.push_slot::<bool>(SeatArgs::VT_PROGRESS_JOURNAL_ONLY, progress_journal_only, false);
+  }
+  #[inline]
+  pub fn add_cast_npc(&mut self, cast_npc: ::flatbuffers::WIPOffset<CastNpcArgs<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<CastNpcArgs>>(SeatArgs::VT_CAST_NPC, cast_npc);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SeatArgsBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SeatArgsBuilder {
@@ -11409,6 +11796,8 @@ impl ::core::fmt::Debug for SeatArgs<'_> {
       ds.field("combat", &self.combat());
       ds.field("progress_name", &self.progress_name());
       ds.field("bank", &self.bank());
+      ds.field("progress_journal_only", &self.progress_journal_only());
+      ds.field("cast_npc", &self.cast_npc());
       ds.finish()
   }
 }
@@ -12580,6 +12969,8 @@ impl<'a> Interact<'a> {
   pub const VT_COMPAT_TILE_INTENT: ::flatbuffers::VOffsetT = 90;
   pub const VT_LINEAGE: ::flatbuffers::VOffsetT = 92;
   pub const VT_MIRROR_OWNER: ::flatbuffers::VOffsetT = 94;
+  pub const VT_PROGRESS_JOURNAL_ONLY: ::flatbuffers::VOffsetT = 96;
+  pub const VT_TARGET_ID: ::flatbuffers::VOffsetT = 98;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -12602,6 +12993,7 @@ impl<'a> Interact<'a> {
     if let Some(x) = args.xf { builder.add_xf(x); }
     builder.add_request_id(args.request_id);
     if let Some(x) = args.bank_generation { builder.add_bank_generation(x); }
+    if let Some(x) = args.target_id { builder.add_target_id(x); }
     if let Some(x) = args.combat { builder.add_combat(x); }
     if let Some(x) = args.cross { builder.add_cross(x); }
     if let Some(x) = args.settings { builder.add_settings(x); }
@@ -12628,6 +13020,7 @@ impl<'a> Interact<'a> {
     builder.add_z(args.z);
     builder.add_x(args.x);
     if let Some(x) = args.op { builder.add_op(x); }
+    builder.add_progress_journal_only(args.progress_journal_only);
     builder.add_compat_tile_intent(args.compat_tile_intent);
     builder.add_run_energy_kind(args.run_energy_kind);
     builder.add_run_auto_kind(args.run_auto_kind);
@@ -12947,6 +13340,20 @@ impl<'a> Interact<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<u64>(Interact::VT_MIRROR_OWNER, Some(0)).unwrap()}
   }
+  #[inline]
+  pub fn progress_journal_only(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(Interact::VT_PROGRESS_JOURNAL_ONLY, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn target_id(&self) -> Option<i32> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(Interact::VT_TARGET_ID, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Interact<'_> {
@@ -12999,6 +13406,8 @@ impl ::flatbuffers::Verifiable for Interact<'_> {
      .visit_field::<bool>("compat_tile_intent", Self::VT_COMPAT_TILE_INTENT, false)?
      .visit_field::<u64>("lineage", Self::VT_LINEAGE, false)?
      .visit_field::<u64>("mirror_owner", Self::VT_MIRROR_OWNER, false)?
+     .visit_field::<bool>("progress_journal_only", Self::VT_PROGRESS_JOURNAL_ONLY, false)?
+     .visit_field::<i32>("target_id", Self::VT_TARGET_ID, false)?
      .finish();
     Ok(())
   }
@@ -13048,6 +13457,8 @@ pub struct InteractArgs<'a> {
     pub compat_tile_intent: bool,
     pub lineage: u64,
     pub mirror_owner: u64,
+    pub progress_journal_only: bool,
+    pub target_id: Option<i32>,
 }
 impl<'a> Default for InteractArgs<'a> {
   #[inline]
@@ -13097,6 +13508,8 @@ impl<'a> Default for InteractArgs<'a> {
       compat_tile_intent: false,
       lineage: 0,
       mirror_owner: 0,
+      progress_journal_only: false,
+      target_id: None,
     }
   }
 }
@@ -13283,6 +13696,14 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> InteractBuilder<'a, 'b, A> {
     self.fbb_.push_slot::<u64>(Interact::VT_MIRROR_OWNER, mirror_owner, 0);
   }
   #[inline]
+  pub fn add_progress_journal_only(&mut self, progress_journal_only: bool) {
+    self.fbb_.push_slot::<bool>(Interact::VT_PROGRESS_JOURNAL_ONLY, progress_journal_only, false);
+  }
+  #[inline]
+  pub fn add_target_id(&mut self, target_id: i32) {
+    self.fbb_.push_slot_always::<i32>(Interact::VT_TARGET_ID, target_id);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> InteractBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     InteractBuilder {
@@ -13344,6 +13765,8 @@ impl ::core::fmt::Debug for Interact<'_> {
       ds.field("compat_tile_intent", &self.compat_tile_intent());
       ds.field("lineage", &self.lineage());
       ds.field("mirror_owner", &self.mirror_owner());
+      ds.field("progress_journal_only", &self.progress_journal_only());
+      ds.field("target_id", &self.target_id());
       ds.finish()
   }
 }
@@ -13525,6 +13948,119 @@ impl ::core::fmt::Debug for InteractBatch<'_> {
       ds.field("decisions", &self.decisions());
       ds.field("cancels", &self.cancels());
       ds.field("mirror_revokes", &self.mirror_revokes());
+      ds.finish()
+  }
+}
+pub enum CastNpcArgsOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct CastNpcArgs<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for CastNpcArgs<'a> {
+  type Inner = CastNpcArgs<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> CastNpcArgs<'a> {
+  pub const VT_COMPONENT_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_INDEX: ::flatbuffers::VOffsetT = 6;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    CastNpcArgs { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args CastNpcArgsArgs
+  ) -> ::flatbuffers::WIPOffset<CastNpcArgs<'bldr>> {
+    let mut builder = CastNpcArgsBuilder::new(_fbb);
+    builder.add_index(args.index);
+    builder.add_component_id(args.component_id);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn component_id(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(CastNpcArgs::VT_COMPONENT_ID, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn index(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(CastNpcArgs::VT_INDEX, Some(0)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for CastNpcArgs<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<i32>("component_id", Self::VT_COMPONENT_ID, false)?
+     .visit_field::<i32>("index", Self::VT_INDEX, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct CastNpcArgsArgs {
+    pub component_id: i32,
+    pub index: i32,
+}
+impl<'a> Default for CastNpcArgsArgs {
+  #[inline]
+  fn default() -> Self {
+    CastNpcArgsArgs {
+      component_id: 0,
+      index: 0,
+    }
+  }
+}
+
+pub struct CastNpcArgsBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> CastNpcArgsBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_component_id(&mut self, component_id: i32) {
+    self.fbb_.push_slot::<i32>(CastNpcArgs::VT_COMPONENT_ID, component_id, 0);
+  }
+  #[inline]
+  pub fn add_index(&mut self, index: i32) {
+    self.fbb_.push_slot::<i32>(CastNpcArgs::VT_INDEX, index, 0);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> CastNpcArgsBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    CastNpcArgsBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<CastNpcArgs<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for CastNpcArgs<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("CastNpcArgs");
+      ds.field("component_id", &self.component_id());
+      ds.field("index", &self.index());
       ds.finish()
   }
 }

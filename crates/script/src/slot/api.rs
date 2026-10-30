@@ -133,6 +133,10 @@ impl ApiSeat {
     ) -> usize {
         self.cast_npc.result_values(results, output)
     }
+    #[cfg(test)]
+    pub(super) fn cast_npc_token(&self) -> Option<u64> {
+        self.cast_npc.token()
+    }
 
     /// Any live API session: they share the slot's one foreground.
     fn busy(&self) -> bool {
@@ -417,9 +421,7 @@ impl SlotScript {
             | crate::api_progress::ProgressPage::JournalDone { token, .. } => {
                 Some((*token, End::Done))
             }
-            crate::api_progress::ProgressPage::Refused { token, .. } => {
-                Some((*token, End::Failed))
-            }
+            crate::api_progress::ProgressPage::Refused { token, .. } => Some((*token, End::Failed)),
             crate::api_progress::ProgressPage::Reading { .. } => None,
         });
         for (token, end) in [gather, combat, progress].into_iter().flatten() {
@@ -479,7 +481,11 @@ impl SlotScript {
             self.api.as_mut().expect("family seat").combat_terminal = None;
         }
         if let Some(token) = cast_npc {
-            self.api.as_mut().expect("family seat").cast_npc.cancel(token);
+            self.api
+                .as_mut()
+                .expect("family seat")
+                .cast_npc
+                .cancel(token);
         }
         if progress.is_some() {
             let families = self.api.as_mut().expect("family seat");

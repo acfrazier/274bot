@@ -322,7 +322,7 @@ export type InteractReq =
   | { op: 'obj'; x: number; z: number; level: number; name?: string | null; action: string; id?: number | null}
   | { op: 'player'; name: string; action: string}
   | { op: 'use-on'; name: string; kind: string; target_name?: string | null; x: number; z: number; level: number; index?: number | null; source_item_id?: number | null; source_item_slot?: number | null; target_item_id?: number | null; target_item_slot?: number | null}
-  | { op: 'use-widget-on'; component_id: number; kind: string; target_name?: string | null; x: number; z: number; level: number; index?: number | null}
+  | { op: 'use-widget-on'; component_id: number; kind: string; target_name?: string | null; x: number; z: number; level: number; index?: number | null; target_id?: number | null}
   | { op: 'continue'; component_id?: number}
   | { op: 'answer'; option: number}
   | { op: 'answer-count'; value: number}

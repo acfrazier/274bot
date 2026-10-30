@@ -1,4 +1,5 @@
 use super::*;
+use crate::combat::CastNpc;
 use api::snapshot::{WidgetKind, WidgetRoot, WidgetView};
 
 fn magic_scene(staff: Option<&str>, level: i32) -> Scene {
@@ -1036,11 +1037,14 @@ fn npc_cast_dispatch_requires_later_rune_or_exact_target_evidence() {
             assert_eq!(*component_id, expected_component);
             assert_eq!(kind, "npc");
             assert_eq!(target_name, &npc.name);
-            assert_eq!((*x, *z, *level), (npc.network.x, npc.network.z, npc.network.level));
+            assert_eq!(
+                (*x, *z, *level),
+                (npc.network.x, npc.network.z, npc.network.level)
+            );
             assert_eq!(*index, Some(7));
             assert_eq!(*target_id, Some(expected_type));
         }
-        other => panic!("unexpected NPC cast interaction: {other:?}"),
+        _ => panic!("unexpected NPC cast interaction"),
     }
     settle_npc_cast(&mut runtime, true);
     assert!(

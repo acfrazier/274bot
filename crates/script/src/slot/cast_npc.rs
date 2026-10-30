@@ -27,9 +27,7 @@ impl CastNpcSeat {
     }
 
     pub(super) fn selected(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
-        self.active
-            .as_ref()
-            .map(|run| Arc::clone(&run.selected))
+        self.active.as_ref().map(|run| Arc::clone(&run.selected))
     }
 
     fn has_request(&self, id: RequestId) -> bool {
@@ -65,7 +63,8 @@ impl CastNpcSeat {
     pub(super) fn retain_results(&mut self, results: &[crate::native::seat::SeatResult]) {
         self.values.retain(|(id, _)| {
             results.iter().any(|result| {
-                result.id == *id && matches!(result.outcome, crate::native::seat::SeatTerminal::Done)
+                result.id == *id
+                    && matches!(result.outcome, crate::native::seat::SeatTerminal::Done)
             })
         });
     }
@@ -78,7 +77,8 @@ impl CastNpcSeat {
         let mut written = 0;
         for (id, value) in &self.values {
             if !results.iter().any(|result| {
-                result.id == *id && matches!(result.outcome, crate::native::seat::SeatTerminal::Done)
+                result.id == *id
+                    && matches!(result.outcome, crate::native::seat::SeatTerminal::Done)
             }) {
                 continue;
             }
@@ -212,7 +212,8 @@ impl SlotScript {
             let mut should_poll = true;
             if run.needs_resume {
                 match run.handle.as_mut() {
-                    Some(handle) => match actions.resume_kept(NativeKind::CastNpc, handle, &mut cx) {
+                    Some(handle) => match actions.resume_kept(NativeKind::CastNpc, handle, &mut cx)
+                    {
                         Ok(()) => run.needs_resume = false,
                         Err(
                             ActionError::Held | ActionError::Busy | ActionError::BudgetExhausted,
@@ -226,10 +227,7 @@ impl SlotScript {
                 }
             }
             if should_poll && run.handle.is_none() {
-                match actions.begin::<CastNpc>(
-                    (run.request, Arc::clone(&run.selected)),
-                    &mut cx,
-                ) {
+                match actions.begin::<CastNpc>((run.request, Arc::clone(&run.selected)), &mut cx) {
                     Ok(handle) => run.handle = Some(handle),
                     Err(ActionError::Held | ActionError::Busy | ActionError::BudgetExhausted) => {
                         should_poll = false;

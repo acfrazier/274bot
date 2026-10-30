@@ -115,7 +115,6 @@ fn compile_error_reason(error: crate::quester::compile::CompileError) -> Arc<str
 }
 
 fn row(
-    prepared: &PreparedProgress,
     path: &CompiledPath,
     progress: api::quest_progress::QuestProgress,
     colour: QuestListStatus,
@@ -504,7 +503,6 @@ impl SlotScript {
                         ProgressPage::Done {
                             token: *token,
                             row: row(
-                                prepared,
                                 path,
                                 resolve_journal(path, &read, None),
                                 QuestListStatus::InProgress,
@@ -583,14 +581,8 @@ impl SlotScript {
                 ProgressPage::Done {
                     token: *token,
                     row: row(
-                        prepared,
                         path,
-                        resolve_colour(
-                            path,
-                            colour,
-                            cx.evidence(),
-                            Arc::clone(&prepared.pin),
-                        ),
+                        resolve_colour(path, colour, cx.evidence(), Arc::clone(&prepared.pin)),
                         colour,
                         false,
                     ),

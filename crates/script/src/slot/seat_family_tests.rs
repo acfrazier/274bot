@@ -253,7 +253,7 @@ fn fixture_08_slot_family_foreground_and_reverse_order_busy() {
                     Some(ProgressPage::Reading { token }) if *token == family_id.get()
                 )),
                 NativeKind::CastNpc => assert_eq!(
-                    slot.api.as_ref().unwrap().cast_npc.token(),
+                    slot.api.as_ref().unwrap().cast_npc_token(),
                     Some(family_id.get())
                 ),
                 NativeKind::Hunt => assert!(slot.api.is_none()),
@@ -314,7 +314,10 @@ fn fixture_26_progress_first_rejects_competing_api_work() {
                 value: &[],
             }];
             assert_eq!(
-                slot.api.as_ref().unwrap().result_values(&results, &mut values),
+                slot.api
+                    .as_ref()
+                    .unwrap()
+                    .result_values(&results, &mut values),
                 1
             );
             assert_eq!(

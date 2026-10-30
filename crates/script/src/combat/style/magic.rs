@@ -120,10 +120,7 @@ fn staff_provides_selected(
     rune: i32,
     members: bool,
 ) -> bool {
-    (members
-        || selected
-            .item_by_id(rhand)
-            .is_some_and(|item| !item.members))
+    (members || selected.item_by_id(rhand).is_some_and(|item| !item.members))
         && selected
             .staves()
             .iter()
@@ -244,7 +241,6 @@ pub(crate) fn rune_count_npc(
         .find(|rune| !staff_provides_selected(selected, rhand, rune.id, frame.world.members))
         .map(|rune| (arbiter::count(frame, rune.id), rune.count.max(1)))
 }
-
 
 /// One consumed rune is enough to acknowledge a cast, including a splash.
 pub(crate) fn rune_count(

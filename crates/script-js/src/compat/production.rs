@@ -43,11 +43,7 @@ mod compat {
         }
 
         fn make_one_component_id(&self) -> Option<i32> {
-            let component_id = self
-                .buttons
-                .iter()
-                .find(|button| button.qty == 1)?
-                .com_id;
+            let component_id = self.buttons.iter().find(|button| button.qty == 1)?.com_id;
             (component_id >= 0).then_some(component_id)
         }
     }
@@ -259,11 +255,7 @@ mod compat {
 
     /// Frozen `ChatDialog.makeOne`: choose the first matching product's Make-1
     /// control and wait for both a page change and its product inventory receipt.
-    fn begin_make_one(
-        probe: &Probe<'_>,
-        match_name: &str,
-        cx: &mut Cx<'_>,
-    ) -> Begin<ChatDialog> {
+    fn begin_make_one(probe: &Probe<'_>, match_name: &str, cx: &mut Cx<'_>) -> Begin<ChatDialog> {
         if !probe.ingame {
             return Begin::Done(false);
         }
@@ -613,7 +605,6 @@ mod compat {
                 inventory: Some(&[]),
                 main_make,
             }
-
         }
         fn machine(phase: Phase) -> ChatDialog {
             ChatDialog {
@@ -756,7 +747,10 @@ mod compat {
                 inventory: Some(&after_inventory),
                 ..at
             };
-            assert_eq!(step(&mut machine, &mut clock, &receipt), (Some(true), vec![]));
+            assert_eq!(
+                step(&mut machine, &mut clock, &receipt),
+                (Some(true), vec![])
+            );
             let (_, _, replacement_machine) = begin(|cx| begin_make_one(&at, "wool", cx));
             let mut replacement_machine = replacement_machine.expect("running");
             let replaced_without_product = Probe {
@@ -765,7 +759,11 @@ mod compat {
                 ..at
             };
             assert_eq!(
-                step(&mut replacement_machine, &mut clock, &replaced_without_product),
+                step(
+                    &mut replacement_machine,
+                    &mut clock,
+                    &replaced_without_product
+                ),
                 (Some(false), vec![]),
                 "a replacement page without a product receipt is not success"
             );
@@ -789,16 +787,12 @@ mod compat {
                 make_products: &no_make_one,
                 ..probe(&no_make_one, None, false, 3000)
             };
-            assert_eq!(
-                begin(|cx| begin_make_one(&at, "wool", cx)).0,
-                Some(false)
-            );
+            assert_eq!(begin(|cx| begin_make_one(&at, "wool", cx)).0, Some(false));
             let missing_inventory = Probe {
                 inventory: None,
                 ..probe(&products, None, false, 3000)
             };
-            let (out, ops, machine) =
-                begin(|cx| begin_make_one(&missing_inventory, "wool", cx));
+            let (out, ops, machine) = begin(|cx| begin_make_one(&missing_inventory, "wool", cx));
             assert_eq!((out, ops, machine.is_none()), (Some(false), vec![], true));
         }
 

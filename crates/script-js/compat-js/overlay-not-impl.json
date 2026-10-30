@@ -18,15 +18,6 @@
     "async": false
   },
   {
-    "id": "not-impl:api/game/Game.js:Game.castOnNpc",
-    "module": "api/game/Game.js",
-    "selector": "Game.castOnNpc",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script-js/src/shim/game.js:208",
-    "async": true
-  },
-  {
     "id": "not-impl:api/shop/Shop.js:Shop.buyById",
     "module": "api/shop/Shop.js",
     "selector": "Shop.buyById",

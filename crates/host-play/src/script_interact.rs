@@ -1463,8 +1463,9 @@ where
             | InteractReq::GatherStop { .. }
             | InteractReq::CombatFight { .. }
             | InteractReq::CombatStop { .. }
+            | InteractReq::CastNpc { .. }
             | InteractReq::ProgressRead { .. } => {
-                // Host-local controls are consumed by the slot before game
+                // Host-local controls and typed native starts are consumed by the slot before game
                 // dispatch; none can authorize a Driver packet here.
             }
             InteractReq::NoteProgress
