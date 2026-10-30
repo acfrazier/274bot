@@ -534,7 +534,7 @@ fn poison_hold_full_window_waits_31_and_resumes_only_after_clear() {
 }
 
 #[test]
-fn poison_hold_partial_window_waits_only_the_remaining_ticks() {
+fn poison_hold_partial_window_waits_the_remainder() {
     let mut rig = HoldRig::new(0, 0, true);
     for tick in 1..=13 {
         rig.observe(tick, tile(0), None, None);
@@ -565,7 +565,7 @@ fn poison_hold_partial_window_waits_only_the_remaining_ticks() {
 }
 
 #[test]
-fn poison_hold_sends_no_hop_into_exposure_before_the_deadline() {
+fn poison_hold_sends_no_hop_into_exposure() {
     let mut rig = HoldRig::new(40, 0, true);
     rig.pump(tile(40), true);
     {
@@ -591,7 +591,7 @@ fn poison_hold_sends_no_hop_into_exposure_before_the_deadline() {
 }
 
 #[test]
-fn poison_long_approach_clears_without_starting_a_wait() {
+fn poison_long_approach_clears_without_a_stop() {
     let mut rig = HoldRig::new(0, 40, true);
     rig.pump(tile(0), true);
     {
