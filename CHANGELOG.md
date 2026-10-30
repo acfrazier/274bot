@@ -222,6 +222,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   holds a Magic log: it only goes to the bank when it holds logs. Clear one
   backpack slot and the script resumes. The fix is in review upstream; update
   your rs2b0t folder once it is merged. 0.2.7 has the same problem.
+- **Scripts:** Some rs2b0t catalog scripts call script API members that 274bot
+  does not implement yet: `SettingsStore.save` and `onChange`,
+  `Bank.backpackReady` and `normalBackpackSnapshot`, `Reachability.probeable`,
+  `ScriptRunner.pause`, `resume`, `state` and `ctx`, and
+  `BotHost.addFrameListener`. Such a script stops with "not implemented" when it
+  reaches that call; for example, the current AutoFighter cannot start fighting.
+  Support is planned for 0.2.9. 0.2.0 to 0.2.7 have the same problem.
 - **Host:** Background work can stop for the rest of the session after one disk
   operation takes longer than 60 seconds. Restart 274bot to recover. A fix is
   planned for 0.2.9. 0.2.6 to 0.2.7 have the same problem.
