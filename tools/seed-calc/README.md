@@ -145,6 +145,8 @@ The hypothetical food rule eats between attempts and steps when Hitpoints are at
 The rule uses the product food line and revision-289 lobster healing and delays.
 It selects the smallest count at 1% death risk, then tries 5%.
 It reports the probability of each named budget stop separately from death.
+Every merge and every sum visits the states in a fixed order.
+Two runs of the same guide and seed therefore store the same floating-point bits.
 
 The model starts the 100-tick Hitpoints timer at phase zero.
 It includes the source delays and the rope setup walk from the guide anchor.
@@ -204,7 +206,7 @@ They check one product-selected eat and its exact healing and action delay.
 A deterministic Monte Carlo simulation checks the exact food and regeneration solver.
 Two additional simulations check the base fight solver.
 Fight tests cover the positive-food-only bound, single-stat-first policy, and state search.
-Self-damage tests check delay/modal regeneration gating, death before a due heal, no regeneration during the rope setup walk, and live guide attempt limits.
+Self-damage tests check delay/modal regeneration gating, death before a due heal, no regeneration during the rope setup walk, live guide attempt limits, and bit-identical results from two runs of one model.
 The unarmed query test preserves the bronze default and selects unarmed mode with `weapon:null`.
 Crossing tests check a product refusal below the first admitted candidate.
 

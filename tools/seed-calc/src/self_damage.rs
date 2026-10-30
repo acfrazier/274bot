@@ -1,5 +1,5 @@
 //! Exact finite-state model for guide steps that damage the player on failure.
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
@@ -212,7 +212,7 @@ enum Operation {
     },
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct State {
     hp: u8,
     regen_phase: u8,
@@ -220,7 +220,10 @@ struct State {
     food_cooldown: u8,
 }
 
-type Distribution = HashMap<State, f64>;
+/// States are visited in `Ord` order at every merge and every sum. Floating-point addition is
+/// not associative, so a map with a per-process order (a hash map) changes the stored bits from
+/// run to run. Sorting only at print would not help: the sums are built during the merge.
+type Distribution = BTreeMap<State, f64>;
 
 #[derive(Default)]
 struct Run {
@@ -797,7 +800,7 @@ fn execute(
     base_hp: u8,
     food_policy: Option<FoodPolicy>,
 ) -> Run {
-    let mut distribution = HashMap::new();
+    let mut distribution = Distribution::new();
     distribution.insert(initial, 1.0);
     let mut run = Run {
         live: distribution,
@@ -834,9 +837,9 @@ fn run_bounded(run: &mut Run, step: &BoundedStep, base_hp: u8, food_policy: Opti
     let chance = f64::from(successes) / f64::from(ROLL_BUCKETS);
     let miss_chance = 1.0 - chance;
     let mut pending = std::mem::take(&mut run.live);
-    let mut completed = HashMap::new();
+    let mut completed = Distribution::new();
     for attempt in 0..step.attempts {
-        let mut next_attempt = HashMap::new();
+        let mut next_attempt = Distribution::new();
         for (state, probability) in pending {
             let before = if attempt == 0 {
                 step.hazard.timing.first_attempt_before_roll
@@ -907,7 +910,7 @@ fn run_swing_acquire(
     food_policy: Option<FoodPolicy>,
 ) {
     let mut pending = std::mem::take(&mut run.live);
-    let mut completed = HashMap::new();
+    let mut completed = Distribution::new();
     for pass in 0..=restarts {
         if pending.is_empty() {
             break;
@@ -1447,12 +1450,7 @@ mod tests {
             .iter()
             .map(|(state, probability)| {
                 (
-                    (
-                        state.hp,
-                        state.regen_phase,
-                        state.food,
-                        state.food_cooldown,
-                    ),
+                    (state.hp, state.regen_phase, state.food, state.food_cooldown),
                     probability.to_bits(),
                 )
             })
