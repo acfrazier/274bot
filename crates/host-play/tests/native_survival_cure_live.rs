@@ -20,9 +20,12 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+// m48_50.jm2 places willow loc 1308 (`pack/loc.pack:1309`) at local (16,34),
+// world (3088,3234). The stand is the clear land tile east of it (no loc, no
+// blocking flag), well inside the Gatherer's 32-tile radius.
 const GATHERER_STAND: WorldTile = WorldTile {
-    x: 3120,
-    z: 3267,
+    x: 3089,
+    z: 3234,
     level: 0,
 };
 const MINING_STAND: WorldTile = WorldTile {
@@ -1244,10 +1247,17 @@ fn work_receipt(
     deadline: u32,
 ) -> Result<Option<Value>, String> {
     check_mark(witness)?;
-    check_deadline(witness, snapshot.tick(), deadline)?;
+    // Work cells poison the bot after Start, so frames before the source and
+    // its chat carry no outcome yet. The source step bounds the chat signal
+    // itself (`TWISTED_CHEST_POISON_SIGNAL_TICKS`,
+    // `DEBUGPROC_POISON_SIGNAL_TICKS`); the outcome deadline counts from it.
     let Some(source_tick) = witness.poison_source_tick else {
         return Ok(None);
     };
+    if witness.poison_tick.is_none() {
+        return Ok(None);
+    }
+    check_deadline(witness, snapshot.tick(), deadline)?;
     let Some(work_active_tick) = witness.work_active_tick else {
         if witness.poison_during_provisioning {
             return Ok(None);
