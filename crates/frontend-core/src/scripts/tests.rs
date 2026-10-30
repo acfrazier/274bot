@@ -191,6 +191,71 @@ fn fixture(test: &str, members: &[&str]) -> Fixture {
     }
 }
 
+#[test]
+fn warm_quester_script_section_shares_its_zone_text_without_allocating() {
+    let _source = crate::quester_paths::registry_source_test_lock();
+    let mut f = fixture("quester-zone-frame-allocations", &["alice"]);
+    assert!(f.scripts.persist_assignment(
+        &mut f.core,
+        "alice",
+        script::compiled_assignment(script::CompiledId("Quester")),
+    ));
+    f.core.flush_writes();
+    let mut settings = f
+        .scripts
+        .compiled_edit_bag(&f.core, Some("alice"), CompiledCardId::QUESTER)
+        .expect("Quester settings load");
+    settings.insert("quests".into(), json!(["desertrescue"]));
+    let operation = f
+        .scripts
+        .set_compiled_overrides(
+            &mut f.core,
+            "alice",
+            CompiledCardId::QUESTER,
+            settings,
+        )
+        .expect("save selected queue");
+    f.core.flush_writes();
+    assert_eq!(
+        f.core.operation(operation).unwrap().outcome("alice"),
+        Some(&Outcome::Completed)
+    );
+    assert!(f.scripts.refresh_quester_start_zones(&f.core, Some("alice")));
+    let view = f
+        .scripts
+        .shared_quester_start_zone_view()
+        .expect("the selected Quester scope is cached");
+    let zones = view
+        .as_ref()
+        .as_ref()
+        .expect("the queue settings resolve");
+    let notice = zones.notice();
+    let label = zones
+        .scopes
+        .first()
+        .expect("the default selected queue has a disclosed guide")
+        .display_label
+        .as_str();
+
+    super::prestart_zones::allocation_probe::start();
+    for _ in 0..256 {
+        assert!(!f.scripts.refresh_quester_start_zones(&f.core, Some("alice")));
+        let current = f
+            .scripts
+            .shared_quester_start_zone_view()
+            .expect("the cached view stays present");
+        assert!(std::sync::Arc::ptr_eq(&view, &current));
+        let current_zones = current.as_ref().as_ref().expect("the same queue stays valid");
+        assert_eq!(current_zones.notice(), notice);
+        assert_eq!(current_zones.scopes[0].display_label, label);
+    }
+    assert_eq!(
+        super::prestart_zones::allocation_probe::stop(),
+        0,
+        "a warm Script section frame allocated"
+    );
+}
+
 #[cfg(feature = "js")]
 struct ScriptSurface<'a>(&'a mut Scripts);
 

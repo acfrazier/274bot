@@ -76,10 +76,6 @@ fn merlin_declared_keep_stairs() {
         std::env::var_os("QUESTER_TICK_MS").is_none(),
         "the shared Engine Q speed must remain unchanged"
     );
-    assert_ne!(
-        std::env::var("QUESTER_ALLOW_DANGER_ZONES").as_deref(),
-        Ok("1")
-    );
     let final_proof = Proof::Arrived {
         x: 2769,
         z: 3403,
@@ -146,7 +142,6 @@ fn merlin_declared_keep_stairs() {
         start_settings: Map::from_iter([
             ("quests".into(), json!(["arthur"])),
             ("include_draft_guides".into(), json!(true)),
-            ("allow_danger_zones".into(), json!(false)),
         ]),
         mode: Mode::Stage {
             expect: vec!["arthur:4".into()],

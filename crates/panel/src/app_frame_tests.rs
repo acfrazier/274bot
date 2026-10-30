@@ -1744,7 +1744,14 @@ fn panel_driver_shows_quester_zone_disclosure_before_start() {
         rig.text
     );
     assert!(
-        rig.text.contains("Survival remains active."),
+        rig.text
+            .contains("The food guard is armed for the whole walk"),
+        "{}",
+        rig.text
+    );
+    assert!(
+        rig.text
+            .contains("protection runs only where a step requests it."),
         "{}",
         rig.text
     );

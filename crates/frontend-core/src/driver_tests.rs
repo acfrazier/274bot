@@ -1653,6 +1653,32 @@ fn set_card(d: &mut HeadlessDriver, card: crate::FleetCard) {
     assert_eq!(terminal_app(d, set.request()), Some(done()));
 }
 
+fn set_quester_queue(d: &mut HeadlessDriver, profile: &str, quests: &[&str]) {
+    let values = serde_json::json!({"quests": quests})
+        .as_object()
+        .expect("quest queue settings are an object")
+        .clone();
+    let operation = d
+        .models
+        .scripts
+        .set_compiled_overrides(
+            &mut d.session,
+            profile,
+            crate::scripts::CompiledCardId::QUESTER,
+            values,
+        )
+        .expect("save Quester queue settings");
+    d.session.flush_writes();
+    assert_eq!(
+        d.session
+            .operation(operation)
+            .expect("settings operation")
+            .outcome(profile),
+        Some(&crate::operations::Outcome::Completed)
+    );
+    d.poll();
+}
+
 fn plan(d: &mut HeadlessDriver, action: crate::FleetAction) -> Option<Terminal> {
     let planned = d
         .submit(
@@ -2177,6 +2203,113 @@ fn a_rename_or_card_change_before_confirm_never_retargets_the_plan() {
         "same identity"
     );
     assert_eq!(assignment(&d, "carol"), None);
+}
+
+/// Quester starts expose the exact per-profile zone lists before Confirm;
+/// if a saved queue changes afterward, that bot is skipped before Start.
+#[test]
+fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
+    let mut d = driver("f3-quester-disclosure", &["alice", "bob"]);
+    let _source = crate::quester_paths::registry_source_test_lock();
+    d.poll();
+    load(&mut d, &["alice", "bob"]);
+    set_card(
+        &mut d,
+        crate::FleetCard::pinned(crate::scripts::ScriptChoice::compiled(
+            crate::scripts::CompiledCardId::QUESTER,
+        )),
+    );
+    mark(&mut d, &["alice", "bob"]);
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    run_plan(&mut d);
+
+    set_quester_queue(&mut d, "alice", &["desertrescue"]);
+    set_quester_queue(&mut d, "bob", &["sheep"]);
+    set_card(&mut d, crate::FleetCard::OWN);
+    assert_eq!(plan(&mut d, crate::FleetAction::Start), Some(done()));
+    let waiting = d.session().fleet_plan().expect("Quester Start plan");
+    assert!(
+        waiting.needs_confirm(),
+        "a marked Quester Start always discloses before it runs"
+    );
+    assert_eq!(plan_names(&d), ["alice", "bob"]);
+    let prompt = waiting.prompt();
+    assert!(prompt.contains("alice: Start accepts only these zones."), "{prompt}");
+    assert!(prompt.contains("bob: No danger zones are declared."), "{prompt}");
+    for id in [
+        "ugthanki@3268,3052,0",
+        "ugthanki@3281,3056,0",
+        "ugthanki@3305,3089,0",
+    ] {
+        assert!(prompt.contains(id), "missing {id}: {prompt}");
+    }
+
+    let alice = d.session().profile_identity_or_synthetic("alice");
+    let bob = d.session().profile_identity_or_synthetic("bob");
+    set_quester_queue(&mut d, "alice", &["sheep"]);
+    let request = run_plan(&mut d);
+    let result = d.session().fleet_result().expect("Start result");
+    assert!(result.settled(), "{}", result.text());
+    assert_eq!(result.counts().skipped, 1, "{}", result.text());
+    assert!(
+        result
+            .text()
+            .contains("alice (Quester danger-zone disclosure changed after confirmation)"),
+        "{}",
+        result.text()
+    );
+    assert!(
+        result.text().contains("alice: Start accepts only these zones.")
+            && result.text().contains("bob: No danger zones are declared."),
+        "the result retains each confirmed disclosure: {}",
+        result.text()
+    );
+    let report = d.report(request).expect("unchanged Bob's Start report");
+    assert!(
+        report.member(Subject::Profile(alice)).is_none(),
+        "Alice was not started with a queue whose zones were not shown"
+    );
+    assert!(
+        report.member(Subject::Profile(bob)).is_some(),
+        "the unchanged Bob remains in the confirmed Start"
+    );
+}
+
+#[test]
+fn unplanned_bulk_start_refuses_quester_without_a_disclosure_plan() {
+    let mut d = driver("f3-quester-bulk-start-refused", &["alice", "bob"]);
+    let _source = crate::quester_paths::registry_source_test_lock();
+    d.poll();
+    load(&mut d, &["alice", "bob"]);
+    set_card(
+        &mut d,
+        crate::FleetCard::pinned(crate::scripts::ScriptChoice::compiled(
+            crate::scripts::CompiledCardId::QUESTER,
+        )),
+    );
+    mark(&mut d, &["alice", "bob"]);
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    run_plan(&mut d);
+
+    let start = d
+        .submit(OperatorCommand::StartScript, Targets::Everyone)
+        .expect("bulk Start is reported as rejected");
+    settle(&mut d, start.request());
+    let report = d.report(start.request()).expect("Start report");
+    for name in ["alice", "bob"] {
+        let identity = d.session().profile_identity_or_synthetic(name);
+        let member = report
+            .member(Subject::Profile(identity))
+            .expect("every selected profile receives the refusal");
+        assert!(
+            matches!(member.terminal(), Some(Settlement::Failed(_))),
+            "{name} must not start without a confirmed zone list"
+        );
+        assert_eq!(
+            member.detail(),
+            Some("Quester bulk Start requires a confirmed fleet plan showing each bot's danger zones")
+        );
+    }
 }
 
 /// A bot whose profile is being saved (here, a held rename) is a named skip

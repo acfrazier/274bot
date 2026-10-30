@@ -415,6 +415,7 @@ fn scope(
 #[cfg(test)]
 mod tests {
     use super::{QuesterStartZoneCache, QuesterStartZones};
+    use crate::selection::ProfileIdentity;
     use api::selected::{ClientRevision, FamilyPreparation};
     use api::snapshot::WorldTile;
     use nav_planner::collision::WorldCollision;
@@ -582,6 +583,18 @@ mod tests {
         Map::from_iter([("quests".into(), json!(quests))])
     }
 
+    fn update_cache(
+        cache: &mut QuesterStartZoneCache,
+        generation: u64,
+        settings: Map<String, Value>,
+    ) -> bool {
+        cache.update_settings(
+            ProfileIdentity::synthetic("prestart-zone-cache-test"),
+            generation,
+            Ok(settings),
+        )
+    }
+
     fn preview(cache: &QuesterStartZoneCache) -> &QuesterStartZones {
         cache.view().expect("the cache has a view").unwrap()
     }
@@ -635,6 +648,9 @@ mod tests {
         assert!(sequence_step
             .display_label
             .contains("step fixture-sequence-walk"));
+        assert!(sequence_step
+            .display_label
+            .contains("Cook Fixture (cook) · stage cook:0"));
         assert_eq!(
             sequence_step.reason,
             "The guide crosses this bank to reach the mill."
@@ -661,6 +677,9 @@ mod tests {
         assert!(prelude_step
             .display_label
             .contains("step fixture-prelude-walk"));
+        assert!(prelude_step
+            .display_label
+            .contains("Cook Fixture (cook) · prelude"));
         assert_eq!(
             prelude_step.reason,
             "The guide crosses this bank to reach the mill."
@@ -739,24 +758,24 @@ mod tests {
     fn queue_defaults_skip_drafts_and_apply_opt_in_and_order_override() {
         let _source_lock = crate::quester_paths::registry_source_test_lock();
         let mut cache = QuesterStartZoneCache::default();
-        assert!(cache.update(&Map::new()));
+        assert!(update_cache(&mut cache, 0, Map::new()));
         let default_ids = quest_ids(preview(&cache));
         assert!(!default_ids.contains(&"arthur"));
 
         let mut draft_opt_in = Map::new();
         draft_opt_in.insert("include_draft_guides".into(), json!(true));
-        assert!(cache.update(&draft_opt_in));
+        assert!(update_cache(&mut cache, 1, draft_opt_in));
         assert!(quest_ids(preview(&cache)).contains(&"arthur"));
 
         let mut ordered = Map::new();
         ordered.insert("order_override".into(), json!(["arthur"]));
-        assert!(cache.update(&ordered));
+        assert!(update_cache(&mut cache, 2, ordered));
         assert_eq!(quest_ids(preview(&cache)).first().copied(), Some("arthur"));
 
         let mut explicit = bag(&["arthur"]);
         explicit.insert("skip".into(), json!(["arthur"]));
         explicit.insert("order_override".into(), json!(["arthur"]));
-        assert!(cache.update(&explicit));
+        assert!(update_cache(&mut cache, 3, explicit));
         assert!(preview(&cache).is_empty());
     }
 
@@ -764,18 +783,50 @@ mod tests {
     fn empty_declarations_and_live_settings_changes_are_visible() {
         let _source_lock = crate::quester_paths::registry_source_test_lock();
         let mut cache = QuesterStartZoneCache::default();
-        assert!(cache.update(&bag(&["sheep"])));
+        let identity = ProfileIdentity::synthetic("prestart-zone-cache-test");
+        assert!(update_cache(&mut cache, 1, bag(&["sheep"])));
         assert!(preview(&cache).is_empty());
+        assert_eq!(
+            preview(&cache).notice(),
+            "No danger zones are declared. Quester walks avoid every danger zone."
+        );
 
         let mut arthur = bag(&["arthur"]);
         arthur.insert("include_draft_guides".into(), json!(true));
-        assert!(cache.update(&arthur));
+        assert!(update_cache(&mut cache, 2, arthur));
         assert!(!preview(&cache).is_empty());
-        assert!(!cache.update(&arthur), "unchanged settings reuse the cache");
-        assert!(
-            cache.update(&bag(&["sheep"])),
-            "live settings refresh the cache"
+        assert_eq!(
+            preview(&cache).notice(),
+            "Start accepts only these zones. The food guard is armed for the whole walk; protection runs only where a step requests it. Every other danger zone stays avoided."
         );
+        assert!(cache.settings_match(identity, 2));
+        assert!(!cache.refresh_registry(), "unchanged registry reuses the cache");
+
+        assert!(update_cache(&mut cache, 3, bag(&["sheep"])));
         assert!(preview(&cache).is_empty());
     }
+
+    #[test]
+    fn desert_rescue_discloses_both_captain_crossings() {
+        let zones =
+            super::resolve_selected_zones(&PathRegistry::default(), &bag(&["desertrescue"]))
+                .expect("bundled Desert Rescue queue resolves");
+        let ids: Vec<_> = zones
+            .scopes
+            .iter()
+            .flat_map(|scope| scope.zones.iter().map(|zone| zone.id.as_str()))
+            .collect();
+        for id in [
+            "ugthanki@3268,3052,0",
+            "ugthanki@3281,3056,0",
+            "ugthanki@3305,3089,0",
+        ] {
+            assert_eq!(
+                ids.iter().filter(|&&found| found == id).count(),
+                2,
+                "both captain walks disclose {id}: {ids:?}"
+            );
+        }
+    }
+
 }

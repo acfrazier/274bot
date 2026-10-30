@@ -405,11 +405,15 @@ const CORE: &[(&str, Decision)] = &[
     ("scripts/paint_style.rs::parse_accent", Excluded(FORMAT)),
     // scripts/prestart_zones.rs: derived disclosure, not operator commands.
     (
-        "scripts/prestart_zones.rs::QuesterStartZoneCache::update",
+        "scripts/prestart_zones.rs::QuesterStartZoneCache::update_settings",
         Excluded(PROJECTION),
     ),
     (
-        "scripts/prestart_zones.rs::QuesterStartZoneCache::set_unavailable",
+        "scripts/prestart_zones.rs::QuesterStartZoneCache::update_unavailable",
+        Excluded(PROJECTION),
+    ),
+    (
+        "scripts/prestart_zones.rs::QuesterStartZoneCache::refresh_registry",
         Excluded(PROJECTION),
     ),
     (

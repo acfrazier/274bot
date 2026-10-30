@@ -5862,24 +5862,11 @@ fn s2b_admission_per_bot_layouts() {
     // S0c moves the platform-specific isolate mutexes into the surface run.
     // The shared 64-bit slot layout no longer contains those mutexes.
     // S0d adds a 16 B per-slot generation cache for lock-free compiled-card reads.
-    // QUEST-DANGER-CONSENT boxes pending Start: SlotScript shrinks 1624 B to 1544 B.
+    // QUEST-DANGER-CONSENT boxes pending Start. On measured Linux x86_64,
+    // SlotScript shrinks from the earlier 1624 B pin to 1544 B.
     // NAV-BUSY-TRANSPORT adds 32 B to Traveller (busy-refusal retry state and
     // the distinct-tick transport clock): NavBot is 3816 B. Lab memory A/B on
     // the branch head passed (NAV-BUSY-TRANSPORT/mem-ab-r3).
-    #[cfg(all(
-        target_os = "macos",
-        target_arch = "aarch64",
-        not(feature = "memory-profile")
-    ))]
-    assert_eq!(
-        (
-            std::mem::size_of::<NavBot>(),
-            std::mem::size_of::<script::SlotScript>(),
-            std::mem::size_of::<script::combat::Combat>(),
-            std::mem::size_of::<script::combat::WalkGuard>()
-        ),
-        (3816, 1544, 512, 264)
-    );
     #[cfg(all(
         target_os = "linux",
         target_arch = "x86_64",

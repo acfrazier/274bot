@@ -1972,7 +1972,14 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             ("quests".to_owned(), serde_json::json!(["arthur"])),
             ("include_draft_guides".to_owned(), serde_json::json!(true)),
         ]);
-        assert!(app.quester_start_zone_cache.update(&settings));
+        let mut disclosure = frontend_core::scripts::QuesterStartZoneCache::default();
+        assert!(disclosure.update_settings(
+            frontend_core::selection::ProfileIdentity::synthetic("tui-zone-capture"),
+            0,
+            Ok(settings),
+        ));
+        app.set_quester_start_zone_view(disclosure.shared_view());
+        app.script_state = ScriptRunState::Error;
 
         let mut combined = String::new();
         let mut page_index = 0;
@@ -1984,6 +1991,14 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
         );
         assert!(
             shown.contains("Start accepts only these zones."),
+            "{width}x{height}: {shown}"
+        );
+        assert!(
+            shown.contains("The food guard is armed for the whole walk"),
+            "{width}x{height}: {shown}"
+        );
+        assert!(
+            shown.contains("protection runs only where a step requests it."),
             "{width}x{height}: {shown}"
         );
         assert!(shown.contains("[Start t]"), "{width}x{height}: {shown}");
