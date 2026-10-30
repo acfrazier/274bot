@@ -614,9 +614,10 @@ fn morytania_sites_compare_proof_unknown_and_false_gate_routes() {
             )
         });
         println!("mausoleum access {start:?} -> {target:?}: {route:?}");
-        assert!(route.legs.iter().any(
-            |leg| matches!(leg, Leg::Transport { edge } if edge.loc_id == loc_id)
-        ));
+        assert!(route
+            .legs
+            .iter()
+            .any(|leg| matches!(leg, Leg::Transport { edge } if edge.loc_id == loc_id)));
     }
     let mut unknown_routes = Vec::with_capacity(SITES.len());
     let mut false_routes = Vec::with_capacity(SITES.len());

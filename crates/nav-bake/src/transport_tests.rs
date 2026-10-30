@@ -9970,7 +9970,10 @@ fn scripted_trapdoor_pair_rejects_unproved_open_or_climb_handlers() {
         ),
     ] {
         let fx = Fixture::new();
-        fx.write("pack/loc.pack", "9001=area_trapdoor\n9002=area_trapdoor_open\n");
+        fx.write(
+            "pack/loc.pack",
+            "9001=area_trapdoor\n9002=area_trapdoor_open\n",
+        );
         fx.write(
             "maps/m53_54.jm2",
             "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 30 29: 9001 22\n",
