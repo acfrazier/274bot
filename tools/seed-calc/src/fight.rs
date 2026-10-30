@@ -39,8 +39,8 @@ impl Selector {
         }
     }
 }
-fn default_weapon() -> Selector {
-    Selector::Name("bronze_scimitar".into())
+fn default_weapon() -> Option<Selector> {
+    Some(Selector::Name("bronze_scimitar".into()))
 }
 fn one() -> u8 {
     1
@@ -130,7 +130,7 @@ pub struct FightQuery {
     pub npc: Selector,
     pub facts: PathBuf,
     #[serde(default = "default_weapon")]
-    pub weapon: Selector,
+    pub weapon: Option<Selector>,
     #[serde(default)]
     pub style: Style,
     #[serde(default)]
@@ -218,7 +218,7 @@ struct ItemFact {
 }
 #[derive(Debug, Deserialize)]
 struct Weapon {
-    id: i32,
+    id: Option<i32>,
     config: String,
     kind: WeaponKind,
     attack_bonus: [i32; 5],
@@ -233,6 +233,24 @@ struct Weapon {
     poisoned: bool,
     source: String,
     wear_source: String,
+}
+fn unarmed_weapon() -> Weapon {
+    Weapon {
+        id: None,
+        config: "unarmed".into(),
+        kind: WeaponKind::Melee,
+        attack_bonus: [0; 5],
+        defence_bonus: [0; 5],
+        strength_bonus: 0,
+        range_bonus: 0,
+        attackrate: 4,
+        required_attack: 1,
+        required_ranged: 1,
+        damage_types: [Some(2), Some(2), None, Some(2)],
+        poisoned: false,
+        source: "content/scripts/skill_combat/scripts/combat.rs2:14-39,63-71; content/scripts/skill_combat/configs/combat.dbrow:140-148; content/scripts/skill_combat/scripts/player/player_melee.rs2:52-56".into(),
+        wear_source: String::new(),
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -422,33 +440,42 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
             "supplement must describe revision 289".into(),
         ));
     }
-    let weapons: Vec<_> = facts
-        .weapons
-        .iter()
-        .filter(|weapon| {
-            query
-                .weapon
-                .matches(weapon.id, &weapon.config, display_name(selected, weapon.id))
-        })
-        .collect();
-    let weapon = match weapons.as_slice() {
-        [weapon] => *weapon,
-        _ => {
+    let unarmed = unarmed_weapon();
+    let weapon = if let Some(selector) = &query.weapon {
+        let weapons: Vec<_> = facts
+            .weapons
+            .iter()
+            .filter(|weapon| {
+                weapon.id.is_some_and(|id| {
+                    selector.matches(id, &weapon.config, display_name(selected, id))
+                })
+            })
+            .collect();
+        let weapon = match weapons.as_slice() {
+            [weapon] => *weapon,
+            _ => {
+                return Err(FightError::Input(
+                    "weapon missing or ambiguous in source supplement".into(),
+                ))
+            }
+        };
+        let weapon_id = weapon
+            .id
+            .ok_or_else(|| FightError::Input("weapon fact has no item id".into()))?;
+        let weapon_item = resolve_item(selected, &facts.items, &Selector::Id(weapon_id))?;
+        if weapon_item.attack_bonus != weapon.attack_bonus[..5]
+            || weapon_item.defence_bonus != weapon.defence_bonus[..5]
+            || weapon_item.strength_bonus != weapon.strength_bonus
+            || weapon_item.range_bonus != weapon.range_bonus
+        {
             return Err(FightError::Input(
-                "weapon missing or ambiguous in source supplement".into(),
-            ))
+                "weapon roll supplement disagrees with its source item facts".into(),
+            ));
         }
+        weapon
+    } else {
+        &unarmed
     };
-    let weapon_item = resolve_item(selected, &facts.items, &Selector::Id(weapon.id))?;
-    if weapon_item.attack_bonus != weapon.attack_bonus[..5]
-        || weapon_item.defence_bonus != weapon.defence_bonus[..5]
-        || weapon_item.strength_bonus != weapon.strength_bonus
-        || weapon_item.range_bonus != weapon.range_bonus
-    {
-        return Err(FightError::Input(
-            "weapon roll supplement disagrees with its source item facts".into(),
-        ));
-    }
     if (query.style == Style::Ranged && weapon.kind != WeaponKind::Ranged)
         || (query.style.melee() && weapon.kind != WeaponKind::Melee)
     {
@@ -459,7 +486,7 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
     let mut worn = Vec::with_capacity(query.worn_items.len());
     for selector in &query.worn_items {
         let item = resolve_item(selected, &facts.items, selector)?;
-        if item.id == weapon.id || worn.iter().any(|known: &&ItemFact| known.id == item.id) {
+        if weapon.id == Some(item.id) || worn.iter().any(|known: &&ItemFact| known.id == item.id) {
             return Err(FightError::Input(
                 "worn_items must not repeat the weapon or another worn item".into(),
             ));
@@ -719,16 +746,27 @@ fn validate_weapon(
     weapon: &Weapon,
     style: Style,
 ) -> Result<(), FightError> {
+    let Some(id) = weapon.id else {
+        if !style.melee()
+            || style == Style::Controlled
+            || weapon.damage_types[usize::from(style.code())].is_none()
+        {
+            return Err(FightError::Input(
+                "unarmed attacks support accurate, aggressive, and defensive styles only".into(),
+            ));
+        }
+        return Ok(());
+    };
     if !selected
         .items()
         .iter()
-        .any(|item| item.id == weapon.id && item.alias.as_deref() == Some(&weapon.config))
+        .any(|item| item.id == id && item.alias.as_deref() == Some(&weapon.config))
     {
         return Err(FightError::Input(
             "weapon supplement disagrees with selected item identity".into(),
         ));
     }
-    if let Some(bonus) = selected.item_combat_bonus(weapon.id) {
+    if let Some(bonus) = selected.item_combat_bonus(id) {
         if bonus.strengthbonus != weapon.strength_bonus || bonus.rangebonus != weapon.range_bonus {
             return Err(FightError::Input(
                 "weapon strength or ranged bonus disagrees with selected facts".into(),
@@ -743,7 +781,7 @@ fn validate_weapon(
                 ));
             }
             let tier = selected
-                .melee_weapon_tier(weapon.id)
+                .melee_weapon_tier(id)
                 .ok_or_else(|| FightError::Input("selected weapon requirement missing".into()))?;
             if tier.quest_gated
                 || tier.strength > 0
@@ -761,7 +799,7 @@ fn validate_weapon(
             let style_fact = selected
                 .weapon_styles()
                 .iter()
-                .find(|fact| fact.obj_id == weapon.id && fact.category == 0)
+                .find(|fact| fact.obj_id == id && fact.category == 0)
                 .ok_or_else(|| FightError::Input("selected melee weapon style missing".into()))?;
             if style_fact.attackrate != weapon.attackrate
                 || style_fact.style != 1
@@ -785,12 +823,12 @@ fn validate_weapon(
             let fact = selected
                 .ranged_weapons()
                 .iter()
-                .find(|fact| fact.obj_id == weapon.id)
+                .find(|fact| fact.obj_id == id)
                 .ok_or_else(|| FightError::Input("selected ranged weapon fact missing".into()))?;
             let style = selected
                 .weapon_styles()
                 .iter()
-                .find(|fact| fact.obj_id == weapon.id && fact.category == 1)
+                .find(|fact| fact.obj_id == id && fact.category == 1)
                 .ok_or_else(|| FightError::Input("selected ranged weapon style missing".into()))?;
             if fact.levelrequire != weapon.required_ranged || style.attackrate != weapon.attackrate
             {
@@ -1889,7 +1927,7 @@ mod tests {
         let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let tables = CombatTables::build(selected).unwrap();
         let weapon = Weapon {
-            id: 1321,
+            id: Some(1321),
             config: "bronze_scimitar".into(),
             kind: WeaponKind::Melee,
             attack_bonus: [1, 7, -2, 0, 0],
@@ -1923,6 +1961,35 @@ mod tests {
             .iter()
             .any(|r| r.contains("unknown NPC maximum")));
     }
+    #[test]
+    fn null_weapon_is_unarmed_and_omitted_weapon_keeps_the_default() {
+        let default: FightQuery = serde_json::from_str(r#"{"npc":"wolf","facts":"facts"}"#).unwrap();
+        assert!(matches!(
+            default.weapon,
+            Some(Selector::Name(alias)) if alias == "bronze_scimitar"
+        ));
+
+        let unarmed: FightQuery =
+            serde_json::from_str(r#"{"npc":"wolf","facts":"facts","weapon":null}"#).unwrap();
+        assert!(unarmed.weapon.is_none());
+    }
+
+    #[test]
+    fn unarmed_weapon_uses_the_content_crush_table_and_four_tick_interval() {
+        let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let tables = CombatTables::build(selected).unwrap();
+        let weapon = unarmed_weapon();
+        assert_eq!(weapon.id, None);
+        assert_eq!(weapon.attackrate, 4);
+        assert_eq!(weapon.attack_bonus, [0; 5]);
+        assert_eq!(weapon.strength_bonus, 0);
+        assert_eq!(weapon.damage_types, [Some(2), Some(2), None, Some(2)]);
+        for style in [Style::Accurate, Style::Aggressive, Style::Defensive] {
+            validate_weapon(tables.selected(), &weapon, style).unwrap();
+        }
+        assert!(validate_weapon(tables.selected(), &weapon, Style::Controlled).is_err());
+    }
+
     #[test]
     fn npc_names_do_not_select_an_arbitrary_variant() {
         let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();

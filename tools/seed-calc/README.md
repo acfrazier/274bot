@@ -37,6 +37,9 @@ Query errors produce explicit JSON error records.
 Selectors accept an item or NPC id, content alias, or exact display name.
 An ambiguous name requires an id.
 The default weapon is a bronze scimitar.
+Set `"weapon": null` to model unarmed combat.
+The unarmed model uses zero bonuses, crush damage, and a four-tick attack interval.
+It supports accurate, aggressive, and defensive styles.
 The weapon is separate from `worn_items`.
 Do not list the weapon twice.
 The optional `ammunition` and `spell` fields retain query details for fights that the tool does not model.
@@ -108,6 +111,41 @@ Magic also needs spell-dependent damage, freezing, and stat changes.
 Poison needs a calibrated damage schedule.
 The tool reports the reason and does not return a survival probability for these cases.
 
+## Self-damage queries
+
+Use `mode: "self_damage"` with a guide and its seed:
+
+```json
+{"mode":"self_damage","label":"upass","guide":"/Volumes/dev-scratch/274bot-evidence/QUEST-TERRA/paths/upass.json","seed":"/Volumes/dev-scratch/274bot-evidence/QUEST-TERRA/upass/seed.json","hitpoints":40}
+{"mode":"self_damage","label":"mcannon","guide":"/Volumes/dev-scratch/274bot-evidence/QUEST-TERRA/paths/mcannon.json","seed":"/Volumes/dev-scratch/274bot-evidence/QUEST-TERRA/mcannon/seed.json","hitpoints":40}
+```
+
+`hitpoints` overrides the seed value. `role` selects a role when a guide has more than one.
+`lobster_limit` defaults to 28.
+
+The model reads the guide steps in order.
+It recognizes Underground Pass rockslides and rope swings, plus Dwarf Cannon railing repairs.
+It follows each step's `max_attempts` or `max_restarts` budget.
+It also follows the eight authored rockslide steps in the rope recovery recipe.
+
+The content roll is `floor(low * (99 - level) / 98) + floor(high * (level - 1) / 98) + 1`.
+The attempt succeeds when this value is greater than the engine's byte roll from 0 through 255.
+The result reports successful roll values per 256 attempts.
+Rockslides deal 3 damage after a failed roll.
+Rope falls deal `floor(current HP * 15 / 100) + 1`.
+Railings deal `min(floor(base HP * 10 / 100), 3)` damage.
+
+The no-food result represents a run with no eating.
+The future food rule eats between attempts and steps when Hitpoints are at or below the product eat line.
+The rule uses the product food line and revision-289 lobster healing and delays.
+It selects the smallest count at 1% death risk, then tries 5%.
+It reports the probability of each named budget stop separately from death.
+
+The model starts the 100-tick Hitpoints timer at phase zero.
+It includes the source delays and the rope setup walk from the guide anchor.
+It excludes travel outside these actions and time for the bot to send the next action.
+It does not model unrelated guide steps.
+
 ## Crossing queries
 
 Provide a reference navpack, route endpoints, and the exact `cross` ids from the guide:
@@ -157,6 +195,8 @@ Tests compare hand-computed hit chances with and without armour.
 They check one product-selected eat and its exact healing and action delay.
 A deterministic Monte Carlo simulation checks the exact food and regeneration solver.
 Two additional simulations check the base fight solver.
+Self-damage tests check a hand-computed chain and the five-attempt rockslide budget.
+The unarmed query test preserves the bronze default and selects unarmed mode with `weapon:null`.
 Crossing tests check a product refusal below the first admitted candidate.
 
 ## Source formulas
@@ -177,5 +217,10 @@ Paths below are relative to the lostcity-289 content or engine roots.
 - Product `crates/script/src/combat/guard.rs:470-483`, `policy.rs:333-386`, and `schedule.rs:85-87,118-131`: the food decision and scheduled action.
 - `content/scripts/login_logout/login.rs2:34-38` and `scripts/player/scripts/stat.rs2:58-60`: the 100-tick Hitpoints regeneration timer.
 - `engine/src/engine/World.ts:357-378,665-717`: NPC processing precedes player processing.
+- `content/scripts/quests/quest_upass/scripts/upass_obstacles.rs2:19-31,93-128`: rockslide and rope rolls, damage, and delays.
+- `content/scripts/quests/quest_mcannon/scripts/locs/railings.rs2:64-92`: railing roll, damage, and delays.
+- `content/scripts/skill_agility/scripts/agility.rs2:18-43,93-101,123-139`: per-tile movement, exact movement, and forced movement.
+- `engine/src/engine/script/handlers/PlayerOps.ts:359-379,591-600`: arrival delay, `p_delay`, and `STAT_RANDOM`.
+- `content/scripts/skill_combat/scripts/combat.rs2:14-39,63-71`, `configs/combat.dbrow:140-148`, `content/scripts/player/scripts/equip.rs2:244-285`, and `player_melee.rs2:52-57`: unarmed styles, crush damage, zero worn bonuses, and attack interval.
 - Product `crates/script/src/combat/risk/facts.rs:102-173` and `risk/replay.rs`: crossing assessment.
 - Product `crates/host-play/src/admission.rs:330-407`: crossing admission and refusal.

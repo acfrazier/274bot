@@ -1,6 +1,7 @@
 //! Offline developer calculator for minimum quest-campaign combat seeds.
 //! See the tool README for assumptions, source formulas and JSON examples.
 pub mod crossing;
+pub mod self_damage;
 pub mod fight;
 mod food;
 
@@ -12,12 +13,14 @@ use thiserror::Error;
 pub enum Query {
     Fight(fight::FightQuery),
     Crossing(crossing::CrossQuery),
+    SelfDamage(self_damage::SelfDamageQuery),
 }
 #[derive(Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum Answer {
     Fight(fight::FightResult),
     Crossing(crossing::CrossResult),
+    SelfDamage(self_damage::SelfDamageResult),
 }
 #[derive(Debug, Error)]
 pub enum Error {
@@ -27,6 +30,8 @@ pub enum Error {
     Fight(#[from] fight::FightError),
     #[error(transparent)]
     Crossing(#[from] crossing::CrossError),
+    #[error(transparent)]
+    SelfDamage(#[from] self_damage::SelfDamageError),
 }
 pub fn calculate(query: &Query) -> Result<Answer, Error> {
     match query {
@@ -36,7 +41,12 @@ pub fn calculate(query: &Query) -> Result<Answer, Error> {
             Ok(Answer::Fight(fight::calculate(query, &tables)?))
         }
         Query::Crossing(query) => Ok(Answer::Crossing(crossing::calculate(query)?)),
-    }
+        Query::SelfDamage(query) => {
+            let tables = script::combat::guard::shared_tables()
+                .map_err(|error| Error::Facts(format!("{error:?}")))?;
+            Ok(Answer::SelfDamage(self_damage::calculate(query, &tables)?))
+        }
+}
 }
 impl Answer {
     pub fn summary(&self) -> String {
@@ -46,6 +56,21 @@ impl Answer {
                 None => format!("fight {}: {}{}", result.npc, result.status, if result.reasons.is_empty() { String::new() } else { format!(": {}", result.reasons.join("; ")) }),
             },
             Self::Crossing(result) => result.summary(),
+            Self::SelfDamage(result) => {
+                let food = match (result.minimum_lobsters, result.accepted_death_bound) {
+                    (Some(count), Some(bound)) => {
+                        format!("{count} lobsters at {:.0}% death risk", bound * 100.0)
+                    }
+                    _ => "no food count meets 5%".into(),
+                };
+                format!(
+                    "self-damage {}: no-food death {:.9}, {food}; food death {:.9}, budget stops {:.9}",
+                    result.label,
+                    result.no_food_death_probability,
+                    result.death_probability_with_policy_food,
+                    result.budget_stop_probability_with_policy_food
+                )
+            }
         }
     }
 }
