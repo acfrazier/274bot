@@ -189,6 +189,7 @@ fn clear_frame_delivery() {
 ///
 /// The caller invokes this only in memory-profile builds. The atomic guard
 /// returns before locking or allocating when no Q4 run owns the counters.
+#[allow(dead_code)]
 pub(crate) fn frame_dispatch_begin(name: &str) {
     if !FRAME_DELIVERY_ACTIVE.load(Relaxed) {
         return;
@@ -210,6 +211,7 @@ pub(crate) fn frame_dispatch_begin(name: &str) {
 }
 
 /// Mark completion of the synchronous client-frame delivery path.
+#[allow(dead_code)]
 pub(crate) fn frame_dispatch_end(name: &str, delivered: bool) {
     if !FRAME_DELIVERY_ACTIVE.load(Relaxed) {
         return;
@@ -3700,18 +3702,18 @@ mod tests {
         assert!(no_listener.contains("MEMAB_BANK_ROWS:"));
         assert!(removal.contains("Date.now() + 20000"));
         assert!(removal.contains("MEMAB_LISTENER_REMOVED"));
-        fn listener_block(source: &str) -> &str {
-            const START: &str = "        this.stopObserving = BotHost.addFrameListener(() => {\n";
+        fn listener_body(source: &str) -> &str {
+            const START: &str = "            this.stock.observe(Bank.items(), Bank.ready());\n";
             const END: &str = "\n        });";
-            let start = source.find(START).expect("frame listener start");
+            let start = source.find(START).expect("full-bank listener body");
             let end = source[start..]
                 .find(END)
-                .map(|offset| start + offset + END.len())
+                .map(|offset| start + offset)
                 .expect("frame listener end");
             &source[start..end]
         }
-        assert_eq!(listener_block(SOURCE), listener_block(&listener));
-        assert_eq!(listener_block(SOURCE), listener_block(&removal));
+        assert_eq!(listener_body(SOURCE), listener_body(&listener));
+        assert_eq!(listener_body(SOURCE), listener_body(&removal));
 
         let changed_listener = SOURCE.replace("Bank.items()", "Bank.getItems()");
         assert!(q4_accountleveler_source(
@@ -3865,7 +3867,7 @@ mod tests {
                 .expect("configured account counters")
                 .bank_rows_from_script = Some(26);
         }
-        assert_eq!(frame_delivery_bank_rows(&names), None);
+        assert_eq!(frame_delivery_bank_rows(&names), Some(26));
 
         let sample = frame_delivery_samples(start_at + Duration::from_secs(2));
         assert_eq!(sample[0]["attempted_frames"], 2);
@@ -3890,6 +3892,34 @@ mod tests {
                 .observation_delivered = 2;
         }
         assert_eq!(frame_delivery_removal_stable(&names), Some(false));
+    }
+
+    #[test]
+    fn q4_bank_rows_require_a_matching_full_array_from_every_account() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = FrameDeliveryGuard;
+        let names = vec!["alice".to_string(), "bob".to_string()];
+        configure_frame_delivery(&names);
+        {
+            let mut delivery = FRAME_DELIVERY.lock().unwrap();
+            let slots = delivery.as_mut().expect("configured account counters");
+            for counters in slots.values_mut() {
+                counters.visible_bank_rows = Some(2);
+                counters.bank_ready = true;
+                counters.bank_rows_from_script = Some(27);
+                counters.script_bank_ready = true;
+            }
+        }
+        assert_eq!(frame_delivery_bank_rows(&names), Some(27));
+        {
+            let mut delivery = FRAME_DELIVERY.lock().unwrap();
+            delivery
+                .as_mut()
+                .and_then(|slots| slots.get_mut("bob"))
+                .expect("bob's account counters")
+                .bank_rows_from_script = Some(26);
+        }
+        assert_eq!(frame_delivery_bank_rows(&names), None);
     }
 
 
