@@ -78,6 +78,8 @@ pub(super) const LOGIN_DEADLINE: Duration = Duration::from_secs(90);
 pub(super) const PREPARATION_DEADLINE: Duration = Duration::from_secs(180);
 pub(super) const CAPTURE_GRACE: Duration = Duration::from_secs(10);
 #[cfg(feature = "js")]
+const CLEAN_LOGOUT_DEADLINE: Duration = Duration::from_secs(30);
+#[cfg(feature = "js")]
 const FEATHER: i32 = 314;
 #[cfg(feature = "js")]
 const LOGS: i32 = 1511;
@@ -1042,6 +1044,57 @@ fn has(snapshot: &GameSnapshot, id: i32, held: i32) -> bool {
 }
 
 #[cfg(feature = "js")]
+struct CleanLogoutGuard<'a> {
+    play: &'a super::Play,
+    account: &'a str,
+    label: &'a str,
+    attempted: bool,
+}
+
+#[cfg(feature = "js")]
+impl CleanLogoutGuard<'_> {
+    fn logout(&mut self) -> Result<(), String> {
+        if self.attempted {
+            return Ok(());
+        }
+        self.attempted = true;
+        self.play.script_stop(self.account);
+        let arm = self
+            .play
+            .arm(self.account)
+            .ok_or_else(|| format!("{} has no slot arm for clean logout", self.label))?;
+        if !self.play.slot_connected(self.account) || arm.session_key().is_none() {
+            return Err(format!(
+                "{} account {} was not connected to an active session for clean logout",
+                self.label, self.account
+            ));
+        }
+        arm.request_logout();
+        self.play.wake(self.account);
+        let deadline = Instant::now() + CLEAN_LOGOUT_DEADLINE;
+        while arm.session_key().is_some() || self.play.slot_connected(self.account) {
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "{} account {} stayed connected after clean logout",
+                    self.label, self.account
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        println!("CLEAN LOGOUT label={} account={}", self.label, self.account);
+        Ok(())
+    }
+}
+
+#[cfg(feature = "js")]
+impl Drop for CleanLogoutGuard<'_> {
+    fn drop(&mut self) {
+        if !self.attempted && self.play.slot_connected(self.account) {
+            let _ = self.logout();
+        }
+    }
+}
+#[cfg(feature = "js")]
 fn run_compat_cell(spec: &CompatSpec) {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"), "requires LIVE=1");
     let root = PathBuf::from(
@@ -1101,6 +1154,12 @@ fn run_compat_cell(spec: &CompatSpec) {
     )
     .unwrap_or_else(|error| {
         panic!("HARNESS PREREQUISITE FAILURE (before the cell deadline): starting login: {error}")
+    });
+    let mut logout_guard = (spec.label == "l-seat-gather-loop").then(|| CleanLogoutGuard {
+        play: &play,
+        account: &account,
+        label: spec.label,
+        attempted: false,
     });
     let mut login_ready = false;
     // The posted frame the answer arrived at; the verdict reads a later one.
@@ -1199,6 +1258,11 @@ fn run_compat_cell(spec: &CompatSpec) {
             })
         };
         if let Some((trace, result, facts, error)) = written {
+            if let Some(guard) = logout_guard.as_mut() {
+                guard
+                    .logout()
+                    .unwrap_or_else(|error| panic!("{error}"));
+            }
             assert!(
                 error.is_none(),
                 "evidence capture failed: {error:?}; {trace:#?}"

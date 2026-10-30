@@ -63,6 +63,7 @@ const PREP_DEADLINE: Duration = Duration::from_secs(180);
 const POWER_DEADLINE: Duration = Duration::from_secs(1800);
 const WEDGE_DEADLINE: Duration = Duration::from_secs(900);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
+const CLEAN_LOGOUT_DEADLINE: Duration = Duration::from_secs(30);
 const REQUIRED_CYCLES: u32 = 2;
 const REQUIRED_POST_DROP_GATHERS: u32 = 2;
 const LOG_ID: i32 = 1511;
@@ -5948,6 +5949,55 @@ fn selected_profile(
     Ok((profile, template))
 }
 
+struct CleanLogoutGuard<'a> {
+    play: &'a host_play::Play,
+    account: &'a str,
+    label: &'a str,
+    attempted: bool,
+}
+
+impl CleanLogoutGuard<'_> {
+    fn logout(&mut self) -> Result<(), String> {
+        if self.attempted {
+            return Ok(());
+        }
+        self.attempted = true;
+        self.play.script_stop(self.account);
+        let arm = self
+            .play
+            .arm(self.account)
+            .ok_or_else(|| format!("{} has no slot arm for clean logout", self.label))?;
+        if !self.play.slot_connected(self.account) || arm.session_key().is_none() {
+            return Err(format!(
+                "{} account {} was not connected to an active session for clean logout",
+                self.label, self.account
+            ));
+        }
+        arm.request_logout();
+        self.play.wake(self.account);
+        let deadline = Instant::now() + CLEAN_LOGOUT_DEADLINE;
+        while arm.session_key().is_some() || self.play.slot_connected(self.account) {
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "{} account {} stayed connected after clean logout",
+                    self.label, self.account
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        println!("CLEAN LOGOUT label={} account={}", self.label, self.account);
+        Ok(())
+    }
+}
+
+impl Drop for CleanLogoutGuard<'_> {
+    fn drop(&mut self) {
+        if !self.attempted && self.play.slot_connected(self.account) {
+            let _ = self.logout();
+        }
+    }
+}
+
 fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Ok(());
@@ -6345,6 +6395,12 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             None,
         )?;
     }
+    let mut logout_guard = (case == LiveCase::BankCostFirstGoal).then(|| CleanLogoutGuard {
+        play: &play,
+        account: &account,
+        label: cell_name,
+        attempted: false,
+    });
     let settings = cell.settings(case);
     let mut identity = json!({
         "phase": "identity",
@@ -7613,11 +7669,18 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             std::thread::sleep(POLL_INTERVAL);
         }
     }
-    play.script_stop(&account);
+    let clean_logout = if let Some(guard) = logout_guard.as_mut() {
+        guard.logout()
+    } else {
+        play.script_stop(&account);
+        Ok(())
+    };
+    drop(logout_guard);
     play.stop_slot(&account);
     if let Some(helper_account) = &helper_account {
         play.stop_slot(helper_account);
     }
+    clean_logout?;
     result?;
     let qualification = state.lock().map_err(|_| "live state poisoned")?.qualifies();
     qualification
