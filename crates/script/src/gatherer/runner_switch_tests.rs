@@ -202,7 +202,10 @@ fn prerequisite_handoff_reissues_original_walk_once_and_cancel_revokes_it() {
         .collect();
     assert_eq!(walk_ids.len(), 1, "only the live reissue remains queued");
     let (reissued_id, reissued) = &walk_ids[0];
-    assert!(*reissued_id > outer_id, "the outer request was replaced once");
+    assert!(
+        *reissued_id > outer_id,
+        "the outer request was replaced once"
+    );
     assert_eq!(reissued.target, target);
     assert_eq!(reissued.radius, 2);
     assert_eq!(

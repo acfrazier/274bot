@@ -1560,7 +1560,11 @@ fn prerequisite_live_paths_compile_with_provenance_and_one_pass_order() {
         .unwrap()
         .join()
         .unwrap();
-        assert!(compiled.is_ok(), "goal={goal:?} recipe={recipe}: {:?}", compiled.err());
+        assert!(
+            compiled.is_ok(),
+            "goal={goal:?} recipe={recipe}: {:?}",
+            compiled.err()
+        );
     }
 }
 
