@@ -37,12 +37,13 @@ assert.deepEqual(
 );
 
 {
+    const npcIds = [1, 2, 3, 390, 403];
     const evidence: NpcTransformClosureEvidence = {
         schema: 1,
         source_inputs: { engine: [], content: [] },
         source_spans: [{ file: 'scripts/test.rs2', first: 1, last: 2 }],
-        npc_types: [1, 2].map(npc_type_id => ({ npc_type_id, category_id: null, config_state: 'complete', source_refs: [0] })),
-        actions: [1, 2].map(npc_type_id => ({
+        npc_types: npcIds.map(npc_type_id => ({ npc_type_id, category_id: null, config_state: 'complete', source_refs: [0] })),
+        actions: npcIds.map(npc_type_id => ({
             npc_type_id, slot: 1, state: 'present', label: 'Talk-to', trigger_code: 1,
             trigger_kind: 'type', trigger_target_id: npc_type_id,
             operation_fingerprint: 'a'.repeat(64), source_refs: [0],
@@ -56,17 +57,34 @@ assert.deepEqual(
         })),
         engine: { complete: true, source_refs: { numeric_dispatch: [0], type_change: [0], reversion: [0], static_type_decoder: [0] } },
     };
-    const runtime = runtimeNpcOperations(evidence);
+    const target = (id: number): TargetWire => ({
+        kind: 'npc', id, op: 1, class: 'resource', respawn: { state: 'known', value: null },
+    });
+    const fishingMethod: Pick<MethodWire, 'skill' | 'op' | 'targets'> = {
+        skill: 'fishing',
+        op: { slot: 1, label: 'Net' },
+        targets: { state: 'known', value: [...npcIds, 999].map(target) },
+    };
+    const methods = [fishingMethod, fishingMethod];
+    const hazardNpcs = [3];
+    const runtime = runtimeNpcOperations(evidence, methods, hazardNpcs);
     assert.deepEqual(runtime.operations, [{ npc_type_id: 1, slot: 1, operation_fingerprint: 'a'.repeat(64) }]);
+    assert.deepEqual(runtime.builtin_gatherer_fishing_operations, [
+        { npc_type_id: 1, slot: 1, operation_fingerprint: 'a'.repeat(64) },
+        { npc_type_id: 2, slot: 1, operation_fingerprint: 'a'.repeat(64) },
+    ], 'static proof admits only complete ordinary NPC types, even when full closure is unavailable');
     assert.equal(runtime.evidence_sha256, crypto.createHash('sha256').update(npcEvidenceBytes(evidence)).digest('hex'));
-    assert.deepEqual(Object.keys(runtime), ['schema', 'evidence_sha256', 'operations']);
+    assert.equal(runtime.schema, 2);
+    assert.deepEqual(Object.keys(runtime), ['schema', 'evidence_sha256', 'operations', 'builtin_gatherer_fishing_operations']);
     evidence.proofs[0].unresolved_refs.push(0);
-    assert.throws(() => runtimeNpcOperations(evidence), /positive NPC proof disagrees/);
+    assert.throws(() => runtimeNpcOperations(evidence, methods, hazardNpcs), /positive NPC proof disagrees/);
     evidence.proofs[0].unresolved_refs.length = 0;
     evidence.npc_types[0].config_state = 'missing';
-    assert.throws(() => runtimeNpcOperations(evidence), /positive NPC proof disagrees/);
+    assert.throws(() => runtimeNpcOperations(evidence, methods, hazardNpcs), /positive NPC proof disagrees/);
     evidence.engine.complete = false;
-    assert.deepEqual(runtimeNpcOperations(evidence).operations, []);
+    const incompleteRuntime = runtimeNpcOperations(evidence, methods, hazardNpcs);
+    assert.deepEqual(incompleteRuntime.operations, []);
+    assert.deepEqual(incompleteRuntime.builtin_gatherer_fishing_operations, []);
 }
 
 

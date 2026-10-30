@@ -984,6 +984,19 @@ impl ServerOrderedCatalog {
     pub fn npc_operation(&self, npc_type_id: i32, slot: u8) -> Option<&NpcTransformAction> {
         self.facts.npc_transforms.operation(npc_type_id, slot)
     }
+
+    /// Return a static selected-content fishing slot available only to the built-in Gatherer.
+    ///
+    /// Unlike `npc_operation`, this does not establish complete transform closure.
+    pub fn builtin_gatherer_fishing_operation(
+        &self,
+        npc_type_id: i32,
+        slot: u8,
+    ) -> Option<&BuiltinGathererFishingOperation> {
+        self.facts
+            .npc_transforms
+            .builtin_gatherer_fishing_operation(npc_type_id, slot)
+    }
 }
 
 impl CatalogWire {

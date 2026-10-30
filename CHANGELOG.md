@@ -7,9 +7,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Gatherer
 
-- Knife-arm NPC requests require a complete selected-content transform proof.
-  A fishing spot with an unproved transform path uses ordinary fishing instead.
-  Whirlpool and Big fish event types are not tick-armed.
+- Knife arm stays off by default. The built-in Gatherer arms only an ordinary
+  NPC type and its fishing operation observed at the click tick; a same-tick
+  transform remains possible. Whirlpool and Big fish types stay unarmed; other
+  callers still need complete transform-closure proof.
 - The host's disposal integration tests now use Gatherer's protected-item bound,
   so the optional knife and log supply does not break their compilation.
 
@@ -112,6 +113,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Scripts
 
+- The default-off Knife setting supports fly and net fishing, woodcutting from
+  oak upward, and gainful mining with bronze-to-adamant pickaxes. Its optional
+  kit can supply the knife and logs; rune pickaxes do not arm because they give
+  no gain. The live cadence gate remains provisional until the S6b probe
+  measures it.
 - Bank opening now waits for its own walk to finish. Before, a walk that a
   script had finished could be taken for the end of the bank walk, and the bank
   walk then ended before the bot reached the bank.

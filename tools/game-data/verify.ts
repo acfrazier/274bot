@@ -207,7 +207,7 @@ async function verifyRevision(revision: number) {
     if (!contentId) throw new Error(`${revision}: selected content identity is missing`);
     const gathering = extractGatheringFamily(pin.contentRoot);
     const npcEvidence = revision === 289 ? extractNpcTransformClosure(spec.engine, spec.content) : undefined;
-    const npcOperations = npcEvidence ? runtimeNpcOperations(npcEvidence) : undefined;
+    const npcOperations = npcEvidence ? runtimeNpcOperations(npcEvidence, gathering.payload.methods, gathering.payload.hazard_npcs) : undefined;
     if (npcEvidence) {
         const evidenceFile = path.join(root, 'tools/game-data/evidence/289-npc-transforms.json');
         const actualSha256 = npcEvidenceSha256(evidenceFile, npcEvidenceBytes(npcEvidence));
