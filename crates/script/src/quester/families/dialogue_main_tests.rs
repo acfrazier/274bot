@@ -3089,3 +3089,183 @@ fn answer_once_rejects_more_prefer_entries_than_the_mask_width() {
         "without answer_once the preference list keeps its existing width"
     );
 }
+
+/// Continue requests the driver has emitted, accepted or not.
+fn continues(ledger: &Option<Box<ledger::Ledger>>) -> usize {
+    ledger
+        .as_ref()
+        .expect("dialogue test ledger")
+        .outbox
+        .iter()
+        .filter(|entry| {
+            matches!(
+                &entry.effect,
+                HostEffect::Interaction(InteractReq::ContinueDialog { .. })
+            )
+        })
+        .count()
+}
+
+/// Begin a continuation on `page` at tick 1 and send its first Continue at
+/// tick 2. Returns the handle; the Continue was requested on observed tick 2.
+fn continue_sent_at_tick_two(
+    page: &GameSnapshot,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+) -> crate::native::ActionHandle<Dialogue> {
+    let handle = with_tick(page, ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(continuation_args(), &mut tick.cx)
+            .unwrap()
+    });
+    assert!(with_tick(page, ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(continues(ledger), 1);
+    handle
+}
+
+/// Merlin's Crystal sends `And wait...` twice in a row (`quest_arthur.rs2:15-16`).
+/// The server reuses the chat root and the Continue component, so page two has
+/// the same modal, Continue visibility and text as page one. The accepted
+/// Continue receipt, read on a later observed tick, acknowledges page one;
+/// the driver then presses Continue on page two instead of failing.
+#[test]
+fn two_identical_consecutive_continue_pages_are_both_acknowledged() {
+    let wait = menu_page(100, &["And wait..."], &[], 101);
+    let mut ledger = None;
+    let handle = continue_sent_at_tick_two(&wait, &mut ledger);
+    complete_last_interaction(&mut ledger, 2, true);
+    let poll = |page: &GameSnapshot, tick: u64, ledger: &mut Option<Box<ledger::Ledger>>| {
+        with_tick(page, ledger, tick, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+    };
+
+    // The engine reads the Continue in the cycle after the receipt's tick and
+    // writes page two after that cycle's PLAYER_INFO. Tick 3 may still show
+    // page one's packets: an accept is not yet an acknowledgement.
+    assert!(poll(&wait, 3, &mut ledger).is_pending());
+    assert_eq!(continues(&ledger), 1, "no second Continue on the next tick");
+    // Tick 4: page two is open and looks like page one.
+    assert!(poll(&wait, 4, &mut ledger).is_pending());
+    assert_eq!(
+        continues(&ledger),
+        2,
+        "the accepted receipt acknowledges page one"
+    );
+    complete_last_interaction(&mut ledger, 4, true);
+
+    let closed = menu_page(-1, &[], &[], -1);
+    assert!(poll(&closed, 5, &mut ledger).is_pending());
+    assert!(matches!(
+        poll(&closed, 6, &mut ledger),
+        Poll::Ready(Ok(DialogueOutcome::Completed))
+    ));
+    assert_eq!(continues(&ledger), 2);
+}
+
+/// The receipt is an extra signal: a page that changed before the receipt
+/// matures is acknowledged at once, as before.
+#[test]
+fn a_changed_page_still_acknowledges_a_continue_without_a_receipt() {
+    let first = menu_page(100, &["You climb inside the crate."], &[], 101);
+    let mut ledger = None;
+    let handle = continue_sent_at_tick_two(&first, &mut ledger);
+    let second = menu_page(100, &["You wait."], &[], 101);
+    assert!(with_tick(&second, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(continues(&ledger), 2);
+}
+
+/// A request that no accepted receipt reaches is bound by observed ticks, not
+/// by elapsed time: sent on tick 2, it is acknowledged or failed by tick 12
+/// (`PAGE_ACK_TICKS` = 10), whatever the wall clock says.
+#[test]
+fn continue_acknowledgement_bound_counts_observed_ticks_not_milliseconds() {
+    let wait = menu_page(100, &["And wait..."], &[], 101);
+    let mut ledger = None;
+    let handle = continue_sent_at_tick_two(&wait, &mut ledger);
+    for observed in 3..12 {
+        let result = with_tick(&wait, &mut ledger, observed, |tick| {
+            // An hour of active time passes. The bound ignores it.
+            tick.cx.active_now = Duration::from_secs(3_600);
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(result.is_pending(), "observed tick {observed}");
+    }
+    let result = with_tick(&wait, &mut ledger, 12, |tick| {
+        // Almost no wall time has passed. The tick bound still ends the wait.
+        tick.cx.active_now = Duration::from_millis(1);
+        tick.actions.poll(&handle, &mut tick.cx)
+    });
+    assert!(matches!(result, Poll::Ready(Ok(DialogueOutcome::Failed))));
+    assert_eq!(continues(&ledger), 1, "no unacknowledged second Continue");
+}
+
+/// A refused Continue was not dispatched, so its receipt acknowledges nothing.
+#[test]
+fn a_refused_continue_receipt_does_not_acknowledge_the_page() {
+    let wait = menu_page(100, &["And wait..."], &[], 101);
+    let mut ledger = None;
+    let handle = continue_sent_at_tick_two(&wait, &mut ledger);
+    complete_last_interaction(&mut ledger, 2, false);
+    for observed in 3..12 {
+        assert!(
+            with_tick(&wait, &mut ledger, observed, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            })
+            .is_pending(),
+            "observed tick {observed}"
+        );
+    }
+    assert_eq!(continues(&ledger), 1);
+    assert!(matches!(
+        with_tick(&wait, &mut ledger, 12, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(DialogueOutcome::Failed))
+    ));
+}
+
+/// A page that never changes, whatever the server does with the presses, is
+/// bound by the tick limit of its first press. Each accepted receipt
+/// acknowledges one press and the driver presses again, but the repeats add
+/// no time and are not new pages: the wait ends 10 ticks after the first press
+/// (tick 2), not after `DRIVE_STEPS` presses.
+#[test]
+fn a_page_that_never_changes_ends_at_the_tick_bound_of_its_first_press() {
+    let stuck = menu_page(100, &["A page that will not advance."], &[], 101);
+    let mut ledger = None;
+    let handle = continue_sent_at_tick_two(&stuck, &mut ledger);
+    complete_last_interaction(&mut ledger, 2, true);
+    let mut result = Poll::Pending;
+    let mut ended = 0;
+    let mut accepted = 1;
+    for observed in 3..40 {
+        result = with_tick(&stuck, &mut ledger, observed, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        if result.is_ready() {
+            ended = observed;
+            break;
+        }
+        // The host accepts every press on the tick that the driver sent it.
+        if continues(&ledger) > accepted {
+            complete_last_interaction(&mut ledger, observed, true);
+            accepted += 1;
+        }
+    }
+    assert!(matches!(result, Poll::Ready(Ok(DialogueOutcome::Failed))));
+    assert_eq!(
+        ended, 13,
+        "the receipt of the press at tick 12 matures at tick 14, one tick after the bound"
+    );
+    assert_eq!(
+        continues(&ledger),
+        6,
+        "one press at tick 2 and one after each matured receipt"
+    );
+}

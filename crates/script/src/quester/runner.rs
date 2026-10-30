@@ -4,7 +4,9 @@ use super::compile::{
     StepAttemptReceipt, StepContext, StepOutcome, StepRun, StepTraceEvent,
 };
 use super::families::combat::CombatReceipt;
-use super::families::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget};
+use super::families::dialogue::{
+    page_open, Dialogue, DialogueArgs, DialogueOptions, DialogueTarget,
+};
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
 use super::provision::{ProvisionEvent, ProvisionPhase, Provisioner};
 use super::queue::QueueStatus;
@@ -344,6 +346,10 @@ pub struct Quester {
     unreadable_reads: u8,
     journal_attempts: u8,
     journal_retry_pending: bool,
+    /// The step that last failed with a dialogue page still open, as
+    /// `(in_prelude, sequence, step)`. Its next begin continues that page
+    /// from the current tile; every begin takes the value.
+    open_page_retry: Option<(bool, usize, usize)>,
     journal_quiet_since: Option<NonZeroU32>,
     empty_reads: u8,
     park_reason: &'static str,
@@ -678,6 +684,7 @@ impl Quester {
             unreadable_reads: 0,
             journal_attempts: 0,
             journal_retry_pending: false,
+            open_page_retry: None,
             journal_quiet_since: None,
             empty_reads: 0,
             park_reason: "no progress",
@@ -2940,6 +2947,7 @@ impl Quester {
             );
             #[cfg(test)]
             self.begun.push(Arc::clone(&step.id.0));
+            let resume_page = self.open_page_retry.take() == Some((prelude, self.seq_index, index));
             let result = {
                 let mut step_cx = StepContext {
                     tick,
@@ -2949,7 +2957,11 @@ impl Quester {
                     banks: &self.banks,
                     choices: &self.choices,
                 };
-                step.plan.begin(&mut step_cx)
+                if resume_page {
+                    step.plan.begin_open_page(&mut step_cx)
+                } else {
+                    step.plan.begin(&mut step_cx)
+                }
             };
             match result {
                 Ok(run) => {
@@ -3200,6 +3212,13 @@ impl Quester {
                 self.capture_failed_acquisition_child();
                 self.step = None;
                 self.last_outcome = None;
+                // A page that is still open belongs to this step: its retry
+                // continues the page where the content left the player.
+                self.open_page_retry = page_open(&tick.cx).then_some((
+                    self.in_prelude,
+                    self.seq_index,
+                    self.step_index,
+                ));
                 self.record_step_failure(error, tick);
             }
         }
@@ -7599,3 +7618,7 @@ mod squire_bank_tests;
 #[cfg(test)]
 #[path = "squire_portrait_runner_tests.rs"]
 mod squire_portrait_tests;
+
+#[cfg(test)]
+#[path = "open_page_retry_runner_tests.rs"]
+mod open_page_retry_tests;

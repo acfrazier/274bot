@@ -1,5 +1,6 @@
 //! Native chat and selected scroll/book continuation driver.
-//! Acknowledgement follows page content as well as roots; completion waits on game ticks.
+//! A Continue is acknowledged by its accepted receipt on a later observed tick or by a page
+//! change; completion and the Continue bound wait on game ticks.
 
 use super::reach;
 use crate::dialogue_outcome::DialogueOutcome;
@@ -72,7 +73,45 @@ const DIALOGUE_WALK_RETRIES: u8 = 1;
 /// one. An unanswered request is a walk failure with the same one fresh plan.
 const DIALOGUE_ASSESS_TICKS: u64 = 8;
 pub const DRIVE_STEPS: u32 = 120;
+/// Wall-clock bound that the Choice and Main-document acknowledgements still
+/// use. A Continue's acknowledgement counts observed ticks
+/// ([`PAGE_ACK_TICKS`]).
 pub const PAGE_ACK_MS: u64 = 3_000;
+/// Observed ticks from a Continue request to the host's dispatch receipt. The
+/// host drains the queued interaction in an observation pass
+/// (`script_observe.rs:1410`) and stamps the receipt with that pass's tick
+/// (`script_observe.rs:1649-1657`). One tick covers a drain that waits for the
+/// next observation.
+const CONTINUE_DISPATCH_TICKS: u64 = 1;
+/// The engine reads the Continue in the cycle after the receipt's tick
+/// (`World.ts:355`, before `World.ts:378`). It resumes the paused script in
+/// that handler (`ResumePauseButtonHandler.ts:7-13`), and the script's next
+/// `p_pausebutton` page is written in the same cycle.
+const CONTINUE_ENGINE_TICKS: u64 = 1;
+/// Cycles from the Continue to the next page when content waits between two
+/// pages. A scan of every `.rs2` script under `content/scripts` found 19,290
+/// page calls (`~chatnpc`, `~chatplayer`, `~mesbox`, `~objbox`,
+/// `~doubleobjbox`, `~doublemesbox`, `~confirmbox`, `p_pausebutton`). Only 34
+/// are followed by a `p_delay` within two statements. The largest is
+/// `p_delay(6)` (`quest_grandtree/scripts/king_narnode.rs2:55`). `P_DELAY`
+/// resumes the script at `currentTick + 1 + n` (`PlayerOps.ts:376-379`,
+/// `World.ts:692`), so the next page is written `6 + 1` cycles later.
+const CONTINUE_PAGE_DELAY_TICKS: u64 = 6 + 1;
+/// Observed ticks that one page gets to be acknowledged, counted from the tick
+/// of the first Continue on it: dispatch, the engine's read cycle, the longest
+/// content delay before the next page, and one observed tick for the page's
+/// packets ([`DIALOGUE_OBSERVE_TICKS`]). A Continue whose accepted receipt
+/// has matured on an unchanged page is acknowledged
+/// ([`Dialogue::continue_receipt_acknowledged`]) and pressed again, but that
+/// repeat keeps the first press's bound, so a page that never changes ends the
+/// wait after this many ticks however many receipts arrive. A request that no
+/// accepted receipt reaches ends it the same way. At the 300 ms tick of
+/// Engine Q the bound is 3,000 ms, the value of the wall-clock bound that it
+/// replaces.
+pub const PAGE_ACK_TICKS: u64 = CONTINUE_DISPATCH_TICKS
+    + CONTINUE_ENGINE_TICKS
+    + CONTINUE_PAGE_DELAY_TICKS
+    + DIALOGUE_OBSERVE_TICKS;
 /// Ticks before acting on a page that changed text on the same root (a same-
 /// root choice page, a book or scroll forward) or offered no input: its text
 /// can still be arriving in later frames of the server tick under the
@@ -517,7 +556,7 @@ impl NativeMachine for Dialogue {
                             ChatTransitionAck::Accepted => {
                                 return Poll::Ready(Ok(DialogueOutcome::Completed));
                             }
-                            ChatTransitionAck::Pending if now < self.deadline_ms => {
+                            ChatTransitionAck::Pending if obs.tick < self.content_deadline_tick => {
                                 return Poll::Pending;
                             }
                             ChatTransitionAck::Pending | ChatTransitionAck::Failed => {}
@@ -617,9 +656,17 @@ impl NativeMachine for Dialogue {
                 Poll::Pending
             }
             Phase::WaitContinueAck => {
+                // A Continue is acknowledged by its own accepted receipt on a
+                // later observed tick, or by a changed page. The receipt is the
+                // signal that works when the next page is identical to this
+                // one (two `~mesbox` calls with the same text in a row,
+                // `quest_arthur.rs2:15-16`): the server reuses the chat root
+                // and Continue component, so such a page has the same
+                // acknowledgement values as the one that was dismissed.
                 if self
                     .ack_page
                     .acknowledged(obs.modal, obs.r#continue, obs.page_fingerprint())
+                    || self.continue_receipt_acknowledged(cx)
                 {
                     // The engine resumes the paused script in the ack packet's
                     // own cycle (`ResumePauseButtonHandler.ts:7-13`) and writes
@@ -631,7 +678,7 @@ impl NativeMachine for Dialogue {
                     self.phase = Phase::Drive;
                     return self.drive(cx, &obs);
                 }
-                if now >= self.deadline_ms {
+                if obs.tick >= self.content_deadline_tick {
                     return Poll::Ready(Ok(DialogueOutcome::Failed));
                 }
                 Poll::Pending
@@ -781,6 +828,31 @@ impl Dialogue {
         } else {
             ChatTransitionAck::Accepted
         }
+    }
+
+    /// Whether this driver's own Continue request was accepted by the host and
+    /// a later observed tick has arrived. An accepted Continue that the
+    /// engine read is one dismissed page, whether or not the next page looks
+    /// different. The engine reads the request in the cycle after the
+    /// receipt's tick and writes the next page in that cycle, after its
+    /// `PLAYER_INFO`; the client can need one more observed tick to apply it
+    /// ([`DIALOGUE_OBSERVE_TICKS`]). An accept on the send tick, or on the
+    /// tick after it, is therefore not yet proof that the next page is up.
+    fn continue_receipt_acknowledged(&self, cx: &ActionContext<'_>) -> bool {
+        let Some(request_id) = self.chat_advance_request_id else {
+            return false;
+        };
+        let Some(receipt) = cx.interaction_receipt(request_id) else {
+            return false;
+        };
+        let evidence = cx.evidence();
+        receipt.accepted
+            && receipt.evidence.run == evidence.run
+            && evidence.tick
+                >= receipt
+                    .evidence
+                    .tick
+                    .saturating_add(CONTINUE_ENGINE_TICKS + DIALOGUE_OBSERVE_TICKS)
     }
 
     /// Mark the pending `prefer` entry now that the page has advanced, but
@@ -1328,15 +1400,28 @@ impl Dialogue {
             return Poll::Pending;
         }
         if obs.r#continue {
-            let ack_page =
-                PageAcknowledgement::capture(obs.modal, obs.r#continue, obs.page_fingerprint());
+            // The same page again, pressed because the previous press's
+            // accepted receipt matured while the page had not changed: the
+            // identical second `And wait...`, or a page that ignores the
+            // press. The tick bound of the first press on this page stays,
+            // so a page that never changes ends the wait however many
+            // receipts arrive, and the repeat is not another page toward
+            // `DRIVE_STEPS`.
+            let fingerprint = obs.page_fingerprint();
+            let unchanged = !self
+                .ack_page
+                .acknowledged(obs.modal, obs.r#continue, fingerprint);
+            let repeated = unchanged && self.content_deadline_tick >= obs.tick;
+            let ack_page = PageAcknowledgement::capture(obs.modal, obs.r#continue, fingerprint);
             let request_id = std::task::ready!(crate::native::defer_budget(
                 cx.emit(InteractReq::ContinueDialog { component_id: None })
             ))?;
-            self.steps += 1;
+            if !repeated {
+                self.steps += 1;
+                self.content_deadline_tick = obs.tick.saturating_add(PAGE_ACK_TICKS);
+            }
             self.ack_page = ack_page;
             self.phase = Phase::WaitContinueAck;
-            self.deadline_ms = cx.active_now().as_millis() as u64 + PAGE_ACK_MS;
             self.chat_advanced = true;
             self.chat_advance_request_id = Some(request_id);
             return Poll::Pending;
@@ -1366,6 +1451,7 @@ impl Dialogue {
             self.ack_page = ack_page;
             self.phase = Phase::WaitChoiceAck;
             self.deadline_ms = cx.active_now().as_millis() as u64 + PAGE_ACK_MS;
+            self.content_deadline_tick = obs.tick.saturating_add(PAGE_ACK_TICKS);
             self.chat_advanced = true;
             self.chat_advance_request_id = Some(request_id);
             return Poll::Pending;
@@ -1511,7 +1597,7 @@ pub(super) fn chat_page_open(root: i32, continue_component_id: i32) -> bool {
 }
 
 /// Operation adoption covers dialogue chat and selected documents, not production menus.
-pub(super) fn page_open(cx: &ActionContext<'_>) -> bool {
+pub(crate) fn page_open(cx: &ActionContext<'_>) -> bool {
     let snapshot = cx.snapshot();
     let production_menu = snapshot
         .make_products()

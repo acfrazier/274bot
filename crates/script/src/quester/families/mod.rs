@@ -1512,11 +1512,10 @@ struct TalkPlan {
     options: dialogue::DialogueOptions,
     expect_combat: Option<i32>,
 }
-impl StepPlan for TalkPlan {
-    fn anchor(&self) -> Option<WorldTile> {
-        self.tile
-    }
-    fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+impl TalkPlan {
+    /// `open_page`: the step's retry found its dialogue page still open; the
+    /// run continues that page from the current tile without the anchor walk.
+    fn run(&self, open_page: bool) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(TalkRun {
             target: self.target.clone(),
             tile: self.tile,
@@ -1526,7 +1525,22 @@ impl StepPlan for TalkPlan {
             walk: None,
             dialogue: None,
             started: false,
+            open_page,
         }))
+    }
+}
+impl StepPlan for TalkPlan {
+    fn anchor(&self) -> Option<WorldTile> {
+        self.tile
+    }
+    fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+        self.run(false)
+    }
+    fn begin_open_page(
+        &self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Result<Box<dyn StepRun>, ActionError> {
+        self.run(dialogue::page_open(&cx.tick.cx))
     }
 }
 
@@ -1539,6 +1553,8 @@ struct TalkRun {
     walk: Option<ActionHandle<Walk>>,
     dialogue: Option<ActionHandle<dialogue::Dialogue>>,
     started: bool,
+    /// The retry of a step that failed with its dialogue page open: no anchor walk.
+    open_page: bool,
 }
 // 664 B measured (+32 B headroom): both inline action handles store machine state; the dialogue approach round 3 fix grew `Dialogue` by 56 B (see `dialogue.rs`).
 const _: [(); 1] = [(); (std::mem::size_of::<TalkRun>() <= 696) as usize];
@@ -1564,7 +1580,7 @@ impl StepRun for TalkRun {
                     .map(|player| player.value.player.network);
                 let near =
                     here.is_some_and(|here| reach::within(here, tile, i32::from(self.leash)));
-                if !near {
+                if !near && !self.open_page {
                     let mut request =
                         reach::walk_request(tile, self.leash, None, cx.required_after);
                     request.arrival = nav_planner::contract::ArrivalKind::Area;
@@ -1888,11 +1904,14 @@ struct InteractPlan {
     target_tile: Option<WorldTile>,
     reachable_only: bool,
 }
-impl StepPlan for InteractPlan {
-    fn anchor(&self) -> Option<WorldTile> {
-        self.tile
-    }
-    fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+impl InteractPlan {
+    /// `open_page`: the step's retry found its dialogue page still open; the
+    /// run continues that page from the current tile (`InteractRun::poll_round`).
+    fn run(
+        &self,
+        cx: &mut StepContext<'_, '_>,
+        open_page: bool,
+    ) -> Result<Box<dyn StepRun>, ActionError> {
         Ok(Box::new(InteractRun {
             kind: self.kind.clone(),
             op: Arc::clone(&self.op),
@@ -1927,7 +1946,23 @@ impl StepPlan for InteractPlan {
             round_deadline: None,
             round_accepted: false,
             started: false,
+            open_page,
         }))
+    }
+}
+impl StepPlan for InteractPlan {
+    fn anchor(&self) -> Option<WorldTile> {
+        self.tile
+    }
+    fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+        self.run(cx, false)
+    }
+    fn begin_open_page(
+        &self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Result<Box<dyn StepRun>, ActionError> {
+        let drives_dialogue = self.default_dialogue || self.dialogue_options.is_some();
+        self.run(cx, drives_dialogue && dialogue::page_open(&cx.tick.cx))
     }
     fn settle_timeout(&self) -> Duration {
         Duration::from_millis(self.settle_ms.unwrap_or(8_000))
@@ -1977,6 +2012,9 @@ struct InteractRun {
     round_deadline: Option<Duration>,
     round_accepted: bool,
     started: bool,
+    /// The retry of a step that failed with its dialogue page open: the first
+    /// poll continues that page instead of approaching the target.
+    open_page: bool,
 }
 
 impl InteractRun {
@@ -2169,6 +2207,23 @@ impl InteractRun {
                         .round_deadline
                         .map(|deadline| deadline.saturating_add(elapsed));
                 }
+            }
+        }
+        if std::mem::take(&mut self.open_page) {
+            // The retry of a step whose dialogue page is still open. The
+            // content moved the player (a teleport inside the page's script),
+            // so the authored anchor is not near and the target is not
+            // reachable from here. Take the step as accepted: drive the open
+            // page below, and walk or click only if the round continues.
+            let now = cx.tick.cx.active_now();
+            self.deadline = Some(now + self.settle_duration);
+            self.dialogue_cap =
+                Some(now.saturating_add(self.settle_duration.max(Duration::from_secs(120))));
+            self.round_accepted = true;
+            self.accepted_tick = Some(cx.tick.cx.evidence().tick);
+            if let Some((id, _)) = self.until {
+                self.round_before = inventory_count(&cx.tick.cx, id);
+                self.round_deadline = Some(now + Duration::from_millis(ACTION_ROUND_MS));
             }
         }
         if self.round_accepted && !self.dialogue_completed {

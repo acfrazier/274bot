@@ -1351,6 +1351,7 @@ fn talk_and_interact_near_checks_use_network_position() {
         walk: None,
         dialogue: None,
         started: false,
+        open_page: false,
     };
     assert!(with_tick(&snapshot, &mut ledger, 1, |t| {
         with_step(t, |cx| talk.poll(cx))
@@ -2125,6 +2126,7 @@ fn interact_false_is_failure_not_success() {
         round_deadline: None,
         round_accepted: false,
         wait_until: None,
+        open_page: false,
     };
     assert!(matches!(
         with_tick(&s, &mut ledger, 2, |t| with_step(t, |cx| run.poll(cx))),
@@ -6462,6 +6464,7 @@ fn talk_walk_user_input_blocks_before_dialogue_interaction() {
         walk: None,
         dialogue: None,
         started: false,
+        open_page: false,
     };
     assert!(with_tick(&snapshot, &mut ledger, 1, |tick| {
         with_step(tick, |cx| run.poll(cx))
@@ -6509,6 +6512,7 @@ fn refused_talk_approach_blocks_without_requeueing_the_walk() {
             walk: None,
             dialogue: None,
             started: false,
+            open_page: false,
         };
         assert!(with_tick(&snapshot, &mut ledger, 40, |tick| {
             with_step(tick, |cx| run.poll(cx))

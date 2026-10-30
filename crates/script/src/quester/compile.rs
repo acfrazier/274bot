@@ -352,6 +352,16 @@ pub trait PredicatePlan: Send + Sync {
 }
 pub trait StepPlan: Send + Sync {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError>;
+    /// Begin the retry of a step that failed while a dialogue page was still
+    /// open. A family that drives dialogue continues that page from the
+    /// current tile instead of walking to the step's anchor; every other
+    /// family begins as usual.
+    fn begin_open_page(
+        &self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Result<Box<dyn StepRun>, ActionError> {
+        self.begin(cx)
+    }
     /// Stable authored world anchor for nearest-first selection.
     fn anchor(&self) -> Option<api::WorldTile> {
         None

@@ -3056,9 +3056,13 @@ fn a_continue_page_that_ignores_clicks_parks_after_the_drain_cap() {
         }
     }
     assert!(script.parked);
+    // Each drain presses the page at its first tick and again after every
+    // accepted receipt that matures on an unchanged page, until the 10-tick
+    // bound of that first press ends the drain: six presses (ticks 0, 2, 4,
+    // 6, 8 and 10 of the drain).
     assert_eq!(
-        continues, 3,
-        "one continue per drain, three drains per read"
+        continues, 18,
+        "six presses per drain, three drains per read"
     );
     assert_eq!(
         script.blocked_failure().message.as_ref(),

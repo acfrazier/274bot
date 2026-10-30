@@ -129,6 +129,21 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - Damage from quest dialogue no longer looks like an attack when no visible
   NPC or player targets the bot.
 - A failed walk also reports where its route ended.
+- Quest dialogue no longer stops at two identical pages in a row. Merlin's
+  Crystal shows `And wait...` twice, and the guide used to wait for the page
+  to change, so it reported `dialogue failed` while the server had already
+  accepted the Continue. The guide now counts a Continue as done when the
+  host accepted it and a later game tick was observed, or when the page
+  changes. The guide presses Continue again on an identical page. A page that
+  never changes ends the wait after 10 observed game ticks from its first
+  Continue, not after 3 seconds of clock time.
+- When a step with a dialogue fails while a dialogue page is still open, its
+  retry continues that page from the player's current tile. It no longer
+  walks back to the step's start position first. This matters where the
+  quest's script moves the player during the dialogue, as the Merlin's
+  Crystal crate does. The retry still counts against the step's attempt limit.
+  When the attempts run out, the step stops with the reason of the last
+  failure.
 
 ### Scripting
 
