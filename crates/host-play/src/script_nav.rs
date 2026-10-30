@@ -7271,6 +7271,42 @@ mod diagnostic_tests {
             completion: Default::default(),
         })
     }
+    #[test]
+    fn budget_exhausted_strict_search_is_incomplete() {
+        let mut job = RouteJob::prepare(
+            "test",
+            stage_request(Arc::new(NavWorld::from_parts(
+                nav_planner::collision::WorldCollision {
+                    origin: WorldTile {
+                        x: 0,
+                        z: 0,
+                        level: 0,
+                    },
+                    width: 4,
+                    height: 4,
+                    walk: vec![0; 4 * 4 * 4],
+                    blocked: vec![0; (4usize * 4 * 4).div_ceil(64)],
+                    flags: None,
+                },
+                nav_planner::transport::TransportGraph::default(),
+                Vec::new(),
+            ))),
+            RouteDemandKind::Walk { authority: None },
+        )
+        .unwrap();
+        job.targets.push(job.request.to);
+
+        job.handle_search(SearchOutcome::Single {
+            route: Err(nav_planner::router::RouteError::BudgetExhausted),
+        })
+        .unwrap();
+
+        assert!(
+            !matches!(job.stage, RouteJobStage::BeginDiagnostics),
+            "an incomplete strict search must not start missing-item diagnostics"
+        );
+    }
+
 
     pub(super) fn tiny_stage_request() -> Box<ScriptRouteRequest> {
         let origin = WorldTile {

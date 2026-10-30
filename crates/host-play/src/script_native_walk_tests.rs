@@ -2367,6 +2367,7 @@ fn native_walk_failure_receipt_names_missing_route_supplies() {
         detail.contains("Insufficient route supplies: 10 more Coins (need 10, carrying 0)"),
         "{detail}"
     );
+    assert!(detail.contains("search_result=Supply"), "{detail}");
     assert!(detail.contains("native walk route failed"), "{detail}");
 }
 
