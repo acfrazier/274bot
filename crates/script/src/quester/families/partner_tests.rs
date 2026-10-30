@@ -158,6 +158,21 @@ fn offer(give: i32) -> TradeView {
     }
 }
 
+/// The offer screen as the client shows it after the mutual accept. The engine
+/// stops the offer containers and the side pack (`trade.rs2:80-86`), the client
+/// empties a stopped container (`client.rs:8389-8404`), and the main modal is
+/// still the offer screen until `if_openmain(tradeconfirm)` (`trade.rs2:147`).
+fn mutual_accept_offer_screen() -> TradeView {
+    TradeView {
+        my_offer: vec![],
+        their_offer: vec![],
+        side_pack: vec![],
+        my_offer_stopped: true,
+        their_offer_stopped: true,
+        ..offer(0)
+    }
+}
+
 fn fixture(budget: u16) -> (GameSnapshot, Ledger, ActionHandle<TradeMachine>, Arc<Port>) {
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
@@ -547,6 +562,28 @@ fn refused_trade_dispatch_still_declines_the_open_screen() {
         Poll::Ready(Err(ActionError::Blocked(reason)))
             if reason.as_ref() == "partner trade dispatch refused"
     ));
+}
+
+#[test]
+fn mutual_accept_stops_the_offer_containers_and_the_trade_waits_for_the_confirm_screen() {
+    let (mut snapshot, mut ledger, handle, port) = fixture(40);
+    let epoch = Instant::now();
+    assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
+    snapshot.seed_trade(offer(2));
+    port.offer.store(true, Ordering::Relaxed);
+    assert!(poll(&snapshot, &mut ledger, &handle, 3, epoch).is_pending());
+    assert!(matches!(
+        ack(&mut ledger, 3),
+        InteractReq::IfButton { component_id: 9 }
+    ));
+
+    // Neither side changed an offer: the engine stopped both containers.
+    snapshot.seed_trade(mutual_accept_offer_screen());
+    assert!(poll(&snapshot, &mut ledger, &handle, 4, epoch).is_pending());
+    assert!(
+        ledger.as_ref().unwrap().outbox.is_empty(),
+        "stopped, emptied offers are not a changed offer: no cleanup may start"
+    );
 }
 
 #[test]
