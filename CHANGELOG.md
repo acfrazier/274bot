@@ -41,6 +41,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   no longer bypass this check. Unknown poison can hold a walk before exposure
   for the rest of one 31-tick clean window. Always and rs2b0t-compatible walks
   keep their existing permission contract and show the bound as information.
+  The bound still charges known poison on routes with no NPC crossing.
+  Incomplete route geometry stays unassessable.
 
 - Bots now drink their boost potion before the first hit even when the target
   starts out of reach.
