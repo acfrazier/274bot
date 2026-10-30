@@ -64,9 +64,13 @@ fn start_sent_hop(
 }
 
 fn plant_message_dialog(client: &mut Client, message: &str) {
+    plant_message_dialog_lines(client, &[message]);
+}
+
+fn plant_message_dialog_lines(client: &mut Client, messages: &[&str]) {
     let root = 100;
     let continue_id = 101;
-    let message_id = 102;
+    let mut children = Vec::with_capacity(messages.len() + 1);
     client.set_iface(
         continue_id,
         IfType {
@@ -83,28 +87,33 @@ fn plant_message_dialog(client: &mut Client, message: &str) {
             ..Default::default()
         },
     );
-    client.set_iface(
-        message_id,
-        IfType {
-            id: message_id as i32,
-            layer_id: root,
-            r#type: ComponentType::TYPE_TEXT,
-            ..Default::default()
-        },
-    );
-    client.set_iface_mut(
-        message_id,
-        IfTypeMut {
-            text: message.into(),
-            ..Default::default()
-        },
-    );
+    for (index, message) in messages.iter().enumerate() {
+        let message_id = 102 + index;
+        client.set_iface(
+            message_id,
+            IfType {
+                id: message_id as i32,
+                layer_id: root,
+                r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
+        client.set_iface_mut(
+            message_id,
+            IfTypeMut {
+                text: (*message).into(),
+                ..Default::default()
+            },
+        );
+        children.push(message_id as i32);
+    }
+    children.push(continue_id as i32);
     client.set_iface(
         root as usize,
         IfType {
             id: root,
             layer_id: root,
-            children: Some(vec![message_id as i32, continue_id as i32]),
+            children: Some(children),
             ..Default::default()
         },
     );
@@ -246,7 +255,11 @@ fn changed_refusal_pages_close_without_a_new_chat_ring_message() {
         .into_iter()
         .enumerate()
     {
-        plant_message_dialog(&mut client, page);
+        if page == REFUSAL {
+            plant_message_dialog_lines(&mut client, &["The barrier refuses", "to open."]);
+        } else {
+            plant_message_dialog(&mut client, page);
+        }
         bump_rebuild(&mut client, &mut snapshot);
         assert_eq!(super::super::chat_seq(&snapshot), observed_sequence);
         assert!(matches!(
