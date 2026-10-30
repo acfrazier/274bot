@@ -6,7 +6,9 @@ use super::compile::{
 use super::families::combat::CombatReceipt;
 use super::families::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget};
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
-use super::provision::{BankCloser, BankLease, Closed, ProvisionEvent, ProvisionPhase, Provisioner};
+use super::provision::{
+    BankCloser, BankLease, Closed, ProvisionEvent, ProvisionPhase, Provisioner,
+};
 use super::queue::QueueStatus;
 use super::registry::PathSource;
 use super::select::{select_with_skips, sequence_for_stage, SelectionDecision};

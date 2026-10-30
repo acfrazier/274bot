@@ -180,75 +180,80 @@ impl BankCloser {
         self.attempts = 0;
     }
 
+    /// Begins the close when none is in flight and the frame still proves the
+    /// lease, then polls it, so the click goes out on the tick it begins.
     pub(super) fn drive(
         &mut self,
         tick: &mut NativeTick<'_>,
         lease: &mut Option<BankLease>,
     ) -> Closed {
-        if let Some(handle) = self.handle.take() {
-            match tick.actions.poll(&handle, &mut tick.cx) {
-                Poll::Pending => {
-                    self.handle = Some(handle);
-                    return Closed::Pending;
-                }
-                Poll::Ready(Ok(())) => {
-                    *lease = None;
+        if self.handle.is_none() {
+            match lease_view(&tick.cx, lease) {
+                LeaseView::Absent => {
                     self.attempts = 0;
                     return Closed::Done;
                 }
-                // The bank did not shut in time, its session was replaced, or
-                // the action owner refused: judge the frame again.
-                Poll::Ready(Err(
+                LeaseView::Unobserved => return Closed::Done,
+                LeaseView::Owned => {}
+            }
+            if !tick.cx.may_continue_this_tick() {
+                return Closed::Pending;
+            }
+            if self.attempts >= MAX_CLOSE_ATTEMPTS {
+                self.attempts = 0;
+                *lease = None;
+                return Closed::Failed(ActionError::Failed(Arc::from(format!(
+                    "bank-close-failed: bank did not close after {MAX_CLOSE_ATTEMPTS} attempts"
+                ))));
+            }
+            match tick.actions.begin::<bank::Close>((), &mut tick.cx) {
+                Ok(handle) => {
+                    self.attempts += 1;
+                    self.handle = Some(Box::new(handle));
+                }
+                Err(
                     ActionError::Busy
                     | ActionError::Held
                     | ActionError::Stale
                     | ActionError::Cancelled
                     | ActionError::BudgetExhausted,
-                )) => {}
-                Poll::Ready(Err(ActionError::Failed(message)))
-                    if message.as_ref() == "bank did not close"
-                        || message.starts_with("bank session replaced") => {}
-                Poll::Ready(Err(error)) => {
-                    *lease = None;
+                ) => return Closed::Pending,
+                Err(error) => {
                     self.attempts = 0;
+                    *lease = None;
                     return Closed::Failed(error);
                 }
             }
         }
-        match lease_view(&tick.cx, lease) {
-            LeaseView::Absent => {
-                self.attempts = 0;
-                return Closed::Done;
-            }
-            LeaseView::Unobserved => return Closed::Done,
-            LeaseView::Owned => {}
-        }
-        if !tick.cx.may_continue_this_tick() {
-            return Closed::Pending;
-        }
-        if self.attempts >= MAX_CLOSE_ATTEMPTS {
-            self.attempts = 0;
-            *lease = None;
-            return Closed::Failed(ActionError::Failed(Arc::from(format!(
-                "bank-close-failed: bank did not close after {MAX_CLOSE_ATTEMPTS} attempts"
-            ))));
-        }
-        match tick.actions.begin::<bank::Close>((), &mut tick.cx) {
-            Ok(handle) => {
-                self.attempts += 1;
-                self.handle = Some(Box::new(handle));
+        let handle = self.handle.take().expect("a close is in flight");
+        match tick.actions.poll(&handle, &mut tick.cx) {
+            Poll::Pending => {
+                self.handle = Some(handle);
                 Closed::Pending
             }
-            Err(
+            Poll::Ready(Ok(())) => {
+                *lease = None;
+                self.attempts = 0;
+                Closed::Done
+            }
+            // The bank did not shut in time, its session was replaced, or the
+            // action owner refused: the next drive judges the frame again.
+            Poll::Ready(Err(
                 ActionError::Busy
                 | ActionError::Held
                 | ActionError::Stale
                 | ActionError::Cancelled
                 | ActionError::BudgetExhausted,
-            ) => Closed::Pending,
-            Err(error) => {
-                self.attempts = 0;
+            )) => Closed::Pending,
+            Poll::Ready(Err(ActionError::Failed(message)))
+                if message.as_ref() == "bank did not close"
+                    || message.starts_with("bank session replaced") =>
+            {
+                Closed::Pending
+            }
+            Poll::Ready(Err(error)) => {
                 *lease = None;
+                self.attempts = 0;
                 Closed::Failed(error)
             }
         }
@@ -4014,7 +4019,11 @@ mod tests {
             !provisioner.session_open(),
             "the error ended the session without a close"
         );
-        assert_eq!(closes_sent(&ledger), 0, "the provisioner sends no close here");
+        assert_eq!(
+            closes_sent(&ledger),
+            0,
+            "the provisioner sends no close here"
+        );
         assert!(provisioner.take_unowned_lease().is_some());
         assert_eq!(provisioner.take_unowned_lease(), None, "handed over once");
     }
@@ -4030,7 +4039,15 @@ mod tests {
         let mut early = Provisioner::new();
         let mut ledger = None;
         assert!(poll_once(
-            &mut early, &snapshot, &mut ledger, 1, &plan, None, &memory, &banks, &quests
+            &mut early,
+            &snapshot,
+            &mut ledger,
+            1,
+            &plan,
+            None,
+            &memory,
+            &banks,
+            &quests
         )
         .is_pending());
         early.cancel();
@@ -4223,6 +4240,10 @@ mod tests {
             &quests,
         );
         assert!(result.is_pending());
-        assert_eq!(closes_sent(&ledger), 1, "the reopened bank is the same session's");
+        assert_eq!(
+            closes_sent(&ledger),
+            1,
+            "the reopened bank is the same session's"
+        );
     }
 }

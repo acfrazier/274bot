@@ -695,7 +695,11 @@ fn resume_closes_the_bank_the_run_left_open_before_the_journal_is_read() {
         .provisioner
         .set_lease_for_test(lease);
     queued.interrupt(Interrupt::Resume);
-    assert_eq!(queued.owed_bank, Some(lease), "resume hands the bank to the closer");
+    assert_eq!(
+        queued.owed_bank,
+        Some(lease),
+        "resume hands the bank to the closer"
+    );
     with_tick_output(&snapshot, &mut ledger, 3, &mut output, |native| {
         assert_eq!(queued.tick(native).unwrap(), ScriptFlow::Continue);
     });
@@ -795,7 +799,11 @@ fn a_held_tick_sends_no_close() {
     );
     assert_eq!(flow, ScriptFlow::Continue);
     assert_eq!(effects(&ledger), Vec::<&str>::new());
-    assert_eq!(queued.owed_bank, Some(lease), "the obligation waits for the hold to end");
+    assert_eq!(
+        queued.owed_bank,
+        Some(lease),
+        "the obligation waits for the hold to end"
+    );
 }
 
 #[test]
@@ -823,7 +831,10 @@ fn a_close_the_bank_never_honours_is_bounded_and_then_dropped() {
         }
     }
     assert_eq!(sent, crate::acquire::run::MAX_CLOSE_ATTEMPTS);
-    assert!(queued.owed_bank.is_none(), "the obligation is dropped, not retried forever");
+    assert!(
+        queued.owed_bank.is_none(),
+        "the obligation is dropped, not retried forever"
+    );
     assert!(
         output
             .1
