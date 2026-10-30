@@ -717,12 +717,25 @@ fn wait_for(
         if condition(play, &state) {
             return;
         }
+        let main_texts = state
+            .snapshot
+            .main_modal_texts()
+            .iter()
+            .take(12)
+            .collect::<Vec<_>>();
         assert!(
             Instant::now() < deadline,
-            "live cell timeout for {account}: state={:?}, script={:?}, native={:?}",
+            "live cell timeout for {account}: state={:?}, script={:?}, native={:?}, tick={}, active_side_tab={}, open_other_quest={}, clicked_wrong_quest={}, wrong_quest={:?}, wrong_page_ready={}, modals={:?}, main_texts={main_texts:?}",
             state.prep,
             play.script_state(account),
-            play.script_native_status(account)
+            play.script_native_status(account),
+            state.snapshot.tick(),
+            state.snapshot.active_side_tab(),
+            state.controls.open_other_quest,
+            state.wrong_quest_clicked,
+            state.wrong_quest_name,
+            state.wrong_page_ready,
+            state.snapshot.modals()
         );
         drop(state);
         thread::sleep(POLL_INTERVAL);
