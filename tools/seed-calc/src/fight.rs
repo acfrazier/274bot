@@ -1557,8 +1557,7 @@ mod tests {
             .items()
             .iter()
             .find(|item| item.alias.as_deref() == Some("lobster"))
-            .unwrap()
-            .clone();
+            .unwrap();
         food::build(&tables, &npc, &lobster, hp_max).unwrap()
     }
 
@@ -1690,19 +1689,25 @@ mod tests {
         let transition = transitions[0];
         let next = transition.next.unwrap();
         assert_eq!(transition.ticks, 3);
+        assert_eq!(rule.eat_delay, 3);
+        assert_eq!(rule.skill_delay, 3);
         assert_eq!(next.player_hp, hp.saturating_add(rule.heal).min(40));
         assert_eq!(next.food, 0);
         assert_eq!(next.player_wait, 0);
-        assert_eq!(next.food_wait, 1);
+        assert_eq!(next.food_wait, 0);
     }
 
     #[test]
     fn absorbing_solver_matches_deterministic_food_and_regeneration_simulation() {
-        let rule = product_food_rule(4);
+        let rule = product_food_rule(24);
+        assert!(
+            (1..=24).any(|hp| rule.should_eat(hp, 0)),
+            "product-backed food rule must select lobster in this fixture"
+        );
         let model = SurvivalModel {
-            player_hp: 4,
+            player_hp: 24,
             npc_hp: 4,
-            player_chance: 0.15,
+            player_chance: 0.05,
             npc_chance: 0.65,
             player_max: 1,
             npc_max: 1,
