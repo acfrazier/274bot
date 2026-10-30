@@ -1445,6 +1445,14 @@ fn run_cells(
                             let command = format!("macro_event {}", plan.event);
                             if interact::cheat(client, &command).is_sent() {
                                 plan.sent = true;
+                                plan.before = actor.snapshot.npcs().iter().map(|npc| npc.index).collect();
+                                plan.chat_baseline = actor
+                                    .snapshot
+                                    .chat_lines()
+                                    .iter()
+                                    .map(|line| line.sequence)
+                                    .max()
+                                    .unwrap_or(0);
                                 actor.transitions.push(json!({
                                     "event": "macro-event-injected",
                                     "account": actor.account,
@@ -1458,6 +1466,55 @@ fn run_cells(
                             }
                         }
                     }
+                }
+            }
+            if let Some(plan) = actor.macro_event.as_mut().filter(|plan| plan.sent) {
+                let tick = actor.snapshot.tick();
+                if !plan.npc_seen {
+                    if let Some(npc) = actor
+                        .snapshot
+                        .npcs()
+                        .iter()
+                        .find(|npc| !plan.before.contains(&npc.index) && npc.distance <= 8)
+                    {
+                        plan.npc_seen = true;
+                        actor.transitions.push(json!({
+                            "event": "macro-event-npc",
+                            "observed_tick": tick,
+                            "npc": npc.name,
+                            "type": npc.r#type,
+                            "index": npc.index,
+                            "tile": [npc.tile.x, npc.tile.z, npc.tile.level],
+                        }));
+                    }
+                }
+                if plan.chat_logged < 8 {
+                    for line in actor
+                        .snapshot
+                        .chat_lines()
+                        .iter()
+                        .filter(|line| line.sequence > plan.chat_baseline)
+                    {
+                        if plan.chat_logged >= 8 {
+                            break;
+                        }
+                        plan.chat_logged += 1;
+                        plan.chat_baseline = plan.chat_baseline.max(line.sequence);
+                        actor.transitions.push(json!({
+                            "event": "macro-event-chat",
+                            "observed_tick": tick,
+                            "text": line.text,
+                        }));
+                    }
+                }
+                if hold.hold != plan.last_hold {
+                    plan.last_hold = hold.hold;
+                    actor.transitions.push(json!({
+                        "event": "guardian-hold",
+                        "held": hold.hold,
+                        "observed_tick": tick,
+                        "tile": actor.last_tile.map(|tile| [tile.x, tile.z, tile.level]),
+                    }));
                 }
             }
             let active_death_combat = actor.latest_status.as_ref().and_then(|status| {
@@ -2917,6 +2974,13 @@ struct MacroEventPlan {
     event: u8,
     step: String,
     sent: bool,
+    /// NPC indexes in view when the cheat was sent.
+    before: HashSet<usize>,
+    /// Chat sequence when the cheat was sent.
+    chat_baseline: i32,
+    npc_seen: bool,
+    last_hold: bool,
+    chat_logged: usize,
 }
 
 fn macro_event_plan_from_env() -> Option<MacroEventPlan> {
@@ -2932,6 +2996,11 @@ fn macro_event_plan_from_env() -> Option<MacroEventPlan> {
         event,
         step,
         sent: false,
+        before: HashSet::new(),
+        chat_baseline: 0,
+        npc_seen: false,
+        last_hold: false,
+        chat_logged: 0,
     })
 }
 
