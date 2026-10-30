@@ -7618,6 +7618,274 @@ fn anchored_interact_wall_walk_falls_back_to_the_loc_tile_once() {
     });
 }
 
+fn approach_retry_interact_plan(cx: &CompileContext<'_>) -> Arc<dyn StepPlan> {
+    compile_interact(
+        test_args::<InteractArgs>(serde_json::json!({
+            "target": {"loc": "hopper_lumbridge"},
+            "op": "Use",
+            "anchor": {"tile": [3167, 3308, 0], "source": "approach retry fixture"},
+            "radius": 8
+        })),
+        cx,
+    )
+    .unwrap()
+}
+
+fn approach_retry_interact_snapshot(cx: &CompileContext<'_>) -> GameSnapshot {
+    use_on_footprint_fixture(cx, tile(3164, 3308)).0
+}
+
+fn approach_retry_buy_plan(cx: &CompileContext<'_>) -> Arc<dyn StepPlan> {
+    s2::compile_buy(
+        test_args::<s2::BuyArgs>(serde_json::json!({
+            "shop": {
+                "npc": "generalshopkeeper1",
+                "anchor": {"tile": [3200, 3200, 0], "source": "approach retry fixture"}
+            },
+            "obj": "rope",
+            "qty": 1
+        })),
+        cx,
+    )
+    .unwrap()
+}
+
+fn approach_retry_buy_snapshot(start: WorldTile) -> GameSnapshot {
+    let anchor = tile(3200, 3200);
+    let mut snapshot = ready();
+    snapshot.seed_local_player(local_player_with_network(anchor, start));
+    snapshot
+}
+
+fn latest_retry_walk_target(ledger: &Option<Box<ledger::Ledger>>) -> WorldTile {
+    let entry = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .rev()
+        .find(|entry| matches!(&entry.effect, HostEffect::Walk(_)))
+        .unwrap();
+    let HostEffect::Walk(request) = &entry.effect else {
+        unreachable!();
+    };
+    request.target
+}
+
+#[test]
+fn interact_retries_a_failed_approach_and_dispatches_after_arrival() {
+    compile_context_test(|cx| {
+        let plan = approach_retry_interact_plan(cx);
+        let mut snapshot = approach_retry_interact_snapshot(cx);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |step| plan.begin(step).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        let (first_request, _) = latest_walk_request(&ledger);
+        let target = latest_retry_walk_target(&ledger);
+
+        assert_eq!(
+            post_walk_receipt(&mut ledger, 3, WalkEnd::NoPath, Some("first approach failed")),
+            first_request
+        );
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert_eq!(walk_request_count(&ledger), 1);
+
+        snapshot.seed_local_player(local_player(tile(3165, 3309)));
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        let (second_request, planned_after) = latest_walk_request(&ledger);
+        assert_ne!(second_request, first_request);
+        assert_eq!(planned_after, 4, "the new plan uses the observed tick");
+        assert_eq!(latest_retry_walk_target(&ledger), target);
+
+        snapshot.seed_local_player(local_player(target));
+        assert_eq!(
+            post_walk_receipt(&mut ledger, 5, WalkEnd::Arrived, None),
+            second_request
+        );
+        assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::Loc { id: Some(id), action, .. }
+                if *id == resolve_loc(cx, "hopper_lumbridge").unwrap() && action == "Use"
+        ));
+    });
+}
+
+#[test]
+fn buy_retries_a_failed_approach_and_starts_at_the_shop() {
+    compile_context_test(|cx| {
+        let plan = approach_retry_buy_plan(cx);
+        let anchor = tile(3200, 3200);
+        let mut snapshot = approach_retry_buy_snapshot(tile(3191, 3200));
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |step| plan.begin(step).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        let (first_request, _) = latest_walk_request(&ledger);
+        assert_eq!(latest_retry_walk_target(&ledger), anchor);
+
+        assert_eq!(
+            post_walk_receipt(&mut ledger, 3, WalkEnd::NoPath, Some("first shop route failed")),
+            first_request
+        );
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert_eq!(walk_request_count(&ledger), 1);
+
+        snapshot.seed_local_player(local_player_with_network(anchor, tile(3192, 3200)));
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        let (second_request, planned_after) = latest_walk_request(&ledger);
+        assert_ne!(second_request, first_request);
+        assert_eq!(planned_after, 4, "the new plan uses the observed tick");
+        assert_eq!(latest_retry_walk_target(&ledger), anchor);
+
+        snapshot.seed_local_player(local_player(anchor));
+        assert_eq!(
+            post_walk_receipt(&mut ledger, 5, WalkEnd::Arrived, None),
+            second_request
+        );
+        assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert_eq!(walk_request_count(&ledger), 2);
+    });
+}
+
+#[test]
+fn approach_retries_park_with_the_last_detail_after_three_attempts() {
+    compile_context_test(|cx| {
+        let scenarios = [
+            (
+                approach_retry_interact_plan(cx),
+                approach_retry_interact_snapshot(cx),
+                "interact",
+            ),
+            (
+                approach_retry_buy_plan(cx),
+                approach_retry_buy_snapshot(tile(3191, 3200)),
+                "buy",
+            ),
+        ];
+        for (plan, snapshot, family) in scenarios {
+            let mut ledger = None;
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |step| plan.begin(step).unwrap())
+            });
+            assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                with_step(tick, |step| run.poll(step))
+            })
+            .is_pending());
+            let mut active_request = latest_walk_request(&ledger).0;
+
+            for attempt in 1u8..=3 {
+                let failure_tick = u64::from(attempt) * 2 + 1;
+                let detail = format!("{family} route failure {attempt}");
+                assert_eq!(
+                    post_walk_receipt(
+                        &mut ledger,
+                        failure_tick,
+                        WalkEnd::NoPath,
+                        Some(&detail),
+                    ),
+                    active_request
+                );
+                let result = with_tick(&snapshot, &mut ledger, failure_tick, |tick| {
+                    with_step(tick, |step| run.poll(step))
+                });
+                if attempt < 3 {
+                    assert!(result.is_pending(), "attempt {attempt} must retry");
+                    assert_eq!(latest_walk_request(&ledger).0, active_request);
+                    assert!(with_tick(&snapshot, &mut ledger, failure_tick + 1, |tick| {
+                        with_step(tick, |step| run.poll(step))
+                    })
+                    .is_pending());
+                    let (retry_request, planned_after) = latest_walk_request(&ledger);
+                    assert_ne!(retry_request, active_request);
+                    assert_eq!(planned_after, failure_tick + 1);
+                    active_request = retry_request;
+                } else {
+                    assert!(
+                        matches!(result, Poll::Ready(Err(ActionError::Blocked(reason))) if reason.as_ref() == detail),
+                        "the exhausted {family} retry must preserve its last detail"
+                    );
+                }
+            }
+            assert_eq!(walk_request_count(&ledger), 3);
+        }
+    });
+}
+
+#[test]
+fn approach_danger_refusals_park_without_a_retry() {
+    compile_context_test(|cx| {
+        let scenarios = [
+            (
+                approach_retry_interact_plan(cx),
+                approach_retry_interact_snapshot(cx),
+                "interact",
+            ),
+            (
+                approach_retry_buy_plan(cx),
+                approach_retry_buy_snapshot(tile(3191, 3200)),
+                "buy",
+            ),
+        ];
+        for (plan, snapshot, family) in scenarios {
+            let mut ledger = None;
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |step| plan.begin(step).unwrap())
+            });
+            assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                with_step(tick, |step| run.poll(step))
+            })
+            .is_pending());
+            let detail = format!("{family} route refused by danger policy");
+            post_walk_receipt_with(
+                &mut ledger,
+                3,
+                WalkEnd::NoPath,
+                Some(&detail),
+                Some(crate::native::WalkRefusal::Unsurvivable),
+                None,
+            );
+            assert!(
+                matches!(
+                    with_tick(&snapshot, &mut ledger, 3, |tick| {
+                        with_step(tick, |step| run.poll(step))
+                    }),
+                    Poll::Ready(Err(ActionError::Blocked(reason))) if reason.as_ref() == detail
+                ),
+                "the {family} danger refusal must remain terminal"
+            );
+            assert_eq!(walk_request_count(&ledger), 1);
+        }
+    });
+}
+
 #[test]
 fn anchored_use_on_loc_starts_the_settle_window_after_its_initial_stand_approach() {
     compile_context_test(|cx| {
