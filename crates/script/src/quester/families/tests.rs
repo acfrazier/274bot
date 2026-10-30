@@ -2283,6 +2283,64 @@ fn anchored_use_on_inventory_target_walks_from_network_tile() {
     });
 }
 
+/// The generic anchor walk is gated on `reach::within(tile, radius)`, so it
+/// must accept any standable tile in the authored area rather than demand a
+/// path onto the anchor tile.
+#[test]
+fn anchored_use_on_item_target_walks_the_anchor_area() {
+    compile_context_test(|cx| {
+        let source_id = resolve_obj(cx, "shears").unwrap();
+        let target_id = resolve_obj(cx, "wool").unwrap();
+        let anchor = tile(3200, 3200);
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player_with_network(anchor, tile(3190, 3200)));
+        let source = ItemView {
+            def: def(source_id, "Shears"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 3,
+            count: 1,
+            actions: vec![],
+            component_id: 3214,
+        };
+        let target = ItemView {
+            def: def(target_id, "Wool"),
+            slot: 7,
+            ..source.clone()
+        };
+        snapshot.seed_inventory(vec![source, target], 28);
+        let plan = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "shears",
+                "target": {"item": "wool"},
+                "anchor": {"tile": [3200, 3200, 0], "source": "network tile fixture"},
+                "radius": 3
+            })),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        let HostEffect::Walk(request) = &ledger.as_ref().unwrap().outbox[0].effect else {
+            panic!("the anchored inventory target must approach its anchor");
+        };
+        assert_eq!(request.target, anchor);
+        assert_eq!(request.radius, 3);
+        assert_eq!(request.loc_id, None);
+        assert_eq!(
+            request.arrival,
+            nav_planner::contract::ArrivalKind::Area,
+            "the authored anchor radius accepts any standable tile inside it"
+        );
+    });
+}
+
 #[test]
 fn same_tick_use_on_admission_waits_after_a_completed_interaction() {
     compile_context_test(|compile| {

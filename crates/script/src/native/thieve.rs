@@ -1117,6 +1117,168 @@ mod tests {
         ));
     }
 
+    /// The anchor gate is Chebyshev `within`, so any standable tile inside
+    /// the radius satisfies the action. The walk it starts must therefore
+    /// ask for an area arrival, not a path onto the anchor tile.
+    #[test]
+    fn anchor_walk_asks_for_area_arrival_at_the_authored_radius() {
+        let anchor = WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        };
+        let snapshot = game_snapshot(
+            WorldTile {
+                x: 30,
+                z: 40,
+                level: 0,
+            },
+            vec![],
+            vec![],
+        );
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let run = tick
+                .actions
+                .begin::<Thieve>(args(anchor, 12), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
+        });
+        let crate::native::HostEffect::Walk(request) =
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect
+        else {
+            panic!("the anchor approach must emit a native walk");
+        };
+        assert_eq!(request.target, anchor);
+        assert_eq!(request.radius, 12);
+        assert_eq!(request.loc_id, None);
+        assert_eq!(
+            request.arrival,
+            nav_planner::contract::ArrivalKind::Area,
+            "the Chebyshev anchor gate accepts any standable tile in the radius"
+        );
+    }
+
+    /// The live failure ended `RouteEnded` on a standable tile ten tiles from
+    /// the anchor, with the anchor reachable only a long way round. An area
+    /// arrival must count that tile as arrival, so the action can look for a
+    /// workman; reach fails it `walk route ended before arrival`.
+    #[test]
+    fn area_anchor_walk_accepts_a_standable_tile_without_a_path_onto_the_anchor() {
+        let anchor = WorldTile {
+            x: 20,
+            z: 20,
+            level: 0,
+        };
+        let far = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        // Ten tiles east of the anchor by Chebyshev distance: inside radius 12.
+        let inside = WorldTile {
+            x: 10,
+            z: 20,
+            level: 0,
+        };
+        let mark = WorldTile {
+            x: 11,
+            z: 20,
+            level: 0,
+        };
+        let base = WorldTile {
+            x: -8,
+            z: -8,
+            level: 0,
+        };
+        // A closed pen around the anchor: no walkable path onto its tile.
+        let walls = pen(anchor);
+        let far_view = flood_view(base, 32, &walls, far);
+        let inside_view = flood_view(base, 32, &walls, inside);
+        let outside = game_snapshot(far, vec![], vec![]);
+        let arrived = game_snapshot(inside, vec![placed_npc(19, mark, inside)], vec![]);
+        let mut ledger = None;
+        // The action emits its anchor approach from outside the radius, then
+        // gives up the foreground so the walk adapter can replay that exact
+        // contract (`NativeActions::begin` admits one live owner).
+        let (target, radius, loc_id, arrival) =
+            with_tick_reach(&outside, &far_view, &mut ledger, 1, |tick| {
+                let run = tick
+                    .actions
+                    .begin::<Thieve>(args(anchor, 12), &mut tick.cx)
+                    .unwrap();
+                assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
+                let crate::native::HostEffect::Walk(request) = &tick
+                    .cx
+                    .ledger
+                    .as_ref()
+                    .unwrap()
+                    .outbox
+                    .last()
+                    .unwrap()
+                    .effect
+                else {
+                    panic!("the anchor approach must emit a native walk");
+                };
+                (
+                    request.target,
+                    request.radius,
+                    request.loc_id,
+                    request.arrival,
+                )
+            });
+        assert_eq!((target, radius), (anchor, 12));
+
+        // The host walk ends `RouteEnded` on the standable in-radius tile.
+        // The adapter's arrival predicate decides whether that is arrival.
+        let walk = with_tick_reach(&arrived, &inside_view, &mut ledger, 2, |tick| {
+            let mut replay = reach::walk_request(target, radius, loc_id, tick.cx.evidence());
+            replay.arrival = arrival;
+            tick.actions
+                .begin::<crate::native::walk::Walk>(replay, &mut tick.cx)
+                .unwrap()
+        });
+        post_walk_end(&mut ledger, 3, WalkEnd::RouteEnded, None);
+        let receipt = with_tick_reach(&arrived, &inside_view, &mut ledger, 3, |tick| {
+            match tick.actions.poll(&walk, &mut tick.cx) {
+                Poll::Ready(Ok(receipt)) => receipt,
+                Poll::Ready(Err(error)) => panic!("the walk adapter failed: {error:?}"),
+                Poll::Pending => {
+                    panic!("the walk adapter must settle on the standable in-radius tile")
+                }
+            }
+        });
+        drop(walk);
+        if let Err(error) = receipt.into_arrival() {
+            panic!(
+                "a standable in-radius tile must end the walk in the action's favour: {error:?}"
+            );
+        }
+
+        // That arrival lets the action look for the workman from the tile.
+        let run = with_tick_reach(&outside, &far_view, &mut ledger, 4, |tick| {
+            let run = tick
+                .actions
+                .begin::<Thieve>(args(anchor, 12), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&run, &mut tick.cx).is_pending());
+            run
+        });
+        post_walk_end(&mut ledger, 5, WalkEnd::Arrived, None);
+        let outcome = with_tick_reach(&arrived, &inside_view, &mut ledger, 5, |tick| {
+            tick.actions.poll(&run, &mut tick.cx)
+        });
+        assert!(
+            outcome.is_pending(),
+            "the thieve action must keep running after the anchor approach"
+        );
+        assert_eq!(
+            npc_click_count(&ledger),
+            1,
+            "after an area arrival the action looks for the workman"
+        );
+    }
+
     #[test]
     fn failed_approach_walk_replans_once_then_pickpockets() {
         let anchor = WorldTile {
