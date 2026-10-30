@@ -300,6 +300,76 @@ fn every_mature_jungle_loc_has_map_or_completion_tool_and_takeoff_gates() {
 }
 
 #[test]
+fn jungle_crossing_accepts_blocked_jungle_landing_only() {
+    let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let (facts, identity) = selected.quest_identity_for_bake().unwrap();
+    let quests = QuestSource {
+        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+        facts: &facts,
+    };
+    let defs = loc_defs(&[(2887, 2, 2), (2889, 1, 1)]);
+    let blocked_tile = WorldTile {
+        x: 101,
+        z: 100,
+        level: 0,
+    };
+    let mut collision = open_collision(90, 90, 80, 40);
+    let blocked_index = (blocked_tile.z - collision.origin.z) as usize * collision.width
+        + (blocked_tile.x - collision.origin.x) as usize;
+    collision.flags.as_mut().unwrap()[blocked_index] |= nav_planner::collision::SQ_BLOCKED;
+
+    let with_jungle_landing = Fixture::new();
+    write_legends_content(&with_jungle_landing);
+    with_jungle_landing.write(
+        "maps/m1_1.jm2",
+        "==== LOC ====\n0 36 36: 2887 10 0\n0 37 36: 2889 10 0\n",
+    );
+    let (graph, _, _) = super::super::derive_transports_with_audit(
+        with_jungle_landing.path(),
+        &defs,
+        &collision,
+        None,
+        Some(&quests),
+    );
+    let takeoff = WorldTile {
+        x: 99,
+        z: 100,
+        level: 0,
+    };
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.loc_id == 2887 && edge.takeoff == Some(takeoff) && edge.to == blocked_tile
+        })
+        .expect("the handler permits landing on another active jungle loc");
+    let mut ready = nav_planner::world_state::WorldState::empty();
+    ready.map_members = true;
+    ready.inventory_ready = true;
+    ready.equipment_ready = true;
+    ready.inv.extend([(714, 1), (975, 1), (1349, 1)]);
+    assert!(ready.allows(edge));
+
+    let without_jungle_landing = Fixture::new();
+    write_legends_content(&without_jungle_landing);
+    without_jungle_landing.write("maps/m1_1.jm2", "==== LOC ====\n0 36 36: 2887 10 0\n");
+    let (graph, _, _) = super::super::derive_transports_with_audit(
+        without_jungle_landing.path(),
+        &defs,
+        &collision,
+        None,
+        Some(&quests),
+    );
+    assert!(
+        !graph.edges.iter().any(|edge| {
+            edge.loc_id == 2887 && edge.takeoff == Some(takeoff) && edge.to == blocked_tile
+        }),
+        "an arbitrary blocked tile remains an invalid landing"
+    );
+}
+
+
+#[test]
 fn jungle_refuses_to_bake_when_a_required_tool_or_proven_map_is_missing() {
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
     let (facts, identity) = selected.quest_identity_for_bake().unwrap();
@@ -362,6 +432,27 @@ fn jungle_refuses_to_bake_when_a_required_tool_or_proven_map_is_missing() {
             "jungle edge must be absent without {missing}"
         );
     }
+}
+
+#[test]
+fn legends_gate_engine_closure_follows_helpers_into_general_scripts() {
+    const MULTIPLY2_BLOCK: &str = "// general/scripts/misc/math_procs.rs2:1\n[proc,multiply2](int $int1, int $int2, int $m)(int, int)\n$int1 = calc($int1 * $m);\n$int2 = calc($int2 * $m);\nreturn($int1, $int2);\n";
+    let fx = Fixture::new();
+    let engine_procs = super::super::stage_doors::ENGINE_DOOR_PROCS;
+    let door_procs = engine_procs.replace(MULTIPLY2_BLOCK, "");
+    assert_ne!(door_procs, engine_procs, "multiply2 must be moved to its source tree");
+    fx.write(
+        "scripts/doors/scripts/open_and_close_double_doors.rs2",
+        &door_procs,
+    );
+    fx.write(
+        "scripts/general/scripts/misc/math_procs.rs2",
+        MULTIPLY2_BLOCK,
+    );
+    assert!(super::pinned_engine_proc_closure_matches(
+        fx.path(),
+        &["open_and_close_double_door2", "open_and_close_double_door3"],
+    ));
 }
 
 fn write_legends_content(fx: &Fixture) {

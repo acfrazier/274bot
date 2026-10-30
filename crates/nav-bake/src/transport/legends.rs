@@ -481,9 +481,6 @@ fn jungle_edges(
                 let Some(to) = jungle_landing(takeoff, at) else {
                     continue;
                 };
-                if !collision.standable(to) {
-                    continue;
-                }
                 let map_blocked = collision.flag(to.x, to.z, to.level) & MAP_BLOCKED_MASK != 0;
                 let destination_is_jungle = JUNGLE_LOCS.iter().any(|candidate| {
                     positions
@@ -492,7 +489,12 @@ fn jungle_edges(
                         .flatten()
                         .any(|p| p.x == to.x && p.z == to.z && p.level == to.level)
                 });
+                // The handler permits a blocked landing only when another
+                // active jungle loc occupies it; model that successful roll.
                 if map_blocked && !destination_is_jungle {
+                    continue;
+                }
+                if !collision.standable(to) && !destination_is_jungle {
                     continue;
                 }
                 let before = graph.edges.len();
@@ -923,7 +925,7 @@ fn pinned_engine_proc_closure_matches(content_root: &Path, roots: &[&str]) -> bo
     let Some(expected) = source_blocks(stage_doors::ENGINE_DOOR_PROCS, Some(&wanted)) else {
         return false;
     };
-    let scripts = content_root.join("scripts/doors");
+    let scripts = content_root.join("scripts");
     let mut actual = SourceBlocks::new();
     let mut failed = false;
     if !visit_rs2(&scripts, &mut |text| {
