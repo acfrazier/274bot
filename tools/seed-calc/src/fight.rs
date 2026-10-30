@@ -19,6 +19,8 @@ pub enum FightError {
     #[error("survival state graph exceeded {limit} states after reaching {states}")]
     StateLimit { limit: usize, states: usize },
     #[error("{0}")]
+    Input(String),
+    #[error("{0}")]
     NotModelled(String),
 }
 
@@ -297,6 +299,7 @@ pub struct Evaluation {
     pub outcome: Outcome,
     pub player_hit_chance: f64,
     pub npc_hit_chance: f64,
+    pub player_max_hit: u16,
     pub npc_max_hit: u16,
     pub player_interval: u8,
     pub npc_interval: u8,
