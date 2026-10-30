@@ -137,7 +137,10 @@ fn kind_attack(
     if kind.unknown_for().is_some() {
         return Err(UnknownWhy::Kind(kind.unknown));
     }
-    let rate = kind.rate;
+    let rate = row.rate;
+    if rate == 0 {
+        return Err(UnknownWhy::MissingFacts);
+    }
     if kind.shared_attack() {
         Ok((
             EventKind::Attack,
@@ -182,9 +185,6 @@ pub(crate) fn build_timeline(
             )?;
         } else {
             let (kind, hit, rate) = kind_attack(row, input, risks, tables)?;
-            if rate == 0 {
-                return Err(UnknownWhy::MissingFacts);
-            }
             let mut tick = start;
             while tick < end {
                 add_event(out, &mut summary, tick, kind, row.max_hit, hit)?;

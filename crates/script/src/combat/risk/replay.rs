@@ -938,6 +938,28 @@ fn timeline_bound(
     })
 }
 
+async fn timeline_bound_cooperative<F, U>(
+    path: RoutePath<'_>,
+    plan: &RoutePlan,
+    input: &RiskInput,
+    context: &Estimate<'_>,
+    poison: super::timeline::PoisonCharge,
+    checkpoint: &mut F,
+) -> Result<(super::timeline::TimelineSummary, super::odds::DeathBound), UnknownWhy>
+where
+    F: FnMut() -> U,
+    U: Future<Output = ()>,
+{
+    // The thread-owned event buffer and convolution form one atomic unit.
+    // Checkpoint on each side of its borrow so another assessment cannot
+    // replace its events during the solve.
+    super::checkpoint(checkpoint).await;
+    let result = timeline_bound(path, plan, input, context, poison);
+    // The event buffer borrow ended with `timeline_bound`.
+    super::checkpoint(checkpoint).await;
+    result
+}
+
 async fn crossing_named<F, U>(
     plan: &RoutePlan,
     crossing: &CrossingGeom,
@@ -968,9 +990,9 @@ fn display_u8(value: u64) -> u8 {
     u8::try_from(value).unwrap_or(u8::MAX)
 }
 
-/// Cooperative route-risk assessment over borrowed facade views. A checkpoint
-/// follows each bounded report unit; timeline construction and convolution are
-/// synchronous and hold the worker's event buffer for no checkpoint.
+/// Cooperative route-risk assessment over borrowed facade views. Each atomic
+/// timeline/convolution pass has checkpoints immediately before its event
+/// buffer borrow and after the synchronous pass releases it.
 pub async fn assess_cooperative<F, U>(
     route: RouteView<'_>,
     context: &Estimate<'_>,
@@ -986,7 +1008,7 @@ where
     match result {
         Ok(value) => Arc::new(value),
         Err(why) => {
-            let _ = write!(reason, "Route assessment unknown: {why}");
+            let _ = write!(reason, "Route assessment unknown ({why:?}): {why}");
             Arc::new(RouteAssessment {
                 verdict: Verdict::Unknown(why),
                 plan: RoutePlan::default(),
@@ -1036,6 +1058,9 @@ where
     {
         unknown = Some(UnknownWhy::NavIdentity);
     }
+    if !plan.complete {
+        unknown = Some(UnknownWhy::Overflow);
+    }
     for row in &plan.intervals {
         if let Some(class) = row.unknown_kind() {
             let _ = write!(
@@ -1084,20 +1109,24 @@ where
     let mut poison_test = PoisonTest::NotNeeded;
     if unknown.is_none() {
         if let Some(q) = unknown_poison_q {
-            let (_, clear) = timeline_bound(
+            let (_, clear) = timeline_bound_cooperative(
                 path,
                 &plan,
                 &input,
                 context,
                 super::timeline::PoisonCharge::None,
-            )?;
-            let (_, charged) = timeline_bound(
+                checkpoint,
+            )
+            .await?;
+            let (_, charged) = timeline_bound_cooperative(
                 path,
                 &plan,
                 &input,
                 context,
                 super::timeline::PoisonCharge::Unknown { q },
-            )?;
+                checkpoint,
+            )
+            .await?;
             bound = clear.bound;
             if charged.admits(super::consts::DEATH_BOUND) {
                 bound = charged.bound;
@@ -1121,7 +1150,9 @@ where
                 verdict = Verdict::Unsurvivable;
             }
         } else {
-            let (_, result) = timeline_bound(path, &plan, &input, context, known_poison)?;
+            let (_, result) =
+                timeline_bound_cooperative(path, &plan, &input, context, known_poison, checkpoint)
+                    .await?;
             bound = result.bound;
             if !result.admits(super::consts::DEATH_BOUND) {
                 verdict = Verdict::Unsurvivable;
