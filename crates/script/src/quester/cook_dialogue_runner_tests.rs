@@ -348,3 +348,86 @@ fn a_random_event_that_takes_the_hand_in_talk_over_resends_it_once_without_a_res
         .iter()
         .any(|line| line.contains("failed")));
 }
+
+/// QUESTER-READ-KEEPS-STEP-R3, finding R1.2, on the real compiled Cook path: a
+/// teleporting event takes the player out and back inside one observed tick
+/// while the hand-in's Talk-to is in flight. The host's two frames of that
+/// tick show the remote square and then the start tile, so the hold's ends
+/// show the same tile. The budget keeps the teleport flag through the return
+/// and the end of the hold; the runner takes it once, drops the in-flight
+/// step with progress and cursor kept, and the hand-in starts again from its
+/// own checks: one new Talk-to, and it completes.
+#[test]
+fn a_teleport_out_and_back_inside_one_tick_drops_the_talk_once_and_the_hand_in_recovers() {
+    let mut fixture = CookDialogueFixture::new();
+    fixture.talk_opens_page = false;
+    let start = tile(3209, 3215);
+    let mut tick = 1;
+    while fixture.talks == 0 {
+        fixture.budget.observe_fix(tick, Some(start));
+        assert_eq!(fixture.tick(tick), ScriptFlow::Continue);
+        tick += 1;
+        assert!(tick < 60, "the hand-in sends its Talk-to");
+    }
+    let begun_before = fixture.script.begun.len();
+    let cursor_before = fixture.script.cursor;
+    assert!(fixture.script.step.is_some());
+
+    fixture.script.on_random(&DetectedRandom {
+        kind: api::random::RandomKind::Maze,
+        name: "maze".into(),
+        ours: true,
+        npc_index: None,
+    });
+    fixture.budget.hold_begin();
+    // One observed tick, two frames: the Maze square, then the start tile.
+    fixture.budget.observe_fix(tick, Some(tile(2893, 4555)));
+    fixture.budget.observe_fix(tick, Some(start));
+    fixture.budget.hold_end();
+    assert!(
+        fixture.budget.hold_teleport_latched(),
+        "the return inside the same tick does not clear the teleport"
+    );
+
+    tick += 1;
+    fixture.talk_opens_page = true;
+    fixture.budget.observe_fix(tick, Some(start));
+    assert_eq!(fixture.tick(tick), ScriptFlow::Continue);
+    assert!(
+        !fixture.budget.hold_teleport_latched(),
+        "the runner took the teleport"
+    );
+    // The old Talk is not resumed (that sends a Talk-to with no new begin,
+    // as in the hold without a teleport above). The step is dropped and
+    // begins again at the kept cursor, and its fresh Talk sends the Talk-to.
+    assert_eq!(
+        fixture.script.begun.len(),
+        begun_before + 1,
+        "the dropped step begins once more"
+    );
+    assert_eq!(fixture.talks, 2, "the new step's one Talk-to");
+    assert_eq!(fixture.script.cursor, cursor_before, "the cursor stays");
+    assert!(fixture.script.progress.is_some(), "progress stays");
+
+    let mut flow = ScriptFlow::Continue;
+    for _ in 0..80 {
+        tick += 1;
+        fixture.budget.observe_fix(tick, Some(start));
+        flow = fixture.tick(tick);
+        if flow == ScriptFlow::Complete {
+            break;
+        }
+    }
+    assert_eq!(flow, ScriptFlow::Complete, "the hand-in completes");
+    assert_eq!(fixture.talks, 2, "no further Talk-to");
+    assert_eq!(
+        fixture.script.begun.len(),
+        begun_before + 1,
+        "no further begin: the teleport is taken once"
+    );
+    assert!(!fixture
+        .output
+        .logs
+        .iter()
+        .any(|line| line.contains("failed")));
+}

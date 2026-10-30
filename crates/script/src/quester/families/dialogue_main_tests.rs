@@ -3553,6 +3553,29 @@ pub(super) fn cook_beside_player() -> GameSnapshot {
     page
 }
 
+/// The Cook on (0, 5) and the player `distance` tiles east of it on the same
+/// row. No reach flood is posted, so an approach asks the router for the
+/// route first (`Phase::Plan`); within two tiles the Cook is in reach.
+pub(super) fn cook_away_from_player(distance: i32) -> GameSnapshot {
+    let mut page = snapshot();
+    page.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: distance,
+        z: 5,
+        level: 0,
+    }));
+    page.seed_npcs(vec![content_dialogue_npc(
+        content_npc_id("cook"),
+        "Cook",
+        distance,
+        api::WorldTile {
+            x: 0,
+            z: 5,
+            level: 0,
+        },
+    )]);
+    page
+}
+
 fn begin_cook_talk(
     page: &GameSnapshot,
     ledger: &mut Option<Box<ledger::Ledger>>,

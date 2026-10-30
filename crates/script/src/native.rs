@@ -1426,6 +1426,10 @@ pub enum HoldResume {
     Kept(&'static str),
     /// The machine sent its request again, once. The text names the request.
     Reissued(&'static str),
+    /// The host dropped the request unsent, and the machine ends so that its
+    /// owner, which holds the goal, checks the goal before it sends another.
+    /// The text names the request.
+    Returned(&'static str),
 }
 
 /// The one `info` line for a resume after a guardian hold, logged by whoever
@@ -1434,6 +1438,7 @@ pub fn log_hold_resume(action: &str, resume: HoldResume) {
     let (what, text) = match resume {
         HoldResume::Kept(text) => ("kept its request", text),
         HoldResume::Reissued(text) => ("re-issued its request once", text),
+        HoldResume::Returned(text) => ("returned its dropped request to its owner", text),
     };
     #[cfg(test)]
     RESUME_LOG.with(|lines| {
@@ -1479,7 +1484,10 @@ pub trait NativeMachine: Send + 'static {
     /// machine re-checks its own goal first (the page is open, the item count
     /// rose, the receipt arrived) and re-issues its request at most once only
     /// when the goal is not met and the request was lost or taken over. A
-    /// `BudgetExhausted` error retries on the next tick.
+    /// machine that does not know the goal (it is its owner's) does not send
+    /// again: it returns [`HoldResume::Returned`] and its next poll ends it,
+    /// so the owner checks the goal first. A `BudgetExhausted` error retries
+    /// on the next tick.
     fn after_hold(&mut self, _cx: &mut ActionContext<'_>) -> Result<HoldResume, ActionError> {
         Ok(HoldResume::Kept(
             "this machine keeps no request across a hold",

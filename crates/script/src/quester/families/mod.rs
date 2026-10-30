@@ -3173,6 +3173,22 @@ impl UseOnRun {
         }
     }
 
+    /// Whether the step's goal is met with no use of ours behind it: checked
+    /// when the host dropped the request unsent, before another one is sent.
+    /// An `until` step needs its count; a product step needs the product
+    /// count to have risen past the dispatch's start (the same rule as an
+    /// accepted round). A step with neither shows no goal, so the use is
+    /// still owed.
+    fn goal_met_without_a_use(&self, cx: &crate::native::ActionContext<'_>) -> bool {
+        if self.until.is_some() {
+            return until_reached(self.until, cx);
+        }
+        match (self.product, self.round_before) {
+            (Some(id), Some(before)) => inventory_count(cx, id).is_some_and(|count| count > before),
+            _ => false,
+        }
+    }
+
     /// An accepted round with no live handle (only the world shows its effect)
     /// that a guardian hold interrupted: the guardian's own interaction
     /// replaced the player's, so the product never comes. After one observed
@@ -3583,7 +3599,33 @@ impl StepRun for UseOnRun {
                 match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                     Poll::Pending => return Poll::Pending,
                     Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                    Poll::Ready(Ok(chat_since)) => {
+                    // The host dropped the request unsent: the step's goal
+                    // decides, not the dropped request. A met goal ends the
+                    // step; otherwise the dispatch path above chooses the
+                    // target from this tick's snapshot and sends one request.
+                    Poll::Ready(Ok(UseOnDispatch::Unsent)) => {
+                        self.interaction = None;
+                        let met = self.goal_met_without_a_use(&cx.tick.cx);
+                        api::host_log!(
+                            api::hostlog::Category::ScriptLifecycle,
+                            api::hostlog::Level::Info,
+                            "use-on step: the host dropped the use-on request unsent; {}",
+                            if met {
+                                "the step's goal is already met, so nothing is sent again"
+                            } else {
+                                "the step's goal is not met, so it sends one new request"
+                            }
+                        );
+                        if met {
+                            return Poll::Ready(Ok(StepOutcome {
+                                progress: None,
+                                evidence: cx.tick.cx.evidence(),
+                                receipt: None,
+                            }));
+                        }
+                        continue;
+                    }
+                    Poll::Ready(Ok(UseOnDispatch::Accepted { chat_since })) => {
                         self.accepted = true;
                         self.accepted_tick = Some(cx.tick.cx.evidence().tick);
                         self.scene_in_range_at_acceptance = use_on_target_within_interaction_range(
@@ -3730,75 +3772,73 @@ impl StepRun for UseOnRun {
     }
 }
 
+/// One use-on request, from its send to the host's answer. It keeps only the
+/// request id: [`UseOnRun`] holds the step's goal and the inputs to choose the
+/// target again, so a request the host dropped unsent goes back to the step.
 struct UseOnAction {
     request: u64,
-    /// The request as sent, to send again if the host drops it unsent.
-    resend: InteractReq,
 }
 
-impl UseOnAction {
-    /// Send the request again after the host dropped it unsent (a guardian
-    /// hold, a held tick, a session reset): no receipt will come for the first
-    /// one (`ActionContext::interaction_dispatch`). The same rule as Talk's
-    /// (`dialogue.rs`, `TalkDispatch::Unsent`).
-    fn resend(&mut self, cx: &mut crate::native::ActionContext<'_>) -> Result<(), ActionError> {
-        self.request = cx.emit(self.resend.clone())?;
-        Ok(())
-    }
+/// What became of one use-on request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UseOnDispatch {
+    /// The host sent it and the server accepted it; the chat lines from
+    /// `chat_since` on can belong to it.
+    Accepted { chat_since: i32 },
+    /// The host dropped it unsent (a guardian hold, a held tick, a session
+    /// reset): no receipt will come (`ActionContext::interaction_dispatch`).
+    /// The step checks its goal before it sends another.
+    Unsent,
 }
 
 impl crate::native::NativeMachine for UseOnAction {
     type Args = InteractReq;
-    type Output = i32;
+    type Output = UseOnDispatch;
     const RESUMES_AFTER_HOLD: bool = true;
     fn begin(
         request: Self::Args,
         cx: &mut crate::native::ActionContext<'_>,
     ) -> Result<Self, ActionError> {
-        let resend = request.clone();
         Ok(Self {
             request: cx.emit(request)?,
-            resend,
         })
     }
     fn poll(
         &mut self,
         cx: &mut crate::native::ActionContext<'_>,
-    ) -> Poll<Result<i32, ActionError>> {
+    ) -> Poll<Result<UseOnDispatch, ActionError>> {
         match cx.interaction_dispatch(self.request) {
             crate::native::InteractionDispatch::Settled(receipt) if receipt.accepted => {
-                Poll::Ready(Ok(receipt.chat_since))
+                Poll::Ready(Ok(UseOnDispatch::Accepted {
+                    chat_since: receipt.chat_since,
+                }))
             }
             crate::native::InteractionDispatch::Settled(_) => Poll::Ready(Err(
                 ActionError::Failed(Arc::from("use_on dispatch rejected")),
             )),
             // The host still holds the request: the wait is its lifecycle's.
             crate::native::InteractionDispatch::Queued => Poll::Pending,
-            crate::native::InteractionDispatch::Unsent => {
-                std::task::ready!(crate::native::defer_budget(self.resend(cx)))?;
-                Poll::Pending
-            }
+            crate::native::InteractionDispatch::Unsent => Poll::Ready(Ok(UseOnDispatch::Unsent)),
         }
     }
     /// The request waits for its receipt only here (an accepted one ends this
     /// machine; [`UseOnRun`] resumes from there). A request the host dropped
-    /// unsent in the hold is sent again once.
+    /// unsent in the hold goes back to the step, which checks its goal first.
     fn after_hold(
         &mut self,
         cx: &mut crate::native::ActionContext<'_>,
     ) -> Result<crate::native::HoldResume, ActionError> {
-        match cx.interaction_dispatch(self.request) {
+        Ok(match cx.interaction_dispatch(self.request) {
             crate::native::InteractionDispatch::Unsent => {
-                self.resend(cx)?;
-                Ok(crate::native::HoldResume::Reissued("use-on request"))
+                crate::native::HoldResume::Returned("use-on request")
             }
-            crate::native::InteractionDispatch::Queued => Ok(crate::native::HoldResume::Kept(
-                "the host still holds the use-on request",
-            )),
-            crate::native::InteractionDispatch::Settled(_) => Ok(crate::native::HoldResume::Kept(
-                "the host settled the use-on request",
-            )),
-        }
+            crate::native::InteractionDispatch::Queued => {
+                crate::native::HoldResume::Kept("the host still holds the use-on request")
+            }
+            crate::native::InteractionDispatch::Settled(_) => {
+                crate::native::HoldResume::Kept("the host settled the use-on request")
+            }
+        })
     }
     fn cancel(&mut self) {}
 }

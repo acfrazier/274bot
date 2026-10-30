@@ -109,7 +109,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   came, a Thieve attempt ended at its receipt deadline, and a Talk whose
   dialogue never opened failed at its deadline. Now the action waits one game
   tick after the hold, checks its goal again, and sends its request again only if
-  the goal is not met. The log shows one line for each resume.
+  the goal is not met: a Use-on checks its `until` count or product first, and
+  a Talk still walking to its NPC plans its route again only when the route
+  was lost or ran out of time during the hold. The log shows one line for
+  each resume.
 - The log now names the reason each time the Quester drops its step or
   progress (a teleport during a random event, a new run, a death, a pause and
   resume, or a session end).

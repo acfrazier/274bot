@@ -3567,10 +3567,11 @@ impl Script for Quester {
     ///
     /// With `settings.random_events` off the guardian neither holds nor acts
     /// (`guardian.rs`: `hold` and `ours` need the setting), so the event is not
-    /// answered and nothing interrupts the step. The Quester keeps the step,
-    /// progress and cursor exactly as with the setting on and no teleport; it
-    /// does not classify a teleport that no hold surrounds, and the step's own
-    /// checks judge whatever the ignored event does to the player.
+    /// answered and the guardian does not interrupt the step. The Quester
+    /// keeps the step, progress and cursor exactly as with the setting on and
+    /// no teleport; it does not classify a teleport that no hold surrounds,
+    /// and the step's own checks judge whatever the ignored event does to the
+    /// player (an attack, a content teleport, a trapped square).
     fn on_random(&mut self, event: &DetectedRandom) -> RandomClaim {
         self.watchdog = Watchdog::default();
         self.custom_reader = None;

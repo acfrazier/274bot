@@ -12,7 +12,7 @@
 //! once, and only if the machine's own goal is not already met.
 use super::super::dialogue::Dialogue;
 use super::super::dialogue_main_tests::{
-    content_npc_id, continues, cook_beside_player, npc_args_for, talks,
+    content_npc_id, continues, cook_away_from_player, cook_beside_player, npc_args_for, talks,
 };
 use super::*;
 use crate::dialogue_outcome::DialogueOutcome;
@@ -187,6 +187,11 @@ fn a_talk_the_host_still_holds_after_the_hold_is_not_doubled() {
 }
 
 fn use_on_snapshot(cx: &CompileContext<'_>, with_product: bool) -> GameSnapshot {
+    use_on_snapshot_holding(cx, i32::from(with_product))
+}
+
+/// Shears and wool in the pack, and `products` balls of wool (none: no row).
+fn use_on_snapshot_holding(cx: &CompileContext<'_>, products: i32) -> GameSnapshot {
     let source_id = resolve_obj(cx, "shears").unwrap();
     let target_id = resolve_obj(cx, "wool").unwrap();
     let product_id = resolve_obj(cx, "ball_of_wool").unwrap();
@@ -205,10 +210,11 @@ fn use_on_snapshot(cx: &CompileContext<'_>, with_product: bool) -> GameSnapshot 
         ..source.clone()
     };
     let mut items = vec![source, target];
-    if with_product {
+    if products > 0 {
         items.push(ItemView {
             def: def(product_id, "Ball of wool"),
             slot: 9,
+            count: products,
             ..items[0].clone()
         });
     }
@@ -224,6 +230,21 @@ fn use_on_plan(cx: &CompileContext<'_>) -> Arc<dyn super::super::super::compile:
             "item": "shears",
             "target": {"item": "wool"},
             "product": "ball_of_wool",
+            "settle_ms": 20_000,
+            "dialogue": "none",
+        })),
+        cx,
+    )
+    .unwrap()
+}
+
+/// The same use with an `until` goal instead of a product: two balls of wool.
+fn use_on_until_plan(cx: &CompileContext<'_>) -> Arc<dyn super::super::super::compile::StepPlan> {
+    compile_use_on(
+        test_args::<UseOnArgs>(serde_json::json!({
+            "item": "shears",
+            "target": {"item": "wool"},
+            "until": {"obj": "ball_of_wool", "qty": 2},
             "settle_ms": 20_000,
             "dialogue": "none",
         })),
@@ -259,40 +280,139 @@ fn poll_use_on(
     })
 }
 
-/// R1, Use-on, request dropped unsent: `UseOnAction` waited for a receipt that
-/// no pass would ever send. It sends the request again, once, after the
-/// settle tick.
+/// What a use-on step did through a guardian hold that dropped its queued
+/// request unsent: the step sends one request at tick 2 from `before`, the
+/// hold drops it, and the step is polled on `after` at ticks 9 (settle), 10
+/// (resume) and 11, until it completes.
+struct DroppedUseOn {
+    /// The new use-on requests queued at ticks 9, 10 and 11.
+    sent: [usize; 3],
+    /// What each poll returned, up to the one that completed the step.
+    polls: Vec<Poll<Result<StepOutcome, ActionError>>>,
+    /// The request id of the first send, and of the last one queued.
+    first: u64,
+    last: Option<u64>,
+}
+
+fn use_on_through_a_dropping_hold(
+    plan: &Arc<dyn super::super::super::compile::StepPlan>,
+    before: &GameSnapshot,
+    after: &GameSnapshot,
+) -> DroppedUseOn {
+    let (mut ledger, mut budget) = (None, TickBudget::default());
+    let mut run = with_tick_budget(before, &mut ledger, &mut budget, 1, |native| {
+        with_step(native, |step| plan.begin(step).unwrap())
+    });
+    assert!(poll_use_on(&mut run, before, &mut ledger, &mut budget, 2).is_pending());
+    assert_eq!(use_on_requests(&ledger), 1, "the step sends its use");
+    let first = ledger.as_ref().unwrap().outbox[0].request_id.get();
+    guardian_hold_that_drops_the_queue(&mut ledger, &mut budget);
+    let mut sent = [0; 3];
+    let mut polls = Vec::new();
+    for tick in [9, 10, 11] {
+        let before_poll = use_on_requests(&ledger);
+        let poll = poll_use_on(&mut run, after, &mut ledger, &mut budget, tick);
+        sent[(tick - 9) as usize] = use_on_requests(&ledger) - before_poll;
+        let done = poll.is_ready();
+        polls.push(poll);
+        if done {
+            // A finished step is not polled again (`Quester::tick`).
+            break;
+        }
+    }
+    let last = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .last()
+        .map(|action| action.request_id.get());
+    DroppedUseOn {
+        sent,
+        polls,
+        first,
+        last,
+    }
+}
+
+/// R1, Use-on, request dropped unsent and the goal still unmet:
+/// `UseOnAction` waited for a receipt that no pass would ever send. The
+/// settle tick sends nothing; on the next, the step checks its goal (no ball
+/// of wool yet) and sends exactly one new request.
 #[test]
 fn a_use_on_dropped_unsent_by_a_guardian_hold_is_sent_again_once() {
     compile_context_test(|cx| {
         let snapshot = use_on_snapshot(cx, false);
-        let plan = use_on_plan(cx);
-        let (mut ledger, mut budget) = (None, TickBudget::default());
-        let mut run = with_tick_budget(&snapshot, &mut ledger, &mut budget, 1, |native| {
-            with_step(native, |step| plan.begin(step).unwrap())
-        });
-        assert!(poll_use_on(&mut run, &snapshot, &mut ledger, &mut budget, 2).is_pending());
-        assert_eq!(use_on_requests(&ledger), 1);
-        let first = ledger.as_ref().unwrap().outbox[0].request_id;
-        guardian_hold_that_drops_the_queue(&mut ledger, &mut budget);
-
-        assert!(poll_use_on(&mut run, &snapshot, &mut ledger, &mut budget, 9).is_pending());
-        assert_eq!(use_on_requests(&ledger), 0, "the settle tick sends nothing");
-        assert!(poll_use_on(&mut run, &snapshot, &mut ledger, &mut budget, 10).is_pending());
+        let dropped = use_on_through_a_dropping_hold(&use_on_plan(cx), &snapshot, &snapshot);
         assert_eq!(
-            use_on_requests(&ledger),
-            1,
-            "exactly one request is sent again"
+            dropped.sent,
+            [0, 1, 0],
+            "nothing, then one request, then none"
         );
-        assert_ne!(ledger.as_ref().unwrap().outbox[0].request_id, first);
-        assert!(poll_use_on(&mut run, &snapshot, &mut ledger, &mut budget, 11).is_pending());
-        assert_eq!(use_on_requests(&ledger), 1, "and no second one");
+        assert_eq!(dropped.polls.len(), 3);
+        assert!(dropped.polls.iter().all(Poll::is_pending));
+        assert_ne!(dropped.last, Some(dropped.first), "a new request");
+        // M1 (round 3) memory tripwire: the resend is built by the step from
+        // its own inputs, so the machine retains only the request id, not a
+        // copy of the request (an `InteractReq` with owned strings).
+        println!(
+            "UseOnAction={} InteractReq={}",
+            std::mem::size_of::<UseOnAction>(),
+            std::mem::size_of::<InteractReq>()
+        );
+        assert_eq!(std::mem::size_of::<UseOnAction>(), 8);
         let log = take_resume_log();
         assert!(
             log.iter()
-                .any(|line| line.contains("re-issued its request once: use-on request")),
+                .any(|line| line
+                    .contains("returned its dropped request to its owner: use-on request")),
             "{log:?}"
         );
+    });
+}
+
+/// R1.1 (round 3): the product came while the hold lasted (the guardian does
+/// not make it, but the step's goal is the pack, not the dropped request).
+/// The step checks its goal before it sends again: it completes, and no
+/// request is sent. On `3d00cc159` the machine sent the dropped request again
+/// without the check.
+#[test]
+fn a_use_on_dropped_unsent_whose_product_came_during_the_hold_is_not_sent_again() {
+    compile_context_test(|cx| {
+        let dropped = use_on_through_a_dropping_hold(
+            &use_on_plan(cx),
+            &use_on_snapshot(cx, false),
+            &use_on_snapshot(cx, true),
+        );
+        assert_eq!(dropped.sent, [0, 0, 0], "no replacement request");
+        assert!(dropped.polls[0].is_pending(), "the settle tick waits");
+        assert_eq!(dropped.polls.len(), 2, "done on the resume tick");
+        assert!(
+            matches!(dropped.polls[1], Poll::Ready(Ok(_))),
+            "the step completes on its goal"
+        );
+    });
+}
+
+/// R1.1 (round 3), the `until` form: the count reached two balls of wool
+/// during the hold, so nothing is sent; with the count still short, exactly
+/// one request is.
+#[test]
+fn a_use_on_dropped_unsent_checks_its_until_count_before_it_sends_again() {
+    compile_context_test(|cx| {
+        let plan = use_on_until_plan(cx);
+        let one = use_on_snapshot_holding(cx, 1);
+        let reached = use_on_through_a_dropping_hold(&plan, &one, &use_on_snapshot_holding(cx, 2));
+        assert_eq!(reached.sent, [0, 0, 0], "the count is reached: no request");
+        assert_eq!(reached.polls.len(), 2, "done on the resume tick");
+        assert!(
+            matches!(reached.polls[1], Poll::Ready(Ok(_))),
+            "the step completes on its count"
+        );
+
+        let short = use_on_through_a_dropping_hold(&plan, &one, &one);
+        assert_eq!(short.sent, [0, 1, 0], "one request, once");
+        assert_eq!(short.polls.len(), 3);
+        assert!(short.polls.iter().all(Poll::is_pending));
     });
 }
 
@@ -487,6 +607,211 @@ fn a_dropped_walk_is_not_sent_again_when_the_player_already_stands_at_its_goal()
     assert!(
         log.iter()
             .any(|line| line.contains("kept its request: the player already stands at the goal")),
+        "{log:?}"
+    );
+}
+
+// --- Talk's own approach (`Dialogue`, `Phase::Approach | Phase::Plan`) ---
+
+/// Route requests (walks and route assessments) in the outbox.
+fn route_requests(ledger: &Option<Box<ledger::Ledger>>) -> usize {
+    ledger.as_ref().map_or(0, |ledger| {
+        ledger
+            .outbox
+            .iter()
+            .filter(|action| {
+                matches!(
+                    &action.effect,
+                    HostEffect::Walk(_) | HostEffect::AssessWalk(_)
+                )
+            })
+            .count()
+    })
+}
+
+fn cook_tile() -> WorldTile {
+    WorldTile {
+        x: 0,
+        z: 5,
+        level: 0,
+    }
+}
+
+/// A Talk to the Cook ten tiles away on the real Dialogue machine. No reach
+/// flood reaches the Cook, so it asks the router first (tick 1); the router
+/// answers 15 route ticks, and the walk is queued on tick 2 with a budget to
+/// observed tick 19 (15 route ticks plus 2 slack ticks).
+fn cook_approach_walking(
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    budget: &mut TickBudget,
+) -> ActionHandle<Dialogue> {
+    let far = cook_away_from_player(10);
+    let handle = with_tick_budget(&far, ledger, budget, 1, |tick| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(npc_args_for(content_npc_id("cook"), "Cook"), &mut tick.cx)
+            .unwrap();
+        assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        handle
+    });
+    assert!(matches!(
+        last_route_effect(ledger),
+        HostEffect::AssessWalk(request) if request.target == cook_tile()
+    ));
+    post_assess_receipt(ledger, 1, 15, None);
+    assert!(poll_talk(&far, ledger, budget, 2, &handle).is_pending());
+    assert!(matches!(
+        last_route_effect(ledger),
+        HostEffect::Walk(request) if request.target == cook_tile()
+    ));
+    assert_eq!(talks(ledger), 0);
+    handle
+}
+
+/// R1.2 (round 3), Talk's own approach: the hold dropped the queued walk
+/// unsent, so no walk receipt will come and the route would only end at its
+/// budget. The settle tick sends nothing; the next plans the route again,
+/// once (the router first, as no flood reaches the Cook), and the walk
+/// follows the router's answer.
+#[test]
+fn a_talk_approach_dropped_unsent_by_a_guardian_hold_is_planned_again_once() {
+    let (mut ledger, mut budget) = (None, TickBudget::default());
+    let handle = cook_approach_walking(&mut ledger, &mut budget);
+    let far = cook_away_from_player(10);
+    budget.hold_begin();
+    assert!(
+        host_drops_queued_work(&mut ledger) >= 1,
+        "the walk was queued"
+    );
+    budget.hold_end();
+
+    assert!(poll_talk(&far, &mut ledger, &mut budget, 9, &handle).is_pending());
+    assert_eq!(route_requests(&ledger), 0, "the settle tick sends nothing");
+    assert!(poll_talk(&far, &mut ledger, &mut budget, 10, &handle).is_pending());
+    assert_eq!(route_requests(&ledger), 1, "one new route");
+    assert!(matches!(
+        last_route_effect(&ledger),
+        HostEffect::AssessWalk(request) if request.target == cook_tile()
+    ));
+    for tick in [11, 12] {
+        assert!(poll_talk(&far, &mut ledger, &mut budget, tick, &handle).is_pending());
+    }
+    assert_eq!(route_requests(&ledger), 1, "and no second one");
+    post_assess_receipt(&mut ledger, 12, 15, None);
+    assert!(poll_talk(&far, &mut ledger, &mut budget, 13, &handle).is_pending());
+    assert!(matches!(
+        last_route_effect(&ledger),
+        HostEffect::Walk(request) if request.target == cook_tile()
+    ));
+    assert_eq!(talks(&ledger), 0, "the Cook is still out of reach");
+    let log = take_resume_log();
+    assert_eq!(log.len(), 1, "one resume line: {log:?}");
+    assert!(
+        log[0].contains("re-issued its request once: approach walk"),
+        "{log:?}"
+    );
+}
+
+/// R1.2 (round 3): the host armed the walk, but the hold outlasted the
+/// route's observed-tick budget (tick 19). The route was not slow, the hold
+/// spent its ticks: on the resume tick it is planned again once, without the
+/// walk's one bounded retry. That retry is still there when the new route
+/// ends short (tick 44): a fresh plan, not a failure.
+#[test]
+fn a_talk_approach_whose_route_budget_ran_out_during_the_hold_is_planned_again_once() {
+    let (mut ledger, mut budget) = (None, TickBudget::default());
+    let handle = cook_approach_walking(&mut ledger, &mut budget);
+    let far = cook_away_from_player(10);
+    assert!(!host_takes_queued_work(&mut ledger).is_empty());
+    guardian_hold_over_an_accepted_request(&mut budget);
+
+    assert!(poll_talk(&far, &mut ledger, &mut budget, 25, &handle).is_pending());
+    assert_eq!(route_requests(&ledger), 0, "the settle tick sends nothing");
+    assert!(poll_talk(&far, &mut ledger, &mut budget, 26, &handle).is_pending());
+    assert_eq!(
+        route_requests(&ledger),
+        1,
+        "one new route on the resume tick"
+    );
+    assert!(matches!(
+        last_route_effect(&ledger),
+        HostEffect::AssessWalk(request) if request.target == cook_tile()
+    ));
+    let log = take_resume_log();
+    assert!(
+        log.iter()
+            .any(|line| line.contains("re-issued its request once: approach walk")),
+        "{log:?}"
+    );
+    // The router answers; the walk is queued on tick 27 with a budget to 44.
+    post_assess_receipt(&mut ledger, 26, 15, None);
+    assert!(poll_talk(&far, &mut ledger, &mut budget, 27, &handle).is_pending());
+    assert!(matches!(
+        last_route_effect(&ledger),
+        HostEffect::Walk(request) if request.target == cook_tile()
+    ));
+    assert!(!host_takes_queued_work(&mut ledger).is_empty());
+    assert!(poll_talk(&far, &mut ledger, &mut budget, 43, &handle).is_pending());
+    let ended = poll_talk(&far, &mut ledger, &mut budget, 44, &handle);
+    assert!(
+        ended.is_pending(),
+        "the walk's own retry was not spent by the hold: {ended:?}"
+    );
+    assert!(poll_talk(&far, &mut ledger, &mut budget, 45, &handle).is_pending());
+    assert!(
+        matches!(
+            last_route_effect(&ledger),
+            HostEffect::AssessWalk(request) if request.target == cook_tile()
+        ),
+        "the fresh plan follows one observed tick later"
+    );
+}
+
+/// R1.2 (round 3), goal met: the walk was dropped, but the player stands
+/// beside the Cook when the hold ends (the guardian walked it there). No
+/// route is sent; the Talk-to is.
+#[test]
+fn a_talk_approach_that_ends_in_reach_after_the_hold_talks_instead_of_walking_again() {
+    let (mut ledger, mut budget) = (None, TickBudget::default());
+    let handle = cook_approach_walking(&mut ledger, &mut budget);
+    budget.hold_begin();
+    assert!(host_drops_queued_work(&mut ledger) >= 1);
+    budget.hold_end();
+    let near = cook_away_from_player(1);
+
+    assert!(poll_talk(&near, &mut ledger, &mut budget, 9, &handle).is_pending());
+    assert_eq!((route_requests(&ledger), talks(&ledger)), (0, 0));
+    assert!(poll_talk(&near, &mut ledger, &mut budget, 10, &handle).is_pending());
+    assert_eq!(route_requests(&ledger), 0, "no route: the Cook is in reach");
+    assert_eq!(talks(&ledger), 1, "the Talk-to is sent");
+    assert!(poll_talk(&near, &mut ledger, &mut budget, 11, &handle).is_pending());
+    assert_eq!((route_requests(&ledger), talks(&ledger)), (0, 1));
+    let log = take_resume_log();
+    assert!(
+        log.iter()
+            .any(|line| line.contains("kept its request: the NPC is already in reach")),
+        "{log:?}"
+    );
+}
+
+/// R1.2 (round 3), valid ownership: the host armed the walk and still
+/// follows it, inside its budget. Nothing is sent again.
+#[test]
+fn a_talk_approach_the_host_still_follows_is_not_planned_again_after_a_hold() {
+    let (mut ledger, mut budget) = (None, TickBudget::default());
+    let handle = cook_approach_walking(&mut ledger, &mut budget);
+    let far = cook_away_from_player(10);
+    assert!(!host_takes_queued_work(&mut ledger).is_empty());
+    guardian_hold_over_an_accepted_request(&mut budget);
+    for tick in 9..=12 {
+        assert!(poll_talk(&far, &mut ledger, &mut budget, tick, &handle).is_pending());
+    }
+    assert_eq!(route_requests(&ledger), 0, "the followed route is kept");
+    assert_eq!(talks(&ledger), 0);
+    let log = take_resume_log();
+    assert!(
+        log.iter()
+            .any(|line| line.contains("kept its request: the approach is still followed")),
         "{log:?}"
     );
 }

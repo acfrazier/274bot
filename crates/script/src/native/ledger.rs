@@ -774,6 +774,13 @@ impl TickBudget {
         false
     }
 
+    /// Whether a teleport is latched and not yet taken; reading it takes
+    /// nothing.
+    #[cfg(test)]
+    pub(crate) fn hold_teleport_latched(&self) -> bool {
+        self.hold & HOLD_TELEPORTED != 0
+    }
+
     /// One host frame's player position. The frame before a hold, every frame
     /// of it and the first after it are compared pairwise: a teleport between
     /// two of them is remembered for [`Self::take_hold_teleport`]. The
@@ -1184,6 +1191,38 @@ mod tests {
         budget.observe_fix(9, at(3500, 3500));
         budget.hold_end();
         assert!(budget.take_hold_teleport());
+    }
+
+    /// Two frames with the same observed tick number are zero ticks apart,
+    /// not an invalid pair: a jump out and back inside one tick is latched,
+    /// the return frame does not clear it, and it is taken once after the
+    /// hold.
+    #[test]
+    fn a_jump_out_and_back_inside_one_observed_tick_is_latched_and_taken_once() {
+        let at = |x, z| Some(api::WorldTile { x, z, level: 0 });
+        let mut budget = TickBudget::default();
+        budget.observe_fix(10, at(3209, 3215));
+        budget.hold_begin();
+        budget.observe_fix(11, at(2893, 4555));
+        budget.observe_fix(11, at(3209, 3215));
+        assert!(budget.hold_teleport_latched(), "latched inside the tick");
+        assert!(!budget.take_hold_teleport(), "not before the hold is over");
+        budget.observe_fix(12, at(3209, 3215));
+        budget.hold_end();
+        budget.observe_fix(12, at(3209, 3215));
+        assert!(
+            budget.hold_teleport_latched(),
+            "the return did not clear it"
+        );
+        assert!(budget.take_hold_teleport());
+        assert!(!budget.take_hold_teleport(), "taken once");
+        assert!(!budget.hold_teleport_latched());
+        // Inside one tick, two tiles of running is still a walk.
+        budget.hold_begin();
+        budget.observe_fix(13, at(3211, 3215));
+        budget.observe_fix(13, at(3209, 3215));
+        budget.hold_end();
+        assert!(!budget.take_hold_teleport());
     }
 
     #[test]
