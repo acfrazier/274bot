@@ -121,8 +121,28 @@ fn measured_kit(cache: &Cache, gear: &[Equipment], selected: &Choice, body: &[Op
     let combined = Model::combine_for_anim(&models, models.len());
     assert_eq!(usize::try_from(combined.num_faces).unwrap(), expected_faces, "actual player merge face count");
     let total_faces = STATIC_FACES + CROWD * expected_faces;
-    let bytes = total_faces * 2 * 3 * 24;
-    json!({"case":label,"gender":if gender==0 {"male"} else {"female"},"parts":parts,"assembled_player_faces":combined.num_faces,"assembled_player_points":combined.num_points,"players":CROWD,"static_faces":STATIC_FACES,"total_source_faces":total_faces,"clipped_vertex_bytes":bytes,"fits_128_mib":bytes <= BINDING_BYTES,"margin_to_128_mib_bytes":BINDING_BYTES as i64 - bytes as i64,"same_clipping_factor_bytes_per_face":144})
+    let vertex_bytes = std::mem::size_of::<client::render::world::GpuVertex>();
+    assert_eq!(vertex_bytes, 16, "the production vertex layout is lossless compact16");
+    let bytes = total_faces * 2 * 3 * vertex_bytes;
+    let legacy_bytes = total_faces * 2 * 3 * 24;
+    json!({
+        "case": label,
+        "gender": if gender == 0 { "male" } else { "female" },
+        "parts": parts,
+        "assembled_player_faces": combined.num_faces,
+        "assembled_player_points": combined.num_points,
+        "players": CROWD,
+        "static_faces": STATIC_FACES,
+        "total_source_faces": total_faces,
+        "production_vertex_bytes": vertex_bytes,
+        "clipped_vertex_bytes": bytes,
+        "legacy24_clipped_vertex_bytes": legacy_bytes,
+        "fits_128_mib": bytes <= BINDING_BYTES,
+        "margin_to_128_mib_bytes": BINDING_BYTES as i64 - bytes as i64,
+        "same_clipping_factor_bytes_per_face": 2 * 3 * vertex_bytes,
+        "retained_cap_bytes": BINDING_BYTES,
+        "maximum_old_plus_new_growth_peak_bytes": BINDING_BYTES + BINDING_BYTES / 2,
+    })
 }
 
 #[test]
@@ -183,5 +203,26 @@ fn legal_armoured_crowd_cases() {
         unique_positions += points.len();
     }
     assert!(inputs.failures.is_empty(), "complete concrete equipment inputs");
-    println!("legal_armoured_crowd_census={}",serde_json::to_string_pretty(&json!({"schema":"T4.4-concrete-armoured-crowd-v1","fixed_cache_version":R289_VERSION,"content_equipment_candidates":gear.len(),"classification":"concrete compatible equip-slot compositions; source wear actions, all stats/quests assumed satisfied; no transmog, attached spot, or temporary loc; static co-location remains an arithmetic envelope, not visibility/reachability proof","cases":cases,"base_model_index_census":{"model_records":records.len(),"source_faces":faces,"source_vertex_indices":source_indices,"unique_positions_summed_per_model":unique_positions,"source_indices_per_face":source_indices as f64 / faces as f64,"unique_positions_per_face":unique_positions as f64 / faces as f64,"qualification":"position-only source-model sharing; NOT a measured ratio of complete GPU vertices, which also depend on per-face alpha/shade/UV and triangle-neighbour shader metadata"},"inputs":inputs.hashes,"complete":true})).unwrap());
+    println!(
+        "legal_armoured_crowd_census={}",
+        serde_json::to_string_pretty(&json!({
+            "schema": "T4.4-concrete-armoured-crowd-v2",
+            "fixed_cache_version": R289_VERSION,
+            "content_equipment_candidates": gear.len(),
+            "classification": "concrete compatible equip-slot compositions; source wear actions, all stats/quests assumed satisfied; no transmog, attached spot, or temporary loc; static co-location remains an arithmetic envelope, not visibility/reachability proof",
+            "cases": cases,
+            "base_model_index_census": {
+                "model_records": records.len(),
+                "source_faces": faces,
+                "source_vertex_indices": source_indices,
+                "unique_positions_summed_per_model": unique_positions,
+                "source_indices_per_face": source_indices as f64 / faces as f64,
+                "unique_positions_per_face": unique_positions as f64 / faces as f64,
+                "qualification": "position-only source-model sharing; NOT a measured ratio of complete GPU vertices, which also depend on per-face alpha/shade/UV and triangle-neighbour shader metadata",
+            },
+            "inputs": inputs.hashes,
+            "complete": true,
+        }))
+        .unwrap()
+    );
 }

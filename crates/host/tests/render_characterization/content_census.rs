@@ -3139,6 +3139,10 @@ fn resource_rows(
             .max_two_triangle_clipped_vertex_payload_bytes;
         let static_capacity = static_payload.checked_next_power_of_two()?;
         Some(json!({
+            "vertex_bytes": capture.submitted_static.vertex_bytes,
+            "retained_cap_bytes": VERTEX_BINDING_LIMIT_BYTES,
+            "maximum_old_plus_new_growth_peak_bytes": VERTEX_BINDING_LIMIT_BYTES + VERTEX_BINDING_LIMIT_BYTES / 2,
+            "over_cap_behavior": "typed Vertex resource fault; retain last completed image and log the fault once; no chunk split",
             "classification": "conservative_unqualified_upper_not_an_achieved_scene",
             "maximum_submitted_static_clipped_vertex_payload_bytes": static_payload,
             "maximum_submitted_static_next_power_of_two_capacity_bytes": static_capacity,
@@ -3293,7 +3297,7 @@ fn resource_rows(
         ),
         (
             RenderResource::Vertex,
-            "Maximum co-located 50x50 static faces plus the face-maximizing allocation of the shared admitted dynamic count among player, NPC, and projectile/map-spot face uppers; multiply by two clipped triangles, three vertices, and the capture vertex layout. B_vertex is next_power_of_two(total payload), not a per-buffer binding size.",
+            "Source-derived face/count upper times two CPU-clipped triangles, three lossless 16-byte vertices. The operator's revised ruling caps retained per-head storage at 128 MiB; old-plus-new power-of-two replacement peaks at 192 MiB and is charged separately. The theoretical content upper can exceed the cap and is not an initialization requirement.",
             capture_trigger.clone(),
             "The submitted static geometry, capture vertex layout, or requested device storage limit is unavailable.",
         ),
@@ -4993,11 +4997,11 @@ fn admitted_geometry_maximizes_faces_under_the_shared_count() {
         10,
         [("player", 2, 8), ("npc", 3, 5), ("projectile_or_map_spot", 10, 2)],
         2,
-        24,
+        std::mem::size_of::<client::render::world::GpuVertex>(),
     ).unwrap();
     assert_eq!(upper.dynamic_faces_upper, 41);
     assert_eq!(upper.scene_faces_upper, 48);
-    assert_eq!(upper.vertex_payload_bytes_upper, 48 * 144);
+    assert_eq!(upper.vertex_payload_bytes_upper, 48 * 2 * 3 * 16);
     assert_eq!(upper.dynamic_classes[0]["count_in_maximizing_shared_allocation"], 2);
     assert_eq!(upper.dynamic_classes[1]["count_in_maximizing_shared_allocation"], 3);
     assert_eq!(upper.dynamic_classes[2]["count_in_maximizing_shared_allocation"], 5);
@@ -5010,7 +5014,7 @@ fn admitted_geometry_does_not_assume_player_faces_are_largest() {
         10,
         [("player", 2, 1), ("npc", 3, 2), ("projectile_or_map_spot", 10, 8)],
         2,
-        24,
+        std::mem::size_of::<client::render::world::GpuVertex>(),
     ).unwrap();
     assert_eq!(upper.dynamic_faces_upper, 80);
     assert_eq!(upper.dynamic_classes[0]["class"], "projectile_or_map_spot");
