@@ -457,6 +457,7 @@ fn jungle_refuses_to_bake_when_a_required_tool_or_proven_map_is_missing() {
 fn legends_gate_engine_closure_follows_helpers_into_general_scripts() {
     const MULTIPLY2_BLOCK: &str = "// general/scripts/misc/math_procs.rs2:1\n[proc,multiply2](int $int1, int $int2, int $m)(int, int)\n$int1 = calc($int1 * $m);\n$int2 = calc($int2 * $m);\nreturn($int1, $int2);\n";
     let fx = Fixture::new();
+    write_legends_content(&fx);
     let engine_procs = super::super::stage_doors::ENGINE_DOOR_PROCS;
     let door_procs = engine_procs.replace(MULTIPLY2_BLOCK, "");
     assert_ne!(door_procs, engine_procs, "multiply2 must be moved to its source tree");
@@ -468,10 +469,32 @@ fn legends_gate_engine_closure_follows_helpers_into_general_scripts() {
         "scripts/general/scripts/misc/math_procs.rs2",
         MULTIPLY2_BLOCK,
     );
-    assert!(super::super::legends::pinned_engine_proc_closure_matches(
+    fx.write(
+        "maps/m42_52.jm2",
+        "==== LOC ====\n0 40 21: 2391 0 1\n0 41 21: 2392 0 1\n",
+    );
+    let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let (facts, identity) = selected.quest_identity_for_bake().unwrap();
+    let quests = QuestSource {
+        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+        facts: &facts,
+    };
+    let (graph, _, _) = super::super::derive_transports_with_audit(
         fx.path(),
-        &["open_and_close_double_door2", "open_and_close_double_door3"],
-    ));
+        &loc_defs(&[]),
+        &open_collision(2724, 3345, 12, 12),
+        None,
+        Some(&quests),
+    );
+    assert_eq!(
+        graph
+            .edges
+            .iter()
+            .filter(|edge| GATE_LOC_IDS.contains(&edge.loc_id) && edge.open_loc_id.is_some())
+            .count(),
+        4,
+        "the gate proof must follow the helper into its general script"
+    );
 }
 
 fn write_legends_content(fx: &Fixture) {
