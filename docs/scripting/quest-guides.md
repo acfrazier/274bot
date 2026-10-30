@@ -55,8 +55,17 @@ Stage declarations also require unique ids and nonempty names and reasons.
 A navigation pack must be available when a guide declares zones.
 Panel and TUI list stage and step declarations before Start, with their scopes.
 The next stage does not retain the previous stage's declarations.
-Other zones remain avoided, even when a global or card danger setting permits them.
-Protection, food, and escape logic remain active.
+Other zones remain avoided, even when the global danger setting is on.
+An empty `cross` set on an active Quester stage is still a scope. It grants no
+danger zones. A global setting or an old saved Quester card value does not
+change that rule.
+A route whose only path crosses an undeclared danger zone is refused. Unscoped
+walks outside a Quester stage are unchanged.
+
+The food guard is armed for the whole walk when a route uses a declared
+crossing. Protection runs only where a step requests it. A declaration does not
+add a survivability check to a fully declared route; its existing admission
+behavior is unchanged.
 
 
 

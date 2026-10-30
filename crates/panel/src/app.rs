@@ -2825,36 +2825,36 @@ fn quester_start_zone_disclosure(ui: &Ui, session: &mut Session, active: bool) {
         .and_then(ScriptChoice::compiled_id)
         == Some(frontend_core::scripts::CompiledCardId::QUESTER);
     if !selected {
-        session.quester_start_zone_cache.clear();
+        session.scripts.clear_quester_start_zones();
         return;
     }
     if active {
         return;
     }
-    session.refresh_quester_start_zone_cache();
+    let profile = session.core.selected();
+    session
+        .scripts
+        .refresh_quester_start_zones(&session.core, profile);
     ui.spacing();
     ui.separator();
-    ui.text_colored(ACCENT, "Start zone scope");
-    match session.quester_start_zone_view() {
-        Some(Ok(zones)) if zones.is_empty() => {
-            ui.text_wrapped(
-                "Start accepts only declared zones. No zones are declared. Survival remains active.",
-            );
-        }
+    ui.text_colored(ACCENT, frontend_core::scripts::START_ZONE_SCOPE_TITLE);
+    match session.scripts.quester_start_zone_view() {
         Some(Ok(zones)) => {
-            ui.text_wrapped("Start accepts only these zones. Survival remains active.");
-            ui.text_disabled("Scroll this panel to read the full list.");
-            for scope in &zones.scopes {
-                ui.text_colored(ACCENT, scope.display_label.as_str());
-                for zone in &scope.zones {
-                    ui.text_wrapped(zone.display_label.as_str());
-                    ui.text_disabled("Guide reason:");
-                    ui.text_wrapped(zone.reason.as_str());
+            ui.text_wrapped(zones.notice());
+            if !zones.is_empty() {
+                ui.text_disabled(frontend_core::scripts::START_ZONE_PANEL_SCROLL_HINT);
+                for scope in &zones.scopes {
+                    ui.text_colored(ACCENT, scope.display_label.as_str());
+                    for zone in &scope.zones {
+                        ui.text_wrapped(zone.display_label.as_str());
+                        ui.text_disabled("Guide reason:");
+                        ui.text_wrapped(zone.reason.as_str());
+                    }
                 }
             }
         }
         Some(Err(reason)) => {
-            ui.text_wrapped("The selected Quester scope is unavailable.");
+            ui.text_wrapped(frontend_core::scripts::START_ZONE_UNAVAILABLE_NOTICE);
             ui.text_wrapped(reason);
         }
         None => {}

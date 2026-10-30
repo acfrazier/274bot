@@ -146,11 +146,6 @@ fn settings_schema() -> &'static [SettingDef] {
                 "Allow wilderness",
                 "Allow this script to route through wilderness when the global setting is off.",
             ),
-            walk_permission_setting(
-                "allow_danger_zones",
-                "Allow danger zones",
-                "Allow this script to route through danger zones when the global setting is off.",
-            ),
         ]
     });
     &SETTINGS

@@ -666,6 +666,30 @@ fn dispatch_start_group<Io>(
     marks: Option<&MarkedSelection>,
     planned_card: Option<Option<ScriptChoice>>,
 ) -> Vec<(String, Applied)> {
+    if planned_card.is_none() {
+        let card = match targets {
+            Targets::Everyone => None,
+            Targets::Marked => scripts.browse_selection(),
+            _ => None,
+        };
+        let (registry, _) = script::quester::registry::snapshot_with_revision();
+        if names.iter().any(|name| {
+            scripts
+                .quester_start_zones_for_card(core, name, card, &registry)
+                .map_or(true, |zones| zones.is_some())
+        }) {
+            return broadcast_script_result(
+                names,
+                Applied::Rejected(
+                    Rejection::NotApplicable,
+                    Some(
+                        "Quester bulk Start requires a confirmed fleet plan showing each bot's danger zones"
+                            .into(),
+                    ),
+                ),
+            );
+        }
+    }
     let root = scripts.take_staged_start_catalog_root();
     let accepted = match targets {
         Targets::Everyone => scripts.start_all(core, root.as_deref()),

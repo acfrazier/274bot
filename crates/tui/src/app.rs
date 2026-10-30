@@ -633,8 +633,9 @@ pub struct TuiApp {
     pub script_queued: bool,
     /// The focused profile's script heading; Start keys on `(source, name)`.
     pub script_sel: Option<ScriptChoice>,
-    /// Cached disclosure for the selected Quester queue.
-    pub(crate) quester_start_zone_cache: frontend_core::scripts::QuesterStartZoneCache,
+    /// Immutable versioned disclosure received from frontend-core.
+    pub(crate) quester_start_zones:
+        Option<Arc<Result<frontend_core::scripts::QuesterStartZones, String>>>,
     /// Vertical scroll through the complete pre-start disclosure.
     pub(crate) quester_start_zone_scroll: u16,
     /// The operator picked a card in Browse since the last pump: the
@@ -796,7 +797,7 @@ impl TuiApp {
             script_load_sel: 0,
             #[cfg(feature = "js")]
             script_load_last_dir: None,
-            quester_start_zone_cache: frontend_core::scripts::QuesterStartZoneCache::default(),
+            quester_start_zones: None,
             quester_start_zone_scroll: 0,
             params_schema: OwnedSchema::default(),
             params_unavailable: None,
@@ -1980,10 +1981,18 @@ impl TuiApp {
             self.script_load_open,
             self.reload_confirm,
         );
-        pane.with_start_zone_view(
-            self.quester_start_zone_cache.view(),
-            self.quester_start_zone_scroll,
-        )
+        let view = self.quester_start_zones.as_deref().map(|view| match view {
+            Ok(zones) => Ok(zones),
+            Err(reason) => Err(reason.as_str()),
+        });
+        pane.with_start_zone_view(view, self.quester_start_zone_scroll)
+    }
+
+    pub(crate) fn set_quester_start_zone_view(
+        &mut self,
+        view: Option<Arc<Result<frontend_core::scripts::QuesterStartZones, String>>>,
+    ) {
+        self.quester_start_zones = view;
     }
 
     pub(crate) fn scroll_quester_start_zones(&mut self, delta: i32) -> bool {
@@ -1994,10 +2003,10 @@ impl TuiApp {
         #[cfg(not(feature = "js"))]
         let load_open = false;
         if !selected_quester
-            || self.script_state != ScriptRunState::Idle
+            || !matches!(self.script_state, ScriptRunState::Idle | ScriptRunState::Error)
             || self.script_browse_open
             || load_open
-            || self.quester_start_zone_cache.view().is_none()
+            || self.quester_start_zones.is_none()
         {
             return false;
         }

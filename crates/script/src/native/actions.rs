@@ -7,28 +7,34 @@ use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 /// Add the stage's declared grants to this step's declared route grants.
 /// Named consent never enables the blanket danger opt-in.
 fn apply_stage_cross(request: &mut WalkRequest, stage: Option<&[Arc<str>]>) {
-    let Some(stage) = stage else {
-        return;
-    };
-    request.options.allow_danger_zones = WalkBit::Forbid;
-    let duplicates = request
-        .cross
-        .iter()
-        .enumerate()
-        .filter(|(index, zone)| request.cross[..*index].contains(zone))
-        .count();
-    let missing = stage
-        .iter()
-        .filter(|zone| !request.cross.contains(zone))
-        .count();
-    if missing != 0 || duplicates != 0 {
-        let mut cross = Vec::with_capacity(request.cross.len() - duplicates + missing);
-        for zone in request.cross.iter().chain(stage) {
-            if !cross.contains(zone) {
-                cross.push(Arc::clone(zone));
+    let has_stage_scope = stage.is_some();
+    if let Some(stage) = stage {
+        let duplicates = request
+            .cross
+            .iter()
+            .enumerate()
+            .filter(|(index, zone)| request.cross[..*index].contains(zone))
+            .count();
+        let missing = stage
+            .iter()
+            .filter(|zone| !request.cross.contains(zone))
+            .count();
+        if missing != 0 || duplicates != 0 {
+            let mut cross = Vec::with_capacity(request.cross.len() - duplicates + missing);
+            for zone in request.cross.iter().chain(stage) {
+                if !cross.contains(zone) {
+                    cross.push(Arc::clone(zone));
+                }
             }
+            request.cross = cross.into_boxed_slice();
         }
-        request.cross = cross.into_boxed_slice();
+    }
+    if has_stage_scope || !request.cross.is_empty() {
+        request.options.allow_danger_zones = WalkBit::Forbid;
+    }
+    if !request.cross.is_empty() {
+        request.food_guard = true;
+        request.allow.food = true;
     }
 }
 

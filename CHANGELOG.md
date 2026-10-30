@@ -63,6 +63,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Quester
 
+- Starting Quester now shows each target's declared danger zones before a
+  fleet Start. The plan asks for confirmation and checks each saved queue
+  again before Start. It skips a bot if its queue changed. A bulk Start
+  without a plan does not start Quester.
+- The Quester card no longer offers the blanket `Allow danger zones` setting.
+  The old saved value still loads, but it no longer affects Quester routes.
+  The harness no longer offers `QUESTER_ALLOW_DANGER_ZONES`. Guides use
+  `cross` to declare stage and step zones. A declared crossing arms the food
+  guard for the walk. Protect stays active only on steps that request it.
+  Even a Quester scope with no grants avoids every danger zone, even when the
+  global setting allows danger routing. Desert Rescue declares the same zones
+  for both walks to the captain.
+
 - Quest guides now respond to an NPC's "I can't reach that!" message at once:
   they recover from the NPC's current location when possible, or report the
   refusal.

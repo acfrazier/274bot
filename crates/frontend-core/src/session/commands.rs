@@ -775,11 +775,14 @@ impl<Io> OperatorSession<Io> {
         let command = self.route_paint_control(command, targets, surface);
         // A planned command runs over the plan's frozen marks, never the
         // lent ones.
-        let plan = if matches!(targets, Targets::Plan) {
+        let mut plan = if matches!(targets, Targets::Plan) {
             Some(self.take_plan_for(command)?)
         } else {
             None
         };
+        if let Some(plan) = plan.as_mut() {
+            self.validate_quester_start_zones(plan, surface);
+        }
         let targets = if plan.is_some() {
             Targets::Marked
         } else {

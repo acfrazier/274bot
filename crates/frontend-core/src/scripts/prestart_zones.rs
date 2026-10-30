@@ -1,9 +1,78 @@
 //! Pre-start disclosure of the exact zone crossings selected by Quester's queue.
-use std::sync::Arc;
-
+use crate::selection::ProfileIdentity;
 use script::quester::path::{PathDocument, StepDocument};
 use script::quester::queue::{Queue, QueueSettings};
 use script::quester::registry::{self, PathRegistry};
+use std::sync::Arc;
+use std::fmt::Write as _;
+#[cfg(test)]
+pub(crate) mod allocation_probe {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
+    struct Counting;
+
+    thread_local! {
+        static ENABLED: Cell<bool> = const { Cell::new(false) };
+        static EVENTS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    fn record() {
+        if ENABLED.try_with(Cell::get).unwrap_or(false) {
+            let _ = EVENTS.try_with(|events| events.set(events.get().saturating_add(1)));
+        }
+    }
+
+    // SAFETY: every allocation operation is forwarded unchanged to System;
+    // the counting state is stored in non-allocating TLS cells.
+    unsafe impl GlobalAlloc for Counting {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            record();
+            // SAFETY: the caller's layout is forwarded unchanged.
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            record();
+            // SAFETY: the caller's layout is forwarded unchanged.
+            unsafe { System.alloc_zeroed(layout) }
+        }
+
+        unsafe fn realloc(
+            &self,
+            ptr: *mut u8,
+            layout: Layout,
+            new_size: usize,
+        ) -> *mut u8 {
+            record();
+            // SAFETY: ptr and layout came from a prior allocation.
+            unsafe { System.realloc(ptr, layout, new_size) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            // SAFETY: ptr and layout came from a prior allocation.
+            unsafe { System.dealloc(ptr, layout) }
+        }
+    }
+
+    #[global_allocator]
+    static ALLOCATOR: Counting = Counting;
+
+    pub(crate) fn start() {
+        EVENTS.with(|events| events.set(0));
+        ENABLED.with(|enabled| enabled.set(true));
+    }
+
+    pub(crate) fn stop() -> usize {
+        ENABLED.with(|enabled| enabled.set(false));
+        EVENTS.with(Cell::get)
+    }
+}
+
+pub const START_ZONE_SCOPE_TITLE: &str = "Start zone scope";
+pub const START_ZONE_PANEL_SCROLL_HINT: &str = "Scroll this panel to read the full list.";
+pub const START_ZONE_TUI_SCROLL_HINT: &str = "Scroll this list with j/k or PgUp/PgDn.";
+pub const START_ZONE_UNAVAILABLE_NOTICE: &str = "The selected Quester scope is unavailable.";
 use serde_json::{Map, Value};
 
 /// One authored zone crossing, with the exact identifier the guide accepts.
@@ -14,7 +83,7 @@ pub struct QuesterStartZone {
     pub step_id: Option<String>,
     pub name: String,
     pub reason: String,
-    /// Cached presentation label. It includes the exact accepted `id`.
+    /// Cached presentation label with scope and exact accepted `id`.
     pub display_label: String,
 }
 
@@ -41,47 +110,87 @@ impl QuesterStartZones {
     pub fn is_empty(&self) -> bool {
         self.scopes.is_empty()
     }
+
+    /// The shared operator-facing explanation for this frozen disclosure.
+    pub fn notice(&self) -> &'static str {
+        if self.is_empty() {
+            "No danger zones are declared. Quester walks avoid every danger zone."
+        } else {
+            "Start accepts only these zones. The food guard is armed for the whole walk; protection runs only where a step requests it. Every other danger zone stays avoided."
+        }
+    }
+
+    /// Append the shared per-profile disclosure used by plan and report text.
+    pub fn append_plan_disclosure(&self, profile: &str, text: &mut String) {
+        let _ = write!(text, "{profile}: {}", self.notice());
+        for scope in &self.scopes {
+            let _ = write!(text, "\n  {}", scope.display_label);
+            for zone in &scope.zones {
+                let _ = write!(
+                    text,
+                    "\n    {} — {}",
+                    zone.display_label, zone.reason
+                );
+            }
+        }
+    }
 }
 
-/// Caches the selected guide metadata until either queue settings or the
-/// immutable Path registry snapshot changes.
+/// Caches effective settings and derived disclosure by profile, profile
+/// generation, and the published registry revision.
 #[derive(Debug, Default)]
 pub struct QuesterStartZoneCache {
-    settings: Option<QueueSettingsSignature>,
-    registry: Option<PathRegistry>,
-    view: Option<Result<QuesterStartZones, String>>,
+    profile: Option<ProfileIdentity>,
+    profiles_generation: Option<u64>,
+    registry_revision: Option<u64>,
+    settings: Option<Map<String, Value>>,
+    view: Option<Arc<Result<QuesterStartZones, String>>>,
 }
 
 impl QuesterStartZoneCache {
-    /// Refresh from the selected profile's effective Quester settings.
-    /// Returns `true` when the cached view changes.
-    pub fn update(&mut self, bag: &Map<String, Value>) -> bool {
-        let current_registry = registry::snapshot();
-        if self
-            .settings
-            .as_ref()
-            .is_some_and(|settings| settings.matches(bag))
-            && self
-                .registry
-                .as_ref()
-                .is_some_and(|cached| same_snapshot(cached, &current_registry))
-        {
-            return false;
-        }
+    /// Whether the durable effective settings are already cached for this
+    /// profile version.
+    pub fn settings_match(&self, profile: ProfileIdentity, generation: u64) -> bool {
+        self.profile == Some(profile) && self.profiles_generation == Some(generation)
+    }
 
-        let settings = QueueSettingsSignature::capture(bag);
-        let view = resolve_selected_zones(&current_registry, bag);
-        self.settings = Some(settings);
-        self.registry = Some(current_registry);
-        self.view = Some(view);
+    /// Refresh from one durable effective-settings read.
+    pub fn update_settings(
+        &mut self,
+        profile: ProfileIdentity,
+        generation: u64,
+        settings: Result<Map<String, Value>, String>,
+    ) -> bool {
+        let (current_registry, registry_revision) = registry::snapshot_with_revision();
+        self.profile = Some(profile);
+        self.profiles_generation = Some(generation);
+        self.registry_revision = Some(registry_revision);
+        let view = match settings {
+            Ok(settings) => {
+                let view = resolve_selected_zones(&current_registry, &settings);
+                self.settings = Some(settings);
+                view
+            }
+            Err(reason) => {
+                self.settings = None;
+                Err(reason)
+            }
+        };
+        self.view = Some(Arc::new(view));
         true
     }
 
-    /// Store an unavailable-settings error from the effective-settings reader.
-    pub fn set_unavailable(&mut self, reason: impl Into<String>) -> bool {
+    /// Store an unavailable-settings error for this profile version.
+    pub fn update_unavailable(
+        &mut self,
+        profile: ProfileIdentity,
+        generation: u64,
+        reason: impl Into<String>,
+    ) -> bool {
         let reason = reason.into();
-        if self.settings.is_none()
-            && self.registry.is_none()
+        let registry_revision = registry::revision();
+        if self.settings_match(profile, generation)
+            && self.registry_revision == Some(registry_revision)
             && self
                 .view
                 .as_ref()
@@ -90,67 +199,72 @@ impl QuesterStartZoneCache {
         {
             return false;
         }
+        self.profile = Some(profile);
+        self.profiles_generation = Some(generation);
+        self.registry_revision = Some(registry_revision);
         self.settings = None;
-        self.registry = None;
-        self.view = Some(Err(reason));
+        self.view = Some(Arc::new(Err(reason)));
+        true
+    }
+
+    /// Re-resolve cached settings only when the registry publishes a new
+    /// version. The common frame path reads one atomic and allocates nothing.
+    pub fn refresh_registry(&mut self) -> bool {
+        let Some(cached_revision) = self.registry_revision else {
+            return false;
+        };
+        if registry::revision() == cached_revision {
+            return false;
+        }
+        let (current_registry, current_revision) = registry::snapshot_with_revision();
+        if current_revision == cached_revision {
+            return false;
+        }
+        self.registry_revision = Some(current_revision);
+        let Some(settings) = self.settings.as_ref() else {
+            return false;
+        };
+        self.view = Some(Arc::new(resolve_selected_zones(
+            &current_registry,
+            settings,
+        )));
         true
     }
 
     /// Clear the view when Quester is not the selected card.
     pub fn clear(&mut self) -> bool {
-        if self.view.is_none() && self.settings.is_none() && self.registry.is_none() {
+        if self.view.is_none()
+            && self.profile.is_none()
+            && self.profiles_generation.is_none()
+            && self.registry_revision.is_none()
+            && self.settings.is_none()
+        {
             return false;
         }
+        self.profile = None;
+        self.profiles_generation = None;
+        self.registry_revision = None;
         self.settings = None;
-        self.registry = None;
         self.view = None;
         true
     }
 
     /// The latest complete view, or its explicit failure.
     pub fn view(&self) -> Option<Result<&QuesterStartZones, &str>> {
-        self.view.as_ref().map(|view| match view {
+        self.view.as_deref().map(|view| match view {
             Ok(zones) => Ok(zones),
             Err(reason) => Err(reason.as_str()),
         })
     }
-}
 
-#[derive(Debug, Default, PartialEq, Eq)]
-struct QueueSettingsSignature {
-    quests: Option<Value>,
-    include_draft_guides: Option<Value>,
-    order_override: Option<Value>,
-    skip: Option<Value>,
-}
-
-impl QueueSettingsSignature {
-    fn capture(bag: &Map<String, Value>) -> Self {
-        Self {
-            quests: bag.get("quests").cloned(),
-            include_draft_guides: bag.get("include_draft_guides").cloned(),
-            order_override: bag.get("order_override").cloned(),
-            skip: bag.get("skip").cloned(),
-        }
-    }
-
-    fn matches(&self, bag: &Map<String, Value>) -> bool {
-        self.quests.as_ref() == bag.get("quests")
-            && self.include_draft_guides.as_ref() == bag.get("include_draft_guides")
-            && self.order_override.as_ref() == bag.get("order_override")
-            && self.skip.as_ref() == bag.get("skip")
+    /// Share the immutable, versioned view with a front-end without copying
+    /// its text or zone list.
+    pub fn shared_view(&self) -> Option<Arc<Result<QuesterStartZones, String>>> {
+        self.view.as_ref().map(Arc::clone)
     }
 }
 
-fn same_snapshot(left: &PathRegistry, right: &PathRegistry) -> bool {
-    match (left, right) {
-        (PathRegistry::Bundled, PathRegistry::Bundled) => true,
-        (PathRegistry::Folder(left), PathRegistry::Folder(right)) => Arc::ptr_eq(left, right),
-        _ => false,
-    }
-}
-
-fn resolve_selected_zones(
+pub(crate) fn resolve_selected_zones(
     registry: &PathRegistry,
     bag: &Map<String, Value>,
 ) -> Result<QuesterStartZones, String> {
@@ -402,6 +516,10 @@ fn scope(
         format!("stage {stage_id}")
     };
     let display_label = format!("{quest_name} ({quest_id}) · {context}{role}");
+    let mut zones = zones;
+    for zone in &mut zones {
+        zone.display_label = format!("{display_label} · {}", zone.display_label);
+    }
     QuesterStartZoneScope {
         quest_id: quest_id.to_owned(),
         quest_name: quest_name.to_owned(),
