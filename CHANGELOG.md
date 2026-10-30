@@ -57,6 +57,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   Bank choices use the same remembered crossing state.
   The crossing check uses the packed legal interaction stand, including
   either side of the holy barrier, rather than walking onto its blocked tile.
+  Walks from Morytania can reach the barrier through the east trapdoor.
 - Two default-on navigation settings allow prerequisite dialogue and quest
   starts. A global or script grant allows the step. A per-walk `false`
   forbids it. Combat escapes and other safety walks never stop to talk.
