@@ -525,6 +525,14 @@ pub fn shim_modules() -> Vec<Module> {
             include_str!("event_signal.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/client/shell/Skill.js",
+            include_str!("client_skill.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/client/config/worlds.js",
+            include_str!("worlds.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/adapter/ClientAdapter.js",
             include_str!("client_adapter.js"),
         ),

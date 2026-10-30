@@ -45,13 +45,14 @@ pub(crate) mod generated;
 use generated::rs_2b_0t::isolate::*;
 pub use generated::rs_2b_0t::isolate::{
     ApiCombatOutcome, ApiGather, ApiGatherOutcome, ApiProgress, AvoidRect, BankApproach, BankStand,
-    Booth, Carry, ChatLine, ChatOption, Collision, CombatFight, CombatProjectile, CombatStyle,
-    InspectHop, Interact, InteractBatch, MainModalTexts, MakeButton, MakeProduct, MirrorRevoke,
-    NativeRequest, NearestBooth, NpcBox, ProgressFlagRow, PuzzleBoard, QuestProgressRow,
-    QuestStatus, Reach, Row, SceneEntity, SeatAbortReason, SeatCancel, SeatCancelReason,
-    SeatDecide, SeatKind, SeatLive, SeatOutcome, SeatOutcomeKind, SeatPhase, SeatPrompt,
-    SeatRefusal, SeatResult, SettingRow, SideTabIface, Snapshot, Stat, StatusField, Tile, Varp,
-    WalkCancelReason, WidgetText,
+    Booth, Carry, ChatLine, ChatModalTexts, ChatOption, ClientAdapterFacts, Collision, CombatFight,
+    CombatProjectile, CombatStyle, InspectHop, Interact, InteractBatch, MainModalTexts, MakeButton,
+    MakeProduct, MirrorRevoke, NativeRequest, NearestBooth, NpcBox, ProjectionLoc, ProjectionScene,
+    ProgressFlagRow, PuzzleBoard, QuestProgressRow, QuestStatus, Reach, Row, SceneEntity, SeatAbortReason,
+    SeatCancel,
+    SeatCancelReason, SeatDecide, SeatKind, SeatLive, SeatOutcome, SeatOutcomeKind, SeatPhase,
+    SeatPrompt, SeatRefusal, SeatResult, SettingRow, SideTabIface, Snapshot, Stat, StatusField, Tile,
+    Varp, WalkCancelReason, WidgetFact, WidgetText,
 };
 
 impl From<script::native::WalkCancelReason> for WalkCancelReason {
@@ -429,6 +430,7 @@ impl<'a> Snapshot<'a> {
         has_bank_loaded => VT_BANK_LOADED,
         has_inv_ready => VT_INV_READY,
         has_bank_side_ready => VT_BANK_SIDE_READY,
+        has_stats_ready => VT_STATS_READY,
         has_hold => VT_HOLD,
         has_ours => VT_OURS,
         has_npcs => VT_NPCS,
@@ -669,6 +671,59 @@ pub struct ItemRowFp {
     pub cert: i32,
     pub component_id: i32,
     pub slot: i32,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct WidgetFactFp {
+    pub component_id: i32,
+    pub root_component_id: i32,
+    pub parent_id: i32,
+    pub type_: i32,
+    pub button_type: i32,
+    pub client_code: i32,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub hidden: bool,
+    pub text: Option<String>,
+    pub alternate_text: Option<String>,
+    pub button_text: Option<String>,
+    pub target_base: Option<String>,
+    pub model_type: i32,
+    pub model_id: i32,
+    pub script_opcode: i32,
+    pub script_varp: i32,
+    pub script_value: i32,
+    pub colour: i32,
+    pub inventory_ready: bool,
+    pub items: Vec<ItemRowFp>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ProjectionSceneFp {
+    pub view: api::snapshot::ProjectionSceneView,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ClientAdapterFactsFp {
+    pub attached: bool,
+    pub map_build_base: (i32, i32),
+    pub server_tile: Option<TileInput>,
+    pub hint_tile_level: Option<i32>,
+    pub bank_com_id: i32,
+    pub chat_continue_component_id: i32,
+    pub chat_modal_texts: (i32, Vec<String>),
+    pub widgets: Vec<WidgetFactFp>,
+    pub player_count: i32,
+    pub npc_count: i32,
+    pub run_controls: Option<(i32, i32)>,
+    pub login_message: String,
+    pub menu_entries: Vec<String>,
+    pub last_walk_path_local: Vec<(i32, i32)>,
+    pub session_generation: u64,
+    pub modal_close_generation: u64,
+    pub projection_scene: Option<ProjectionSceneFp>,
 }
 
 /// One posted puzzle board as an owned fingerprint row. The generation is a
@@ -970,6 +1025,7 @@ pub struct SnapshotFingerprint {
     pub bank_open: bool,
     pub bank_loaded: bool,
     pub inv_ready: bool,
+    pub stats_ready: bool,
     pub bank_side_ready: bool,
     pub bank_generation: u64,
     pub count_dialog_open: bool,
@@ -1039,6 +1095,8 @@ pub struct SnapshotFingerprint {
     /// `(root, texts)` — the whole pair or nothing. A missing pair is not
     /// a closed modal, so the comparison cannot tear lines off the root.
     pub main_modal_texts: Option<(i32, Vec<String>)>,
+    /// One complete host-captured projection of synchronous ClientAdapter reads.
+    pub client_adapter: Option<ClientAdapterFactsFp>,
     /// The whole board observation (identity, size, rows, generation) or
     /// nothing — one family, so a delta cannot post one half.
     pub puzzle_board: Option<PuzzleBoardFp>,
@@ -1083,6 +1141,8 @@ pub struct SnapshotFingerprint {
     pub chat_page_fingerprint: u64,
     pub side_modal_id: Option<i32>,
     seat_page: Option<SeatPageFingerprint>,
+    pub active_event: Option<String>,
+    pub taking_damage: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -1213,6 +1273,7 @@ impl SnapshotFingerprint {
             bank_open: input.bank_open,
             bank_loaded: input.bank_loaded,
             inv_ready: native.inv_ready,
+            stats_ready: native.stats_ready,
             bank_side_ready: native.bank_side_ready,
             bank_generation: input.bank_generation,
             count_dialog_open: input.count_dialog_open,
@@ -1337,6 +1398,58 @@ impl SnapshotFingerprint {
             main_modal_texts: native
                 .main_modal_texts
                 .map(|pair| (pair.root, pair.texts.to_vec())),
+            client_adapter: native.client_adapter.map(|facts| ClientAdapterFactsFp {
+                attached: facts.attached,
+                map_build_base: facts.map_build_base,
+                server_tile: facts.server_tile,
+                hint_tile_level: facts.hint_tile_level,
+                bank_com_id: facts.bank_com_id,
+                chat_continue_component_id: facts.chat_continue_component_id,
+                chat_modal_texts: (
+                    facts.chat_modal_texts.root,
+                    facts.chat_modal_texts.texts.to_vec(),
+                ),
+                widgets: facts
+                    .widget_facts
+                    .iter()
+                    .map(|w| WidgetFactFp {
+                        component_id: w.component_id,
+                        root_component_id: w.root_component_id,
+                        parent_id: w.parent_id,
+                        type_: w.type_,
+                        button_type: w.button_type,
+                        client_code: w.client_code,
+                        x: w.x,
+                        y: w.y,
+                        width: w.width,
+                        height: w.height,
+                        hidden: w.hidden,
+                        text: w.text.map(str::to_string),
+                        alternate_text: w.alternate_text.map(str::to_string),
+                        button_text: w.button_text.map(str::to_string),
+                        target_base: w.target_base.map(str::to_string),
+                        model_type: w.model_type,
+                        model_id: w.model_id,
+                        script_opcode: w.script_opcode,
+                        script_varp: w.script_varp,
+                        script_value: w.script_value,
+                        colour: w.colour,
+                        inventory_ready: w.inventory_ready,
+                        items: w.items.iter().map(item_row_fp).collect(),
+                    })
+                    .collect(),
+                player_count: facts.player_count,
+                npc_count: facts.npc_count,
+                run_controls: facts.run_controls,
+                login_message: facts.login_message.to_string(),
+                menu_entries: facts.menu_entries.iter().map(|entry| entry.to_string()).collect(),
+                last_walk_path_local: facts.last_walk_path_local.to_vec(),
+                session_generation: facts.session_generation,
+                modal_close_generation: facts.modal_close_generation,
+                projection_scene: facts.projection_scene.map(|projection| ProjectionSceneFp {
+                    view: (*projection.view).clone(),
+                }),
+            }),
             puzzle_board: native.puzzle_board.map(|board| PuzzleBoardFp {
                 component_id: board.component_id,
                 size: board.size,
@@ -1383,6 +1496,8 @@ impl SnapshotFingerprint {
             chat_page_fingerprint: native.chat_page_fingerprint,
             side_modal_id: native.side_modal_id,
             seat_page: native.seat_page.map(SeatPageFingerprint::from),
+            active_event: native.active_event.map(str::to_string),
+            taking_damage: native.taking_damage,
         }
     }
 }
@@ -1453,6 +1568,7 @@ pub struct DeltaMask {
     pub bank_open: bool,
     pub bank_loaded: bool,
     pub inv_ready: bool,
+    pub stats_ready: bool,
     pub bank_side_ready: bool,
     pub bank_generation: bool,
     pub count_dialog_open: bool,
@@ -1527,6 +1643,7 @@ pub struct DeltaMask {
     /// another root's id. When set, slot 248 and slot 68 post in the same
     /// buffer.
     pub main_modal_texts: bool,
+    pub client_adapter: bool,
     /// One bit for the whole board family (identity, size, rows AND
     /// generation): when set, slot 250 and slot 252 post in the same
     /// buffer. Never set for the generation alone — the generation is not
@@ -1552,6 +1669,8 @@ pub struct DeltaMask {
     pub side_modal_id: bool,
     /// One bit for the seat live and retained-result pages, posted together.
     pub seat_page: bool,
+    pub active_event: bool,
+    pub taking_damage: bool,
 }
 
 impl DeltaMask {
@@ -1571,6 +1690,7 @@ impl DeltaMask {
             bank_open: true,
             bank_loaded: true,
             inv_ready: true,
+            stats_ready: true,
             bank_side_ready: true,
             bank_generation: true,
             count_dialog_open: true,
@@ -1641,6 +1761,7 @@ impl DeltaMask {
             route_inspect: true,
             collision: true,
             main_modal_texts: true,
+            client_adapter: true,
             puzzle_board: true,
             bank_selection: true,
             self_anim: true,
@@ -1654,6 +1775,8 @@ impl DeltaMask {
             chat_page_fingerprint: true,
             side_modal_id: true,
             seat_page: true,
+            active_event: true,
+            taking_damage: true,
         }
     }
 
@@ -1680,6 +1803,7 @@ impl DeltaMask {
             bank_open: next.bank_open != last.bank_open,
             bank_loaded: next.bank_loaded != last.bank_loaded,
             inv_ready: next.inv_ready != last.inv_ready,
+            stats_ready: next.stats_ready != last.stats_ready,
             bank_side_ready: next.bank_side_ready != last.bank_side_ready,
             bank_generation: next.bank_generation != last.bank_generation,
             count_dialog_open: next.count_dialog_open != last.count_dialog_open,
@@ -1764,6 +1888,7 @@ impl DeltaMask {
             route_inspect: next.route_inspect != last.route_inspect,
             collision: next.collision != last.collision,
             main_modal_texts: next.main_modal_texts != last.main_modal_texts,
+            client_adapter: next.client_adapter != last.client_adapter,
             // The generation rides inside the board row, so one comparison
             // covers both slots.
             puzzle_board: next.puzzle_board != last.puzzle_board,
@@ -1782,6 +1907,8 @@ impl DeltaMask {
             chat_page_fingerprint: next.chat_page_fingerprint != last.chat_page_fingerprint,
             side_modal_id: next.side_modal_id != last.side_modal_id,
             seat_page: next.seat_page != last.seat_page,
+            active_event: next.active_event != last.active_event,
+            taking_damage: next.taking_damage != last.taking_damage,
         }
     }
     /// Whether this delta carries an actual evidence change. The tick and
@@ -1799,6 +1926,7 @@ impl DeltaMask {
             || self.bank_open
             || self.bank_loaded
             || self.inv_ready
+            || self.stats_ready
             || self.bank_side_ready
             || self.bank_generation
             || self.count_dialog_open
@@ -1868,6 +1996,7 @@ impl DeltaMask {
             || self.route_inspect
             || self.collision
             || self.main_modal_texts
+            || self.client_adapter
             || self.puzzle_board
             || self.bank_selection
             || self.self_anim
@@ -1879,8 +2008,10 @@ impl DeltaMask {
             || self.chat_page_fingerprint
             || self.side_modal_id
             || self.seat_page
+            || self.active_event
             || (self.banks && next.banks != last.banks)
             || (self.hold && next.hold != last.hold)
+            || self.taking_damage
     }
 }
 
@@ -2380,6 +2511,18 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let client_adapter_off = if mask.client_adapter {
+        native
+            .client_adapter
+            .map(|facts| client_adapter_off(b, &facts))
+    } else {
+        None
+    };
+    let active_event_off = if mask.active_event {
+        Some(b.create_string(native.active_event.unwrap_or_default()))
+    } else {
+        None
+    };
     // The open puzzle board. ONE table carrying the identity, the slot count
     // and the rows; all three inner slots are always written, so a present
     // board can never be half-posted. The table is absent only when the
@@ -2599,6 +2742,9 @@ fn encode_snapshot_masked_into(
     }
     if mask.inv_ready {
         table.add_inv_ready(native.inv_ready);
+    }
+    if mask.stats_ready {
+        table.add_stats_ready(native.stats_ready);
     }
     if mask.bank_side_ready {
         table.add_bank_side_ready(native.bank_side_ready);
@@ -2893,6 +3039,11 @@ fn encode_snapshot_masked_into(
             table.add_main_modal_texts(off);
         }
     }
+    if mask.client_adapter {
+        if let Some(off) = client_adapter_off {
+            table.add_client_adapter(off);
+        }
+    }
     // Both slots or neither: the generation is pushed only from the same
     // `Some` that produced the table, so no buffer can carry a generation
     // without a board (or a board without its generation).
@@ -2929,8 +3080,14 @@ fn encode_snapshot_masked_into(
     if let (true, Some(side)) = (mask.side_modal_id, native.side_modal_id) {
         table.add_side_modal_id(side);
     }
+    if let Some(off) = active_event_off {
+        table.add_active_event(off);
+    }
     if mask.local_player_motion {
         table.add_local_player_motion(local_player_motion_code(native.local_player_moving));
+    }
+    if mask.taking_damage {
+        table.add_taking_damage(native.taking_damage);
     }
     table.add_canvas_width(SNAPSHOT_CANVAS_W);
     table.add_canvas_height(SNAPSHOT_CANVAS_H);
@@ -3910,6 +4067,179 @@ fn row_off<'b>(b: &mut FlatBufferBuilder<'b>, r: &ItemRowInput<'_>) -> WIPOffset
     table.add_component_id(r.component_id);
     if r.slot >= 0 {
         table.add_slot(r.slot);
+    }
+    table.finish()
+}
+
+fn widget_fact_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    widget: &WidgetFactInput<'_>,
+) -> WIPOffset<WidgetFact<'b>> {
+    let text = widget.text.map(|value| b.create_string(value));
+    let alternate_text = widget.alternate_text.map(|value| b.create_string(value));
+    let button_text = widget.button_text.map(|value| b.create_string(value));
+    let target_base = widget.target_base.map(|value| b.create_string(value));
+    let items = widget
+        .items
+        .iter()
+        .map(|item| row_off(b, item))
+        .collect::<Vec<_>>();
+    let items = b.create_vector(&items);
+    let mut table = WidgetFactBuilder::new(b);
+    table.add_component_id(widget.component_id);
+    table.add_root_component_id(widget.root_component_id);
+    table.add_parent_id(widget.parent_id);
+    table.add_component_type(widget.type_);
+    table.add_button_type(widget.button_type);
+    table.add_client_code(widget.client_code);
+    table.add_x(widget.x);
+    table.add_y(widget.y);
+    table.add_width(widget.width);
+    table.add_height(widget.height);
+    table.add_hidden(widget.hidden);
+    if let Some(value) = text {
+        table.add_text(value);
+    }
+    if let Some(value) = alternate_text {
+        table.add_alternate_text(value);
+    }
+    if let Some(value) = button_text {
+        table.add_button_text(value);
+    }
+    if let Some(value) = target_base {
+        table.add_target_base(value);
+    }
+    table.add_model_type(widget.model_type);
+    table.add_model_id(widget.model_id);
+    table.add_script_opcode(widget.script_opcode);
+    table.add_script_varp(widget.script_varp);
+    table.add_script_value(widget.script_value);
+    table.add_colour(widget.colour);
+    table.add_inventory_ready(widget.inventory_ready);
+    table.add_items(items);
+    table.finish()
+}
+
+fn chat_modal_texts_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    pair: &ChatModalTextsInput<'_>,
+) -> WIPOffset<ChatModalTexts<'b>> {
+    let texts = pair
+        .texts
+        .iter()
+        .map(|text| b.create_string(text))
+        .collect::<Vec<_>>();
+    let texts = b.create_vector(&texts);
+    let mut table = ChatModalTextsBuilder::new(b);
+    table.add_root(pair.root);
+    table.add_texts(texts);
+    table.finish()
+}
+fn projection_loc_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    loc: &api::snapshot::ProjectionLocView,
+) -> WIPOffset<ProjectionLoc<'b>> {
+    let name = loc.name.as_deref().map(|name| b.create_string(name));
+    let mut table = ProjectionLocBuilder::new(b);
+    table.add_id(loc.id);
+    if let Some(name) = name {
+        table.add_name(name);
+    }
+    table.add_rank(loc.rank);
+    table.add_level(loc.level);
+    table.add_min_tile_x(loc.min_tile_x);
+    table.add_max_tile_x(loc.max_tile_x);
+    table.add_min_tile_z(loc.min_tile_z);
+    table.add_max_tile_z(loc.max_tile_z);
+    table.add_scene_x(loc.scene_x);
+    table.add_scene_z(loc.scene_z);
+    table.add_half_width(loc.half_width);
+    table.add_half_length(loc.half_length);
+    table.add_top_height(loc.top_height);
+    table.finish()
+}
+
+fn projection_scene_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    view: &api::snapshot::ProjectionSceneView,
+) -> WIPOffset<ProjectionScene<'b>> {
+    let heights = b.create_vector(view.heights.as_ref());
+    let heights_above = b.create_vector(view.heights_above.as_ref());
+    let link_below = b.create_vector(view.link_below.as_ref());
+    let locs = view
+        .locs
+        .iter()
+        .map(|loc| projection_loc_off(b, loc))
+        .collect::<Vec<_>>();
+    let locs = b.create_vector(&locs);
+    let mut table = ProjectionSceneBuilder::new(b);
+    table.add_level(view.level);
+    table.add_camera_x(view.camera_x);
+    table.add_camera_y(view.camera_y);
+    table.add_camera_z(view.camera_z);
+    table.add_sin_pitch(view.sin_pitch);
+    table.add_cos_pitch(view.cos_pitch);
+    table.add_sin_yaw(view.sin_yaw);
+    table.add_cos_yaw(view.cos_yaw);
+    table.add_heights(heights);
+    table.add_heights_above(heights_above);
+    table.add_link_below(link_below);
+    table.add_locs(locs);
+    table.finish()
+}
+
+
+fn client_adapter_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    facts: &ClientAdapterFactsInput<'_>,
+) -> WIPOffset<ClientAdapterFacts<'b>> {
+    let server_tile = facts.server_tile.map(|tile| tile_off(b, tile));
+    let projection_scene = facts
+        .projection_scene
+        .map(|projection| projection_scene_off(b, projection.view));
+    let chat_modal_texts = chat_modal_texts_off(b, &facts.chat_modal_texts);
+    let widgets = facts
+        .widget_facts
+        .iter()
+        .map(|widget| widget_fact_off(b, widget))
+        .collect::<Vec<_>>();
+    let widgets = b.create_vector(&widgets);
+    let login_message = b.create_string(facts.login_message);
+    let menu_entries = facts
+        .menu_entries
+        .iter()
+        .map(|entry| b.create_string(entry))
+        .collect::<Vec<_>>();
+    let menu_entries = b.create_vector(&menu_entries);
+    let mut last_walk_path = Vec::with_capacity(facts.last_walk_path_local.len() * 2);
+    for &(x, z) in facts.last_walk_path_local {
+        last_walk_path.extend([x, z]);
+    }
+    let last_walk_path = b.create_vector(&last_walk_path);
+    let (run_on, run_off) = facts.run_controls.unwrap_or((-1, -1));
+    let mut table = ClientAdapterFactsBuilder::new(b);
+    table.add_attached(facts.attached);
+    table.add_map_build_base_x(facts.map_build_base.0);
+    table.add_map_build_base_z(facts.map_build_base.1);
+    if let Some(tile) = server_tile {
+        table.add_server_tile(tile);
+    }
+    table.add_hint_tile_level(facts.hint_tile_level.unwrap_or(-1));
+    table.add_bank_com_id(facts.bank_com_id);
+    table.add_chat_continue_component_id(facts.chat_continue_component_id);
+    table.add_chat_modal_texts(chat_modal_texts);
+    table.add_widgets(widgets);
+    table.add_player_count(facts.player_count);
+    table.add_npc_count(facts.npc_count);
+    table.add_run_on_com_id(run_on);
+    table.add_run_off_com_id(run_off);
+    table.add_login_message(login_message);
+    table.add_menu_entries(menu_entries);
+    table.add_last_walk_path_local(last_walk_path);
+    table.add_session_generation(facts.session_generation);
+    table.add_modal_close_generation(facts.modal_close_generation);
+    if let Some(scene) = projection_scene {
+        table.add_projection_scene(scene);
     }
     table.finish()
 }
@@ -7031,7 +7361,7 @@ pub(crate) mod tests {
             encode_snapshot_delta_with_native(None, &input, native(700), false);
         let keyframe = decode_snapshot(&keyframe_bytes).expect("keyframe");
         assert!(keyframe.has_side_modal_id());
-        assert_eq!(keyframe.side_modal_id(), 700);
+        assert_eq!(keyframe.side_modal_id(), Some(700));
         crate::observed::apply(&keyframe);
         assert_eq!(crate::observed::with(side), (Some(700), Some(700)));
 
@@ -7045,8 +7375,8 @@ pub(crate) mod tests {
         );
         assert_eq!(
             unchanged.side_modal_id(),
-            -1,
-            "the reader default is absent"
+            None,
+            "the reader sees omission"
         );
         crate::observed::apply(&unchanged);
         assert_eq!(
@@ -7061,7 +7391,7 @@ pub(crate) mod tests {
             encode_snapshot_delta_with_native(Some(&fp), &input, native(-1), false);
         let closed = decode_snapshot(&closed_bytes).expect("closed");
         assert!(closed.has_side_modal_id(), "-1 is an explicit close");
-        assert_eq!(closed.side_modal_id(), -1);
+        assert_eq!(closed.side_modal_id(), Some(-1));
         crate::observed::apply(&closed);
         assert_eq!(crate::observed::with(side), (Some(-1), Some(-1)));
 
@@ -7093,7 +7423,32 @@ pub(crate) mod tests {
         let (old_bytes, _) = encode_snapshot_delta(None, &empty_input(7), false);
         let old = decode_snapshot(&old_bytes).expect("old");
         assert!(!old.has_side_modal_id());
-        assert_eq!(old.side_modal_id(), -1);
+        assert_eq!(old.side_modal_id(), None);
+    }
+
+    #[test]
+    fn taking_damage_round_trips_as_a_delta_scalar() {
+        let native = |taking_damage| NativeFactsInput {
+            taking_damage,
+            ..NativeFactsInput::default()
+        };
+        let mut input = empty_input(1);
+        let (keyframe_bytes, fingerprint) =
+            encode_snapshot_delta_with_native(None, &input, native(true), false);
+        let keyframe = decode_snapshot(&keyframe_bytes).expect("keyframe");
+        assert_eq!(keyframe.taking_damage(), Some(true));
+
+        input.tick = 2;
+        let (unchanged_bytes, fingerprint) =
+            encode_snapshot_delta_with_native(Some(&fingerprint), &input, native(true), false);
+        let unchanged = decode_snapshot(&unchanged_bytes).expect("unchanged");
+        assert_eq!(unchanged.taking_damage(), None, "unchanged is omitted");
+
+        input.tick = 3;
+        let (cleared_bytes, _) =
+            encode_snapshot_delta_with_native(Some(&fingerprint), &input, native(false), false);
+        let cleared = decode_snapshot(&cleared_bytes).expect("clear");
+        assert_eq!(cleared.taking_damage(), Some(false));
     }
 
     /// Stats rows carry base + effective (+ xp/name/index) through the blob.

@@ -192,6 +192,33 @@ table WidgetText {
   text: string;
   item_count: int = -1;
 }
+// One selected widget from the open interface trees. Positions are in the
+// root-relative coordinate space used by the upstream positioned walk.
+table WidgetFact {
+  component_id: int;
+  root_component_id: int;
+  parent_id: int = -1;
+  component_type: int;
+  button_type: int;
+  client_code: int;
+  x: int;
+  y: int;
+  width: int;
+  height: int;
+  hidden: bool;
+  text: string;
+  alternate_text: string;
+  button_text: string;
+  target_base: string;
+  model_type: int;
+  model_id: int;
+  script_opcode: int = -1;
+  script_varp: int = -1;
+  script_value: int = -1;
+  colour: int;
+  inventory_ready: bool;
+  items: [Row];
+}
 
 // One quest-tab text row after Rust resolves its native display colour.
 // `component_id` (slot 8) is the walked TYPE_TEXT id — the row's click
@@ -215,6 +242,66 @@ table QuestStatus {
 table MainModalTexts {
   root: int = -1;
   texts: [string];
+}
+table ChatModalTexts {
+  root: int = -1;
+  texts: [string];
+}
+
+// Camera, selected terrain planes and placed-loc geometry for the native
+// synchronous ClientAdapter projection readers.
+table ProjectionLoc {
+  id: int;
+  name: string;
+  rank: int;
+  level: int;
+  min_tile_x: int;
+  max_tile_x: int;
+  min_tile_z: int;
+  max_tile_z: int;
+  scene_x: int;
+  scene_z: int;
+  half_width: int;
+  half_length: int;
+  top_height: int;
+}
+table ProjectionScene {
+  level: int;
+  camera_x: int;
+  camera_y: int;
+  camera_z: int;
+  sin_pitch: int;
+  cos_pitch: int;
+  sin_yaw: int;
+  cos_yaw: int;
+  heights: [int];
+  heights_above: [int];
+  link_below: [ubyte];
+  locs: [ProjectionLoc];
+}
+
+// Coherent bounded snapshot facts for the synchronous ClientAdapter readers.
+table ClientAdapterFacts {
+  attached: bool;
+  map_build_base_x: int;
+  map_build_base_z: int;
+  server_tile: Tile;
+  hint_tile_level: int = -1;
+  bank_com_id: int = -1;
+  chat_continue_component_id: int = -1;
+  chat_modal_texts: ChatModalTexts;
+  widgets: [WidgetFact];
+  player_count: int;
+  npc_count: int;
+  run_on_com_id: int = -1;
+  run_off_com_id: int = -1;
+  login_message: string;
+  menu_entries: [string];
+  // Local x/z pairs, flattened in source→destination order.
+  last_walk_path_local: [int];
+  session_generation: ulong;
+  modal_close_generation: ulong;
+  projection_scene: ProjectionScene;
 }
 
 // One navigator-named gate short (`nav_planner::router::MissingReq::Carry`): an
@@ -579,7 +666,7 @@ table Snapshot {
   // posted (possibly empty) bank_side from one not posted yet; never infer
   // that from the vector length. Written on the keyframe and whenever it
   // changes; an omitted delta keeps the last root; old buffers read -1.
-  side_modal_id: int = -1;
+  side_modal_id: int = null;
   // Slot 286: local-player motion. 0 is unknown or unobserved (including old
   // buffers), 1 is stationary, and 2 is moving. Omitted deltas keep the last
   // reported state.
@@ -601,6 +688,16 @@ table Snapshot {
   // Open bank side pack carries this session's full update
   // (`bankSideSnapshotReady`).
   bank_side_ready: bool;
+  // Every used skill has a positive stat update from this login session.
+  stats_ready: bool;
+  // The ClientAdapter fact family is one optional delta: every scalar and
+  // bounded vector below comes from one current API snapshot.
+  client_adapter: ClientAdapterFacts;
+  // Nullable supervisor event label; an empty string clears a prior event in a delta.
+  active_event: string;
+  // Whether the local player has a current positive type-1 hitmark. An
+  // omitted delta retains the last observation.
+  taking_damage: bool = null;
 }
 
 table Collision {

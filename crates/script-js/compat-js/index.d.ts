@@ -106,188 +106,10 @@ export function resolveDestination(...args: unknown[]): never;
 }
 
 declare module '*adapter/ClientAdapter.js' {
-class Linkable {
-    key: bigint;
-    next: Linkable | null;
-    prev: Linkable | null;
-    unlink(): void;
-}
-class Linkable2 extends Linkable {
-    next2: Linkable2 | null;
-    prev2: Linkable2 | null;
-    unlink2(): void;
-}
-class PointNormal {
-    x: number;
-    y: number;
-    z: number;
-    w: number;
-}
-abstract class OnDemandProvider {
-    abstract requestModel(id: number): void;
-}
-class Metadata {
-    src: Uint8Array | null;
-    numPoints: number;
-    numFaces: number;
-    numT: number;
-    vertexOrderOffset: number;
-    vertexXOffset: number;
-    vertexYOffset: number;
-    vertexZOffset: number;
-    vertexLabelOffset: number;
-    faceIndexOffset: number;
-    faceIndexOrderOffset: number;
-    faceColourOffset: number;
-    faceRenderTypeOffset: number;
-    facePriorityOffset: number;
-    faceAlphaOffset: number;
-    faceLabelOffset: number;
-    faceTextureAxisOffset: number;
-}
-class Model extends ModelSource {
-    static loaded: number;
-    static meta: (Metadata | null)[];
-    static provider: OnDemandProvider;
-    static tmpVertexX: Int32Array;
-    static tmpVertexY: Int32Array;
-    static tmpVertexZ: Int32Array;
-    numPoints: number;
-    pointX: Int32Array | null;
-    pointY: Int32Array | null;
-    pointZ: Int32Array | null;
-    numFaces: number;
-    faceVertexA: Int32Array | null;
-    faceVertexB: Int32Array | null;
-    faceVertexC: Int32Array | null;
-    faceRenderType: Int32Array | null;
-    facePriority: Int32Array | null;
-    faceAlpha: Int32Array | null;
-    faceColour: Int32Array | null;
-    priority: number;
-    numT: number;
-    faceTextureP: Int32Array | null;
-    faceTextureM: Int32Array | null;
-    faceTextureN: Int32Array | null;
-    vertexLabel: Int32Array | null;
-    faceLabel: Int32Array | null;
-    labelVertices: (Int32Array | null)[] | null;
-    labelFaces: (Int32Array | null)[] | null;
-    sharedPointNormal: (PointNormal | null)[] | null;
-    maxY: number;
-    minX: number;
-    maxX: number;
-    minZ: number;
-    maxZ: number;
-    objRaise: number;
-    static tempModel: Model;
-    static tempFTran: Int32Array;
-    faceColourA: Int32Array | null;
-    faceColourB: Int32Array | null;
-    faceColourC: Int32Array | null;
-    useAABBMouseCheck: boolean;
-    radius: number;
-    maxDepth: number;
-    minDepth: number;
-    static faceClippedX: boolean[];
-    static faceNearClipped: boolean[];
-    static vertexScreenX: Int32Array;
-    static vertexScreenY: Int32Array;
-    static vertexScreenZ: Int32Array;
-    static vertexViewSpaceX: Int32Array;
-    static vertexViewSpaceY: Int32Array;
-    static vertexViewSpaceZ: Int32Array;
-    static tmpDepthFaceCount: Int32Array;
-    static tmpDepthFaces: Int32Array[];
-    static tmpPriorityFaceCount: Int32Array;
-    static tmpPriorityFaces: Int32Array[];
-    static tmpPriority10FaceDepth: Int32Array;
-    static tmpPriority11FaceDepth: Int32Array;
-    static tmpPriorityDepthSum: Int32Array;
-    static clippedX: Int32Array;
-    static clippedY: Int32Array;
-    static clippedColour: Int32Array;
-    static oX: number;
-    static oY: number;
-    static oZ: number;
-    static mouseCheck: boolean;
-    static mouseX: number;
-    static mouseY: number;
-    static pickedCount: number;
-    static pickedEntityTypecode: Int32Array;
-    static trackTypecode: number;
-    static frameStamp: number;
-    static trackStamp: number;
-    static trackMinX: number;
-    static trackMaxX: number;
-    static trackMinY: number;
-    static trackMaxY: number;
-    private static trackExtend;
-    static init(total: number, provider: OnDemandProvider): void;
-    static unpack(id: number, src: Uint8Array | null): void;
-    static unload(id: number): void;
-    static load(id: number): Model | null;
-    static requestDownload(id: number): boolean;
-    static combineForAnim(models: (Model | null)[], count: number): Model;
-    static combine(models: Model[], count: number): Model;
-    static copyForAnim(src: Model, shareColours: boolean, shareAlpha: boolean, shareVertices: boolean): Model;
-    static hillSkewCopy(src: Model, copyVertexY: boolean, copyFaces: boolean): Model;
-    set(src: Model, shareAlpha: boolean): void;
-    addPoint(src: Model, vertex: number): number;
-    calcBoundingCylinder(): void;
-    recalcBoundingCylinder(): void;
-    private calcBoundingCube;
-    prepareAnim(): void;
-    animate(id: number): void;
-    maskAnimate(primaryId: number, secondaryId: number, mask: Int32Array | null): void;
-    private animate2;
-    rotate90(): void;
-    rotateXAxis(angle: number): void;
-    translate(y: number, x: number, z: number): void;
-    recolour(src: number, dst: number): void;
-    mirror(): void;
-    resize(x: number, y: number, z: number): void;
-    calculateNormals(ambient: number, contrast: number, x: number, y: number, z: number, doNotShareLight: boolean): void;
-    light(ambient: number, contrast: number, x: number, y: number, z: number): void;
-    static getColour(hsl: number, scalar: number, faceRenderType: number): number;
-    objRender(pitch: number, yaw: number, roll: number, eyePitch: number, eyeX: number, eyeY: number, eyeZ: number): void;
-    worldRender(yaw: number, sinEyePitch: number, cosEyePitch: number, sinEyeYaw: number, cosEyeYaw: number, relativeX: number, relativeY: number, relativeZ: number, typecode: number): void;
-    private render2;
-    private render3;
-    private render3ZClip;
-    isMouseRoughlyInsideTriangle(x: number, y: number, yA: number, yB: number, yC: number, xA: number, xB: number, xC: number): boolean;
-}
-class ModelSource extends Linkable2 {
-    pointNormal: (PointNormal | null)[] | null;
-    minY: number;
-    worldRender(yaw: number, sinEyePitch: number, cosEyePitch: number, sinEyeYaw: number, cosEyeYaw: number, relativeX: number, relativeY: number, relativeZ: number, typecode: number): void;
-    getTempModel(): Model | null;
-}
-/** Called when a zone packet lands; the next locs() rebuilds from the live scene. */
-export function invalidateLocSnapshots(): never;
-/** Releases the client; later reads return empty state. */
-export function detach(): never;
 export type ModalCloseObservation = {
     readonly session: symbol;
     readonly generation: number;
 };
-/** Whether the login snapshot has populated every skill exposed by this client. */
-export function activeStatsReady(baseLevels?: ArrayLike<number>): never;
-/** Whether every active stat was received during this exact login session. */
-export function currentLoginStatsReady(baseLevels?: ArrayLike<number>, seenGenerations?: ArrayLike<number>, sessionGeneration?: number): never;
-/**
- * Object/NPC vertical extent for hulls. RS model space: minY = max(-vertexY)
- * (height above origin), same as ClientNpc.height. maxY is below-origin only.
- */
-export function locHullHeight(model?: {
-    minY: number;
-    maxY: number;
-} | null | undefined, fallback?: number): never;
-/**
- * Walls/scenery often store a static `Model` as ModelSource, and Model returns null from getTempModel().
- * Why: bare ModelSource.minY defaults to 1000, so never read extents off the source itself.
- */
-export function resolveLocModelExtents(src?: ModelSource | null | undefined): never;
 export interface WorldTile {
     x: number;
     z: number;
@@ -342,8 +164,6 @@ export interface ModalButton {
     /** A `buttontype=pause` button resumes a suspended script instead of firing `if_button`. */
     pause: boolean;
 }
-export function attach(client?: unknown): never;
-export function setPacketListener(cb?: ((ptype: number) => void) | null): never;
 /** One obj definition, flattened for bot code that may not import client internals. */
 export interface ObjRecord {
     id: number;
@@ -358,9 +178,9 @@ export interface ObjRecord {
     /** One of a stackable's pile-size models, which carries the base item's name and is not a separate item. */
     stackVariant?: boolean;
 }
-/** Test seam; the live client only fills this table once, at login. */
-export function resetObjCatalog(): never;
 export const reader: {
+    modalCloseObservation(): ModalCloseObservation | null;
+    attached(): boolean;
     ingame(): boolean;
     sceneState(): number;
     worldTile(): WorldTile | null;
@@ -371,12 +191,38 @@ export const reader: {
      * Used by Brimhaven Agility Arena for the active ticket pillar.
      */
     hintTile(): WorldTile | null;
+    /** Current map-build origin (world tile of local scene 0,0). */
+    mapBuildBase(): {
+        x: number;
+        z: number;
+    } | null;
+    /** Project a world-tile point onto the overlay; `u` and `v` are clamped tile fractions. */
+    overlayPosWorld(x: number, z: number, height?: number, u?: number, v?: number): {
+        x: number;
+        y: number;
+    } | null;
+    /** Project a world-tile corner into areaGame pixels while Pix2D is bound there. */
+    projectAreaGameWorld(x: number, z: number, height?: number, u?: number, v?: number): {
+        x: number;
+        y: number;
+    } | null;
     selfAnim(): number;
     selfChat(): string | null;
     energy(): number;
+    /** Client-only orbit yaw (0-2047) used by nav path-facing. */
+    cameraYaw(): number;
+    /** Orbit camera pitch (128-383). */
+    cameraPitch(): number;
+    weight(): number;
     skillCount(): number;
+    skillUsed(index: number): boolean;
+    /** True once this login's stat snapshot is safe for script baselines. */
+    statsReady(): boolean;
     stat(index: number): StatSnapshot;
     varp(index: number): number;
+    chat(count: number): ChatLine[];
+    playerCount(): number;
+    npcCount(): number;
     /**
      * The eight corners of an NPC's bounding box in overlay-canvas pixels, ground ring first then the top ring in the same winding.
      * Edges are 0-1-2-3-0, 4-5-6-7-4 and 0-4, 1-5, 2-6, 3-7. Null when the NPC is gone or off-screen.
@@ -385,21 +231,40 @@ export const reader: {
         x: number;
         y: number;
     }[] | null;
+    /**
+     * Loc object hull: eight corners of the object AABB in overlay pixels, or areaGame pixels when `areaGame`.
+     * Centre comes from live scene placement; size from LocType, multi-tile footprint or model minY. Null when off-scene.
+     */
+    locBox(opts: {
+        id?: number;
+        x: number;
+        z: number;
+        level?: number;
+        name?: string;
+    }, areaGame?: boolean): {
+        x: number;
+        y: number;
+    }[] | null;
     npcs(): NpcSnapshot[];
     selfSlot(): number;
     selfFaceEntity(): number;
     players(): PlayerSnapshot[];
     inCombat(): boolean;
+    takingDamage(): boolean;
     locs(): LocSnapshot[];
     groundItems(): GroundItemSnapshot[];
     inventory(): InvItemSnapshot[];
     objCatalog(): ObjRecord[];
     inventorySize(): number;
+    inventorySnapshotReady(): boolean;
     equipment(): InvItemSnapshot[];
-    bankComId(): never;
+    bankComId(): number;
     bankItems(): InvItemSnapshot[];
     bankSideItems(): InvItemSnapshot[];
-    chatContinueComId(): never;
+    bankSnapshotReady(): boolean;
+    bankSideSnapshotReady(): boolean;
+    bankSnapshotGeneration(): number;
+    chatContinueComId(): number;
     chatOptions(): {
         comId: number;
         text: string;
@@ -412,37 +277,98 @@ export const reader: {
             comId: number;
         }[];
     }[];
+    runControls(): {
+        onComId: number;
+        offComId: number;
+    } | null;
     retaliateControls(): {
         onComId: number;
         offComId: number;
     } | null;
+    toWorld(lx: number, lz: number): WorldTile | null;
     toLocal(x: number, z: number): {
         lx: number;
         lz: number;
     } | null;
+    collisionFlags(lx: number, lz: number): number | null;
+    /**
+     * World tiles for the last successful walkTo/tryMove (src→dest inclusive).
+     * Empty when the last walk failed or the client has no path buffer.
+     */
+    lastWalkPathWorld(): {
+        x: number;
+        z: number;
+        level: number;
+    }[];
     localPlayerName(): string | null;
     combatLevel(): number;
+    loginMessage(): string;
+    menuEntries(): string[];
     modals(): {
         main: number;
         side: number;
         chat: number;
     };
     countDialogOpen(): boolean;
+    shopInv(comId: number): InvItemSnapshot[];
+    puzzleBoardComId(): number;
+    puzzleBoard(): InvItemSnapshot[];
+    puzzleBoardSize(): number;
+    duelOffers(): {
+        ready: boolean;
+        mine: InvItemSnapshot[];
+        theirs: InvItemSnapshot[];
+    };
+    tradeOfferOpen(): boolean;
+    tradeConfirmOpen(): boolean;
+    tradeMyOffer(): InvItemSnapshot[];
+    tradeTheirOffer(): InvItemSnapshot[];
+    tradeSidePack(): InvItemSnapshot[];
+    tradePartner(): string | null;
+    tradeConfirmOffers(): {
+        mine: InvItemSnapshot[];
+        theirs: InvItemSnapshot[];
+    };
+    tradeConfirmReady(): boolean;
+    closeButtonComId(rootComId: number): number;
     activeSideTab(): number;
     ifText(comId: number): string | null;
+    mainModalTexts(): string[];
     chatModalTexts(): string[];
+    ifModelObjId(comId: number): number | null;
+    /** Every button under a modal root, with its caption, its menu word and whether a layer above it is hiding it. */
+    modalButtons(rootComId: number): ModalButton[];
+    buttonByText(rootComId: number, label: string): number;
+    /**
+     * Find a clickable main-modal button nearest a text label (substring match).
+     * Why: glidermap-style destination buttons carry no buttonText and only sit beside a text component (e.g. "Gandius", "Ta Quir Priw").
+     */
+    mainModalButtonNearText(label: string): number;
     targetButtonByBase(rootComId: number, base: string): number;
     selectButtonByVarp(rootComId: number, varp: number, value: number): number;
     selectButtonLabelsByVarp(rootComId: number, varp: number): SelectButtonLabel[];
+    mainSkillMultiItems(): InvItemSnapshot[];
     sideTabInterface(tab: number): number;
-    selfTarget(): {
-        kind: number;
-        index: number;
-    };
+    questStatuses(): {
+        comId: number;
+        name: string;
+        colour: number;
+    }[];
+    /**
+     * Raw item icon pixels for the loadout picker. Null whenever the cache is not loaded or the id has no sprite.
+     * Why: DOM belongs to src/bot/panel/, so canvas and data-URL conversion lives there rather than here.
+     */
+    itemIconPixels(id: number): {
+        width: number;
+        height: number;
+        data: Int32Array;
+    } | null;
 };
 export const actions: {
     answerCountDialog(value: number): boolean;
+    sayPublic(text: string): boolean;
     walkTo(lx: number, lz: number): boolean;
+    continueDialog(): boolean;
     ifButton(comId: number): boolean;
     setRun(on: boolean): boolean;
     /** Toggle Auto Retaliate on the combat tab (same panel as run). */
@@ -450,16 +376,6 @@ export const actions: {
     clickSideTab(tab: number): boolean;
     closeModal(): boolean;
 };
-export const WELCOME_SCREEN: never;
-export function readRetaliateControls(): never;
-export function readModalButtons(rootComId?: number): never;
-/** Read each select button together with the style text rendered beside it. */
-export function readSelectButtonLabelsByVarp(rootComId?: number, varp?: number): never;
-/**
- * Cycles-remaining threshold that keeps the combat window at {@link COMBAT_WINDOW_MS}.
- * Why: deltime can be zero during random-event teleports and scene rebuilds, and dividing by it would NaN the window and crash handlers.
- */
-export function combatShowingThreshold(deltimeMs?: number): never;
 interface PostedSceneEntity {
     index: number;
     id: number;
@@ -3999,6 +3915,19 @@ export const Traversal: {
     preload(): void;
     remaining(): never;
 };
+
+}
+
+declare module '*client/config/worlds.js' {
+export function resolveWorldNumber(host: string, params: URLSearchParams): 1 | 2 | 3;
+
+}
+
+declare module '*client/shell/Skill.js' {
+export default class Skill {
+    static readonly names: string[];
+    static readonly used: boolean[];
+}
 
 }
 

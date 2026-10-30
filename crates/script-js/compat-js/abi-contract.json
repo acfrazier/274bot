@@ -12406,6 +12406,16 @@
       "nav_consuming": true
     },
     {
+      "module": "client/config/worlds.js",
+      "family_id": "client-adapter",
+      "nav_consuming": false
+    },
+    {
+      "module": "client/shell/Skill.js",
+      "family_id": "client-adapter",
+      "nav_consuming": false
+    },
+    {
       "module": "data/cookingRanges.js",
       "family_id": "cooking",
       "nav_consuming": false
@@ -12740,16 +12750,6 @@
       "nav_consuming": false
     },
     {
-      "id": "not-impl-value:adapter/ClientAdapter.js:WELCOME_SCREEN",
-      "module": "adapter/ClientAdapter.js",
-      "selector": "WELCOME_SCREEN",
-      "reason": "The frozen login-screen constant is unavailable from selected host state.",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:18",
-      "declaration": "export const WELCOME_SCREEN: never;",
-      "family_id": "client-adapter",
-      "nav_consuming": false
-    },
-    {
       "id": "not-impl-value:api/ai/clues/data/toolAcquire.js:SPADE_SPAWNS",
       "module": "api/ai/clues/data/toolAcquire.js",
       "selector": "SPADE_SPAWNS",
@@ -12978,6 +12978,26 @@
       "declaration": "export const PRICE_BOOK_SETTINGS_NS: never;",
       "family_id": "runtime",
       "nav_consuming": true
+    },
+    {
+      "id": "client-skill-catalog",
+      "module": "client/shell/Skill.js",
+      "selector": "$module",
+      "reason": "The default Skill class exposes only the shared native skill names and used mask.",
+      "runtime": "crates/script-js/src/shim/client_skill.js:7",
+      "declaration": "export default class Skill { static readonly names: string[]; static readonly used: boolean[]; }",
+      "family_id": "client-adapter",
+      "nav_consuming": false
+    },
+    {
+      "id": "client-world-number",
+      "module": "client/config/worlds.js",
+      "selector": "$module",
+      "reason": "The compatibility route exposes the bounded world-number resolver only.",
+      "runtime": "crates/script-js/src/shim/worlds.js:3",
+      "declaration": "export function resolveWorldNumber(host: string, params: URLSearchParams): 1 | 2 | 3;",
+      "family_id": "client-adapter",
+      "nav_consuming": false
     },
     {
       "id": "not-impl-value:runtime/Settings.js:PRICE_BOOK_SETTINGS",
@@ -13527,17 +13547,6 @@
       "nav_consuming": false
     },
     {
-      "id": "scene-reader-self-target",
-      "module": "adapter/ClientAdapter.js",
-      "selector": "reader.selfTarget",
-      "add": true,
-      "reason": "The shim normalizes the posted self target to a required numeric kind/index pair, with an explicit none value (crates/script-js/src/shim/client_adapter.js:185-191).",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:190",
-      "declaration": "selfTarget(): { kind: number; index: number };",
-      "family_id": "client-adapter",
-      "nav_consuming": false
-    },
-    {
       "id": "scene-npc-row-field",
       "module": "api/model/Npc.js",
       "selector": "$add",
@@ -13647,28 +13656,6 @@
       "runtime": "crates/script-js/src/shim/players.js:55",
       "declaration": "all(): Player[];",
       "family_id": "entities",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:adapter/ClientAdapter.js:reader.chatContinueComId",
-      "module": "adapter/ClientAdapter.js",
-      "selector": "reader.chatContinueComId",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:133",
-      "async": false,
-      "family_id": "client-adapter",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:adapter/ClientAdapter.js:reader.bankComId",
-      "module": "adapter/ClientAdapter.js",
-      "selector": "reader.bankComId",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:253",
-      "async": false,
-      "family_id": "client-adapter",
       "nav_consuming": false
     },
     {
@@ -13977,149 +13964,6 @@
       "runtime": "crates/script-js/src/shim/bot.js:38",
       "async": false,
       "family_id": "bot",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:adapter/ClientAdapter.js:invalidateLocSnapshots",
-      "module": "adapter/ClientAdapter.js",
-      "selector": "invalidateLocSnapshots",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: client snapshot invalidation has no native adapter.",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:5",
-      "async": false,
-      "family_id": "client-adapter",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:adapter/ClientAdapter.js:detach",
-      "module": "adapter/ClientAdapter.js",
-      "selector": "detach",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: client detachment has no native adapter.",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:6",
-      "async": false,
-      "family_id": "client-adapter",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:adapter/ClientAdapter.js:activeStatsReady",
-      "module": "adapter/ClientAdapter.js",
-      "selector": "activeStatsReady",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: active-stat readiness has no native adapter.",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:7",
-      "async": false,
-      "family_id": "client-adapter",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:adapter/ClientAdapter.js:currentLoginStatsReady",
-      "module": "adapter/ClientAdapter.js",
-      "selector": "currentLoginStatsReady",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: login-stat readiness has no native adapter.",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:8",
-      "async": false,
-      "family_id": "client-adapter",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:adapter/ClientAdapter.js:locHullHeight",
-      "module": "adapter/ClientAdapter.js",
-      "selector": "locHullHeight",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: location model hull height has no native adapter.",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:9",
-      "async": false,
-      "family_id": "client-adapter",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:adapter/ClientAdapter.js:resolveLocModelExtents",
-      "module": "adapter/ClientAdapter.js",
-      "selector": "resolveLocModelExtents",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: location model extents have no native adapter.",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:10",
-      "async": false,
-      "family_id": "client-adapter",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:adapter/ClientAdapter.js:attach",
-      "module": "adapter/ClientAdapter.js",
-      "selector": "attach",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: client attachment has no native adapter.",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:11",
-      "async": false,
-      "family_id": "client-adapter",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:adapter/ClientAdapter.js:setPacketListener",
-      "module": "adapter/ClientAdapter.js",
-      "selector": "setPacketListener",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: packet listeners have no native adapter.",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:12",
-      "async": false,
-      "family_id": "client-adapter",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:adapter/ClientAdapter.js:resetObjCatalog",
-      "module": "adapter/ClientAdapter.js",
-      "selector": "resetObjCatalog",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: the cached object catalogue has no reset operation.",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:13",
-      "async": false,
-      "family_id": "client-adapter",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:adapter/ClientAdapter.js:readRetaliateControls",
-      "module": "adapter/ClientAdapter.js",
-      "selector": "readRetaliateControls",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: retaliation controls have no native adapter.",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:14",
-      "async": false,
-      "family_id": "client-adapter",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:adapter/ClientAdapter.js:readModalButtons",
-      "module": "adapter/ClientAdapter.js",
-      "selector": "readModalButtons",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: modal-button reads have no native adapter.",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:15",
-      "async": false,
-      "family_id": "client-adapter",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:adapter/ClientAdapter.js:readSelectButtonLabelsByVarp",
-      "module": "adapter/ClientAdapter.js",
-      "selector": "readSelectButtonLabelsByVarp",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: select-button labels have no native adapter.",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:16",
-      "async": false,
-      "family_id": "client-adapter",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:adapter/ClientAdapter.js:combatShowingThreshold",
-      "module": "adapter/ClientAdapter.js",
-      "selector": "combatShowingThreshold",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: the combat-showing threshold has no native adapter.",
-      "runtime": "crates/script-js/src/shim/client_adapter.js:17",
-      "async": false,
-      "family_id": "client-adapter",
       "nav_consuming": false
     },
     {
@@ -23508,26 +23352,6 @@
   ],
   "not_impl_debt": [
     {
-      "family_id": "client-adapter",
-      "member": "chatContinueComId",
-      "selector": "reader.chatContinueComId",
-      "module": "adapter/ClientAdapter.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/client_adapter.js:133",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "overlay_id": "not-impl:adapter/ClientAdapter.js:reader.chatContinueComId"
-    },
-    {
-      "family_id": "client-adapter",
-      "member": "bankComId",
-      "selector": "reader.bankComId",
-      "module": "adapter/ClientAdapter.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/client_adapter.js:253",
-      "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "overlay_id": "not-impl:adapter/ClientAdapter.js:reader.bankComId"
-    },
-    {
       "family_id": "game-state",
       "member": "castOnNpc",
       "selector": "Game.castOnNpc",
@@ -23806,136 +23630,6 @@
       "source": "crates/script-js/src/shim/bot.js:38",
       "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
       "overlay_id": "not-impl:api/bot/Bot.js:LeafTask.execute"
-    },
-    {
-      "family_id": "client-adapter",
-      "member": "invalidateLocSnapshots",
-      "selector": "invalidateLocSnapshots",
-      "module": "adapter/ClientAdapter.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/client_adapter.js:5",
-      "reason": "Unconditional not-impl: client snapshot invalidation has no native adapter.",
-      "overlay_id": "not-impl:adapter/ClientAdapter.js:invalidateLocSnapshots"
-    },
-    {
-      "family_id": "client-adapter",
-      "member": "detach",
-      "selector": "detach",
-      "module": "adapter/ClientAdapter.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/client_adapter.js:6",
-      "reason": "Unconditional not-impl: client detachment has no native adapter.",
-      "overlay_id": "not-impl:adapter/ClientAdapter.js:detach"
-    },
-    {
-      "family_id": "client-adapter",
-      "member": "activeStatsReady",
-      "selector": "activeStatsReady",
-      "module": "adapter/ClientAdapter.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/client_adapter.js:7",
-      "reason": "Unconditional not-impl: active-stat readiness has no native adapter.",
-      "overlay_id": "not-impl:adapter/ClientAdapter.js:activeStatsReady"
-    },
-    {
-      "family_id": "client-adapter",
-      "member": "currentLoginStatsReady",
-      "selector": "currentLoginStatsReady",
-      "module": "adapter/ClientAdapter.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/client_adapter.js:8",
-      "reason": "Unconditional not-impl: login-stat readiness has no native adapter.",
-      "overlay_id": "not-impl:adapter/ClientAdapter.js:currentLoginStatsReady"
-    },
-    {
-      "family_id": "client-adapter",
-      "member": "locHullHeight",
-      "selector": "locHullHeight",
-      "module": "adapter/ClientAdapter.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/client_adapter.js:9",
-      "reason": "Unconditional not-impl: location model hull height has no native adapter.",
-      "overlay_id": "not-impl:adapter/ClientAdapter.js:locHullHeight"
-    },
-    {
-      "family_id": "client-adapter",
-      "member": "resolveLocModelExtents",
-      "selector": "resolveLocModelExtents",
-      "module": "adapter/ClientAdapter.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/client_adapter.js:10",
-      "reason": "Unconditional not-impl: location model extents have no native adapter.",
-      "overlay_id": "not-impl:adapter/ClientAdapter.js:resolveLocModelExtents"
-    },
-    {
-      "family_id": "client-adapter",
-      "member": "attach",
-      "selector": "attach",
-      "module": "adapter/ClientAdapter.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/client_adapter.js:11",
-      "reason": "Unconditional not-impl: client attachment has no native adapter.",
-      "overlay_id": "not-impl:adapter/ClientAdapter.js:attach"
-    },
-    {
-      "family_id": "client-adapter",
-      "member": "setPacketListener",
-      "selector": "setPacketListener",
-      "module": "adapter/ClientAdapter.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/client_adapter.js:12",
-      "reason": "Unconditional not-impl: packet listeners have no native adapter.",
-      "overlay_id": "not-impl:adapter/ClientAdapter.js:setPacketListener"
-    },
-    {
-      "family_id": "client-adapter",
-      "member": "resetObjCatalog",
-      "selector": "resetObjCatalog",
-      "module": "adapter/ClientAdapter.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/client_adapter.js:13",
-      "reason": "Unconditional not-impl: the cached object catalogue has no reset operation.",
-      "overlay_id": "not-impl:adapter/ClientAdapter.js:resetObjCatalog"
-    },
-    {
-      "family_id": "client-adapter",
-      "member": "readRetaliateControls",
-      "selector": "readRetaliateControls",
-      "module": "adapter/ClientAdapter.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/client_adapter.js:14",
-      "reason": "Unconditional not-impl: retaliation controls have no native adapter.",
-      "overlay_id": "not-impl:adapter/ClientAdapter.js:readRetaliateControls"
-    },
-    {
-      "family_id": "client-adapter",
-      "member": "readModalButtons",
-      "selector": "readModalButtons",
-      "module": "adapter/ClientAdapter.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/client_adapter.js:15",
-      "reason": "Unconditional not-impl: modal-button reads have no native adapter.",
-      "overlay_id": "not-impl:adapter/ClientAdapter.js:readModalButtons"
-    },
-    {
-      "family_id": "client-adapter",
-      "member": "readSelectButtonLabelsByVarp",
-      "selector": "readSelectButtonLabelsByVarp",
-      "module": "adapter/ClientAdapter.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/client_adapter.js:16",
-      "reason": "Unconditional not-impl: select-button labels have no native adapter.",
-      "overlay_id": "not-impl:adapter/ClientAdapter.js:readSelectButtonLabelsByVarp"
-    },
-    {
-      "family_id": "client-adapter",
-      "member": "combatShowingThreshold",
-      "selector": "combatShowingThreshold",
-      "module": "adapter/ClientAdapter.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/client_adapter.js:17",
-      "reason": "Unconditional not-impl: the combat-showing threshold has no native adapter.",
-      "overlay_id": "not-impl:adapter/ClientAdapter.js:combatShowingThreshold"
     },
     {
       "family_id": "runtime",
@@ -24386,15 +24080,6 @@
       "source": "crates/script-js/src/shim/paint.js:156",
       "reason": "Unconditional not-impl: frame steppers are not provided by the paint host.",
       "overlay_id": "not-impl:paint/Paint.js:PaintFrame.stepper"
-    },
-    {
-      "family_id": "client-adapter",
-      "member": "WELCOME_SCREEN",
-      "selector": "WELCOME_SCREEN",
-      "module": "adapter/ClientAdapter.js",
-      "state": "not-impl",
-      "source": "crates/script-js/src/shim/client_adapter.js:18",
-      "reason": "The exported value throws when accessed through notImplValue."
     },
     {
       "family_id": "runtime",
@@ -25056,7 +24741,7 @@
       "type_aliases": 0,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 16
+      "not_impl_debt": 0
     },
     {
       "family_id": "clues",

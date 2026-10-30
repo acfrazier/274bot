@@ -40,15 +40,6 @@
     "declaration": "export interface GroundItemSnapshot extends PostedSceneEntity { health: number; }"
   },
   {
-    "id": "scene-reader-self-target",
-    "module": "adapter/ClientAdapter.js",
-    "selector": "reader.selfTarget",
-    "add": true,
-    "reason": "The shim normalizes the posted self target to a required numeric kind/index pair, with an explicit none value (crates/script-js/src/shim/client_adapter.js:185-191).",
-    "runtime": "crates/script-js/src/shim/client_adapter.js:190",
-    "declaration": "selfTarget(): { kind: number; index: number };"
-  },
-  {
     "id": "scene-npc-row-field",
     "module": "api/model/Npc.js",
     "selector": "$add",
