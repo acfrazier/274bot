@@ -340,14 +340,33 @@ fn jungle_crossing_accepts_blocked_jungle_landing_only() {
         .edges
         .iter()
         .find(|edge| {
-            edge.loc_id == 2887 && edge.takeoff == Some(takeoff) && edge.to == blocked_tile
+            edge.loc_id == 2887
+                && edge.takeoff == Some(takeoff)
+                && edge.to == blocked_tile
+                && edge.quest_gates.is_none()
+                && edge.worn_req.is_empty()
+                && edge.worn_all_req.is_empty()
+                && edge
+                    .item_req
+                    .iter()
+                    .any(|(id, count)| MAP_IDS.contains(id) && *count == 1)
+                && edge
+                    .item_req
+                    .iter()
+                    .any(|(id, count)| *id == MACHETTE_ID && *count == 1)
+                && edge
+                    .item_req
+                    .iter()
+                    .any(|(id, count)| AXE_IDS.contains(id) && *count == 1)
         })
-        .expect("the handler permits landing on another active jungle loc");
+        .expect("the carried map, machete, and axe permit this jungle landing");
     let mut ready = nav_planner::world_state::WorldState::empty();
     ready.map_members = true;
     ready.inventory_ready = true;
     ready.equipment_ready = true;
-    ready.inv.extend([(714, 1), (975, 1), (1349, 1)]);
+    for &(id, count) in &edge.item_req {
+        ready.inv.insert(id, count);
+    }
     assert!(ready.allows(edge));
 
     let without_jungle_landing = Fixture::new();
