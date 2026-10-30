@@ -1820,7 +1820,8 @@ fn incomplete_search_does_not_clear_existing_walk_arm() {
         Some(script::native::WalkRefusal::SearchIncomplete { .. })
     ));
 
-    let arm = arms.lock().unwrap()["alice"].lock().unwrap();
+    let arms_guard = arms.lock().unwrap();
+    let arm = arms_guard["alice"].lock().unwrap();
     assert!(arm
         .route
         .as_ref()
