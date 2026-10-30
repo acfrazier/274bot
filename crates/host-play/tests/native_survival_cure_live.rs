@@ -75,7 +75,14 @@ const CURE_CHAT: &str = "You drink some of your antipoison potion.";
 const TIMER_CLEAR_TICKS: u32 = 31;
 const Q_UNKNOWN: u8 = 11;
 const LETHAL_OUTLOOK: u16 = 330;
-const BASE40_SKILL_LEVEL: i32 = 40;
+// The Base40 qualification profile seeds only the combat skills and Prayer
+// (`scenario/src/quester.rs:626-635`) after `minme`, so each cell seeds its
+// work skill itself. 41 is the rune pickaxe's `levelrequire`
+// (`skill_mining/configs/pickaxes.obj:197`, checked by
+// `skill_mining/scripts/pickaxe_checker.rs2:4`); willow needs Woodcutting 30
+// (`skill_woodcutting/configs/trees.dbrow:103`) and 289 axes have no
+// Woodcutting requirement (`skill_woodcutting/scripts/woodcut.rs2:161-183`).
+const WORK_SKILL_LEVEL: i32 = 41;
 
 const COOK_PATH_JSON: &str = include_str!("../../script/paths/289/cook.json");
 
@@ -375,6 +382,26 @@ fn fixture(
             },
         });
     }
+    let (work_skill, work_stat) = match activity {
+        Activity::Woodcutting => ("woodcutting", WOODCUTTING_STAT),
+        Activity::Mining | Activity::Dialogue => ("mining", MINING_STAT),
+    };
+    let work_command = format!("setstat {work_skill} {WORK_SKILL_LEVEL}");
+    before_start.push(scenario::Step {
+        name: "seed the work skill after the fixture profile proof",
+        kind: scenario::StepKind::Perform {
+            send: Box::new(move |client, _| api::interact::cheat(client, &work_command).is_sent()),
+        },
+        wait: scenario::Wait {
+            // `minme` left the skill at 1, so this level proves the
+            // `setstat` landed (Player.ts:1904-1909 sets base and current).
+            arm: scenario::Proof::Stat {
+                id: work_stat,
+                min: WORK_SKILL_LEVEL,
+            },
+            budget_ticks: 10,
+        },
+    });
     before_start.push(scenario::Step {
         name: "seed Hitpoints 30 after the fixture profile proof",
         kind: scenario::StepKind::Perform {
@@ -383,9 +410,11 @@ fn fixture(
             }),
         },
         wait: scenario::Wait {
-            arm: scenario::Proof::Stat {
+            // The profile proof just observed Hitpoints 40, so only the
+            // landed `setstat` satisfies an upper bound of 30.
+            arm: scenario::Proof::StatAtMost {
                 id: HITPOINTS_STAT,
-                min: 30,
+                max: 30,
             },
             budget_ticks: 10,
         },
@@ -1432,7 +1461,7 @@ fn observe_start(snapshot: &GameSnapshot, witness: &mut Witness) -> Result<Value
     let tile = snapshot.tile();
     if tile != Some((witness.stand.x, witness.stand.z, witness.stand.level))
         || hp != 30
-        || skill != BASE40_SKILL_LEVEL
+        || skill != WORK_SKILL_LEVEL
         || witness.baseline_antipoison != 1
         || witness.baseline_tool != witness.expected_tool_at_start
         || witness.baseline_key != witness.expected_key_at_start
