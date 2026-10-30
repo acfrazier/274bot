@@ -24,19 +24,17 @@ const MENU_PACKET_ORDER_TICKS: u64 = 1;
 // opens the input dialog and suspends the script (`engine/src/engine/script/handlers/PlayerOps.ts:369-371`).
 // Allow two observed game ticks for the button and count-dialog signals.
 const MAKE_X_SIGNAL_TICKS: u64 = 2;
-// Make-X spinning starts its first weak queue after three ticks
-// (`content/scripts/skill_crafting/scripts/spinning/spinning.rs2:87-103`).
-// Allow one more player-info observation tick for the first product.
-const MAKE_X_INITIAL_PRODUCT_TICKS: u64 = 4;
-// Repeated production output arrives within three ticks in spinning and smithing.
-// Fletching and pottery use two-tick queues.
-// Sources: `content/scripts/skill_crafting/scripts/spinning/spinning.rs2:98`,
-// `content/scripts/skill_smithing/scripts/smithing/smithing.rs2:269-286`,
+// Make-X spinning queues the first product after three ticks and repeats after
+// two (`content/scripts/skill_crafting/scripts/spinning/spinning.rs2:87-110`).
+// Allow one extra observed tick for either queue to publish the product.
+const MAKE_X_PRODUCT_PROGRESS_TICKS: u64 = 4;
+// Smithing posts the product after its delay, then waits three ticks before it
+// returns or starts its next item. Fletching and pottery use two-tick queues.
+// Sources: `content/scripts/skill_smithing/scripts/smithing/smithing.rs2:269-286`,
 // `content/scripts/skill_fletching/scripts/cut_logs.rs2:83-103`, and
 // `content/scripts/skill_crafting/scripts/pottery/pottery.rs2:80-101`.
 const PRODUCT_PROGRESS_TICKS: u64 = 3;
-// Smithing posts the product after its delay, then delays three ticks before
-// it returns or starts its next item:
+// Main-make waits three ticks before returning or starting its next item:
 // `content/scripts/skill_smithing/scripts/smithing/smithing.rs2:269-286`.
 const MAIN_MAKE_RETURN_TICKS: u64 = 3;
 
@@ -175,6 +173,7 @@ enum Phase {
 enum Surface {
     Chat,
     MainMake,
+    MakeX,
 }
 
 pub struct MakeMachine {
@@ -314,7 +313,7 @@ impl NativeMachine for MakeMachine {
                         MakeXStep::Complete => {
                             self.make_x = MakeXCore::new();
                             self.phase = Phase::Product;
-                            self.surface = Some(Surface::Chat);
+                            self.surface = Some(Surface::MakeX);
                             self.active_target = item_target(
                                 current,
                                 remaining_processes,
@@ -324,7 +323,7 @@ impl NativeMachine for MakeMachine {
                             if now_held.is_some_and(|count| count >= self.request.qty) {
                                 return Poll::Ready(Ok(MakeReceipt { held: current }));
                             }
-                            self.deadline_tick = tick.saturating_add(MAKE_X_INITIAL_PRODUCT_TICKS);
+                            self.deadline_tick = tick.saturating_add(MAKE_X_PRODUCT_PROGRESS_TICKS);
                             continue 'phases;
                         }
                         MakeXStep::TimedOut(phase) => {
@@ -504,7 +503,12 @@ impl NativeMachine for MakeMachine {
                 Phase::Product => {
                     if current > self.last_held {
                         self.last_held = current;
-                        self.deadline_tick = tick.saturating_add(PRODUCT_PROGRESS_TICKS);
+                        self.deadline_tick =
+                            tick.saturating_add(if self.surface == Some(Surface::MakeX) {
+                                MAKE_X_PRODUCT_PROGRESS_TICKS
+                            } else {
+                                PRODUCT_PROGRESS_TICKS
+                            });
                         if self.surface == Some(Surface::MainMake) {
                             self.main_make_ready_tick = tick.saturating_add(MAIN_MAKE_RETURN_TICKS);
                         }
@@ -987,13 +991,32 @@ mod tests {
         })
         .is_pending());
 
-        // The three-tick content queue publishes its first product one observation later.
+        // The three-tick initial queue publishes its first product one observation later.
         assert!(with_tick(&menu_closed, &mut ledger, 8, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
         let first_product = menu_snapshot_with_held(&client, 1);
         assert!(with_tick(&first_product, &mut ledger, 9, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        // The repeated two-tick queue also needs its following product observation.
+        assert!(with_tick(&first_product, &mut ledger, 12, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        let second_product = menu_snapshot_with_held(&client, 2);
+        assert!(with_tick(&second_product, &mut ledger, 13, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        assert!(with_tick(&second_product, &mut ledger, 16, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+        let third_product = menu_snapshot_with_held(&client, 3);
+        assert!(with_tick(&third_product, &mut ledger, 17, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending());
