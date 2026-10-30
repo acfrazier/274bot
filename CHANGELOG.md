@@ -56,6 +56,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   original walk. Stop cancels the current walk or conversation.
   Bank choices use the same remembered crossing state.
   Manual map walks can check these crossings without a running script.
+  The manual walker uses the same quest evidence for planning and crossing.
   The crossing check uses the packed legal interaction stand. For the barrier,
   the route planner chooses between both legal stands instead of committing
   to a side the account cannot reach. It never walks onto the blocked tile.

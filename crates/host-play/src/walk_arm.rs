@@ -639,6 +639,10 @@ pub fn step_walk_arm_follow<D: Driver>(
         close_enough: 0,
         teleports: world.map(|world| world.graph.teleports.as_slice()),
         edges: world.map(|world| world.graph.edges.as_slice()),
+        quest_evidence: arm
+            .basis
+            .as_deref()
+            .and_then(|basis| basis.quest_evidence.as_ref()),
         ..TravelOptions::default()
     };
     if let Some(context) = arm.manual_prereq.as_deref() {

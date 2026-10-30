@@ -27459,7 +27459,7 @@ fn host_gated_npc_hop_recovery_uses_retained_route_evidence() {
         wildy_cap: None,
         quest_gates: Some(
             QuestGates::new(family(1), [window("tbwt", "tbwt_main", Some(3), Some(3))])
-            .expect("typed gated NPC crossing"),
+                .expect("typed gated NPC crossing"),
         ),
     };
     let route = Arc::new(Route {
