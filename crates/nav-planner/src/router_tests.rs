@@ -1211,7 +1211,9 @@ fn false_complete_gate_selects_an_alternate_walk_route() {
     graph.edges[0].quest_gates = Some(
         QuestGates::new(
             family,
-            [QuestGate::Complete(api::selected::FactKey::new("biohazard"))],
+            [QuestGate::Complete(api::selected::FactKey::new(
+                "biohazard",
+            ))],
         )
         .unwrap(),
     );

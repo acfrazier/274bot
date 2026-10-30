@@ -45,9 +45,10 @@ fn walk_key(request: &WalkRequest) -> WalkKey {
 
 fn quest_list_status_observed(snapshot: SnapshotView<'_>) -> bool {
     snapshot.quest_statuses().is_some_and(|statuses| {
-        statuses.value.iter().any(|status| {
-            status.status() != api::snapshot::QuestListStatus::Unknown
-        })
+        statuses
+            .value
+            .iter()
+            .any(|status| status.status() != api::snapshot::QuestListStatus::Unknown)
     })
 }
 
@@ -170,12 +171,10 @@ impl NativeMachine for Walk {
             return Poll::Pending;
         }
 
-        let needs_quest_evidence = cx
-            .walk_receipt(self.request_id)
-            .is_some_and(|receipt| {
-                receipt.evidence.meets(self.request.required_after)
-                    && matches!(&receipt.end, WalkEnd::NeedsEvidence(_))
-            });
+        let needs_quest_evidence = cx.walk_receipt(self.request_id).is_some_and(|receipt| {
+            receipt.evidence.meets(self.request.required_after)
+                && matches!(&receipt.end, WalkEnd::NeedsEvidence(_))
+        });
         if needs_quest_evidence {
             let receipt = cx
                 .walk_receipt(self.request_id)
@@ -568,11 +567,9 @@ mod tests {
             ));
         }
 
-        let Poll::Ready(Ok(receipt)) =
-            with_tick(&snapshot, &mut ledger, 2, |tick| tick
-                .actions
-                .poll(&handle, &mut tick.cx))
-        else {
+        let Poll::Ready(Ok(receipt)) = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }) else {
             panic!("missing journal status must refuse after one observed tick");
         };
         assert_eq!(receipt.request_id, original);
