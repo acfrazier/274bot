@@ -1801,7 +1801,19 @@ fn assert_common_cure(receipt: &Value, resumed_ticks: u64) {
         LETHAL_OUTLOOK
     );
     assert_eq!(receipt["condition_at_need"]["outlook_per_fire"], Q_UNKNOWN);
-    assert_eq!(receipt["condition_at_need"]["outlook_pending"], true);
+    // `check_need` applied the per-decision latch rule; restate it. `Needed`
+    // is the open latch (outlook pending); `Drinking` is the straight-to-drink
+    // report, with the latch either way (A6.5 item 3).
+    match receipt["survival_report_at_need"]["decision"].as_str() {
+        Some("Needed") => {
+            assert_eq!(receipt["condition_at_need"]["outlook_pending"], true);
+            assert_eq!(receipt["condition_at_need"]["unlatched_poison"], true);
+        }
+        Some("Drinking") => assert!(receipt["condition_at_need"]["poison"]
+            .as_str()
+            .is_some_and(|poison| poison.starts_with("Onset"))),
+        other => panic!("need report decision is neither Needed nor Drinking: {other:?}"),
+    }
     assert_eq!(receipt["survival_report_at_need"]["why"], "Some(Lethal)");
     assert_eq!(receipt["survival_report_at_need"]["owner"], "Step");
     assert_eq!(receipt["condition_at_need"]["hitpoints"], 30);
@@ -2506,5 +2518,83 @@ mod oracle_tests {
         let mut hit = cured_witness(&lethal_report(Decision::Drinking), true);
         hit.need_no_hit_at_edge = Some(false);
         assert!(check_need(&hit).is_err());
+    }
+
+    /// The fields `assert_common_cure` reads, with the values of the passing
+    /// Gatherer receipt of `cells/round-1` (`Drinking`, latched onset).
+    fn cure_receipt(decision: &str, pending: bool, unlatched: bool, poison: &str) -> Value {
+        json!({
+            "condition_at_need": {
+                "poison": poison,
+                "unlatched_poison": unlatched,
+                "outlook_total": LETHAL_OUTLOOK,
+                "outlook_per_fire": Q_UNKNOWN,
+                "outlook_pending": pending,
+                "hitpoints": 30,
+                "hitpoints_max": 30,
+                "food": 0,
+                "antipoison": 1,
+                "in_combat": false,
+                "no_hitmark_at_edge": true,
+            },
+            "survival_report_at_need": {"decision": decision, "why": "Some(Lethal)", "owner": "Step"},
+            "drink_decision_chat_modal": -1,
+            "poison_marks": [],
+            "first_scheduled_fire_covered": true,
+            "observed_poison_ticks": 31,
+            "ticks_from_poison_to_settled": 1,
+            "resumed_work_ticks": 30,
+            "antipoison_remaining": 0,
+        })
+    }
+
+    #[test]
+    fn the_restated_assertions_accept_both_need_decisions() {
+        assert_common_cure(
+            &cure_receipt(
+                "Drinking",
+                false,
+                false,
+                "Onset { since: 38, q: Some(11), hit_since_line: false }",
+            ),
+            120,
+        );
+        assert_common_cure(
+            &cure_receipt(
+                "Needed",
+                true,
+                true,
+                "Onset { since: 38, q: None, hit_since_line: false }",
+            ),
+            120,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "neither Needed nor Drinking")]
+    fn the_restated_assertions_reject_a_receipt_with_no_lethal_report() {
+        assert_common_cure(
+            &cure_receipt(
+                "None",
+                false,
+                false,
+                "Onset { since: 38, q: Some(11), hit_since_line: false }",
+            ),
+            120,
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn the_restated_assertions_reject_a_needed_report_with_a_closed_latch() {
+        assert_common_cure(
+            &cure_receipt(
+                "Needed",
+                false,
+                false,
+                "Onset { since: 38, q: Some(11), hit_since_line: false }",
+            ),
+            120,
+        );
     }
 }
