@@ -51,20 +51,29 @@ pub(super) fn report_walk(
     }
 }
 
-/// The next walk-hop target: the leg's last tile when 20 or fewer path
-/// steps remain, otherwise a tile ~15 steps ahead of the player (or the
-/// last uncleared tile when the leg is shorter), so each hop re-routes a
-/// fresh short path and never aims back toward the leg start.
-pub(super) fn pick_aim(tiles: &[WorldTile], here: WorldTile, cursor: usize) -> (WorldTile, usize) {
-    let last = *tiles.last().expect("walk legs are non-empty");
-    let last_index = tiles.len() - 1;
-    let base = tiles
+fn player_path_index(tiles: &[WorldTile], here: WorldTile, cursor: usize) -> Option<usize> {
+    tiles
         .iter()
         .enumerate()
         .skip(cursor)
-        .find_map(|(i, tile)| (*tile == here).then_some(i))
-        .unwrap_or(cursor);
-    let steps_left = if tiles.get(base) == Some(&here) {
+        .find_map(|(index, tile)| (*tile == here).then_some(index))
+}
+
+/// Fifteen-step aims and the 20-step end cutoff keep each walk request within
+/// the client's 25-turn cap (`client.rs:5129-5131`) and the engine's
+/// 25-waypoint limits (`MoveClickDecoder.ts:21`, `PathingEntity.ts:42`).
+/// At one tile per tick (`PathingEntity.ts:144-149`), 20 steps plus the
+/// 2-tile click-ahead radius (`walk.rs:122-127`) stay within the 60-tick
+/// hop budget (`traveller.rs:427`).
+pub(super) fn pick_aim(
+    tiles: &[WorldTile],
+    here_index: Option<usize>,
+    cursor: usize,
+) -> (WorldTile, usize) {
+    let last = *tiles.last().expect("walk legs are non-empty");
+    let last_index = tiles.len() - 1;
+    let base = here_index.unwrap_or(cursor);
+    let steps_left = if here_index.is_some() {
         last_index - base
     } else {
         tiles.len() - base
@@ -81,19 +90,15 @@ pub(super) fn pick_aim(tiles: &[WorldTile], here: WorldTile, cursor: usize) -> (
 /// loaded scene, so click-ahead cannot `OffScene` at the 104-edge.
 pub(super) fn pick_aim_in_scene(
     tiles: &[WorldTile],
-    here: WorldTile,
+    here_index: Option<usize>,
     cursor: usize,
     scene: &api::snapshot::SceneView,
 ) -> (WorldTile, usize) {
-    let (aim, mut idx) = pick_aim(tiles, here, cursor);
+    let (aim, mut idx) = pick_aim(tiles, here_index, cursor);
     if tile_in_scene(scene, aim) {
         return (aim, idx);
     }
-    let here_i = tiles
-        .iter()
-        .position(|t| *t == here)
-        .filter(|&i| i >= cursor)
-        .unwrap_or(cursor);
+    let here_i = here_index.unwrap_or(cursor);
     while idx > here_i && !tile_in_scene(scene, tiles[idx]) {
         idx -= 1;
     }
@@ -404,12 +409,10 @@ impl FollowRun {
         let end = hop.tiles().last().copied();
         let mut refused = (hop.end_refused_ticks, hop.end_refused_last_tick);
         let tiles = hop.tiles();
-        let here_i = tiles
-            .iter()
-            .position(|t| *t == here)
-            .filter(|&i| i >= hop.cursor)
-            .unwrap_or(hop.cursor);
-        let (mut aim, mut idx) = pick_aim_in_scene(tiles, here, hop.cursor, snapshot.scene());
+        let here_index = player_path_index(tiles, here, hop.cursor);
+        let here_i = here_index.unwrap_or(hop.cursor);
+        let (mut aim, mut idx) =
+            pick_aim_in_scene(tiles, here_index, hop.cursor, snapshot.scene());
         loop {
             if aim == here {
                 (hop.end_refused_ticks, hop.end_refused_last_tick) = refused;
