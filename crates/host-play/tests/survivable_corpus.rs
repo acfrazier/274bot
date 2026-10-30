@@ -250,6 +250,7 @@ fn export() -> Result<(), String> {
             }).count(),
         },
         "input_signature_sha256": corpus_signature,
+        "input_signature_basis": "materialized inputs and source content identity; content-addressed source paths remain in records but do not distinguish private clones",
         "records": records,
     });
     let (file_name, model) = match model.as_str() {
@@ -267,12 +268,6 @@ fn export() -> Result<(), String> {
         .map_err(|e| format!("parse approved P1-B corpus: {e}"))?;
         if old["model"] != "p1b_worst" {
             return Err("comparison input is not the approved P1-B worst-model export".into());
-        }
-        if old["input_signature_sha256"] != artifact["input_signature_sha256"] {
-            return Err(format!(
-                "old/new corpus inputs differ: old {}, new {}",
-                old["input_signature_sha256"], artifact["input_signature_sha256"]
-            ));
         }
         let diff = diff_artifacts(&old, &artifact)?;
         write_json(&output.join("diff.json"), &diff)?;
@@ -2369,6 +2364,50 @@ fn guide_coverage(inputs: &[CorpusInput]) -> Value {
     json!(sets)
 }
 
+fn source_content_identity(value: &Value) -> Value {
+    match value {
+        Value::Object(fields) => {
+            let content_addressed = fields.get("sha256").is_some_and(Value::is_string);
+            Value::Object(
+                fields
+                    .iter()
+                    .filter(|(key, _)| !content_addressed || key.as_str() != "path")
+                    .map(|(key, value)| (key.clone(), source_content_identity(value)))
+                    .collect(),
+            )
+        }
+        Value::Array(items) => {
+            Value::Array(items.iter().map(source_content_identity).collect())
+        }
+        value => value.clone(),
+    }
+}
+
+#[test]
+fn corpus_input_identity_uses_source_content_not_clone_location() {
+    let old = json!({
+        "record_id": "source-identity-probe",
+        "source": {
+            "file": {"path": "/old-clone/input.json", "sha256": "abc", "bytes": 12},
+            "unhashed_locator": {"path": "/authored/path"}
+        },
+        "input": {"from": [1, 2, 0], "targets": [[3, 4, 0]]}
+    });
+    let signature = input_signature(std::slice::from_ref(&old)).unwrap();
+    let mut relocated = old.clone();
+    relocated["source"]["file"]["path"] = json!("/new-clone/input.json");
+    assert_eq!(input_signature(&[relocated]).unwrap(), signature);
+    let mut changed_content = old.clone();
+    changed_content["source"]["file"]["sha256"] = json!("def");
+    assert_ne!(input_signature(&[changed_content]).unwrap(), signature);
+    let mut changed_input = old.clone();
+    changed_input["input"]["targets"] = json!([[5, 6, 0]]);
+    assert_ne!(input_signature(&[changed_input]).unwrap(), signature);
+    let mut changed_unhashed_path = old;
+    changed_unhashed_path["source"]["unhashed_locator"]["path"] = json!("/different/path");
+    assert_ne!(input_signature(&[changed_unhashed_path]).unwrap(), signature);
+}
+
 fn input_signature(records: &[Value]) -> Result<String, String> {
     let signature = records
         .iter()
@@ -2388,7 +2427,7 @@ fn input_signature(records: &[Value]) -> Result<String, String> {
                 .collect::<Vec<_>>();
             json!({
                 "record_id":record["record_id"],
-                "source":record["source"],
+                "source":source_content_identity(&record["source"]),
                 "input_kind":record["input_kind"],
                 "input":record["input"],
                 "loadout":record["loadout"],
@@ -2424,6 +2463,13 @@ fn diff_artifacts(old: &Value, new: &Value) -> Result<Value, String> {
     let new_rows = new["records"]
         .as_array()
         .ok_or("new corpus has no records")?;
+    let old_signature = input_signature(old_rows)?;
+    if new["input_signature_sha256"].as_str() != Some(old_signature.as_str()) {
+        return Err(format!(
+            "old/new corpus inputs differ: old {old_signature}, new {}",
+            new["input_signature_sha256"]
+        ));
+    }
     let old_by_id = old_rows
         .iter()
         .filter_map(|row| row["record_id"].as_str().map(|id| (id.to_owned(), row)))
@@ -2554,6 +2600,8 @@ fn diff_artifacts(old: &Value, new: &Value) -> Result<Value, String> {
         "old_model":old["model"],
         "new_model":new["model"],
         "input_signature_sha256":new["input_signature_sha256"],
+        "input_signature_basis":"materialized inputs and source content identity; content-addressed source paths remain in records but do not distinguish private clones",
+        "old_artifact_input_signature_sha256":old["input_signature_sha256"],
         "retained_layout_target":new["retained_layout_target"],
         "retained_layout_deltas_bytes":layout_deltas,
         "row_counts":{
