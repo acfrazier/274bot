@@ -2509,6 +2509,7 @@ fn an_unproven_crossing_reaches_the_native_owner_typed() {
             }),
             false,
         );
+        rig.observe(2);
         if matches!(&expected, WalkEnd::NeedsEvidence(_)) {
             assert_eq!(
                 rig.end(),
