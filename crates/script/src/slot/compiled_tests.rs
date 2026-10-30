@@ -1130,6 +1130,30 @@ fn gatherer_slot(incarnation: u64) -> SlotScript {
     slot
 }
 
+#[test]
+fn builtin_gatherer_knife_permission_requires_the_live_compiled_run() {
+    let mut gatherer = gatherer_slot(0x544d_5801);
+    let first = gatherer.native_run().unwrap();
+    let (other, _) = receiver(0x544d_5802, SettingsApply::Applied);
+    let foreign = other.native_run().unwrap();
+    assert!(gatherer.is_builtin_gatherer_run(first));
+    assert!(!gatherer.is_builtin_gatherer_run(foreign));
+    assert!(!other.is_builtin_gatherer_run(foreign));
+    assert!(!other.is_builtin_gatherer_run(first));
+
+    gatherer.pause();
+    assert!(!gatherer.is_builtin_gatherer_run(first));
+    gatherer.resume();
+    assert!(gatherer.is_builtin_gatherer_run(first));
+    restart_and_settle(&mut gatherer, Instant::now());
+    let restarted = gatherer.native_run().unwrap();
+    assert_ne!(first, restarted);
+    assert!(!gatherer.is_builtin_gatherer_run(first));
+    assert!(gatherer.is_builtin_gatherer_run(restarted));
+    gatherer.stop();
+    assert!(!gatherer.is_builtin_gatherer_run(restarted));
+}
+
 fn take_gatherer_drop_actions(slot: &mut SlotScript) -> Vec<crate::native::HostAction> {
     let mut actions = Vec::with_capacity(5);
     while let Some(action) = slot.take_native_action() {
