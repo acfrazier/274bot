@@ -8086,7 +8086,7 @@ fn pick_aim_in_scene_clips_a_hop_that_would_leave_the_104() {
         height: 104,
         collision_flags: vec![],
     };
-    let (aim, _) = super::pick_aim_in_scene(&tiles, here, 0, &scene);
+    let (aim, _) = super::pick_aim_in_scene(&tiles, here, 0, &scene, tiles.len() - 1);
     let lz = aim.z - scene.base_z;
     assert!(
         (0..104).contains(&lz),

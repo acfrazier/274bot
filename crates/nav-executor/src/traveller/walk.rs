@@ -71,17 +71,9 @@ pub(super) fn pick_aim(tiles: &[WorldTile], here: WorldTile, cursor: usize) -> (
 }
 
 /// [`pick_aim`] then walk the index back until the tile is inside the
-/// loaded scene, so click-ahead cannot `OffScene` at the 104-edge.
+/// loaded scene and no farther than `last_allowed`.
+/// Click-ahead cannot `OffScene` at the 104-edge.
 pub(super) fn pick_aim_in_scene(
-    tiles: &[WorldTile],
-    here: WorldTile,
-    cursor: usize,
-    scene: &api::snapshot::SceneView,
-) -> (WorldTile, usize) {
-    pick_aim_in_scene_through(tiles, here, cursor, scene, tiles.len() - 1)
-}
-
-fn pick_aim_in_scene_through(
     tiles: &[WorldTile],
     here: WorldTile,
     cursor: usize,
@@ -439,7 +431,7 @@ impl FollowRun {
             .position(|t| *t == here)
             .filter(|&i| i >= hop.cursor)
             .unwrap_or(hop.cursor);
-        let (mut aim, mut idx) = pick_aim_in_scene_through(
+        let (mut aim, mut idx) = pick_aim_in_scene(
             tiles,
             here,
             hop.cursor,

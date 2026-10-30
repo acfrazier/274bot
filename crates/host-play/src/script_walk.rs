@@ -160,7 +160,7 @@ pub(crate) fn step_poison_hold_on_bot<D: Driver>(
                 bot,
                 world,
                 destination,
-                crate::native::WalkRefusal::PoisonUnsettled { waited, cause },
+                script::native::WalkRefusal::PoisonUnsettled { waited, cause },
             );
         }
         return true;
