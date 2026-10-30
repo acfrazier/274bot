@@ -79,14 +79,10 @@ pub(crate) fn step_poison_hold_on_bot<D: Driver>(
         .current()
         .copied()
         .filter(|fact| fact.tick == snapshot.tick());
-    if fact.is_some_and(|fact| !matches!(fact.poison, PoisonState::Unknown { .. }))
-        && bot
-            .poison_hold
-            .as_ref()
-            .is_some_and(|hold| hold.wait.is_none())
-    {
-        // If a caller has not refreshed admission yet, freeze before a
-        // hold window starts. An already-started window still times out.
+    if fact.is_some_and(|fact| !matches!(fact.poison, PoisonState::Unknown { .. })) {
+        // A fact always precedes the Unknown-only deadline. If the world is
+        // temporarily unavailable, freeze until publication can reassess it.
+        bot.admission_pending = true;
         return true;
     }
     let retreat = if let Some(route) = bot.compact_route.as_ref() {
@@ -110,7 +106,7 @@ pub(crate) fn step_poison_hold_on_bot<D: Driver>(
     let here = snapshot.tile().map(|(x, z, level)| WorldTile { x, z, level });
     let at_retreat = retreat.is_some() && here == retreat;
     let window = fact.and_then(|fact| fact.poison_window);
-    let remaining = window.map_or(crate::poison_hold::CLEAN_TICKS, |window| window.remaining);
+    let remaining = window.map_or(crate::slot_condition::CLEAN_TICKS, |window| window.remaining);
     let accepted = window.is_some_and(|window| window.accepted);
 
     if at_retreat {

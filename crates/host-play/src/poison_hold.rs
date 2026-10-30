@@ -1,6 +1,3 @@
-/// Clean observed PLAYER_INFO edges needed after an incomplete or absent fact.
-pub(crate) const CLEAN_TICKS: u8 = 31;
-
 /// The route tile where an assessed poison hold must stop the follow.
 #[derive(Debug, Default)]
 pub(crate) struct PoisonHold {
@@ -56,7 +53,8 @@ impl PoisonHold {
 
 #[cfg(test)]
 mod tests {
-    use super::{HoldWait, PoisonHold, CLEAN_TICKS};
+    use super::{HoldWait, PoisonHold};
+    use crate::slot_condition::CLEAN_TICKS;
 
     #[test]
     fn fallback_window_is_31_ticks() {

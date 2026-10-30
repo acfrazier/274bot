@@ -24,7 +24,7 @@ use script::combat::threats::ThreatSet;
 const POISON_LINE: &str = "You have been poisoned!";
 const DRINK_LINE: &str = "You drink some of your antipoison potion.";
 const FRUIT_LINE: &str = "You eat the fruit.";
-const CLEAN_TICKS: u8 = 31;
+pub(crate) const CLEAN_TICKS: u8 = 31;
 const _: () = assert!(CLEAN_TICKS == 31);
 
 // Content operations, uses and interface actions can run or resume a script.

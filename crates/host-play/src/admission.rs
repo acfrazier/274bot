@@ -671,7 +671,7 @@ pub(crate) fn publish(
             if enforced
                 && bot.poison_hold.as_ref().is_none_or(|hold| hold.until_index != until_index)
             {
-                bot.poison_hold = Some(crate::script_runtime::PoisonHold {
+                bot.poison_hold = Some(crate::poison_hold::PoisonHold {
                     until_index,
                     wait: None,
                     stand_sent: false,
