@@ -1442,7 +1442,7 @@ fn run_cells(
                     if let Some(status) = actor.latest_status.as_ref() {
                         if status.phase == NativePhase::Working && step_matches(status, &plan.step)
                         {
-                            let command = format!("macro_event {}", plan.event);
+                            let command = format!("~macro_event {}", plan.event);
                             if interact::cheat(client, &command).is_sent() {
                                 plan.sent = true;
                                 plan.before = actor.snapshot.npcs().iter().map(|npc| npc.index).collect();
@@ -1461,7 +1461,7 @@ fn run_cells(
                                     "observed_tick": actor.snapshot.tick(),
                                     "tile": actor.last_tile.map(|tile| [tile.x, tile.z, tile.level]),
                                     "status": status_json(status),
-                                    "authorized_injection": "::macro_event",
+                                    "authorized_injection": "~macro_event (the engine's debugproc char)",
                                 }));
                             }
                         }
