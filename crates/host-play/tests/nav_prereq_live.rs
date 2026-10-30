@@ -583,6 +583,19 @@ fn make_fixture_with_seed_commands(
                 .filter(|receipt| receipt.state == script::ScriptTerminalState::Completed)
         },
     );
+    let session = play
+        .arm(&seed_name)
+        .and_then(|arm| arm.session_key())
+        .expect("fixture binder belongs to the actual live host session");
+    assert_eq!(
+        session.slot().incarnation().get(),
+        seed_run.slot,
+        "fixture binder keeps its slot incarnation"
+    );
+    let seed_run = RunKey {
+        session: session.epoch(),
+        ..seed_run
+    };
 
     LiveFixture {
         play,
@@ -1572,13 +1585,17 @@ fn live_manual_prereq_holy_barrier_wrong_memory_retries() {
     seed_wrong_memory(&fixture, "priestperil", 61, fixture.seed_run);
     let previous_generation = lifecycle_generation(&fixture);
     let route = manual_map_walk(&fixture, PREREQ_EAST);
-    let run = wait_for_manual_walk_run(&fixture);
+    assert_eq!(
+        route["admission"]["kind"], "walking",
+        "wrong same-run memory must attempt the direct crossing before repair"
+    );
     let fact = refusal_fact(&fixture, "priestperil", Duration::from_secs(240));
     assert_holy_barrier_refusal_fact(&fact);
     assert_eq!(
         fact.observed.run, fixture.seed_run,
         "direct GateRefused must keep the run that witnessed its page",
     );
+    let run = wait_for_manual_walk_run(&fixture);
     assert_ne!(
         fact.observed.run, run,
         "hidden card must keep a fresh native identity"
