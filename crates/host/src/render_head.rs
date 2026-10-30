@@ -425,6 +425,18 @@ impl Head {
             .map(client::render::budget::RenderBudget::scope)
     }
 
+    #[cfg(feature = "render-test-hooks")]
+    pub(crate) fn observe_client_cycle(&self, client: &Client) {
+        if fair::enabled() {
+            self.fair.observe_client_cycle(
+                self.identity.slot(),
+                self.renderer.backend_kind(),
+                client.loop_cycle,
+                client.ingame && client.scene_state == 2 && self.renderer.has_valid_scene(),
+            );
+        }
+    }
+
     /// Paint one frame. A GPU head lends its lease to this thread's scene
     /// hook for the frame, so its scene submission runs under a frame lease.
     pub(crate) fn paint(&mut self, client: &mut Client) -> FrameOutput {
@@ -436,12 +448,6 @@ impl Head {
         let frame = {
             #[cfg(feature = "render-test-hooks")]
             if fair::enabled() {
-                self.fair.observe_client_cycle(
-                    self.identity.slot(),
-                    self.renderer.backend_kind(),
-                    client.loop_cycle,
-                    client.ingame && client.scene_state == 2 && self.renderer.has_valid_scene(),
-                );
                 fair::paint(self, client)
             } else {
                 self.paint_legacy(client)

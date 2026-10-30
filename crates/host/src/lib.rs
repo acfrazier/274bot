@@ -554,6 +554,10 @@ impl Host {
         slot.recover_entity_cycles(client, slot.pacing_now(t_loop));
         client.mainloop();
         client.advance_hosted_animations(false);
+        #[cfg(feature = "render-test-hooks")]
+        if let Some(head) = slot.head.as_ref() {
+            head.observe_client_cycle(client);
+        }
         // The hosted title's `mainloop` changes nothing it draws, so the only
         // title paint owed ahead of its cadence is the in-game → title edge:
         // it replaces the last game frame now and starts a fresh title

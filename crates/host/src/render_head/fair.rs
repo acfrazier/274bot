@@ -58,6 +58,7 @@ pub mod test_hooks {
         ) -> Option<client::render::backend::gpu::test_hooks::SceneTestPoint> {
             None
         }
+        /// Observe a completed simulation pass, independent of paint cadence.
         fn client_cycle(
             &self,
             _slot: SlotKey,
