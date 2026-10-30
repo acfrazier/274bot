@@ -591,9 +591,7 @@ fn sparse_map_source_includes_packed_default_terrain() {
     let defaults = parse_map_source(b"==== MAP ====\n", "m3_4", 3, 4).unwrap();
     assert_eq!(defaults.map_cells, 4 * 64 * 64);
     assert_eq!(defaults.explicit_map_cells, 0);
-    assert!(
-        parse_map_source(b"==== MAP ====\n0 1 2: u1\n0 1 2: u2\n", "duplicate", 3, 4).is_err()
-    );
+    assert!(parse_map_source(b"==== MAP ====\n0 1 2: u1\n0 1 2: u2\n", "duplicate", 3, 4).is_err());
 }
 
 #[derive(Default)]
