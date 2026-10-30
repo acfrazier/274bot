@@ -11,11 +11,11 @@ use super::{
     game_window_flags, hold_script_terminal_shot, live_exit_code, live_null_tick, live_script_tick,
     live_smoke_tick, live_stress_tick, loading_text, login_logout_row, logout_enabled,
     manual_shot_label, parse_args, parse_live_args, render_fault_banner_with,
-    request_clean_stop_capture, request_native_failure_capture, runner_config,
+    render_fixture_config, request_clean_stop_capture, request_native_failure_capture, runner_config,
     script_failure_scenario, smoke_settled, smoke_should_fire, startup_progress,
     status_value_visible, Boot, LiveBoot, LiveHarness, LiveNull, LiveScript, LiveSmoke, LiveStress,
     PanelState, ProgressPhase, RunMode, ShotStatus, SoakCapture, StartupPreparation, BASE_WINDOW_H,
-    BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
+    BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, RAIL_W, SMOKE_DEADLINE, SMOKE_SETTLE,
 };
 use crate::log_pane::log_follow_bottom;
 use crate::test_support::{patiently, TestDir};
