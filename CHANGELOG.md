@@ -74,6 +74,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   stop.
 - Quest guides can select a product and quantity from a production menu
   opened by using an item on another item or on a location.
+- Loc-triggered production steps wait for arrival and an accepted click. The
+  one-tick menu deadline starts at the first observed tick after arrival and
+  allows for the engine's next-tick click processing and interface-packet order.
+- Non-kill combat re-engagements are now bounded. `until_drop` uses its
+  authored `max_kills`; `until` and `win` use the configured target
+  alternatives. The bound spans the full step, and exhaustion keeps the last
+  outcome in the failure detail.
 - Ground-item Take steps can now use an observed game-tick budget. This
   lets a guide collect a temporary scripted drop such as the Jailer's key,
   without a wall-clock spawn wait.

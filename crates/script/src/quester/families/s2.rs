@@ -593,8 +593,9 @@ impl StepRun for BuyRun {
 struct MakeLoc {
     /// Symbolic location config name.
     name: String,
-    /// Location operation used to start production.
-    op: String,
+    /// Optional loc operation. Omit it to use the menu item on this loc.
+    #[serde(default)]
+    op: Option<String>,
 }
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
@@ -603,14 +604,15 @@ struct MakeMenu {
     /// Symbolic item config name shown in the production menu.
     obj: String,
     /// Source citation for the menu option.
+    #[cfg_attr(feature = "path-schema", schemars(regex(pattern = r"\S")))]
     source: String,
 }
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub(super) struct MakeArgs {
-    /// Optional location action used to start production. When omitted, select
-    /// from a production menu opened by an earlier `use_on` step.
+    /// Optional loc trigger. With `op`, click that operation; without `op`,
+    /// use the menu item on the loc. When omitted, the menu must already be open.
     #[serde(default)]
     loc: Option<MakeLoc>,
     /// Required with `loc`; the authored approach anchor and its source.
@@ -633,7 +635,7 @@ struct MakeTrigger {
     tile: WorldTile,
     loc_id: i32,
     loc_name: Arc<str>,
-    op: Arc<str>,
+    op: Option<Arc<str>>,
 }
 pub(super) fn compile_make(
     args: MakeArgs,
@@ -651,46 +653,70 @@ pub(super) fn compile_make(
             let loc = cx.selected.loc_by_config(&loc_arg.name).ok_or_else(|| {
                 CompileError::code("unresolved-loc").with_detail(loc_arg.name.as_str())
             })?;
-            if !loc
-                .ops
-                .iter()
-                .any(|op| op.eq_ignore_ascii_case(&loc_arg.op))
-            {
+            if loc_arg.op.as_ref().is_some_and(|op| {
+                !loc
+                    .ops
+                    .iter()
+                    .any(|candidate| candidate.eq_ignore_ascii_case(op))
+            }) {
                 return Err(CompileError::code("unsupported-loc-op"));
             }
             Some(MakeTrigger {
                 tile: anchor(anchor_arg.tile),
                 loc_id: loc.id,
                 loc_name: Arc::from(loc.display.as_deref().unwrap_or(&loc_arg.name)),
-                op: Arc::from(loc_arg.op),
+                op: loc_arg.op.map(Arc::from),
             })
         }
         (None, None) => None,
         _ => return Err(CompileError::code("invalid-make-trigger")),
     };
     let product = item(cx, &args.product)?;
-    let menu_id = match args.menu {
+    let menu_item = match args.menu {
         Some(menu) => {
             if menu.source.trim().is_empty() {
                 return Err(CompileError::code("invalid-make-menu"));
             }
-            item(cx, &menu.obj)?.id
+            item(cx, &menu.obj)?
         }
-        None => product.id,
+        None => product.clone(),
     };
     Ok(Arc::new(MakePlan {
         trigger,
         product,
-        menu_id,
+        menu_item,
+        items_per_process: make_items_per_process(&args.product),
         qty,
         make_x: args.make_x,
     }))
 }
 
+/// Per-process yields are defined by the content's production scripts and
+/// menu rows. Unknown products are one item per process.
+fn make_items_per_process(product: &str) -> i32 {
+    match product {
+        // C:scripts/skill_fletching/scripts/cut_logs.rs2:44-47
+        "arrow_shaft" => 15,
+        // C:scripts/skill_smithing/configs/smithing/smithing.inv:32,68,103,140,175,210
+        "bronze_dart_tip" | "iron_dart_tip" | "steel_dart_tip" | "mithril_dart_tip"
+        | "adamant_dart_tip" | "rune_dart_tip" => 10,
+        // C:scripts/skill_smithing/configs/smithing/smithing.inv:33,69,104,141,176,211
+        "bronze_arrowheads" | "iron_arrowheads" | "steel_arrowheads" | "mithril_arrowheads"
+        | "adamant_arrowheads" | "rune_arrowheads" => 15,
+        // C:scripts/skill_smithing/configs/smithing/smithing.inv:34,70,105,142,177,212
+        "bronze_knife" | "iron_knife" | "steel_knife" | "mithril_knife" | "adamant_knife"
+        | "rune_knife" => 5,
+        // C:scripts/skill_smithing/configs/smithing/smithing.inv:106
+        "nails" => 2,
+        _ => 1,
+    }
+}
+
 struct MakePlan {
     trigger: Option<MakeTrigger>,
     product: BankItem,
-    menu_id: i32,
+    menu_item: BankItem,
+    items_per_process: i32,
     qty: QuantityPlan,
     make_x: bool,
 }
@@ -703,12 +729,16 @@ impl StepPlan for MakePlan {
             trigger_plan: self.trigger.clone(),
             request: MakeRequest {
                 product_id: self.product.id,
-                menu_id: self.menu_id,
+                menu_id: self.menu_item.id,
                 qty,
+                items_per_process: self.items_per_process,
+                menu_start_tick: None,
                 make_x: self.make_x,
             },
+            input_item_name: Arc::clone(&self.menu_item.name),
             walk: None,
             trigger: None,
+            retrigger: None,
             make: None,
         }))
     }
@@ -720,10 +750,45 @@ impl StepPlan for MakePlan {
 struct MakeRun {
     trigger_plan: Option<MakeTrigger>,
     request: MakeRequest,
+    input_item_name: Arc<str>,
     walk: Option<ActionHandle<Walk>>,
     trigger: Option<ActionHandle<reach::Reach>>,
+    retrigger: Option<ActionHandle<super::UseOnAction>>,
     make: Option<ActionHandle<MakeMachine>>,
 }
+
+fn make_use_on_request(
+    trigger: &MakeTrigger,
+    menu_id: i32,
+    item_name: &str,
+    cx: &ActionContext<'_>,
+) -> Result<crate::shim::InteractReq, ActionError> {
+    let source = cx
+        .snapshot()
+        .inventory()
+        .and_then(|items| {
+            items
+                .value
+                .iter()
+                .find(|item| item.def.id == menu_id && item.count > 0)
+                .map(|item| item.slot)
+        })
+        .ok_or_else(|| ActionError::Unavailable(Arc::from("production trigger item is not held")))?;
+    Ok(crate::shim::InteractReq::UseOn {
+        name: item_name.to_owned(),
+        kind: "loc".to_owned(),
+        target_name: Some(trigger.loc_name.to_string()),
+        x: trigger.tile.x,
+        z: trigger.tile.z,
+        level: trigger.tile.level,
+        index: None,
+        source_item_id: Some(menu_id),
+        source_item_slot: Some(source),
+        target_item_id: Some(trigger.loc_id),
+        target_item_slot: None,
+    })
+}
+
 impl StepRun for MakeRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         if self.request.qty <= 0 {
@@ -739,37 +804,64 @@ impl StepRun for MakeRun {
                 }
             }
         }
-        if self.trigger.is_none() && self.make.is_none() {
-            if let Some(trigger) = &self.trigger_plan {
-                let near = cx.tick.cx.snapshot().local_player().is_some_and(|player| {
-                    reach::within(player.value.player.network, trigger.tile, 6)
-                });
-                if !near {
+        if self.trigger.is_none() && self.retrigger.is_none() && self.make.is_none() {
+            if let Some(trigger) = self.trigger_plan.clone() {
+                let loc = {
+                    let snapshot = cx.tick.cx.snapshot();
+                    snapshot.locs().and_then(|locs| {
+                        locs
+                            .value
+                            .iter()
+                            .find(|loc| loc.id == trigger.loc_id && loc.tile == trigger.tile)
+                            .cloned()
+                    })
+                };
+                let Some(loc) = loc else {
+                    return Poll::Pending;
+                };
+                if !reach::loc_arrived(&cx.tick.cx, &loc) {
+                    let here = cx.tick.cx.snapshot().local_player().map(|player| {
+                        player.value.player.network
+                    });
                     self.walk = Some(std::task::ready!(crate::native::defer_budget(
                         cx.tick.actions.begin::<Walk>(
-                            reach::walk_request(trigger.tile, 4, None, cx.required_after),
+                            reach::loc_walk_request(&loc, here, cx.required_after),
                             &mut cx.tick.cx,
                         ),
                     ))?);
                     return Poll::Pending;
                 }
-                self.trigger = Some(std::task::ready!(crate::native::defer_budget(
-                    cx.tick.actions.begin::<reach::Reach>(
-                        reach::ReachArgs {
-                            kind: reach::ReachKind::Loc {
-                                id: Some(trigger.loc_id),
-                                name: Some(Arc::clone(&trigger.loc_name)),
+                if let Some(op) = trigger.op.as_ref() {
+                    self.trigger = Some(std::task::ready!(crate::native::defer_budget(
+                        cx.tick.actions.begin::<reach::Reach>(
+                            reach::ReachArgs {
+                                kind: reach::ReachKind::Loc {
+                                    id: Some(trigger.loc_id),
+                                    name: Some(Arc::clone(&trigger.loc_name)),
+                                },
+                                op: Arc::clone(op),
+                                anchor: Some(trigger.tile),
+                                radius: 8,
+                                wait_if_missing: true,
+                                target_tile: None,
+                                reachable_only: false,
                             },
-                            op: Arc::clone(&trigger.op),
-                            anchor: Some(trigger.tile),
-                            radius: 8,
-                            wait_if_missing: true,
-                            target_tile: None,
-                            reachable_only: false,
-                        },
-                        &mut cx.tick.cx,
-                    ),
-                ))?);
+                            &mut cx.tick.cx,
+                        ),
+                    ))?);
+                } else {
+                    let request = make_use_on_request(
+                        &trigger,
+                        self.request.menu_id,
+                        &self.input_item_name,
+                        &cx.tick.cx,
+                    )?;
+                    self.retrigger = Some(std::task::ready!(crate::native::defer_budget(
+                        cx.tick
+                            .actions
+                            .begin::<super::UseOnAction>(request, &mut cx.tick.cx),
+                    ))?);
+                }
                 return Poll::Pending;
             }
             self.make = Some(
@@ -789,26 +881,65 @@ impl StepRun for MakeRun {
                 }
                 Poll::Ready(Ok(true)) => {
                     self.trigger = None;
+                    self.request.menu_start_tick = Some(cx.tick.cx.evidence().tick);
                     self.make = Some(
                         cx.tick
                             .actions
                             .begin::<MakeMachine>(self.request.clone(), &mut cx.tick.cx)?,
                     );
-                    // The menu may be posted on the trigger's accepted snapshot.
                     if !cx.tick.cx.may_continue_this_tick() {
                         return Poll::Pending;
                     }
                 }
             }
         }
-        match cx
-            .tick
-            .actions
-            .poll(self.make.as_ref().unwrap(), &mut cx.tick.cx)
-        {
+        if let Some(handle) = &self.retrigger {
+            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(_)) => {
+                    self.retrigger = None;
+                    self.request.menu_start_tick = Some(cx.tick.cx.evidence().tick);
+                    self.make = Some(
+                        cx.tick
+                            .actions
+                            .begin::<MakeMachine>(self.request.clone(), &mut cx.tick.cx)?,
+                    );
+                    if !cx.tick.cx.may_continue_this_tick() {
+                        return Poll::Pending;
+                    }
+                }
+            }
+        }
+        let Some(handle) = self.make.as_ref() else {
+            return Poll::Pending;
+        };
+        match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
-            Poll::Ready(Ok(_)) => Poll::Ready(Ok(done(cx))),
+            Poll::Ready(Ok(receipt)) if receipt.held >= self.request.qty => {
+                Poll::Ready(Ok(done(cx)))
+            }
+            Poll::Ready(Ok(_)) => {
+                self.make = None;
+                let Some(trigger) = self.trigger_plan.as_ref() else {
+                    return Poll::Ready(Err(ActionError::Blocked(Arc::from(
+                        "production menu closed before the held target; add a loc trigger to retry",
+                    ))));
+                };
+                let request = make_use_on_request(
+                    trigger,
+                    self.request.menu_id,
+                    &self.input_item_name,
+                    &cx.tick.cx,
+                )?;
+                self.retrigger = Some(std::task::ready!(crate::native::defer_budget(
+                    cx.tick
+                        .actions
+                        .begin::<super::UseOnAction>(request, &mut cx.tick.cx),
+                ))?);
+                Poll::Pending
+            }
         }
     }
     fn cancel(&mut self, _actions: &mut NativeActions) {}

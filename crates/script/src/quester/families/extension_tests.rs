@@ -3703,9 +3703,10 @@ fn item_on_anvil_make_selects_bronze_wire_main_make_row() {
 
 #[test]
 fn loc_make_starts_menu_clock_after_multi_tick_approach() {
-    // E engine/src/engine/World.ts:350-355 processes the click in client input on a later tick;
-    // NetworkPlayer.ts:171-177 writes the menu packet after the tick packet, so this menu is
-    // observed one tick after the loc approach ends.
+    // The accepted click follows approach arrival. World processes client input on
+    // a later tick (E engine/src/engine/World.ts:350-355), then NetworkPlayer
+    // writes the interface after that tick packet (E engine/src/engine/NetworkPlayer.ts:171-177).
+    // A snapshot on that tick can still lack the menu; it is observable on the next.
     compile_context_test(|compile| {
         let wheel_id = resolve_loc(compile, "spinningwheel").unwrap();
         let wool_id = resolve_obj(compile, "wool").unwrap();
@@ -3800,10 +3801,14 @@ fn loc_make_starts_menu_clock_after_multi_tick_approach() {
             with_step(tick, |cx| run.poll(cx))
         })
         .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 8, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
         let menu_client = production_menu_client(&[(wool_id, "Wool")]);
         snapshot.rebuild_family(&menu_client, api::snapshot::Family::MakeProducts);
         snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
-        assert!(with_tick(&snapshot, &mut ledger, 8, |tick| {
+        assert!(with_tick(&snapshot, &mut ledger, 9, |tick| {
             with_step(tick, |cx| run.poll(cx))
         })
         .is_pending());
@@ -3862,16 +3867,13 @@ fn main_make_retriggers_item_on_loc_after_each_closed_batch() {
         let bar_id = resolve_obj(compile, "bronze_bar").unwrap();
         let wire_id = resolve_obj(compile, "bronzecraftwire").unwrap();
         let anvil_id = resolve_loc(compile, "anvil").unwrap();
-        let use_on = compile_use_on(
-            test_args::<UseOnArgs>(serde_json::json!({
-                "item": "bronze_bar",
-                "target": {"loc": "anvil"}
-            })),
-            compile,
-        )
-        .unwrap();
         let make = s2::compile_make(
             test_args::<s2::MakeArgs>(serde_json::json!({
+                "loc": {"name": "anvil"},
+                "anchor": {
+                    "tile": [5, 6, 0],
+                    "source": "C:scripts/skill_smithing/scripts/smithing/smithing.rs2:39-76"
+                },
                 "product": "bronzecraftwire",
                 "menu": {
                     "obj": "bronze_bar",
@@ -3882,11 +3884,8 @@ fn main_make_retriggers_item_on_loc_after_each_closed_batch() {
             compile,
         )
         .unwrap();
-        let mut menu_client = production_main_make_client(
-            bar_id,
-            "Bronze bar",
-            &["Make 1", "Make 5", "Make 10"],
-        );
+        let mut menu_client =
+            production_main_make_client(bar_id, "Bronze bar", &["Make 1", "Make 5", "Make 10"]);
         let mut snapshot = ready();
         snapshot.seed_local_player(local_player(tile(5, 5)));
         snapshot.seed_inventory(
@@ -3901,49 +3900,52 @@ fn main_make_retriggers_item_on_loc_after_each_closed_batch() {
         anvil.distance = 1;
         snapshot.seed_locs(vec![anvil]);
         let mut ledger = None;
-        let mut use_on_run = with_tick(&snapshot, &mut ledger, 1, |tick| {
-            with_step(tick, |cx| use_on.begin(cx).unwrap())
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| make.begin(cx).unwrap())
         });
+
         assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
-            with_step(tick, |cx| use_on_run.poll(cx))
-        })
-        .is_pending());
-        assert!(matches!(emitted(&ledger), InteractReq::UseOn { .. }));
-        accept_last(&mut ledger, 3, true);
-        snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake);
-        snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
-        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
-            with_step(tick, |cx| use_on_run.poll(cx))
+            with_step(tick, |cx| run.poll(cx))
         })
         .is_pending());
         assert!(matches!(
-            with_tick(&snapshot, &mut ledger, 5, |tick| {
-                with_step(tick, |cx| use_on_run.poll(cx))
-            }),
-            Poll::Ready(Ok(_))
+            emitted(&ledger),
+            InteractReq::UseOn {
+                kind,
+                source_item_id: Some(id),
+                target_item_id: Some(target),
+                ..
+            } if kind == "loc" && *id == bar_id && *target == anvil_id
         ));
+        accept_last(&mut ledger, 3, true);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
 
-        let mut make_run = with_tick(&snapshot, &mut ledger, 6, |tick| {
-            with_step(tick, |cx| make.begin(cx).unwrap())
-        });
-        assert!(with_tick(&snapshot, &mut ledger, 7, |tick| {
-            with_step(tick, |cx| make_run.poll(cx))
+        menu_client.main_modal_id = 2200;
+        menu_client.bump_gens(ServerProt::IF_OPENMAIN);
+        assert!(snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake));
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |cx| run.poll(cx))
         })
         .is_pending());
         assert!(matches!(
             emitted(&ledger),
             InteractReq::MakePanel { operation: 2, .. }
         ));
-        accept_last(&mut ledger, 8, true);
+        accept_last(&mut ledger, 5, true);
+        // C:scripts/skill_smithing/scripts/smithing/smithing.rs2:213-214 closes the menu per attempt.
         menu_client.main_modal_id = -1;
-        menu_client.bump_gens(ServerProt::IF_OPENMAIN);
+        menu_client.bump_gens(ServerProt::IF_CLOSE);
         assert!(snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake));
         snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
-        assert!(snapshot.main_make().is_empty(), "smithing closes its menu");
-        assert!(with_tick(&snapshot, &mut ledger, 9, |tick| {
-            with_step(tick, |cx| make_run.poll(cx))
+        assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
+            with_step(tick, |cx| run.poll(cx))
         })
         .is_pending());
+
         snapshot.seed_inventory(
             vec![
                 held(bar_id, "Bronze bar", 8, 5, None),
@@ -3951,18 +3953,14 @@ fn main_make_retriggers_item_on_loc_after_each_closed_batch() {
             ],
             28,
         );
-        assert!(with_tick(&snapshot, &mut ledger, 10, |tick| {
-            with_step(tick, |cx| make_run.poll(cx))
-        })
-        .is_pending());
-        for tick in 11..=13 {
+        for tick in 7..=10 {
             assert!(with_tick(&snapshot, &mut ledger, tick, |native| {
-                with_step(native, |cx| make_run.poll(cx))
+                with_step(native, |cx| run.poll(cx))
             })
             .is_pending());
         }
-        assert!(with_tick(&snapshot, &mut ledger, 14, |tick| {
-            with_step(tick, |cx| make_run.poll(cx))
+        assert!(with_tick(&snapshot, &mut ledger, 11, |tick| {
+            with_step(tick, |cx| run.poll(cx))
         })
         .is_pending());
         assert!(matches!(
@@ -3970,21 +3968,22 @@ fn main_make_retriggers_item_on_loc_after_each_closed_batch() {
             InteractReq::UseOn {
                 kind,
                 source_item_id: Some(id),
+                target_item_id: Some(target),
                 ..
-            } if kind == "loc" && *id == bar_id
+            } if kind == "loc" && *id == bar_id && *target == anvil_id
         ));
 
-        accept_last(&mut ledger, 15, true);
+        accept_last(&mut ledger, 12, true);
+        assert!(with_tick(&snapshot, &mut ledger, 12, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
         menu_client.main_modal_id = 2200;
         menu_client.bump_gens(ServerProt::IF_OPENMAIN);
         assert!(snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake));
         snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
-        assert!(with_tick(&snapshot, &mut ledger, 15, |tick| {
-            with_step(tick, |cx| make_run.poll(cx))
-        })
-        .is_pending());
-        assert!(with_tick(&snapshot, &mut ledger, 16, |tick| {
-            with_step(tick, |cx| make_run.poll(cx))
+        assert!(with_tick(&snapshot, &mut ledger, 13, |tick| {
+            with_step(tick, |cx| run.poll(cx))
         })
         .is_pending());
         assert!(matches!(
@@ -3992,17 +3991,15 @@ fn main_make_retriggers_item_on_loc_after_each_closed_batch() {
             InteractReq::MakePanel { operation: 1, .. }
         ));
 
-        accept_last(&mut ledger, 17, true);
+        accept_last(&mut ledger, 14, true);
         menu_client.main_modal_id = -1;
-        menu_client.bump_gens(ServerProt::IF_OPENMAIN);
+        menu_client.bump_gens(ServerProt::IF_CLOSE);
         assert!(snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake));
         snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
-        for tick in 18..=19 {
-            assert!(with_tick(&snapshot, &mut ledger, tick, |native| {
-                with_step(native, |cx| make_run.poll(cx))
-            })
-            .is_pending());
-        }
+        assert!(with_tick(&snapshot, &mut ledger, 15, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
         snapshot.seed_inventory(
             vec![
                 held(bar_id, "Bronze bar", 8, 4, None),
@@ -4010,14 +4007,14 @@ fn main_make_retriggers_item_on_loc_after_each_closed_batch() {
             ],
             28,
         );
-        for tick in 20..=22 {
+        for tick in 16..=19 {
             assert!(with_tick(&snapshot, &mut ledger, tick, |native| {
-                with_step(native, |cx| make_run.poll(cx))
+                with_step(native, |cx| run.poll(cx))
             })
             .is_pending());
         }
-        assert!(with_tick(&snapshot, &mut ledger, 23, |tick| {
-            with_step(tick, |cx| make_run.poll(cx))
+        assert!(with_tick(&snapshot, &mut ledger, 20, |tick| {
+            with_step(tick, |cx| run.poll(cx))
         })
         .is_pending());
         assert!(matches!(
@@ -4025,21 +4022,22 @@ fn main_make_retriggers_item_on_loc_after_each_closed_batch() {
             InteractReq::UseOn {
                 kind,
                 source_item_id: Some(id),
+                target_item_id: Some(target),
                 ..
-            } if kind == "loc" && *id == bar_id
+            } if kind == "loc" && *id == bar_id && *target == anvil_id
         ));
 
-        accept_last(&mut ledger, 24, true);
+        accept_last(&mut ledger, 21, true);
+        assert!(with_tick(&snapshot, &mut ledger, 21, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
         menu_client.main_modal_id = 2200;
         menu_client.bump_gens(ServerProt::IF_OPENMAIN);
         assert!(snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake));
         snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
-        assert!(with_tick(&snapshot, &mut ledger, 24, |tick| {
-            with_step(tick, |cx| make_run.poll(cx))
-        })
-        .is_pending());
-        assert!(with_tick(&snapshot, &mut ledger, 25, |tick| {
-            with_step(tick, |cx| make_run.poll(cx))
+        assert!(with_tick(&snapshot, &mut ledger, 22, |tick| {
+            with_step(tick, |cx| run.poll(cx))
         })
         .is_pending());
         assert!(matches!(
@@ -4047,17 +4045,15 @@ fn main_make_retriggers_item_on_loc_after_each_closed_batch() {
             InteractReq::MakePanel { operation: 1, .. }
         ));
 
-        accept_last(&mut ledger, 26, true);
+        accept_last(&mut ledger, 23, true);
         menu_client.main_modal_id = -1;
-        menu_client.bump_gens(ServerProt::IF_OPENMAIN);
+        menu_client.bump_gens(ServerProt::IF_CLOSE);
         assert!(snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake));
         snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
-        for tick in 27..=28 {
-            assert!(with_tick(&snapshot, &mut ledger, tick, |native| {
-                with_step(native, |cx| make_run.poll(cx))
-            })
-            .is_pending());
-        }
+        assert!(with_tick(&snapshot, &mut ledger, 24, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
         snapshot.seed_inventory(
             vec![
                 held(bar_id, "Bronze bar", 8, 3, None),
@@ -4065,15 +4061,15 @@ fn main_make_retriggers_item_on_loc_after_each_closed_batch() {
             ],
             28,
         );
-        for tick in 29..=30 {
+        for tick in 25..=27 {
             assert!(with_tick(&snapshot, &mut ledger, tick, |native| {
-                with_step(native, |cx| make_run.poll(cx))
+                with_step(native, |cx| run.poll(cx))
             })
             .is_pending());
         }
         assert!(matches!(
-            with_tick(&snapshot, &mut ledger, 31, |tick| {
-                with_step(tick, |cx| make_run.poll(cx))
+            with_tick(&snapshot, &mut ledger, 28, |tick| {
+                with_step(tick, |cx| run.poll(cx))
             }),
             Poll::Ready(Ok(_))
         ));

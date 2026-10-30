@@ -981,6 +981,11 @@ impl Quester {
     }
 
     fn finish_quest(&mut self, tick: &mut NativeTick<'_>) -> ScriptFlow {
+        self.step_index = self
+            .path
+            .sequences
+            .get(self.seq_index)
+            .map_or(self.path.prelude.len(), |sequence| sequence.steps.len());
         self.trace.flush_repeats(tick.output);
         self.trace.terminal(
             tick.output,

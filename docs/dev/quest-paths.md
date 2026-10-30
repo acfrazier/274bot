@@ -55,6 +55,11 @@ The kill count persists across native re-engagements within that step.
 Only a confirmed `Killed` result spends the budget.
 Disappearance, a missing target, or an attempt timeout does not count as a kill.
 
+Non-kill outcomes use a separate re-engagement bound. `until_drop` uses its
+authored `max_kills`; `until` and `win` allow one re-engagement per configured
+target alternative. The count spans the full step, including after successful
+kills. If it is spent, the step fails with the last combat report.
+
 The final permitted kill still receives the normal loot wait and pickup.
 The appearance deadline does not cancel a pickup that already started.
 If the item remains absent, the runner parks with the authored `stop`.
@@ -91,15 +96,30 @@ Then use `make` with neither `loc` nor `anchor`:
 }
 ```
 
-The `product` names the output item.
-The optional `menu.obj` names the item represented by the posted menu row.
-Some menus show an input item instead of the output.
 `qty` is a held target: hold at least this many output items after production.
-It is not an instruction to make that many additional items.
-The machine selects the named product and a quantity that does not exceed the remaining target.
+A fixed menu button counts processes, not output items. The step rounds the
+remaining item target up to the minimum whole-process count needed. A normal
+log fletching process yields 15 arrow shafts
+(`content/scripts/skill_fletching/scripts/cut_logs.rs2:44-47`); smithing
+produces 10 dart tips, 15 arrowheads, five knives or two steel nails per bar
+(`content/scripts/skill_smithing/configs/smithing/smithing.inv:30-35,101-107`,
+with the dart-tip, arrowhead and knife rows repeated for other metal tiers at
+`:66-70,101-106,138-142,173-177,208-212`). Products without a listed yield
+are treated as one item per process.
+
+On a `skill_multi3` chat menu, a fixed button must match the remaining process
+count; `make_x: true` allows the Make-X count dialog when there is no exact
+fixed button. On a MainMake menu, the step chooses the largest posted fixed
+button not above the remaining process count. If more output is still needed,
+a loc-triggered step uses the item on the loc again for the next batch. A
+selector-only step stops as blocked if its MainMake menu closes before the
+held target is reached. Whole processes can leave the held count above `qty`
+when a product yields several items or the menu has no exact process count.
+The step does not request more processes than needed to cover the remaining
+item target.
+
 The compiler rejects a missing half of the `loc` and `anchor` trigger pair.
 Existing loc-triggered `make` steps retain both fields.
-
 The same selector works after item-on-item and item-on-loc use.
 Ikov can use it after a knife on logs.
 Zombie Queen can use it for bronze wire smithing.

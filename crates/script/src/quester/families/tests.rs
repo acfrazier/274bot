@@ -4344,6 +4344,8 @@ fn make_selects_the_input_menu_row_and_settles_on_the_output() {
                     product_id: 1759,
                     menu_id: 1737,
                     qty: 20,
+                    items_per_process: 1,
+                    menu_start_tick: None,
                     make_x: true,
                 },
                 &mut tick.cx,

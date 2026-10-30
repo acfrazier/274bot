@@ -3625,7 +3625,7 @@ impl StepRun for UseOnRun {
     }
 }
 
-struct UseOnAction {
+pub(super) struct UseOnAction {
     request: u64,
 }
 impl crate::native::NativeMachine for UseOnAction {
