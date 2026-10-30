@@ -565,15 +565,14 @@ fn parse_swing_acquire(
             .ok_or_else(|| {
                 SelfDamageError::NotModelled(format!("{child_id} recipe has no rockslide attempt"))
             })?;
+        let mut fields = attempt
+            .as_object()
+            .cloned()
+            .ok_or_else(|| SelfDamageError::Input("rockslide attempt is not an object".into()))?;
+        fields.insert("id".into(), Value::String(child_id.to_owned()));
+        let child_step = Value::Object(fields);
         recovery.push(parse_bounded_step(
-            &Value::Object({
-                let mut fields = attempt
-                    .as_object()
-                    .cloned()
-                    .ok_or_else(|| SelfDamageError::Input("rockslide attempt is not an object".into()))?;
-                fields.insert("id".into(), Value::String(child_id.to_owned()));
-                Value::Object(fields)
-            }),
+            &child_step,
             rockslide_hazard(agility),
             Some(max_restarts),
             1,
@@ -848,7 +847,7 @@ fn run_swing_acquire(
         if pending.is_empty() {
             break;
         }
-        let branches = run_once(pending, swing, base_hp);
+        let branches = run_once(std::mem::take(&mut pending), swing, base_hp);
         run.death_probability += branches.death_probability;
         let mut failed = branches.failure;
         let mut successful = branches.success;
