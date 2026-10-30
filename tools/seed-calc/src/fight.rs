@@ -178,7 +178,6 @@ struct NpcRoll {
     strength: i32,
     strength_bonus: i32,
     attackrate: u8,
-    max_dealt: u16,
     source: String,
 }
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -596,14 +595,10 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
         .iter()
         .find(|n| n.id == row.id && n.config == row.config)
         .ok_or_else(|| FightError::Input("NPC roll supplement missing".into()))?;
-    let expected_npc_max_hit = u16::from(
-        npc_max_hit(row).ok_or_else(|| FightError::Input("NPC maximum hit unavailable".into()))?,
-    );
     if npc.hitpoints != row.hitpoints
         || Some(npc.strength) != row.strength
         || Some(npc.strength_bonus) != row.strengthbonus
         || npc.attackrate != tables.npc_rate(row)
-        || npc.max_dealt != expected_npc_max_hit
     {
         return Err(FightError::Input(
             "source supplement disagrees with selected NPC facts".into(),

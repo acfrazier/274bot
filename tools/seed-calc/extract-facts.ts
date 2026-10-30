@@ -44,7 +44,7 @@ const npcs = selected.npc_names.rows.flatMap((row: { id: number; config: string 
     return [{ id: row.id, config: row.config, attack: stat(section, 'attack'), defence: stat(section, 'defence'),
         attack_bonus: param(section, 'attackbonus'), defence_bonus: bonusNames.map((b) => param(section, `${b}defence`)),
         hitpoints: stat(section, 'hitpoints'), strength: stat(section, 'strength'), strength_bonus: param(section, 'strengthbonus'),
-        attackrate: param(section, 'attackrate'), max_dealt: param(section, 'max_dealt'), source: source(section) }];
+        attackrate: param(section, 'attackrate'), source: source(section) }];
 });
 const tables = new Map(parseRows(requireGatherText(content, 'scripts/skill_combat/configs/combat.dbrow')).map((row) => [row.name, row]));
 const categoryTables = new Map<string, string>();
