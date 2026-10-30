@@ -4498,7 +4498,9 @@ mod tests {
     /// Drive one teller trip to its receipt, then end the session. Returns the
     /// ledger's bank mark after the trip, the lease after the trip, and the
     /// number of closes that ending the session sent.
-    fn teller_trip(start: TellerStart) -> (Option<ledger::BankSessionMark>, Option<BankLease>, usize) {
+    fn teller_trip(
+        start: TellerStart,
+    ) -> (Option<ledger::BankSessionMark>, Option<BankLease>, usize) {
         let (mut snapshot, bank, banks) = openable_bank_fixture();
         if start != TellerStart::NoBanker {
             snapshot.seed_npcs(vec![teller_npc(bank.tile)]);
@@ -4572,7 +4574,7 @@ mod tests {
                     complete_open_stand(&mut ledger, tick);
                     snapshot.seed_bank_observation(1, tick, Some(Vec::new()), Vec::new());
                 }
-                Some(other) => panic!("unexpected teller trip effect: {other:?}"),
+                Some(_) => panic!("{start:?}: the teller trip issued an unexpected effect"),
                 None if picked && !kernel_waited && start != TellerStart::KernelOpens => {
                     // The kernel waited (no banker) or was denied (budget)
                     // without a request. The player now opens a bank.
