@@ -12,7 +12,72 @@ globalThis.__Tile = class Tile {
         this.level = level;
     }
 };
-globalThis.__g = (op, ...args) => __rs2b0t_gather_catalog(op, ...args);
+// Tables take the `Tile` class after the op; members (op 20 and up) take their own arguments only.
+globalThis.__g = (op, tile, ...rest) =>
+    op < 20 ? __rs2b0t_gather_catalog(op, tile, ...rest) : __rs2b0t_gather_catalog(op, ...rest);
+globalThis.__custom = { gear: [
+    { name: 'Fishing bait', min: 1, restock: 1000, note: 'x' },
+    { restock: 2000, name: 'Feather', min: 1 },
+    { name: 'Small fishing net', min: 1, restock: 1 },
+] };
+/// One thunk per member that materializes a script value, each over realistic arguments; `__origin` stands
+/// beside a selected `Range`.
+globalThis.__ops = () => {
+    const T = __Tile;
+    const g = __g;
+    const origin = __origin;
+    const none = () => 0;
+    const stocked = () => 50;
+    const rich = name => (name === 'Coins' ? 1000000 : 0);
+    const world = { heldCount: none, invCount: rich, bankCount: rich };
+    const near = { x: 2830, z: 3430 };
+    const methods = g(4, T);
+    const method = methods.find(m => m.gear.some(piece => piece.restock > 1));
+    const bait = method.gear.find(piece => piece.restock > 1);
+    const mining = g(1, T);
+    const labelled = mining.find(row => row.recommendedCombat != null) ?? mining[0];
+    const everyMethod = run => () => methods.map(m => run(m));
+    return {
+        woodcutting: () => g(0, T),
+        mining: () => g(1, T),
+        fishing: () => g(2, T),
+        shilo: () => g(3, T),
+        methods: () => g(4, T),
+        gerrant: () => g(5, T),
+        harry: () => g(6, T),
+        miningLabels: () => g(7, T),
+        methodOptions: () => g(8, T),
+        gearNames: () => g(9, T),
+        whirlpool: () => g(10, T),
+        shopCosts: () => g(11, T),
+        gerrantOnly: () => g(12, T),
+        cookSurfaces: () => g(13, T),
+        miningLabel: () => g(20, T, labelled),
+        resolveMethod: () => g(21, T, method.name),
+        keepNames: () => g(22, T, method),
+        gearLabel: () => g(23, T, method),
+        hasGear: () => g(24, T, method, none),
+        missingGear: () => g(25, T, method, none),
+        restockPlan: () => g(26, T, method, none, stocked),
+        spotMatches: () => g(27, T, [method.op, method.pair], method),
+        shopCost: () => g(28, T, bait.name),
+        vendorFor: () => g(29, T, bait.name, near),
+        isBait: () => g(30, T, bait),
+        withBait: () => g(31, T, method, 500),
+        withBaitCustom: () => g(31, T, __custom, 500),
+        planBuys: () => g(32, T, method, world, { near, baitQty: 500 }),
+        planAcquire: () => g(33, T, method, world, { near }),
+        plansCost: () => g(34, T, g(32, T, method, world)),
+        shopCart: () => g(35, T, method, world, { baitQty: 500 }),
+        shopableMissing: () => g(36, T, method.gear, none),
+        cookSurfaceFor: () => g(40, T, 'Catherby', 'bank'),
+        resolveCookCurated: () => g(41, T, 'Catherby', origin, 5, 'bank'),
+        resolveCookNearest: () => g(41, T, 'Nowhere', origin, 5, 'bank'),
+        everyMethodRestock: everyMethod(m => g(26, T, m, none, stocked)),
+        everyMethodWithBait: everyMethod(m => g(31, T, m, 500)),
+        everyMethodPlans: everyMethod(m => [g(32, T, m, world, { near }), g(33, T, m, world), g(35, T, m, world)]),
+    };
+};
 "#;
 
 /// Materializes every table, walks every object it reaches and checks the contract the shapes exist for.
@@ -72,24 +137,64 @@ globalThis.__check = expected => {
     }
     walk(g(7, T), 'labels');
     walk(g(11, T), 'costs');
-    need(g(12, T) instanceof Set && g(10, T) === undefined, 'sets and the unavailable whirlpool ids');
+    need(g(12, T) instanceof Set && g(10, T) instanceof Set, 'sets, including the selected whirlpool ids');
+    // Every member that materializes a script value: the result and everything it reaches has fast properties.
+    const ops = __ops();
+    for (const [label, run] of Object.entries(ops)) {
+        const result = run();
+        need(result !== undefined && result !== null, `${label} produced nothing`);
+        walk(result, `op ${label}`);
+    }
+    const baited = g(31, T, __custom, 500);
+    need(JSON.stringify(Reflect.ownKeys(baited.gear[0])) === '["name","min","restock","note"]' && baited.gear[0].restock === 500,
+        'a bait copy keeps the piece key order and takes the target');
+    need(JSON.stringify(Reflect.ownKeys(baited.gear[1])) === '["restock","name","min"]' && baited.gear[1].restock === 500,
+        'a present restock keeps its place in the copy');
+    need(baited.gear[0] !== __custom.gear[0] && __custom.gear[0].restock === 1000 && baited.gear[2] === __custom.gear[2],
+        'a bait piece is copied, any other piece is the caller object');
+    need(g(41, T, 'Catherby', __origin, 5, 'bank') === g(40, T, 'Catherby', 'bank') && g(40, T, 'Catherby', 'bank') !== null,
+        'the curated cook surface is the cached object');
     globalThis.__walked = seen.size;
     return true;
 };
 globalThis.__walkedCount = () => globalThis.__walked;
 globalThis.__repeat = count => {
+    const runs = Object.values(__ops());
     for (let index = 0; index < count; index++) {
-        globalThis.__last = [__g(0, __Tile), __g(1, __Tile), __g(2, __Tile), __g(4, __Tile), __g(13, __Tile)];
+        for (const run of runs) globalThis.__last = run();
     }
+};
+globalThis.__labels = () => Object.keys(__ops());
+globalThis.__repeatOp = (label, count) => {
+    const run = __ops()[label];
+    for (let index = 0; index < count; index++) globalThis.__last = run();
 };
 "#;
 
+/// The revision 289 selected content (its whirlpool NPCs and cook surfaces), configured on this thread, and an
+/// origin one tile east of one of its ranges.
 fn setup() -> Runtime {
     crate::platform::bootstrap_test_v8_platform();
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected game data");
+    let range = data
+        .cook_surfaces()
+        .iter()
+        .find(|surface| surface.name == "Range")
+        .expect("the selected content places a Range")
+        .tile();
+    crate::supply_v2::configure(Some(data));
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     cb::install_ops(&mut runtime).unwrap();
     install(&mut runtime).unwrap();
     runtime.eval::<()>(SETUP).unwrap();
+    runtime
+        .eval::<()>(&format!(
+            "globalThis.__origin = new __Tile({}, {}, {});",
+            range.x + 1,
+            range.z,
+            range.level
+        ))
+        .unwrap();
     runtime
 }
 
@@ -151,6 +256,14 @@ fn every_table_object_has_fast_properties_from_its_cached_shape() {
         };
         assert!(shapes >= 10, "shapes are cached per own-key list: {shapes}");
         assert!(shapes < 64, "the shape cache stays bounded by the table schema: {shapes}");
+        let copies = |runtime: &mut Runtime| {
+            let scope = runtime.deno_runtime().handle_scope();
+            let cache = scope.get_slot::<Shared>().cloned().expect("catalog installed");
+            let count = cache.borrow().copies.len();
+            count
+        };
+        let copied = copies(&mut runtime);
+        assert_eq!(copied, 3, "one template per copied gear-piece key list: the method pieces and two custom lists");
         assert!(runtime.eval::<bool>("__check(__expected)").unwrap());
         let again = {
             let scope = runtime.deno_runtime().handle_scope();
@@ -159,6 +272,7 @@ fn every_table_object_has_fast_properties_from_its_cached_shape() {
             count
         };
         assert_eq!(again, shapes, "a second read adds no shape");
+        assert_eq!(copies(&mut runtime), copied, "a second read adds no copy template");
     });
 }
 
@@ -199,6 +313,19 @@ fn materialized_tables_bound_the_collected_v8_heap_and_repeat_reads_add_nothing(
         after_repeat.saturating_sub(populated) <= 64 * 1024,
         "1,000 repeat reads grew collected V8 used heap from {populated} to {after_repeat}: a table is not returned by identity"
     );
+    // Each operation alone: after one warming call, 1,000 more calls leave the collected heap where it was.
+    let labels: Vec<String> = runtime.eval("__labels()").unwrap();
+    // The 14 tables, the 17 members from `MINING_LABEL` to `SHOPABLE_MISSING`, the 2 cook members, and 5 variants.
+    assert_eq!(labels.len(), 38, "every dispatch operation has an exercise: {labels:?}");
+    for label in labels {
+        runtime.eval::<()>(&format!("globalThis.__repeatOp('{label}', 1); globalThis.__last = null;")).unwrap();
+        let before = collected_used_heap(&mut runtime);
+        runtime.eval::<()>(&format!("globalThis.__repeatOp('{label}', 1000); globalThis.__last = null;")).unwrap();
+        let after = collected_used_heap(&mut runtime);
+        let grown = after.saturating_sub(before);
+        println!("Gather catalog op {label}: before={before} after={after} growth_after_1000={grown}");
+        assert!(grown <= 16 * 1024, "{label}: 1,000 calls grew collected V8 used heap by {grown} bytes");
+    }
 }
 
 #[test]
