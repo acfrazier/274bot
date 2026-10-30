@@ -579,7 +579,7 @@ fn a_refused_loadouts_store_blocks_the_path_instead_of_waiting() {
     );
 }
 
-fn cook_status(colour: u32) -> Vec<QuestStatusView> {
+fn cook_status(colour: i32) -> Vec<QuestStatusView> {
     vec![QuestStatusView {
         name: "Cook's Assistant".into(),
         component_id: 42,

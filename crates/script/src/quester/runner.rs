@@ -983,11 +983,6 @@ impl Quester {
         ScriptFlow::Complete
     }
 
-    /// Provisioning trips or their close are running.
-    pub(super) fn bank_session_open(&self) -> bool {
-        self.provisioner.session_open()
-    }
-
     pub(super) fn bank_lease(&self) -> Option<BankLease> {
         self.provisioner.bank_lease()
     }
