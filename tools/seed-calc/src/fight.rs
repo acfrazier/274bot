@@ -18,6 +18,8 @@ pub enum FightError {
     Json(#[from] serde_json::Error),
     #[error("{0}")]
     Input(String),
+    #[error("{0}")]
+    NotModelled(String),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -610,7 +612,7 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
     }
     if let Some(stats) = query.candidate {
         let candidate_food = None;
-        result.candidate = Some(evaluate(
+        match evaluate(
             stats,
             row,
             npc,
@@ -621,7 +623,15 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
             0,
             query.player_initiates,
             query.sequential_kills,
-        )?);
+        ) {
+            Ok(candidate) => result.candidate = Some(candidate),
+            Err(FightError::NotModelled(reason)) => {
+                result
+                    .reasons
+                    .push(format!("candidate comparison not modelled: {reason}"));
+            }
+            Err(error) => return Err(error),
+        }
     }
     let food_limit = if food_item.is_some() { query.food_count } else { 0 };
     for level in 40..=99 {
@@ -635,7 +645,7 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
         let mut within_five = None;
         let mut best = None;
         for food_count in 0..=food_limit {
-            let evaluation = evaluate(
+            let evaluation = match evaluate(
                 stats,
                 row,
                 npc,
@@ -646,7 +656,15 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
                 food_count,
                 query.player_initiates,
                 query.sequential_kills,
-            )?;
+            ) {
+                Ok(evaluation) => evaluation,
+                Err(FightError::NotModelled(reason)) => {
+                    result.status = "not_modelled";
+                    result.reasons.push(reason);
+                    return Ok(result);
+                }
+                Err(error) => return Err(error),
+            };
             let death_probability = evaluation.outcome.death_probability;
             if death_probability <= 0.01 {
                 within_one = Some(evaluation);
@@ -888,9 +906,9 @@ fn evaluate(
             / 640,
     )
     .map_err(|_| FightError::Input("player maximum hit overflow".into()))?;
-    let npc_max_hit = u16::from(
-        npc_max_hit(row).ok_or_else(|| FightError::Input("NPC maximum hit unavailable".into()))?,
-    );
+    let npc_max_hit = u16::from(npc_max_hit(row).ok_or_else(|| {
+        FightError::NotModelled("NPC maximum hit unavailable".into())
+    })?);
     let model = SurvivalModel {
         player_hp: stats.hitpoints,
         npc_hp: u16::try_from(row.hitpoints)
@@ -1203,7 +1221,7 @@ fn solve_survival(model: SurvivalModel<'_>) -> Result<Outcome, FightError> {
     let mut cursor = 0;
     while cursor < nodes.len() {
         if nodes.len() > MAX_SURVIVAL_STATES {
-            return Err(FightError::Input(format!(
+            return Err(FightError::NotModelled(format!(
                 "survival state graph exceeded {MAX_SURVIVAL_STATES} states"
             )));
         }
@@ -1264,7 +1282,7 @@ fn solve_survival(model: SurvivalModel<'_>) -> Result<Outcome, FightError> {
             });
         }
     }
-    Err(FightError::Input(
+    Err(FightError::NotModelled(
         "survival state graph did not converge within 100000 value iterations".into(),
     ))
 }
