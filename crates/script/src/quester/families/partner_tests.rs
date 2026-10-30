@@ -543,7 +543,9 @@ fn deadline_cleanup_supersedes_the_unacknowledged_accept_with_a_close() {
         HostEffect::Interaction(InteractReq::IfButton { component_id: 9 })
     ));
     // No dispatch receipt arrives. Failure cleanup must replace acceptance
-    // authority, not wait on it and leave the confirmation screen open.
+    // authority, not wait on it and leave the confirmation screen open. The run
+    // is polled on every observed tick: a skipped tick is a held one.
+    assert!(poll(&snapshot, &mut ledger, &handle, 4, epoch).is_pending());
     assert!(poll(&snapshot, &mut ledger, &handle, 5, epoch).is_pending());
     let live: Vec<_> = ledger
         .as_ref()
@@ -558,6 +560,7 @@ fn deadline_cleanup_supersedes_the_unacknowledged_accept_with_a_close() {
         HostEffect::Interaction(InteractReq::CloseModal)
     ));
     // The close is not repeated while it is unacknowledged.
+    assert!(poll(&snapshot, &mut ledger, &handle, 6, epoch).is_pending());
     assert!(poll(&snapshot, &mut ledger, &handle, 7, epoch).is_pending());
     let live: Vec<_> = ledger
         .as_ref()
