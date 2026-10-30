@@ -728,7 +728,7 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
     } else {
         0
     };
-    let policy = search_policy(query.style, food_limit, |stats| {
+    let policy = search_policy(query.style, |stats| {
         validate_wear(stats, weapon, &worn)?;
         let food_rule = food_item
             .map(|food| food::build(tables, row, food, stats.hitpoints))

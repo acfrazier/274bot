@@ -1358,6 +1358,30 @@ mod tests {
         });
         let rockslide = parse_bounded_step(&rockslide, rockslide_hazard(1), None, 1).unwrap();
         assert_eq!(rockslide.attempts, 8);
+        let mut altered_parent = parent.clone();
+        altered_parent["args"]["max_restarts"] = serde_json::json!(3);
+        let mut altered_guide = guide.clone();
+        altered_guide["quest"]["acquire"]["swing-and-recover"][1]["args"]["max_restarts"] =
+            serde_json::json!(2);
+        let Operation::SwingAcquire {
+            restarts,
+            recovery,
+            ..
+        } = parse_swing_acquire(&altered_parent, &altered_guide, 1).unwrap()
+        else {
+            panic!("altered swing recipe did not produce a swing acquire operation");
+        };
+        assert_eq!(restarts, 3);
+        assert_eq!(recovery[0].attempts, 3);
+        assert_eq!(recovery[1].attempts, 8);
+
+        let rockslide = serde_json::json!({
+            "id": "cross-rockslide-1",
+            "max_attempts": 4,
+            "stop": "rockslide-1-attempts-exhausted"
+        });
+        let rockslide = parse_bounded_step(&rockslide, rockslide_hazard(1), None, 1).unwrap();
+        assert_eq!(rockslide.attempts, 4);
     }
 
     #[test]
