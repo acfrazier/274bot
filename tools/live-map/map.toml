@@ -549,6 +549,7 @@ globs = [
   "crates/host-play/src/walk_map/**",
   "crates/script-js/src/compat/boat_fare.rs",
   "crates/script-js/src/compat/walk.rs",
+  "crates/script-js/src/shim/traversal.js",
   "crates/host-play/tests/nav_prereq_live.rs",
 ]
 cells = [
