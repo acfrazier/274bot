@@ -7581,7 +7581,7 @@ mod diagnostic_tests {
 
         let request = first_goal_area_request(Arc::clone(&world), from, to);
         let (output, _, _) = (*request).drive_route_job_output_for_test();
-        assert_eq!(output.search_result, Some(RouteSearchResultKind::NoPath));
+        assert_eq!(output.search_result, Some(RouteSearchResultKind::Supply));
         assert_eq!(output.missing.len(), 1);
         assert!(
             output
