@@ -113,7 +113,11 @@ fn matrix(world: &NavWorld, qualified: bool) -> Vec<serde_json::Value> {
         ..Default::default()
     };
     graph.rebuild_index(&collision);
-    assert_eq!(graph.at.len(), 2, "both real takeoffs are indexed");
+    assert_eq!(
+        graph.at.values().map(Vec::len).sum::<usize>(),
+        2,
+        "both real crossings are indexed (qualified={qualified}): {graph:?}"
+    );
     let profiles = [
         (
             "phoenix_alfonse",
