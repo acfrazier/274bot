@@ -838,6 +838,7 @@ where
                     hp,
                     cap,
                     tick as u16,
+                    0,
                 )
                 .and_then(|choice| choice.ordinary)
                 {

@@ -482,6 +482,7 @@ impl WalkGuard {
                 hp,
                 hp_max,
                 tick,
+                0,
             )
         } else {
             None
@@ -2761,6 +2762,7 @@ mod tests {
             poison_fire,
             hp,
             hp_max,
+            0,
             0,
         )
     }

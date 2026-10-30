@@ -1855,6 +1855,7 @@ impl Combat {
             hp,
             max,
             tick,
+            0,
         ) else {
             return;
         };

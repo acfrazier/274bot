@@ -135,7 +135,7 @@ impl SurvivalStep {
             return SurvivalWant::Click(args);
         }
         if let Some(hp) = hp {
-            if let Some(choice) = policy::eat_choice_with_floor(
+            if let Some(choice) = policy::eat_choice(
                 &frame,
                 tables,
                 &schedule,
