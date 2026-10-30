@@ -82,6 +82,8 @@ pub struct GathererSettings {
     pub fishing_method: String,
     #[serde(default = "default_target_preference")]
     pub target_preference: String,
+    #[serde(default = "default_tick_method")]
+    pub tick_method: String,
     #[serde(default = "default_location")]
     pub location: String,
     #[serde(default)]
@@ -139,6 +141,9 @@ fn default_fishing_method() -> String {
 fn default_target_preference() -> String {
     "Best tier".into()
 }
+fn default_tick_method() -> String {
+    "Off".into()
+}
 fn default_location() -> String {
     "Start".into()
 }
@@ -172,6 +177,7 @@ impl Default for GathererSettings {
             mining_resources: default_mining_resources(),
             fishing_method: default_fishing_method(),
             target_preference: default_target_preference(),
+            tick_method: default_tick_method(),
             location: default_location(),
             site: String::new(),
             custom_tile: None,
@@ -238,6 +244,17 @@ impl GathererSettings {
                 "targetPreference",
                 "invalid-option",
                 "targetPreference must be Best tier or Nearest",
+            ));
+        }
+        if self.tick_method.eq_ignore_ascii_case("off") {
+            self.tick_method = "Off".into();
+        } else if self.tick_method.eq_ignore_ascii_case("knife") {
+            self.tick_method = "Knife".into();
+        } else {
+            return Err(ConfigError::new(
+                "tickMethod",
+                "invalid-option",
+                "tickMethod must be Off or Knife",
             ));
         }
         if Location::parse(&self.location).is_none() {
@@ -399,6 +416,7 @@ impl GathererSettings {
             || self.woodcutting_resources != other.woodcutting_resources
             || self.mining_resources != other.mining_resources
             || self.fishing_method != other.fishing_method
+            || self.tick_method != other.tick_method
             || self.location != other.location
             || self.site != other.site
             || self.custom_tile != other.custom_tile
@@ -728,6 +746,14 @@ static SCHEMA: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             Some("Best tier"),
             &["Best tier", "Nearest"],
             Some("{ key: 'skill', anyOf: ['Woodcutting', 'Mining'] }"),
+            None,
+        ),
+        setting(
+            "tickMethod",
+            "string",
+            Some("Off"),
+            &["Off", "Knife"],
+            Some("{ key: 'skill', anyOf: ['Woodcutting', 'Mining', 'Fishing'] }"),
             None,
         ),
         setting(

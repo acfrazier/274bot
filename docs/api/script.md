@@ -1319,6 +1319,20 @@ without a walk. At the open bank the live rows are planned afresh and win over
 the memory. A wielded tool counts as carried, and so does a worn required item;
 consumed bait counts only from the pack.
 
+`tickMethod` is one restart-required setting for Woodcutting, Mining and
+Fishing. It defaults to `Off`; the other value is `Knife`. `Knife` prepares
+one selected-cache Knife and normal Logs: held targets 1 and 3, with at least
+one of each needed for the technique. Both item IDs are protected from
+deposits and product disposal. Preparation does not decide whether the
+selected method or observed tool can use the technique.
+
+An unknown bank admits the existing trip to learn its stock. A known bank
+without a usable knife-and-log kit does not cause a trip or `supply-missing`
+for that optional kit; ordinary gathering can continue. At an open bank,
+available stock tops up the kit only when both minimums can be met.
+This settings-and-supply slice is inert until the emission and boundary-test
+slices S4 and S8 land.
+
 `baitTarget` defaults to 100 (range 1–10,000). Only a selected fishing method
 that consumes bait uses it: zero held bait makes a trip due, and the next bank
 trip tops it up to the target. `food` is an optional selected-cache item name;

@@ -1201,7 +1201,7 @@ impl Gatherer {
             return;
         };
         let products = Arc::clone(&self.prepared.products);
-        let mut protected = [0; 8];
+        let mut protected = [0; 10];
         let ids = supply::protected_ids(&self.prepared, self.tool.id);
         let protected_len = ids.as_slice().len();
         protected[..protected_len].copy_from_slice(ids.as_slice());

@@ -23,13 +23,19 @@ use std::sync::Arc;
 
 const COINS_ID: i32 = 995;
 const MAX_RESERVE_RUNES: usize = 3;
-const MAX_PLAN_ITEMS: usize = 8;
-const MAX_PROTECTED_IDS: usize = 8 + UNBANKABLE_ALIASES.len();
+const MAX_PLAN_ITEMS: usize = 10;
+const MAX_PROTECTED_IDS: usize = 10 + UNBANKABLE_ALIASES.len();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SupplyItemFact {
     pub id: i32,
     pub name: Arc<str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TickKit {
+    pub knife: SupplyItemFact,
+    pub logs: SupplyItemFact,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +72,8 @@ pub struct PreparedSupply {
     pub coin_name: Option<Arc<str>>,
     /// Selected spell and its selected-cache rune costs; absent for `Off`.
     pub reserve: Option<ReserveSpell>,
+    /// Fixed knife and normal-log kit, resolved without method applicability.
+    pub tick_kit: Option<TickKit>,
 }
 
 impl PreparedSupply {
@@ -90,13 +98,48 @@ impl PreparedSupply {
             ));
         }
         let reserve = resolve_reserve(settings, selected)?;
+        let tick_kit = resolve_tick_kit(settings, selected)?;
         Ok(Self {
             food,
             bait,
             coin_name,
             reserve,
+            tick_kit,
         })
     }
+}
+
+fn resolve_tick_kit(
+    settings: &GathererSettings,
+    selected: &SelectedGameData,
+) -> Result<Option<TickKit>, ConfigError> {
+    if settings.tick_method != "Knife" {
+        return Ok(None);
+    }
+    let resolve = |alias| {
+        selected
+            .resolve_item_name(alias)
+            .and_then(|item| {
+                item.name
+                    .as_deref()
+                    .filter(|name| !name.trim().is_empty())
+                    .map(|name| SupplyItemFact {
+                        id: item.id,
+                        name: Arc::from(name),
+                    })
+            })
+            .ok_or_else(|| {
+                ConfigError::new(
+                    "tickMethod",
+                    "item-unavailable",
+                    format!("the selected cache has no named {alias} item"),
+                )
+            })
+    };
+    Ok(Some(TickKit {
+        knife: resolve("knife")?,
+        logs: resolve("logs")?,
+    }))
 }
 
 fn resolve_food(
@@ -554,6 +597,10 @@ pub fn protected_ids(prepared: &Prepared, tool_id: i32) -> ProtectedIds {
             }
         }
     }
+    if let Some(kit) = &prepared.supply.tick_kit {
+        ids.push(kit.knife.id);
+        ids.push(kit.logs.id);
+    }
     ids
 }
 
@@ -594,6 +641,7 @@ pub struct SupplyPlan {
     items: [Option<SupplyItem>; MAX_PLAN_ITEMS],
     len: u8,
     missing: Option<Arc<str>>,
+    kit_missing: bool,
 }
 
 impl Default for SupplyPlan {
@@ -602,6 +650,7 @@ impl Default for SupplyPlan {
             items: std::array::from_fn(|_| None),
             len: 0,
             missing: None,
+            kit_missing: false,
         }
     }
 }
@@ -612,6 +661,12 @@ impl SupplyPlan {
     /// plan.
     pub fn missing(&self) -> Option<&Arc<str>> {
         self.missing.as_ref()
+    }
+
+    /// The optional technique kit cannot reach one held knife and log.
+    /// It never becomes a gating missing item or a trip by itself.
+    pub fn kit_missing(&self) -> bool {
+        self.kit_missing
     }
 
     fn note_missing(&mut self, missing: Arc<str>) {
@@ -773,6 +828,20 @@ impl SupplyPlan {
                 }
             }
         }
+        if let Some(kit) = &prepared.supply.tick_kit {
+            let knife_held = held(kit.knife.id);
+            let logs_held = held(kit.logs.id);
+            let knife_banked = banked(kit.knife.id).max(0);
+            let logs_banked = banked(kit.logs.id).max(0);
+            if knife_held.saturating_add(knife_banked) < 1
+                || logs_held.saturating_add(logs_banked) < 1
+            {
+                plan.kit_missing = true;
+            } else {
+                top_up(&mut plan, &kit.knife, 1, 1, knife_held, knife_banked);
+                top_up(&mut plan, &kit.logs, 3, 1, logs_held, logs_banked);
+            }
+        }
         plan
     }
 
@@ -838,6 +907,23 @@ fn supplies_due(supply: &PreparedSupply, settings: &GathererSettings, stock: Sto
                 .reserve
                 .as_ref()
                 .is_some_and(|reserve| !can_afford_cast(reserve, stock)))
+        || supply
+            .tick_kit
+            .as_ref()
+            .is_some_and(|kit| tick_kit_due(kit, stock))
+}
+
+fn tick_kit_due(kit: &TickKit, stock: Stock<'_>) -> bool {
+    let (Some(knife), Some(logs)) = (stock.held(kit.knife.id), stock.held(kit.logs.id)) else {
+        return false;
+    };
+    if knife >= 1 && logs >= 1 {
+        return false;
+    }
+    stock.bank.filter(|bank| bank.known()).is_none_or(|bank| {
+        (knife >= 1 || bank.count(kit.knife.id).is_some_and(|count| count >= 1))
+            && (logs >= 1 || bank.count(kit.logs.id).is_some_and(|count| count >= 1))
+    })
 }
 
 /// Runes are consumed from the pack: worn runes never pay a cast.
