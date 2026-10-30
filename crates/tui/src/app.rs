@@ -2047,6 +2047,7 @@ impl TuiApp {
                 if let Some(card) = self.script_cards.get(idx) {
                     self.script_sel = card_selection(card);
                     self.browse_changed = true;
+                    self.script_browse_open = false;
                 }
                 AppAction::None
             }
@@ -2066,15 +2067,28 @@ impl TuiApp {
                     AppAction::None
                 }
             }
-            Command::ScriptStart => match self.script_sel.as_ref().map(ScriptChoice::duplicate) {
-                Some(sel) => AppAction::ScriptStart(sel),
-                None => AppAction::Refused(Refusal {
-                    command: Some(OperatorCommand::StartScript),
-                    bot: self.focused_name(),
-                    reason: "script: browse to pick one first".into(),
-                    need: Unavailable::NoScriptPicked.need(),
-                }),
-            },
+            Command::ScriptStart => {
+                let quester_selected = self
+                    .script_sel
+                    .as_ref()
+                    .and_then(ScriptChoice::compiled_id)
+                    == Some(frontend_core::scripts::CompiledCardId::QUESTER);
+                if quester_selected && self.script_browse_open {
+                    // Browse covers Quester's shared pre-start zone disclosure.
+                    self.script_browse_open = false;
+                    AppAction::None
+                } else {
+                    match self.script_sel.as_ref().map(ScriptChoice::duplicate) {
+                        Some(sel) => AppAction::ScriptStart(sel),
+                        None => AppAction::Refused(Refusal {
+                            command: Some(OperatorCommand::StartScript),
+                            bot: self.focused_name(),
+                            reason: "script: browse to pick one first".into(),
+                            need: Unavailable::NoScriptPicked.need(),
+                        }),
+                    }
+                }
+            }
             Command::ScriptPause => AppAction::ScriptPause,
             Command::ScriptStop => AppAction::ScriptStop,
             #[cfg(feature = "js")]
