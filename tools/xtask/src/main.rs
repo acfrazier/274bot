@@ -25,5 +25,7 @@ fn main() -> ExitCode {
 }
 
 fn print_usage() {
-    println!("Usage: cargo xtask ci --list | --all | <step>... [--log-dir <path>]");
+    println!(
+        "Usage: cargo run --locked -p xtask -- ci --list | --all | <step>... [--log-dir <path>]"
+    );
 }

@@ -8,8 +8,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 ### Developer tooling
 
 - Contributors can run the same checks as GitHub CI with
-  `cargo xtask ci --all`. The command writes a log and exit code for each
-  step.
+  `cargo run --locked -p xtask -- ci --all`. The command writes a log and exit
+  code for each step.
 
 ### Panel and terminal app
 

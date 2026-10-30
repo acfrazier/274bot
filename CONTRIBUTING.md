@@ -57,7 +57,7 @@ data, the other programs and the live-test commands are in
 Run the full CI check set:
 
 ```sh
-cargo xtask ci --all
+cargo run --locked -p xtask -- ci --all
 ```
 
 This command runs the formatting checks, lint checks, architecture check,
@@ -65,9 +65,11 @@ FlatBuffer check, all Clippy commands, and every test lane from GitHub CI.
 It writes one log file per step and a `summary.txt` file to
 `target/xtask-ci/`.
 
-Use `cargo xtask ci --list` to print the step names. Run selected steps with
-`cargo xtask ci <step>...`. Use `--log-dir <path>` to choose another log
+Use `cargo run --locked -p xtask -- ci --list` to print the step names. Run selected steps with
+`cargo run --locked -p xtask -- ci <step>...`. Use `--log-dir <path>` to choose another log
 directory.
+You may add a personal Cargo alias in your user-level Cargo config; keep it
+outside the repository.
 
 The `xtask` package is a workspace member. The workspace `default-members`
 list excludes it, so plain `cargo test` and `cargo clippy` do not build it.

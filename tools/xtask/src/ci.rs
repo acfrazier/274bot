@@ -178,7 +178,9 @@ pub fn run(args: Vec<String>) -> Result<u8, String> {
         let step = steps
             .iter()
             .find(|step| step.name == *name)
-            .ok_or_else(|| format!("unknown CI step `{name}`; run `cargo xtask ci --list`"))?;
+            .ok_or_else(|| {
+                format!("unknown CI step `{name}`; use `--list` to list valid steps")
+            })?;
         selected_steps.push(step);
     }
 
@@ -761,7 +763,7 @@ fn self_check_step(root: &Path, log: &mut File) -> Result<i32, String> {
     if problems.is_empty() {
         writeln!(
             log,
-            "CI run steps call cargo xtask or use an approved hosted setup command."
+            "CI run steps call the locked xtask runner or use an approved hosted setup command."
         )
         .map_err(io_error)?;
         return Ok(0);
@@ -790,7 +792,7 @@ fn inspect_workflow(contents: &str) -> Vec<String> {
     let run_steps = parse_run_steps(contents);
     let step_specs = steps();
     let known: HashSet<&str> = step_specs.iter().map(|step| step.name.as_str()).collect();
-    let test_template = "cargo xtask ci test-${{ matrix.lane }}";
+    let test_template = "cargo run --locked -p xtask -- ci test-${{ matrix.lane }}";
     let mut called = HashSet::new();
     let mut has_test_template = false;
 
@@ -811,14 +813,14 @@ fn inspect_workflow(contents: &str) -> Vec<String> {
         }
         if step.commands.len() != 1 {
             problems.push(format!(
-                "{}: run block must contain one `cargo xtask ci <step>` command",
+                "{}: run block must contain one locked xtask command",
                 step.name
             ));
             continue;
         }
         let Some(name) = parse_xtask_call(&step.commands[0]) else {
             problems.push(format!(
-                "{}: run command bypasses cargo xtask: {}",
+                "{}: run command bypasses the xtask runner: {}",
                 step.name,
                 step.commands.join(" ; ")
             ));
@@ -826,7 +828,7 @@ fn inspect_workflow(contents: &str) -> Vec<String> {
         };
         if !known.contains(name) {
             problems.push(format!(
-                "{}: cargo xtask references unknown step `{name}`",
+                "{}: references unknown xtask CI step `{name}`",
                 step.name
             ));
             continue;
@@ -837,14 +839,14 @@ fn inspect_workflow(contents: &str) -> Vec<String> {
     }
 
     if !has_test_template {
-        problems.push("CI has no cargo xtask test-lane matrix call".to_owned());
+        problems.push("CI has no xtask test-lane matrix call".to_owned());
     }
     for step in step_specs
         .iter()
         .filter(|step| !step.name.starts_with("test-"))
     {
         if !called.contains(step.name.as_str()) {
-            problems.push(format!("CI does not call cargo xtask step `{}`", step.name));
+            problems.push(format!("CI does not call xtask CI step `{}`", step.name));
         }
     }
     problems
@@ -907,7 +909,7 @@ fn parse_matrix_lanes(contents: &str) -> Vec<String> {
 }
 
 fn parse_xtask_call(command: &str) -> Option<&str> {
-    let command = command.strip_prefix("cargo xtask ci ")?;
+    let command = command.strip_prefix("cargo run --locked -p xtask -- ci ")?;
     if command.is_empty() || command.split_whitespace().count() != 1 {
         return None;
     }
@@ -1189,7 +1191,7 @@ mod tests {
         assert!(
             problems
                 .iter()
-                .any(|problem| problem.contains("bypasses cargo xtask"))
+                .any(|problem| problem.contains("bypasses the xtask runner"))
         );
     }
 

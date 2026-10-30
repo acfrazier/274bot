@@ -52,19 +52,19 @@ jobs:
         with:
           shared-key: fmt-ubuntu-24.04
       - name: Check formatting
-        run: cargo xtask ci fmt
+        run: cargo run --locked -p xtask -- ci fmt
       - name: Check formatting
-        run: cargo xtask ci fmt-client
+        run: cargo run --locked -p xtask -- ci fmt-client
       - name: Lint suppression ratchet
-        run: cargo xtask ci ratchet-selftest
+        run: cargo run --locked -p xtask -- ci ratchet-selftest
       - name: Lint suppression ratchet
-        run: cargo xtask ci ratchet
+        run: cargo run --locked -p xtask -- ci ratchet
       - name: Docs check
-        run: cargo xtask ci docs-check-selftest
+        run: cargo run --locked -p xtask -- ci docs-check-selftest
       - name: Docs check
-        run: cargo xtask ci docs-check
+        run: cargo run --locked -p xtask -- ci docs-check
       - name: ci-self-check
-        run: cargo xtask ci ci-self-check
+        run: cargo run --locked -p xtask -- ci ci-self-check
 
   clippy:
     name: clippy
@@ -97,33 +97,33 @@ jobs:
             . -> target
             vendor/fr-client-rust -> target
       - name: Navigation action deny-list coverage
-        run: cargo xtask ci nav-clippy
+        run: cargo run --locked -p xtask -- ci nav-clippy
       - name: Clippy
-        run: cargo xtask ci clippy-1
+        run: cargo run --locked -p xtask -- ci clippy-1
       - name: Clippy
-        run: cargo xtask ci clippy-2
+        run: cargo run --locked -p xtask -- ci clippy-2
       - name: Clippy
-        run: cargo xtask ci clippy-3
+        run: cargo run --locked -p xtask -- ci clippy-3
       - name: Clippy
-        run: cargo xtask ci clippy-4
+        run: cargo run --locked -p xtask -- ci clippy-4
       - name: Clippy
-        run: cargo xtask ci clippy-5
+        run: cargo run --locked -p xtask -- ci clippy-5
       - name: Clippy
-        run: cargo xtask ci clippy-6
+        run: cargo run --locked -p xtask -- ci clippy-6
       - name: Clippy
-        run: cargo xtask ci clippy-7
+        run: cargo run --locked -p xtask -- ci clippy-7
       - name: Clippy
-        run: cargo xtask ci clippy-8
+        run: cargo run --locked -p xtask -- ci clippy-8
       - name: Clippy
-        run: cargo xtask ci clippy-9
+        run: cargo run --locked -p xtask -- ci clippy-9
       - name: Clippy
-        run: cargo xtask ci clippy-10
+        run: cargo run --locked -p xtask -- ci clippy-10
       - name: Clippy
-        run: cargo xtask ci clippy-11
+        run: cargo run --locked -p xtask -- ci clippy-11
       - name: Clippy
-        run: cargo xtask ci clippy-12
+        run: cargo run --locked -p xtask -- ci clippy-12
       - name: Clippy
-        run: cargo xtask ci clippy-13
+        run: cargo run --locked -p xtask -- ci clippy-13
 
   architecture:
     name: architecture
@@ -153,11 +153,11 @@ jobs:
           python-version: "3.14.8"
           check-latest: false
       - name: Run operator-owned architecture check
-        run: cargo xtask ci arch-selftest
+        run: cargo run --locked -p xtask -- ci arch-selftest
       - name: Run operator-owned architecture check
-        run: cargo xtask ci arch
+        run: cargo run --locked -p xtask -- ci arch
       - name: Check FlatBuffer bindings
-        run: cargo xtask ci flatbuffers
+        run: cargo run --locked -p xtask -- ci flatbuffers
 
   test_lanes:
     name: test (${{ matrix.lane }})
@@ -306,7 +306,7 @@ jobs:
           echo "WORLD_NAV_PACK=$RUNNER_TEMP/nav-289/274bot-289-v17.navpack" >> "$GITHUB_ENV"
           echo "NAV_ARRIVAL_PACK=$RUNNER_TEMP/nav-289/274bot-289-v17.navpack" >> "$GITHUB_ENV"
       - name: Test ${{ matrix.lane }}
-        run: cargo xtask ci test-${{ matrix.lane }}
+        run: cargo run --locked -p xtask -- ci test-${{ matrix.lane }}
 
   # Preserve the required `test` status while the expensive commands fan out.
   test:
