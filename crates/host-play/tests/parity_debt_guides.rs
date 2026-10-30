@@ -17,6 +17,15 @@ fn walk_step<'a>(
     }
 }
 
+fn cross_names(step: &serde_json::Value) -> Vec<&str> {
+    step["args"]["cross"]
+        .as_array()
+        .expect("declared cross ids")
+        .iter()
+        .map(|name| name.as_str().expect("cross id"))
+        .collect()
+}
+
 #[test]
 fn desert_captain_resume_step_declares_the_same_pack_zones() {
     let document: serde_json::Value =
@@ -28,16 +37,8 @@ fn desert_captain_resume_step_declares_the_same_pack_zones() {
         "ugthanki@3281,3056,0",
         "ugthanki@3305,3089,0",
     ];
-    let names = |step: &serde_json::Value| {
-        step["args"]["cross"]
-            .as_array()
-            .expect("declared cross ids")
-            .iter()
-            .map(|name| name.as_str().expect("cross id"))
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(names(first), expected);
-    assert_eq!(names(resumed), expected);
+    assert_eq!(cross_names(first), expected);
+    assert_eq!(cross_names(resumed), expected);
     assert!(resumed["args"].get("allow_danger_zones").is_none());
 }
 
