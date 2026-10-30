@@ -152,7 +152,11 @@ pub(crate) fn seed_prereq_crossing(
         typecode: 0,
         info: 0,
         description: None,
-        layer: if barrier { LocLayer::Ground } else { LocLayer::Wall },
+        layer: if barrier {
+            LocLayer::Ground
+        } else {
+            LocLayer::Wall
+        },
         shape: if barrier { 10 } else { 0 },
         angle: if barrier { 1 } else { 3 },
         width: 1,

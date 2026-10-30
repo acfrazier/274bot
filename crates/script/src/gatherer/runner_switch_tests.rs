@@ -200,8 +200,9 @@ fn prerequisite_handoff_reissues_original_walk_once_and_cancel_revokes_it() {
             _ => None,
         })
         .collect();
-    assert_eq!(walk_ids.len(), 2, "one outer walk and one reissue");
-    let (reissued_id, reissued) = &walk_ids[1];
+    assert_eq!(walk_ids.len(), 1, "only the live reissue remains queued");
+    let (reissued_id, reissued) = &walk_ids[0];
+    assert!(*reissued_id > outer_id, "the outer request was replaced once");
     assert_eq!(reissued.target, target);
     assert_eq!(reissued.radius, 2);
     assert_eq!(
@@ -220,8 +221,8 @@ fn prerequisite_handoff_reissues_original_walk_once_and_cancel_revokes_it() {
     });
     assert_eq!(
         ledger.as_ref().unwrap().outbox.len(),
-        3,
-        "an unchanged pending wrapper must not submit duplicate actions"
+        1,
+        "an unchanged pending wrapper keeps only its one live reissue"
     );
     gatherer.cancel_active();
     let reissued_action = ledger

@@ -97,7 +97,9 @@ pub(crate) fn prepare(
     _worker: &mut FamilyPreparation,
 ) -> Result<Arc<PrereqCatalog>, FactError> {
     let pin = data.selected_pin()?;
-    CACHE.prepare(Key::of(&pin), || load(&pin, crate::game_data::MANIFEST, embedded(pin.revision)))
+    CACHE.prepare(Key::of(&pin), || {
+        load(&pin, crate::game_data::MANIFEST, embedded(pin.revision))
+    })
 }
 
 pub(crate) fn cached(data: &SelectedGameData) -> Option<Arc<PrereqCatalog>> {
@@ -106,13 +108,7 @@ pub(crate) fn cached(data: &SelectedGameData) -> Option<Arc<PrereqCatalog>> {
 }
 
 fn load(pin: &SelectedPin, manifest: &[u8], family: &[u8]) -> Result<PrereqCatalog, FactError> {
-    family_asset::verify_family(
-        pin,
-        manifest,
-        &PREREQ_STEPS_FAMILY,
-        wire::SCHEMA,
-        family,
-    )?;
+    family_asset::verify_family(pin, manifest, &PREREQ_STEPS_FAMILY, wire::SCHEMA, family)?;
     let rows = wire::decode(pin, family)?;
     PrereqCatalog::from_rows(rows).map_err(|reason| FactError::Invalid {
         source: crate::selected::SourceSpan {

@@ -2305,7 +2305,7 @@ fn return_prerequisite_handoff_reissues_once_and_cancel_keeps_anchor_state() {
         .iter()
         .filter(|action| matches!(&action.effect, HostEffect::Walk(_)))
         .count();
-    assert_eq!(walk_count, 3, "one bank walk, return walk, and one reissue");
+    assert_eq!(walk_count, 1, "only the live return reissue remains queued");
     require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 10));
     assert_eq!(latest_walk(&driver).unwrap().0, reissued_id);
     assert_eq!(

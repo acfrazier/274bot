@@ -1906,7 +1906,11 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
         })
         .expect("selected catalog has a local gated crossing");
     let crossing = &entry.crossing;
-    let origin = t(crossing.takeoff.x, crossing.takeoff.z, crossing.takeoff.level);
+    let origin = t(
+        crossing.takeoff.x,
+        crossing.takeoff.z,
+        crossing.takeoff.level,
+    );
     let destination = t(crossing.to.x, crossing.to.z, crossing.to.level);
     let size = crossing
         .takeoff
@@ -1920,15 +1924,13 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
         0,
     );
     // Both endpoints are valid stands; wall bits forbid walking between them.
-    let mut flags = vec![
-        client::dash3d::CollisionFlag::SQ_BLOCKED as u32;
-        4 * size * size
-    ];
+    let mut flags = vec![client::dash3d::CollisionFlag::SQ_BLOCKED as u32; 4 * size * size];
     for stand in [crossing.takeoff, crossing.to] {
         let x = (stand.x - grid_origin.x) as usize;
         let z = (stand.z - grid_origin.z) as usize;
         flags[stand.level as usize * size * size + z * size + x] =
-            client::dash3d::CollisionFlag::WALK_BLOCK_FLAGS as u32;
+            (client::dash3d::CollisionFlag::WALK_BLOCK_FLAGS
+                & !client::dash3d::CollisionFlag::SQ_BLOCKED) as u32;
     }
     let (walk, blocked) = pack_walk(&flags);
     let mut gate_edge = edge(TransportKind::Door, crossing.at, crossing.to);

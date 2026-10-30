@@ -5869,7 +5869,11 @@ impl api::quest_progress::EvidenceProvider for ZonesQuestProfile {
             QuestGate::Complete(key) => key,
             QuestGate::Window(window) => &window.quest,
         };
-        let row = self.facts.rows.iter().find(|row| row.id == key.0.as_ref())?;
+        let row = self
+            .facts
+            .rows
+            .iter()
+            .find(|row| row.id == key.0.as_ref())?;
         let complete = self.complete.contains(&row.display);
         let truth = match gate {
             QuestGate::Complete(_) => {

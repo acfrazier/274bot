@@ -214,9 +214,13 @@ fn poll_at(
     tick_number: u64,
     gate: OpenGate,
 ) -> Poll<Result<AcquireOutcome, ActionError>> {
-    crate::quester::families::tests::with_tick_scene_bank(snapshot, memory, ledger, tick_number, |tick| {
-        run.poll(tick, gate)
-    })
+    crate::quester::families::tests::with_tick_scene_bank(
+        snapshot,
+        memory,
+        ledger,
+        tick_number,
+        |tick| run.poll(tick, gate),
+    )
 }
 
 fn first_effect(ledger: &TestLedger) -> &HostEffect {
@@ -1139,8 +1143,9 @@ fn bank_walk_prerequisite_handoff_reissues_once_and_cancel_keeps_run_state() {
             _ => None,
         })
         .collect();
-    assert_eq!(walk_ids.len(), 2, "one outer walk and one reissue");
-    let (reissued_id, reissued) = &walk_ids[1];
+    assert_eq!(walk_ids.len(), 1, "only the live reissue remains queued");
+    let (reissued_id, reissued) = &walk_ids[0];
+    assert!(*reissued_id > outer_id, "the outer request was replaced once");
     assert_eq!(reissued.target, target);
     assert_eq!(reissued.radius, 0);
     assert_eq!(reissued.required_after.tick, 3);
@@ -1154,8 +1159,8 @@ fn bank_walk_prerequisite_handoff_reissues_once_and_cancel_keeps_run_state() {
     assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 4, OpenGate::Open).is_pending());
     assert_eq!(
         ledger.as_ref().unwrap().outbox.len(),
-        3,
-        "pending wrapper polls must not repeat the outer or probe action"
+        1,
+        "pending wrapper polls keep only their one live reissue"
     );
     crate::quester::families::tests::with_tick_bank(&snapshot, None, &mut ledger, 5, |tick| {
         run.cancel(tick.actions)

@@ -446,12 +446,23 @@ fn morytania_sites_compare_proof_unknown_and_false_gate_routes() {
         .chain(&world().graph.teleports)
         .enumerate()
     {
-        let crossing = edge.crossing_id().expect("representable real-pack crossing");
-        assert_eq!(
-            crossing_ids.insert(crossing, index),
-            None,
-            "duplicate CrossingId at edge {index}: {crossing:?}"
+        let crossing = edge
+            .crossing_id()
+            .expect("representable real-pack crossing");
+        let physical = (
+            edge.kind,
+            edge.loc_id,
+            edge.option,
+            edge.at,
+            crossing.takeoff,
+            edge.to,
         );
+        if let Some(previous) = crossing_ids.insert(crossing, physical) {
+            assert_eq!(
+                previous, physical,
+                "different physical crossings share an id at edge {index}: {crossing:?}"
+            );
+        }
     }
     println!("real-pack unique crossing ids: {}", crossing_ids.len());
 
@@ -471,14 +482,23 @@ fn morytania_sites_compare_proof_unknown_and_false_gate_routes() {
         .enumerate()
         .filter(|(_, edge)| edge.loc_id == a1.loc_id && edge.at == a1.at && edge.to == a1.to)
         .collect();
-    assert_eq!(a1_directions.len(), 2, "both exact A1 takeoffs are retained");
-    assert!(!world().collision.standable(a1.at), "the barrier anchor is blocked");
+    assert_eq!(
+        a1_directions.len(),
+        2,
+        "both exact A1 takeoffs are retained"
+    );
+    assert!(
+        !world().collision.standable(a1.at),
+        "the barrier anchor is blocked"
+    );
     for (index, edge) in &a1_directions {
         let crossing = edge.crossing_id().unwrap();
         assert_eq!(crossing.at, a1.at);
         assert_ne!(crossing.takeoff, crossing.at);
         assert!(world().collision.standable(crossing.takeoff));
-        assert!(world().graph.admissible_from(&world().collision, *index, crossing.takeoff));
+        assert!(world()
+            .graph
+            .admissible_from(&world().collision, *index, crossing.takeoff));
     }
     let mut a1_takeoffs: Vec<_> = a1_directions
         .iter()

@@ -181,6 +181,9 @@ impl PrereqWalk {
 
     /// Dropping the only live handle revokes its queued requests. Do not click a page.
     pub fn cancel(&mut self) {
+        if matches!(self.phase, Phase::Complete) {
+            return;
+        }
         if let Some(link) = &self.revocation {
             link.revoker().revoke();
         }
@@ -395,15 +398,26 @@ mod tests {
     #[test]
     fn saving_native_policy_allocates_nothing_and_does_not_retain_the_old_stamp() {
         let original = EvidenceStamp {
-            run: RunKey { slot: 1, run: 2, session: 3 },
+            run: RunKey {
+                slot: 1,
+                run: 2,
+                session: 3,
+            },
             tick: 4,
             sequence: 5,
         };
-        let next = EvidenceStamp { tick: 6, sequence: 7, ..original };
-        let target = api::WorldTile { x: 10, z: 20, level: 0 };
-        let mut request = crate::quester::families::reach::walk_request(
-            target, 2, Some(42), original,
-        );
+        let next = EvidenceStamp {
+            tick: 6,
+            sequence: 7,
+            ..original
+        };
+        let target = api::WorldTile {
+            x: 10,
+            z: 20,
+            level: 0,
+        };
+        let mut request =
+            crate::quester::families::reach::walk_request(target, 2, Some(42), original);
         request.options.allow_teleports = crate::native::WalkBit::Forbid;
         request.protect = true;
         request.food_guard = true;
@@ -419,12 +433,14 @@ mod tests {
         assert_eq!(reissued.target, target);
         assert_eq!(reissued.radius, 2);
         assert_eq!(reissued.loc_id, Some(42));
-        assert_eq!(reissued.options.allow_teleports, crate::native::WalkBit::Forbid);
+        assert_eq!(
+            reissued.options.allow_teleports,
+            crate::native::WalkBit::Forbid
+        );
         assert!(reissued.protect && reissued.food_guard);
         assert!(!reissued.allow.food);
         assert!(
-            std::mem::size_of::<SavedNativeWalk>()
-                + std::mem::size_of::<EvidenceStamp>()
+            std::mem::size_of::<SavedNativeWalk>() + std::mem::size_of::<EvidenceStamp>()
                 <= std::mem::size_of::<WalkRequest>()
         );
     }

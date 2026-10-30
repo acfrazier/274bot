@@ -1045,7 +1045,9 @@ impl<Io> OperatorSession<Io> {
             self.frames
                 .with_snapshot(name, |snapshot| {
                     play.map_walk_with_snapshot(
-                        command.take().expect("snapshot dispatch retains its map command"),
+                        command
+                            .take()
+                            .expect("snapshot dispatch retains its map command"),
                         &context,
                         Some(snapshot),
                         &state,

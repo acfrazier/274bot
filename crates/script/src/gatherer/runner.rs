@@ -412,7 +412,8 @@ impl Gatherer {
     /// The packed stand the current trip opened, for the transfer verbs'
     /// re-open (`native_bank::MAX_BANK_REOPENS`).
     fn selected_access(&self) -> Option<Arc<bank::BankStandAccess>> {
-        self.scratch.selected_bank
+        self.scratch
+            .selected_bank
             .as_ref()
             .and_then(|selected| selected.access.clone())
     }
@@ -3306,15 +3307,13 @@ mod tests {
             });
             assert!(gatherer.failure.is_none());
             assert_eq!(gatherer.trip, TripStep::Open);
-            assert!(
-                gatherer
-                    .scratch
-                    .selected_bank
-                    .as_ref()
-                    .unwrap()
-                    .access
-                    .is_some()
-            );
+            assert!(gatherer
+                .scratch
+                .selected_bank
+                .as_ref()
+                .unwrap()
+                .access
+                .is_some());
             assert!(matches!(gatherer.active, Active::Open(_)));
         }
         assert_eq!(gatherer.scratch.bank_open_attempts, MAX_BANK_OPEN_ATTEMPTS);

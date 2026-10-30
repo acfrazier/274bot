@@ -122,11 +122,7 @@ fn crossing_snapshot(crossing: &PrereqCrossing) -> GameSnapshot {
         .iter()
         .find(|(_, row)| row.crossing(&crossing.crossing).is_some())
         .unwrap();
-    crate::quester::families::tests::seed_prereq_crossing(
-        &mut snapshot,
-        row,
-        &crossing.crossing,
-    );
+    crate::quester::families::tests::seed_prereq_crossing(&mut snapshot, row, &crossing.crossing);
     snapshot
 }
 fn npc_snapshot(row: &PrereqStep) -> GameSnapshot {
@@ -933,12 +929,14 @@ fn reclaim_retalks_once_with_the_same_row_and_budget() {
                 );
             }
             close_snapshot(&mut snapshot);
-            let before = ledger.as_ref().unwrap().outbox.len();
+            let before = ledger.as_ref().unwrap().outbox.last().unwrap().request_id;
             let mut completed = false;
             for _ in 0..=PAGE_TICKS + SEND_SLACK_TICKS + DIALOG_GAP_TICKS as u16 {
                 match poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget) {
                     Poll::Pending
-                        if index == 0 && ledger.as_ref().unwrap().outbox.len() > before =>
+                        if index == 0
+                            && ledger.as_ref().unwrap().outbox.last().unwrap().request_id
+                                != before =>
                     {
                         assert!(matches!(last_interaction(&ledger), InteractReq::Npc { .. }));
                         accept_last(&mut ledger, tick, 0);
@@ -1121,7 +1119,13 @@ fn cancel_at_effect(after_effect: bool) {
             &mut budget,
         );
         page_snapshot(&mut snapshot, branch.terminal.as_deref().unwrap());
-        assert!(poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget).is_pending());
+        for _ in 0..=PAGE_TICKS + SEND_SLACK_TICKS {
+            assert!(poll(&mut run, &snapshot, &mut ledger, tick, &state, &mut budget).is_pending());
+            if !state.prereq_snapshot().facts().is_empty() {
+                break;
+            }
+            tick += 1;
+        }
         assert_eq!(state.prereq_snapshot().facts()[0].possible, branch.proves);
     } else {
         assert!(state.prereq_snapshot().facts().is_empty());
@@ -1645,6 +1649,7 @@ fn reach_handover_captures_inline_walk_grants_and_cancels_the_probe_owner() {
     let mut snapshot = crossing_snapshot(crossing);
     let mut door = snapshot.locs()[0].clone();
     door.name = Some("Door".into());
+    door.actions = vec![Some("Open".into())];
     snapshot.seed_locs(vec![door]);
     let args = reach::ReachArgs {
         kind: reach::ReachKind::Loc {
@@ -1896,6 +1901,17 @@ fn a_walk_deadline_returns_no_route_to_step_without_a_fact_or_retry() {
     let mut budget = PrereqBudget::default();
     let mut ledger = None;
     assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
+    assert_eq!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|effect| matches!(effect.effect, HostEffect::Walk(_)))
+            .count(),
+        1,
+        "the deadline starts with one owned walk"
+    );
     let before = state.prereq_snapshot();
     let result = with_tick(&snapshot, &mut ledger, 1, |native| {
         native.cx.active_now = crate::native::walk::WALK_DEADLINE + Duration::from_millis(1);
@@ -1918,7 +1934,7 @@ fn a_walk_deadline_returns_no_route_to_step_without_a_fact_or_retry() {
             .iter()
             .filter(|effect| matches!(effect.effect, HostEffect::Walk(_)))
             .count(),
-        1
+        0,
     );
     assert!(!ledger.as_ref().unwrap().test_owner_live());
 }

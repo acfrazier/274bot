@@ -188,8 +188,14 @@ fn stage_colour_range(
 }
 
 fn intersect_ranges(left: InclusiveRange, right: InclusiveRange) -> Option<InclusiveRange> {
-    let min = left.min.unwrap_or(i32::MIN).max(right.min.unwrap_or(i32::MIN));
-    let max = left.max.unwrap_or(i32::MAX).min(right.max.unwrap_or(i32::MAX));
+    let min = left
+        .min
+        .unwrap_or(i32::MIN)
+        .max(right.min.unwrap_or(i32::MIN));
+    let max = left
+        .max
+        .unwrap_or(i32::MAX)
+        .min(right.max.unwrap_or(i32::MAX));
     (min <= max).then_some(InclusiveRange {
         min: Some(min),
         max: Some(max),
@@ -273,19 +279,12 @@ impl QuestListEvidenceProvider {
 }
 
 impl EvidenceProvider for QuestListEvidenceProvider {
-    fn observe_gate(
-        &self,
-        gate: &QuestGate,
-        required_after: EvidenceStamp,
-    ) -> Option<Observation> {
+    fn observe_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Option<Observation> {
         let quest = match gate {
             QuestGate::Complete(quest) => quest,
             QuestGate::Window(window) => &window.quest,
         };
-        let status = self
-            .statuses
-            .iter()
-            .find(|status| status.quest == *quest);
+        let status = self.statuses.iter().find(|status| status.quest == *quest);
         let truth = if !self.family_matches
             || !self.stamp.is_some_and(|stamp| stamp.meets(required_after))
         {
@@ -299,16 +298,14 @@ impl EvidenceProvider for QuestListEvidenceProvider {
             };
             match gate {
                 QuestGate::Complete(_) => status_truth(status.status),
-                QuestGate::Window(window) if window.signal == status.signal => {
-                    stage_colour_range(
-                        status.status,
-                        status.complete,
-                        status.stage_domain,
-                        status.colour_authoritative,
-                        status.transmission,
-                    )
-                    .map_or(Truth::Unknown, |possible| window.values.test(&possible))
-                }
+                QuestGate::Window(window) if window.signal == status.signal => stage_colour_range(
+                    status.status,
+                    status.complete,
+                    status.stage_domain,
+                    status.colour_authoritative,
+                    status.transmission,
+                )
+                .map_or(Truth::Unknown, |possible| window.values.test(&possible)),
                 QuestGate::Window(_) => Truth::Unknown,
             }
         };

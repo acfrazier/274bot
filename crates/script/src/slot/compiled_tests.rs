@@ -2943,8 +2943,8 @@ mod api_gather_seat {
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>(),
             8
         );
-        // Typed RouteTooLarge adds 40 B to inline receipts: 8,206 B measured, 242 B headroom.
-        assert!(exclusive <= 8448, "exclusive API seat exceeds 8.25KiB");
+        // The logical walk retains prerequisite request policy: 8,554 B measured, 150 B headroom.
+        assert!(exclusive <= 8704, "exclusive API seat exceeds 8.5KiB");
         let stopped = allocation_counter::measure(|| stop_in_seat(&mut slot, 209));
         println!("API gather post-Stop retained={}B (exclusive live + Stop delta), Stop={stopped:?}, worker transient_peak={}B", exclusive + stopped.bytes_current, i128::from(worker.bytes_max) - i128::from(worker.bytes_current));
         assert!(!slot.api_owns_foreground());

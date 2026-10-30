@@ -320,8 +320,7 @@ impl SlotScript {
     pub fn take_compat_walk_terminal(
         &self,
     ) -> Option<(RunKey, RequestId, Result<WalkReceipt, ActionError>)> {
-        let CompatWalkSeat::Owned(owner) = &self.api.as_ref()?.compat_walk
-        else {
+        let CompatWalkSeat::Owned(owner) = &self.api.as_ref()?.compat_walk else {
             return None;
         };
         let CompatWalkState::Finished(result) = &owner.state else {
@@ -338,8 +337,7 @@ impl SlotScript {
         let Some(seat) = self.api.as_mut() else {
             return false;
         };
-        let CompatWalkSeat::Owned(owner) = &mut seat.compat_walk
-        else {
+        let CompatWalkSeat::Owned(owner) = &mut seat.compat_walk else {
             return false;
         };
         if owner.request_id != request_id {
@@ -936,8 +934,7 @@ impl SlotScript {
     }
 
     fn tick_api_compat_walk(&mut self, seat: &mut ApiSeat, ctx: &mut ScriptCtx<'_>) {
-        let CompatWalkSeat::Owned(owner) = &mut seat.compat_walk
-        else {
+        let CompatWalkSeat::Owned(owner) = &mut seat.compat_walk else {
             return;
         };
         let CompatWalkState::Walking(walk) = &mut owner.state else {
