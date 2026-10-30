@@ -1426,10 +1426,7 @@ fn wait_for_drezel_advice_page(fixture: &LiveFixture) -> (ChatWitness, String, V
                 return None;
             }
             let page = first_chat_witness(&snapshot)?;
-            if !page
-                .text
-                .contains("I cannot let you pass without warning you.")
-            {
+            if !page.text.contains("I cannot let you pass without warning you.") {
                 return None;
             }
             Some((page, w3, logs))
