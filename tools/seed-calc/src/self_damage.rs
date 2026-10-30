@@ -522,9 +522,7 @@ fn parse_swing_acquire(
     let acquire = guide
         .pointer("/quest/acquire")
         .and_then(Value::as_object)
-        .ok_or_else(|| {
-            SelfDamageError::NotModelled(format!("{id} has no quest acquire map"))
-        })?;
+        .ok_or_else(|| SelfDamageError::NotModelled(format!("{id} has no quest acquire map")))?;
     let recipe = acquire
         .get("swing-and-recover")
         .and_then(Value::as_array)
@@ -1184,7 +1182,10 @@ mod tests {
                 }]),
             );
         }
-        acquire.insert("swing-and-recover".into(), serde_json::Value::Array(swing_recipe));
+        acquire.insert(
+            "swing-and-recover".into(),
+            serde_json::Value::Array(swing_recipe),
+        );
         let guide = serde_json::json!({ "quest": { "acquire": acquire } });
         let parent = serde_json::json!({
             "id": "swing-rope",
