@@ -114,6 +114,34 @@ struct JungleLoc {
     next_stage: &'static str,
     next_stage_id: i32,
 }
+#[derive(Clone, Copy)]
+struct JungleCrossing {
+    loc_id: i32,
+    at: WorldTile,
+    takeoff: WorldTile,
+    to: WorldTile,
+}
+
+#[derive(Clone, Copy)]
+struct JungleToolOptions<'a> {
+    machette: i32,
+    machette_wearable: bool,
+    axes: &'a [i32],
+    worn_axes: &'a [i32],
+}
+
+#[derive(Clone, Copy)]
+struct JungleToolUse {
+    machette_worn: bool,
+    axe: JungleAxeUse,
+}
+
+#[derive(Clone, Copy)]
+enum JungleAxeUse {
+    Carried(i32),
+    Worn,
+}
+
 
 struct LegendsQuest {
     family: QuestFamilyId,
@@ -355,6 +383,12 @@ fn jungle_edges(
     let mut map_ids = map_ids;
     map_ids.sort_unstable();
     let quest = legends_quest(content_root, quests);
+    let tools = JungleToolOptions {
+        machette: machette_id,
+        machette_wearable,
+        axes: &axes,
+        worn_axes: &worn_axes,
+    };
     if quest.is_none() {
         bump(skipped, SKIP_JUNGLE_QUEST, 1);
     }
@@ -460,19 +494,13 @@ fn jungle_edges(
                     continue;
                 }
                 let before = graph.edges.len();
-                emit_jungle_variants(
-                    graph,
-                    loc.id,
+                let crossing = JungleCrossing {
+                    loc_id: loc.id,
                     at,
                     takeoff,
                     to,
-                    &map_ids,
-                    machette_id,
-                    machette_wearable,
-                    &axes,
-                    &worn_axes,
-                    quest.as_ref(),
-                );
+                };
+                emit_jungle_variants(graph, crossing, tools, &map_ids, quest.as_ref());
                 emitted |= graph.edges.len() > before;
             }
             if !emitted {
@@ -484,30 +512,17 @@ fn jungle_edges(
 
 fn emit_jungle_variants(
     graph: &mut TransportGraph,
-    loc_id: i32,
-    at: WorldTile,
-    takeoff: WorldTile,
-    to: WorldTile,
+    crossing: JungleCrossing,
+    tools: JungleToolOptions<'_>,
     map_ids: &[i32],
-    machette: i32,
-    machette_wearable: bool,
-    axes: &[i32],
-    worn_axes: &[i32],
     quest: Option<&LegendsQuest>,
 ) {
     for &map_id in map_ids {
         emit_jungle_unlock_variants(
             graph,
-            loc_id,
-            at,
-            takeoff,
-            to,
-            machette,
-            machette_wearable,
-            axes,
-            worn_axes,
+            crossing,
+            tools,
             JungleUnlock::Item(map_id),
-            None,
         );
     }
     if let Some(quest) = quest {
@@ -519,16 +534,9 @@ fn emit_jungle_variants(
         if let Some(completed_gate) = completed_gate.as_ref() {
             emit_jungle_unlock_variants(
                 graph,
-                loc_id,
-                at,
-                takeoff,
-                to,
-                machette,
-                machette_wearable,
-                axes,
-                worn_axes,
-                JungleUnlock::Complete,
-                Some(completed_gate),
+                crossing,
+                tools,
+                JungleUnlock::Complete(completed_gate),
             );
         }
     }
@@ -536,49 +544,36 @@ fn emit_jungle_variants(
 
 fn emit_jungle_unlock_variants(
     graph: &mut TransportGraph,
-    loc_id: i32,
-    at: WorldTile,
-    takeoff: WorldTile,
-    to: WorldTile,
-    machette: i32,
-    machette_wearable: bool,
-    axes: &[i32],
-    worn_axes: &[i32],
-    unlock: JungleUnlock,
-    quest_gates: Option<&QuestGates>,
+    crossing: JungleCrossing,
+    tools: JungleToolOptions<'_>,
+    unlock: JungleUnlock<'_>,
 ) {
     for machette_worn in [false, true] {
-        if machette_worn && !machette_wearable {
+        if machette_worn && !tools.machette_wearable {
             continue;
         }
-        for &axe in axes {
+        for &axe in tools.axes {
             push_jungle_edge(
                 graph,
-                loc_id,
-                at,
-                takeoff,
-                to,
-                machette,
-                machette_worn,
-                Some(axe),
-                &[],
+                crossing,
+                tools,
+                JungleToolUse {
+                    machette_worn,
+                    axe: JungleAxeUse::Carried(axe),
+                },
                 unlock,
-                quest_gates,
             );
         }
-        if !worn_axes.is_empty() && !machette_worn {
+        if !tools.worn_axes.is_empty() && !machette_worn {
             push_jungle_edge(
                 graph,
-                loc_id,
-                at,
-                takeoff,
-                to,
-                machette,
-                machette_worn,
-                None,
-                worn_axes,
+                crossing,
+                tools,
+                JungleToolUse {
+                    machette_worn,
+                    axe: JungleAxeUse::Worn,
+                },
                 unlock,
-                quest_gates,
             );
         }
     }
@@ -586,41 +581,42 @@ fn emit_jungle_unlock_variants(
 
 fn push_jungle_edge(
     graph: &mut TransportGraph,
-    loc_id: i32,
-    at: WorldTile,
-    takeoff: WorldTile,
-    to: WorldTile,
-    machette: i32,
-    machette_worn: bool,
-    inventory_axe: Option<i32>,
-    worn_axes: &[i32],
-    unlock: JungleUnlock,
-    quest_gates: Option<&QuestGates>,
+    crossing: JungleCrossing,
+    tools: JungleToolOptions<'_>,
+    tool_use: JungleToolUse,
+    unlock: JungleUnlock<'_>,
 ) {
     let mut item_req = Vec::with_capacity(3);
-    if let Some(axe) = inventory_axe {
-        item_req.push((axe, 1));
+    let worn_req = match tool_use.axe {
+        JungleAxeUse::Carried(axe) => {
+            item_req.push((axe, 1));
+            Vec::new()
+        }
+        JungleAxeUse::Worn => tools.worn_axes.to_vec(),
+    };
+    if !tool_use.machette_worn {
+        item_req.push((tools.machette, 1));
     }
-    if !machette_worn {
-        item_req.push((machette, 1));
-    }
-    if let JungleUnlock::Item(id) = unlock {
-        item_req.push((id, 1));
-    }
+    let quest_gates = match unlock {
+        JungleUnlock::Item(id) => {
+            item_req.push((id, 1));
+            None
+        }
+        JungleUnlock::Complete(gates) => Some(gates.clone()),
+    };
     item_req.sort_unstable();
-    let worn_all_req = if machette_worn {
-        vec![machette]
+    let worn_all_req = if tool_use.machette_worn {
+        vec![tools.machette]
     } else {
         Vec::new()
     };
-    let worn_req = worn_axes.to_vec();
     graph.edges.push(TransportEdge {
         kind: TransportKind::AgilityShortcut,
-        at,
-        to,
-        takeoff: Some(takeoff),
+        at: crossing.at,
+        to: crossing.to,
+        takeoff: Some(crossing.takeoff),
         player_delta: None,
-        loc_id,
+        loc_id: crossing.loc_id,
         option: 1,
         ticks: 1,
         dir: None,
@@ -637,14 +633,14 @@ fn push_jungle_edge(
         forbidden_worn: vec![],
         members_req: false,
         wildy_cap: None,
-        quest_gates: quest_gates.cloned(),
+        quest_gates,
     });
 }
 
 #[derive(Clone, Copy)]
-enum JungleUnlock {
+enum JungleUnlock<'a> {
     Item(i32),
-    Complete,
+    Complete(&'a QuestGates),
 }
 
 fn jungle_landing(takeoff: WorldTile, at: WorldTile) -> Option<WorldTile> {

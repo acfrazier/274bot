@@ -86,7 +86,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   poll that misses several ticks no longer extends it.
 - Navigation now maps both directions of the Legends Guild gate after the quest
   starts. It also maps Kharazi jungle crossings. A jungle map or completed
-  Legends unlocks each crossing. The player must also have a machette and an
+  Legends unlocks each crossing. The player must also have a machete and an
   axe. Both tools can be carried. The player can also wear one tool in the right
   hand and carry the other.
 
