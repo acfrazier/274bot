@@ -2011,7 +2011,7 @@ fn run_brimhaven_phoenix_kitchen_journal() {
     let receipt_path = evidence.join(format!("kitchen-phoenix-{account}-{serial}.json"));
     let mut receipt = json!({
         "account": account,
-        "server": "Engine Q through chardonnay 127.0.0.1:44694",
+        "server": "Engine Q at 127.0.0.1:44694",
         "seed": null,
         "prerequisite_and_crossing": null,
         "logout_observed": false,
