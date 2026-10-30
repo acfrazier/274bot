@@ -748,7 +748,25 @@ fn probability_admission_engine_l() {
             mode: Mode::PoisonDuringHold,
         },
     ];
+    let selected = std::env::var("P1C_LIVE_CELLS").ok().map(|value| {
+        let names: Vec<_> = value.split(',').map(str::to_owned).collect();
+        assert!(!names.is_empty());
+        for name in &names {
+            assert!(
+                cells.iter().any(|cell| cell.name == name),
+                "unknown P1-C live cell: {name}"
+            );
+        }
+        names
+    });
+    let mut failed = Vec::new();
     for cell in cells {
+        if selected
+            .as_ref()
+            .is_some_and(|names| !names.iter().any(|name| name == cell.name))
+        {
+            continue;
+        }
         let cell_dir = directory.join(cell.name);
         std::fs::create_dir_all(&cell_dir).unwrap();
         let log_start = LOGS.0.lock().unwrap().len();
@@ -760,9 +778,17 @@ fn probability_admission_engine_l() {
         }));
         receipt["passed"] = json!(result.is_ok());
         save(&cell_dir, &rig, &mut receipt, log_start);
-        rig.logout_clean();
-        if let Err(error) = result {
-            std::panic::resume_unwind(error);
+        if result.is_err() {
+            failed.push(cell.name);
         }
+        // The acceptance receipt ends before cleanup. Keep our own account
+        // clear of aggro, then let content's 16-tick combat logout guard expire.
+        rig.tele(tile(3222, 3218));
+        let cleanup_start = rig.snapshot.tick();
+        rig.until(24, false, |rig| {
+            rig.snapshot.tick().saturating_sub(cleanup_start) >= 17
+        });
+        rig.logout_clean();
     }
+    assert!(failed.is_empty(), "failed P1-C live cells: {failed:?}");
 }
