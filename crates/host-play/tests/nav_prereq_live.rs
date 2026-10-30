@@ -1952,7 +1952,7 @@ fn live_compat_prereq_holy_barrier_denied_second_walk_same_run() {
         "run": run_receipt(run),
         "server_stage": {"priestperil": 60, "druidspirit": 0},
         "global_allow_prereq_dialogue": false,
-        "wrong_memory": {"priestperil": 61, "run": run_receipt(fixture.seed_run)},
+        "wrong_memory": {"priestperil": 61, "run": run_receipt(expected_run)},
         "server_refusal_fact": format!("{fact:?}"),
         "same_run_compat_result": result,
         "outer_terminal_logs": logs,
