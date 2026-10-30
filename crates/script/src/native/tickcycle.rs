@@ -1519,25 +1519,56 @@ mod tests {
         }
     }
 
-    fn dispatch_receipt(request_id: u64, tick: u64, prefix: u8, wire_events: u8) -> ServerOrderedDispatch {
+    fn dispatch_receipt(
+        request_id: u64,
+        tick: u64,
+        shape: Shape,
+        prefix: u8,
+    ) -> ServerOrderedDispatch {
         use api::interact::server_ordered::{RowDispatch, ServerOrderedError};
+        let row_events = match shape {
+            Shape::Continuing => [1, 1, 2, 0, 0],
+            Shape::Ending => [1, 1, 0, 0, 0],
+        };
+        let row_count = match shape {
+            Shape::Continuing => 3,
+            Shape::Ending => 2,
+        };
+        let dispatched_prefix = prefix.min(row_count);
         let mut rows = [RowDispatch::NotAttempted; 5];
-        let terminal = if prefix < 5 {
-            Some(ServerOrderedError::ContractUnavailable)
+        let mut wire_events = 0u8;
+        for (index, row_wire_events) in row_events
+            .iter()
+            .copied()
+            .take(usize::from(dispatched_prefix))
+            .enumerate()
+        {
+            rows[index] = RowDispatch::HostQueued {
+                wire_events: row_wire_events,
+            };
+            wire_events = wire_events.saturating_add(row_wire_events);
+        }
+        let terminal = if dispatched_prefix < row_count {
+            let reason = ServerOrderedError::ContractUnavailable;
+            let refused_row = usize::from(dispatched_prefix);
+            rows[refused_row] = RowDispatch::Refused { reason };
+            for row in rows
+                .iter_mut()
+                .take(usize::from(row_count))
+                .skip(refused_row + 1)
+            {
+                *row = RowDispatch::SkippedDependency;
+            }
+            Some(reason)
         } else {
             None
         };
-        if prefix == 0 {
-            rows[0] = RowDispatch::Refused {
-                reason: ServerOrderedError::ContractUnavailable,
-            };
-        }
         ServerOrderedDispatch {
             request_id,
             dispatch_tick: tick,
             rows,
-            row_count: 4,
-            dispatched_prefix: prefix,
+            row_count,
+            dispatched_prefix,
             wire_events,
             terminal,
         }
@@ -1553,7 +1584,7 @@ mod tests {
         let mut tick = 101;
         let mut request = run.batch(tick, AnimClass::Skill);
         for cycle in 0..3 {
-            let receipt = dispatch_receipt(request, tick, 3, 4);
+            let receipt = dispatch_receipt(request, tick, Shape::Continuing, 3);
             assert_eq!(
                 run.poll_receipts(
                     tick, None, false, false, false, false, false, false, false, Some(&receipt), None,
@@ -1672,8 +1703,21 @@ mod tests {
 
     #[test]
     fn ending_click_occurs_at_the_next_edge_and_roll_starts_next_cycle() {
+        use api::interact::server_ordered::RowDispatch;
         let mut run = replay(ending());
-        run.batch(101, AnimClass::Skill);
+        let batch = run.batch(101, AnimClass::Skill);
+        let receipt = dispatch_receipt(batch, 101, Shape::Ending, 2);
+        assert_eq!(receipt.row_count, 2);
+        assert_eq!(receipt.wire_events, 2);
+        assert_eq!(receipt.rows[0], RowDispatch::HostQueued { wire_events: 1 });
+        assert_eq!(receipt.rows[1], RowDispatch::HostQueued { wire_events: 1 });
+        assert_eq!(receipt.terminal, None);
+        assert_eq!(
+            run.poll_receipts(
+                101, None, false, false, false, false, false, false, false, Some(&receipt), None,
+            ),
+            CycleStep::Wait
+        );
         assert_eq!(run.poll(102, Some(AnimClass::Fletching), false, false, false, false, false, false, false), CycleStep::Wait);
         assert_eq!(run.poll(102, None, false, false, false, false, false, false, false), CycleStep::Wait);
         assert_eq!(run.poll(103, None, false, false, false, false, false, false, false), CycleStep::Click);
@@ -1753,7 +1797,7 @@ mod tests {
         let transit_batch = run.next_request - 1;
         assert_eq!(run.poll(103, Some(AnimClass::Fletching), false, false, false, false, false, false, false), CycleStep::Click);
         let act_request = run.next_request - 1;
-        assert_eq!(run.poll_receipts(103, None, false, false, false, false, false, false, false, Some(&dispatch_receipt(transit_batch, 102, 3, 4)), Some((act_request, true))), CycleStep::Wait);
+        assert_eq!(run.poll_receipts(103, None, false, false, false, false, false, false, false, Some(&dispatch_receipt(transit_batch, 102, Shape::Continuing, 3)), Some((act_request, true))), CycleStep::Wait);
         run.poll(104, None, false, false, false, false, false, false, false);
         assert_eq!(run.poll(105, None, false, false, true, false, false, false, false), CycleStep::Click);
         assert_eq!(run.policy.stats().lost, 1);
@@ -1787,7 +1831,7 @@ mod tests {
     fn act_obligation_uses_prefix_independent_signal_and_receipt_id() {
         let mut run = replay(continuing());
         let batch_id = run.batch(101, AnimClass::Skill);
-        let receipt = dispatch_receipt(batch_id, 101, 2, 3);
+        let receipt = dispatch_receipt(batch_id, 101, Shape::Continuing, 2);
         assert_eq!(run.poll_receipts(101, None, false, false, false, false, false, false, false, Some(&receipt), None), CycleStep::Wait);
         assert_eq!(run.poll(102, Some(AnimClass::Fletching), false, false, false, false, false, false, false), CycleStep::Click);
         let act_id = run.next_request - 1;
@@ -1799,7 +1843,7 @@ mod tests {
 
         let mut prefix3 = replay(continuing());
         let id = prefix3.batch(101, AnimClass::Skill);
-        let receipt = dispatch_receipt(id, 101, 3, 4);
+        let receipt = dispatch_receipt(id, 101, Shape::Continuing, 3);
         prefix3.poll_receipts(101, None, false, false, false, false, false, false, false, Some(&receipt), None);
         assert_eq!(prefix3.poll(102, Some(AnimClass::Fletching), false, false, false, false, false, false, false), CycleStep::Click);
         assert_eq!(prefix3.policy.stats().verified, 0);
@@ -1848,7 +1892,7 @@ mod tests {
     fn lone_opener_gets_one_fallback_and_never_a_make_retry() {
         let mut run = replay(continuing());
         let batch = run.batch(101, AnimClass::Skill);
-        let receipt = dispatch_receipt(batch, 101, 1, 1);
+        let receipt = dispatch_receipt(batch, 101, Shape::Continuing, 1);
         assert_eq!(run.poll_receipts(101, None, false, false, false, false, false, false, false, Some(&receipt), None), CycleStep::Wait);
         assert_eq!(run.poll(102, None, false, false, false, false, false, false, false), CycleStep::Click);
         let fallback_id = run.next_request - 1;
@@ -1879,7 +1923,7 @@ mod tests {
     fn late_prefix_two_uses_one_slip_and_one_fallback() {
         let mut run = replay(continuing());
         let batch = run.batch(101, AnimClass::Skill);
-        let receipt = dispatch_receipt(batch, 101, 2, 3);
+        let receipt = dispatch_receipt(batch, 101, Shape::Continuing, 2);
         run.poll_receipts(101, None, false, false, false, false, false, false, false, Some(&receipt), None);
         run.poll(102, None, false, false, false, false, false, false, false);
         assert_eq!(run.poll(103, Some(AnimClass::Fletching), false, false, false, false, false, false, false), CycleStep::Click);
@@ -2006,7 +2050,7 @@ mod tests {
         for _ in 0..2 {
             let batch = run.batch(run.cycle.last_tick + 1, AnimClass::Skill);
             let tick = run.cycle.last_tick;
-            let receipt = dispatch_receipt(batch, tick, 0, 0);
+            let receipt = dispatch_receipt(batch, tick, Shape::Continuing, 0);
             assert_eq!(run.poll_receipts(tick, None, false, false, false, false, false, false, false, Some(&receipt), None), CycleStep::Wait);
             assert_eq!(run.poll(tick + 1, None, false, false, false, false, false, false, false), CycleStep::Click);
             assert_eq!(run.policy.stats().lost as u8, run.ring());
