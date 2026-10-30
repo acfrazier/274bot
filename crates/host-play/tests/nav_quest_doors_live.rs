@@ -1245,7 +1245,7 @@ enum KitchenFrameCommand {
 struct KitchenFrameControl {
     command: KitchenFrameCommand,
     crossing: api::prereq_steps::CrossingId,
-    crossing_pending: Option<(u32, u64)>,
+    crossing_pending: Option<(u32, i32)>,
     crossing_result: Option<Value>,
     logout_sent: bool,
     logout_observed: bool,
@@ -1628,7 +1628,6 @@ struct PhoenixPlayResult {
 
 fn run_phoenix_native_and_crossing(
     template: Arc<SharedClientTemplate>,
-    profile: Arc<host_play::ServerProfile>,
     selected: Arc<api::game_data::SelectedGameData>,
     world: Arc<NavWorld>,
     edge: TransportEdge,
@@ -2075,7 +2074,6 @@ fn run_brimhaven_phoenix_kitchen_journal() {
 
         let play_result = run_phoenix_native_and_crossing(
             template,
-            profile.clone(),
             selected,
             world,
             edge,
