@@ -821,6 +821,48 @@ mod tests {
     }
 
     #[test]
+    fn u2_content_proved_bespoke_melee_uses_shared_damage_facts() {
+        let combat = combat();
+        let rows = &combat.selected().npc_names().unwrap().rows;
+
+        let spider = rows.iter().find(|row| row.id == 977).unwrap();
+        assert!(!spider.bespoke);
+        let spider_fact = KindRisk::from_npc(spider, &combat);
+        assert_eq!(spider_fact.style, Style::Melee);
+        assert_eq!(spider_fact.max_hit, 4);
+        assert_eq!(spider_fact.rate, 4);
+        assert_eq!(spider_fact.unknown_for(), None);
+        assert_eq!(
+            crate::combat::select::facts::npc_style_max_hit(
+                spider,
+                crate::combat::threats::StyleObs::Melee,
+            ),
+            Some(4),
+        );
+
+        let highwayman = rows.iter().find(|row| row.id == 180).unwrap();
+        assert!(!highwayman.bespoke);
+        let highwayman_fact = KindRisk::from_npc(highwayman, &combat);
+        assert_eq!(highwayman_fact.style, Style::Melee);
+        assert_eq!(highwayman_fact.rate, 4);
+        assert_eq!(highwayman_fact.unknown_for(), None);
+
+        let shadow_spider = combat.selected().npc_by_config("shadow_spider").unwrap();
+        assert!(shadow_spider.bespoke);
+        assert_eq!(
+            KindRisk::from_npc(shadow_spider, &combat).unknown,
+            UnknownKind::Bespoke,
+        );
+        assert_eq!(
+            crate::combat::select::facts::npc_style_max_hit(
+                shadow_spider,
+                crate::combat::threats::StyleObs::Melee,
+            ),
+            None,
+        );
+    }
+
+    #[test]
     fn u2_cooperative_risk_table_matches_sync_and_checkpoints_every_npc() {
         let combat = combat();
         let rows = &combat.selected().npc_names().unwrap().rows;

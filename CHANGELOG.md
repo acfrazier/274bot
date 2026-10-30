@@ -30,6 +30,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Combat
 
+- The route-risk model uses normal melee facts for a bespoke NPC only when
+  extracted combat content proves its shared melee routine, damage, and timing,
+  with no poison or multi-hit effect. Other bespoke attacks remain unknown.
+
+
 - Bots now drink their boost potion before the first hit even when the target
   starts out of reach.
 - Bots now know how hard common monsters such as cows, chickens, rats and
