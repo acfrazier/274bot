@@ -347,7 +347,7 @@ fn an_accepted_use_on_whose_product_arrived_is_not_sent_again() {
 
         assert!(poll_use_on(&mut run, &after, &mut ledger, &mut budget, 9).is_pending());
         let done = poll_use_on(&mut run, &after, &mut ledger, &mut budget, 10);
-        assert!(matches!(done, Poll::Ready(Ok(_))), "{done:?}");
+        assert!(matches!(done, Poll::Ready(Ok(_))), "the step completes");
         assert_eq!(use_on_requests(&ledger), 0, "nothing is sent again");
         let log = take_resume_log();
         assert!(

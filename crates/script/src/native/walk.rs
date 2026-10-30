@@ -3,7 +3,6 @@ use super::walk_wait::{HostOutcome, Observation, WalkKey, WalkSlot};
 use super::{
     ActionContext, ActionError, HoldResume, NativeMachine, WalkEnd, WalkReceipt, WalkRequest,
 };
-use api::quest_progress::EvidenceStamp;
 use api::snapshot::SnapshotView;
 use nav_planner::contract::ArrivalKind;
 use std::num::NonZeroU64;
