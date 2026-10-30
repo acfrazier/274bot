@@ -180,6 +180,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   calculations, the radius helpers and the constants come from the game data
   that 274bot selects. `GERRANT_VENDOR` and `HARRY_VENDOR` still report
   `not impl`.
+- The catalog script BankSorter is no longer dimmed in the script picker. It
+  sorts the bank with the built-in bank sorter and reports the quest items
+  left in the bank. The Woodcutter, Miner and Fisher cards of GatheringBot
+  stay dimmed: the built-in Gatherer replaces them.
 
 ### Fixed during development
 

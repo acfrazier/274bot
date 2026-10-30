@@ -130,10 +130,10 @@ ScriptRegistry.register({ name: 'JiveKQ', create: () => new JiveKQ() });
     assert_eq!(cook.unloadable, None, "CookBot is not name-locked");
     let sorter = lib
         .get(ScriptSource::Catalog, "BankSorter")
-        .expect("BankSorter remains listed with its availability reason");
+        .expect("BankSorter listed");
     assert_eq!(
-        sorter.unloadable.as_deref(),
-        Some("dim: BankSorter is unavailable until native bank sorting is implemented")
+        sorter.unloadable, None,
+        "BankSorter loads: the native bank seat sorts"
     );
     let jive = lib
         .get(ScriptSource::Catalog, "JiveKQ")

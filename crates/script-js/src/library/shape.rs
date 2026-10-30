@@ -1097,11 +1097,6 @@ pub(super) fn catalog_unloadable(
     scanned: Option<String>,
 ) -> Option<String> {
     if source == ScriptSource::Catalog {
-        if name == "BankSorter" {
-            return Some(
-                "dim: BankSorter is unavailable until native bank sorting is implemented".into(),
-            );
-        }
         if name == "EssMiner" {
             return Some(
                 "dim: EssMiner is unavailable until the native Gatherer replaces it".into(),

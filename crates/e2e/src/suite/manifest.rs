@@ -536,15 +536,20 @@ mod tests {
             .cases
             .iter()
             .any(|c| c.id == "banksorter-live" && c.script.as_deref() == Some("BankSorter")));
-        // BankSorter is unavailable by operator decision wherever it appears.
-        for case in manifest
+        assert!(manifest.unavailable_by_operator_decision.is_empty());
+        let bank_sorter: Vec<_> = manifest
             .cases
             .iter()
-            .filter(|c| c.script.as_deref() == Some("BankSorter"))
-        {
+            .filter(|case| case.script.as_deref() == Some("BankSorter"))
+            .collect();
+        assert!(!bank_sorter.is_empty());
+        for case in bank_sorter {
+            assert_eq!(case.kind, CaseKind::Reference);
             assert_eq!(
-                case.unavailable.as_ref().map(|u| u.code.as_str()),
-                Some("operator_decision")
+                case.unavailable
+                    .as_ref()
+                    .map(|unavailable| unavailable.code.as_str()),
+                Some("unmapped_reference")
             );
         }
     }

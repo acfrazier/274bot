@@ -157,9 +157,7 @@
   "Firemaker",
   "FlaxRunner"
  ],
- "unavailable_by_operator_decision": [
-  "BankSorter"
- ],
+ "unavailable_by_operator_decision": [],
  "cases": [
   {
    "id": "aio_teleport",
@@ -4672,8 +4670,8 @@
     "paths": []
    },
    "unavailable": {
-    "code": "operator_decision",
-    "reason": "UNAVAILABLE_BY_OPERATOR_DECISION: no native sorter; cases and history are retained, nothing is replaced or silently removed"
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
    },
    "proven_at": "d02c664c",
    "note": "seeds a scrambled bank at Varrock West, sorts it cold, then tops it up and re-sorts; passes when both orders are contiguous by category and ranked by tier inside each one, the incremental pass takes one insert batch, and varp 304 comes back"
@@ -4694,8 +4692,8 @@
     "paths": []
    },
    "unavailable": {
-    "code": "operator_decision",
-    "reason": "UNAVAILABLE_BY_OPERATOR_DECISION: no native sorter; cases and history are retained, nothing is replaced or silently removed"
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
    }
   },
   {

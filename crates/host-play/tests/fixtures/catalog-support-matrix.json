@@ -31097,14 +31097,13 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "No LIVE acceptance sought for explicitly unavailable core.",
+      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
       "observable_proof_requirement": "after Start, script-caused Utility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "UNAVAILABLE_BY_OPERATOR_DECISION",
-      "status_detail": "Operator decision2026-09-11: keep BankSorter explicitly unavailable pending a separate native sorter. BLOCKED: missing native bank sorting. No foreign category planner or substitute value/ID policy is introduced.",
-      "fixture_id": "local-274",
-      "operator_scope_boundary": "Deferred native sorter; keep original inventory and honest runtime refusal. Not a foreign-script defect or a successful sort."
+      "status": "PENDING",
+      "status_detail": "PENDING: native bank sorting exists since 0.2.9; revision 274 live qualification is not yet run",
+      "fixture_id": "local-274"
     },
     {
       "display_name": "BankSorter",
@@ -31317,14 +31316,13 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "No LIVE acceptance sought for explicitly unavailable core.",
+      "fixture_readiness": "Live fixture: a seeded unsorted bank at a real bank booth (crates/host-play/tests/compat_bank_live.rs).",
       "observable_proof_requirement": "after Start, script-caused Utility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "UNAVAILABLE_BY_OPERATOR_DECISION",
-      "status_detail": "Operator decision2026-09-11: keep BankSorter explicitly unavailable pending a separate native sorter. BLOCKED: missing native bank sorting. No foreign category planner or substitute value/ID policy is introduced.",
-      "fixture_id": "local-289",
-      "operator_scope_boundary": "Deferred native sorter; keep original inventory and honest runtime refusal. Not a foreign-script defect or a successful sort."
+      "status": "PARTIAL",
+      "status_detail": "COMPAT-FINISH-029 (0.2.9): native sortBank and findQuestJunk; the operator dim is lifted. host-play compat_bank_live banksorter_sorts_and_reports passed 3/3 on Engine L at c1e892007 (sorted, 3 moves, planner order, varp 304 restored, Red bead quest leftover reported; /Volumes/dev-scratch/274bot-evidence/COMPAT-FINISH-029/impl/live/banksorter_sorts_and_reports/run-c1e-pass{1,2,3}). Other settings are not separately qualified.",
+      "fixture_id": "local-289"
     },
     {
       "display_name": "DartFletcher",
@@ -66409,14 +66407,13 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "No LIVE acceptance sought for explicitly unavailable core.",
+      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
       "observable_proof_requirement": "after Start, script-caused Utility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "UNAVAILABLE_BY_OPERATOR_DECISION",
-      "status_detail": "Operator decision2026-09-11: keep BankSorter explicitly unavailable pending a separate native sorter. BLOCKED: missing native bank sorting. No foreign category planner or substitute value/ID policy is introduced.",
-      "fixture_id": "local-274",
-      "operator_scope_boundary": "Deferred native sorter; keep original inventory and honest runtime refusal. Not a foreign-script defect or a successful sort."
+      "status": "PENDING",
+      "status_detail": "PENDING: native bank sorting exists since 0.2.9; revision 274 live qualification is not yet run",
+      "fixture_id": "local-274"
     },
     {
       "display_name": "BankSorter",
@@ -66629,14 +66626,13 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "No LIVE acceptance sought for explicitly unavailable core.",
+      "fixture_readiness": "Live fixture: a seeded unsorted bank at a real bank booth (crates/host-play/tests/compat_bank_live.rs).",
       "observable_proof_requirement": "after Start, script-caused Utility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "UNAVAILABLE_BY_OPERATOR_DECISION",
-      "status_detail": "Operator decision2026-09-11: keep BankSorter explicitly unavailable pending a separate native sorter. BLOCKED: missing native bank sorting. No foreign category planner or substitute value/ID policy is introduced.",
-      "fixture_id": "local-289",
-      "operator_scope_boundary": "Deferred native sorter; keep original inventory and honest runtime refusal. Not a foreign-script defect or a successful sort."
+      "status": "PARTIAL",
+      "status_detail": "COMPAT-FINISH-029 (0.2.9): native sortBank and findQuestJunk; the operator dim is lifted. host-play compat_bank_live banksorter_sorts_and_reports passed 3/3 on Engine L at c1e892007 (sorted, 3 moves, planner order, varp 304 restored, Red bead quest leftover reported; /Volumes/dev-scratch/274bot-evidence/COMPAT-FINISH-029/impl/live/banksorter_sorts_and_reports/run-c1e-pass{1,2,3}). Other settings are not separately qualified.",
+      "fixture_id": "local-289"
     },
     {
       "display_name": "DartFletcher",
@@ -80665,9 +80661,9 @@
         "receipt": "docs/compat/evidence/brimhaven-source-dim/8e7d965b.json"
       }
     ],
-    "operator_unavailable_rows": 4,
-    "core_qualification_required_cards": 43,
-    "core_qualification_required_rows": 172,
-    "operator_unavailable_note": "BankSorter remains in original inventory; native sorting explicitly deferred. Loader counts above describe actual loader snapshot, not qualified support."
+    "operator_unavailable_rows": 0,
+    "core_qualification_required_cards": 44,
+    "core_qualification_required_rows": 176,
+    "operator_unavailable_note": "BankSorter loads since 0.2.9 (native sortBank, COMPAT-FINISH-029); no card is unavailable by operator decision. The per-catalog loader counts are the recorded receipts of their snapshots; since 0.2.9 the loader dims one card fewer (BankSorter)."
   }
 }
