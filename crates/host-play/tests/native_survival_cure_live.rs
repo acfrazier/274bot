@@ -1089,7 +1089,7 @@ fn observe_frame(
     }
     if witness.poison_tick.is_some() {
         if let Some(hitmarks) = snapshot.hitmarks() {
-            record_poison_marks(&hitmarks, snapshot.tick(), &mut witness.poison_marks);
+            record_poison_marks(hitmarks, snapshot.tick(), &mut witness.poison_marks);
         }
         if witness.cure_tick.is_none()
             && snapshot
