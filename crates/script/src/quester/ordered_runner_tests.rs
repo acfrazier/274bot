@@ -10,7 +10,7 @@ use crate::quester::compile::{PredicateContext, PredicatePlan, StepPlan, StepRun
 use crate::quester::families::tests::{with_tick, with_tick_output};
 use crate::quester::path::{PathDocument, PredicateDocument, SequenceOrder, StepDocument};
 use api::snapshot::{GameSnapshot, QuestStatusView, StatView};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 const NOT_STARTED: i32 = 0xF80000;
 const IN_PROGRESS: i32 = 0xF8F800;
@@ -94,6 +94,55 @@ fn random_event() -> DetectedRandom {
         name: "genie".into(),
         ours: true,
         npc_index: Some(0),
+    }
+}
+
+fn maze_event() -> DetectedRandom {
+    DetectedRandom {
+        kind: api::random::RandomKind::Maze,
+        name: "maze".into(),
+        ours: true,
+        npc_index: None,
+    }
+}
+
+/// A step that stays in flight until released and counts the progress reads
+/// it was handed.
+struct HeldStep {
+    release: Arc<AtomicBool>,
+    reads: Arc<AtomicUsize>,
+}
+
+impl StepPlan for HeldStep {
+    fn begin(&self, _: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+        Ok(Box::new(HeldRun {
+            release: Arc::clone(&self.release),
+            reads: Arc::clone(&self.reads),
+        }))
+    }
+}
+
+struct HeldRun {
+    release: Arc<AtomicBool>,
+    reads: Arc<AtomicUsize>,
+}
+
+impl StepRun for HeldRun {
+    fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        if !self.release.load(Ordering::Acquire) {
+            return Poll::Pending;
+        }
+        Poll::Ready(Ok(StepOutcome {
+            progress: None,
+            evidence: cx.tick.cx.evidence(),
+            receipt: None,
+        }))
+    }
+
+    fn cancel(&mut self, _: &mut NativeActions) {}
+
+    fn progress_read_completed(&mut self, _: Duration) {
+        self.reads.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -624,17 +673,76 @@ fn unresolved_first_read_after_resume_still_resets_the_cursor() {
     );
 }
 
+/// QUESTER-READ-KEEPS-STEP: the engine's 500-tick login timer spawns a random
+/// event while a step runs (`login.rs2:40`, `macro_events.rs2:2-12`), and the
+/// quest journal read that follows must find the same stage with the same
+/// step still in flight. Dig Site `steal-green-sample` and Ernest
+/// `unlock-closet` began again from cursor 0 here, with no failure.
 #[test]
-fn random_event_replays_an_ordered_sequence_unless_paired_work_is_pending() {
+fn random_event_then_a_same_stage_read_keeps_the_step_in_flight() {
     let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), always()));
+    let release = Arc::new(AtomicBool::new(false));
+    let reads = Arc::new(AtomicUsize::new(0));
+    Arc::get_mut(&mut harness.script.path)
+        .expect("unshared path")
+        .sequences[0]
+        .steps[1]
+        .plan = Arc::new(HeldStep {
+        release: Arc::clone(&release),
+        reads: Arc::clone(&reads),
+    });
     harness.run_until_begun(2);
+    assert!(harness.script.step.is_some());
+    assert_eq!(harness.script.cursor, 1);
     assert_eq!(harness.script.on_random(&random_event()), RandomClaim::Host);
-    assert!(harness.script.progress.is_none());
-    harness.run_until_begun(4);
+    assert!(
+        harness.script.step.is_some(),
+        "the event does not end step 2"
+    );
+    assert!(harness.script.progress.is_some());
+    // The journal read of the same stage, as the live runs sent it.
+    harness.script.needs_read = true;
+    for _ in 0..6 {
+        harness.step();
+    }
     assert_eq!(
         harness.begun,
-        ["step-1", "step-2", "step-1", "step-2"],
-        "an ordinary random event drops progress, so the sequence replays from step 1"
+        ["step-1", "step-2"],
+        "the read of an unchanged stage must not begin step 2 again"
+    );
+    assert!(harness.script.step.is_some());
+    assert!(harness.script.progress.is_some());
+    assert_eq!(harness.script.cursor, 1);
+    assert!(!harness.script.needs_read);
+    assert_eq!(
+        reads.load(Ordering::Relaxed),
+        1,
+        "the in-flight step takes the finished read through progress_read_completed"
+    );
+    release.store(true, Ordering::Release);
+    harness.run_until_begun(3);
+    assert_eq!(
+        harness.begun[2], "step-3",
+        "the sequence carries on past the kept step"
+    );
+}
+
+#[test]
+fn random_event_that_moves_the_player_drops_only_the_step() {
+    let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), always()));
+    harness.run_until_begun(2);
+    assert_eq!(harness.script.on_random(&maze_event()), RandomClaim::Host);
+    assert!(
+        harness.script.step.is_none(),
+        "the teleport ended step 2's interaction"
+    );
+    assert!(harness.script.progress.is_some());
+    assert_eq!(harness.script.cursor, 1);
+    harness.run_until_begun(3);
+    assert_eq!(
+        harness.begun,
+        ["step-1", "step-2", "step-2"],
+        "the sequence resumes at the kept cursor, not at step 1"
     );
     // Let step 2 complete and settle so the cursor sits past it (step 3 is
     // selected on that same tick), then model partner admission in flight,
@@ -642,18 +750,19 @@ fn random_event_replays_an_ordered_sequence_unless_paired_work_is_pending() {
     while harness.script.cursor < 2 {
         harness.step();
     }
-    assert_eq!(harness.begun.len(), 5);
+    assert_eq!(harness.begun.len(), 4);
     assert_eq!(harness.script.cursor, 2);
     harness.script.pair_admission_since = Some(harness.active_now());
-    assert_eq!(harness.script.on_random(&random_event()), RandomClaim::Host);
+    assert_eq!(harness.script.on_random(&maze_event()), RandomClaim::Host);
+    assert!(harness.script.step.is_some());
     assert!(harness.script.progress.is_some());
     assert_eq!(harness.script.cursor, 2);
     // Step 3 stays in flight through the event and the sequence carries on
     // from the kept cursor: the next begin is step 4, not a replay.
-    harness.run_until_begun(6);
+    harness.run_until_begun(5);
     assert_eq!(
-        harness.begun[5], "step-4",
-        "while paired work is pending a random event keeps the cursor: replaying mid-pairing would desync the partners"
+        harness.begun[4], "step-4",
+        "while paired work is pending even a moving random event keeps the step: replaying mid-pairing would desync the partners"
     );
 }
 
