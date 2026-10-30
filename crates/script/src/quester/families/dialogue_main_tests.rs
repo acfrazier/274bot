@@ -201,10 +201,27 @@ fn book_page(ids: DialogueUiIds, text: &str, forward_visible: bool) -> Vec<Widge
 }
 
 fn last_interaction(ledger: &Option<Box<ledger::Ledger>>) -> &InteractReq {
-    match &ledger.as_ref().unwrap().outbox.last().unwrap().effect {
-        HostEffect::Interaction(request) => request,
-        _ => panic!("expected interaction"),
-    }
+    let outbox = &ledger.as_ref().unwrap().outbox;
+    outbox
+        .iter()
+        .rev()
+        .find_map(|entry| match &entry.effect {
+            HostEffect::Interaction(request) => Some(request),
+            _ => None,
+        })
+        .unwrap_or_else(|| {
+            let last_effect = outbox.last().map_or("empty", |entry| match &entry.effect {
+                HostEffect::Interaction(_) => "Interaction",
+                HostEffect::Walk(_) => "Walk",
+                HostEffect::BankPick(_) => "BankPick",
+                HostEffect::AssessWalk(_) => "AssessWalk",
+                HostEffect::ServerOrdered(_) => "ServerOrdered",
+            });
+            panic!(
+                "expected interaction, found {last_effect} after {} effects",
+                outbox.len()
+            )
+        })
 }
 
 fn complete_talk(
