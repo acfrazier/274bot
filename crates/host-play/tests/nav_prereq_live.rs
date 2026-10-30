@@ -1224,25 +1224,6 @@ fn live_manual_prereq_holy_barrier_denied() {
     println!("prereq cell outcome=completed test=live_manual_prereq_holy_barrier_denied");
 }
 
-fn compat_mort_myre_source(destination: WorldTile) -> String {
-    format!(
-        r#"
-import {{ Traversal }} from '../../api/walking/Traversal.js';
-export default class PrereqMortMyreCompat extends LoopingBot {{
-    async loop() {{
-        if (globalThis.__nav_prereq_started) return;
-        globalThis.__nav_prereq_started = true;
-        globalThis.__nav_prereq_result = await Traversal.walkTo(
-            {{ x: {}, z: {}, level: {} }},
-            {{ arriveWithin: 0, allowQuestStart: false }}
-        );
-    }}
-}}
-"#,
-        destination.x, destination.z, destination.level
-    )
-}
-
 #[test]
 #[ignore = "requires LIVE=1 and the explicitly configured local Engine L on 47594/3080"]
 fn live_compat_prereq_mort_myre_denied() {
@@ -1258,7 +1239,7 @@ fn live_compat_prereq_mort_myre_denied() {
         .play
         .script_start_load(
             &fixture.name,
-            compat_mort_myre_source(PREREQ_SWAMP),
+            compat_holy_source(PREREQ_SWAMP, "allowQuestStart: false", false),
             script_js::LoadShape::CompatClass,
             None,
             vec![],
@@ -1270,7 +1251,22 @@ fn live_compat_prereq_mort_myre_denied() {
         fact.observed.run, expected_run,
         "refusal belongs to compat run"
     );
-    let lifecycle = assert_not_allowed_terminal(&fixture, Duration::from_secs(240));
+    let (result, logs) = wait_compat_result(&fixture, Duration::from_secs(240));
+    assert_eq!(
+        result["terminal_count"], 1,
+        "expected one outer WalkTo terminal"
+    );
+    assert_eq!(
+        result["first"].as_bool(),
+        Some(false),
+        "compat WalkTo did not retain the request-level denial"
+    );
+    let seat = assert_seat_idle(&fixture);
+    assert_eq!(
+        fixture.play.script_state(&fixture.name),
+        script::RunState::Running,
+        "one denied WalkTo must not fail its Load owner"
+    );
     let (nav_logs, repair_waits) = assert_no_repair_waits(&fixture.name);
     fixture.play.script_stop(&fixture.name);
     let receipt = json!({
@@ -1281,7 +1277,9 @@ fn live_compat_prereq_mort_myre_denied() {
         "global_allow_quest_start": true,
         "request_allow_quest_start": false,
         "server_refusal_fact": format!("{fact:?}"),
-        "lifecycle_at_refusal": lifecycle,
+        "compat_result": result,
+        "outer_terminal_logs": logs,
+        "seat_idle": seat,
         "navigation_logs": nav_logs,
         "repair_waits": repair_waits,
         "session_only": true,
