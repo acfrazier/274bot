@@ -2,12 +2,12 @@
 use crate::dialogue_outcome::DialogueOutcome;
 use crate::local_state::SlotState;
 use crate::native::walk::Walk;
-use crate::quest_journal::{JournalMachine, JournalRequest};
 use crate::native::{
     ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, OuterWalk, PrereqAllow,
     PrereqFailure, PrereqMissing, PrereqRefusal, PrereqStepIdentity, PrereqSwitch, PrereqWaitName,
     WalkAllow, WalkEnd, WalkGoals, WalkOptions, WalkRequest,
 };
+use crate::quest_journal::{JournalMachine, JournalRequest};
 use crate::quester::families::dialogue::{
     Dialogue, DialogueArgs, DialogueOptions, DialogueSend, DialogueSendKind, DialogueTarget,
     LineRule, PageAcknowledgement, DIALOG_GAP_TICKS,
@@ -17,8 +17,8 @@ use crate::shim::InteractReq;
 use api::prereq_knowledge::Observation;
 use api::prereq_knowledge::{Fact, FactSource, RefusalObservation, SessionMemory};
 use api::prereq_steps::{
-    ActionableGate, BranchOutcome, ConsentSwitch, OpenerRequirement, PrereqCatalog,
-    PrereqJournal, PrereqPrecondition, PrereqStep, RefusalThen,
+    ActionableGate, BranchOutcome, ConsentSwitch, OpenerRequirement, PrereqCatalog, PrereqJournal,
+    PrereqPrecondition, PrereqStep, RefusalThen,
 };
 use api::quest_progress::{EvidenceProvider, EvidenceStamp};
 use api::selected::{InclusiveRange, QuestGate, Truth};
@@ -366,14 +366,18 @@ impl PrereqRun {
                 let data = api::game_data::for_revision(cx.pin().revision)
                     .expect("catalog revision was validated");
                 let Some(facts) = data.try_quests() else {
-                    return Poll::Ready(Err(failed(step, PrereqFailure::Action(
-                        Arc::from("journal facts are not prepared"),
-                    ))));
+                    return Poll::Ready(Err(failed(
+                        step,
+                        PrereqFailure::Action(Arc::from("journal facts are not prepared")),
+                    )));
                 };
-                match actions.begin::<JournalMachine>(JournalRequest {
-                    quest: journal.quest.clone(),
-                    facts,
-                }, cx) {
+                match actions.begin::<JournalMachine>(
+                    JournalRequest {
+                        quest: journal.quest.clone(),
+                        facts,
+                    },
+                    cx,
+                ) {
                     Ok(read) => *handle = Some(read),
                     Err(ActionError::BudgetExhausted) => return Poll::Pending,
                     Err(error) => return Poll::Ready(Err(failed(step, action_failure(error)))),
@@ -397,17 +401,22 @@ impl PrereqRun {
                 return Poll::Ready(Err(PrereqRefusal::StepUnwitnessed { step }));
             }
             let text = super::super::progress::normalize_journal(&read.lines);
-            let mut matched = journal.rules.iter().enumerate().filter(|(_, rule)| {
-                rule.all.iter().all(|needle| text.contains(needle.as_ref()))
-            });
+            let mut matched =
+                journal.rules.iter().enumerate().filter(|(_, rule)| {
+                    rule.all.iter().all(|needle| text.contains(needle.as_ref()))
+                });
             let Some((line, rule)) = matched.next() else {
                 return Poll::Ready(Err(PrereqRefusal::StepUnwitnessed { step }));
             };
             if matched.next().is_some() {
                 return Poll::Ready(Err(PrereqRefusal::StepUnwitnessed { step }));
             }
-            let after = journal.after.iter().find(|after| after.proves == rule.proves)
-                .expect("journal preservation was validated").after;
+            let after = journal
+                .after
+                .iter()
+                .find(|after| after.proves == rule.proves)
+                .expect("journal preservation was validated")
+                .after;
             if let Some(state) = state {
                 state.record_prereq_fact(Fact {
                     quest: journal.establishes.quest.clone(),

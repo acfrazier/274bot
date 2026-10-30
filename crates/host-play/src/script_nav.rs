@@ -9966,16 +9966,31 @@ mod route_quest_provider_tests {
             gate: QuestGate::Window(StageWindow {
                 quest: FactKey::new("blackarmgang"),
                 signal: FactKey::new("phoenixgang"),
-                values: InclusiveRange { min: Some(10), max: Some(10) },
+                values: InclusiveRange {
+                    min: Some(10),
+                    max: Some(10),
+                },
             }),
             truth: Truth::Unknown,
             leg: 0,
             crossing: CrossingId {
                 loc_id: 2628,
                 option: 1,
-                at: WorldTile { x: 2788, z: 3190, level: 0 },
-                takeoff: WorldTile { x: 2788, z: 3190, level: 0 },
-                to: WorldTile { x: 2788, z: 3189, level: 0 },
+                at: WorldTile {
+                    x: 2788,
+                    z: 3190,
+                    level: 0,
+                },
+                takeoff: WorldTile {
+                    x: 2788,
+                    z: 3190,
+                    level: 0,
+                },
+                to: WorldTile {
+                    x: 2788,
+                    z: 3189,
+                    level: 0,
+                },
                 kind: CrossingKind::Door,
             },
         };

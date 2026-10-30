@@ -392,9 +392,17 @@ impl PrereqCatalog {
                     rule.all.is_empty()
                         || rule.all.iter().any(|text| text.trim().is_empty())
                         || !valid_range(&rule.proves)
-                        || journal.after.iter().filter(|after| after.proves == rule.proves).count() != 1
+                        || journal
+                            .after
+                            .iter()
+                            .filter(|after| after.proves == rule.proves)
+                            .count()
+                            != 1
                 })
-                || journal.after.iter().any(|rule| !valid_range(&rule.proves) || !valid_range(&rule.after))
+                || journal
+                    .after
+                    .iter()
+                    .any(|rule| !valid_range(&rule.proves) || !valid_range(&rule.after))
             {
                 return Err(PrereqCatalogError::InvalidJournalFacts);
             }
@@ -416,26 +424,37 @@ impl PrereqCatalog {
 
     /// Match both the established window and the exact directed crossing.
     pub fn for_gate(&self, gate: &QuestGate, crossing: &CrossingId) -> Option<(u16, &PrereqStep)> {
-        self.entries.rows.iter().enumerate().find_map(|(index, row)| {
-            if proves(&row.establishes, gate) && row.crossing(crossing).is_some() {
-                Some((
-                    u16::try_from(index).expect("catalog row count was checked"),
-                    row,
-                ))
-            } else {
-                None
-            }
-        })
+        self.entries
+            .rows
+            .iter()
+            .enumerate()
+            .find_map(|(index, row)| {
+                if proves(&row.establishes, gate) && row.crossing(crossing).is_some() {
+                    Some((
+                        u16::try_from(index).expect("catalog row count was checked"),
+                        row,
+                    ))
+                } else {
+                    None
+                }
+            })
     }
 
     /// Find a page that can establish this signal without a world interaction.
     pub fn for_journal(&self, gate: &QuestGate) -> Option<(u16, &PrereqJournal)> {
-        self.entries.journals.iter().enumerate().find_map(|(index, journal)| {
-            proves(&journal.establishes, gate).then(|| (
-                u16::try_from(self.entries.rows.len() + index).expect("catalog row count was checked"),
-                journal,
-            ))
-        })
+        self.entries
+            .journals
+            .iter()
+            .enumerate()
+            .find_map(|(index, journal)| {
+                proves(&journal.establishes, gate).then(|| {
+                    (
+                        u16::try_from(self.entries.rows.len() + index)
+                            .expect("catalog row count was checked"),
+                        journal,
+                    )
+                })
+            })
     }
 
     /// Iterate rows with their stable ordinal for refusal and page facts.

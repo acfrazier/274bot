@@ -1131,10 +1131,7 @@ struct KitchenPrereqScript {
     open_page: Option<EvidenceStamp>,
 }
 impl Script for KitchenPrereqScript {
-    fn tick(
-        &mut self,
-        tick: &mut NativeTick<'_>,
-    ) -> Result<ScriptFlow, ScriptFailure> {
+    fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
         let stamp = tick.cx.evidence();
         {
             let snapshot = tick.cx.snapshot();
@@ -1207,8 +1204,7 @@ impl Script for KitchenPrereqScript {
                     report.finished = true;
                     report.error = Some(format!("{error:?}"));
                     report.current_stamp = Some(stamp);
-                    report.unsupported =
-                        self.remaining.iter().map(|gate| json!(gate)).collect();
+                    report.unsupported = self.remaining.iter().map(|gate| json!(gate)).collect();
                     return Ok(ScriptFlow::Complete);
                 }
             }
@@ -1282,7 +1278,6 @@ fn observe_kitchen_frame(
     client.draw = false;
     snapshot.rebuild(client);
     let mut control = control.lock();
-
 
     if let Some((before_tick, mark)) = control.crossing_pending {
         let destination = (
@@ -1426,11 +1421,7 @@ fn wait_for_play_tile(
     }
 }
 
-fn wait_for_native_prereq(
-    play: &host_play::Play,
-    account: &str,
-    timeout: Duration,
-) -> bool {
+fn wait_for_native_prereq(play: &host_play::Play, account: &str, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     loop {
         if play
@@ -1552,13 +1543,13 @@ fn seed_phoenix_kitchen_account(
             return Err("seed relog scene timeout".into());
         }
 
-        // The page proof is for the live hero stage 3 and Phoenix Shield
-        // completion; Black Arm stage 4 stays the independent refusal case.
+        // The Phoenix journal branch requires Black Arm to remain unjoined.
+        // Black Arm stage 4 stays the independent refusal case.
         let seeded = [
             ("tutorial", scenario::tutorial::TUTORIAL_COMPLETE),
             ("heroquest", 3),
             ("phoenixgang", 10),
-            ("blackarmgang", 4),
+            ("blackarmgang", 0),
         ];
         for (varp, value) in seeded {
             let mark = snapshot
@@ -1606,7 +1597,7 @@ fn seed_phoenix_kitchen_account(
             "seeded": {
                 "heroquest_188": 3,
                 "phoenixgang_146": 10,
-                "blackarmgang_145": 4,
+                "blackarmgang_145": 0,
                 "tutorial": scenario::tutorial::TUTORIAL_COMPLETE,
             },
             "seed_authority": "fresh server getvar replies",
@@ -1723,12 +1714,7 @@ fn run_phoenix_native_and_crossing(
     ));
 
     let proof = (|| -> Result<Value, String> {
-        if !wait_for_play_tile(
-            &play,
-            account,
-            crossing.takeoff,
-            Duration::from_secs(90),
-        ) {
+        if !wait_for_play_tile(&play, account, crossing.takeoff, Duration::from_secs(90)) {
             return Err(format!(
                 "Engine Q account did not log in at kitchen stand: {:?}",
                 play.statuses()
@@ -1800,12 +1786,7 @@ fn run_phoenix_native_and_crossing(
         let page_facts = memory
             .facts()
             .iter()
-            .filter(|fact| {
-                matches!(
-                    &fact.source,
-                    api::prereq_knowledge::FactSource::Page { .. }
-                )
-            })
+            .filter(|fact| matches!(&fact.source, api::prereq_knowledge::FactSource::Page { .. }))
             .collect::<Vec<_>>();
         let mut detail = json!({
             "driver": "script::quester::prereq::run::PrereqRun",
@@ -1868,7 +1849,10 @@ fn run_phoenix_native_and_crossing(
                 .iter()
                 .any(|expected| normalized.trim().eq_ignore_ascii_case(expected))
             {
-                return Err(format!("unexpected production journal page: {}", page.title));
+                return Err(format!(
+                    "unexpected production journal page: {}",
+                    page.title
+                ));
             }
         }
         let has_page = |expected: &str| {
@@ -2123,8 +2107,14 @@ fn run_brimhaven_phoenix_kitchen_journal() {
     };
     write_receipt(&receipt_path, &receipt);
     println!("KITCHEN_LIVE {receipt}");
-    assert!(logout_observed, "live Phoenix account must log out: {receipt}");
-    assert!(error.is_none(), "Phoenix journal live proof failed: {receipt}");
+    assert!(
+        logout_observed,
+        "live Phoenix account must log out: {receipt}"
+    );
+    assert!(
+        error.is_none(),
+        "Phoenix journal live proof failed: {receipt}"
+    );
 }
 #[test]
 #[ignore = "requires Engine Q at 127.0.0.1:44694/http1180, LIVE=1, WORLD_NAV_PACK, BOT_LIVE_NAME_PREFIX=npr3, and NAV_KITCHEN_EVIDENCE"]

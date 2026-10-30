@@ -2078,100 +2078,189 @@ fn kitchen_journal_gate() -> ActionableGate {
         gate: QuestGate::Window(StageWindow {
             quest: FactKey::new("blackarmgang"),
             signal: FactKey::new("phoenixgang"),
-            values: InclusiveRange { min: Some(10), max: Some(10) },
+            values: InclusiveRange {
+                min: Some(10),
+                max: Some(10),
+            },
         }),
         truth: Truth::Unknown,
         leg: 0,
         crossing: CrossingId {
             loc_id: 2628,
             option: 1,
-            at: WorldTile { x: 2788, z: 3190, level: 0 },
-            takeoff: WorldTile { x: 2788, z: 3190, level: 0 },
-            to: WorldTile { x: 2788, z: 3189, level: 0 },
+            at: WorldTile {
+                x: 2788,
+                z: 3190,
+                level: 0,
+            },
+            takeoff: WorldTile {
+                x: 2788,
+                z: 3190,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 2788,
+                z: 3189,
+                level: 0,
+            },
             kind: CrossingKind::Door,
         },
     }
 }
 
 fn kitchen_journal_observation(lines: &[&str], expected: Option<Truth>) {
-    journal_observation(kitchen_journal_gate(), "Shield of Arrav", 0x00f800, lines, expected);
+    journal_observation(
+        kitchen_journal_gate(),
+        "Shield of Arrav",
+        0x00f800,
+        lines,
+        expected,
+    );
 }
 
-fn journal_observation(gate: ActionableGate, title: &str, colour: i32, lines: &[&str], expected: Option<Truth>) {
+fn journal_observation(
+    gate: ActionableGate,
+    title: &str,
+    colour: i32,
+    lines: &[&str],
+    expected: Option<Truth>,
+) {
     use api::snapshot::QuestStatusView;
     let state = state();
     let _ = &*CATALOG;
     let mut snapshot = snapshot(gate.crossing.takeoff);
-    snapshot.seed_quest_statuses(vec![QuestStatusView {
-        name: title.into(),
-        component_id: 42,
-        colour,
-    }], true);
+    snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            name: title.into(),
+            component_id: 42,
+            colour,
+        }],
+        true,
+    );
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 1, |native| {
-        assert!(PrereqRun::first_supported(
-            std::slice::from_ref(&gate), &RunEntry::NeedsStep, &native.cx
-        ).is_some(), "an unknown gate needs an authoritative journal evidence source");
+        assert!(
+            PrereqRun::first_supported(
+                std::slice::from_ref(&gate),
+                &RunEntry::NeedsStep,
+                &native.cx
+            )
+            .is_some(),
+            "an unknown gate needs an authoritative journal evidence source"
+        );
     });
-    let mut run = PrereqRun::begin(gate.clone(), RunEntry::NeedsStep, PrereqAllow {
-        dialogue: false, quest_start: false,
-    });
+    let mut run = PrereqRun::begin(
+        gate.clone(),
+        RunEntry::NeedsStep,
+        PrereqAllow {
+            dialogue: false,
+            quest_start: false,
+        },
+    );
     let mut budget = PrereqBudget::default();
     assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
-    assert!(matches!(last_interaction(&ledger), InteractReq::IfButton { component_id: 42 }));
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::IfButton { component_id: 42 }
+    ));
     accept_last(&mut ledger, 1, 0);
     // A causal journal frame is required. Neither a green row nor the send
     // receipt is membership evidence.
     assert!(state.prereq_snapshot().facts().is_empty());
     assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
-    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1, "polling never repeats the page request");
+    assert_eq!(
+        ledger.as_ref().unwrap().outbox.len(),
+        1,
+        "polling never repeats the page request"
+    );
     let mut widgets = vec![crate::quest_journal::test_widget(
-        crate::quest_journal::TITLE_289, &format!("@dre@{title}")
+        crate::quest_journal::TITLE_289,
+        &format!("@dre@{title}"),
     )];
-    widgets.extend(lines.iter().enumerate().map(|(index, line)|
-        crate::quest_journal::test_widget(8145 + index as i32, line)));
+    widgets.extend(
+        lines
+            .iter()
+            .enumerate()
+            .map(|(index, line)| crate::quest_journal::test_widget(8145 + index as i32, line)),
+    );
     snapshot.seed_main_modal(crate::quest_journal::ROOT_289, widgets);
     assert!(poll(&mut run, &snapshot, &mut ledger, 2, &state, &mut budget).is_pending());
     assert!(matches!(last_interaction(&ledger), InteractReq::CloseModal));
     accept_last(&mut ledger, 2, 0);
-    assert!(state.prereq_snapshot().facts().is_empty(), "wait for the observed close");
+    assert!(
+        state.prereq_snapshot().facts().is_empty(),
+        "wait for the observed close"
+    );
     snapshot.seed_main_modal(-1, vec![]);
     let result = poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget);
     match expected {
         Some(Truth::True) => assert!(matches!(result, Poll::Ready(Ok(Done { crossed: false })))),
-        Some(Truth::False) => assert!(matches!(result, Poll::Ready(Err(PrereqRefusal::PreconditionMissing { .. })))),
-        _ => assert!(matches!(result, Poll::Ready(Err(PrereqRefusal::StepUnwitnessed { .. })))),
+        Some(Truth::False) => assert!(matches!(
+            result,
+            Poll::Ready(Err(PrereqRefusal::PreconditionMissing { .. }))
+        )),
+        _ => assert!(matches!(
+            result,
+            Poll::Ready(Err(PrereqRefusal::StepUnwitnessed { .. }))
+        )),
     }
     with_tick(&snapshot, &mut ledger, 3, |native| {
-        let acquired = EvidenceStamp { tick: 2, sequence: 2, ..native.cx.evidence() };
-        assert_eq!(state.prereq_snapshot().observe(&gate.gate, acquired).map(|fact| fact.truth), expected);
+        let acquired = EvidenceStamp {
+            tick: 2,
+            sequence: 2,
+            ..native.cx.evidence()
+        };
+        assert_eq!(
+            state
+                .prereq_snapshot()
+                .observe(&gate.gate, acquired)
+                .map(|fact| fact.truth),
+            expected
+        );
         if expected == Some(Truth::False) {
-            assert_eq!(state.prereq_snapshot().observe(&gate.gate, native.cx.evidence()).unwrap().truth, Truth::Unknown,
-                "a negative rule does not overclaim future Phoenix progress");
+            assert_eq!(
+                state
+                    .prereq_snapshot()
+                    .observe(&gate.gate, native.cx.evidence())
+                    .unwrap()
+                    .truth,
+                Truth::Unknown,
+                "a negative rule does not overclaim future Phoenix progress"
+            );
         }
     });
-    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 2, "one page request and one close, never a door or NPC probe");
+    assert_eq!(
+        ledger.as_ref().unwrap().outbox.len(),
+        2,
+        "one page request and one close, never a door or NPC probe"
+    );
 }
 
 #[test]
 fn kitchen_journal_phoenix_completion_establishes_membership() {
     // blackarmgang_journal.rs2:96-108. The row colour is shared with Black Arm.
-    kitchen_journal_observation(&[
-        "@str@I searched the Phoenix Gang Headquarters and found",
-        "@str@half of the Shield of Arrav.",
-        "@red@QUEST COMPLETE!",
-    ], Some(Truth::True));
+    kitchen_journal_observation(
+        &[
+            "@str@I searched the Phoenix Gang Headquarters and found",
+            "@str@half of the Shield of Arrav.",
+            "@red@QUEST COMPLETE!",
+        ],
+        Some(Truth::True),
+    );
 }
 
 #[test]
 fn kitchen_journal_black_arm_completion_refuses_phoenix_membership() {
     // blackarmgang_journal.rs2:114,186-197. Phoenix is below joined here.
-    kitchen_journal_observation(&[
-        "@str@allowed me to join the Black Arm Gang.",
-        "@str@I searched the Black Arm Gang Headquarters and found",
-        "@str@half of the Shield of Arrav.",
-        "@red@QUEST COMPLETE!",
-    ], Some(Truth::False));
+    kitchen_journal_observation(
+        &[
+            "@str@allowed me to join the Black Arm Gang.",
+            "@str@I searched the Black Arm Gang Headquarters and found",
+            "@str@half of the Shield of Arrav.",
+            "@red@QUEST COMPLETE!",
+        ],
+        Some(Truth::False),
+    );
 }
 
 #[test]
@@ -2181,13 +2270,16 @@ fn kitchen_journal_green_row_without_distinctive_page_never_proves_membership() 
 
 #[test]
 fn kitchen_journal_conflicting_gang_pages_leave_no_fact() {
-    kitchen_journal_observation(&[
-        "@str@I searched the Phoenix Gang Headquarters and found",
-        "@str@I searched the Black Arm Gang Headquarters and found",
-        "@str@allowed me to join the Black Arm Gang.",
-        "@str@half of the Shield of Arrav.",
-        "@red@QUEST COMPLETE!",
-    ], None);
+    kitchen_journal_observation(
+        &[
+            "@str@I searched the Phoenix Gang Headquarters and found",
+            "@str@I searched the Black Arm Gang Headquarters and found",
+            "@str@allowed me to join the Black Arm Gang.",
+            "@str@half of the Shield of Arrav.",
+            "@red@QUEST COMPLETE!",
+        ],
+        None,
+    );
 }
 
 #[test]
@@ -2197,10 +2289,19 @@ fn kitchen_journal_hero_password_establishes_pre_completion_eligibility() {
     gate.gate = QuestGate::Window(StageWindow {
         quest: FactKey::new("heroquest"),
         signal: FactKey::new("heroquest"),
-        values: InclusiveRange { min: Some(3), max: Some(15) },
+        values: InclusiveRange {
+            min: Some(3),
+            max: Some(15),
+        },
     });
-    journal_observation(gate, "Heroes' Quest", 0xffff00, &[
-        "@str@I spoke to Straven about the Master Thieves Armband.",
-        "@str@Then I told Alfonse the password 'Gherkin'.",
-    ], Some(Truth::True));
+    journal_observation(
+        gate,
+        "Heroes' Quest",
+        0xffff00,
+        &[
+            "@str@I spoke to Straven about the Master Thieves Armband.",
+            "@str@Then I told Alfonse the password 'Gherkin'.",
+        ],
+        Some(Truth::True),
+    );
 }
