@@ -2066,3 +2066,92 @@ fn the_runner_module_reads_no_active_clock() {
         assert!(!source.contains("active_now"));
     }
 }
+
+fn kitchen_journal_gate() -> ActionableGate {
+    use api::prereq_steps::{CrossingId, CrossingKind};
+    use api::selected::{FactKey, StageWindow};
+    ActionableGate {
+        gate: QuestGate::Window(StageWindow {
+            quest: FactKey::new("blackarmgang"),
+            signal: FactKey::new("phoenixgang"),
+            values: InclusiveRange { min: Some(10), max: Some(10) },
+        }),
+        truth: Truth::Unknown,
+        leg: 0,
+        crossing: CrossingId {
+            loc_id: 2628,
+            option: 1,
+            at: WorldTile { x: 2788, z: 3190, level: 0 },
+            takeoff: WorldTile { x: 2788, z: 3190, level: 0 },
+            to: WorldTile { x: 2788, z: 3189, level: 0 },
+            kind: CrossingKind::Door,
+        },
+    }
+}
+
+fn kitchen_journal_observation(lines: &[&str], expected: Truth) {
+    use api::snapshot::QuestStatusView;
+    let gate = kitchen_journal_gate();
+    let state = state();
+    let _ = &*CATALOG;
+    let mut snapshot = snapshot(gate.crossing.takeoff);
+    snapshot.seed_quest_statuses(vec![QuestStatusView {
+        name: "Shield of Arrav".into(),
+        component_id: 42,
+        colour: 0x00f800,
+    }], true);
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |native| {
+        assert!(PrereqRun::first_supported(
+            std::slice::from_ref(&gate), &RunEntry::NeedsStep, &native.cx
+        ).is_some(), "the shared green row needs an authoritative gang evidence source");
+    });
+    let mut run = PrereqRun::begin(gate.clone(), RunEntry::NeedsStep, PrereqAllow {
+        dialogue: true, quest_start: false,
+    });
+    let mut budget = PrereqBudget::default();
+    assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
+    assert!(matches!(last_interaction(&ledger), InteractReq::IfButton { component_id: 42 }));
+    accept_last(&mut ledger, 1, 0);
+    // A causal journal frame is required. Neither a green row nor the send
+    // receipt is membership evidence.
+    assert!(state.prereq_snapshot().facts().is_empty());
+    let mut widgets = vec![crate::quest_journal::test_widget(
+        crate::quest_journal::TITLE_289, "@dre@Shield of Arrav"
+    )];
+    widgets.extend(lines.iter().enumerate().map(|(index, line)|
+        crate::quest_journal::test_widget(8145 + index as i32, line)));
+    snapshot.seed_main_modal(crate::quest_journal::ROOT_289, widgets);
+    assert!(poll(&mut run, &snapshot, &mut ledger, 2, &state, &mut budget).is_pending());
+    assert!(matches!(last_interaction(&ledger), InteractReq::CloseModal));
+    accept_last(&mut ledger, 2, 0);
+    assert!(state.prereq_snapshot().facts().is_empty(), "wait for the observed close");
+    snapshot.seed_main_modal(-1, vec![]);
+    let result = poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget);
+    assert_eq!(result.is_ready(), true);
+    with_tick(&snapshot, &mut ledger, 3, |native| {
+        assert_eq!(state.prereq_snapshot().observe(&gate.gate, native.cx.evidence()).unwrap().truth, expected);
+    });
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 2, "one page request and one close, never a door or NPC probe");
+}
+
+#[test]
+fn kitchen_journal_phoenix_completion_establishes_membership() {
+    // blackarmgang_journal.rs2:96-108. The row colour is shared with Black Arm.
+    kitchen_journal_observation(&[
+        "@str@I searched the Phoenix Gang Headquarters and found",
+        "@str@half of the Shield of Arrav.",
+        "@red@QUEST COMPLETE!",
+    ], Truth::True);
+}
+
+#[test]
+fn kitchen_journal_black_arm_completion_refuses_phoenix_membership() {
+    // blackarmgang_journal.rs2:114,186-197. Phoenix is below joined here.
+    kitchen_journal_observation(&[
+        "@str@allowed me to join the Black Arm Gang.",
+        "@str@I searched the Black Arm Gang Headquarters and found",
+        "@str@half of the Shield of Arrav.",
+        "@red@QUEST COMPLETE!",
+    ], Truth::False);
+}
