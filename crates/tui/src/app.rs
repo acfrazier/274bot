@@ -2068,10 +2068,7 @@ impl TuiApp {
                 }
             }
             Command::ScriptStart => {
-                let quester_selected = self
-                    .script_sel
-                    .as_ref()
-                    .and_then(ScriptChoice::compiled_id)
+                let quester_selected = self.script_sel.as_ref().and_then(ScriptChoice::compiled_id)
                     == Some(frontend_core::scripts::CompiledCardId::QUESTER);
                 if quester_selected && self.script_browse_open {
                     // Browse covers Quester's shared pre-start zone disclosure.

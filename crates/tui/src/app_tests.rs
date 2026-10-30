@@ -2204,7 +2204,6 @@ fn mouse_browse_pick_discloses_quester_zones_before_start_80x24() {
     assert_mouse_browse_pick_discloses_quester_zones_before_start(80, 24);
 }
 
-
 #[test]
 fn palette_start_opens_quester_zone_scope_before_start() {
     let evidence_root =
