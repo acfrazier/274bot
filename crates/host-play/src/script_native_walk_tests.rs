@@ -2383,7 +2383,16 @@ fn native_area_walk_budget_stop_is_refused_as_incomplete_not_no_path() {
     }
 
     rig.observe(1);
-    wait_for_native_route_outcome(&rig);
+    assert!(
+        rig.wait_for_route(30_000, || {
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| bot.walk_outcome_seq != 0 && !bot.route_work_pending())
+        }),
+        "the native route worker completes its budget-bounded search",
+    );
     rig.observe(2);
 
     let shared = rig.shared.lock();
