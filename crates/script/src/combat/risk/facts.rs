@@ -371,6 +371,7 @@ fn npc_risk_for_row(row: &NpcNameRow, rows: &[NpcNameRow], combat: &CombatTables
         .unwrap_or_else(KindRisk::missing_facts)
 }
 
+#[cfg(test)]
 fn npc_risk_from_rows(rows: &[NpcNameRow], id: i32, combat: &CombatTables) -> KindRisk {
     rows.binary_search_by_key(&id, |row| row.id)
         .ok()

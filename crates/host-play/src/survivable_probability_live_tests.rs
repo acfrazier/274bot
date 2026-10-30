@@ -12,7 +12,7 @@ use nav_planner::router::{FindOptions, Leg, Route};
 use nav_planner::world::NavWorld;
 use nav_planner::zones::ZoneExempt;
 use nav_planner::WorldState;
-use script::combat::risk::{PoisonTest, Verdict};
+use script::combat::risk::{PoisonTest, RiskInput, RiskTables, Verdict};
 use script::native::{RiskPolicy, WalkRefusal};
 use serde_json::{json, Value};
 
@@ -413,90 +413,207 @@ fn route(
     .unwrap()
 }
 
-fn long_approach(
+fn poison_start(
     world: &NavWorld,
-    snapshot: &GameSnapshot,
-    members: bool,
+    state: &WorldState,
+    mut input: RiskInput,
+    anchor: WorldTile,
     destination: WorldTile,
-) -> WorldTile {
-    // Choose a real safe route prefix, not a scripted detour or changed map.
-    for origin in [
-        tile(2704, 3760),
-        tile(2704, 3780),
-        tile(2704, 3800),
-        tile(2700, 3800),
-    ] {
-        if !world.collision.standable(origin) {
-            continue;
-        }
-        let state = WorldState::from_snapshot(snapshot).with_map_members(members);
-        let Ok(route) = nav_planner::router::find_with(
-            &world.collision,
-            &world.graph,
-            origin,
-            destination,
-            FindOptions {
-                zones: ZoneExempt::all(),
-                ..FindOptions::default()
-            },
-            &state,
-        ) else {
-            continue;
-        };
-        let mut input = capture(snapshot, members, None, false);
-        input.pos = origin;
-        input.poison = PoisonState::Unknown {
-            since: snapshot.tick() as u16,
-        };
-        let admission = Admission {
-            input,
-            policy: RiskPolicy::Inherit,
-            enforce: true,
-            ..Admission::manual(
-                FindOptions::default(),
-                input,
-                1,
-                crate::WalkGlobals::default(),
-            )
-        };
-        let assessment = assess(&route, world, &admission);
-        if let PoisonTest::WaitForClear { until_index, .. } = assessment.poison_test {
-            let prefix: usize = route
-                .legs
-                .iter()
-                .take_while(|leg| matches!(leg, Leg::Walk { .. }))
-                .map(|leg| match leg {
-                    Leg::Walk { tiles, .. } => tiles.len(),
-                    _ => 0,
-                })
-                .sum();
-            if until_index >= 40 && prefix > usize::from(until_index) {
-                return origin;
+    long: bool,
+    tables: (&script::combat::tables::CombatTables, &RiskTables),
+) -> Result<(WorldTile, Value), String> {
+    use nav_planner::producer;
+    use script::combat::risk::{self, CrossingGeom, Estimate, RoutePath};
+
+    let (combat, risks) = tables;
+    let zones = producer::zones_view(world).unwrap().unwrap();
+    let wilderness = producer::wilderness_view(world).unwrap();
+    let anchor_zones: Vec<_> = zones.containing(anchor).map(|zone| zone.key()).collect();
+    assert!(
+        !anchor_zones.is_empty(),
+        "the stated anchor must name real zones"
+    );
+    input.poison = PoisonState::Unknown { since: input.tick };
+    let options = FindOptions {
+        zones: ZoneExempt::all(),
+        ..FindOptions::default()
+    };
+    let mut searched = 0;
+    let mut best_prefix = 0;
+    // A client can run two tiles per game tick. Eighty safe walk edges leave
+    // at least forty observed ticks before retreat, even with running enabled.
+    let minimum_prefix = if long { 80 } else { 1 };
+    for radius in (4..=128).step_by(4) {
+        for offset in (-radius..=radius).step_by(4) {
+            for (side, origin) in [
+                tile(anchor.x + offset, anchor.z - radius),
+                tile(anchor.x + offset, anchor.z + radius),
+                tile(anchor.x - radius, anchor.z + offset),
+                tile(anchor.x + radius, anchor.z + offset),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if side >= 2 && offset.abs() == radius || !world.collision.standable(origin) {
+                    continue;
+                }
+                searched += 1;
+                let Ok(candidate) = nav_planner::router::find_with(
+                    &world.collision,
+                    &world.graph,
+                    origin,
+                    destination,
+                    options,
+                    state,
+                ) else {
+                    continue;
+                };
+                input.pos = origin;
+                let view = producer::route_view(world, &candidate).unwrap();
+                let path = RoutePath::new(view).unwrap();
+                let Ok(plan) = risk::build_plan(path, zones, risks, wilderness, &input) else {
+                    continue;
+                };
+                let Some(crossing) = plan.crossings.first() else {
+                    continue;
+                };
+                let rows = &plan.intervals
+                    [usize::from(crossing.intervals.0)..usize::from(crossing.intervals.1)];
+                if !plan.complete
+                    || crossing.retreat == CrossingGeom::NONE
+                    || !rows.iter().any(|row| anchor_zones.contains(&row.zone))
+                {
+                    continue;
+                }
+                best_prefix = best_prefix.max(crossing.retreat);
+                if crossing.retreat < minimum_prefix {
+                    continue;
+                }
+                let Some(Leg::Walk { tiles }) = candidate.legs.first() else {
+                    continue;
+                };
+                if tiles.len() <= usize::from(crossing.retreat) {
+                    continue;
+                }
+                let origin = if long {
+                    origin
+                } else {
+                    path.point(crossing.retreat).unwrap().tile
+                };
+                // Replan a short start from the exact retreat. Reuse the
+                // existing route when the long start has not changed.
+                let candidate = if long {
+                    candidate
+                } else {
+                    let Ok(route) = nav_planner::router::find_with(
+                        &world.collision,
+                        &world.graph,
+                        origin,
+                        destination,
+                        options,
+                        state,
+                    ) else {
+                        continue;
+                    };
+                    route
+                };
+                input.pos = origin;
+                let view = producer::route_view(world, &candidate).unwrap();
+                let path = RoutePath::new(view).unwrap();
+                let assessment = risk::assess(
+                    view,
+                    &Estimate {
+                        zones: Some(zones),
+                        wilderness,
+                        grants: None,
+                        risks,
+                        combat,
+                        allow: Default::default(),
+                        generation: 1,
+                    },
+                    input,
+                );
+                let PoisonTest::WaitForClear { until_index, .. } = assessment.poison_test else {
+                    continue;
+                };
+                if assessment.verdict != Verdict::Survivable
+                    || long && until_index < minimum_prefix
+                    || !long && until_index != 0
+                {
+                    continue;
+                }
+                let crossing = &assessment.plan.crossings[0];
+                let rows = &assessment.plan.intervals
+                    [usize::from(crossing.intervals.0)..usize::from(crossing.intervals.1)];
+                if !rows.iter().any(|row| anchor_zones.contains(&row.zone)) {
+                    continue;
+                }
+                let retreat = path.point(until_index).unwrap().tile;
+                let geometry: Vec<_> = rows
+                    .iter()
+                    .map(|row| {
+                        let zone = zones.zone(row.zone).unwrap();
+                        json!({
+                            "zone": zones.name(row.zone).unwrap(), "spawn": zone.spawn(),
+                            "bounds": zone.bounds(), "npc_id": zone.kind().npc_id(),
+                            "r": row.r, "reach": row.reach, "a": row.a, "b": row.b,
+                            "e": row.e, "f": row.f,
+                        })
+                    })
+                    .collect();
+                return Ok((
+                    origin,
+                    json!({
+                        "anchor": [anchor.x, anchor.z, anchor.level],
+                        "start": [origin.x, origin.z, origin.level],
+                        "retreat": [retreat.x, retreat.z, retreat.level],
+                        "retreat_index": until_index, "searched_standable_candidates": searched,
+                        "first_crossing": {"first": crossing.first, "last": crossing.last,
+                            "env_first": crossing.env_first, "env_last": crossing.env_last},
+                        "zones": geometry,
+                    }),
+                ));
             }
         }
     }
-    panic!("selected real pack has no >=40-tick safe approach among the stated candidate starts");
+    Err(format!(
+        "no qualifying real start within 128 tiles of {anchor:?}: searched {searched} standable candidates, best safe prefix {best_prefix}, required {minimum_prefix}"
+    ))
 }
 
 fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
-    if matches!(cell.mode, Mode::LongApproach) {
-        cell.origin = long_approach(&rig.world, &rig.snapshot, rig.members, cell.destination);
-    }
+    let mut fixture_geometry = None;
     if matches!(
         cell.mode,
         Mode::Hold | Mode::LongApproach | Mode::PoisonDuringHold
     ) {
         // Reset the observed poison window while still at the safe setup tile.
         // A relog at the crab origin would be blocked by the combat logout guard.
+        let input = capture(
+            &rig.snapshot,
+            rig.members,
+            rig.navs.lock().unwrap()[&rig.name].condition.current(),
+            false,
+        );
+        let tables = super::tables(&rig.world).unwrap();
+        let (origin, geometry) = poison_start(
+            &rig.world,
+            &WorldState::from_snapshot(&rig.snapshot).with_map_members(rig.members),
+            input,
+            cell.origin,
+            cell.destination,
+            matches!(cell.mode, Mode::LongApproach),
+            (&tables.combat, &tables.risks),
+        )
+        .unwrap();
+        cell.origin = origin;
+        fixture_geometry = Some(geometry);
+        // Geometry search does not count as an observed safe approach.
         rig.relog();
-    }
-    rig.tele(cell.origin);
-    if !matches!(
-        cell.mode,
-        Mode::Hold | Mode::LongApproach | Mode::PoisonDuringHold
-    ) {
+    } else {
         rig.clear_from_observation();
     }
+    rig.tele(cell.origin);
     let route = Arc::new(route(
         &rig.world,
         &rig.snapshot,
@@ -529,6 +646,7 @@ fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
         "verdict": format!("{:?}", assessment.verdict), "bound": assessment.bound,
         "poison_test": format!("{:?}", assessment.poison_test), "reason": assessment.reason,
         "route": format!("{route:?}"), "deaths": 0});
+    receipt["fixture_geometry"] = json!(fixture_geometry);
     if matches!(cell.mode, Mode::Refuse) {
         assert_eq!(assessment.verdict, Verdict::Unsurvivable);
         assert!(!permits(&route, &rig.world, &admission, &assessment));
@@ -561,7 +679,7 @@ fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
     {
         let mut navs = rig.navs.lock().unwrap();
         let bot = navs.get_mut(&rig.name).unwrap();
-        bot.route = Some(route);
+        bot.route = Some(Arc::clone(&route));
         bot.requested_route = Some((cell.destination, 0, false, false, false, ZoneExempt::NONE));
         bot.route_generation = 1;
         bot.route_request_id = 1;
@@ -572,6 +690,7 @@ fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
     }
     let mut seeded_poison = false;
     let start = rig.snapshot.tick();
+    let accepted_frame_start = rig.frames.len();
     let watchdog = Instant::now() + Duration::from_secs(1200);
     loop {
         rig.frame(true);
@@ -653,7 +772,7 @@ fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
         assert!(Instant::now() < watchdog, "walk watchdog expired");
         std::thread::sleep(Duration::from_millis(20));
     }
-    let frames = &rig.frames;
+    let frames = &rig.frames[accepted_frame_start..];
     let waited: Vec<_> = frames
         .iter()
         .filter_map(|frame| frame["hold"]["wait"]["waited"].as_u64())
@@ -661,6 +780,14 @@ fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
     if matches!(cell.mode, Mode::Hold) {
         assert!(!waited.is_empty(), "hold never stood at its retreat index");
         assert!(waited.iter().all(|&ticks| ticks <= 31));
+        let retreat = &fixture_geometry.as_ref().unwrap()["retreat"];
+        assert!(
+            frames
+                .iter()
+                .take_while(|frame| frame["poison"] != "Clear")
+                .all(|frame| frame["tile"] == *retreat),
+            "the held walk must stay at its real retreat tile until Clear"
+        );
         assert!(frames.iter().any(|frame| frame["poison"] == "Clear"));
     }
     if matches!(cell.mode, Mode::LongApproach) {
@@ -668,6 +795,27 @@ fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
             waited.is_empty(),
             "clean approach stopped at the retreat tile"
         );
+        let geometry = fixture_geometry.as_ref().unwrap();
+        let until_index = geometry["retreat_index"].as_u64().unwrap() as u16;
+        let first_clear = frames
+            .iter()
+            .find(|frame| frame["poison"] == "Clear")
+            .expect("the observed approach must establish Clear");
+        let path = script::combat::risk::RoutePath::new(
+            nav_planner::producer::route_view(&rig.world, &route).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            (0..until_index).any(|index| {
+                let at = path.point(index).unwrap().tile;
+                first_clear["tile"] == json!([at.x, at.z, at.level])
+            }),
+            "Clear must be observed on the safe approach, before retreat"
+        );
+        let PoisonState::Unknown { since } = input.poison else {
+            unreachable!()
+        };
+        assert!((first_clear["tick"].as_u64().unwrap() as u16).wrapping_sub(since) >= 31);
         assert!(frames.iter().any(|frame| frame["poison"] == "Clear"));
     }
     receipt["waited_ticks"] = json!(waited);
@@ -682,6 +830,61 @@ fn save(directory: &Path, rig: &Rig, receipt: &mut Value, log_start: usize) {
         serde_json::to_vec_pretty(receipt).unwrap(),
     )
     .unwrap();
+}
+
+#[test]
+#[ignore = "explicit real-pack poison-start qualification; requires WORLD_NAV_PACK"]
+fn qualify_probability_poison_starts() {
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let combat = script::combat::tables::CombatTables::build(Arc::clone(&selected)).unwrap();
+    let risks = RiskTables::build(&combat);
+    let mut world =
+        NavWorld::load_pack(Path::new(&std::env::var_os("WORLD_NAV_PACK").unwrap())).unwrap();
+    world.bind_named_bank_facts(&selected).unwrap();
+    let state = WorldState::default().with_map_members(true);
+    let mut input = RiskInput {
+        hp: 40,
+        hp_max: 40,
+        defence: 40,
+        worn_defence: [188, 202, 198, 190],
+        combat: Some(46),
+        ..RiskInput::default()
+    };
+    input.set_map_members(true);
+    input.set_missing_facts(false);
+    let short = poison_start(
+        &world,
+        &state,
+        input,
+        tile(2704, 3726),
+        tile(2725, 3492),
+        false,
+        (&combat, &risks),
+    );
+    eprintln!("POISON_GEOMETRY_SHORT={short:?}");
+    let long = poison_start(
+        &world,
+        &state,
+        input,
+        tile(2704, 3726),
+        tile(2725, 3492),
+        true,
+        (&combat, &risks),
+    );
+    eprintln!("POISON_GEOMETRY_LONG={long:?}");
+    if let Some(path) = std::env::var_os("P1C_POISON_GEOMETRY_OUT") {
+        std::fs::write(
+            path,
+            serde_json::to_vec_pretty(&json!({
+                "short": short.as_ref().map(|(_, geometry)| geometry),
+                "long": long.as_ref().map(|(_, geometry)| geometry),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+    short.unwrap();
+    long.unwrap();
 }
 
 #[test]
