@@ -91,11 +91,17 @@ if (%death = ^true) {
 }
 anim(%com_defendanim, 0);
 ~npc_meleeattack;
-[ai_opplayer2,poisoned_melee] ~npc_meleeattack;
+[ai_opplayer2,poisoned_melee] @poisoned_melee_attack;
+[label,poisoned_melee_attack]
+anim(%com_defendanim, 0);
+~npc_meleeattack;
 [ai_opplayer2,extra_hit]
 ~npc_meleeattack;
 ~playerhit_n_melee(true, 99, npc_param(attackrate));
-[ai_opplayer2,multi_melee] ~npc_meleeattack;
+[ai_opplayer2,multi_melee] @multi_melee_attack;
+[label,multi_melee_attack]
+anim(%com_defendanim, 0);
+~npc_meleeattack;
 `;
 function fixture(): string {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'npc-stat-default-'));
