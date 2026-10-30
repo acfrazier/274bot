@@ -825,32 +825,9 @@ fn item_id(selected: &api::game_data::SelectedGameData, alias: &str) -> i32 {
         .id
 }
 
-fn inventory_seed_aliases(
-    selected: &api::game_data::SelectedGameData,
-    required: &[&str],
-    slots: usize,
-) -> Vec<String> {
+fn inventory_seed_aliases(selected: &api::game_data::SelectedGameData, slots: usize) -> Vec<String> {
     let mut aliases = Vec::with_capacity(slots);
     let mut ids = HashSet::with_capacity(slots);
-    for alias in required {
-        let item = selected
-            .item_by_alias(alias)
-            .unwrap_or_else(|| panic!("selected R289 data has no item {alias:?}"));
-        assert!(
-            item.id > 0,
-            "required pack item must have a real id: {alias}"
-        );
-        assert!(
-            !item.stackable,
-            "required pack item must occupy one slot: {alias}"
-        );
-        assert!(ids.insert(item.id), "duplicate required pack item: {alias}");
-        aliases.push((*alias).to_owned());
-    }
-    assert!(
-        aliases.len() <= slots,
-        "required pack items exceed target slots"
-    );
     for item in selected.items() {
         if aliases.len() == slots {
             break;
@@ -861,7 +838,9 @@ fn inventory_seed_aliases(
         let Some(alias) = item.alias.as_deref() else {
             continue;
         };
-        if !safe_item_alias(alias) || matches!(alias, "meat_pie" | "apple_pie") {
+        if !safe_item_alias(alias)
+            || matches!(alias, "meat_pie" | "apple_pie" | "dagger_wolfbane")
+        {
             continue;
         }
         if ids.insert(item.id) {
@@ -899,6 +878,12 @@ fn full_bank_seed_commands(
     }
     let mut ids = HashSet::with_capacity(FULL_BANK_SLOTS);
     let mut commands = Vec::with_capacity(FULL_BANK_SLOTS);
+    let dagger = selected
+        .item_by_alias("dagger_wolfbane")
+        .expect("selected R289 data has Wolfbane");
+    assert!(!excluded.contains(&dagger.id), "Wolfbane must be banked");
+    ids.insert(dagger.id);
+    commands.push("givebank dagger_wolfbane 1".to_owned());
     for item in selected.items() {
         let Some(alias) = item.alias.as_deref() else {
             continue;
@@ -1543,10 +1528,12 @@ fn start_default_gatherer(fixture: &LiveFixture) {
 fn live_prereq_fixture(pack_slots: usize, full_bank: bool) -> (LiveFixture, Vec<String>) {
     let selected =
         api::game_data::for_revision(ClientRevision::R289).expect("selected R289 game data");
-    let pack_aliases = inventory_seed_aliases(&selected, &["dagger_wolfbane"], pack_slots);
+    let pack_aliases = inventory_seed_aliases(&selected, pack_slots);
     let mut seed_commands = item_seed_commands("give", &pack_aliases);
     if full_bank {
         seed_commands.extend(full_bank_seed_commands(&selected, &pack_aliases));
+    } else {
+        seed_commands.push("givebank dagger_wolfbane 1".to_owned());
     }
     let fixture = make_fixture_with_seed_commands(
         PREREQ_EAST,
@@ -2017,12 +2004,34 @@ fn run_mort_myre_gift(full_bank: bool, run_gatherer: bool) {
         "compat script grant must be off for the Mort Myre Inherit case"
     );
     let run = start_compat(&fixture, compat_holy_source(PREREQ_SWAMP, "", false));
-    let fact = refusal_fact(&fixture, "druidspirit", Duration::from_secs(240));
+    let fact = wait_for(
+        &fixture.play,
+        &fixture.name,
+        "observed Mort Myre start item-box fact",
+        Duration::from_secs(240),
+        |_| {
+            fixture
+                .state
+                .prereq_snapshot()
+                .facts()
+                .iter()
+                .find(|fact| {
+                    fact.quest.0.as_ref() == "druidspirit"
+                        && fact.possible.min == Some(5)
+                        && fact.possible.max == Some(5)
+                        && matches!(&fact.source, FactSource::Page { .. })
+                })
+                .cloned()
+        },
+    );
     assert_eq!(
         fact.observed.run, run,
-        "Mort Myre refusal belongs to compat run"
+        "Mort Myre item-box fact belongs to compat run"
     );
-    assert!(fact.refused.is_some(), "Mort Myre refusal fact is missing");
+    assert!(
+        fact.refused.is_none(),
+        "known-false Mort Myre start must not probe"
+    );
     let (gift_tick, gift_counts, gift_chat) = wait_for_snapshot(
         &fixture,
         "observed Drezel's three meat pies and three apple pies",
@@ -2065,7 +2074,7 @@ fn run_mort_myre_gift(full_bank: bool, run_gatherer: bool) {
         "script_allow_quest_start": script_allow_quest_start,
         "seeded_inventory_tick": seeded_inventory_tick,
         "seeded_pack_aliases": pack_aliases,
-        "server_refusal_fact": format!("{fact:?}"),
+        "start_item_box_fact": format!("{fact:?}"),
         "gift_tick": gift_tick,
         "inventory_pies": {"meat_pie": gift_counts.0, "apple_pie": gift_counts.1},
         "gift_chat_lines": gift_chat,
