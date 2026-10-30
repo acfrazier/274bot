@@ -3179,10 +3179,7 @@ impl UseOnRun {
     /// tick for an in-flight effect to land, and only if the round's goal is
     /// still unmet, the round starts over once: the same re-dispatch a
     /// timed-out `until` round already makes (`clear_round`).
-    fn resume_after_hold(
-        &mut self,
-        cx: &mut crate::native::ActionContext<'_>,
-    ) -> Poll<()> {
+    fn resume_after_hold(&mut self, cx: &mut crate::native::ActionContext<'_>) -> Poll<()> {
         use crate::native::{log_hold_resume, AfterHold, HoldResume};
         if !self.accepted || self.dialogue.is_some() {
             return Poll::Ready(());
@@ -3772,9 +3769,9 @@ impl crate::native::NativeMachine for UseOnAction {
             crate::native::InteractionDispatch::Settled(receipt) if receipt.accepted => {
                 Poll::Ready(Ok(receipt.chat_since))
             }
-            crate::native::InteractionDispatch::Settled(_) => Poll::Ready(Err(ActionError::Failed(
-                Arc::from("use_on dispatch rejected"),
-            ))),
+            crate::native::InteractionDispatch::Settled(_) => Poll::Ready(Err(
+                ActionError::Failed(Arc::from("use_on dispatch rejected")),
+            )),
             // The host still holds the request: the wait is its lifecycle's.
             crate::native::InteractionDispatch::Queued => Poll::Pending,
             crate::native::InteractionDispatch::Unsent => {

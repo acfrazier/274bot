@@ -41,8 +41,8 @@ pub use server_ordered::ServerOrderedCompletion;
 pub mod walk;
 pub mod walk_wait;
 pub use ledger::{
-    is_teleport, AfterHold, BankDepositTrace, HostAction, HostAuthority, HostEffect, QuietReadOwner,
-    WALK_TILES_PER_TICK,
+    is_teleport, AfterHold, BankDepositTrace, HostAction, HostAuthority, HostEffect,
+    QuietReadOwner, WALK_TILES_PER_TICK,
 };
 /// Static avoid-catalog identities shared with external runtime adapters.
 pub use nav_planner::contract::AVOID_CATALOG_IDS;
@@ -1481,7 +1481,9 @@ pub trait NativeMachine: Send + 'static {
     /// when the goal is not met and the request was lost or taken over. A
     /// `BudgetExhausted` error retries on the next tick.
     fn after_hold(&mut self, _cx: &mut ActionContext<'_>) -> Result<HoldResume, ActionError> {
-        Ok(HoldResume::Kept("this machine keeps no request across a hold"))
+        Ok(HoldResume::Kept(
+            "this machine keeps no request across a hold",
+        ))
     }
     fn cancel(&mut self) {}
     fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {

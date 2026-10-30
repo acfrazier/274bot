@@ -793,7 +793,11 @@ impl SlotScript {
     /// while the guardian holds the slot, and the guardian's Maze and Mime
     /// events move the player and return it to the tile it left, so only the
     /// frames of the hold itself can show the jump.
-    pub fn observe_player_fix(&mut self, tick: u64, snapshot: Option<&api::snapshot::GameSnapshot>) {
+    pub fn observe_player_fix(
+        &mut self,
+        tick: u64,
+        snapshot: Option<&api::snapshot::GameSnapshot>,
+    ) {
         let tile = snapshot
             .and_then(|snapshot| snapshot.local_player())
             .map(|player| player.player.network);

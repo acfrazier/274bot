@@ -910,7 +910,10 @@ fn toggle_off_knocks_the_script_once_but_never_holds_or_sends() {
         assert!(!status.hold, "the guardian never holds the slot");
         assert!(!status.ours, "the event latches no pending script work");
         assert!(!status.handling);
-        assert!(drv.menus.is_empty() && drv.actions.is_empty(), "nothing is sent");
+        assert!(
+            drv.menus.is_empty() && drv.actions.is_empty(),
+            "nothing is sent"
+        );
     }
     assert_eq!(*knocks.lock().unwrap(), 1, "one knock on the event's edge");
 }

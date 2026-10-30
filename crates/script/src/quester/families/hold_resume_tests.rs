@@ -92,10 +92,17 @@ fn a_talk_dropped_unsent_by_a_guardian_hold_is_sent_again_once() {
     assert_eq!(talks(&ledger), 1, "one click is sent again");
     assert_ne!(ledger.as_ref().unwrap().outbox[0].request_id, first);
     assert!(poll_talk(&page, &mut ledger, &mut budget, 11, &handle).is_pending());
-    assert_eq!(talks(&ledger), 1, "the host holds the new click: no second one");
+    assert_eq!(
+        talks(&ledger),
+        1,
+        "the host holds the new click: no second one"
+    );
     let log = take_resume_log();
     assert_eq!(log.len(), 1, "one resume line: {log:?}");
-    assert!(log[0].contains("re-issued its request once: Talk-to"), "{log:?}");
+    assert!(
+        log[0].contains("re-issued its request once: Talk-to"),
+        "{log:?}"
+    );
 }
 
 /// R1, Talk, accepted then interrupted: the server took the click, then the
@@ -226,20 +233,18 @@ fn use_on_plan(cx: &CompileContext<'_>) -> Arc<dyn super::super::super::compile:
 }
 
 fn use_on_requests(ledger: &Option<Box<ledger::Ledger>>) -> usize {
-    ledger
-        .as_ref()
-        .map_or(0, |ledger| {
-            ledger
-                .outbox
-                .iter()
-                .filter(|action| {
-                    matches!(
-                        &action.effect,
-                        HostEffect::Interaction(InteractReq::UseOn { .. })
-                    )
-                })
-                .count()
-        })
+    ledger.as_ref().map_or(0, |ledger| {
+        ledger
+            .outbox
+            .iter()
+            .filter(|action| {
+                matches!(
+                    &action.effect,
+                    HostEffect::Interaction(InteractReq::UseOn { .. })
+                )
+            })
+            .count()
+    })
 }
 
 fn poll_use_on(
@@ -274,7 +279,11 @@ fn a_use_on_dropped_unsent_by_a_guardian_hold_is_sent_again_once() {
         assert!(poll_use_on(&mut run, &snapshot, &mut ledger, &mut budget, 9).is_pending());
         assert_eq!(use_on_requests(&ledger), 0, "the settle tick sends nothing");
         assert!(poll_use_on(&mut run, &snapshot, &mut ledger, &mut budget, 10).is_pending());
-        assert_eq!(use_on_requests(&ledger), 1, "exactly one request is sent again");
+        assert_eq!(
+            use_on_requests(&ledger),
+            1,
+            "exactly one request is sent again"
+        );
         assert_ne!(ledger.as_ref().unwrap().outbox[0].request_id, first);
         assert!(poll_use_on(&mut run, &snapshot, &mut ledger, &mut budget, 11).is_pending());
         assert_eq!(use_on_requests(&ledger), 1, "and no second one");
@@ -596,19 +605,8 @@ fn a_slot_classifies_a_hold_by_the_player_positions_its_frames_show() {
             vec![tile(2900, 4555), tile(2900, 4556), origin],
             1,
         ),
-        (
-            "a plane change",
-            vec![WorldTile {
-                level: 1,
-                ..origin
-            }],
-            1,
-        ),
-        (
-            "no hold at all",
-            vec![],
-            0,
-        ),
+        ("a plane change", vec![WorldTile { level: 1, ..origin }], 1),
+        ("no hold at all", vec![], 0),
     ];
     for (name, frames, expected) in cases {
         let count = Arc::new(AtomicUsize::new(0));

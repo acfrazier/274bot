@@ -576,15 +576,13 @@ pub const WALK_TILES_PER_TICK: u32 = 2;
 /// (`macro_events.rs2:235-241`). A guardian walk away from a hostile event
 /// covers a few tiles at running speed, which this rule never calls a
 /// teleport.
-pub fn is_teleport(
-    from: api::WorldTile,
-    to: api::WorldTile,
-    ticks: u32,
-) -> bool {
+pub fn is_teleport(from: api::WorldTile, to: api::WorldTile, ticks: u32) -> bool {
     if from.level != to.level {
         return true;
     }
-    let distance = (from.x - to.x).unsigned_abs().max((from.z - to.z).unsigned_abs());
+    let distance = (from.x - to.x)
+        .unsigned_abs()
+        .max((from.z - to.z).unsigned_abs());
     distance > WALK_TILES_PER_TICK.saturating_mul(ticks.saturating_add(1))
 }
 
@@ -786,16 +784,12 @@ impl TickBudget {
             return;
         };
         let tick = tick as u32;
-        let watching = matches!(
-            self.hold & HOLD_PHASE_MASK,
-            HOLD_HELD | HOLD_ENDED
-        );
+        let watching = matches!(self.hold & HOLD_PHASE_MASK, HOLD_HELD | HOLD_ENDED);
         if self.fix != 0 && watching {
             let elapsed = tick.wrapping_sub(self.fix_tick);
             // A wrapped (negative) elapsed count is a restarted tick clock,
             // not time that passed.
-            if elapsed < u32::MAX / 2
-                && is_teleport(unpack_fix(self.fix), unpack_fix(fix), elapsed)
+            if elapsed < u32::MAX / 2 && is_teleport(unpack_fix(self.fix), unpack_fix(fix), elapsed)
             {
                 self.hold |= HOLD_TELEPORTED;
             }

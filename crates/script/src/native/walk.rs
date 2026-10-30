@@ -124,7 +124,9 @@ impl NativeMachine for Walk {
             return Ok(HoldResume::Kept("the walk already has its receipt"));
         }
         if !cx.walk_unsent(self.request_id) {
-            return Ok(HoldResume::Kept("the host armed the walk and still follows it"));
+            return Ok(HoldResume::Kept(
+                "the host armed the walk and still follows it",
+            ));
         }
         let frame = Frame {
             snapshot: cx.snapshot(),

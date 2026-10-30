@@ -1,9 +1,7 @@
 use super::thieving_core::{
     level_ready, ChatEvidence, Decision, Failure, Observation, ThieveCore, PICKPOCKET, STEAL_FROM,
 };
-use super::{
-    ActionContext, ActionError, HoldResume, InteractionDispatch, NativeMachine, WalkEnd,
-};
+use super::{ActionContext, ActionError, HoldResume, InteractionDispatch, NativeMachine, WalkEnd};
 use crate::gatherer::oneop::{OneOp, OneOpArgs};
 use crate::quester::families::reach::{self, Reach, ReachArgs, ReachKind};
 use api::quest_progress::EvidenceStamp;
@@ -1681,7 +1679,11 @@ mod tests {
         assert!(poll_thieve(&handle, &snapshot, &mut ledger, &mut budget, 9).is_pending());
         assert_eq!(npc_click_count(&ledger), 0, "the settle tick sends nothing");
         assert!(poll_thieve(&handle, &snapshot, &mut ledger, &mut budget, 10).is_pending());
-        assert_eq!(npc_click_count(&ledger), 1, "one attempt is dispatched again");
+        assert_eq!(
+            npc_click_count(&ledger),
+            1,
+            "one attempt is dispatched again"
+        );
         assert_ne!(ledger.as_ref().unwrap().outbox[0].request_id, first);
         assert!(poll_thieve(&handle, &snapshot, &mut ledger, &mut budget, 11).is_pending());
         assert_eq!(npc_click_count(&ledger), 1, "and no second one");
@@ -1717,8 +1719,9 @@ mod tests {
         assert_eq!(npc_click_count(&ledger), 0, "nothing is dispatched again");
         let log = crate::native::take_resume_log();
         assert!(
-            log.iter()
-                .any(|line| line.contains("kept its request: the item count already meets the goal")),
+            log.iter().any(
+                |line| line.contains("kept its request: the item count already meets the goal")
+            ),
             "{log:?}"
         );
     }

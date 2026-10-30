@@ -1,6 +1,6 @@
 use super::*;
-use crate::native::{HostEffect, InteractionReceipt, NativeOutput};
 use crate::native::ledger::TickBudget;
+use crate::native::{HostEffect, InteractionReceipt, NativeOutput};
 use crate::quester::families::tests::{def, local_player, with_tick_budget_output};
 use crate::shim::InteractReq;
 use api::named_banks::{NamedBank, NamedBankFacts};
@@ -320,7 +320,10 @@ fn a_random_event_that_takes_the_hand_in_talk_over_resends_it_once_without_a_res
     // The settle tick sends nothing; the next sends one Talk-to; then the
     // host's reply opens the page this time.
     assert_eq!(fixture.tick(tick), ScriptFlow::Continue);
-    assert_eq!(fixture.talks, 1, "the first observed tick after the hold sends nothing");
+    assert_eq!(
+        fixture.talks, 1,
+        "the first observed tick after the hold sends nothing"
+    );
     tick += 1;
     fixture.talk_opens_page = true;
     assert_eq!(fixture.tick(tick), ScriptFlow::Continue);
@@ -339,5 +342,9 @@ fn a_random_event_that_takes_the_hand_in_talk_over_resends_it_once_without_a_res
     }
     assert_eq!(flow, ScriptFlow::Complete, "the hand-in completes");
     assert_eq!(fixture.talks, 2, "no third Talk-to");
-    assert!(!fixture.output.logs.iter().any(|line| line.contains("failed")));
+    assert!(!fixture
+        .output
+        .logs
+        .iter()
+        .any(|line| line.contains("failed")));
 }
