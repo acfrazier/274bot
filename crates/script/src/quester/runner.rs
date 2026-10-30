@@ -295,18 +295,13 @@ fn quest_gate_evidence_detail(gates: &[api::selected::QuestGate]) -> Arc<str> {
         detail.push_str(" quest ");
         match gate {
             api::selected::QuestGate::Complete(quest) => {
-                let _ = write!(
-                    detail,
-                    "{}; completion; evidence state unknown",
-                    quest.0
-                );
+                let _ = write!(detail, "{}; completion; evidence state unknown", quest.0);
             }
             api::selected::QuestGate::Window(window) => {
                 let _ = write!(
                     detail,
                     "{}; signal {}; window; minimum ",
-                    window.quest.0,
-                    window.signal.0
+                    window.quest.0, window.signal.0
                 );
                 match window.values.min {
                     Some(minimum) => {
@@ -327,7 +322,6 @@ fn quest_gate_evidence_detail(gates: &[api::selected::QuestGate]) -> Arc<str> {
     }
     Arc::from(detail)
 }
-
 
 pub struct Quester {
     run: RunKey,
@@ -5985,16 +5979,16 @@ mod tests {
     #[test]
     fn quester_reports_walk_evidence_as_a_terminal_block() {
         let (mut script, _) = fixture();
-        let gates: Arc<[api::selected::QuestGate]> = Arc::from([
-            api::selected::QuestGate::Window(api::selected::StageWindow {
+        let gates: Arc<[api::selected::QuestGate]> = Arc::from([api::selected::QuestGate::Window(
+            api::selected::StageWindow {
                 quest: FactKey::new("biohazard"),
                 signal: FactKey::new("biohazard"),
                 values: api::selected::InclusiveRange {
                     min: None,
                     max: Some(9),
                 },
-            }),
-        ]);
+            },
+        )]);
         script.record_failure(ActionError::NeedsEvidence(gates));
         assert_eq!(script.blocked_failure().code.as_ref(), "needs-evidence");
         let detail = script.blocked_failure().message;

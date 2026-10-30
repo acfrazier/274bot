@@ -216,7 +216,6 @@ fn test_window_status(status: &QuestListStatusEvidence, window: &StageWindow) ->
     }
 }
 
-
 impl EvidenceProvider for QuestListEvidenceProvider {
     fn test_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Truth {
         if !self.family_matches || !self.stamp.is_some_and(|stamp| stamp.meets(required_after)) {
@@ -384,7 +383,6 @@ mod quest_list_tests {
         })
     }
 
-
     #[test]
     fn observed_statuses_answer_completion_without_other_evidence_sources() {
         let quests = catalog();
@@ -502,10 +500,7 @@ mod quest_list_tests {
         for min in [None, Some(0)] {
             assert_eq!(
                 provider.test_gate(
-                    &biohazard_window(InclusiveRange {
-                        min,
-                        max: Some(9),
-                    }),
+                    &biohazard_window(InclusiveRange { min, max: Some(9) }),
                     observed,
                 ),
                 Truth::True
