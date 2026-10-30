@@ -971,7 +971,20 @@ fn start_compat(fixture: &LiveFixture, source: String) -> RunKey {
         },
     );
     assert_eq!(settled, Some(script::StartOutcome::Ready));
-    run
+    let session = fixture
+        .play
+        .arm(&fixture.name)
+        .and_then(|arm| arm.session_key())
+        .expect("compat belongs to the actual live host session");
+    assert_eq!(
+        session.slot().incarnation().get(),
+        run.slot,
+        "compat keeps the fixture's slot incarnation"
+    );
+    RunKey {
+        session: session.epoch(),
+        ..run
+    }
 }
 
 fn wait_compat_result(
