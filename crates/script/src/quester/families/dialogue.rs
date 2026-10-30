@@ -362,7 +362,10 @@ pub struct Dialogue {
     chat_advance_request_id: Option<u64>,
 }
 // Keep retained per-action dialogue state within its reviewed size budget.
-const _: () = assert!(std::mem::size_of::<Dialogue>() <= 384);
+// 392 B measured (+8 B headroom). The approach round 3 fix added the route
+// plan (tile, radius, assessment request, retries) and a separate Talk
+// arrival and NPC-message tick: 56 B over the 336 B of round 2.
+const _: () = assert!(std::mem::size_of::<Dialogue>() <= 400);
 
 impl NativeMachine for Dialogue {
     type Args = DialogueArgs;
@@ -1220,6 +1223,7 @@ impl Dialogue {
                 }
             }
             Phase::Approach
+            | Phase::Plan
             | Phase::WaitContinueAck
             | Phase::WaitContinueTick
             | Phase::WaitChoiceAck

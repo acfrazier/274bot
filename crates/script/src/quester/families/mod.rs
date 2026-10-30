@@ -1540,8 +1540,8 @@ struct TalkRun {
     dialogue: Option<ActionHandle<dialogue::Dialogue>>,
     started: bool,
 }
-// 576 B measured (+32 B headroom): both inline action handles store machine state; this approach fix adds no fields.
-const _: [(); 1] = [(); (std::mem::size_of::<TalkRun>() <= 608) as usize];
+// 664 B measured (+32 B headroom): both inline action handles store machine state; the dialogue approach round 3 fix grew `Dialogue` by 56 B (see `dialogue.rs`).
+const _: [(); 1] = [(); (std::mem::size_of::<TalkRun>() <= 696) as usize];
 impl StepRun for TalkRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         if let Some(handle) = &self.walk {
