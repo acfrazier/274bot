@@ -92,6 +92,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   before the bot reached the bank. The host now checks the route generation
   before it sends a walk result to a native action.
 
+- A native script that asked the host for a route assessment could wait for
+  an answer that never came. This happened when the script's earlier walk had
+  just ended: the host cleared the old walk and, with it, the new assessment.
+  The host now clears only the old walk's own work, so the assessment still
+  answers once. If the host itself cancels a live assessment (a pause or a
+  relog), the script now gets one refusal that says so.
+
 - The script API documentation now states that moving the bot by hand during a
   fight ends `api.combat.fight` as `aborted` with reason `user-input`. The host
   has settled it that way since 0.2.4; the declarations and pages still

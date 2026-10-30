@@ -111,6 +111,9 @@ pub(crate) enum RouteDemand {
     Preparing {
         generation: u64,
         request_id: u64,
+        /// The taken demand's kind: cleanup that finds only this placeholder
+        /// must still tell walk work from a live advisory.
+        kind: RouteDemandKind,
     },
     Prepared(Box<RouteJob>),
 }
@@ -134,6 +137,17 @@ impl RouteDemandKind {
             }
             | Self::Advisory { authority, .. } => RequestId::from_raw(authority.request_id().get()),
             Self::Walk { authority: None } => None,
+        }
+    }
+
+    /// Whether the cleanup of a revoked or ended walk may discard work of this
+    /// kind. Walk work always belongs to the walk. Advisory work has its own
+    /// owner (its `HostAuthority`): only an advisory whose owner is already
+    /// revoked is discarded, silently, because nobody awaits it.
+    fn walk_cleanup_discards(&self) -> bool {
+        match self {
+            Self::Walk { .. } => true,
+            Self::Advisory { authority, .. } => !authority.live(),
         }
     }
 }
@@ -169,7 +183,7 @@ impl RouteDemand {
     fn kind(&self) -> Option<RouteDemandKind> {
         match self {
             Self::Pending { kind, .. } => Some(kind.clone()),
-            Self::Preparing { .. } => None,
+            Self::Preparing { kind, .. } => Some(kind.clone()),
             Self::Prepared(job) => job.kind.as_ref().cloned(),
         }
     }
@@ -3006,6 +3020,9 @@ fn take_route_demand(
     let placeholder = RouteDemand::Preparing {
         generation: pending.generation(),
         request_id: pending.request_id(),
+        kind: pending
+            .kind()
+            .expect("queued route work retains its demand kind"),
     };
     let demand = std::mem::replace(bot.pending_route.as_deref_mut()?, placeholder);
     Some((demand, scope))
@@ -5385,7 +5402,7 @@ impl ScriptWalkArm {
                 .as_ref()
                 .is_some_and(|owner| matches!(&owner.kind, RouteDemandKind::Walk { .. }))
             {
-                bot.supersede_route_work();
+                bot.supersede_walk_route_work();
             }
             let displaced = bot.pending_route.take();
             let displaced_kind = displaced.as_ref().and_then(|demand| demand.kind());
@@ -6246,6 +6263,7 @@ impl NavBot {
         self.pending_route = Some(Box::new(RouteDemand::Preparing {
             generation: self.route_generation,
             request_id: self.walk_request_id,
+            kind: RouteDemandKind::Walk { authority: None },
         }));
     }
 
@@ -6258,12 +6276,73 @@ impl NavBot {
         }
     }
 
-    /// Abandon the accepted route when bank work takes ownership of the nav entry.
-    pub(crate) fn supersede_route_work(&mut self) {
-        if let Some(mut owner) = self.route_ticket.take() {
-            owner.abandon(Cancellation::Superseded);
+    /// Abandon the walk's own route work (its accepted ticket and its queued
+    /// demand) when bank work takes over the nav entry or the walk is revoked
+    /// or ended. Advisory work has its own owner and is never the walk's: a
+    /// live advisory and its result stay, and only an advisory whose owner is
+    /// already revoked is dropped, without a receipt, since nobody awaits it.
+    pub(crate) fn supersede_walk_route_work(&mut self) {
+        if self
+            .route_ticket
+            .as_ref()
+            .is_some_and(|owner| owner.kind.walk_cleanup_discards())
+        {
+            if let Some(mut owner) = self.route_ticket.take() {
+                owner.abandon(Cancellation::Superseded);
+            }
         }
-        self.pending_route = None;
+        if self
+            .pending_route
+            .as_ref()
+            .and_then(|demand| demand.kind())
+            .is_none_or(|kind| kind.walk_cleanup_discards())
+        {
+            self.pending_route = None;
+        }
+    }
+
+    /// The host ends all advisory route work of the slot (a pause, a relog or
+    /// the end of the run). Work whose owner is still live gets exactly one
+    /// correlated refusal receipt; work whose owner is revoked is dropped
+    /// without one. The caller must not clear `assess_result` afterwards.
+    pub(crate) fn cancel_advisory_route_work(&mut self, detail: &str) {
+        let mut cancelled = Vec::new();
+        if self
+            .route_ticket
+            .as_ref()
+            .is_some_and(|owner| matches!(owner.kind, RouteDemandKind::Advisory { .. }))
+        {
+            if let Some(mut owner) = self.route_ticket.take() {
+                owner.abandon(Cancellation::ScopeInvalidated);
+                cancelled.push(owner.kind.clone());
+            }
+        }
+        if self
+            .pending_route
+            .as_ref()
+            .and_then(|demand| demand.kind())
+            .is_some_and(|kind| matches!(kind, RouteDemandKind::Advisory { .. }))
+        {
+            if let Some(demand) = self.pending_route.take() {
+                cancelled.extend(demand.kind());
+                (*demand).signal_completion();
+            }
+        }
+        // At most one advisory is current: the one the slot last queued.
+        for kind in cancelled {
+            if let RouteDemandKind::Advisory {
+                authority,
+                evidence,
+            } = kind
+            {
+                if authority.live() && self.advisory_request_id == authority.request_id().get() {
+                    self.assess_result = Some(Box::new((
+                        authority.clone(),
+                        advisory_refusal(&authority, evidence, detail),
+                    )));
+                }
+            }
+        }
     }
 
     /// Native request IDs belong to their run, within the bound compiled slot.
@@ -7110,9 +7189,11 @@ fn end_route_follow(nav: &mut NavBot) {
     if nav.bank_pick.walking(nav.route_generation) {
         nav.bank_pick.reset();
     }
-    nav.supersede_route_work();
+    nav.supersede_walk_route_work();
     nav.route_generation = nav.route_generation.wrapping_add(1);
-    nav.pending_route = None;
+    // The host ends the slot's follow and its advisory work together. A live
+    // advisory is answered with one refusal; a revoked one is dropped.
+    nav.cancel_advisory_route_work("Advisory route was cancelled when the host ended route work");
     nav.requested_route = None;
     nav.traveller.clear();
     nav.clear_route();
@@ -7122,7 +7203,14 @@ fn end_route_follow(nav: &mut NavBot) {
     super::script_walk::owe_walk_guard_off(nav);
     nav.end_native_walk(script::native::WalkEnd::Cancelled);
     nav.admission_pending = false;
-    nav.assess_result = None;
+    // A finished advisory answer of a live owner still awaits delivery.
+    if nav
+        .assess_result
+        .as_ref()
+        .is_some_and(|result| !result.0.live())
+    {
+        nav.assess_result = None;
+    }
     nav.risk_refusal = None;
     if nav
         .admission

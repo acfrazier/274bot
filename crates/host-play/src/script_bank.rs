@@ -2082,8 +2082,7 @@ fn queue_bank(
     let walk_generation = if walking && first.is_some() {
         bot.route_generation = bot.route_generation.wrapping_add(1);
         bot.walk_request_id = 0;
-        bot.supersede_route_work();
-        bot.pending_route = None;
+        bot.supersede_walk_route_work();
         Some(bot.route_generation)
     } else {
         None

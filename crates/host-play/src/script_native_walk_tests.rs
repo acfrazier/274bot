@@ -6360,7 +6360,7 @@ mod s2b_admission_contract {
             let authority = bot.native_walk.as_ref().unwrap().clone();
             // Isolate the owner-result publication boundary from a concurrent
             // search completion. The actual request and action owner stay live.
-            bot.supersede_route_work();
+            bot.supersede_walk_route_work();
             (bot.route_generation, bot.walk_request_id, authority)
         };
         crate::script_runtime::publish_route_owner_refusal(
@@ -6573,9 +6573,7 @@ mod s2b_admission_contract {
     /// Complete the pre-walk and leave assessment B queued, with the old walk's
     /// host owner revoked and still attached to the slot. With `accepted`, the
     /// pump has also admitted B's worker ticket (not yet harvested).
-    fn pre_walk_then_queued_assessment(
-        accepted: bool,
-    ) -> (Rig, Arc<parking_lot::Mutex<Chain>>) {
+    fn pre_walk_then_queued_assessment(accepted: bool) -> (Rig, Arc<parking_lot::Mutex<Chain>>) {
         let (mut rig, shared) = chained_rig();
         rig.observe(1);
         rig.wait_routed();
@@ -6614,7 +6612,10 @@ mod s2b_admission_contract {
         assert_eq!(shared.receipts.len(), 1, "exactly one receipt arrived");
         let receipt = &shared.receipts[0];
         assert_eq!(receipt.request_id, shared.requests[0]);
-        assert!(receipt.assessment.is_some(), "a real assessment: {receipt:?}");
+        assert!(
+            receipt.assessment.is_some(),
+            "a real assessment: {receipt:?}"
+        );
         assert!(receipt.route_ticks > 0);
         assert!(receipt.refusal.is_none());
         assert_eq!(advisory_work(rig), (false, false));
