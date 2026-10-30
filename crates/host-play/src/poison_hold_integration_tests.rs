@@ -8,7 +8,7 @@ use api::snapshot::{
     WorldStateView, WorldTile,
 };
 use client::client::{Client, ClientConfig};
-use client::io::{ClientProt, ClientRevision, map_client_prot};
+use client::io::{map_client_prot, ClientProt, ClientRevision};
 use nav_planner::collision::{pack_walk, WorldCollision};
 use nav_planner::router::{Leg, Route};
 use nav_planner::transport::TransportGraph;
@@ -110,8 +110,7 @@ impl HoldRig {
         let mut bot = NavBot::default();
         bot.condition
             .session_started(0, 0, Some((combat, poison_rate)));
-        bot.condition
-            .observe_frame(&snapshot, &drain(false), false);
+        bot.condition.observe_frame(&snapshot, &drain(false), false);
         if accepted {
             observe_dispatch(
                 &mut bot,
@@ -121,13 +120,11 @@ impl HoldRig {
             );
         }
 
-        let input = admission::capture(
-            &snapshot,
-            false,
-            bot.condition.current(),
-            false,
+        let input = admission::capture(&snapshot, false, bot.condition.current(), false);
+        assert!(
+            !input.missing_facts,
+            "fixture must have complete live facts"
         );
-        assert!(!input.missing_facts, "fixture must have complete live facts");
         assert_eq!(input.poison, PoisonState::Unknown { since: 0 });
         let admission = Admission {
             policy: RiskPolicy::Avoid,
@@ -182,13 +179,7 @@ impl HoldRig {
         }
     }
 
-    fn observe(
-        &mut self,
-        tick: u32,
-        here: WorldTile,
-        modal: Option<i32>,
-        hit: Option<(i32, i32)>,
-    ) {
+    fn observe(&mut self, tick: u32, here: WorldTile, modal: Option<i32>, hit: Option<(i32, i32)>) {
         self.snapshot = frame(tick, here, modal, hit, world_width(self.start));
         self.navs
             .lock()
@@ -228,12 +219,7 @@ impl HoldRig {
         let bot = navs.get_mut(ALICE).expect("nav bot");
         let generation = bot.route_generation.wrapping_add(1);
         let request_id = bot.walk_request_id.wrapping_add(1);
-        let input = admission::capture(
-            &self.snapshot,
-            false,
-            bot.condition.current(),
-            false,
-        );
+        let input = admission::capture(&self.snapshot, false, bot.condition.current(), false);
         let admission = Admission {
             policy: RiskPolicy::Avoid,
             enforce: true,
@@ -245,7 +231,10 @@ impl HoldRig {
             escape: None,
         };
         let assessment = admission::assess(&self.route, &self.world, &admission);
-        assert!(matches!(&assessment.poison_test, PoisonTest::WaitForClear { .. }));
+        assert!(matches!(
+            &assessment.poison_test,
+            PoisonTest::WaitForClear { .. }
+        ));
         bot.route_generation = generation;
         bot.walk_request_id = request_id;
         bot.requested_route = Some((
@@ -289,7 +278,12 @@ fn outgoing_client() -> Client {
     client
 }
 
-fn observe_dispatch(bot: &mut NavBot, client: &mut Client, packet: ClientProt, snapshot: &GameSnapshot) {
+fn observe_dispatch(
+    bot: &mut NavBot,
+    client: &mut Client,
+    packet: ClientProt,
+    snapshot: &GameSnapshot,
+) {
     let checkpoint = bot
         .condition
         .dispatch_checkpoint(client)
@@ -306,8 +300,7 @@ fn observe_dispatch(bot: &mut NavBot, client: &mut Client, packet: ClientProt, s
         client.out.p1(0);
     }
     bot.condition.observe_dispatch(client, checkpoint);
-    bot.condition
-        .observe_frame(snapshot, &drain(false), false);
+    bot.condition.observe_frame(snapshot, &drain(false), false);
 }
 
 fn no_reach() -> Arc<api::query::ReachQueryView> {
@@ -466,14 +459,11 @@ fn frame(
         index: 173,
         value: 0,
     }]);
-    let mut marks = [
-        HitmarkView {
-            kind: 0,
-            value: 0,
-            cycle: -1,
-        };
-        4
-    ];
+    let mut marks = [HitmarkView {
+        kind: 0,
+        value: 0,
+        cycle: -1,
+    }; 4];
     let loop_cycle = tick as i32;
     if let Some((kind, value)) = hit {
         marks[0] = HitmarkView {
@@ -507,7 +497,10 @@ fn poison_hold_full_window_waits_31_and_resumes_only_after_clear() {
         assert_eq!(hold.until_index, 0);
         assert_eq!(wait.started, 0);
         assert_eq!(wait.deadline.wrapping_sub(wait.started), 31);
-        assert!(rig.driver.walks.is_empty(), "accepted movement needs no stand click");
+        assert!(
+            rig.driver.walks.is_empty(),
+            "accepted movement needs no stand click"
+        );
     }
 
     for tick in 1..=30 {
@@ -516,7 +509,10 @@ fn poison_hold_full_window_waits_31_and_resumes_only_after_clear() {
         let navs = rig.bot();
         let hold = navs[ALICE].poison_hold.as_ref().expect("hold until clear");
         assert_eq!(hold.wait.unwrap().deadline, 31);
-        assert!(rig.driver.walks.is_empty(), "no hop while poison is unresolved");
+        assert!(
+            rig.driver.walks.is_empty(),
+            "no hop while poison is unresolved"
+        );
     }
     rig.observe(31, tile(0), None, None);
     assert_eq!(
@@ -531,7 +527,10 @@ fn poison_hold_full_window_waits_31_and_resumes_only_after_clear() {
         &navs[ALICE].assessment.as_ref().unwrap().poison_test,
         PoisonTest::PassesCharged { .. } | PoisonTest::NotNeeded
     ));
-    assert!(!rig.driver.walks.is_empty(), "follow resumes after the clear fact");
+    assert!(
+        !rig.driver.walks.is_empty(),
+        "follow resumes after the clear fact"
+    );
 }
 
 #[test]
@@ -549,12 +548,7 @@ fn poison_hold_partial_window_waits_only_the_remaining_ticks() {
     assert_eq!(window.remaining, 18);
 
     rig.pump(tile(0), true);
-    let wait = rig.bot()[ALICE]
-        .poison_hold
-        .as_ref()
-        .unwrap()
-        .wait
-        .unwrap();
+    let wait = rig.bot()[ALICE].poison_hold.as_ref().unwrap().wait.unwrap();
     assert_eq!(wait.started, 13);
     assert_eq!(wait.deadline, 31);
     for tick in 14..=31 {
@@ -585,7 +579,10 @@ fn poison_hold_sends_no_hop_into_exposure_before_the_deadline() {
     for tick in 1..=30 {
         rig.observe(tick, tile(40), None, None);
         rig.pump(tile(40), true);
-        assert!(rig.driver.walks.is_empty(), "route cannot enter the zone during hold");
+        assert!(
+            rig.driver.walks.is_empty(),
+            "route cannot enter the zone during hold"
+        );
     }
     rig.observe(31, tile(40), None, None);
     rig.pump(tile(40), true);
@@ -599,7 +596,10 @@ fn poison_long_approach_clears_without_starting_a_wait() {
     rig.pump(tile(0), true);
     {
         let navs = rig.bot();
-        let hold = navs[ALICE].poison_hold.as_ref().expect("published approach hold");
+        let hold = navs[ALICE]
+            .poison_hold
+            .as_ref()
+            .expect("published approach hold");
         assert_eq!(hold.until_index, 40);
         assert!(hold.wait.is_none(), "approach does not start the wait");
     }
@@ -608,7 +608,10 @@ fn poison_long_approach_clears_without_starting_a_wait() {
         rig.observe(tick, tile(tick as i32), None, None);
         rig.pump(tile(tick as i32), true);
         if let Some(hold) = rig.bot()[ALICE].poison_hold.as_ref() {
-            assert!(hold.wait.is_none(), "approach must not spend clear ticks waiting");
+            assert!(
+                hold.wait.is_none(),
+                "approach must not spend clear ticks waiting"
+            );
         }
     }
     rig.observe(31, tile(31), None, None);
@@ -647,7 +650,10 @@ fn poison_door_interaction_restarts_the_window_at_tick_20() {
         rig.pump(tile(tick as i32), true);
     }
     let navs = rig.bot();
-    let hold = navs[ALICE].poison_hold.as_ref().expect("still held at retreat");
+    let hold = navs[ALICE]
+        .poison_hold
+        .as_ref()
+        .expect("still held at retreat");
     assert_eq!(hold.until_index, 40);
     assert_eq!(hold.wait.unwrap().started, 40);
     assert_eq!(hold.wait.unwrap().deadline, 51);
@@ -686,14 +692,22 @@ fn poison_hold_sends_one_stand_click_when_movement_was_not_accepted() {
 fn poison_hold_reassesses_a_kind_two_hit_as_poisoned() {
     let mut rig = HoldRig::new(0, 0, true);
     rig.pump(tile(0), true);
-    assert!(rig.bot()[ALICE].poison_hold.as_ref().unwrap().wait.is_some());
+    assert!(rig.bot()[ALICE]
+        .poison_hold
+        .as_ref()
+        .unwrap()
+        .wait
+        .is_some());
 
     rig.observe(1, tile(0), None, Some((2, i32::from(POISON_RATE))));
     rig.pump(tile(0), true);
     let navs = rig.bot();
     assert!(matches!(
         navs[ALICE].condition.current().unwrap().poison,
-        PoisonState::Poisoned { per_tick: POISON_RATE, .. }
+        PoisonState::Poisoned {
+            per_tick: POISON_RATE,
+            ..
+        }
     ));
     assert_eq!(
         navs[ALICE].assessment.as_ref().unwrap().input.poison,
@@ -711,12 +725,7 @@ fn poison_hold_reset_ends_at_deadline_and_retry_gets_a_new_hold() {
     let mut rig = HoldRig::new(0, 0, true);
     rig.pump(tile(0), true);
     for tick in 1..=31 {
-        rig.observe(
-            tick,
-            tile(0),
-            (tick == 5).then_some(123),
-            None,
-        );
+        rig.observe(tick, tile(0), (tick == 5).then_some(123), None);
         rig.pump(tile(0), true);
     }
     {
@@ -728,7 +737,13 @@ fn poison_hold_reset_ends_at_deadline_and_retry_gets_a_new_hold() {
         assert!(navs[ALICE].poison_hold.is_none());
         assert!(navs[ALICE].route.is_none());
         assert_eq!(
-            navs[ALICE].condition.current().unwrap().poison_window.unwrap().last_reset,
+            navs[ALICE]
+                .condition
+                .current()
+                .unwrap()
+                .poison_window
+                .unwrap()
+                .last_reset,
             WindowReset::Modal
         );
     }
@@ -747,7 +762,10 @@ fn poison_hold_reset_ends_at_deadline_and_retry_gets_a_new_hold() {
     rig.rearm();
     rig.pump(tile(0), true);
     let navs = rig.bot();
-    let hold = navs[ALICE].poison_hold.as_ref().expect("retry hold installed");
+    let hold = navs[ALICE]
+        .poison_hold
+        .as_ref()
+        .expect("retry hold installed");
     let wait: HoldWait = hold.wait.expect("retry starts the new remainder");
     assert_eq!(wait.started, 32);
     assert_eq!(wait.deadline, 36);
@@ -766,7 +784,12 @@ fn known_clear_or_poisoned_fact_with_no_world_never_becomes_unsettled() {
         clear.bot()[ALICE].condition.current().unwrap().poison,
         PoisonState::Clear
     );
-    assert!(clear.bot()[ALICE].poison_hold.as_ref().unwrap().wait.is_some());
+    assert!(clear.bot()[ALICE]
+        .poison_hold
+        .as_ref()
+        .unwrap()
+        .wait
+        .is_some());
     clear.pump(tile(0), false);
     assert!(!matches!(
         clear.bot()[ALICE].risk_refusal.as_ref(),
@@ -775,7 +798,12 @@ fn known_clear_or_poisoned_fact_with_no_world_never_becomes_unsettled() {
 
     let mut poisoned = HoldRig::new(0, 0, true);
     poisoned.pump(tile(0), true);
-    assert!(poisoned.bot()[ALICE].poison_hold.as_ref().unwrap().wait.is_some());
+    assert!(poisoned.bot()[ALICE]
+        .poison_hold
+        .as_ref()
+        .unwrap()
+        .wait
+        .is_some());
     poisoned.observe(1, tile(0), None, Some((2, i32::from(POISON_RATE))));
     assert!(matches!(
         poisoned.bot()[ALICE].condition.current().unwrap().poison,

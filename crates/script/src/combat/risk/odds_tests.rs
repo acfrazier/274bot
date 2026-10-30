@@ -175,7 +175,10 @@ fn bound_dominating_kind_never_understates() {
                 selection /= kinds.len();
             }
             let mixture = &mixture[..len];
-            let max_hit = mixture.iter().map(|event| event.hit.get()).fold(0.0, f64::max);
+            let max_hit = mixture
+                .iter()
+                .map(|event| event.hit.get())
+                .fold(0.0, f64::max);
             let max_amount = mixture.iter().map(|event| event.amount).max().unwrap();
             let envelope = [attack(max_hit, max_amount); 3];
             for hp in 1..=10 {
@@ -193,22 +196,45 @@ fn bound_dominating_kind_never_understates() {
 fn bound_distinct_keys_and_fixed_events_match_exact_reference() {
     // F1/F2: old tests had no exact reference for 3+ distinct keys or fixed
     // companion events. Four keys, a duplicate, and both fixed kinds now do.
-    let certain = Event { kind: EventKind::Certain, ..attack(0.0, 2) };
-    let poison = Event { kind: EventKind::Poison, ..attack(0.0, 3) };
+    let certain = Event {
+        kind: EventKind::Certain,
+        ..attack(0.0, 2)
+    };
+    let poison = Event {
+        kind: EventKind::Poison,
+        ..attack(0.0, 3)
+    };
     let mixture = [
-        attack(0.156, 6), attack(0.25, 1), attack(0.5, 2),
-        attack(0.75, 3), attack(0.25, 1), certain, poison,
+        attack(0.156, 6),
+        attack(0.25, 1),
+        attack(0.5, 2),
+        attack(0.75, 3),
+        attack(0.25, 1),
+        certain,
+        poison,
     ];
-    assert!(mixture[0].hit.get() > 0.156, "fixture exercises upward rounding");
+    assert!(
+        mixture[0].hit.get() > 0.156,
+        "fixture exercises upward rounding"
+    );
     let envelope = [attack(0.75, 6); 5];
     for hp in 1..=20 {
         let actual = death_bound(&mixture, hp).unwrap();
         let exact = exhaustive_tail(&mixture, hp);
         assert!((actual.bound - exact).abs() <= f64::from(actual.visits) * f64::EPSILON);
         let dominating = death_bound(
-            &[envelope[0], envelope[1], envelope[2], envelope[3], envelope[4], certain, poison],
+            &[
+                envelope[0],
+                envelope[1],
+                envelope[2],
+                envelope[3],
+                envelope[4],
+                certain,
+                poison,
+            ],
             hp,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(dominating.bound + f64::from(dominating.visits) * f64::EPSILON >= exact);
     }
 }

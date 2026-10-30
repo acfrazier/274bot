@@ -35,7 +35,9 @@ impl HoldWait {
     }
 
     pub(crate) fn remaining(self) -> u8 {
-        self.deadline.wrapping_sub(self.started).min(u16::from(u8::MAX)) as u8
+        self.deadline
+            .wrapping_sub(self.started)
+            .min(u16::from(u8::MAX)) as u8
     }
 }
 

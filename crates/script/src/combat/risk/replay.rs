@@ -906,7 +906,6 @@ impl<'a> Grants<'a> {
     }
 }
 
-
 /// Typed computation only. No routing retry, movement, guard, or slot ownership.
 /// `route` and `context.zones` must be views of the same pack.
 pub fn assess(
@@ -1156,8 +1155,8 @@ where
             origin_volley = origin_volley.saturating_add(u64::from(live.max_hit));
             let events = u64::try_from(ceil(duration, i32::from(live.rate))?)
                 .map_err(|_| UnknownWhy::Overflow)?;
-            origin_worst = origin_worst
-                .saturating_add(u64::from(live.max_hit).saturating_mul(events));
+            origin_worst =
+                origin_worst.saturating_add(u64::from(live.max_hit).saturating_mul(events));
             if live.due().is_some() {
                 origin_worst = origin_worst.saturating_add(u64::from(live.max_hit));
             }
@@ -1198,9 +1197,8 @@ where
                     checkpoint,
                 )
                 .await?;
-                floor_deep = floor_deep.max(
-                    u64::try_from(floor.unwrap_or(255).max(0)).unwrap_or(u64::MAX),
-                );
+                floor_deep =
+                    floor_deep.max(u64::try_from(floor.unwrap_or(255).max(0)).unwrap_or(u64::MAX));
                 if unaffordable_floor.is_none()
                     && floor.is_some_and(|cost| cost >= i32::from(input.hp_max))
                 {
@@ -1234,8 +1232,7 @@ where
             let intervals = rows(&plan, crossing);
             let first = intervals.first().ok_or(UnknownWhy::Overflow)?;
             let max_hit = display_u8(
-                u64::try_from(margin(&plan, crossing, checkpoint).await)
-                    .unwrap_or(u64::MAX),
+                u64::try_from(margin(&plan, crossing, checkpoint).await).unwrap_or(u64::MAX),
             );
             let mut rate = u8::MAX;
             let mut has_unknown = false;
@@ -1403,9 +1400,7 @@ where
         }
     }
     if let Some(crossing) = no_way_out {
-        let ending = rows(&plan, &crossing)
-            .last()
-            .ok_or(UnknownWhy::Overflow)?;
+        let ending = rows(&plan, &crossing).last().ok_or(UnknownWhy::Overflow)?;
         let kind = zones.zone(ending.zone).map_err(nav_identity)?.kind();
         let _ = write!(reason, "NoWayOut: ends inside {}; ", kind.label());
         if let Some(LegView::Transport(hop)) = usize::from(crossing.leg)

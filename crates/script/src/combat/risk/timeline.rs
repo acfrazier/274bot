@@ -82,9 +82,11 @@ fn npc_hit(
     let rolls = super::facts::defence_rolls(input.defence, input.style_def, input.worn_defence)?;
     let defence_roll = match row.damagetype.as_deref().and_then(damage_type_index) {
         Some(index) => rolls[index],
-        None if row.damagetype.as_deref() == Some("^damagetype_melee") => {
-            rolls[..3].iter().copied().min().ok_or(UnknownWhy::MissingFacts)?
-        }
+        None if row.damagetype.as_deref() == Some("^damagetype_melee") => rolls[..3]
+            .iter()
+            .copied()
+            .min()
+            .ok_or(UnknownWhy::MissingFacts)?,
         None => return Err(UnknownWhy::MissingFacts),
     };
     Ok(HitChance::ceil_from(hit_chance(attack_roll, defence_roll)))
@@ -194,9 +196,7 @@ pub(crate) fn build_timeline(
     }
 
     for live in input.live_iter() {
-        let kind = risks
-            .npc(live.ident)
-            .ok_or(UnknownWhy::AlreadyEngaged)?;
+        let kind = risks.npc(live.ident).ok_or(UnknownWhy::AlreadyEngaged)?;
         if kind.unknown_for().is_some() || live.rate == 0 {
             return Err(UnknownWhy::AlreadyEngaged);
         }
@@ -212,14 +212,7 @@ pub(crate) fn build_timeline(
         };
         let mut tick = 0;
         while tick < duration {
-            add_event(
-                out,
-                &mut summary,
-                tick,
-                event_kind,
-                live.max_hit,
-                hit,
-            )?;
+            add_event(out, &mut summary, tick, event_kind, live.max_hit, hit)?;
             tick = tick
                 .checked_add(i32::from(live.rate))
                 .ok_or(UnknownWhy::Overflow)?;
@@ -227,14 +220,7 @@ pub(crate) fn build_timeline(
         if let Some(due) = live.due() {
             let due = i32::from(due.wrapping_sub(input.tick));
             last_tick = last_tick.max(due.saturating_add(1));
-            add_event(
-                out,
-                &mut summary,
-                due,
-                event_kind,
-                live.max_hit,
-                hit,
-            )?;
+            add_event(out, &mut summary, due, event_kind, live.max_hit, hit)?;
         }
     }
 
@@ -242,16 +228,8 @@ pub(crate) fn build_timeline(
     summary.ticks = last_tick;
     if input.map_members() {
         for live in input.live_iter() {
-            let kind = risks
-                .npc(live.ident)
-                .ok_or(UnknownWhy::AlreadyEngaged)?;
-            extend_poison(
-                out,
-                &mut summary,
-                kind.poison,
-                0,
-                i32::from(last_tick),
-            )?;
+            let kind = risks.npc(live.ident).ok_or(UnknownWhy::AlreadyEngaged)?;
+            extend_poison(out, &mut summary, kind.poison, 0, i32::from(last_tick))?;
         }
     }
     for row in &plan.intervals {
@@ -263,13 +241,7 @@ pub(crate) fn build_timeline(
             continue;
         }
         let first = path.point(row.a).ok_or(UnknownWhy::Overflow)?.tick;
-        extend_poison(
-            out,
-            &mut summary,
-            kind.poison,
-            first,
-            i32::from(last_tick),
-        )?;
+        extend_poison(out, &mut summary, kind.poison, first, i32::from(last_tick))?;
     }
 
     match poison {

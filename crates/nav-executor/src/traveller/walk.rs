@@ -142,8 +142,7 @@ impl FollowRun {
         // click-ahead at Chebyshev 2 (at least `close_enough`) so the
         // next walk goes out while the player is still moving.
         const CLICK_AHEAD: i32 = 2;
-        let at_limit = options.route_index_limit.is_some()
-            && last_allowed == Some(hop.aim_index);
+        let at_limit = options.route_index_limit.is_some() && last_allowed == Some(hop.aim_index);
         let last = hop.aim_index + 1 >= hop.tiles().len() || at_limit;
         let radius = if last {
             0

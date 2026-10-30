@@ -286,7 +286,6 @@ impl Future for YieldOnce {
     }
 }
 
-
 fn wolf_zone(tables: &CombatTables, spawns: &[i32], radius: u8) -> ZoneTable {
     let npc = tables.selected().npc_by_config("wolf").unwrap();
     zone_table(
@@ -397,7 +396,11 @@ fn timeline_counts_each_zone_once_per_own_rate() {
     // Old: one rounded window attack; new: own-rate ticks 0 and 6.
     assert_eq!(summary.attacks, 2);
     assert_eq!(
-        events.events().iter().map(|event| event.tick).collect::<Vec<_>>(),
+        events
+            .events()
+            .iter()
+            .map(|event| event.tick)
+            .collect::<Vec<_>>(),
         [0, 6],
         "12 ticks at rate 6 has two attacks, not one or three",
     );
@@ -494,7 +497,9 @@ fn timeline_charges_unknown_and_npc_poison_pulses_both() {
         &value,
         &tables,
         &risks,
-        timeline::PoisonCharge::Unknown { q: risks.poison_unknown_v },
+        timeline::PoisonCharge::Unknown {
+            q: risks.poison_unknown_v,
+        },
         &mut events,
     )
     .unwrap();
@@ -563,14 +568,16 @@ fn admission_wolf_crossing_admits_at_base_40_without_food() {
     let risk = RiskTables::build(&tables);
     let walk = route(90, 108);
     let cx = context(&fx, &risk, &tables);
-    let assessment = assert_assessment_equivalence(
-        fx.route(&walk),
-        &cx,
-        wolf_input(40, 40, &tables),
-    );
+    let assessment =
+        assert_assessment_equivalence(fx.route(&walk), &cx, wolf_input(40, 40, &tables));
 
     // Old: this route required a food fix; new: its no-food bound admits.
-    assert_eq!(assessment.verdict, Verdict::Survivable, "{}", assessment.reason);
+    assert_eq!(
+        assessment.verdict,
+        Verdict::Survivable,
+        "{}",
+        assessment.reason
+    );
     assert_eq!(assessment.input.food_counts[0], 0);
     assert!(assessment.bound <= consts::DEATH_BOUND);
     assert_eq!(assessment.hp_after, 40);
@@ -635,11 +642,7 @@ fn admission_endpoint_completion_grant_keeps_no_way_out_refusal() {
     cx.grants = Some(Grants::request(fx.none(), fx.wilderness()));
 
     // Old: endpoint completion waived NoWayOut; new: only named zones waive it.
-    let assessment = assess(
-        fx.route(&walk),
-        &cx,
-        input(90, 90, 0, &tables),
-    );
+    let assessment = assess(fx.route(&walk), &cx, input(90, 90, 0, &tables));
     assert_eq!(assessment.verdict, Verdict::Unsurvivable);
     assert!(assessment.reason.contains("NoWayOut"));
 }
@@ -713,11 +716,7 @@ fn admission_named_grant_never_bypasses_unknown_facts() {
     let mut cx = context(&fx, &risk, &tables);
     cx.grants = Some(Grants::named(fx.exempt(&[ZoneKey::Zone(0)])));
     let walk = transport_entering_walk(100, 101);
-    let assessment = assess(
-        fx.route(&walk),
-        &cx,
-        input(90, 90, 0, &tables),
-    );
+    let assessment = assess(fx.route(&walk), &cx, input(90, 90, 0, &tables));
 
     // Old: naming a zone bypassed unknown risk; new: grants only waive NoWayOut.
     assert_eq!(
@@ -734,11 +733,7 @@ fn admission_credits_no_protect() {
     let risk = RiskTables::build(&tables);
     let walk = route(90, 108);
     let cx = context(&fx, &risk, &tables);
-    let unprotected = assess(
-        fx.route(&walk),
-        &cx,
-        wolf_input(40, 40, &tables),
-    );
+    let unprotected = assess(fx.route(&walk), &cx, wolf_input(40, 40, &tables));
     let mut protected_input = wolf_input(40, 40, &tables);
     protected_input.active_protect = Style::Melee;
     let protected = assess(fx.route(&walk), &cx, protected_input);
@@ -751,7 +746,10 @@ fn admission_credits_no_protect() {
 #[test]
 fn crossing_display_volley_saturates_u8() {
     let tables = tables();
-    let fx = Fixture::new(wolf_zone(&tables, &[100, 101], 1), WildernessRules::default());
+    let fx = Fixture::new(
+        wolf_zone(&tables, &[100, 101], 1),
+        WildernessRules::default(),
+    );
     let mut risk = RiskTables::build(&tables);
     let wolf = tables.selected().npc_by_config("wolf").unwrap().id;
     risk.npc_mut(wolf).unwrap().max_hit = 200;
@@ -804,14 +802,15 @@ fn poison_charged_pass_admits_at_once() {
     let walk = route(90, 108);
     let mut value = wolf_input(40, 40, &tables);
     value.poison = PoisonState::Unknown { since: 0 };
-    let assessment = assess(
-        fx.route(&walk),
-        &context(&fx, &risk, &tables),
-        value,
-    );
+    let assessment = assess(fx.route(&walk), &context(&fx, &risk, &tables), value);
 
     // Old: Unknown always started a hold; new: a passing charged bound admits now.
-    assert_eq!(assessment.verdict, Verdict::Survivable, "{}", assessment.reason);
+    assert_eq!(
+        assessment.verdict,
+        Verdict::Survivable,
+        "{}",
+        assessment.reason
+    );
     assert!(matches!(
         assessment.poison_test,
         PoisonTest::PassesCharged { charged } if charged <= consts::DEATH_BOUND
@@ -826,14 +825,15 @@ fn poison_charged_fail_clear_pass_holds_at_retreat() {
     let walk = route(80, 252);
     let mut value = input(90, 90, 0, &tables);
     value.poison = PoisonState::Unknown { since: 0 };
-    let assessment = assess(
-        fx.route(&walk),
-        &context(&fx, &risk, &tables),
-        value,
-    );
+    let assessment = assess(fx.route(&walk), &context(&fx, &risk, &tables), value);
 
     // Old: Unknown was refused before reassessment; new: wait at the safe retreat.
-    assert_eq!(assessment.verdict, Verdict::Survivable, "{}", assessment.reason);
+    assert_eq!(
+        assessment.verdict,
+        Verdict::Survivable,
+        "{}",
+        assessment.reason
+    );
     let retreat = assessment.plan.crossings[0].retreat;
     assert_ne!(retreat, CrossingGeom::NONE);
     assert!(assessment.bound <= consts::DEATH_BOUND);
@@ -854,14 +854,15 @@ fn poison_no_safe_tile_admits_on_clear_bound() {
     let walk = transport_entering_walk(100, 300);
     let mut value = input(90, 90, 0, &tables);
     value.poison = PoisonState::Unknown { since: 0 };
-    let assessment = assess(
-        fx.route(&walk),
-        &context(&fx, &risk, &tables),
-        value,
-    );
+    let assessment = assess(fx.route(&walk), &context(&fx, &risk, &tables), value);
 
     // Old: Unknown alone refused a no-retreat route; new: admit on the clear bound.
-    assert_eq!(assessment.verdict, Verdict::Survivable, "{}", assessment.reason);
+    assert_eq!(
+        assessment.verdict,
+        Verdict::Survivable,
+        "{}",
+        assessment.reason
+    );
     assert_eq!(assessment.plan.crossings[0].retreat, CrossingGeom::NONE);
     assert!(assessment.bound <= consts::DEATH_BOUND);
     assert!(matches!(
@@ -871,11 +872,7 @@ fn poison_no_safe_tile_admits_on_clear_bound() {
     assert!(assessment.reason.contains("no tile to wait on"));
     let mut low_hp = input(1, 1, 0, &tables);
     low_hp.poison = PoisonState::Unknown { since: 0 };
-    let refused = assess(
-        fx.route(&walk),
-        &context(&fx, &risk, &tables),
-        low_hp,
-    );
+    let refused = assess(fx.route(&walk), &context(&fx, &risk, &tables), low_hp);
     // Old: Unknown itself determined the refusal; new: the clear bound must fail.
     assert_eq!(refused.verdict, Verdict::Unsurvivable);
     assert!(refused.bound > consts::DEATH_BOUND);
@@ -892,11 +889,7 @@ fn poison_facts_missing_is_unknown() {
     let walk = route(88, 112);
     let mut value = input(90, 90, 0, &tables);
     value.poison = PoisonState::Unknown { since: 0 };
-    let assessment = assess(
-        fx.route(&walk),
-        &context(&fx, &risk, &tables),
-        value,
-    );
+    let assessment = assess(fx.route(&walk), &context(&fx, &risk, &tables), value);
 
     // Old: missing poison data could understate risk; new: invalid q fails closed.
     assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Poison));
@@ -1016,11 +1009,7 @@ fn replay_no_crossing_walk_refuses_onset_on_failed_baseline() {
     let long_walk = route(10, 252);
     let mut food_is_not_credited = input(20, 30, 1, &tables);
     food_is_not_credited.poison = unattributed_onset();
-    let assessment = assess(
-        fx.route(&long_walk),
-        &estimate,
-        food_is_not_credited,
-    );
+    let assessment = assess(fx.route(&long_walk), &estimate, food_is_not_credited);
     assert!(assessment.plan.crossings.is_empty());
     assert_eq!(assessment.verdict, Verdict::Unsurvivable);
     assert_eq!(assessment.hp_after, 20);
@@ -2492,7 +2481,9 @@ fn u9_assessment_allocation_and_cpu_measurement() {
 
     let wolf_27_route = route(90, 107);
     assert_eq!(
-        RoutePath::new(wolf_fx.route(&wolf_27_route)).unwrap().ticks(),
+        RoutePath::new(wolf_fx.route(&wolf_27_route))
+            .unwrap()
+            .ticks(),
         27
     );
 
@@ -2504,7 +2495,9 @@ fn u9_assessment_allocation_and_cpu_measurement() {
     let three_route = route(10, 1009);
     let three_input = input(90, 90, 0, &tables);
     assert_eq!(
-        RoutePath::new(three_fx.route(&three_route)).unwrap().ticks(),
+        RoutePath::new(three_fx.route(&three_route))
+            .unwrap()
+            .ticks(),
         1500
     );
     let three_plan = build_plan(
@@ -2779,7 +2772,11 @@ fn u4_mixed_food_topup_windows_exclusions_and_exact_threshold() {
     value.food_len = 1;
     let assessed = assess(fx.route(&walk), &cx, value);
     assert_eq!(assessed.hp_after, value.hp);
-    assert!(!assessed.reason.contains("karambwan"), "{}", assessed.reason);
+    assert!(
+        !assessed.reason.contains("karambwan"),
+        "{}",
+        assessed.reason
+    );
     assert!(assessed
         .supplies
         .iter()
@@ -3590,7 +3587,10 @@ fn t5_1_assessment_refuses_another_pack() {
     let mut foreign_grant = context(&fx, &risk, &tables);
     foreign_grant.grants = Some(Grants::named(other.exempt_all()));
     let mismatched = assess(fx.route(&walk), &foreign_grant, value);
-    assert_eq!(mismatched.verdict, Verdict::Unknown(UnknownWhy::NavIdentity));
+    assert_eq!(
+        mismatched.verdict,
+        Verdict::Unknown(UnknownWhy::NavIdentity)
+    );
 }
 fn yielding_checkpoint(
     calls: Arc<AtomicUsize>,
