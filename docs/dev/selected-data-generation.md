@@ -46,6 +46,21 @@ digest **and** schema; sources are rechecked before publication. A refused build
 removes staging and leaves the previous assets intact. The final manifest's
 digest is computed externally, never embedded in its own bytes.
 
+## Gathering tick facts
+
+Gathering schema 4 requires a `tick_arm` row for every method.
+The extractor checks the reviewed attempt-script families and classifies each
+method as continuing, ending, or not armable. It also records the roll signal,
+depletion and delay-drop behavior, the native arm delay, and the animation ids
+resolved from the selected sequence pack.
+Mining and woodcutting keep item-sorted per-tool facts. Mining rates and skill
+animations come from the selected tool parameters. The decoder rejects missing
+classifications, unknown kinds, and tool rows that are duplicate or incomplete.
+
+Regenerate both revisions when changing this family schema. A revision 274
+catalog cannot retain schema 3 when the decoder requires schema 4. These facts
+do not enable tick manipulation or change gathering requests by themselves.
+
 ## Server-ordered content contracts
 
 The revision 289 core includes a generated `server_ordered` catalog.

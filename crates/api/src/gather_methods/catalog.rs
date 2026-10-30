@@ -56,7 +56,7 @@ pub struct TickArmTool {
     pub item: i32,
     /// `d < 0` action-delay offset written for this selected tool.
     pub native_arm: u8,
-    /// Whether this tool yields no skill gain for the method.
+    /// Whether tick manipulation cannot shorten this tool's native cadence.
     pub no_gain: bool,
     /// Selected-cache sequence id used for this tool's skill animation.
     pub skill_anim: i32,
@@ -80,7 +80,7 @@ pub struct TickArm {
     pub act_min_d: u8,
     /// Whether the family has a silent act step instead of an observable message or animation (lava eel).
     pub act_silent: bool,
-    /// Method-wide no-gain result; `None` means it is selected per tool.
+    /// Whether tick manipulation cannot shorten the method's native cadence; `None` means it is tool-selected.
     pub no_gain: Option<bool>,
     /// Shared skill-animation sequence, or `None` when it is absent or tool-selected.
     pub skill_anim: Option<i32>,

@@ -1,4 +1,4 @@
-//! Wire format of `gathering.json` (extractor schema 3) and its decode into the typed catalog. Decoding runs once
+//! Wire format of `gathering.json` (extractor schema 4) and its decode into the typed catalog. Decoding runs once
 //! per prepared catalog, off-pump; every violation is a typed `FactError`, nothing is defaulted or guessed.
 //!
 //! Field meanings mirror `tools/game-data/extractors/gathering.ts`: a `Know` cell is `known`, `partial` (rows plus

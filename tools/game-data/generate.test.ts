@@ -3071,7 +3071,6 @@ for (const { revision, root } of gatheringPins) {
     const method = view.method(hemensterCarpMethod);
     const target = targetsOf(method, 'resource')[0]!;
     const npcPack = parsePack(fs.readFileSync(path.join(root, 'pack/npc.pack'), 'utf8'));
-    const objPack = parsePack(fs.readFileSync(path.join(root, 'pack/obj.pack'), 'utf8'));
     assert.equal(method.id, hemensterCarpMethod);
     assert.equal(target.kind, 'npc');
     assert.equal(target.id, npcPack.get(hemensterSpot));
