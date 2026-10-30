@@ -15,7 +15,16 @@
     "bank": "nearest",
     "coin_float": 0,
     "loadouts": {},
-    "areas": {},
+    "areas": {
+      "karamja-route": {
+        "boxes": [[2752, 3000, 2999, 3249, 0], [2752, 3000, 2999, 3249, 1]],
+        "source": "content/scripts/areas/area_port_sarim/scripts/sailors.rs2:10,31; content/scripts/areas/area_ardougne_east/scripts/captain_barnaby.rs2:1-2; content/maps/m43_50.jm2:4911-4913"
+      },
+      "ardougne-route": {
+        "boxes": [[2450, 3250, 2850, 3550, 0], [2450, 3250, 2850, 3550, 1]],
+        "source": "content/scripts/areas/area_karamja/scripts/customs_officer.rs2:81-82; content/maps/m44_53.jm2:5562"
+      }
+    },
     "tools": [
       "obj:swordfish",
       "obj:bass",
@@ -154,7 +163,30 @@
           "required": [],
           "terminal": false,
           "recovery_entry": null,
+          "order": "ordered",
+          "cross": [
+            {"id":"scorpion@2865,3156,0","name":"Karamja scorpion","reason":"Cross Karamja from Musa Point to Brimhaven."},
+            {"id":"scorpion@2870,3159,0","name":"Karamja scorpion","reason":"Cross Karamja from Musa Point to Brimhaven."},
+            {"id":"snake@2875,3164,0","name":"Karamja snake","reason":"Cross Karamja from Musa Point to Brimhaven."},
+            {"id":"scorpion@2861,3165,0","name":"Karamja scorpion","reason":"Cross Karamja from Musa Point to Brimhaven."},
+            {"id":"scorpion@2863,3169,0","name":"Karamja scorpion","reason":"Cross Karamja from Musa Point to Brimhaven."},
+            {"id":"scorpion@2862,3180,0","name":"Karamja scorpion","reason":"Cross Karamja from Musa Point to Brimhaven."}
+          ],
           "steps": [
+            {
+              "id":"sail-sarim-to-musa","kind":"talk","version":1,"advances":false,
+              "args":{"npc":"seaman_thresnor","anchor":{"tile":[3026,3217,0],"source":"content/maps/m47_50.jm2:10009; content/pack/npc.pack:379"},"leash":8,"prefer":["Yes please."],"strict":true,"gap_ticks":8},
+              "comment":"The 30-coin voyage lands on the Musa ship: content/scripts/areas/area_port_sarim/scripts/sailors.rs2:10-31; content/scripts/interface_boat/scripts/sail.rs2:21-29. The seven-tick delay makes an eight-tick dialogue gap.",
+              "skip_if":{"Any":[{"Fact":{"kind":"in_area","version":1,"args":{"area":"karamja-route"}}},{"Fact":{"kind":"in_area","version":1,"args":{"area":"ardougne-route"}}}]},
+              "settle":{"Fact":{"kind":"in_area","version":1,"args":{"area":"karamja-route"}}}
+            },
+            {
+              "id":"sail-brimhaven-to-caleb","kind":"talk","version":1,"advances":false,
+              "args":{"npc":"customs_officer","anchor":{"tile":[2772,3225,0],"source":"content/maps/m43_50.jm2:4911-4913; content/pack/npc.pack:381"},"leash":8,"prefer":["Can I journey on this ship?","Search away, I have nothing to hide.","Ok."],"strict":true,"gap_ticks":8},
+              "comment":"The Brimhaven officer charges 30 coins and sails to Ardougne after the search: content/scripts/areas/area_karamja/scripts/customs_officer.rs2:1-3,23-24,45-84; content/scripts/interface_boat/scripts/sail.rs2:21-29.",
+              "skip_if":{"Fact":{"kind":"in_area","version":1,"args":{"area":"ardougne-route"}}},
+              "settle":{"Fact":{"kind":"in_area","version":1,"args":{"area":"ardougne-route"}}}
+            },
             {
               "id": "ask-caleb",
               "kind": "talk",
@@ -201,7 +233,15 @@
           "required": [],
           "terminal": false,
           "recovery_entry": null,
+          "order": "ordered",
           "steps": [
+            {
+              "id":"sail-ardougne-to-alfonse","kind":"talk","version":1,"advances":false,
+              "args":{"npc":"captain_barnaby","anchor":{"tile":[2679,3275,0],"source":"content/maps/m41_51.jm2:11011; content/pack/npc.pack:382"},"leash":8,"prefer":["Yes please."],"strict":true,"gap_ticks":8},
+              "comment":"Barnaby uses the same 30-coin sailor dialogue: content/scripts/areas/area_ardougne_east/scripts/captain_barnaby.rs2:1-2; content/scripts/areas/area_port_sarim/scripts/sailors.rs2:12-31; content/scripts/interface_boat/scripts/sail.rs2:21-29.",
+              "skip_if":{"Any":[{"Fact":{"kind":"in_area","version":1,"args":{"area":"karamja-route"}}},{"All":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tuna"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"swordfish"}}}]},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"ruby"}}}]},
+              "settle":{"Fact":{"kind":"in_area","version":1,"args":{"area":"karamja-route"}}}
+            },
             {"id":"buy-tuna","kind":"buy","version":1,
              "args":{"shop":{"npc":"alfonse_the_waiter","anchor":{"tile":[2793,3188,0],"source":"content/maps/m43_49.jm2:9202; content/pack/npc.pack:794"}},"obj":"tuna","qty":1,"est_gp":130},
              "comment":"Full-stock tuna costs 130 coins: content/scripts/areas/area_brimhaven/configs/brimhaven.inv:31-44; content/scripts/areas/area_brimhaven/configs/brimhaven.npc:26-57; content/scripts/skill_fishing/configs/fishing.obj:572-584; content/scripts/shop/scripts/shop.rs2:131-147,182-187.",
@@ -212,6 +252,13 @@
              "comment":"Full-stock swordfish costs 260 coins: content/scripts/areas/area_brimhaven/configs/brimhaven.inv:31-44; content/scripts/areas/area_brimhaven/configs/brimhaven.npc:26-57; content/scripts/skill_fishing/configs/fishing.obj:675-687; content/scripts/shop/scripts/shop.rs2:131-147,182-187.",
              "skip_if":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"swordfish"}}},
              "settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"swordfish"}}}},
+            {
+              "id":"sail-brimhaven-to-ruby","kind":"talk","version":1,"advances":false,
+              "args":{"npc":"customs_officer","anchor":{"tile":[2772,3225,0],"source":"content/maps/m43_50.jm2:4911-4913; content/pack/npc.pack:381"},"leash":8,"prefer":["Can I journey on this ship?","Search away, I have nothing to hide.","Ok."],"strict":true,"gap_ticks":8},
+              "comment":"The return costs 30 coins: content/scripts/areas/area_karamja/scripts/customs_officer.rs2:1-3,23-24,45-84; content/scripts/interface_boat/scripts/sail.rs2:21-29.",
+              "skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"ruby"}}},{"Fact":{"kind":"in_area","version":1,"args":{"area":"ardougne-route"}}}]},
+              "settle":{"Fact":{"kind":"in_area","version":1,"args":{"area":"ardougne-route"}}}
+            },
             {"id":"buy-ruby-before-fish-gap","kind":"buy","version":1,
              "args":{"shop":{"npc":"gem_merchant","anchor":{"tile":[2669,3303,0],"source":"content/maps/m41_51.jm2:11008; content/pack/npc.pack:571"}},"obj":"ruby","qty":1,"est_gp":1500},
              "comment":"At full stock one ruby costs 1500 coins: content/scripts/areas/area_ardougne_east/configs/ardougne_east.inv:111-122; content/scripts/areas/area_ardougne_east/configs/ardougne_east.npc:344-379; content/scripts/skill_crafting/configs/jewellery/cut_gems.obj:23-25; content/scripts/shop/scripts/shop.rs2:131-147,182-187.",
