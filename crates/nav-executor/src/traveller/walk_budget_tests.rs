@@ -84,8 +84,7 @@ fn click_ahead_hop_budget_counts_from_player_tile() {
     assert_eq!(first_hop.aim, tiles[15]);
     assert_eq!(first_hop.budget_ticks, 15);
 
-    for index in 1..=13 {
-        let tile = tiles[index];
+    for (index, tile) in tiles.iter().enumerate().take(14).skip(1) {
         plant_player(&mut client, tile.x - 3200, tile.z - 3200);
         bump_rebuild(&mut client, &mut snapshot);
         assert!(
