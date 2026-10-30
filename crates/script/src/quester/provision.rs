@@ -4627,17 +4627,25 @@ mod tests {
         (mark, lease, closes)
     }
 
+    /// The player's bank after a teller wait: no ownership mark, no lease and
+    /// no close.
+    fn assert_the_players_bank(start: TellerStart) {
+        let (mark, lease, closes) = teller_trip(start);
+        assert_eq!(
+            (mark.is_some_and(|mark| mark.opened_by_machine), lease, closes),
+            (false, None, 0),
+            "{start:?}: (marked as the kernel's, lease, closes); mark {mark:?}"
+        );
+    }
+
     #[test]
-    fn a_bank_the_player_opens_while_the_teller_kernel_waits_is_not_its_own() {
-        for start in [TellerStart::NoBanker, TellerStart::BudgetDenied] {
-            let (mark, lease, closes) = teller_trip(start);
-            assert!(
-                !mark.is_some_and(|mark| mark.opened_by_machine),
-                "{start:?}: the player's bank is not marked as the kernel's: {mark:?}"
-            );
-            assert_eq!(lease, None, "{start:?}: the player's bank is not leased");
-            assert_eq!(closes, 0, "{start:?}: the player's bank is not closed");
-        }
+    fn a_bank_the_player_opens_while_the_teller_kernel_finds_no_banker_is_not_its_own() {
+        assert_the_players_bank(TellerStart::NoBanker);
+    }
+
+    #[test]
+    fn a_bank_the_player_opens_after_a_denied_teller_talk_is_not_its_own() {
+        assert_the_players_bank(TellerStart::BudgetDenied);
     }
 
     #[test]
