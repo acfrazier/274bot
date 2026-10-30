@@ -652,17 +652,21 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
                 query.player_initiates,
                 query.sequential_kills,
             )?;
-            if best.as_ref().is_none_or(|current: &Evaluation| {
-                evaluation.outcome.death_probability < current.outcome.death_probability
-            }) {
-                best = Some(evaluation);
-            }
-            if evaluation.outcome.death_probability <= 0.01 {
+            let death_probability = evaluation.outcome.death_probability;
+            if death_probability <= 0.01 {
                 within_one = Some(evaluation);
                 break;
             }
-            if within_five.is_none() && evaluation.outcome.death_probability <= 0.05 {
-                within_five = Some(evaluation);
+            if death_probability <= 0.05 {
+                if within_five.is_none() {
+                    within_five = Some(evaluation);
+                }
+                continue;
+            }
+            if best.as_ref().is_none_or(|current: &Evaluation| {
+                death_probability < current.outcome.death_probability
+            }) {
+                best = Some(evaluation);
             }
         }
         if let Some(evaluation) = within_one {

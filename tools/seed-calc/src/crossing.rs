@@ -473,7 +473,7 @@ fn calculate_food_in_world(
                     let assessment = admission::assess(&route, world, &admission);
                     let admitted = admission::permits(&route, world, &admission, &assessment);
                     EvaluatedCandidate {
-                        level: BASE_LEVEL,
+                        level: POLICY_C_BASE_LEVEL,
                         hp,
                         combat_level,
                         food_count: Some(food_count),
@@ -484,7 +484,7 @@ fn calculate_food_in_world(
                     }
                 }
                 Err(reason) => EvaluatedCandidate {
-                    level: BASE_LEVEL,
+                    level: POLICY_C_BASE_LEVEL,
                     hp,
                     combat_level,
                     food_count: Some(food_count),
@@ -501,9 +501,9 @@ fn calculate_food_in_world(
                 .ok_or(CrossError::MissingAssessment)?;
             return Ok(CrossThreshold {
                 route_zones: product_route_zones(world, assessment)?,
-                lowest_level: Some(BASE_LEVEL),
+                lowest_level: Some(POLICY_C_BASE_LEVEL),
                 lowest_hp: Some(hp),
-                defence: Some(BASE_LEVEL),
+                defence: Some(POLICY_C_BASE_LEVEL),
                 food_search_limit: Some(food_search_limit),
                 lowest_food_count: Some(food_count),
                 available_food_slots: Some(available_food_slots),
