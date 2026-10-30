@@ -34,6 +34,7 @@ fn native_local_overhead_and_coordinate_hint_are_distinct_current_facts() {
     client.hint_type = 2;
     client.hint_tile_x = 2761;
     client.hint_tile_z = 9546;
+    client.minusedlevel = 2;
     client.bump_gens(ServerProt::PLAYER_INFO);
     client.bump_gens(ServerProt::MESSAGE_GAME);
 
@@ -43,7 +44,11 @@ fn native_local_overhead_and_coordinate_hint_are_distinct_current_facts() {
     assert_eq!(snapshot.chat(), Some("latest ring line"));
     assert_eq!(
         snapshot.hint_tile(),
-        Some(&HintTileView { x: 2761, z: 9546 })
+        Some(&HintTileView {
+            x: 2761,
+            z: 9546,
+            level: 2,
+        })
     );
 
     client.timeout_chat();
