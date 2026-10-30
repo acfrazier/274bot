@@ -1,9 +1,9 @@
 //! Offline developer calculator for minimum quest-campaign combat seeds.
 //! See the tool README for assumptions, source formulas and JSON examples.
 pub mod crossing;
-pub mod self_damage;
 pub mod fight;
 mod food;
+pub mod self_damage;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -46,7 +46,7 @@ pub fn calculate(query: &Query) -> Result<Answer, Error> {
                 .map_err(|error| Error::Facts(format!("{error:?}")))?;
             Ok(Answer::SelfDamage(self_damage::calculate(query, &tables)?))
         }
-}
+    }
 }
 impl Answer {
     pub fn summary(&self) -> String {

@@ -1963,7 +1963,8 @@ mod tests {
     }
     #[test]
     fn null_weapon_is_unarmed_and_omitted_weapon_keeps_the_default() {
-        let default: FightQuery = serde_json::from_str(r#"{"npc":"wolf","facts":"facts"}"#).unwrap();
+        let default: FightQuery =
+            serde_json::from_str(r#"{"npc":"wolf","facts":"facts"}"#).unwrap();
         assert!(matches!(
             default.weapon,
             Some(Selector::Name(alias)) if alias == "bronze_scimitar"

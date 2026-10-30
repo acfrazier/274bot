@@ -324,9 +324,9 @@ pub fn calculate(
     let displayed = selected
         .map(|(candidate, bound)| (Some(candidate), Some(bound)))
         .unwrap_or_else(|| (candidates.last(), None));
-    let selected_candidate = displayed.0.ok_or_else(|| {
-        SelfDamageError::Input("lobster search produced no candidate".into())
-    })?;
+    let selected_candidate = displayed
+        .0
+        .ok_or_else(|| SelfDamageError::Input("lobster search produced no candidate".into()))?;
 
     let mut stop_names = BTreeMap::<String, (f64, f64)>::new();
     for (name, probability) in &no_food.budget_stops {
@@ -337,13 +337,13 @@ pub fn calculate(
     }
     let budget_stops = stop_names
         .into_iter()
-        .map(|(stop, (probability_without_food, probability_with_policy_food))| {
-            BudgetStopResult {
+        .map(
+            |(stop, (probability_without_food, probability_with_policy_food))| BudgetStopResult {
                 stop,
                 probability_without_food,
                 probability_with_policy_food,
-            }
-        })
+            },
+        )
         .collect();
 
     Ok(SelfDamageResult {
@@ -396,7 +396,10 @@ fn seed_level(seed: &Value, name: &str) -> Result<u8, SelfDamageError> {
     Ok(level)
 }
 
-fn select_role<'a>(guide: &'a Value, requested: Option<&str>) -> Result<&'a Value, SelfDamageError> {
+fn select_role<'a>(
+    guide: &'a Value,
+    requested: Option<&str>,
+) -> Result<&'a Value, SelfDamageError> {
     let roles = guide
         .get("roles")
         .and_then(Value::as_array)
@@ -455,9 +458,7 @@ fn extract_plan(
                     continue;
                 }
             }
-            if step.pointer("/args/recipe").and_then(Value::as_str)
-                == Some("swing-and-recover")
-            {
+            if step.pointer("/args/recipe").and_then(Value::as_str) == Some("swing-and-recover") {
                 plan.push(parse_swing_acquire(step, role, agility)?);
             }
         }
@@ -560,8 +561,10 @@ fn parse_swing_acquire(
             })?;
         let attempt = child_recipe
             .iter()
-            .find(|step| step.pointer("/args/target/loc").and_then(Value::as_str)
-                == Some("rockslide2_obstacle_upass"))
+            .find(|step| {
+                step.pointer("/args/target/loc").and_then(Value::as_str)
+                    == Some("rockslide2_obstacle_upass")
+            })
             .ok_or_else(|| {
                 SelfDamageError::NotModelled(format!("{child_id} recipe has no rockslide attempt"))
             })?;
@@ -587,7 +590,10 @@ fn parse_swing_acquire(
     Ok(Operation::SwingAcquire {
         id: id.clone(),
         restarts,
-        stop: format!("{id} exhausted after {} attempts", restarts.saturating_add(1)),
+        stop: format!(
+            "{id} exhausted after {} attempts",
+            restarts.saturating_add(1)
+        ),
         swing,
         recovery,
     })
@@ -700,19 +706,24 @@ fn food_facts(
     let fact = tables.food(lobster.id).ok_or_else(|| {
         SelfDamageError::NotModelled("lobster has no selected fixed-heal food fact".into())
     })?;
-    let heal = u8::try_from(fact.heal)
-        .map_err(|_| SelfDamageError::NotModelled("lobster heal is outside the model range".into()))?;
+    let heal = u8::try_from(fact.heal).map_err(|_| {
+        SelfDamageError::NotModelled("lobster heal is outside the model range".into())
+    })?;
     let eat_delay = u8::try_from(
         fact.eat_delay_arg
             .ok_or_else(|| SelfDamageError::NotModelled("lobster eat delay is unknown".into()))?
             .saturating_add(1),
     )
-    .map_err(|_| SelfDamageError::NotModelled("lobster eat delay is outside the model range".into()))?;
-    let skill_delay = u8::try_from(
-        fact.skill_delay_arg
-            .ok_or_else(|| SelfDamageError::NotModelled("lobster skill delay is unknown".into()))?,
-    )
-    .map_err(|_| SelfDamageError::NotModelled("lobster skill delay is outside the model range".into()))?;
+    .map_err(|_| {
+        SelfDamageError::NotModelled("lobster eat delay is outside the model range".into())
+    })?;
+    let skill_delay =
+        u8::try_from(fact.skill_delay_arg.ok_or_else(|| {
+            SelfDamageError::NotModelled("lobster skill delay is unknown".into())
+        })?)
+        .map_err(|_| {
+            SelfDamageError::NotModelled("lobster skill delay is outside the model range".into())
+        })?;
     let line = script::combat::select::lines(None, i32::from(hitpoints))
         .eat
         .clamp(0, i32::from(hitpoints)) as u8;
@@ -794,11 +805,8 @@ fn run_bounded(run: &mut Run, step: &BoundedStep, base_hp: u8, food_policy: Opti
             let ready = advance(state, u16::from(before), base_hp);
             let success_probability = probability * chance;
             if success_probability > 0.0 {
-                let successful = advance(
-                    ready,
-                    u16::from(step.hazard.timing.after_success),
-                    base_hp,
-                );
+                let successful =
+                    advance(ready, u16::from(step.hazard.timing.after_success), base_hp);
                 let successful = food_policy
                     .map(|policy| eat_at_boundary(successful, policy, base_hp))
                     .unwrap_or(successful);
@@ -901,11 +909,7 @@ fn run_once(input: Distribution, hazard: Hazard, base_hp: u8) -> OnceBranches {
         );
         let success_probability = probability * chance;
         if success_probability > 0.0 {
-            let successful = advance(
-                ready,
-                u16::from(hazard.timing.after_success),
-                base_hp,
-            );
+            let successful = advance(ready, u16::from(hazard.timing.after_success), base_hp);
             add_state(&mut branches.success, successful, success_probability);
         }
         let failure_probability = probability * miss_chance;
@@ -1143,8 +1147,7 @@ mod tests {
             food: 0,
             food_cooldown: 0,
         };
-        let expected_after_four_fails =
-            (95.0_f64 / 256.0).powi(4) * (161.0_f64 / 256.0);
+        let expected_after_four_fails = (95.0_f64 / 256.0).powi(4) * (161.0_f64 / 256.0);
         let actual_after_four_fails = run
             .live
             .get(&state_after_four_fails)
@@ -1157,5 +1160,4 @@ mod tests {
     fn level_one_crafting_matches_the_61_of_256_guide_fact() {
         assert_eq!(stat_random_successes(1, 60, 150), 61);
     }
-
 }
