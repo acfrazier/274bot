@@ -64,6 +64,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   sees that the attacker is gone. If every route fails, the quest stops with
   the last route failure. The bot does not promise that an escape exists.
 
+### Quester
+
+- The Quester now closes the bank when it has finished taking what a quest
+  needs. Before, a bot that looked in its bank, or took items from it, could
+  start the next step with the bank window still open. A step such as using a
+  spinning wheel then waited until the watchdog restarted the script, and the
+  journal read after that stopped with a message about the bank window. Now
+  the bot waits until the bank window is gone before it starts the step. It
+  closes only a bank it opened itself. A bank that you opened stays open.
+- When a quest starts without something the bot only wanted to carry (for
+  example the coins it keeps for buying things), the log now has one line that
+  names the item and how many are missing. The bot does the same as before.
+
 ### Survival
 
 - After a bot eats a Strange fruit, it now counts its poison as cured even

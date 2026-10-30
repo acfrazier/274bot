@@ -4,17 +4,25 @@
 //! the account's bank memory (design-bank-snapshot §4 N2). An `Unknown` bank
 //! or a `Hint`-predicted shortage costs one scan trip that observes the whole
 //! bank; only a `Session`-known shortage blocks in place (§2.4).
+//!
+//! A bank session is the run of bank trips this provisioner starts. It ends
+//! when provisioning returns to the Path (`Ready`), parks (`Blocked`) or starts
+//! a recipe. Then the provisioner closes the bank if its own trips opened it
+//! and it is still open, because a Path step cannot act under the bank
+//! interface. It never closes a bank that was already open when its first trip
+//! began (the player's, or an earlier step's): that session is not its own.
+//! A Path step that needs the bank opens it again through the bank kernel.
 use super::compile::{
     CompiledAcquireRecipe, CompiledItemKind, CompiledProvisioning, StepContext, StepPlan, StepRun,
 };
 use super::families::AcquirePlan;
-use crate::acquire::plan::{NeedObservation, Planner};
-use crate::acquire::run::AcquireRun;
+use crate::acquire::plan::{NeedObservation, Planner, UnmetCause, UnmetNeed};
+use crate::acquire::run::{bank_open, AcquireRun, MAX_CLOSE_ATTEMPTS};
 use crate::acquire::{
     AcquireOutcome, AcquireRequest, NeedKind, OpenGate, Presence, SourceSet, WorldFacts,
 };
-use crate::bank::ops;
-use crate::native::{ActionError, NativeActions};
+use crate::bank::{self, ops};
+use crate::native::{ActionError, ActionHandle, NativeActions};
 use crate::native_bank::{BankAction, BankReceipt};
 use api::bank_memory::Origin;
 use api::selected::{FactKey, Truth};
@@ -35,6 +43,7 @@ pub enum ProvisionPhase {
     Scanning,
     Spillover,
     Withdrawing,
+    Closing,
     Acquiring,
     Ready,
     Blocked,
@@ -96,6 +105,12 @@ pub struct Provisioner {
     /// Bank trips started so far (wrapping), so the runner can trace a trip
     /// that began and ended within one poll.
     bank_starts: u32,
+    /// A trip of this provisioner opened the bank and its session has not ended.
+    session_open: bool,
+    close_run: Option<ActionHandle<bank::Close>>,
+    close_attempts: u8,
+    /// Optional needs already logged as unmet since the last path reset.
+    unmet_logged: Vec<UnmetNeed>,
 }
 
 impl Default for Provisioner {
@@ -117,6 +132,10 @@ impl Provisioner {
             status: Status::default(),
             revision: 0,
             bank_starts: 0,
+            session_open: false,
+            close_run: None,
+            close_attempts: 0,
+            unmet_logged: Vec::new(),
         }
     }
 
@@ -139,6 +158,13 @@ impl Provisioner {
             self.set_coin_drawn(plan.coin_float <= 0);
         }
 
+        if self.close_run.is_some() {
+            match self.poll_close(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(())) => {}
+            }
+        }
         if self.bank_run.is_some() {
             return self.poll_bank(cx);
         }
@@ -146,6 +172,9 @@ impl Provisioner {
             return self.poll_acquire(cx);
         }
         if plan.owns_inventory {
+            if let Some(ended) = self.end_session(cx) {
+                return ended;
+            }
             self.set_status(ProvisionPhase::Ready, None, 0, 0, None, bank_known(cx));
             return Poll::Ready(Ok(ProvisionEvent::Ready));
         }
@@ -157,6 +186,12 @@ impl Provisioner {
             if self.bank_run.is_some() {
                 return self.poll_bank(cx);
             }
+            if self.close_run.is_some() {
+                return match self.poll_close(cx) {
+                    Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+                    _ => Poll::Pending,
+                };
+            }
             if self.acquire_run.is_some() {
                 return self.poll_acquire(cx);
             }
@@ -167,6 +202,7 @@ impl Provisioner {
     pub fn cancel(&mut self) {
         self.bank_run = None;
         self.acquire_run = None;
+        self.close_run = None;
         self.acquire_finished = false;
         self.set_status(
             ProvisionPhase::Idle,
@@ -185,11 +221,16 @@ impl Provisioner {
         if let Some(mut run) = self.acquire_run.take() {
             run.cancel(actions);
         }
+        if let Some(handle) = self.close_run.take() {
+            actions.cancel(handle);
+        }
         self.acquire_finished = false;
         self.path = None;
         self.set_coin_drawn(false);
         self.set_carry_drawn(0);
         self.attempts = 0;
+        self.close_attempts = 0;
+        self.unmet_logged.clear();
         self.set_status(ProvisionPhase::Idle, None, 0, 0, None, false);
     }
 
@@ -206,11 +247,16 @@ impl Provisioner {
     }
 
     pub(super) fn bank_phase(&self) -> Option<ProvisionPhase> {
-        self.bank_run.as_ref().map(|_| self.status.phase)
+        (self.bank_run.is_some() || self.close_run.is_some()).then_some(self.status.phase)
     }
 
     pub(super) fn bank_starts(&self) -> u32 {
         self.bank_starts
+    }
+
+    /// This provisioner's trips opened a bank that its session has not closed yet.
+    pub(super) fn session_open(&self) -> bool {
+        self.session_open
     }
 
     pub(super) fn take_trace_event(&mut self) -> Option<super::compile::StepTraceEvent> {
@@ -231,7 +277,9 @@ impl Provisioner {
 
     /// A bank or acquisition run is live and may own an open dialogue.
     pub(super) fn run_live(&self) -> bool {
-        self.bank_run.is_some() || (self.acquire_run.is_some() && !self.acquire_finished)
+        self.bank_run.is_some()
+            || self.close_run.is_some()
+            || (self.acquire_run.is_some() && !self.acquire_finished)
     }
 
     pub fn needs_progress_read(&self) -> bool {
@@ -417,6 +465,13 @@ impl Provisioner {
                             NeedKind::Optional,
                             Presence::Held,
                         ))?;
+                    } else {
+                        needs.note_unmet(UnmetNeed {
+                            item: Arc::clone(&coin.item.name),
+                            need: coin.qty,
+                            have: ops::count_id(inventory, coin.item.id),
+                            cause: UnmetCause::NoRoom,
+                        });
                     }
                 }
             }
@@ -458,6 +513,13 @@ impl Provisioner {
                             NeedKind::Optional,
                             Presence::Held,
                         ))?;
+                    } else {
+                        needs.note_unmet(UnmetNeed {
+                            item: Arc::clone(&row.item.name),
+                            need: row.qty,
+                            have: ops::count_id(inventory, row.item.id),
+                            cause: UnmetCause::NoRoom,
+                        });
                     }
                 }
             }
@@ -495,6 +557,12 @@ impl Provisioner {
                 {
                     // An optional later-stage hint must not park a runnable Path.
                     // Its authored steps still acquire it when it is needed.
+                    needs.note_unmet(UnmetNeed {
+                        item: Arc::clone(&item.name),
+                        need: target,
+                        have: pack,
+                        cause: UnmetCause::NoRoom,
+                    });
                     continue;
                 }
             }
@@ -525,6 +593,9 @@ impl Provisioner {
             return Poll::Pending;
         }
         if let Some(missing) = needs.blocked() {
+            if let Some(ended) = self.end_session(cx) {
+                return ended;
+            }
             // A `Session` shortage of a required item is final (design-bank-
             // snapshot §2.4, D4): in place, before any spillover or
             // withdrawal trip — the same observation already rules the
@@ -555,6 +626,9 @@ impl Provisioner {
         let deficit = required_slots.saturating_sub(capacity);
         if deficit > 0 {
             if safe_slots < deficit {
+                if let Some(ended) = self.end_session(cx) {
+                    return ended;
+                }
                 let item = Arc::from(format!(
                     "inventory capacity needs {deficit} additional safe slots"
                 ));
@@ -609,6 +683,9 @@ impl Provisioner {
             return Poll::Pending;
         }
         if let (Some(recipe_need), Some(recipe)) = (recipe_need, active_recipe) {
+            if let Some(ended) = self.end_session(cx) {
+                return ended;
+            }
             // A provisioning need has no step settle to restart against, so
             // this run makes one pass.
             let acquire = AcquirePlan {
@@ -634,6 +711,10 @@ impl Provisioner {
             }
         }
 
+        if let Some(ended) = self.end_session(cx) {
+            return ended;
+        }
+        self.log_unmet(plan, needs.unmet());
         self.set_status(ProvisionPhase::Ready, None, 0, 0, None, bank_known(cx));
         Poll::Ready(Ok(ProvisionEvent::Ready))
     }
@@ -724,6 +805,9 @@ impl Provisioner {
         pack: i32,
         bank: Option<i32>,
     ) {
+        if !self.session_open && !bank_open(&cx.tick.cx) {
+            self.session_open = true;
+        }
         let request = AcquireRequest::bank_actions(
             plan.bank,
             plan.bank_required,
@@ -740,6 +824,90 @@ impl Provisioner {
         self.attempts = self.attempts.saturating_add(1);
         self.bank_starts = self.bank_starts.wrapping_add(1);
         self.set_status(phase, item, need, pack, bank, bank_known(cx));
+    }
+
+    /// Ends the bank session: closes the bank this provisioner's trips opened.
+    /// `None` means nothing is left to close. Otherwise the result is the
+    /// poll result to return while the close runs. The close waits for the
+    /// modal root to go away in observed game ticks, in the bank kernel.
+    fn end_session(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Option<Poll<Result<ProvisionEvent, ActionError>>> {
+        if !self.session_open {
+            return None;
+        }
+        if !bank_open(&cx.tick.cx) {
+            self.session_open = false;
+            return None;
+        }
+        if !cx.tick.cx.may_continue_this_tick() {
+            return Some(Poll::Pending);
+        }
+        if self.close_attempts >= MAX_CLOSE_ATTEMPTS {
+            self.close_attempts = 0;
+            return Some(Poll::Ready(Err(ActionError::Failed(Arc::from(format!(
+                "bank-close-failed: bank did not close after {MAX_CLOSE_ATTEMPTS} attempts"
+            ))))));
+        }
+        match cx.tick.actions.begin::<bank::Close>((), &mut cx.tick.cx) {
+            Ok(handle) => {
+                self.close_attempts += 1;
+                self.close_run = Some(handle);
+                self.set_status(ProvisionPhase::Closing, None, 0, 0, None, bank_known(cx));
+                Some(Poll::Pending)
+            }
+            Err(error) => Some(Poll::Ready(Err(error))),
+        }
+    }
+
+    fn poll_close(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<(), ActionError>> {
+        let Some(handle) = self.close_run.take() else {
+            return Poll::Ready(Ok(()));
+        };
+        match cx.tick.actions.poll(&handle, &mut cx.tick.cx) {
+            Poll::Pending => {
+                self.close_run = Some(handle);
+                Poll::Pending
+            }
+            Poll::Ready(Ok(())) => {
+                self.session_open = false;
+                self.close_attempts = 0;
+                Poll::Ready(Ok(()))
+            }
+            // The next end of session begins another close, up to the cap.
+            Poll::Ready(Err(ActionError::Failed(message)))
+                if message.as_ref() == "bank did not close" =>
+            {
+                Poll::Ready(Ok(()))
+            }
+            Poll::Ready(Err(error)) => {
+                self.close_attempts = 0;
+                Poll::Ready(Err(error))
+            }
+        }
+    }
+
+    /// One `info` line for each optional need that provisioning leaves unmet
+    /// while it returns `Ready`. A repeat of the same shortfall logs nothing.
+    fn log_unmet(&mut self, plan: &CompiledProvisioning, unmet: &[UnmetNeed]) {
+        if self.unmet_logged.as_slice() == unmet {
+            return;
+        }
+        for need in unmet {
+            api::host_log!(
+                api::hostlog::Category::BankOp,
+                api::hostlog::Level::Info,
+                "quester {}: provisioning ready with an optional need unmet: {} needs {}, holds {}, short {} ({})",
+                plan.path.0,
+                need.item,
+                need.need,
+                need.have,
+                need.need.saturating_sub(need.have),
+                need.cause.describe()
+            );
+        }
+        self.unmet_logged = unmet.to_vec();
     }
 
     fn set_coin_drawn(&mut self, drawn: bool) {
@@ -3181,5 +3349,305 @@ mod tests {
         ));
         assert_eq!(provisioner.status().phase, ProvisionPhase::Ready);
         assert!(ledger.is_none(), "a worn MustHave queues no withdrawal");
+    }
+
+    /// The host side of one provisioning bank session on the fixture bank.
+    /// It completes each effect the provisioner sends, moves a withdrawn
+    /// token from the bank rows to the pack, and takes the bank interface
+    /// away when the provisioner closes it.
+    struct SessionRun {
+        /// The effects the provisioner sent, in order.
+        effects: Vec<&'static str>,
+        /// Whether the bank was open on the tick provisioning returned `Ready`.
+        open_at_ready: Option<bool>,
+    }
+
+    fn run_session(
+        plan: &CompiledProvisioning,
+        mut memory: BankMemory,
+        mut bank_rows: Vec<ItemView>,
+        open_at_start: bool,
+    ) -> SessionRun {
+        enum Seen {
+            Pick,
+            Open,
+            Note,
+            Withdraw,
+            Close,
+        }
+        let (mut snapshot, bank, banks) = openable_bank_fixture();
+        if open_at_start {
+            snapshot.seed_bank_observation(1, 0, Some(bank_rows.clone()), Vec::new());
+        }
+        let stand = bank.tile;
+        let quests = quest_catalog();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let mut pack: Vec<ItemView> = Vec::new();
+        let mut run = SessionRun {
+            effects: Vec::new(),
+            open_at_ready: None,
+        };
+        for tick in 1..=80 {
+            memory.track(&snapshot, tick);
+            let result = poll_once(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                tick,
+                plan,
+                None,
+                &memory,
+                &banks,
+                &quests,
+            );
+            let seen = ledger
+                .as_ref()
+                .and_then(|ledger| ledger.outbox.first())
+                .map(|action| match &action.effect {
+                    HostEffect::BankPick(_) => Seen::Pick,
+                    HostEffect::Interaction(crate::shim::InteractReq::OpenStand { .. }) => {
+                        Seen::Open
+                    }
+                    HostEffect::Interaction(crate::shim::InteractReq::SetNoteMode { .. }) => {
+                        Seen::Note
+                    }
+                    HostEffect::Interaction(
+                        crate::shim::InteractReq::Withdraw { .. }
+                        | crate::shim::InteractReq::WithdrawX { .. },
+                    ) => Seen::Withdraw,
+                    HostEffect::Interaction(crate::shim::InteractReq::Close) => Seen::Close,
+                    HostEffect::Interaction(request) => panic!("unexpected interaction {request:?}"),
+                    _ => panic!("unexpected non-interaction effect"),
+                });
+            match seen {
+                Some(Seen::Pick) => {
+                    run.effects.push("pick");
+                    complete_bank_pick(&mut ledger, bank, stand, tick);
+                }
+                Some(Seen::Open) => {
+                    run.effects.push("open");
+                    complete_open_stand(&mut ledger, tick);
+                    snapshot.seed_bank_observation(1, tick, Some(bank_rows.clone()), Vec::new());
+                }
+                Some(Seen::Note) => {
+                    run.effects.push("note");
+                    complete_open_stand(&mut ledger, tick);
+                }
+                Some(Seen::Withdraw) => {
+                    run.effects.push("withdraw");
+                    pack.push(item_view(42, "Quest token", 1, ItemContainer::Inventory));
+                    bank_rows.retain(|row| row.def.id != 42);
+                    complete_open_stand(&mut ledger, tick);
+                    snapshot.seed_inventory(pack.clone(), 28);
+                    snapshot.seed_bank_observation(1, tick, Some(bank_rows.clone()), Vec::new());
+                }
+                Some(Seen::Close) => {
+                    run.effects.push("close");
+                    complete_open_stand(&mut ledger, tick);
+                    snapshot.seed_bank_observation(-1, tick, None, Vec::new());
+                }
+                None => {}
+            }
+            match result {
+                Poll::Pending | Poll::Ready(Ok(ProvisionEvent::BankReceipt(_))) => {}
+                Poll::Ready(Ok(ProvisionEvent::Ready)) => {
+                    run.open_at_ready = Some(
+                        snapshot_view(&snapshot, tick)
+                            .bank_session()
+                            .is_some_and(|session| session.value.open),
+                    );
+                    break;
+                }
+                Poll::Ready(other) => panic!("provisioning ended without Ready: {other:?}"),
+            }
+        }
+        run
+    }
+
+    fn coin_float_plan(qty: i32) -> CompiledProvisioning {
+        let mut plan = provisioning(Vec::new(), None);
+        plan.coin_float = qty;
+        plan.coin = Some(super::super::compile::CompiledCarry {
+            item: crate::native_bank::BankItem {
+                id: 10,
+                name: Arc::from("Coins"),
+            },
+            qty,
+            stackable: true,
+            latch_index: u8::MAX,
+        });
+        plan
+    }
+
+    #[test]
+    fn scan_then_ready_closes_the_bank_before_the_next_step_acts() {
+        // The empty-bank Sheep Shearer case: the scan finds no coins, no
+        // withdrawal follows, and the Path's next step is not a bank step.
+        let run = run_session(
+            &coin_float_plan(20),
+            BankMemory::default(),
+            Vec::new(),
+            false,
+        );
+        assert_eq!(
+            run.open_at_ready,
+            Some(false),
+            "provisioning must not hand control to a step under the bank interface: {:?}",
+            run.effects
+        );
+        assert_eq!(run.effects.iter().filter(|e| **e == "close").count(), 1);
+        assert_eq!(run.effects.last(), Some(&"close"));
+    }
+
+    #[test]
+    fn scan_then_withdraw_closes_once_after_the_withdrawal() {
+        let plan = provisioning(
+            vec![compiled_item(
+                42,
+                "Quest token",
+                1,
+                CompiledItemKind::MustHave,
+                None,
+            )],
+            None,
+        );
+        let run = run_session(
+            &plan,
+            BankMemory::seeded(&[], Origin::Hint),
+            vec![bank_row(42, "Quest token", 1)],
+            false,
+        );
+        let position = |name: &str| run.effects.iter().position(|effect| *effect == name);
+        let open = position("open").expect("the scan opens the bank");
+        let withdraw = position("withdraw").expect("the bank holds the token");
+        let close = position("close").expect("the session ends with a close");
+        assert!(
+            !run.effects[open..withdraw].contains(&"close"),
+            "no close between the scan and the withdrawal: {:?}",
+            run.effects
+        );
+        assert!(withdraw < close, "the close follows the withdrawal");
+        assert_eq!(run.effects.iter().filter(|e| **e == "close").count(), 1);
+        assert_eq!(run.effects.last(), Some(&"close"));
+        assert_eq!(run.open_at_ready, Some(false));
+    }
+
+    #[test]
+    fn a_bank_open_before_the_first_trip_is_left_open() {
+        // The player (or an earlier step) opened this bank: the provisioner
+        // withdraws at it and never closes it, since the session is not its own.
+        let plan = provisioning(
+            vec![compiled_item(
+                42,
+                "Quest token",
+                1,
+                CompiledItemKind::MustHave,
+                None,
+            )],
+            None,
+        );
+        let run = run_session(
+            &plan,
+            BankMemory::default(),
+            vec![bank_row(42, "Quest token", 1)],
+            true,
+        );
+        assert!(
+            run.effects.contains(&"withdraw"),
+            "the provisioner withdraws at the open bank: {:?}",
+            run.effects
+        );
+        assert_eq!(run.open_at_ready, Some(true));
+        assert!(
+            !run.effects.contains(&"close"),
+            "a bank the provisioner did not open is not closed by it: {:?}",
+            run.effects
+        );
+    }
+
+    #[test]
+    fn ready_with_an_unmet_optional_need_logs_the_need_and_the_shortfall_once() {
+        const SLOT: &str = "status-provision-unmet-supply";
+        crate::slot::compiled::tests::install_status_line_sink();
+        api::hostlog::bind_slot(SLOT);
+        let plan = coin_float_plan(20);
+        let snapshot = ready_snapshot(Vec::new());
+        let memo = known_empty(10);
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let quests = quest_catalog();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        for tick in 1..=3 {
+            assert!(matches!(
+                poll_once(
+                    &mut provisioner,
+                    &snapshot,
+                    &mut ledger,
+                    tick,
+                    &plan,
+                    None,
+                    &memo,
+                    &banks,
+                    &quests,
+                ),
+                Poll::Ready(Ok(ProvisionEvent::Ready))
+            ));
+        }
+        let lines: Vec<_> = crate::slot::compiled::tests::status_lines_for(SLOT)
+            .into_iter()
+            .filter(|line| line.message.contains("optional need unmet"))
+            .collect();
+        assert_eq!(lines.len(), 1, "one line, not one per poll: {lines:?}");
+        assert_eq!(lines[0].level, api::hostlog::Level::Info);
+        assert!(
+            lines[0]
+                .message
+                .ends_with("Coins needs 20, holds 0, short 20 (nothing more to draw it from)"),
+            "{}",
+            lines[0].message
+        );
+    }
+
+    #[test]
+    fn a_float_left_out_for_pack_room_logs_the_shortfall() {
+        const SLOT: &str = "status-provision-unmet-room";
+        crate::slot::compiled::tests::install_status_line_sink();
+        api::hostlog::bind_slot(SLOT);
+        let mut plan = coin_float_plan(20);
+        plan.base_spillover_keep = Arc::from([42]);
+        let mut snapshot = ready_snapshot(Vec::new());
+        snapshot.seed_inventory(vec![item_view(42, "Kept", 1, ItemContainer::Inventory)], 1);
+        let memo = BankMemory::seeded(&[(10, 5)], Origin::Session);
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let quests = quest_catalog();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        assert!(matches!(
+            poll_once(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                1,
+                &plan,
+                None,
+                &memo,
+                &banks,
+                &quests,
+            ),
+            Poll::Ready(Ok(ProvisionEvent::Ready))
+        ));
+        let lines: Vec<_> = crate::slot::compiled::tests::status_lines_for(SLOT)
+            .into_iter()
+            .filter(|line| line.message.contains("optional need unmet"))
+            .collect();
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0]
+                .message
+                .ends_with("Coins needs 20, holds 0, short 20 (no free pack slot for it)"),
+            "{}",
+            lines[0].message
+        );
     }
 }

@@ -825,7 +825,9 @@ impl Quester {
                     if !tick.cx.may_continue_this_tick() {
                         return false;
                     }
-                    if self.step.is_some() {
+                    // A step waiting on its scan polls only after provisioning
+                    // closed the bank its own trips opened.
+                    if self.step.is_some() && !self.provisioner.session_open() {
                         return true;
                     }
                 }
@@ -881,6 +883,7 @@ impl Quester {
                 ProvisionPhase::Scanning => "scan",
                 ProvisionPhase::Spillover => "deposit-capacity",
                 ProvisionPhase::Withdrawing => "withdraw",
+                ProvisionPhase::Closing => "close",
                 _ => "other",
             };
             self.trace.record(
@@ -1217,7 +1220,10 @@ impl Quester {
             "blocked"
         } else if matches!(
             provision.phase,
-            ProvisionPhase::Scanning | ProvisionPhase::Spillover | ProvisionPhase::Withdrawing
+            ProvisionPhase::Scanning
+                | ProvisionPhase::Spillover
+                | ProvisionPhase::Withdrawing
+                | ProvisionPhase::Closing
         ) {
             "banking"
         } else if self.waiting.is_some() || self.needs_read || self.settling {
