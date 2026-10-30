@@ -128,7 +128,7 @@ Unless `quest.owns_inventory` bypasses preparation, missing required or acquirab
 
 For a gather step, the Provisioner withdraws one method-usable tool only when none is carried or equipped and the bank has one. This uses the same bank scan, capacity planning, and withdrawal route as recipes.
 
-An observed bank without a compatible tool does not block provisioning; the gather family reports its normal missing-tool failure. `quest.tools` remain preservation hints only, not withdrawal hints or extra requirements: absent entries alone never cause a bank visit. The initial scan and ingredient/tool withdrawals share the open bank session.
+An observed bank without a compatible tool does not block provisioning; the gather family reports its normal missing-tool failure. `quest.tools` remain preservation hints only, not withdrawal hints or extra requirements: absent entries alone never cause a bank visit. The initial scan and ingredient/tool withdrawals share the open bank session. When provisioning ends (ready, blocked, or about to start a recipe), the Provisioner closes the bank if its own trips opened it, and waits in observed game ticks until the bank window is gone before any Path step acts. A bank that was already open when its first trip began is left open. An authored `bank` step opens the bank again when it needs it.
 
 Bank memory has three states. A bank never seen (`Unknown`) costs one scan trip. A shortage known only from an earlier login (`Hint`) costs one verifying trip. Only a shortage in a bank seen open this login (`Session`) blocks in place. The Quester keeps no other bank record.
 
