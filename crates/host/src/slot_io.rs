@@ -1343,7 +1343,7 @@ impl FrameBuf {
 
     /// Start diagnostic gap accounting without changing the actual consume timestamp.
     #[cfg(feature = "render-test-hooks")]
-    pub fn begin_scene_gap_window(&self, start: Instant) -> bool {
+    pub fn begin_scene_gap_window(&self, start: std::time::Instant) -> bool {
         let mut inner = self.inner.lock().unwrap();
         let Some(sample) = inner.fair_stats.as_mut() else {
             return false;

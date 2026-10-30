@@ -995,8 +995,7 @@ fn m3_oracle_replays_real_empty_bins_over_thirty_seconds() {
                 sample["max_gap_ms"].as_f64().unwrap() / 1000.0,
             ),
             since_scene_consume: Some(Duration::from_secs_f64(
-                row["to_t_s"].as_f64().unwrap()
-                    - sample["last_consume_at_t_s"].as_f64().unwrap(),
+                row["to_t_s"].as_f64().unwrap() - sample["last_consume_at_t_s"].as_f64().unwrap(),
             )),
             ..background_oracle_fixture()
         };
