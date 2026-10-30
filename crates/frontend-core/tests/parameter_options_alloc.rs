@@ -4,10 +4,12 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
 use frontend_core::scripts::{resolve_parameter_options, Loadouts, Scripts, SettingView};
-use frontend_core::test_support::{empty_play, IsolatedStores};
-use frontend_core::{HeadlessSurface, OperatorSession};
+use frontend_core::test_support::{
+    empty_play, session::with_settings_bag, FixtureProfile, IsolatedStores, VaultFixture,
+};
+use frontend_core::OperatorSession;
 use host_play::{InstancePermit, PlayOptions, Transport};
-use vault::{CompiledSettingsRecord, Profile, ProfileSettings, Vault};
+use vault::CompiledSettingsRecord;
 
 struct Counting;
 
@@ -129,48 +131,37 @@ fn new_scripts(directory: &std::path::Path) -> Scripts {
 fn warm_quester_script_section_shares_its_zone_text_without_allocating() {
     let stores = IsolatedStores::enter("quester-zone-frame-allocations");
     let directory = stores.dir();
-    let mut vault = Vault::create(&directory.join("vault"), "test-passphrase-01").unwrap();
     let id = script::CompiledId("Quester");
     let card = script::compiled_card(id).expect("Quester card");
-    let mut profile_settings = ProfileSettings::default();
-    profile_settings.script_assignment = Some(script::compiled_assignment(id));
-    profile_settings.script_settings.insert(
-        script::compiled_identity_key(id),
-        CompiledSettingsRecord {
-            schema_version: card.schema_version,
-            values: serde_json::Map::from_iter([
-                ("quests".to_owned(), serde_json::json!(["desertrescue"])),
-                ("include_draft_guides".to_owned(), serde_json::json!(true)),
-            ]),
-        }
-        .into_entry(),
-    );
-    vault
-        .upsert(Profile {
-            username: "alice".into(),
-            password: "pw".into(),
-            uid: 1,
-            settings: profile_settings,
-        })
-        .unwrap();
+    let values = serde_json::Map::from_iter([
+        ("quests".to_owned(), serde_json::json!(["desertrescue"])),
+        ("include_draft_guides".to_owned(), serde_json::json!(true)),
+    ]);
+    let entry = CompiledSettingsRecord {
+        schema_version: card.schema_version,
+        values,
+    }
+    .into_entry();
+    let key = script::compiled_identity_key(id);
+    let mut vault = VaultFixture::create(&directory.join("vault"), "test-passphrase-01");
+    vault.put(with_settings_bag(
+        FixtureProfile::new("alice", "pw").uid(1),
+        &key,
+        entry,
+    ));
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let mut play = empty_play(&PlayOptions {
+        host: "127.0.0.1".into(),
+        transport: Transport::Tcp,
+        port: 43594,
+        cache_dir: directory.join("cache").to_string_lossy().into_owned(),
+        lowmem: true,
+        mainland: false,
+    });
+    play.bind_script_test_data(data);
     let mut core = OperatorSession::new(InstancePermit::SkipLock);
     core.set_spawn_workers(false);
-    core.start(
-        vault,
-        empty_play(&PlayOptions {
-            host: "127.0.0.1".into(),
-            transport: Transport::Tcp,
-            port: 43594,
-            cache_dir: directory.join("cache"),
-            lowmem: true,
-            mainland: false,
-        }),
-    );
-    core.load("alice", &mut HeadlessSurface::new());
-    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-    core.play_mut()
-        .expect("test Play")
-        .bind_script_test_data(data);
+    vault.start_session(&mut core, play);
     let mut scripts = new_scripts(directory);
     assert!(scripts.refresh_quester_start_zones(&core, Some("alice")));
     let view = scripts
