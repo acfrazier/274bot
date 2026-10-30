@@ -3451,7 +3451,9 @@ mod tests {
                         | crate::shim::InteractReq::WithdrawX { .. },
                     ) => Seen::Withdraw,
                     HostEffect::Interaction(crate::shim::InteractReq::Close) => Seen::Close,
-                    HostEffect::Interaction(request) => panic!("unexpected interaction {request:?}"),
+                    HostEffect::Interaction(request) => {
+                        panic!("unexpected interaction {request:?}")
+                    }
                     _ => panic!("unexpected non-interaction effect"),
                 });
             match seen {

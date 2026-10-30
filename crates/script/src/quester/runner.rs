@@ -6660,6 +6660,14 @@ mod tests {
                     )
                 })
             });
+            let close_pending = self.ledger.as_ref().is_some_and(|ledger| {
+                ledger.outbox.first().is_some_and(|action| {
+                    matches!(
+                        &action.effect,
+                        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Close)
+                    )
+                })
+            });
             if bank_pick_pending {
                 let action = self.ledger.as_mut().unwrap().outbox.remove(0);
                 let authority = action.authority();
@@ -6707,6 +6715,24 @@ mod tests {
                 self.snapshot
                     .seed_bank_observation(1, tick, Some(self.stock.clone()), Vec::new());
                 self.opened_bank = true;
+            } else if close_pending {
+                let action = self.ledger.as_mut().unwrap().outbox.remove(0);
+                let authority = action.authority();
+                self.ledger.as_mut().unwrap().complete_interaction(
+                    &authority,
+                    crate::native::InteractionReceipt {
+                        request_id: authority.request_id().get(),
+                        evidence: api::quest_progress::EvidenceStamp {
+                            run: authority.run(),
+                            tick,
+                            sequence: tick,
+                        },
+                        accepted: true,
+                        chat_since: 0,
+                    },
+                );
+                self.snapshot
+                    .seed_bank_observation(-1, tick, None, Vec::new());
             } else if self
                 .ledger
                 .as_ref()
