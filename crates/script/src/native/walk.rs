@@ -187,10 +187,23 @@ impl NativeMachine for Walk {
                 ));
                 return Poll::Ready(Ok(refused));
             }
-            let started = self
-                .quest_list_wait_since
-                .get_or_insert_with(|| cx.evidence().tick);
-            if cx.evidence().tick.saturating_sub(*started) < QUEST_LIST_STATUS_WAIT_TICKS {
+            let first_observation = self.quest_list_wait_since.is_none();
+            let tick = cx.evidence().tick;
+            let started = self.quest_list_wait_since.get_or_insert(tick);
+            if first_observation || tick != *started {
+                let quest_rows = cx
+                    .snapshot()
+                    .quest_statuses()
+                    .map(|statuses| statuses.value);
+                api::host_log!(
+                    api::hostlog::Category::NavTrace,
+                    api::hostlog::Level::Debug,
+                    "walk-quest-list-observation request={} tick={} rows={quest_rows:?}",
+                    self.request_id,
+                    tick,
+                );
+            }
+            if tick.saturating_sub(*started) < QUEST_LIST_STATUS_WAIT_TICKS {
                 return Poll::Pending;
             }
             if quest_list_status_observed(cx.snapshot()) {
