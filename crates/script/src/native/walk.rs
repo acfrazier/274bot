@@ -43,11 +43,11 @@ fn walk_key(request: &WalkRequest) -> WalkKey {
     }
 }
 
-fn quest_list_status_observed(snapshot: SnapshotView<'_>) -> bool {
-    snapshot.quest_statuses().is_some_and(|statuses| {
-        statuses
-            .value
-            .iter()
+fn quest_list_status_observed(
+    rows: Option<&[api::snapshot::QuestStatusView]>,
+) -> bool {
+    rows.is_some_and(|rows| {
+        rows.iter()
             .any(|status| status.status() != api::snapshot::QuestListStatus::Unknown)
     })
 }
@@ -190,11 +190,11 @@ impl NativeMachine for Walk {
             let first_observation = self.quest_list_wait_since.is_none();
             let tick = cx.evidence().tick;
             let started = self.quest_list_wait_since.get_or_insert(tick);
+            let snapshot = cx.snapshot();
+            let quest_rows = snapshot
+                .quest_statuses()
+                .map(|statuses| statuses.value);
             if first_observation || tick != *started {
-                let quest_rows = cx
-                    .snapshot()
-                    .quest_statuses()
-                    .map(|statuses| statuses.value);
                 api::host_log!(
                     api::hostlog::Category::NavTrace,
                     api::hostlog::Level::Debug,
@@ -206,7 +206,7 @@ impl NativeMachine for Walk {
             if tick.saturating_sub(*started) < QUEST_LIST_STATUS_WAIT_TICKS {
                 return Poll::Pending;
             }
-            if quest_list_status_observed(cx.snapshot()) {
+            if quest_list_status_observed(quest_rows) {
                 if let Err(error) = self.replan_after_quest_list_wait(cx) {
                     return Poll::Ready(Err(error));
                 }
