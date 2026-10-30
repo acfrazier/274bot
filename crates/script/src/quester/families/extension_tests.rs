@@ -3875,6 +3875,7 @@ fn main_make_retriggers_item_on_loc_after_each_closed_batch() {
                 "loc": {"name": "anvil"},
                 "anchor": {
                     "tile": [6, 7, 0],
+                    "source": "unit fixture",
                 },
                 "product": "bronzecraftwire",
                 "menu": {
