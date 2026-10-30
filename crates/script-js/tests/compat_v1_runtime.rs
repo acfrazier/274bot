@@ -344,7 +344,7 @@ fn assert_export_removed(module: &str, name: &str) {
 }
 
 #[test]
-fn compat_v1_runtime__cut_exports_preserve_supported_siblings() {
+fn compat_v1_runtime_cut_exports_preserve_supported_siblings() {
     let src = bot(
         r#"
 import { RunManager } from '../../runtime/RunManager.js';
