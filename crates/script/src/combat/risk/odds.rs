@@ -139,7 +139,7 @@ fn validate(events: &[Event], hp: u8) -> Result<(), UnknownWhy> {
 /// of input order. Each distinct distribution scans the borrowed events once,
 /// counting duplicates without copying or sorting a second event buffer.
 /// For n events and d distinct attack distributions this uses at most n(d+1)
-/// key comparisons, in addition to the probability-cell visits. Fixed damage
+/// event inspections, in addition to the probability-cell visits. Fixed damage
 /// is summed exactly first. There are only the two probability rows on stack.
 fn distribution<'a>(
     events: &[Event],
