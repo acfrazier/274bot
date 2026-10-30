@@ -1188,13 +1188,15 @@ fn worker_thread(shared: Arc<WorkerShared>) {
     if result.is_err() {
         let now = shared.clock.now();
         latch_outage(&shared, ConditionCause::Panicked, now);
-        if let Some(active) = *shared.active.lock() {
-            if let Some(entry) = shared
+        let active = *shared.active.lock();
+        if let Some(active) = active {
+            let entry = shared
                 .registry
                 .lock()
                 .get(&active.entry)
-                .and_then(Weak::upgrade)
-            {
+                .and_then(Weak::upgrade);
+            if let Some(entry) = entry {
+                // Retiring a consumed terminal re-locks the registry.
                 mark_returned(&shared, &entry);
             }
         }
