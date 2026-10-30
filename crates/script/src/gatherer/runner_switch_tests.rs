@@ -1765,15 +1765,10 @@ fn refused_return_walk_keeps_detail_while_reselecting() {
     with_tick(&snapshot, &mut ledger, 723, |tick| {
         gatherer.return_to_resources(tick);
     });
-    if gatherer.failure.is_none() {
-        assert_ne!(gatherer.target.as_ref().unwrap().tile, failed_stand);
+    if let Some(failure) = gatherer.failure.as_ref() {
+        assert!(failure.message.contains(detail.as_ref()));
     } else {
-        assert!(gatherer
-            .failure
-            .as_ref()
-            .unwrap()
-            .message
-            .contains(detail.as_ref()));
+        assert_ne!(gatherer.target.as_ref().unwrap().tile, failed_stand);
     }
 }
 
