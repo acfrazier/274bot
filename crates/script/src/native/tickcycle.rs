@@ -1,6 +1,4 @@
 //! Allocation-free state machine for one observed tick-timed gather cycle.
-//!
-//! This module is deliberately inert until the Gatherer integration slice uses it.
 
 use std::num::NonZeroU64;
 
@@ -80,6 +78,32 @@ pub(crate) enum Verdict {
     Delayed,
     Paused,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CycleReason {
+    OnSchedule,
+    LateBatch,
+    LateAct,
+    LateRoll,
+    HostRefused,
+    LoneOpener,
+    NoLanding,
+    ActFailed,
+    Fletch,
+    MissingRoll,
+    SkippedEdge,
+    Delayed,
+    Paused,
+    ContentRefusal,
+    PredictedRoll,
+    BoundedRoll,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct CycleDiagnostic {
+    pub(crate) sequence: u32,
+    pub(crate) verdict: Option<Verdict>,
+    pub(crate) reason: Option<CycleReason>,
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct CycleStats {
@@ -108,6 +132,8 @@ pub(crate) struct TickPolicy {
     trips: u8,
     off_until: Option<OffUntil>,
     stats: CycleStats,
+    last_cycle_ticks: Option<u32>,
+    diagnostic: CycleDiagnostic,
 }
 
 impl TickPolicy {
@@ -122,10 +148,14 @@ impl TickPolicy {
         self.stats
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Wave 3 (S4) publishes the run-level cycle count")
-    )]
+    pub(crate) const fn last_cycle_ticks(&self) -> Option<u32> {
+        self.last_cycle_ticks
+    }
+
+    pub(crate) const fn diagnostic(&self) -> CycleDiagnostic {
+        self.diagnostic
+    }
+
     pub(crate) const fn cycles(&self) -> u32 {
         self.cycles
     }
@@ -185,7 +215,20 @@ impl TickPolicy {
         self.stats.wire_events = self.stats.wire_events.saturating_add(u32::from(events));
     }
 
-    fn record(&mut self, verdict: Verdict, tick: u64) {
+    fn record(
+        &mut self,
+        verdict: Verdict,
+        reason: CycleReason,
+        tick: u64,
+        cycle_ticks: Option<u32>,
+    ) {
+        self.diagnostic.sequence = self.diagnostic.sequence.saturating_add(1);
+        self.diagnostic.verdict = Some(verdict);
+        self.diagnostic.reason = Some(reason);
+        if matches!(verdict, Verdict::Verified | Verdict::Unobserved) {
+            self.last_cycle_ticks = cycle_ticks;
+        }
+
         match verdict {
             Verdict::Verified => {
                 self.stats.verified = self.stats.verified.saturating_add(1);
@@ -500,6 +543,7 @@ pub(crate) struct TickCycle {
     phase: Phase,
     last_tick: u64,
     last_emit_tick: u64,
+    cycle_started_tick: Option<u64>,
     anim_serial: u32,
     chat_cursor: i32,
     evidence: Evidence,
@@ -530,6 +574,7 @@ impl TickCycle {
             },
             last_tick: tick,
             last_emit_tick: tick,
+            cycle_started_tick: None,
             anim_serial,
             chat_cursor,
             evidence: Evidence {
@@ -565,21 +610,52 @@ impl TickCycle {
         self.chat_cursor
     }
 
+    pub(crate) fn allows_native_begin(&self) -> bool {
+        matches!(
+            self.phase,
+            Phase::Native {
+                fallback: None,
+                pending: None,
+                ..
+            }
+        ) && self.pending_batch_id.is_none()
+    }
+
+    pub(crate) fn allows_stray_tend(&self) -> bool {
+        matches!(self.phase, Phase::Native { .. } | Phase::Idle { .. })
+    }
+
+    pub(crate) fn batch_request_id(&self) -> Option<u64> {
+        self.pending_batch_id.map(NonZeroU64::get)
+    }
+
+    pub(crate) fn checked_request_id(&self) -> Option<u64> {
+        match self.phase {
+            Phase::Armed {
+                act: ActState::Owed(obligation),
+                ..
+            } => obligation.request_id.map(NonZeroU64::get),
+            Phase::Native {
+                fallback, pending, ..
+            } => match pending.and_then(|obligation| obligation.request_id) {
+                Some(request_id) => Some(request_id.get()),
+                None => fallback
+                    .and_then(|obligation| obligation.request_id)
+                    .map(NonZeroU64::get),
+            },
+            _ => None,
+        }
+    }
+
+    pub(crate) fn has_unresolved_requests(&self) -> bool {
+        self.pending_batch_id.is_some() || self.checked_request_id().is_some()
+    }
+
     #[cfg(test)]
     fn phase(&self) -> Phase {
         self.phase
     }
 
-    #[cfg(test)]
-    fn pending_obligation_id(&self) -> Option<u64> {
-        match self.phase {
-            Phase::Native {
-                pending: Some(obligation),
-                ..
-            } => obligation.request_id.map(NonZeroU64::get),
-            _ => None,
-        }
-    }
 
     /// Drive one edge or wake without allocation.
     #[cfg_attr(
@@ -649,7 +725,7 @@ impl TickCycle {
         if signals.fletch {
             let live = matches!(self.phase, Phase::Sent { .. } | Phase::Armed { .. });
             if live {
-                self.end_cycle(Verdict::Lost, signals.tick, policy);
+                self.end_cycle(Verdict::Lost, CycleReason::Fletch, signals.tick, policy);
                 self.start_fallback(signals.tick);
                 return self.fallback_step(signals.tick);
             }
@@ -683,6 +759,7 @@ impl TickCycle {
         match (step, &mut self.phase) {
             (CycleStep::Batch, Phase::Sent { .. }) => {
                 self.pending_batch_id = Some(request_id);
+                self.cycle_started_tick = Some(tick);
             }
             (
                 CycleStep::Click,
@@ -718,7 +795,7 @@ impl TickCycle {
         let old = self.phase;
         let mut pending = None;
         if matches!(old, Phase::Sent { .. } | Phase::Armed { .. }) {
-            policy.record(Verdict::Paused, self.last_tick);
+            self.record_cycle(policy, Verdict::Paused, CycleReason::Paused, self.last_tick);
             if let Phase::Armed {
                 act: ActState::Owed(obligation),
                 ..
@@ -780,7 +857,12 @@ impl TickCycle {
         self.pending_batch_id = None;
         policy.add_wire_events(receipt.wire_events);
         if matches!(self.phase, Phase::Sent { .. }) && receipt.dispatched_prefix <= 1 {
-            self.end_cycle(Verdict::Lost, receipt.dispatch_tick, policy);
+            let reason = if receipt.dispatched_prefix == 0 {
+                CycleReason::HostRefused
+            } else {
+                CycleReason::LoneOpener
+            };
+            self.end_cycle(Verdict::Lost, reason, receipt.dispatch_tick, policy);
             self.start_fallback(self.last_tick);
             return Some(self.fallback_step(self.last_tick));
         }
@@ -813,7 +895,7 @@ impl TickCycle {
                     };
                     None
                 } else {
-                    self.end_cycle(Verdict::Lost, self.last_tick, policy);
+                    self.end_cycle(Verdict::Lost, CycleReason::ActFailed, self.last_tick, policy);
                     if let Phase::Native { pending, .. } = &mut self.phase {
                         *pending = None;
                     }
@@ -869,7 +951,7 @@ impl TickCycle {
         let tick = self.last_tick;
         let live = matches!(self.phase, Phase::Sent { .. } | Phase::Armed { .. });
         if live {
-            self.end_cycle(Verdict::Lost, tick, policy);
+            self.end_cycle(Verdict::Lost, CycleReason::ContentRefusal, tick, policy);
             self.start_fallback(tick);
         } else {
             self.phase = Phase::Native {
@@ -895,7 +977,7 @@ impl TickCycle {
                     fallback: None,
                     pending: None,
                 };
-                policy.record(Verdict::Unobserved, tick);
+                self.record_cycle(policy, Verdict::Unobserved, CycleReason::SkippedEdge, tick);
             }
             Phase::Armed { act, .. } => {
                 let pending = match act {
@@ -907,7 +989,7 @@ impl TickCycle {
                     fallback: None,
                     pending,
                 };
-                policy.record(Verdict::Unobserved, tick);
+                self.record_cycle(policy, Verdict::Unobserved, CycleReason::SkippedEdge, tick);
             }
             Phase::Native {
                 fallback, pending, ..
@@ -1003,7 +1085,7 @@ impl TickCycle {
                     && null_edge
                     && self.evidence.success(tick, tick)
                 {
-                    self.policy_record(policy, Verdict::Delayed, tick);
+                    self.record_cycle(policy, Verdict::Delayed, CycleReason::Delayed, tick);
                     self.phase = Phase::Idle { since: tick };
                     return self.drive_idle(signals, policy);
                 }
@@ -1039,7 +1121,7 @@ impl TickCycle {
                     }
                     if self.spec.delay_drop && fresh == Some(AnimClass::Null) {
                         if self.evidence.success(tick, tick) {
-                            self.policy_record(policy, Verdict::Delayed, tick);
+                            self.record_cycle(policy, Verdict::Delayed, CycleReason::Delayed, tick);
                             self.phase = Phase::Idle { since: tick };
                             return self.drive_idle(signals, policy);
                         }
@@ -1060,7 +1142,7 @@ impl TickCycle {
                         self.evidence.contains_act(tick, tick),
                     ) {
                         if self.spec.shape == Shape::Continuing {
-                            self.end_cycle(Verdict::Slip, tick, policy);
+                            self.end_cycle(Verdict::Slip, CycleReason::LateBatch, tick, policy);
                             self.start_fallback(tick);
                             return self.fallback_step(tick);
                         }
@@ -1073,7 +1155,7 @@ impl TickCycle {
                         };
                         return CycleStep::Wait;
                     }
-                    self.end_cycle(Verdict::Lost, tick, policy);
+                    self.end_cycle(Verdict::Lost, CycleReason::NoLanding, tick, policy);
                     self.start_fallback(tick);
                     return self.fallback_step(tick);
                 }
@@ -1235,7 +1317,7 @@ impl TickCycle {
             && self.evidence.contains_act(tick, tick)
             && !self.evidence.contains_act(armed, tick)
         {
-            self.end_cycle(Verdict::Slip, tick, policy);
+            self.end_cycle(Verdict::Slip, CycleReason::LateAct, tick, policy);
             self.start_fallback(tick);
             return self.fallback_step(tick);
         }
@@ -1245,7 +1327,18 @@ impl TickCycle {
                 && fresh == Some(AnimClass::Null)
                 && self.evidence.success(tick, tick);
             if is_rolled(fresh, self.evidence.contains_act(tick, tick), success) {
-                return self.finish_armed_roll(signals, tick, late, success, policy);
+                return self.finish_armed_roll(
+                    signals,
+                    tick,
+                    late,
+                    success,
+                    if late {
+                        CycleReason::LateBatch
+                    } else {
+                        CycleReason::OnSchedule
+                    },
+                    policy,
+                );
             }
             if fresh == Some(AnimClass::Null) && !success {
                 null_edge = true;
@@ -1259,15 +1352,12 @@ impl TickCycle {
                 return CycleStep::Wait;
             }
             if self.spec.roll_signal != RollSignal::Always && !signals.menu_open {
-                self.policy_record(
-                    policy,
-                    if late {
-                        Verdict::Slip
-                    } else {
-                        Verdict::Unobserved
-                    },
-                    tick,
-                );
+                let (verdict, reason) = if late {
+                    (Verdict::Slip, CycleReason::LateBatch)
+                } else {
+                    (Verdict::Unobserved, CycleReason::PredictedRoll)
+                };
+                self.record_cycle(policy, verdict, reason, tick);
                 if policy.refresh_off(tick).is_some() {
                     self.phase = Phase::Native {
                         roll_due: None,
@@ -1299,15 +1389,22 @@ impl TickCycle {
                 && fresh == Some(AnimClass::Null)
                 && self.evidence.success(tick, tick);
             if is_rolled(fresh, self.evidence.contains_act(tick, tick), success) {
-                return self.finish_armed_roll(signals, tick, true, success, policy);
+                return self.finish_armed_roll(
+                    signals,
+                    tick,
+                    true,
+                    success,
+                    CycleReason::LateRoll,
+                    policy,
+                );
             }
             if self.evidence.product_contains(roll_due, tick) {
-                let verdict = if late {
-                    Verdict::Slip
+                let (verdict, reason) = if late {
+                    (Verdict::Slip, CycleReason::LateBatch)
                 } else {
-                    Verdict::Unobserved
+                    (Verdict::Unobserved, CycleReason::BoundedRoll)
                 };
-                self.policy_record(policy, verdict, tick);
+                self.record_cycle(policy, verdict, reason, tick);
                 if late && self.spec.shape == Shape::Ending {
                     self.start_fallback(tick);
                     return self.fallback_step(tick);
@@ -1320,7 +1417,7 @@ impl TickCycle {
                 return CycleStep::Wait;
             }
             if self.spec.roll_signal == RollSignal::Always {
-                self.end_cycle(Verdict::Lost, tick, policy);
+                self.end_cycle(Verdict::Lost, CycleReason::MissingRoll, tick, policy);
                 self.start_fallback(tick);
                 return self.fallback_step(tick);
             }
@@ -1328,7 +1425,7 @@ impl TickCycle {
 
         if let ActState::Owed(obligation) = act {
             if obligation.expired() && edge {
-                self.end_cycle(Verdict::Lost, tick, policy);
+                self.end_cycle(Verdict::Lost, CycleReason::ActFailed, tick, policy);
                 self.start_fallback(tick);
                 return self.fallback_step(tick);
             }
@@ -1352,12 +1449,13 @@ impl TickCycle {
         act: ActState,
         policy: &mut TickPolicy,
     ) -> CycleStep {
-        self.policy_record(
+        self.record_cycle(
             policy,
+            if late { Verdict::Slip } else { Verdict::Unobserved },
             if late {
-                Verdict::Slip
+                CycleReason::LateBatch
             } else {
-                Verdict::Unobserved
+                CycleReason::BoundedRoll
             },
             tick,
         );
@@ -1395,15 +1493,13 @@ impl TickCycle {
         tick: u64,
         late: bool,
         success: bool,
+        reason: CycleReason,
         policy: &mut TickPolicy,
     ) -> CycleStep {
-        self.policy_record(
+        self.record_cycle(
             policy,
-            if late {
-                Verdict::Slip
-            } else {
-                Verdict::Verified
-            },
+            if late { Verdict::Slip } else { Verdict::Verified },
+            reason,
             tick,
         );
         if let Some(reason) = policy.refresh_off(tick) {
@@ -1481,7 +1577,7 @@ impl TickCycle {
 
     fn start_batch(&mut self, tick: u64, blind: bool, policy: &mut TickPolicy) -> CycleStep {
         self.evidence = Evidence::default();
-        self.pending_batch_id = None;
+        self.cycle_started_tick = None;
         self.phase = Phase::Sent {
             sent: tick,
             blind,
@@ -1511,7 +1607,13 @@ impl TickCycle {
         let _ = tick;
     }
 
-    fn end_cycle(&mut self, verdict: Verdict, tick: u64, policy: &mut TickPolicy) {
+    fn end_cycle(
+        &mut self,
+        verdict: Verdict,
+        reason: CycleReason,
+        tick: u64,
+        policy: &mut TickPolicy,
+    ) {
         let pending = match self.phase {
             Phase::Armed {
                 act: ActState::Owed(obligation),
@@ -1520,7 +1622,7 @@ impl TickCycle {
             Phase::Native { pending, .. } => pending,
             _ => None,
         };
-        policy.record(verdict, tick);
+        self.record_cycle(policy, verdict, reason, tick);
         self.phase = Phase::Native {
             roll_due: None,
             fallback: None,
@@ -1528,8 +1630,24 @@ impl TickCycle {
         };
     }
 
-    fn policy_record(&self, policy: &mut TickPolicy, verdict: Verdict, tick: u64) {
-        policy.record(verdict, tick);
+    fn record_cycle(
+        &mut self,
+        policy: &mut TickPolicy,
+        verdict: Verdict,
+        reason: CycleReason,
+        tick: u64,
+    ) {
+        let cycle_ticks = if matches!(verdict, Verdict::Verified | Verdict::Unobserved) {
+            self.cycle_started_tick
+                .and_then(|started| tick.checked_sub(started))
+                .and_then(|duration| {
+                    (duration <= u64::from(u32::MAX)).then_some(duration as u32)
+                })
+        } else {
+            None
+        };
+        policy.record(verdict, reason, tick, cycle_ticks);
+        self.cycle_started_tick = None;
     }
 
     fn asked_act(&self, act: ActState) -> Option<Obligation> {
@@ -1864,6 +1982,15 @@ mod tests {
         assert_ring(&run, 3);
         assert_eq!(run.policy.stats().verified, 3);
         assert_eq!(run.policy.stats().wire_events, 12);
+        assert_eq!(run.policy.last_cycle_ticks(), Some(3));
+        assert_eq!(
+            run.policy.diagnostic(),
+            CycleDiagnostic {
+                sequence: 3,
+                verdict: Some(Verdict::Verified),
+                reason: Some(CycleReason::OnSchedule),
+            }
+        );
     }
 
     #[test]
@@ -3465,36 +3592,32 @@ mod tests {
     #[test]
     fn slip_ring_slides_and_cooldown_ladder_is_run_scoped() {
         let mut policy = TickPolicy::default();
-        policy.record(Verdict::Slip, 1);
+        policy.record(Verdict::Slip, CycleReason::LateBatch, 1, None);
         for tick in 2..=13 {
-            policy.record(Verdict::Verified, tick);
+            policy.record(Verdict::Verified, CycleReason::OnSchedule, tick, None);
         }
-        policy.record(Verdict::Slip, 14);
+        policy.record(Verdict::Slip, CycleReason::LateBatch, 14, None);
         assert_eq!(policy.verdict_count(), 12);
         assert_eq!(policy.off_reason(), None);
-        policy.record(Verdict::Slip, 15);
-        assert_eq!(
-            policy.off_reason(),
-            None,
-            "the first slip has left the ring"
-        );
-        policy.record(Verdict::Slip, 16);
+        policy.record(Verdict::Slip, CycleReason::LateBatch, 15, None);
+        assert_eq!(policy.off_reason(), None, "the first slip has left the ring");
+        policy.record(Verdict::Slip, CycleReason::LateBatch, 16, None);
         assert_eq!(policy.off_until(), Some(96));
         assert_eq!(policy.verdict_count(), 0);
         policy.refresh_off(96);
-        policy.record(Verdict::Slip, 97);
+        policy.record(Verdict::Slip, CycleReason::LateBatch, 97, None);
         assert_eq!(policy.off_reason(), None);
-        policy.record(Verdict::Lost, 98);
-        policy.record(Verdict::Lost, 99);
+        policy.record(Verdict::Lost, CycleReason::NoLanding, 98, None);
+        policy.record(Verdict::Lost, CycleReason::NoLanding, 99, None);
         assert_eq!(policy.off_until(), Some(259));
         policy.refresh_off(259);
-        policy.record(Verdict::Lost, 260);
-        policy.record(Verdict::Lost, 261);
+        policy.record(Verdict::Lost, CycleReason::NoLanding, 260, None);
+        policy.record(Verdict::Lost, CycleReason::NoLanding, 261, None);
         assert_eq!(policy.off_until(), Some(u64::MAX));
         assert_eq!(policy.off_reason(), Some(OffReason::UnstableTiming));
 
         let mut keep = TickPolicy::default();
-        keep.record(Verdict::Slip, 1);
+        keep.record(Verdict::Slip, CycleReason::LateBatch, 1, None);
         let _cancelled_cycle = TickCycle::new(continuing(), 2, 55, 7);
         assert_eq!(keep.verdict_count(), 1);
         assert_eq!(keep.trips, 0);
