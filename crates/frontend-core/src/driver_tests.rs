@@ -2234,6 +2234,7 @@ fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
     set_quester_queue(&mut d, "alice", &["desertrescue"]);
     set_quester_queue(&mut d, "bob", &["sheep"]);
     d.poll();
+    d.session_mut().flush_writes();
     set_card(&mut d, crate::FleetCard::OWN);
     assert_eq!(plan(&mut d, crate::FleetAction::Start), Some(done()));
     let waiting = d.session().fleet_plan().expect("Quester Start plan");
