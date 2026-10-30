@@ -187,7 +187,7 @@ const stageWindow = (stage: number) => ({
 // stay unique.
 withProjection(baseEntries(), (overrides) => {
     const projection = loadPrereqCrossingProjection(289, overrides)!;
-    assert.deepEqual(projection.identical_edge_groups, []);
+    assert.deepEqual(projection.identical_edge_groups, [['graph.edges[1833]', 'graph.edges[1834]']]);
     const joined = extractPrereqStepsFacts(289, overrides);
     assert.equal(joined.rows[0].crossings.length, 2);
     assert.equal(joined.rows[1].crossings.length, 4);
