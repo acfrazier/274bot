@@ -17,7 +17,8 @@ struct CastNpcRun {
 
 #[derive(Default)]
 pub(super) struct CastNpcSeat {
-    active: Option<CastNpcRun>,
+    // Keep this family's large live state out of every otherwise idle API seat.
+    active: Option<Box<CastNpcRun>>,
     values: Vec<(RequestId, Vec<u8>)>,
 }
 
@@ -36,7 +37,7 @@ impl CastNpcSeat {
     }
 
     fn start(&mut self, run: CastNpcRun) {
-        self.active = Some(run);
+        self.active = Some(Box::new(run));
     }
 
     pub(super) fn cancel(&mut self, token: u64) {
