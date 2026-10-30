@@ -18,29 +18,34 @@ use std::task::Poll;
 /// later script that deliberately closes and reopens the chat authors its
 /// engine hole (`gap_ticks`).
 pub const DIALOG_GAP_TICKS: u64 = 1;
-/// The observed-tick budget for the first chat page after the engine-side
-/// approach ends. Before that clock starts, NPC Talk waits for both an
-/// accepted click receipt and the existing `reach::npc_adjacent` observation.
-/// The largest pre-page delay in the 797 scanned `[opnpc1,...]` handlers is
-/// `p_delay(2)` in Captain Siad (`quest_desertrescue/scripts/captain_siad.rs2:1-11`)
-/// and the seven Underground Pass slaves
-/// (`quest_upass/scripts/upass_slave.rs2:1-56`). `P_DELAY` resumes at
-/// `currentTick + 1 + N` (`PlayerOps.ts:376-379`, `World.ts:692-696`).
-/// The engine reads Talk input before player processing (`World.ts:350-355`),
-/// moves one tile per walking cycle or two while running
-/// (`PathingEntity.ts:135-149`), and writes chat-open packets after the tick
-/// packet (`NetworkPlayer.ts:171-177`). Allow four observed ticks after
-/// adjacency: the content delay and scheduling cycles plus one packet-miss
-/// tick under the client's five-packet read limit (`client.rs:12798-12803`).
-/// The poll checks for a page before its deadline, so a page on the deadline
-/// tick is still observed. NPC-script messages are progress signals, not
-/// dialogue-open failures.
-pub const DIALOGUE_OPEN_TICKS: u64 = 4;
+/// Ticks from the engine's `opnpc1` trigger to the first chat-page write, for
+/// the largest pre-page delay in the 797 scanned `[opnpc1,...]` handlers:
+/// `p_delay(2)` in Captain Siad after a `mes`
+/// (`quest_desertrescue/scripts/captain_siad.rs2:2-3`) and in the seven
+/// Underground Pass slaves (`quest_upass/scripts/upass_slave.rs2:1-56`).
+/// `P_DELAY` resumes the script at `currentTick + 1 + 2`
+/// (`PlayerOps.ts:376-379`, `World.ts:692`).
+pub const DIALOGUE_PAGE_DELAY_TICKS: u64 = 3;
+/// One more observed tick after the page's own cycle. The engine writes
+/// `IF_OPENCHAT` in `encodeOut`, after `PLAYER_INFO` (`World.ts:1110-1123`),
+/// and the client reads at most five packets per frame (`client.rs:12798-12803`),
+/// so the first poll that sees the page's tick can still miss the page.
+pub const DIALOGUE_OBSERVE_TICKS: u64 = 1;
+/// Observed ticks from the engine's trigger to the first-page deadline. The
+/// trigger is the later of the engine's read of the accepted click and the
+/// observed arrival beside the NPC. The host stamps the click receipt with the
+/// click's own tick (`script_observe.rs:1649-1657`) and the engine reads the
+/// packet one cycle later (`World.ts:355` before `World.ts:378`). The poll
+/// checks for a page before its deadline, so a page on the deadline tick is
+/// still observed. NPC-script messages are not failures: the first one
+/// re-anchors the deadline (`Dialogue::observe_talk_message`).
+pub const DIALOGUE_OPEN_TICKS: u64 = DIALOGUE_PAGE_DELAY_TICKS + DIALOGUE_OBSERVE_TICKS;
 /// An NPC's legal wander square contains `(2 * wanderrange + 1)^2` tiles.
 /// Set the replan cap to the number of non-home tiles in this square. The
 /// engine chooses destinations within that square (`Npc.ts:705-728`) and has
 /// a 1/8 chance to choose a destination each tick (`Npc.ts:720-726`). The cap
-/// remains finite even when the NPC revisits a tile.
+/// remains finite even when the NPC revisits a tile. A replan is spent only
+/// when the NPC's observed tile changed since the last plan.
 /// Brundt's `wanderrange=2` is sourced at `viking.npc:769-803`.
 /// Walk one tile per observed engine cycle, conservatively; running advances
 /// two tiles per cycle (`PathingEntity.ts:135-149`). Add two slack ticks: one
@@ -48,6 +53,13 @@ pub const DIALOGUE_OPEN_TICKS: u64 = 4;
 /// next `PLAYER_INFO` position observation (`World.ts:350-355`,
 /// `NetworkPlayer.ts:171-177`, `host/src/slot.rs:22-25`).
 pub(super) const DIALOGUE_APPROACH_SLACK_TICKS: u32 = 2;
+/// Fresh plans from the observed position that one route gets after a walk
+/// failure (no route, or a route that ended short while the NPC stood still)
+/// before the approach reports the failure. One fresh plan is the supported
+/// recovery for a stalled walk (`native.rs:1062-1066`, AGENTS.md "A walk
+/// failure is never terminal until its bounded retries are spent"). A replan
+/// after an NPC move restores the count.
+const DIALOGUE_WALK_RETRIES: u8 = 1;
 pub const DRIVE_STEPS: u32 = 120;
 pub const PAGE_ACK_MS: u64 = 3_000;
 /// Ticks before acting on a page that changed text on the same root (a same-
@@ -275,6 +287,9 @@ enum ChatTransitionAck {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
     Approach,
+    /// Waiting for the router's route length before the walk starts, or for the
+    /// tick on which a fresh plan follows a walk failure.
+    Plan,
     Open,
     Drive,
     WaitContinueAck,
@@ -311,8 +326,12 @@ pub struct Dialogue {
     gap_position: Option<api::WorldTile>,
     gap_chat_mark: i32,
     gap_rearms_left: u64,
-    /// Records Talk arrival while opening, then the last close-gap rearm tick.
-    gap_rearm_or_talk_arrival_tick: Option<u64>,
+    /// The last close-gap rearm tick.
+    gap_rearm_tick: Option<u64>,
+    /// The first tick the bot was observed beside the NPC after the Talk click.
+    talk_arrival_tick: Option<u64>,
+    /// The tick the NPC's first game message after the Talk click was observed.
+    talk_message_tick: Option<u64>,
     ack_page: PageAcknowledgement,
     npc_index: i32,
     npc_action: Arc<str>,
@@ -326,6 +345,15 @@ pub struct Dialogue {
     talk_approach_budget_ticks: u32,
     /// An explicit refusal has started the one recovery approach.
     refusal_recovery_active: bool,
+    /// NPC tile that the current route was planned to. A route that ends
+    /// short replans only when the NPC has since moved.
+    plan_tile: api::WorldTile,
+    /// Arrival radius of the planned route.
+    plan_radius: u16,
+    /// Compute-only route assessment awaited in `Phase::Plan`; 0 when none.
+    assess_request_id: u64,
+    /// Fresh plans left for this route after a walk failure.
+    walk_retries_left: u8,
     talk_request_id: Option<u64>,
     talk_baseline: Option<PageAcknowledgement>,
     talk_chat_mark: Option<i32>,
@@ -369,7 +397,9 @@ impl NativeMachine for Dialogue {
                 })
                 .saturating_add(4)
                 .min(DRIVE_STEPS as u64),
-            gap_rearm_or_talk_arrival_tick: None,
+            gap_rearm_tick: None,
+            talk_arrival_tick: None,
+            talk_message_tick: None,
             ack_page: PageAcknowledgement::default(),
             npc_index: -1,
             npc_action: Arc::from("Talk-to"),
@@ -379,6 +409,14 @@ impl NativeMachine for Dialogue {
             approach_replans_left,
             talk_approach_budget_ticks: 0,
             refusal_recovery_active: false,
+            plan_tile: api::WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            plan_radius: 0,
+            assess_request_id: 0,
+            walk_retries_left: DIALOGUE_WALK_RETRIES,
             surface: Surface::Unselected,
             talk_request_id: None,
             talk_baseline: None,
@@ -499,51 +537,26 @@ impl NativeMachine for Dialogue {
             return Poll::Ready(Err(ActionError::CombatInterrupted));
         }
         match self.phase {
-            Phase::Approach => {
-                let target = self.npc_id().and_then(|id| nearest_talk(cx, id));
-                let Some(target) = target else {
-                    cx.cancel_request(self.walk_request_id);
-                    self.walk_request_id = 0;
-                    return Poll::Ready(self.approach_failure());
+            Phase::Approach | Phase::Plan => {
+                let goal = self
+                    .npc_id()
+                    .and_then(|id| nearest_talk(cx, id))
+                    .map(|target| approach_goal(cx, &target));
+                let Some(goal) = goal else {
+                    self.cancel_route(cx);
+                    return Poll::Ready(self.approach_target_gone());
                 };
-                if target.distance <= 2 && talk_reachable(cx, target.tile) {
+                if goal.close {
                     std::task::ready!(crate::native::defer_budget(self.open(cx)))?;
-                    cx.cancel_request(self.walk_request_id);
-                    self.walk_request_id = 0;
+                    self.cancel_route(cx);
                     return Poll::Pending;
                 }
-                let route_finished =
-                    self.walk_request_id != 0 && cx.walk_receipt(self.walk_request_id).is_some();
-                if obs.tick >= self.content_deadline_tick
-                    || (route_finished && self.approach_replans_left == 0)
-                {
-                    cx.cancel_request(self.walk_request_id);
-                    self.walk_request_id = 0;
-                    return Poll::Ready(self.approach_failure());
-                }
-                if route_finished {
-                    let reachable = talk_reachable(cx, target.tile);
-                    let route_budget = dialogue_approach_tick_budget(cx, &target);
-                    let request = reach::walk_request(
-                        target.tile,
-                        if reachable { 1 } else { 0 },
-                        None,
-                        cx.evidence(),
-                    );
-                    let request_id =
-                        std::task::ready!(crate::native::defer_budget(cx.walk(request)))?;
-                    self.approach_replans_left -= 1;
-                    self.walk_request_id = request_id;
-                    self.content_deadline_tick =
-                        cx.evidence().tick.saturating_add(u64::from(route_budget));
-                }
-                Poll::Pending
+                self.poll_route(cx, obs.tick, goal)
             }
             Phase::Open => {
                 if obs.ready {
                     self.talk_chat_mark = None;
                     self.refusal_recovery_active = false;
-                    self.gap_rearm_or_talk_arrival_tick = None;
                     return self.drive(cx, &obs);
                 }
                 // NPC content can send a game message before its first chat page.
@@ -561,33 +574,25 @@ impl NativeMachine for Dialogue {
                         self.cancel_talk_request(cx);
                         return Poll::Ready(Err(dialogue_refusal_error()));
                     }
-                    let Some(target) = nearest_talk(cx, npc_id) else {
+                    let goal = nearest_talk(cx, npc_id).map(|target| approach_goal(cx, &target));
+                    let Some(goal) = goal else {
                         self.cancel_talk_request(cx);
                         return Poll::Ready(Err(dialogue_refusal_error()));
                     };
-                    let route_budget = dialogue_approach_tick_budget(cx, &target);
-                    let reachable = talk_reachable(cx, target.tile);
-                    let walk_request_id = std::task::ready!(crate::native::defer_budget(cx.walk(
-                        reach::walk_request(
-                            target.tile,
-                            if reachable { 1 } else { 0 },
-                            None,
-                            cx.evidence(),
-                        )
-                    )))?;
+                    // The recovery walk gets the same route length as any
+                    // approach: the flood's, or the router's when the flood
+                    // cannot reach the NPC.
+                    std::task::ready!(crate::native::defer_budget(self.start_route(cx, goal)))?;
                     self.cancel_talk_request(cx);
                     self.refusal_recovery_active = true;
-                    self.phase = Phase::Approach;
-                    self.walk_request_id = walk_request_id;
-                    self.content_deadline_tick =
-                        cx.evidence().tick.saturating_add(u64::from(route_budget));
-                    self.gap_rearm_or_talk_arrival_tick = None;
+                    self.walk_retries_left = DIALOGUE_WALK_RETRIES;
                     self.chat_advanced = false;
                     self.chat_page_owned = false;
                     self.chat_advance_request_id = None;
                     return Poll::Pending;
                 }
                 self.observe_talk_arrival(cx, obs.tick);
+                self.observe_talk_message(cx, obs.tick);
                 self.update_talk_open_deadline(cx);
                 if obs.tick >= self.content_deadline_tick {
                     static REASON: std::sync::LazyLock<Arc<str>> =
@@ -687,10 +692,10 @@ impl NativeMachine for Dialogue {
                         self.gap_position = position;
                         self.gap_chat_mark = chat_mark;
                         if self.gap_rearms_left > 0
-                            && self.gap_rearm_or_talk_arrival_tick != Some(obs.tick)
+                            && self.gap_rearm_tick != Some(obs.tick)
                         {
                             self.gap_rearms_left -= 1;
-                            self.gap_rearm_or_talk_arrival_tick = Some(obs.tick);
+                            self.gap_rearm_tick = Some(obs.tick);
                             self.due_tick = obs.tick.saturating_add(self.gap_ticks());
                         }
                     }
@@ -700,13 +705,13 @@ impl NativeMachine for Dialogue {
                             .local_player()
                             .is_some_and(|player| player.value.player.actor.animation >= 0);
                         if animation_active && self.gap_rearms_left > 0 {
-                            if self.gap_rearm_or_talk_arrival_tick == Some(obs.tick) {
+                            if self.gap_rearm_tick == Some(obs.tick) {
                                 return Poll::Pending;
                             }
                             // Scripted work can close chat before its final page.
                             // Share the evidence-tick limit with changed evidence.
                             self.gap_rearms_left -= 1;
-                            self.gap_rearm_or_talk_arrival_tick = Some(obs.tick);
+                            self.gap_rearm_tick = Some(obs.tick);
                             self.due_tick = obs.tick.saturating_add(self.gap_ticks());
                             return Poll::Pending;
                         }
@@ -789,7 +794,9 @@ impl Dialogue {
         self.talk_chat_mark = None;
     }
 
-    fn approach_failure(&self) -> Result<DialogueOutcome, ActionError> {
+    /// The NPC left view: not a walk failure, so no retry applies. After a
+    /// refusal the refusal stays the reported reason.
+    fn approach_target_gone(&self) -> Result<DialogueOutcome, ActionError> {
         if self.refusal_recovery_active {
             Err(dialogue_refusal_error())
         } else {
@@ -797,18 +804,208 @@ impl Dialogue {
         }
     }
 
+    /// The named terminal failure of an approach whose retries are spent. A
+    /// failure after a server refusal keeps the refusal text first.
+    fn approach_error(&self, why: WalkFailure) -> ActionError {
+        let text = match why {
+            WalkFailure::NoRoute(detail) => format!("no route to the NPC: {detail}"),
+            WalkFailure::Ended(detail) => {
+                format!("the walk ended before the NPC was in reach: {detail}")
+            }
+            WalkFailure::Late => format!(
+                "the walk did not reach the NPC by observed tick {}",
+                self.content_deadline_tick
+            ),
+            WalkFailure::NpcKeepsMoving => "the NPC kept moving through every replan".to_owned(),
+        };
+        let reason = if self.refusal_recovery_active {
+            format!("{DIALOGUE_REFUSAL}; recovery walk failed: {text}")
+        } else {
+            format!("dialogue approach failed: {text}")
+        };
+        ActionError::Failed(Arc::from(reason))
+    }
+
+    /// Cancel the walk and the route assessment, whichever is in flight.
+    fn cancel_route(&mut self, cx: &mut ActionContext<'_>) {
+        cx.cancel_request(self.walk_request_id);
+        self.walk_request_id = 0;
+        cx.cancel_request(self.assess_request_id);
+        self.assess_request_id = 0;
+    }
+
+    /// Record a started walk. Its deadline counts observed ticks from the
+    /// tick on which the walk was requested.
+    fn begin_walk(&mut self, cx: &ActionContext<'_>, request_id: u64, budget_ticks: u32) {
+        self.walk_request_id = request_id;
+        self.phase = Phase::Approach;
+        self.content_deadline_tick = cx.evidence().tick.saturating_add(u64::from(budget_ticks));
+    }
+
+    /// Start a route to the NPC's observed tile. The live flood's route depth
+    /// is the budget when it reaches the NPC. Otherwise the router assesses the
+    /// same request first (`Phase::Plan`), and the walk's budget is the
+    /// router's route length, which includes any door or wall detour.
+    fn start_route(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        goal: ApproachGoal,
+    ) -> Result<(), ActionError> {
+        let request = reach::walk_request(goal.tile, goal.radius, None, cx.evidence());
+        let previous = self.walk_request_id;
+        match goal.route_steps {
+            Some(steps) => {
+                let request_id = cx.walk(request)?;
+                self.begin_walk(
+                    cx,
+                    request_id,
+                    steps.saturating_add(DIALOGUE_APPROACH_SLACK_TICKS),
+                );
+            }
+            None => {
+                self.assess_request_id = cx.assess_walk(request)?;
+                self.walk_request_id = 0;
+                self.phase = Phase::Plan;
+            }
+        }
+        if previous != 0 && previous != self.walk_request_id {
+            cx.cancel_request(previous);
+        }
+        self.plan_tile = goal.tile;
+        self.plan_radius = goal.radius;
+        self.talk_arrival_tick = None;
+        self.talk_message_tick = None;
+        Ok(())
+    }
+
+    /// Follow the route. When it is over (a walk receipt, or its tick budget)
+    /// and the bot is still not in reach: a moved NPC costs one replan, and a
+    /// still NPC is a walk failure with its own bounded retry.
+    fn poll_route(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        tick: u64,
+        goal: ApproachGoal,
+    ) -> Poll<Result<DialogueOutcome, ActionError>> {
+        if self.phase == Phase::Plan {
+            return self.poll_plan(cx, tick, goal);
+        }
+        let ended = (self.walk_request_id != 0)
+            .then(|| cx.walk_receipt(self.walk_request_id))
+            .flatten()
+            .map(|receipt| {
+                receipt
+                    .failure_detail()
+                    .unwrap_or_else(|| Arc::from(format!("{:?}", receipt.end)))
+            });
+        if ended.is_none() && tick < self.content_deadline_tick {
+            return Poll::Pending;
+        }
+        let why = ended.map_or(WalkFailure::Late, WalkFailure::Ended);
+        if goal.tile != self.plan_tile {
+            if self.approach_replans_left == 0 {
+                self.cancel_route(cx);
+                return Poll::Ready(Err(self.approach_error(WalkFailure::NpcKeepsMoving)));
+            }
+            std::task::ready!(crate::native::defer_budget(self.start_route(cx, goal)))?;
+            self.approach_replans_left -= 1;
+            self.walk_retries_left = DIALOGUE_WALK_RETRIES;
+            return Poll::Pending;
+        }
+        self.walk_failed(cx, tick, why)
+    }
+
+    /// `Phase::Plan`: wait for the router's route length, then walk with it. A
+    /// refused assessment (no route) is a walk failure.
+    fn poll_plan(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        tick: u64,
+        goal: ApproachGoal,
+    ) -> Poll<Result<DialogueOutcome, ActionError>> {
+        if self.assess_request_id == 0 {
+            // A fresh plan follows one observed tick after the failed one.
+            if tick < self.due_tick {
+                return Poll::Pending;
+            }
+            std::task::ready!(crate::native::defer_budget(self.start_route(cx, goal)))?;
+            return Poll::Pending;
+        }
+        let Some(receipt) = cx.assess_receipt(self.assess_request_id) else {
+            return Poll::Pending;
+        };
+        let route_ticks = receipt.route_ticks;
+        let refusal = receipt.refusal.map(|refusal| {
+            receipt
+                .detail
+                .clone()
+                .unwrap_or_else(|| Arc::from(refusal.to_string()))
+        });
+        if let Some(detail) = refusal {
+            return self.walk_failed(cx, tick, WalkFailure::NoRoute(detail));
+        }
+        let request = reach::walk_request(self.plan_tile, self.plan_radius, None, cx.evidence());
+        let request_id = std::task::ready!(crate::native::defer_budget(cx.walk(request)))?;
+        cx.cancel_request(self.assess_request_id);
+        self.assess_request_id = 0;
+        self.begin_walk(
+            cx,
+            request_id,
+            route_ticks.saturating_add(DIALOGUE_APPROACH_SLACK_TICKS),
+        );
+        Poll::Pending
+    }
+
+    /// A route failed with the NPC still. Spend one fresh plan from the
+    /// observed position, or report the failure once they are spent.
+    fn walk_failed(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        tick: u64,
+        why: WalkFailure,
+    ) -> Poll<Result<DialogueOutcome, ActionError>> {
+        self.cancel_route(cx);
+        if self.walk_retries_left == 0 {
+            return Poll::Ready(Err(self.approach_error(why)));
+        }
+        self.walk_retries_left -= 1;
+        self.phase = Phase::Plan;
+        self.due_tick = tick.saturating_add(1);
+        Poll::Pending
+    }
+
     fn observe_talk_arrival(&mut self, cx: &ActionContext<'_>, tick: u64) {
-        if self.gap_rearm_or_talk_arrival_tick.is_some() {
+        if self.talk_arrival_tick.is_some() {
             return;
         }
         let Some(target) = self.npc_id().and_then(|id| nearest_talk(cx, id)) else {
             return;
         };
         if reach::npc_adjacent(cx, target.npc) {
-            self.gap_rearm_or_talk_arrival_tick = Some(tick);
+            self.talk_arrival_tick = Some(tick);
         }
     }
 
+    /// The NPC script's first game message after the click proves that the
+    /// engine ran `opnpc1` (it runs only in range), and the page follows the
+    /// message by the content's own delay (`p_delay`), so it anchors the wait.
+    fn observe_talk_message(&mut self, cx: &ActionContext<'_>, tick: u64) {
+        if self.talk_message_tick.is_some() {
+            return;
+        }
+        if self
+            .talk_chat_mark
+            .is_some_and(|since| reach::saw_game_message(cx, since, ""))
+        {
+            self.talk_message_tick = Some(tick);
+        }
+    }
+
+    /// First-page deadline, counted in observed ticks from the engine's own
+    /// trigger. The host stamps the receipt with the click tick, so the engine
+    /// reads the click one cycle later; when the bot walks the last tiles
+    /// after the click, the trigger is the cycle of arrival. Until the bot is
+    /// beside the NPC, the planned route plus slack bounds the wait.
     fn update_talk_open_deadline(&mut self, cx: &ActionContext<'_>) {
         let Some(request_id) = self.talk_request_id else {
             return;
@@ -819,19 +1016,18 @@ impl Dialogue {
         if !receipt.accepted {
             return;
         }
-        self.content_deadline_tick = self.content_deadline_tick.max(
-            receipt
-                .evidence
-                .tick
-                .saturating_add(u64::from(self.talk_approach_budget_ticks)),
-        );
-        if let Some(arrival_tick) = self.gap_rearm_or_talk_arrival_tick {
-            self.content_deadline_tick = receipt
-                .evidence
-                .tick
+        let click_tick = receipt.evidence.tick;
+        let mut deadline = click_tick.saturating_add(u64::from(self.talk_approach_budget_ticks));
+        if let Some(arrival_tick) = self.talk_arrival_tick {
+            deadline = click_tick
+                .saturating_add(1)
                 .max(arrival_tick)
                 .saturating_add(DIALOGUE_OPEN_TICKS);
         }
+        if let Some(message_tick) = self.talk_message_tick {
+            deadline = message_tick.saturating_add(DIALOGUE_OPEN_TICKS);
+        }
+        self.content_deadline_tick = deadline;
     }
 
     /// The conversation's used-`prefer` mask, for the acceptance tests.
@@ -871,24 +1067,19 @@ impl Dialogue {
         let mut talk_approach_budget_ticks = DIALOGUE_APPROACH_SLACK_TICKS;
         let npc_id = self.npc_id();
         if let Some(target) = npc_id.and_then(|id| nearest_talk(cx, id)) {
-            let reachable = talk_reachable(cx, target.tile);
-            if target.distance > 2 || !reachable {
-                let route_budget = dialogue_approach_tick_budget(cx, &target);
-                self.walk_request_id = cx.walk(reach::walk_request(
-                    target.tile,
-                    if reachable { 1 } else { 0 },
-                    None,
-                    cx.evidence(),
-                ))?;
-                self.gap_rearm_or_talk_arrival_tick = None;
-                self.phase = Phase::Approach;
-                self.content_deadline_tick =
-                    cx.evidence().tick.saturating_add(u64::from(route_budget));
-                return Ok(());
+            let goal = approach_goal(cx, &target);
+            if !goal.close {
+                return self.start_route(cx, goal);
             }
             self.npc_index = target.index;
             self.npc_action = Arc::from(target.action);
-            talk_approach_budget_ticks = dialogue_approach_tick_budget(cx, &target);
+            // The engine walks the last tiles after the click. The flood's
+            // route depth bounds them; with no flood posted, the observed
+            // distance does, which is at most two tiles here.
+            talk_approach_budget_ticks = goal
+                .route_steps
+                .unwrap_or_else(|| u32::try_from(goal.distance.max(0)).unwrap_or(u32::MAX))
+                .saturating_add(DIALOGUE_APPROACH_SLACK_TICKS);
         }
         let DialogueTarget::Npc { name, .. } = &self.args.target else {
             self.surface = Surface::Unselected;
@@ -908,7 +1099,8 @@ impl Dialogue {
         self.talk_request_id = Some(talk_request_id);
         self.talk_chat_mark = Some(reach::last_chat_seq(cx));
         self.talk_approach_budget_ticks = talk_approach_budget_ticks;
-        self.gap_rearm_or_talk_arrival_tick = None;
+        self.talk_arrival_tick = None;
+        self.talk_message_tick = None;
         self.surface = Surface::Chat;
         self.phase = Phase::Open;
         self.content_deadline_tick = cx
@@ -1431,18 +1623,46 @@ fn dialogue_approach_replan_budget(cx: &ActionContext<'_>, npc_id: i32) -> u16 {
     u16::try_from(side.saturating_mul(side).saturating_sub(1)).unwrap_or(u16::MAX)
 }
 
-fn dialogue_approach_tick_budget(cx: &ActionContext<'_>, target: &TalkTarget<'_>) -> u32 {
-    // The live reach flood supplies the planned path depth. Without one, use
-    // the observed NPC distance as a geometric fallback; it cannot include
-    // unseen detours.
-    let steps = reach::npc_route_steps(cx, target.npc)
-        .unwrap_or_else(|| u32::try_from(target.distance.max(0)).unwrap_or(u32::MAX));
-    steps.saturating_add(DIALOGUE_APPROACH_SLACK_TICKS)
+/// Why a route ended without the bot in reach of the NPC.
+enum WalkFailure {
+    /// The router found no route (or refused the assessment).
+    NoRoute(Arc<str>),
+    /// The walk's own receipt ended the route.
+    Ended(Arc<str>),
+    /// The route's observed-tick budget ran out.
+    Late,
+    /// Every replan was spent on a moving NPC.
+    NpcKeepsMoving,
 }
+
+/// What one approach decision reads from the NPC and the live reach flood.
+#[derive(Clone, Copy)]
+struct ApproachGoal {
+    tile: api::WorldTile,
+    radius: u16,
+    /// Route depth from the live flood, when it reaches the NPC.
+    route_steps: Option<u32>,
+    distance: i32,
+    /// Within two tiles and reachable: click now, the engine walks the rest.
+    close: bool,
+}
+
+fn approach_goal(cx: &ActionContext<'_>, target: &TalkTarget<'_>) -> ApproachGoal {
+    let reachable = talk_reachable(cx, target.tile);
+    ApproachGoal {
+        tile: target.tile,
+        radius: u16::from(reachable),
+        route_steps: reach::npc_route_steps(cx, target.npc),
+        distance: target.distance,
+        close: target.distance <= 2 && reachable,
+    }
+}
+
+const DIALOGUE_REFUSAL: &str = "server refused Talk-to: I can't reach that!";
 
 fn dialogue_refusal_error() -> ActionError {
     static REASON: std::sync::LazyLock<Arc<str>> =
-        std::sync::LazyLock::new(|| Arc::from("server refused Talk-to: I can't reach that!"));
+        std::sync::LazyLock::new(|| Arc::from(DIALOGUE_REFUSAL));
     ActionError::Failed(Arc::clone(&REASON))
 }
 

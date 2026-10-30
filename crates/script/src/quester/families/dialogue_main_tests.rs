@@ -207,6 +207,55 @@ fn last_interaction(ledger: &Option<Box<ledger::Ledger>>) -> &InteractReq {
     }
 }
 
+/// The target of the newest walk that is still live in the outbox.
+fn live_walk_target(ledger: &Option<Box<ledger::Ledger>>) -> Option<api::WorldTile> {
+    ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .rev()
+        .find_map(|entry| match (&entry.effect, entry.live()) {
+            (HostEffect::Walk(request), true) => Some(request.target),
+            _ => None,
+        })
+}
+
+/// Every walk the machine has requested, live or superseded.
+fn walks_requested(ledger: &Option<Box<ledger::Ledger>>) -> usize {
+    ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .filter(|entry| matches!(&entry.effect, HostEffect::Walk(_)))
+        .count()
+}
+
+fn live_walks(ledger: &Option<Box<ledger::Ledger>>) -> usize {
+    ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .filter(|entry| matches!(&entry.effect, HostEffect::Walk(_)) && entry.live())
+        .count()
+}
+
+/// The request id of the newest route assessment, live or cancelled.
+fn last_assessment_id(ledger: &Option<Box<ledger::Ledger>>) -> u64 {
+    ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .rev()
+        .find(|entry| matches!(&entry.effect, HostEffect::AssessWalk(_)))
+        .expect("a route assessment was requested")
+        .request_id
+        .get()
+}
+
 fn complete_talk(
     ledger: &mut Option<Box<ledger::Ledger>>,
     evidence_tick: u64,
@@ -1258,7 +1307,7 @@ fn dialogue_open_timeout_counts_observed_ticks_not_elapsed_time() {
 }
 
 #[test]
-fn dialogue_stationary_cook_approach_covers_route_at_fixed_ticks() {
+fn dialogue_stationary_cook_approach_uses_router_route_ticks_at_fixed_ticks() {
     let cook_id = content_npc_id("cook");
     assert_eq!(content_wander_range("cook"), 0);
     let cook_tile = api::WorldTile {
@@ -1282,6 +1331,14 @@ fn dialogue_stationary_cook_approach_covers_route_at_fixed_ticks() {
         assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         handle
     });
+    // No flood reaches the Cook, so the router assesses the 10-tile route
+    // first (15 route ticks) and walks only once it answers.
+    assert!(matches!(
+        super::tests::last_route_effect(&ledger),
+        HostEffect::AssessWalk(request) if request.target == cook_tile
+    ));
+    assert_eq!(walks_requested(&ledger), 0);
+    super::tests::post_assess_receipt(&mut ledger, 1, 15, None);
 
     let mut six_tiles_away = snapshot();
     six_tiles_away.seed_local_player(super::tests::local_player(api::WorldTile {
@@ -1290,26 +1347,183 @@ fn dialogue_stationary_cook_approach_covers_route_at_fixed_ticks() {
         level: 0,
     }));
     six_tiles_away.seed_npcs(vec![content_dialogue_npc(cook_id, "Cook", 6, cook_tile)]);
-    assert!(
-        with_tick(&six_tiles_away, &mut ledger, 5, |tick| {
-            tick.actions.poll(&handle, &mut tick.cx)
-        })
-        .is_pending(),
-        "the Cook remains six tiles away at tick 5"
-    );
-    assert!(
-        with_tick(&six_tiles_away, &mut ledger, 12, |tick| {
-            tick.actions.poll(&handle, &mut tick.cx)
-        })
-        .is_pending(),
-        "the 10-tile distance fallback plus 2 slack ticks expires at tick 13"
-    );
+    // The walk is requested at tick 2: 15 route ticks plus 2 slack ticks.
+    for observed in [2, 5, 18] {
+        assert!(
+            with_tick(&six_tiles_away, &mut ledger, observed, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            })
+            .is_pending(),
+            "the Cook is still out of reach at tick {observed}"
+        );
+        assert_eq!(live_walk_target(&ledger), Some(cook_tile));
+    }
+    // Tick 19 ends the route with the Cook still in place: one fresh plan.
+    assert!(with_tick(&six_tiles_away, &mut ledger, 19, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(with_tick(&six_tiles_away, &mut ledger, 20, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
     assert!(matches!(
-        with_tick(&six_tiles_away, &mut ledger, 13, |tick| {
+        super::tests::last_route_effect(&ledger),
+        HostEffect::AssessWalk(request) if request.target == cook_tile
+    ));
+    super::tests::post_assess_receipt(&mut ledger, 20, 9, None);
+    assert!(with_tick(&six_tiles_away, &mut ledger, 21, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(walks_requested(&ledger), 2);
+    assert!(with_tick(&six_tiles_away, &mut ledger, 31, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(
+        with_tick(&six_tiles_away, &mut ledger, 32, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
-        Poll::Ready(Ok(DialogueOutcome::Failed))
+        Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref()
+                == "dialogue approach failed: the walk did not reach the NPC by observed tick 32"
     ));
+}
+
+#[test]
+fn dialogue_no_route_is_a_named_walk_failure_after_one_fresh_plan() {
+    let cook_id = content_npc_id("cook");
+    let cook_tile = api::WorldTile {
+        x: 0,
+        z: 5,
+        level: 0,
+    };
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(api::WorldTile {
+        x: 10,
+        z: 5,
+        level: 0,
+    }));
+    before.seed_npcs(vec![content_dialogue_npc(cook_id, "Cook", 10, cook_tile)]);
+    let mut ledger = None;
+    let handle = with_tick(&before, &mut ledger, 1, |tick| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(npc_args_for(cook_id, "Cook"), &mut tick.cx)
+            .unwrap();
+        assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        handle
+    });
+    let no_route = Some(crate::native::WalkRefusal::NoRouteWithinBounds {
+        tried: 0,
+        last: None,
+    });
+    let first = super::tests::post_assess_receipt(&mut ledger, 1, 0, no_route);
+    assert!(with_tick(&before, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(
+        last_assessment_id(&ledger),
+        first,
+        "the fresh plan waits for the next observed tick"
+    );
+    assert!(with_tick(&before, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_ne!(
+        last_assessment_id(&ledger),
+        first,
+        "one fresh plan from the observed position"
+    );
+    super::tests::post_assess_receipt(&mut ledger, 3, 0, no_route);
+    assert!(matches!(
+        with_tick(&before, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref()
+                == "dialogue approach failed: no route to the NPC: router found no route"
+    ));
+    assert_eq!(walks_requested(&ledger), 0, "no route, no walk");
+}
+
+#[test]
+fn dialogue_route_ending_short_with_a_still_npc_is_a_walk_failure_not_a_replan() {
+    let brundt_id = content_npc_id("viking_brundt");
+    assert_eq!(content_wander_range("viking_brundt"), 2);
+    let player_tile = api::WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(player_tile));
+    before.seed_npcs(vec![content_dialogue_npc(
+        brundt_id,
+        "Brundt the Chieftain",
+        7,
+        api::WorldTile {
+            x: 7,
+            z: 5,
+            level: 0,
+        },
+    )]);
+    let mut ledger = None;
+    let handle = with_tick(&before, &mut ledger, 1, |tick| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(
+                npc_args_for(brundt_id, "Brundt the Chieftain"),
+                &mut tick.cx,
+            )
+            .unwrap();
+        assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        handle
+    });
+    super::tests::post_assess_receipt(&mut ledger, 1, 10, None);
+    assert!(with_tick(&before, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(walks_requested(&ledger), 1);
+
+    // The route ends short and Brundt has not moved: no replan, one fresh plan.
+    super::tests::post_user_input_walk_receipt(&mut ledger, 3);
+    ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
+    assert!(with_tick(&before, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(walks_requested(&ledger), 1, "a still NPC is not replanned");
+    assert!(with_tick(&before, &mut ledger, 4, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    super::tests::post_assess_receipt(&mut ledger, 4, 10, None);
+    assert!(with_tick(&before, &mut ledger, 5, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(walks_requested(&ledger), 2);
+
+    super::tests::post_user_input_walk_receipt(&mut ledger, 6);
+    ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
+    assert!(matches!(
+        with_tick(&before, &mut ledger, 6, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref()
+                == "dialogue approach failed: the walk ended before the NPC was in reach: Arrived"
+    ));
+    assert_eq!(
+        walks_requested(&ledger),
+        2,
+        "the 24-replan cap was not spent on a still NPC"
+    );
 }
 
 #[test]
@@ -1340,7 +1554,7 @@ fn dialogue_open_timeout_uses_four_ticks_after_accepted_receipt() {
         assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         handle
     });
-    complete_talk(&mut ledger, 2, true, false);
+    complete_talk(&mut ledger, 1, true, false);
     assert!(with_tick(&before, &mut ledger, 2, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })
@@ -1410,7 +1624,7 @@ fn dialogue_siad_and_upass_pages_open_on_the_receipt_deadline_tick() {
         .is_pending());
         assert!(matches!(last_interaction(&ledger), InteractReq::Npc { .. }));
 
-        complete_last_interaction(&mut ledger, 33, true);
+        complete_last_interaction(&mut ledger, 32, true);
         let mut progress = snapshot();
         progress.seed_local_player(super::tests::local_player(api::WorldTile {
             x: 6,
@@ -1501,8 +1715,14 @@ fn dialogue_brundt_replan_cap_matches_24_nonhome_tiles_at_fixed_ticks() {
         assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         handle
     });
+    // No flood reaches Brundt: the router assesses each route first.
+    super::tests::post_assess_receipt(&mut ledger, 1, 10, None);
+    assert!(with_tick(&before, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
 
-    let mut tick_number = 2;
+    let mut tick_number = 3;
     for dz in -2..=2 {
         for dx in -2..=2 {
             if dx == 0 && dz == 0 {
@@ -1532,43 +1752,45 @@ fn dialogue_brundt_replan_cap_matches_24_nonhome_tiles_at_fixed_ticks() {
                 .is_pending(),
                 "Brundt stays out of reach through all 24 non-home tiles"
             );
-            assert_eq!(
-                ledger
-                    .as_ref()
-                    .unwrap()
-                    .outbox
-                    .iter()
-                    .rev()
-                    .find_map(|entry| match (&entry.effect, entry.live()) {
-                        (HostEffect::Walk(request), true) => Some(request.target),
-                        _ => None,
-                    }),
-                Some(current_npc_tile)
+            assert!(
+                matches!(
+                    super::tests::last_route_effect(&ledger),
+                    HostEffect::AssessWalk(request) if request.target == current_npc_tile
+                ),
+                "every move to a new tile costs one replan, planned by the router"
             );
-            tick_number += 1;
+            super::tests::post_assess_receipt(&mut ledger, tick_number, 10, None);
+            assert!(with_tick(&moved, &mut ledger, tick_number + 1, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            })
+            .is_pending());
+            assert_eq!(live_walk_target(&ledger), Some(current_npc_tile));
+            tick_number += 2;
         }
     }
-    assert_eq!(tick_number, 26);
+    assert_eq!(tick_number, 51);
 
-    super::tests::post_user_input_walk_receipt(&mut ledger, 26);
+    super::tests::post_user_input_walk_receipt(&mut ledger, 51);
     ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
     let mut still_moving = snapshot();
     still_moving.seed_local_player(super::tests::local_player(player_tile));
     still_moving.seed_npcs(vec![content_dialogue_npc(
         brundt_id,
         "Brundt the Chieftain",
-        9,
+        8,
         api::WorldTile {
-            x: 9,
-            z: 7,
+            x: 8,
+            z: 5,
             level: 0,
         },
     )]);
     assert!(matches!(
-        with_tick(&still_moving, &mut ledger, 26, |tick| {
+        with_tick(&still_moving, &mut ledger, 51, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
-        Poll::Ready(Ok(DialogueOutcome::Failed))
+        Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref()
+                == "dialogue approach failed: the NPC kept moving through every replan"
     ));
 }
 
@@ -1603,7 +1825,7 @@ fn dialogue_stationary_cook_refusal_retries_once_at_fixed_ticks() {
         assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         handle
     });
-    complete_talk(&mut ledger, 2, true, false);
+    complete_talk(&mut ledger, 1, true, false);
     let mut refused = snapshot();
     refused.seed_local_player(super::tests::local_player(player_tile));
     refused.seed_npcs(vec![cook.clone()]);
@@ -1612,44 +1834,47 @@ fn dialogue_stationary_cook_refusal_retries_once_at_fixed_ticks() {
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
-    assert_eq!(
-        ledger
-            .as_ref()
-            .unwrap()
-            .outbox
-            .iter()
-            .filter(|entry| matches!(&entry.effect, HostEffect::Walk(_)) && entry.live())
-            .count(),
-        1,
-        "a stationary NPC still gets one approach retry"
+    assert!(
+        matches!(
+            super::tests::last_route_effect(&ledger),
+            HostEffect::AssessWalk(request) if request.target == cook.tile
+        ),
+        "a stationary NPC still gets one approach retry, planned by the router"
     );
+    assert_eq!(walks_requested(&ledger), 0);
+    super::tests::post_assess_receipt(&mut ledger, 2, 3, None);
+    let mut walking = snapshot();
+    walking.seed_local_player(super::tests::local_player(player_tile));
+    let mut cook_ahead = cook.clone();
+    cook_ahead.distance = 4;
+    walking.seed_npcs(vec![cook_ahead]);
+    walking.seed_chat_lines(vec![game_message(1, "I can't reach that!")]);
+    assert!(with_tick(&walking, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(live_walks(&ledger), 1);
 
-    super::tests::post_user_input_walk_receipt(&mut ledger, 3);
+    super::tests::post_user_input_walk_receipt(&mut ledger, 4);
     ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
-    assert!(with_tick(&refused, &mut ledger, 3, |tick| {
+    assert!(with_tick(&refused, &mut ledger, 4, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
     assert!(matches!(last_interaction(&ledger), InteractReq::Npc { .. }));
-    complete_last_interaction(&mut ledger, 3, true);
+    complete_last_interaction(&mut ledger, 4, true);
 
     let mut refused_again = refused;
     refused_again.seed_chat_lines(vec![game_message(2, "I can't reach that!")]);
     assert!(matches!(
-        with_tick(&refused_again, &mut ledger, 4, |tick| {
+        with_tick(&refused_again, &mut ledger, 5, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Err(ActionError::Failed(reason)))
             if reason.as_ref() == "server refused Talk-to: I can't reach that!"
     ));
     assert_eq!(
-        ledger
-            .as_ref()
-            .unwrap()
-            .outbox
-            .iter()
-            .filter(|entry| matches!(&entry.effect, HostEffect::Walk(_)) && entry.live())
-            .count(),
+        live_walks(&ledger),
         0,
         "the refusal budget does not issue a second recovery walk"
     );
@@ -1689,7 +1914,7 @@ fn dialogue_refusal_approach_failure_keeps_refusal_detail() {
         assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         handle
     });
-    complete_talk(&mut ledger, 2, true, false);
+    complete_talk(&mut ledger, 1, true, false);
     let mut refused = snapshot();
     refused.seed_local_player(super::tests::local_player(player_tile));
     refused.seed_npcs(vec![brundt]);
@@ -1698,16 +1923,11 @@ fn dialogue_refusal_approach_failure_keeps_refusal_detail() {
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
-    assert_eq!(
-        ledger
-            .as_ref()
-            .unwrap()
-            .outbox
-            .iter()
-            .filter(|entry| matches!(&entry.effect, HostEffect::Walk(_)) && entry.live())
-            .count(),
-        1
-    );
+    assert!(matches!(
+        super::tests::last_route_effect(&ledger),
+        HostEffect::AssessWalk(_)
+    ));
+    assert_eq!(walks_requested(&ledger), 0);
 
     let mut missing = snapshot();
     missing.seed_local_player(super::tests::local_player(player_tile));
@@ -1722,6 +1942,107 @@ fn dialogue_refusal_approach_failure_keeps_refusal_detail() {
         ),
         "unexpected terminal poll: {terminal:?}"
     );
+}
+
+/// A Cook that the live flood cannot reach after a server refusal: the
+/// recovery walk gets the router's route length, not the straight-line 2.
+fn refused_cook_before_recovery() -> (
+    Option<Box<ledger::Ledger>>,
+    crate::native::ActionHandle<Dialogue>,
+    GameSnapshot,
+    api::query::ReachQueryView,
+) {
+    let cook_id = content_npc_id("cook");
+    let player_tile = api::WorldTile {
+        x: 5,
+        z: 5,
+        level: 0,
+    };
+    let cook = content_dialogue_npc(
+        cook_id,
+        "Cook",
+        2,
+        api::WorldTile {
+            x: 7,
+            z: 5,
+            level: 0,
+        },
+    );
+    let mut before = snapshot();
+    before.seed_local_player(super::tests::local_player(player_tile));
+    before.seed_npcs(vec![cook.clone()]);
+    let mut ledger = None;
+    let handle = with_tick(&before, &mut ledger, 1, |tick| {
+        let handle = tick
+            .actions
+            .begin::<Dialogue>(npc_args_for(cook_id, "Cook"), &mut tick.cx)
+            .unwrap();
+        assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        handle
+    });
+    assert!(matches!(last_interaction(&ledger), InteractReq::Npc { .. }));
+    complete_talk(&mut ledger, 1, true, false);
+    let mut refused = snapshot();
+    refused.seed_local_player(super::tests::local_player(player_tile));
+    refused.seed_npcs(vec![cook]);
+    refused.seed_chat_lines(vec![game_message(1, "I can't reach that!")]);
+    let reach = super::tests::wall_door_reach_view();
+    assert!(
+        super::tests::with_tick_reach(&refused, &reach, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending()
+    );
+    assert!(matches!(
+        super::tests::last_route_effect(&ledger),
+        HostEffect::AssessWalk(request) if request.radius == 0
+    ));
+    (ledger, handle, refused, reach)
+}
+
+#[test]
+fn dialogue_refusal_recovery_walk_budget_is_the_routers_route_length() {
+    let (mut ledger, handle, refused, reach) = refused_cook_before_recovery();
+    super::tests::post_assess_receipt(&mut ledger, 2, 15, None);
+    let mut poll_at = |tick_number| {
+        super::tests::with_tick_reach(&refused, &reach, &mut ledger, tick_number, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+    };
+    // The recovery walk is requested at tick 3: 15 route ticks plus 2 slack
+    // ticks, not the 2 + 2 of the straight-line distance.
+    for observed in [3, 6, 19] {
+        let result = poll_at(observed);
+        assert!(result.is_pending(), "tick {observed}: {result:?}");
+    }
+    assert_eq!(walks_requested(&ledger), 1);
+}
+
+#[test]
+fn dialogue_refusal_recovery_keeps_the_refusal_when_the_router_finds_no_route() {
+    let (mut ledger, handle, refused, reach) = refused_cook_before_recovery();
+    let no_route = Some(crate::native::WalkRefusal::NoRouteWithinBounds {
+        tried: 0,
+        last: None,
+    });
+    super::tests::post_assess_receipt(&mut ledger, 2, 0, no_route);
+    let mut poll_at = |tick_number| {
+        super::tests::with_tick_reach(&refused, &reach, &mut ledger, tick_number, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+    };
+    assert!(poll_at(3).is_pending());
+    assert!(poll_at(4).is_pending());
+    super::tests::post_assess_receipt(&mut ledger, 4, 0, no_route);
+    assert!(matches!(
+        super::tests::with_tick_reach(&refused, &reach, &mut ledger, 5, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref()
+                == "server refused Talk-to: I can't reach that!; recovery walk failed: no route to the NPC: router found no route"
+    ));
+    assert_eq!(walks_requested(&ledger), 0);
 }
 
 #[test]
@@ -1822,7 +2143,7 @@ fn dialogue_viking_refusal_replans_and_retries_talk_for_visible_npc() {
     });
     assert!(matches!(last_interaction(&ledger), InteractReq::Npc { .. }));
 
-    complete_talk(&mut ledger, 2, true, false);
+    complete_talk(&mut ledger, 1, true, false);
     assert!(with_tick(&before, &mut ledger, 2, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })
@@ -1845,22 +2166,29 @@ fn dialogue_viking_refusal_replans_and_retries_talk_for_visible_npc() {
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
+    assert!(
+        matches!(
+            super::tests::last_route_effect(&ledger),
+            HostEffect::AssessWalk(request) if request.target == moved_npc_tile
+        ),
+        "the refusal recovery must plan a route to the NPC's current tile"
+    );
+    super::tests::post_assess_receipt(&mut ledger, 3, 4, None);
+    let mut walking = snapshot();
+    walking.seed_local_player(super::tests::local_player(player_tile));
+    walking.seed_npcs(vec![viking_npc(3, moved_npc_tile)]);
+    walking.seed_chat_lines(vec![game_message(8, "I can't reach that!")]);
+    assert!(with_tick(&walking, &mut ledger, 4, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
     assert_eq!(
-        ledger
-            .as_ref()
-            .unwrap()
-            .outbox
-            .iter()
-            .rev()
-            .find_map(|entry| match (&entry.effect, entry.live()) {
-                (HostEffect::Walk(request), true) => Some(request.target),
-                _ => None,
-            }),
+        live_walk_target(&ledger),
         Some(moved_npc_tile),
         "the refusal recovery must target the NPC's current tile"
     );
 
-    super::tests::post_user_input_walk_receipt(&mut ledger, 4);
+    super::tests::post_user_input_walk_receipt(&mut ledger, 5);
     ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
     let mut settled = snapshot();
     settled.seed_local_player(super::tests::local_player(api::WorldTile {
@@ -1870,7 +2198,7 @@ fn dialogue_viking_refusal_replans_and_retries_talk_for_visible_npc() {
     }));
     settled.seed_npcs(vec![viking_npc(1, moved_npc_tile)]);
     settled.seed_chat_lines(vec![game_message(8, "I can't reach that!")]);
-    assert!(with_tick(&settled, &mut ledger, 4, |tick| {
+    assert!(with_tick(&settled, &mut ledger, 5, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
@@ -1921,47 +2249,47 @@ fn dialogue_approach_replans_when_npc_moves_then_talks_after_it_settles() {
         (handle, result)
     });
     assert!(initial.is_pending());
-    assert_eq!(
-        ledger
-            .as_ref()
-            .unwrap()
-            .outbox
-            .iter()
-            .rev()
-            .find_map(|entry| match (&entry.effect, entry.live()) {
-                (HostEffect::Walk(request), true) => Some(request.target),
-                _ => None,
-            }),
-        Some(initial_npc_tile)
+    assert!(
+        matches!(
+            super::tests::last_route_effect(&ledger),
+            HostEffect::AssessWalk(request) if request.target == initial_npc_tile
+        ),
+        "no flood reaches the NPC, so the router assesses the first route"
     );
+    super::tests::post_assess_receipt(&mut ledger, 1, 5, None);
+    assert!(with_tick(&before, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert_eq!(live_walk_target(&ledger), Some(initial_npc_tile));
 
-    super::tests::post_user_input_walk_receipt(&mut ledger, 2);
+    super::tests::post_user_input_walk_receipt(&mut ledger, 3);
     ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
     assert!(
-        with_tick(&moved, &mut ledger, 2, |tick| {
+        with_tick(&moved, &mut ledger, 3, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         })
         .is_pending(),
         "a moved, still-visible NPC should cause an approach re-plan"
     );
+    assert!(matches!(
+        super::tests::last_route_effect(&ledger),
+        HostEffect::AssessWalk(request) if request.target == moved_npc_tile
+    ));
+    super::tests::post_assess_receipt(&mut ledger, 3, 5, None);
+    assert!(with_tick(&moved, &mut ledger, 4, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
     assert_eq!(
-        ledger
-            .as_ref()
-            .unwrap()
-            .outbox
-            .iter()
-            .rev()
-            .find_map(|entry| match (&entry.effect, entry.live()) {
-                (HostEffect::Walk(request), true) => Some(request.target),
-                _ => None,
-            }),
+        live_walk_target(&ledger),
         Some(moved_npc_tile),
         "the re-plan must target the NPC's current tile"
     );
 
-    super::tests::post_user_input_walk_receipt(&mut ledger, 3);
+    super::tests::post_user_input_walk_receipt(&mut ledger, 5);
     ledger.as_mut().unwrap().walk.as_mut().unwrap().end = crate::native::WalkEnd::Arrived;
-    assert!(with_tick(&settled, &mut ledger, 3, |tick| {
+    assert!(with_tick(&settled, &mut ledger, 5, |tick| {
         tick.actions.poll(&handle, &mut tick.cx)
     })
     .is_pending());
@@ -2031,7 +2359,8 @@ fn dialogue_approach_timeout_counts_observed_ticks_not_wall_time() {
         handle
     });
 
-    for observed_tick in 2..=8 {
+    super::tests::post_assess_receipt(&mut ledger, 1, 5, None);
+    for observed_tick in 2..=9 {
         let result = with_tick(&before, &mut ledger, observed_tick, |tick| {
             tick.cx.active_now = if observed_tick == 2 {
                 Duration::from_secs(86_400)
@@ -2040,15 +2369,26 @@ fn dialogue_approach_timeout_counts_observed_ticks_not_wall_time() {
             };
             tick.actions.poll(&handle, &mut tick.cx)
         });
-        if observed_tick == 8 {
-            assert!(matches!(result, Poll::Ready(Ok(DialogueOutcome::Failed))));
-        } else {
-            assert!(
-                result.is_pending(),
-                "the five-tile fallback plus two slack ticks remains pending through tick 7"
-            );
-        }
+        assert!(
+            result.is_pending(),
+            "the five-tile route plus two slack ticks, counted from the walk at tick 2, ends at tick 9 with a fresh plan, not a failure"
+        );
     }
+    assert!(matches!(
+        super::tests::last_route_effect(&ledger),
+        HostEffect::Walk(_)
+    ));
+    assert!(with_tick(&before, &mut ledger, 10, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(
+        matches!(
+            super::tests::last_route_effect(&ledger),
+            HostEffect::AssessWalk(_)
+        ),
+        "the fresh plan follows the ended route one observed tick later"
+    );
 }
 #[test]
 fn dialogue_main_scroll_and_book_actions_retry_after_budget_exhaustion() {

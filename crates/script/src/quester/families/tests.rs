@@ -305,6 +305,39 @@ fn accept_last(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64, accepted: bo
         },
     );
 }
+/// Complete the queued route assessment as the host does when the router
+/// finishes its advisory job: the route length in ticks, or a refusal.
+pub(crate) fn post_assess_receipt(
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    route_ticks: u32,
+    refusal: Option<crate::native::WalkRefusal>,
+) -> u64 {
+    let ledger = ledger.as_mut().expect("an assessment must be queued");
+    let (request_id, run) = ledger
+        .outbox
+        .iter()
+        .rev()
+        .find(|action| matches!(&action.effect, HostEffect::AssessWalk(_)))
+        .map(|action| (action.request_id.get(), action.run()))
+        .expect("an assessment must be queued");
+    ledger.assess_receipt = Some(crate::native::AssessReceipt {
+        request_id,
+        evidence: EvidenceStamp {
+            run,
+            tick,
+            sequence: tick,
+        },
+        assessment: None,
+        refusal,
+        detail: refusal.map(|_| Arc::from("router found no route")),
+        route_ticks,
+    });
+    request_id
+}
+pub(crate) fn last_route_effect(ledger: &Option<Box<ledger::Ledger>>) -> &HostEffect {
+    &ledger.as_ref().unwrap().outbox.last().unwrap().effect
+}
 fn ready() -> GameSnapshot {
     let mut s = GameSnapshot::new();
     s.seed_ingame(2);
@@ -569,7 +602,7 @@ fn quest_walk_step_keeps_needs_evidence_typed() {
     );
 }
 
-fn wall_door_reach_view() -> api::query::ReachQueryView {
+pub(crate) fn wall_door_reach_view() -> api::query::ReachQueryView {
     let mut reachable = vec![0u32];
     reachable[0] = 1 << 4;
     let mut exact_rank = vec![u16::MAX; 9];
@@ -3643,22 +3676,31 @@ fn dialogue_approaches_a_distant_npc_before_talking() {
             with_step(t, |cx| run.poll(cx))
         })
         .is_pending());
-        match &ledger.as_ref().unwrap().outbox.last().unwrap().effect {
+        // No live flood reaches the NPC, so the router assesses the same
+        // route first and its length sets the walk's budget.
+        match last_route_effect(&ledger) {
+            HostEffect::AssessWalk(request) => {
+                assert_eq!(request.target, tile(2542, 3170));
+                assert_eq!(request.radius, 1);
+            }
+            _ => panic!("the approach starts with a route assessment"),
+        }
+        post_assess_receipt(&mut ledger, 2, 12, None);
+        assert!(with_tick(&far, &mut ledger, 3, |t| {
+            with_step(t, |cx| run.poll(cx))
+        })
+        .is_pending());
+        match last_route_effect(&ledger) {
             HostEffect::Walk(request) => {
                 assert_eq!(request.target, tile(2542, 3170));
                 assert_eq!(request.radius, 1);
             }
-            HostEffect::Interaction(_)
-            | HostEffect::BankPick(_)
-            | HostEffect::AssessWalk(_)
-            | HostEffect::ServerOrdered(_) => {
-                panic!("talked before approaching the NPC")
-            }
+            _ => panic!("talked before approaching the NPC"),
         }
 
         let mut near = ready();
         near.seed_npcs(vec![npc(1)]);
-        assert!(with_tick(&near, &mut ledger, 3, |t| {
+        assert!(with_tick(&near, &mut ledger, 4, |t| {
             with_step(t, |cx| run.poll(cx))
         })
         .is_pending());
@@ -5778,17 +5820,23 @@ fn dialogue_open_clock_starts_after_approaching_the_npc() {
         InteractReq::Npc { index: Some(7), .. }
     ));
     accept_last(&mut ledger, 32, true);
-    // Talk-to is sent at tick 32 after the long approach; only now does the
-    // four-observed-tick open budget start. Captain Siad similarly writes this
-    // game message before `p_delay(2)` and its first chat page
-    // (`quest_desertrescue/scripts/captain_siad.rs2:1-11`).
+    // The host stamps the receipt with the click's own tick, 32
+    // (`script_observe.rs:1649-1657`). The engine reads the click in cycle 33
+    // (`World.ts:355` before `:378`). Captain Siad writes this game message in
+    // that cycle and resumes after `p_delay(2)`, so the page is written in
+    // cycle 36 after `PLAYER_INFO`
+    // (`quest_desertrescue/scripts/captain_siad.rs2:2-3`).
     snapshot.seed_chat_lines(vec![api::snapshot::ChatLineView {
         sequence: 1,
         text: "The captain looks up from his work as you address him.".into(),
         type_: 0,
         username: None,
     }]);
-    with_tick(&snapshot, &mut ledger, 35, |t| {
+    with_tick(&snapshot, &mut ledger, 33, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+    });
+    // The first frame of tick 36 can come before the page packet.
+    with_tick(&snapshot, &mut ledger, 36, |t| {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
     });
     snapshot.seed_chat_modal(
@@ -5802,6 +5850,208 @@ fn dialogue_open_clock_starts_after_approaching_the_npc() {
     assert!(matches!(
         emitted(&ledger),
         InteractReq::ContinueDialog { component_id: None }
+    ));
+}
+
+fn fred_npc(distance: i32, at: WorldTile) -> api::snapshot::NpcView {
+    api::snapshot::NpcView {
+        index: 7,
+        r#type: Some(758),
+        name: Some("Fred the Farmer".into()),
+        actions: vec![Some("Talk-to".into())],
+        tile: at,
+        distance,
+        animation: -1,
+        animation_frame: 0,
+        pose_animation: -1,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        spot_animation_stamp: -1,
+        health: 1,
+        total_health: 1,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
+        level: 0,
+        size: 1,
+        network: at,
+        x: 0,
+        z: 0,
+        yaw: 0,
+    }
+}
+
+fn fred_args() -> dialogue::DialogueArgs {
+    dialogue::DialogueArgs {
+        target: dialogue::DialogueTarget::Npc {
+            id: 758,
+            name: Arc::from("Fred the Farmer"),
+        },
+        options: dialogue::DialogueOptions {
+            prefer: Arc::from([]),
+            choose: None,
+            ..Default::default()
+        },
+    }
+}
+
+/// The bot is already beside the NPC when it clicks at observed tick 32. The
+/// host stamps the receipt with the click's tick, 32
+/// (`host-play/src/script_observe.rs:1649-1657`). The engine reads the click in
+/// cycle 33 and runs the NPC script there; Siad's `mes` is in cycle 33 and
+/// `p_delay(2)` resumes at 33 + 1 + 2 = 36
+/// (`captain_siad.rs2:2-3`, `PlayerOps.ts:376-379`). `IF_OPENCHAT` follows
+/// `PLAYER_INFO` in the cycle-36 output (`World.ts:1110-1123`), so the first
+/// poll that sees tick 36 can come before the page. That poll must stay
+/// pending, and the page can still arrive in tick 36 or 37.
+#[test]
+fn dialogue_adjacent_click_first_frame_of_the_page_tick_is_not_a_timeout() {
+    let mut snapshot = ready();
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_npcs(vec![fred_npc(1, tile(3189, 3273))]);
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 32, |t| {
+        let handle = t
+            .actions
+            .begin::<dialogue::Dialogue>(fred_args(), &mut t.cx)
+            .unwrap();
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+        handle
+    });
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::Npc { index: Some(7), .. }
+    ));
+    accept_last(&mut ledger, 32, true);
+    snapshot.seed_chat_lines(vec![api::snapshot::ChatLineView {
+        sequence: 1,
+        text: "The captain looks up from his work as you address him.".into(),
+        type_: 0,
+        username: None,
+    }]);
+    with_tick(&snapshot, &mut ledger, 33, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+    });
+    let first_frame_of_36 = with_tick(&snapshot, &mut ledger, 36, |t| {
+        t.actions.poll(&handle, &mut t.cx)
+    });
+    assert!(
+        first_frame_of_36.is_pending(),
+        "tick 36 observed before the cycle-36 IF_OPENCHAT: {first_frame_of_36:?}"
+    );
+    snapshot.seed_chat_modal(
+        4893,
+        vec!["Fred the Farmer".into(), "Well I need some wool...".into()],
+    );
+    snapshot.seed_chat_options(vec![], 4899);
+    // The page lands one observed tick after the first frame of its own tick.
+    with_tick(&snapshot, &mut ledger, 37, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+    });
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::ContinueDialog { component_id: None }
+    ));
+}
+
+/// With no page, the same click fails at the deadline: the engine's read tick
+/// (33) plus the delay and observation ticks (4), not earlier and not later.
+#[test]
+fn dialogue_adjacent_click_deadline_counts_from_the_engine_read_tick() {
+    let mut snapshot = ready();
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_npcs(vec![fred_npc(1, tile(3189, 3273))]);
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 32, |t| {
+        let handle = t
+            .actions
+            .begin::<dialogue::Dialogue>(fred_args(), &mut t.cx)
+            .unwrap();
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+        handle
+    });
+    accept_last(&mut ledger, 32, true);
+    for observed in 33..37 {
+        assert!(
+            with_tick(&snapshot, &mut ledger, observed, |t| {
+                t.actions.poll(&handle, &mut t.cx)
+            })
+            .is_pending(),
+            "tick {observed} is inside the engine-read deadline"
+        );
+    }
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 37, |t| t.actions.poll(&handle, &mut t.cx)),
+        Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref() == "expected dialogue did not open"
+    ));
+}
+
+/// The NPC is two tiles away across a wall, so the live flood cannot reach it
+/// and gives no route length. The router's route (a door detour of 12 ticks)
+/// sets the walk's budget, not the straight-line distance of 2. A route that
+/// ends short while the NPC stands still is a walk failure with one fresh
+/// plan, then a named terminal failure.
+#[test]
+fn dialogue_door_detour_approach_budget_is_the_routers_route_length() {
+    let mut snapshot = ready();
+    snapshot.seed_local_player(local_player(tile(5, 5)));
+    snapshot.seed_npcs(vec![fred_npc(2, tile(7, 5))]);
+    let reach = wall_door_reach_view();
+    let mut ledger = None;
+    let handle = with_tick_reach(&snapshot, &reach, &mut ledger, 1, |t| {
+        let handle = t
+            .actions
+            .begin::<dialogue::Dialogue>(fred_args(), &mut t.cx)
+            .unwrap();
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+        handle
+    });
+    assert!(matches!(
+        last_route_effect(&ledger),
+        HostEffect::AssessWalk(request) if request.target == tile(7, 5) && request.radius == 0
+    ));
+    post_assess_receipt(&mut ledger, 1, 12, None);
+    let poll_at = |ledger: &mut Option<Box<ledger::Ledger>>, tick| {
+        with_tick_reach(&snapshot, &reach, ledger, tick, |t| {
+            t.actions.poll(&handle, &mut t.cx)
+        })
+    };
+    assert!(poll_at(&mut ledger, 2).is_pending());
+    assert!(matches!(
+        last_route_effect(&ledger),
+        HostEffect::Walk(request) if request.target == tile(7, 5) && request.radius == 0
+    ));
+    // The walk was requested at tick 2: 12 route ticks plus 2 slack ticks.
+    for observed in [5, 9, 15] {
+        let result = poll_at(&mut ledger, observed);
+        assert!(
+            result.is_pending(),
+            "a door detour is still walking at tick {observed}: {result:?}"
+        );
+        assert!(matches!(last_route_effect(&ledger), HostEffect::Walk(_)));
+    }
+    // Tick 16 ends the route with the NPC still: a fresh plan, one tick later.
+    assert!(poll_at(&mut ledger, 16).is_pending());
+    assert!(matches!(last_route_effect(&ledger), HostEffect::Walk(_)));
+    assert!(poll_at(&mut ledger, 17).is_pending());
+    assert!(matches!(
+        last_route_effect(&ledger),
+        HostEffect::AssessWalk(request) if request.target == tile(7, 5)
+    ));
+    post_assess_receipt(&mut ledger, 17, 12, None);
+    assert!(poll_at(&mut ledger, 18).is_pending());
+    assert!(matches!(last_route_effect(&ledger), HostEffect::Walk(_)));
+    assert!(poll_at(&mut ledger, 31).is_pending());
+    assert!(matches!(
+        poll_at(&mut ledger, 32),
+        Poll::Ready(Err(ActionError::Failed(reason)))
+            if reason.as_ref()
+                == "dialogue approach failed: the walk did not reach the NPC by observed tick 32"
     ));
 }
 
@@ -6053,23 +6303,34 @@ fn dialogue_nearby_blocked_npc_keeps_approaching_until_clipping_allows_talk() {
             })
             .is_pending()
         );
-        match &ledger.as_ref().unwrap().outbox.last().unwrap().effect {
-            HostEffect::Walk(request) => {
+        // The router assesses the route to the NPC's side first, because the
+        // flood cannot reach it.
+        match last_route_effect(&ledger) {
+            HostEffect::AssessWalk(request) => {
                 assert_eq!(request.target, npc_tile);
                 assert_eq!(
                     request.radius, 0,
                     "route to the NPC's side, not an adjacent tile across the barrier"
                 );
             }
-            HostEffect::Interaction(_)
-            | HostEffect::BankPick(_)
-            | HostEffect::AssessWalk(_)
-            | HostEffect::ServerOrdered(_) => {
-                panic!("geometric proximity cannot bypass closed clipping")
-            }
+            _ => panic!("geometric proximity cannot bypass closed clipping"),
         }
+        post_assess_receipt(&mut ledger, 2, 9, None);
         assert!(
             with_tick_reach(&snapshot, &blocked, &mut ledger, 3, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending()
+        );
+        match last_route_effect(&ledger) {
+            HostEffect::Walk(request) => {
+                assert_eq!(request.target, npc_tile);
+                assert_eq!(request.radius, 0);
+            }
+            _ => panic!("geometric proximity cannot bypass closed clipping"),
+        }
+        assert!(
+            with_tick_reach(&snapshot, &blocked, &mut ledger, 4, |tick| {
                 with_step(tick, |cx| run.poll(cx))
             })
             .is_pending()
@@ -6088,7 +6349,7 @@ fn dialogue_nearby_blocked_npc_keeps_approaching_until_clipping_allows_talk() {
         opened.reachable_adj[0] = 1 << 1;
         opened.exact_rank[1] = 0;
         opened.adjacent_rank[1] = 0;
-        assert!(with_tick_reach(&snapshot, &opened, &mut ledger, 4, |tick| {
+        assert!(with_tick_reach(&snapshot, &opened, &mut ledger, 5, |tick| {
             with_step(tick, |cx| run.poll(cx))
         })
         .is_pending());
