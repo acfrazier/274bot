@@ -195,7 +195,7 @@ impl QuesterStartZoneCache {
                 .view
                 .as_ref()
                 .and_then(|view| view.as_ref().err())
-                .is_some_and(|previous| previous == &reason)
+                .is_some_and(|previous| previous == reason)
         {
             return false;
         }

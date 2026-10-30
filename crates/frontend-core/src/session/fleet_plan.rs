@@ -411,7 +411,7 @@ impl<Io> OperatorSession<Io> {
         };
         let (registry, revision) = script::quester::registry::snapshot_with_revision();
         let mut stale = Vec::new();
-        let mut models = surface.models();
+        let models = surface.models();
         if let Some(scripts) = models.scripts.as_deref() {
             for disclosure in &plan.quester_start_zones {
                 let profile = self.name_for_identity(disclosure.profile);
