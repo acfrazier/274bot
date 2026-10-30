@@ -428,9 +428,14 @@ fn poison_start(
     let (combat, risks) = tables;
     let zones = producer::zones_view(world).unwrap().unwrap();
     let wilderness = producer::wilderness_view(world).unwrap();
-    let anchor_zones: Vec<_> = zones.containing(anchor).map(|zone| zone.key()).collect();
+    // Keep the anchor's real NPC kinds, not only its two individual spawns:
+    // approaching that coast can encounter another spawn of the same kind first.
+    let anchor_kinds: Vec<_> = zones
+        .containing(anchor)
+        .map(|zone| zone.kind().npc_id())
+        .collect();
     assert!(
-        !anchor_zones.is_empty(),
+        !anchor_kinds.is_empty(),
         "the stated anchor must name real zones"
     );
     let anchor_geometry: Vec<_> = zones
@@ -510,7 +515,9 @@ fn poison_start(
                     rejected[3] += 1;
                     continue;
                 }
-                if !rows.iter().any(|row| anchor_zones.contains(&row.zone)) {
+                if !rows.iter().any(|row| {
+                    anchor_kinds.contains(&zones.zone(row.zone).unwrap().kind().npc_id())
+                }) {
                     rejected[4] += 1;
                     continue;
                 }
@@ -574,7 +581,9 @@ fn poison_start(
                 let crossing = &assessment.plan.crossings[0];
                 let rows = &assessment.plan.intervals
                     [usize::from(crossing.intervals.0)..usize::from(crossing.intervals.1)];
-                if !rows.iter().any(|row| anchor_zones.contains(&row.zone)) {
+                if !rows.iter().any(|row| {
+                    anchor_kinds.contains(&zones.zone(row.zone).unwrap().kind().npc_id())
+                }) {
                     continue;
                 }
                 let retreat = path.point(until_index).unwrap().tile;
