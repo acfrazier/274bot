@@ -226,8 +226,8 @@ impl OutputProbe {
             ),
             FrameOutput::Texture(texture) => (
                 "texture",
-                Some(texture.width as i32),
-                Some(texture.height as i32),
+                Some(texture.width() as i32),
+                Some(texture.height() as i32),
                 None,
             ),
             FrameOutput::Refused(_) => ("refused", None, None, None),
