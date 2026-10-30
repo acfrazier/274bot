@@ -1343,7 +1343,10 @@ fn u11_manual_stale_publication_refuses_and_retains_reason_before_held_follow() 
         Some(WalkRefusal::Unknown(UnknownWhy::MissingFacts))
     );
     let reason = &arm.last_assessment.as_ref().unwrap().reason;
-    assert!(reason.contains("Unknown(MissingFacts)"));
+    assert!(
+        reason.contains("required combat facts are unavailable"),
+        "{reason}"
+    );
     assert!(
         arm.admission.is_none(),
         "the refusal closes this stale manual arm"
@@ -2186,7 +2189,13 @@ fn named_cross_walk_still_judges_an_ungranted_zone_on_the_way() {
             ..make_admission(RiskPolicy::Inherit, unknown_poison(99))
         };
         let assessment = assess(&crossing, &world, &named);
-        assert_eq!(assessment.verdict, Verdict::Survivable);
+        assert_eq!(assessment.verdict, Verdict::Unsurvivable);
+        assert!(assessment.bound <= script::combat::risk::consts::DEATH_BOUND);
+        assert!(
+            assessment.reason.contains("no way out"),
+            "{}",
+            assessment.reason
+        );
         let named_passes = permits(&crossing, &world, &named, &assessment);
         let both = Admission {
             grants: ZoneExempt::named(&[ZoneKey::Zone(0), ZoneKey::Zone(1)]).unwrap(),

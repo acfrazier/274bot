@@ -84,11 +84,10 @@ fn route_cache_bind_does_not_deadlock_slot_tick() {
     let mut session = Session::new();
     session.set_focus_for_test("alice");
     let arms = host_play::WalkArms::default();
-    let arm = Arc::new(std::sync::Mutex::new(host_play::WalkArm {
-        route: Some(Arc::new(test_route())),
-        route_generation: 42,
-        ..Default::default()
-    }));
+    let mut arm = host_play::WalkArm::default();
+    arm.route = Some(Arc::new(test_route()));
+    arm.route_generation = 42;
+    let arm = Arc::new(std::sync::Mutex::new(arm));
     arms.lock()
         .unwrap()
         .insert("alice".into(), Arc::clone(&arm));

@@ -137,10 +137,13 @@ impl HoldRig {
             escape: None,
         };
         let assessment = admission::assess(&route, &world, &admission);
-        assert!(matches!(
-            &assessment.poison_test,
-            PoisonTest::WaitForClear { until_index, .. } if *until_index == safe_index
-        ));
+        assert!(
+            matches!(
+                &assessment.poison_test,
+                PoisonTest::WaitForClear { until_index, .. } if *until_index == safe_index
+            ),
+            "hold fixture assessment: {assessment:?}"
+        );
 
         bot.route_generation = 1;
         bot.walk_request_id = 1;
@@ -162,8 +165,10 @@ impl HoldRig {
         bot.assessment = Some(assessment);
         bot.admission_pending = true;
 
-        let mut driver = HoldDriver::default();
-        driver.current = (start, 1);
+        let driver = HoldDriver {
+            current: (start, 1),
+            ..Default::default()
+        };
         Self {
             start,
             route,
