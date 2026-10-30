@@ -3009,6 +3009,7 @@ mod tests {
                 },
             )
             .expect("configure the render fixture before recorder construction");
+            host::render_head::test_hooks::with_process_render_budget(|| ());
         }
         let fixture_dir =
             PathBuf::from(std::env::var_os("RECORDER_FIXTURE_DIR").expect("fixture directory"));

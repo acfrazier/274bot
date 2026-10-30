@@ -411,9 +411,7 @@ impl FrameBuf {
         if let Some(frame) = queue.frames.pop_front() {
             return Ok(Some(frame));
         }
-        if let Err(error) = progress {
-            return Err(error);
-        }
+        progress?;
         match queue.last_error.take() {
             Some(error) => Err(error),
             None => Ok(None),
@@ -1040,7 +1038,7 @@ impl FrameBuf {
         {
             return Err(client::render::backend::ReadbackError::Limit);
         }
-        for rgba_pixel in rgba.chunks_exact(4) {
+        for rgba_pixel in rgba.as_chunks::<4>().0 {
             pixels.push(
                 ((rgba_pixel[0] as i32) << 16)
                     | ((rgba_pixel[1] as i32) << 8)
@@ -1111,7 +1109,7 @@ impl FrameBuf {
         let (pending, registration) = {
             let mut queue = queue.lock();
             let matches_head =
-                |candidate: HeadIdentity| head.map_or(true, |head| candidate == head);
+                |candidate: HeadIdentity| head.is_none_or(|head| candidate == head);
             let pending = if queue
                 .pending
                 .as_ref()

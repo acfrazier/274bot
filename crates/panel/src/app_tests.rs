@@ -2989,6 +2989,7 @@ fn typed_capture_refusals_fail_terminal_pair_and_soak_drains_without_waiting() {
         },
     )
     .expect("configure this isolated process before host initialization");
+    host::render_head::test_hooks::with_process_render_budget(|| ());
     let label = "typed-refusal";
     let refusal = crate::window::CaptureError::Expired;
     let mut shots = crate::window::ShotState::default();
