@@ -89,6 +89,7 @@ The food cooldown follows the content eat delay.
 The player's Hitpoints regenerate by one every 100 ticks.
 
 The self-damage timeline applies at most one overdue regeneration event on a non-delayed, non-modal tick. It does not heal during `p_delay` or `p_arrivedelay` (`engine/src/engine/World.ts:687-709`, `engine/src/engine/entity/Player.ts:816-830,945-959`, `engine/src/engine/script/handlers/PlayerOps.ts:359-379`).
+
 The solver carries Hitpoints, food, and regeneration through `sequential_kills`.
 Each new fight resets both attack clocks and starts with no recovery time.
 The probability covers all requested kills against the same NPC type.
