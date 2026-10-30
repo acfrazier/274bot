@@ -2222,7 +2222,10 @@ fn ordered_knife_transformed_whirlpool_and_big_fish_never_arm() {
         rig.pump(1);
         rig.pump(2);
         let receipt = rig.receipt();
-        assert_eq!(receipt.terminal, Some(ServerOrderedError::ContractUnavailable));
+        assert_eq!(
+            receipt.terminal,
+            Some(ServerOrderedError::ContractUnavailable)
+        );
         assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
         assert_no_cipher_movement(&rig);
     }
