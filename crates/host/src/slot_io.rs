@@ -2499,14 +2499,14 @@ mod tests {
             invalid_n1.is_fresh(),
             "the invalid scene still has a usable GPU frame"
         );
-        let FrameOutput::Texture(invalid_n1) = &invalid_n1 else {
+        let FrameOutput::Texture(texture_n1) = &invalid_n1 else {
             panic!("the invalid GPU frame carries its by-value token and validity");
         };
-        let token_n1 = invalid_n1
+        let token_n1 = texture_n1
             .present_token()
             .expect("the invalid submitted frame has its own token");
         assert_ne!(token_n1, token_n);
-        assert!(!invalid_n1.has_valid_scene());
+        assert!(!texture_n1.has_valid_scene());
 
         assert_eq!(
             mailbox.generation(),
