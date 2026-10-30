@@ -613,13 +613,13 @@ impl PrereqRun {
                                                 gate: gate.clone(),
                                                 truth,
                                                 leg: self.gate.leg,
-                                                crossing: crossing.crossing.clone(),
+                                                crossing: crossing.crossing,
                                             },
                                             RunEntry::NeedsStep,
                                             self.allow,
                                         )
                                         .with_evidence(self.explicit.clone());
-                                        run.catalog = Some(Arc::clone(&catalog));
+                                        run.catalog = Some(Arc::clone(catalog));
                                         run.depth = self.depth + 1;
                                         self.phase = Phase::Child {
                                             run: Box::new(run),

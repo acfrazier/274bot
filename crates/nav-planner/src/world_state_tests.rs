@@ -392,7 +392,7 @@ fn establishable_windows_only_make_unproven_implied_gates_actionable() {
         signal: FactKey::new("tbwt_main"),
         values: range(Some(3), Some(3)),
     };
-    let windows: Arc<[StageWindow]> = Arc::from([established.clone()]);
+    let windows: Arc<[StageWindow]> = Arc::from([established]);
 
     let unknown = WorldState::empty().with_establishable(windows.clone());
     assert!(unknown.quest_evidence.is_none());

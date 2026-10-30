@@ -796,3 +796,33 @@ pub fn cancel_walk_arm_on_manual_input(
     let mut owned = arm.lock().unwrap();
     cancel_walk_arm(Some(slot), &mut owned, at, "UserInput")
 }
+
+#[cfg(test)]
+mod prereq_layout_tests {
+    use super::*;
+    use std::mem::size_of;
+
+    #[test]
+    fn idle_manual_arm_keeps_prerequisite_context_boxed_and_unallocated() {
+        let idle = allocation_counter::measure(|| {
+            let arm = std::hint::black_box(WalkArm::default());
+            assert!(arm.manual_prereq.is_none());
+        });
+        eprintln!(
+            "prereq manual layout WalkArm={} ManualWalkPrereqContext={} idle_context={} SlotScript={} idle={idle:?}",
+            size_of::<WalkArm>(),
+            size_of::<ManualWalkPrereqContext>(),
+            size_of::<Option<Box<ManualWalkPrereqContext>>>(),
+            size_of::<script::SlotScript>(),
+        );
+        assert_eq!(
+            size_of::<Option<Box<ManualWalkPrereqContext>>>(),
+            size_of::<usize>()
+        );
+        assert!(size_of::<ManualWalkPrereqContext>() <= 512);
+        assert!(size_of::<WalkArm>() <= 4096);
+        assert!(size_of::<script::SlotScript>() <= 2048);
+        assert_eq!(idle.count_total, 0);
+        assert_eq!(idle.bytes_total, 0);
+    }
+}

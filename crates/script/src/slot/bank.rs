@@ -298,6 +298,10 @@ impl BankRow {
         None
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The bank seat borrows its separate owners and selected facts without another context allocation."
+    )]
     fn poll(
         &mut self,
         actions: &mut NativeActions,

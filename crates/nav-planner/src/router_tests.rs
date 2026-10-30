@@ -1427,7 +1427,7 @@ fn actionable_quest_diagnosis_preserves_strict_route_and_crossing_identity() {
             "false",
             Truth::False,
             evidenced(tbwt_evidence(gate_range(Some(4), Some(6))))
-                .with_establishable(establishable.clone()),
+                .with_establishable(establishable),
         ),
     ] {
         assert_eq!(

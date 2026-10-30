@@ -1078,7 +1078,7 @@ impl SlotScript {
         selected: Arc<api::game_data::SelectedGameData>,
         banks: Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<(), StartError> {
-        self.start_compiled_inner(account, id, bag, selected, banks, None, None)
+        self.start_compiled_inner(account, id, bag, selected, banks, None)
     }
 
     pub fn start_manual_walk_handover(
@@ -1095,8 +1095,7 @@ impl SlotScript {
             Arc::new(SettingsBag::new()),
             selected,
             banks,
-            Some(handover),
-            route_run,
+            Some((handover, route_run)),
         )
     }
 
@@ -1107,9 +1106,12 @@ impl SlotScript {
         bag: Arc<SettingsBag>,
         selected: Arc<api::game_data::SelectedGameData>,
         banks: Arc<api::named_banks::NamedBankFacts>,
-        handover: Option<WalkHandover>,
-        route_run: Option<RunKey>,
+        manual_handover: Option<(WalkHandover, Option<RunKey>)>,
     ) -> Result<(), StartError> {
+        let (handover, route_run) = match manual_handover {
+            Some((handover, route_run)) => (Some(handover), route_run),
+            None => (None, None),
+        };
         if self.quest_pairs.as_ref().is_some_and(|pairs| pairs.busy()) {
             return Err(StartError::Unavailable("Stop this pair first".into()));
         }
