@@ -226,16 +226,16 @@ fn compat_v1_game_state__game_castonnpc__contract() {
     }];
     snapshot.tick = 3;
     post_native_seat_page(&iso, &mut buffer, &snapshot, &[], &terminal, &[], &values);
+    let _ = iso.drain_seat_batches();
+    snapshot.tick = 4;
+    post_native_seat_page(&iso, &mut buffer, &snapshot, &[], &[], &[], &[]);
     let terminal_batches = iso.drain_seat_batches();
     assert!(
         terminal_batches
             .iter()
             .any(|batch| batch.batch.consumed_terminal_seq == 1),
-        "the observed terminal result is acknowledged"
+        "the terminal seat page is acknowledged by the next isolate batch"
     );
-    snapshot.tick = 4;
-    post_native_seat_page(&iso, &mut buffer, &snapshot, &[], &[], &[], &[]);
-    let _ = iso.drain_seat_batches();
     assert_eq!(iso.probe("__cast").expect("cast result"), Value::Bool(true));
     assert_eq!(
         iso.probe("__missing").expect("missing-spell result"),

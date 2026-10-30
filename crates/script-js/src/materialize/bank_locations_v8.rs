@@ -1557,7 +1557,8 @@ globalThis.__checkEmptyBankResults = () => {
                 "isolated V8 shape test failed\nstdout: {stdout}\nstderr: {stderr}"
             );
             assert!(
-                stdout.contains(&format!("test {BANK_SHAPE_TEST_NAME} ... ok"))
+                stdout.contains(&format!("test {BANK_SHAPE_TEST_NAME} ..."))
+                    && stdout.contains("running 1 test")
                     && stdout.contains("1 passed"),
                 "isolated test did not run exactly once\nstdout: {stdout}\nstderr: {stderr}"
             );

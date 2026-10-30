@@ -27,6 +27,7 @@ export default class T extends LoopingBot {
     async loop() {
         if (globalThis.__did) return;
         globalThis.__did = true;
+        globalThis.__made = null;
         globalThis.__made = await ChatDialog.makeOne('WOOL');
     }
 }
