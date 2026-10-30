@@ -4840,7 +4840,18 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             session.mainland = scenario.view().mainland();
             session.live_catalog_core = args.catalog_core;
             session.live_pair_core = args.pair_core;
-            session.live_prepare_script(scenario)?;
+            if let Err(error) = session.live_prepare_script(scenario) {
+                if session.live_name.is_some() {
+                    let mut app = new_app(
+                        format!("tui-play --live {name} · {}", session.profile_label()),
+                        &session.preferences,
+                    );
+                    app.names = session.names.clone();
+                    app.focused = (!app.names.is_empty()).then_some(0);
+                    return session.finish_live_exit(&mut app, Err(error));
+                }
+                return Err(error);
+            }
             let mut app = new_app(
                 format!("tui-play --live {name} · {}", session.profile_label()),
                 &session.preferences,

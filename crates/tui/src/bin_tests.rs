@@ -4279,6 +4279,20 @@ fn live_quit_defers_play_shutdown_to_run_loop_cleanup() {
     );
 }
 
+#[test]
+fn incomplete_live_run_still_fails_after_shutdown_cleanup() {
+    let iso = IsolatedStores::enter("tui-live-incomplete-failure");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    session.live_name = Some("quester".into());
+
+    let result =
+        session.finish_live_exit(&mut app, Err("live run stopped before completion".into()));
+
+    assert_eq!(result, Err("live run stopped before completion".into()));
+    assert!(!session.core.has_play(), "cleanup quits the Play session");
+}
+
+
 /// Nothing loaded is not an error when quitting.
 #[test]
 fn quit_with_nothing_loaded_is_not_an_error() {
