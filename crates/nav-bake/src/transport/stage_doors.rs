@@ -356,8 +356,8 @@ fn retain_quest_upper_bounds(
     }
 }
 
-/// Canonical identity fields needed to translate a journal colour into a
-/// bounded stage-window gate.
+/// Content-proven bounds for a quest signal. Journal authority is separate:
+/// a shared journal row cannot prove which underlying signal is complete.
 #[derive(Debug, Clone, Copy)]
 struct QuestStageFacts {
     colour_authoritative: bool,
@@ -365,10 +365,7 @@ struct QuestStageFacts {
     transmission: api::quest_facts::Transmission,
 }
 fn authoritative_stage_domain(facts: QuestStageFacts, complete: i32) -> Option<(i32, i32)> {
-    if !facts.colour_authoritative
-        || facts.transmission != api::quest_facts::Transmission::NotTransmitted
-        || complete <= 0
-    {
+    if facts.transmission != api::quest_facts::Transmission::NotTransmitted || complete <= 0 {
         return None;
     }
     let domain = facts.stage_domain?;
@@ -1349,7 +1346,7 @@ impl Eval<'_> {
                         };
                         // A green journal row is canonical only when the
                         // authoritative domain makes completion exact.
-                        let gate = if max == *complete
+                        let gate = if facts.colour_authoritative && max == *complete
                             && values.min == Some(*complete)
                             && values.max == Some(*complete)
                         {

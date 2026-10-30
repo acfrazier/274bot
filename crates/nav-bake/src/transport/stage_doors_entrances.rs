@@ -116,8 +116,13 @@ fn quest_gate(
     values: api::selected::InclusiveRange,
     complete: i32,
     domain_max: i32,
+    colour_authoritative: bool,
 ) -> api::selected::QuestGate {
-    if domain_max == complete && values.min == Some(complete) && values.max == Some(complete) {
+    if colour_authoritative
+        && domain_max == complete
+        && values.min == Some(complete)
+        && values.max == Some(complete)
+    {
         api::selected::QuestGate::Complete(quest.clone())
     } else {
         api::selected::QuestGate::Window(api::selected::StageWindow {
@@ -506,7 +511,14 @@ impl Motion<'_> {
                         values
                     };
                     Needs {
-                        quests: vec![quest_gate(quest, quest_varp, values, *complete, domain_max)],
+                        quests: vec![quest_gate(
+                            quest,
+                            quest_varp,
+                            values,
+                            *complete,
+                            domain_max,
+                            self.base.src.quest_stage[quest_varp].colour_authoritative,
+                        )],
                         quest_family: Some(quest_family),
                         ..Needs::default()
                     }
@@ -1271,7 +1283,7 @@ mod stage_window_tests {
     }
 
     #[test]
-    fn only_authoritative_untransmitted_bounded_domains_are_used() {
+    fn content_domains_do_not_depend_on_journal_authority() {
         let facts = QuestStageFacts {
             colour_authoritative: true,
             stage_domain: Some(range(0, 20)),
@@ -1296,7 +1308,7 @@ mod stage_window_tests {
                 },
                 15,
             ),
-            None
+            Some((0, 20))
         );
         assert_eq!(
             authoritative_stage_domain(

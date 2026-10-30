@@ -2323,3 +2323,48 @@ return(false);
         Err(RouteError::NoPath)
     );
 }
+
+#[test]
+fn shared_journal_kitchen_door_requires_the_phoenix_signal_in_both_directions() {
+    // brimhaven_restaurant.rs2:1-6, quest_hero.constant:4, and
+    // quests.rs2:328-332: the green Shield of Arrav row does not identify a gang.
+    let fx = plain_opener_fixture(
+        "[oploc1,plain_door]\n\
+         if (%heroquest >= 3 & %phoenixgang = 10) {\n\
+         ~open_and_close_door(loc_1535, ~check_axis(coord, loc_coord, loc_angle), false);\n\
+         return;\n}\nmes(\"This door seems to be locked...\");\n",
+    );
+    fx.write("pack/varp.pack", "188=heroquest\n146=phoenixgang\n");
+    let selected =
+        api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
+    let (facts, identity) = selected.quest_identity_for_bake().expect("verified family");
+    let phoenix = facts.rows.iter().find(|row| row.varp == "phoenixgang").unwrap();
+    assert!(!phoenix.colour_authoritative);
+    assert_eq!(phoenix.varp_id, 146);
+    let quests = QuestSource {
+        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+        facts: &facts,
+    };
+    let (graph, _) = derive_stage_with_quests(&fx, &[900], &quests);
+    let edges: Vec<_> = graph.edges.iter().filter(|edge| edge.loc_id == 900).collect();
+    assert_eq!(edges.len(), 2, "both physical door directions survive");
+    for edge in edges {
+        assert!(edge.varp_req.is_empty(), "hidden varps are not snapshot evidence");
+        assert!(edge.quest_req.is_empty(), "a shared journal colour is not membership");
+        let gates = edge.quest_gates.as_ref().expect("typed signal gates");
+        assert_eq!(gates.gates().len(), 2);
+        for gate in gates.gates() {
+            let api::selected::QuestGate::Window(window) = gate else {
+                panic!("neither a shared gang journal nor early Heroes' stage is completion");
+            };
+            let expected = match window.signal.0.as_ref() {
+                "phoenixgang" => ("blackarmgang", 10, 10),
+                "heroquest" => ("hero", 3, 15),
+                signal => panic!("unexpected signal {signal}"),
+            };
+            assert_eq!(window.quest.0.as_ref(), expected.0);
+            assert_eq!(window.values.min, Some(expected.1));
+            assert_eq!(window.values.max, Some(expected.2));
+        }
+    }
+}
