@@ -1738,9 +1738,9 @@ fn overlay_pos_world<'s>(
     point_object(scope, x, y)
 }
 
-fn project_scene_point(
-    scope: &mut v8::HandleScope,
-    context: &ProjectionContext<'_>,
+fn project_scene_point<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    context: &ProjectionContext<'s>,
     x: i32,
     z: i32,
     height: i32,
@@ -1785,9 +1785,9 @@ fn project_scene_point(
     Ok(Some((px, py)))
 }
 
-fn projection_height_at(
-    scope: &mut v8::HandleScope,
-    context: &ProjectionContext<'_>,
+fn projection_height_at<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    context: &ProjectionContext<'s>,
     x: i32,
     z: i32,
 ) -> Result<Option<i32>, String> {
@@ -1997,7 +1997,7 @@ struct LocBoxCandidate {
 
 fn loc_box_points<'s>(
     scope: &mut v8::HandleScope<'s>,
-    context: &ProjectionContext<'_>,
+    context: &ProjectionContext<'s>,
     loc: LocBoxCandidate,
     area_game: bool,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
