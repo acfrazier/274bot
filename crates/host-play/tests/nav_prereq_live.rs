@@ -267,7 +267,6 @@ struct LiveFixture {
     state: Arc<SlotState>,
     selected: Arc<api::game_data::SelectedGameData>,
     snapshot: Arc<Mutex<GameSnapshot>>,
-    advice_abort: Arc<Mutex<Option<AdvicePageAbort>>>,
     manual_arms: WalkArms,
     name: String,
     seed_run: RunKey,
@@ -390,8 +389,6 @@ fn make_fixture_with_seed_commands(
     let seeded = Arc::new(AtomicBool::new(false));
     let snapshot = Arc::new(Mutex::new(GameSnapshot::new()));
     let frame_snapshot = Arc::clone(&snapshot);
-    let advice_abort = Arc::new(Mutex::new(None::<AdvicePageAbort>));
-    let frame_advice_abort = Arc::clone(&advice_abort);
     let frame_seeded = Arc::clone(&seeded);
     let frame_name = seed_name.clone();
     let seed_errors = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -418,28 +415,8 @@ fn make_fixture_with_seed_commands(
                 return;
             }
             if matches!(*phase, FixtureSeedPhase::Ready) {
-                if input.hold || !client.ingame || client.scene_state != 2 {
-                    return;
-                }
-                // Observe and queue the release before this frame polls Dialogue.
-                // An external poll of this snapshot can run after Continue is sent.
+                if input.hold || input.host_move_owned || !client.ingame || client.scene_state != 2
                 {
-                    let mut abort = frame_advice_abort.lock().expect("advice abort mutex");
-                    if let Some(abort) = abort.as_mut() {
-                        if abort.observed.is_none()
-                            && drezel_advice_page_matches(snapshot.chat_modal_texts())
-                        {
-                            if let Some(page) = first_chat_witness(&snapshot) {
-                                if let Err(error) = (abort.queue)(abort.request_id) {
-                                    frame_errors.lock().expect("seed error mutex").push(error);
-                                    return;
-                                }
-                                abort.observed = Some(page);
-                            }
-                        }
-                    }
-                }
-                if input.host_move_owned {
                     return;
                 }
                 let arm = frame_manual_arms
@@ -627,7 +604,6 @@ fn make_fixture_with_seed_commands(
         state,
         selected,
         snapshot,
-        advice_abort,
         manual_arms,
         name: seed_name,
         seed_run,
@@ -1363,12 +1339,6 @@ struct ChatWitness {
     text: String,
 }
 
-struct AdvicePageAbort {
-    request_id: u64,
-    queue: Box<dyn Fn(u64) -> Result<(), String> + Send + Sync>,
-    observed: Option<ChatWitness>,
-}
-
 fn first_chat_witness(snapshot: &GameSnapshot) -> Option<ChatWitness> {
     if snapshot.modals().chat < 0 {
         return None;
@@ -1470,13 +1440,11 @@ fn wait_for_drezel_advice_page(fixture: &LiveFixture) -> (ChatWitness, String) {
                 .skip(w5 + 1)
                 .find(|line| line.contains("prereq wait=W3 "))
                 .cloned()?;
-            let page = fixture
-                .advice_abort
-                .lock()
-                .expect("advice abort mutex")
-                .as_ref()?
-                .observed
-                .clone()?;
+            let snapshot = fixture.snapshot.lock().expect("game snapshot mutex");
+            let page = first_chat_witness(&snapshot)?;
+            if !drezel_advice_page_matches(snapshot.chat_modal_texts()) {
+                return None;
+            }
             Some((page, w3))
         },
     )
@@ -1515,18 +1483,30 @@ fn wait_for_live_approach(fixture: &LiveFixture) -> (u64, serde_json::Value) {
     )
 }
 
-fn wait_for_chat_steady(fixture: &LiveFixture, before: &ChatWitness) -> ChatWitness {
+fn wait_for_chat_steady(fixture: &LiveFixture) -> (ChatWitness, ChatWitness) {
+    // A Continue admitted before AbortWalk can still return its page.
+    // The trace oracle rejects every page action after the accepted AbortWalk.
+    let mut baseline = None::<ChatWitness>;
     wait_for_snapshot(
         fixture,
         "chat page remains unclicked after AbortWalk",
         Duration::from_secs(30),
         |snapshot| {
-            let current = first_chat_witness(snapshot)?;
-            (snapshot.tick() >= before.tick.saturating_add(2)
-                && current.modal == before.modal
-                && current.sequence == before.sequence
-                && current.text == before.text)
-                .then_some(current)
+            let Some(current) = first_chat_witness(snapshot) else {
+                baseline = None;
+                return None;
+            };
+            if let Some(before) = baseline.as_ref() {
+                if current.modal == before.modal
+                    && current.sequence == before.sequence
+                    && current.text == before.text
+                {
+                    return (snapshot.tick() >= before.tick.saturating_add(2))
+                        .then(|| (before.clone(), current));
+                }
+            }
+            baseline = Some(current);
+            None
         },
     )
 }
@@ -1901,22 +1881,6 @@ fn live_compat_prereq_holy_barrier_abort_advice_page() {
         fact.observed.run, run,
         "GateRefused belongs to the compat run"
     );
-    let request_id = wait_for(
-        &fixture.play,
-        &fixture.name,
-        "advice abort outer walk id",
-        Duration::from_secs(30),
-        |play| play.script_live_walk_request_id(&fixture.name),
-    );
-    let queue = fixture
-        .play
-        .script_api_live_compat_abort_handle(&fixture.name)
-        .expect("advice abort belongs to a live script slot");
-    *fixture.advice_abort.lock().expect("advice abort mutex") = Some(AdvicePageAbort {
-        request_id,
-        queue: Box::new(queue),
-        observed: None,
-    });
     let (page, w3_log) = wait_for_drezel_advice_page(&fixture);
     assert!(
         w3_log.contains("since=")
@@ -1927,6 +1891,14 @@ fn live_compat_prereq_holy_barrier_abort_advice_page() {
         "advice page lacks the observed W3 evidence record: {w3_log}"
     );
     assert!(page.modal >= 0, "advice page is not open: {page:?}");
+    let request_id = fixture
+        .play
+        .script_live_walk_request_id(&fixture.name)
+        .expect("advice page must retain the outer walk id");
+    fixture
+        .play
+        .script_api_live_abort_walk(&fixture.name, request_id)
+        .expect("dispatch AbortWalk for the exact live outer id");
     let (result, terminal_logs) = wait_compat_result(&fixture, Duration::from_secs(240));
     assert_eq!(
         result["terminal_count"], 1,
@@ -1939,7 +1911,7 @@ fn live_compat_prereq_holy_barrier_abort_advice_page() {
     );
     let seat = assert_seat_idle(&fixture);
     let logs_at_abort_terminal = slot_nav_logs(&fixture.name);
-    let steady_page = wait_for_chat_steady(&fixture, &page);
+    let (settled_page, steady_page) = wait_for_chat_steady(&fixture);
     let navigation_logs = slot_nav_logs(&fixture.name);
     let later_w3_starts = navigation_logs
         .iter()
@@ -1961,6 +1933,7 @@ fn live_compat_prereq_holy_barrier_abort_advice_page() {
         "compat_result": result,
         "outer_terminal_logs": terminal_logs,
         "seat_idle": seat,
+        "settled_page_after_abort": settled_page,
         "same_page_after_two_observed_ticks": steady_page,
         "later_w3_starts": later_w3_starts,
         "navigation_log_count_at_abort_terminal": logs_at_abort_terminal.len(),
