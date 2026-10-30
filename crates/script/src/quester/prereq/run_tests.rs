@@ -2112,6 +2112,7 @@ fn kitchen_journal_observation(lines: &[&str], expected: Option<Truth>) {
     journal_observation(
         kitchen_journal_gate(),
         "Shield of Arrav",
+        "Shield of Arrav",
         0x00f800,
         lines,
         expected,
@@ -2121,6 +2122,7 @@ fn kitchen_journal_observation(lines: &[&str], expected: Option<Truth>) {
 fn journal_observation(
     gate: ActionableGate,
     title: &str,
+    row_title: &str,
     colour: i32,
     lines: &[&str],
     expected: Option<Truth>,
@@ -2131,7 +2133,7 @@ fn journal_observation(
     let mut snapshot = snapshot(gate.crossing.takeoff);
     snapshot.seed_quest_statuses(
         vec![QuestStatusView {
-            name: title.into(),
+            name: row_title.into(),
             component_id: 42,
             colour,
         }],
@@ -2297,6 +2299,7 @@ fn kitchen_journal_hero_password_establishes_pre_completion_eligibility() {
     journal_observation(
         gate,
         "Heroes' Quest",
+        "Hero's Quest",
         0xffff00,
         &[
             "@str@I spoke to Straven about the Master Thieves Armband.",
