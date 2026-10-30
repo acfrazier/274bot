@@ -2,49 +2,118 @@
 
 ## Result
 
-This report covers the ten requested rows: H1, H2, M1–M7, and Low. It records observed results, including incomplete checks. It does not treat a compile error as a failing test or a missing screenshot as a pass.
+This report covers ten requested items: H1, H2, M1–M7, and Low. It records observed results and limits.
 
-The final Rust test, Clippy, and format matrix passed on `5c3b99e28`. The live matrix did not pass in full: 19 of 23 cells passed, and four failed. No headed panel capture shows the Quester zone list. The TUI captures do show it.
+The Rust test, Clippy, and format matrix passed on commit `5c3b99e28`. Nineteen of 23 live cells passed. Four live cells failed.
 
-The requested red-before/green-after condition is not established for every row. M1 and Low pass on the old revision because their underlying behavior or measured size did not change. M3 is a documentation check. The M5–M7 baseline attempts fail to compile because the APIs under test did not exist. M4 is an operational live-coverage check, not a unit test. These limits are explicit below.
+The TUI capture shows the zone list. No headed panel capture shows it.
 
-Evidence files are under `/Volumes/dev-scratch/274bot-evidence/QUEST-DANGER-CONSENT/r2/` unless a different path is shown.
+The red-before/green-after check remains incomplete for some items. M1 and Low pass on the old revision. Their behavior or measured size did not change. M3 is a documentation check. The M5–M7 baseline attempts failed to compile because the tested APIs did not exist. M4 is a live-coverage check, not a unit test.
+
+Evidence files are under `/Volumes/dev-scratch/274bot-evidence/QUEST-DANGER-CONSENT/r2/` unless a citation starts with `../`.
 
 ## Findings
 
-| Finding | Fix | Test or check; result on `764a49853` | Result on the implementation branch |
-| --- | --- | --- | --- |
-| **H1 — a declared crossing needs a survival control** | `crates/script/src/native/actions.rs:9-38` arms the food guard and allows food for any non-empty declared crossing. The policy text is in `CHANGELOG.md:73-76`. | `native::actions::tests::plain_walk_under_stage_grant_arms_food_guard` failed: 0 passed, 1 failed. See `baseline/baseline-tests-aubaine.log:163-176`. | Passed in the final full suite on `5c3b99e28`; see `validation-chardonnay-final-5c3b99e28.log:753`. The contemporaneous `baseline-tests.log` also records H1 passing after the fix, but does not identify the exact commit tested. |
-| **H2 — Desert Rescue’s resumed captain walk needs the same grant** | `crates/script/paths/289/desertrescue.json:2036-2054` gives `walk-to-captain-again` the same three Ugthanki ids as `walk-to-captain`. | `desert_captain_resume_step_declares_the_same_pack_zones` failed: 0 passed, 1 failed. See `baseline/baseline-tests-aubaine.log:452-465`. | Passed in the final full suite; see `validation-chardonnay-final-5c3b99e28.log:12893-12895`. |
-| **M1 — Quester’s empty scope must not inherit global danger grants** | The policy is stated in `CHANGELOG.md:75-76`; the route policy is applied in `crates/script/src/native/actions.rs:32-38`. | `admission::tests::empty_quester_stage_forbid_avoids_a_globally_allowed_undeclared_zone` passed on the baseline: 1 passed. See `baseline/baseline-m1-aubaine.log:9-12`. This is not a red-before regression test; it explicitly supplies `WalkBit::Forbid`. | Passed in the final full suite; see `validation-chardonnay-final-5c3b99e28.log:10892`. The behavior was already present at baseline; the new change makes the policy explicit. |
-| **M2 — remove the misleading danger setting** | `crates/script/src/quester/card.rs:53-55,801-834` hides the old override while retaining saved data. `crates/host-play/tests/quester_path_live.rs:232-240` no longer adds the obsolete live setting. The change is documented in `CHANGELOG.md:70-74`. | `quester::card::walk_permission_settings_tests::walk_permission_settings_keep_teleports_and_legacy_danger_data` failed because the Quester card still exposed the override. See `baseline/baseline-m2-aubaine.log:7-19`. | Passed in the final full suite; see `validation-chardonnay-final-5c3b99e28.log:1040`. |
-| **M3 — document the user-visible change** | `CHANGELOG.md:64-77` adds an Unreleased Quester entry for the disclosure, removed setting, named grants, and food guard. | The review records that the earlier commits had no CHANGELOG entry (`../review-opus.md:52-53`). No Cargo test covers this documentation-only finding. | The required entry is present at `CHANGELOG.md:64-77`. This is a source/document check, not a behavioral test. |
-| **M4 — live proof must cover the changed paths** | Operational check: run the mapped live cells once, as required by the round-2 brief. There is no code-only fix for incomplete live receipts. | The earlier evidence was one run of one cell; the review cites `../live-default.log:212,341`. | `live-cells-chardonnay-once.log` records 19/23 passing cells. Four failed: `panel.headed-quester-zone-list` (30 s world-speed timeout and refused restore), `panel.manual-start-live` (missing copied decoded R289 cache), `panel.state-gap-stop-live` (same missing cache), and `tui.live-jive-kq` (`/crc` connection problem). This is partial, not a full pass. |
-| **M5 — bulk Start must disclose each Quester queue** | `crates/frontend-core/src/fleet_plan.rs:94-120,275-357`, `crates/frontend-core/src/session/fleet_plan.rs:275-450`, and `crates/frontend-core/src/session/scripts.rs:677-687` freeze each bot’s disclosure, require confirmation, reject an unplanned bulk Start, and skip a bot whose queue changed. | The baseline attempt did not reach an assertion. It failed to compile because the new disclosure APIs were absent; see `baseline/baseline-m5-aubaine.log:11-77`. This is not a red test result. | `quester_fleet_start_discloses_each_queue_and_skips_changed_consent` and `unplanned_bulk_start_refuses_quester_without_a_disclosure_plan` passed in the final frontend-core suite; see `validation-chardonnay-final-5c3b99e28.log:6933-6945`. |
-| **M6 — panel and TUI must use the same disclosure, including after an error** | `crates/frontend-core/src/scripts/prestart_zones.rs` owns the shared view. The panel and TUI consume it through `crates/panel/src/app.rs:2821-2845` and `crates/tui/src/script_shape.rs:471-496,663-670`. | The baseline attempt did not reach an assertion. It failed to compile because the disclosure APIs were absent; see `baseline/baseline-m6-tui-aubaine-2.log:81-105`. | `panel_driver_shows_quester_zone_disclosure_before_start` passed; see `validation-chardonnay-final-5c3b99e28.log:8236`. `arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes` passed; this TUI test renders the disclosure in `Error` state. See the same log at `10099`. |
-| **M7 — avoid rebuilding the full settings bag each frame** | `crates/frontend-core/src/scripts/mod.rs:989-1030` and `crates/frontend-core/src/scripts/prestart_zones.rs:141-222` cache durable settings by profile generation and rebuild the view only when the profile generation or registry revision changes. The common refresh path reads the revision without allocating. | The baseline attempt did not reach an assertion. It failed to compile because the cache APIs were absent; see `baseline/baseline-m7-aubaine.log:3-107`. | `scripts::tests::warm_quester_script_section_shares_its_zone_text_without_allocating` passed in the final full suite; see `validation-chardonnay-final-5c3b99e28.log:7262` and `7942`. |
-| **Low — pin the Linux SlotScript size exactly (L1)** | `crates/script/tests/surface_facts_alloc.rs:326-334` now asserts `SlotScript == 1544` bytes. | `slot_size_matches_the_measured_linux_parent_layout` passed on the baseline because the measured size was already 1544 bytes; see `baseline-chardonnay-tests.log:62-70`. The old test’s loose ceiling was the finding, not a changed runtime size. | The exact 1544-byte assertion passed in the final suite; see `validation-chardonnay-final-5c3b99e28.log:4516`. No red-before result is possible from the unchanged measured size. The macOS aarch64 size remains unmeasured, as noted in L2 of the review. |
+### H1 — A declared crossing needs a survival control
 
-The M5–M7 baseline compiler failures are retained for transparency. They do not satisfy the requested behavioral red-before requirement. The M1 and Low tests also do not distinguish the old and new behavior. M3 and M4 have no equivalent Cargo regression test. The available evidence therefore does not establish a valid red-before/green-after test for every requested row.
+- **Fix:** `crates/script/src/native/actions.rs:9-38` arms the food guard and allows food for each non-empty declared crossing. `CHANGELOG.md:73-76` states this policy.
+- **Before:** `native::actions::tests::plain_walk_under_stage_grant_arms_food_guard` failed. Zero tests passed and one failed. See `baseline/baseline-tests-aubaine.log:163-176`.
+- **After:** The test passed in the full suite on `5c3b99e28`. See `validation-chardonnay-final-5c3b99e28.log:753`. `baseline-tests.log:8-10` also records a post-fix pass. That log does not identify the tested commit.
+
+### H2 — Desert Rescue’s resumed captain walk needs the same grant
+
+- **Fix:** `crates/script/paths/289/desertrescue.json:2036-2054` gives `walk-to-captain-again` the same three Ugthanki ids as `walk-to-captain`.
+- **Before:** `desert_captain_resume_step_declares_the_same_pack_zones` failed. Zero tests passed and one failed. See `baseline/baseline-tests-aubaine.log:452-465`.
+- **After:** The test passed in the full suite. See `validation-chardonnay-final-5c3b99e28.log:12893-12895`.
+
+### M1 — Empty Quester scope must not inherit global danger grants
+
+- **Fix:** `CHANGELOG.md:75-76` states this policy. `crates/script/src/native/actions.rs:32-38` applies the route policy.
+- **Before:** `admission::tests::empty_quester_stage_forbid_avoids_a_globally_allowed_undeclared_zone` passed on the baseline. One test passed. See `baseline/baseline-m1-aubaine.log:9-12`. The test supplies `WalkBit::Forbid`. It is not a red-before regression test.
+- **After:** The test passed in the full suite. See `validation-chardonnay-final-5c3b99e28.log:10892`. The behavior already existed on the baseline. The change states the policy.
+
+### M2 — Remove the misleading danger setting
+
+- **Fix:** `crates/script/src/quester/card.rs:53-55,801-834` hides the old override and keeps saved data. `crates/host-play/tests/quester_path_live.rs:232-240` no longer adds the old live setting. `CHANGELOG.md:70-74` documents the change.
+- **Before:** `quester::card::walk_permission_settings_tests::walk_permission_settings_keep_teleports_and_legacy_danger_data` failed because the Quester card still showed the override. See `baseline/baseline-m2-aubaine.log:7-19`.
+- **After:** The test passed in the full suite. See `validation-chardonnay-final-5c3b99e28.log:1040`.
+
+### M3 — Document the user-visible change
+
+- **Fix:** `CHANGELOG.md:64-77` adds an Unreleased Quester entry. It describes the disclosure, removed setting, named grants, and food guard.
+- **Before:** The review says the earlier commits did not change the changelog. See `../review-opus.md:52-53`. No Cargo test covers this documentation finding.
+- **After:** The required entry appears at `CHANGELOG.md:64-77`. This is a document check, not a behavioral test.
+
+### M4 — Live proof must cover the changed paths
+
+- **Check:** The round-2 brief requires one run of each mapped live cell. The result is incomplete.
+- **Before:** The earlier evidence covers one run of one cell. See `../live-default.log:212,341` and `../review-opus.md:55-56`.
+- **After:** `live-cells-chardonnay-once.log` records 19 of 23 passing cells. Four cells failed:
+  - `panel.headed-quester-zone-list`: world speed timed out after 30 seconds. The panel refused to restore it.
+  - `panel.manual-start-live`: the copied R289 cache was missing.
+  - `panel.state-gap-stop-live`: the copied R289 cache was missing.
+  - `tui.live-jive-kq`: the `/crc` connection failed.
+
+### M5 — Bulk Start must disclose each Quester queue
+
+- **Fix:** `crates/frontend-core/src/fleet_plan.rs:94-120,275-357` and `crates/frontend-core/src/session/fleet_plan.rs:275-450` freeze each bot’s disclosure and require confirmation. `crates/frontend-core/src/session/scripts.rs:677-687` refuses unplanned bulk starts and skips bots with changed queues.
+- **Before:** The baseline attempt failed to compile because the disclosure APIs did not exist. It did not reach an assertion. See `baseline/baseline-m5-aubaine.log:11-77`. This is not a failing test result.
+- **After:** `quester_fleet_start_discloses_each_queue_and_skips_changed_consent` passed. `unplanned_bulk_start_refuses_quester_without_a_disclosure_plan` passed. See `validation-chardonnay-final-5c3b99e28.log:6933-6945`.
+
+### M6 — Panel and TUI must share disclosure, including after an error
+
+- **Fix:** `crates/frontend-core/src/scripts/prestart_zones.rs` owns the shared view. The panel uses `crates/panel/src/app.rs:2821-2845`. The TUI uses `crates/tui/src/script_shape.rs:471-496,663-670`.
+- **Before:** The baseline attempt failed to compile because the disclosure APIs did not exist. It did not reach an assertion. See `baseline/baseline-m6-tui-aubaine-2.log:81-105`. This is not a failing test result.
+- **After:** `panel_driver_shows_quester_zone_disclosure_before_start` passed. See `validation-chardonnay-final-5c3b99e28.log:8236`. `arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes` passed and rendered the disclosure in Error state. See line 10099 of the same log.
+
+### M7 — Avoid rebuilding the full settings bag each frame
+
+- **Fix:** `crates/frontend-core/src/scripts/mod.rs:989-1030` and `crates/frontend-core/src/scripts/prestart_zones.rs:141-222` cache durable settings by profile generation. The code rebuilds the view only when the profile generation or registry revision changes. The common refresh path reads the revision without allocation.
+- **Before:** The baseline attempt failed to compile because the cache APIs did not exist. It did not reach an assertion. See `baseline/baseline-m7-aubaine.log:3-107`. This is not a failing test result.
+- **After:** `scripts::tests::warm_quester_script_section_shares_its_zone_text_without_allocating` passed in the full suite. See `validation-chardonnay-final-5c3b99e28.log:7262` and `7942`.
+
+### Low — Pin the Linux SlotScript size exactly (L1)
+
+- **Fix:** `crates/script/tests/surface_facts_alloc.rs:326-334` asserts that `SlotScript` is exactly 1544 bytes.
+- **Before:** `slot_size_matches_the_measured_linux_parent_layout` passed on the baseline because the size was already 1544 bytes. See `baseline-chardonnay-tests.log:62-70`. The finding was the loose size limit, not a runtime size change.
+- **After:** The exact size assertion passed in the full suite. See `validation-chardonnay-final-5c3b99e28.log:4516`. No red-before result is possible because the measured size did not change. The macOS aarch64 size remains unmeasured.
+
+The M5–M7 baseline compiler failures do not provide behavioral red results. The M1 and Low tests also pass on the baseline. M3 and M4 have no Cargo regression test. The evidence does not show a valid red-before/green-after test for every item.
 
 ## Expectation update in `80d5ac948`
 
-`crates/script/src/quester/families/combat_tests.rs` changed both combat-walk assertions from `aborted && !protect` to `cross || (aborted && !protect)`. This is derived from `crates/script/src/native/actions.rs:35-38`: when the request has a declared crossing, the implementation sets `food_guard = true` and `allow.food = true`. The original term remains for an unprotected abort walk. The new expectation therefore covers both existing abort protection and the added food guard for declared crossings. The updated test message says the same thing at `combat_tests.rs:424-425`.
+`crates/script/src/quester/families/combat_tests.rs` changed both combat-walk assertions from `aborted && !protect` to `cross || (aborted && !protect)`.
+
+This change follows `crates/script/src/native/actions.rs:35-38`. When a request declares a crossing, the code sets `food_guard = true` and `allow.food = true`. The old assertion term still covers an unprotected abort walk. The new assertion covers either case.
+
+The updated test message says the same thing at `combat_tests.rs:424-425`.
 
 ## Validation
 
-`validation-chardonnay-final-5c3b99e28.log` is the final Rust validation matrix on the current branch descendant. It records exit 0 for:
+`validation-chardonnay-final-5c3b99e28.log` records exit 0 for the final Rust validation matrix.
 
-- all-target tests for `script` (default, no default features, and all features), `frontend-core` (default and no default features), `panel` (default and no default features), `tui` (default and no default features), and `host-play` (default, no default features, and `live-harness,test-support`);
-- Clippy with `-D warnings` for the listed default, no-default, TUI no-default, and host-play live-feature modes; and
-- `cargo fmt --all -- --check`.
+- **Tests:** `script` with default, no-default, and all features. `frontend-core`, `panel`, and `tui` with default and no-default features. `host-play` with default, no-default, and `live-harness,test-support` features.
+- **Clippy:** `-D warnings` in the listed default, no-default, TUI no-default, and host-play live-feature modes.
+- **Format:** `cargo fmt --all -- --check`.
 
-The log ends with `MATRIX_EXIT=0` at line 17807. This is separate from the live-cell matrix, which has four failures. The earlier interrupted Aubaine log is not used as a green result.
+The log records `MATRIX_EXIT=0` at line 17807. The live-cell matrix remains separate and has four failures. The interrupted Aubaine log is not a green result.
 
-The green matrix and after-results above are on final descendant `5c3b99e28`, not a full rerun at the exact requested implementation revision `80d5ac948`. The cited contemporaneous H1 receipt does not identify its commit hash. This report therefore does not claim a per-row green run at exactly `80d5ac948`.
+The full matrix and after-results above are from descendant `5c3b99e28`. The matrix did not run at the exact requested revision `80d5ac948`. The post-fix H1 receipt does not identify its commit. This report does not claim a per-item green run at exactly `80d5ac948`.
 
 ## Live UI evidence and limits
 
-The TUI capture test wrote five 120x40 pages (`tui-120x40-page-00.txt` through `-04.txt`) and fourteen 80x24 pages (`tui-80x24-page-00.txt` through `-13.txt`). The first and last pages show the Start zone scope, the food-guard notice, the Start control, and the Arthur stage-3 and stage-4 zones with ids and guide reasons. The captures are under `live-20261030-once/tui-app-headless/run-1/tui-zone-list/QUEST-DANGER-CONSENT/`.
+The TUI capture test wrote five pages at 120x40 and fourteen pages at 80x24. The first and last pages show the Start zone scope, food-guard notice, and Start control. They also show Arthur stage-3 and stage-4 zones with ids and guide reasons.
 
-No headed panel image shows the zone list. The live headed cell failed before it produced one: `live-cells-chardonnay-once.log` records the world-speed timeout and refused restore. The retry log `live-headed-retry.log` records a 60 s Quester scenario timeout; its screenshot `live-headed-retry/quester_path.png` shows the bot in the desert, not the zone list. The null-raster attempts also did not produce a usable image: attempt 1 shows the login queue with Script collapsed, attempt 2 did not select a bot and targeted the toolbar’s Script preferences, and attempt 3 produced black root screenshots and failed to locate the Script section. These attempts are in `live-headed-nullraster.log`, `live-headed-nullraster-attempt2.log`, and `live-headed-nullraster-attempt3.log`. The headed check remains unverified.
+The captures are under `live-20261030-once/tui-app-headless/run-1/tui-zone-list/QUEST-DANGER-CONSENT/`.
+
+No headed panel image shows the zone list. The live headed cell failed before it produced an image. `live-cells-chardonnay-once.log` records the world-speed timeout and refused restore.
+
+The retry log `live-headed-retry.log` records a 60-second Quester scenario timeout. Its screenshot `live-headed-retry/quester_path.png` shows the bot in the desert, not the zone list.
+
+The null-raster attempts also failed to produce a usable image:
+
+- Attempt 1 shows the login queue and a collapsed Script section. See `live-headed-nullraster.log`.
+- Attempt 2 did not select a bot. Automation targeted the toolbar’s Script preferences. See `live-headed-nullraster-attempt2.log`.
+- Attempt 3 produced black root screenshots and did not locate the Script section. See `live-headed-nullraster-attempt3.log`.
+
+The headed zone-list check remains unverified.
