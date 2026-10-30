@@ -237,7 +237,6 @@ fn routed(result: &RouteAdmission) -> &Route {
             panic!("expected a real router route")
         }
     }
-
 }
 #[test]
 fn unavailable_snapshots_preserve_missing_facts_without_inventing_events() {
