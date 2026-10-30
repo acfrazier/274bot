@@ -734,9 +734,8 @@ impl StepPlan for MakePlan {
                 after_trigger: false,
                 make_x: self.make_x,
             },
-            walk: None,
+            small_handle: None,
             trigger_reach: None,
-            trigger_use_on: None,
             make: None,
         }))
     }
@@ -745,12 +744,16 @@ impl StepPlan for MakePlan {
     }
 }
 
+enum MakeSmallHandle {
+    Walk(ActionHandle<Walk>),
+    UseOn(ActionHandle<super::UseOnAction>),
+}
+
 struct MakeRun {
     trigger_plan: Option<MakeTrigger>,
     request: MakeRequest,
-    walk: Option<ActionHandle<Walk>>,
+    small_handle: Option<MakeSmallHandle>,
     trigger_reach: Option<ActionHandle<reach::Reach>>,
-    trigger_use_on: Option<ActionHandle<super::UseOnAction>>,
     make: Option<ActionHandle<MakeMachine>>,
 }
 
@@ -795,19 +798,35 @@ impl StepRun for MakeRun {
         if self.request.qty <= 0 {
             return Poll::Ready(Ok(done(cx)));
         }
-        if let Some(handle) = &self.walk {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(receipt)) => {
-                    walk_step_evidence(receipt)?;
-                    self.walk = None;
+        let mut accepted = false;
+        if let Some(handle) = &self.small_handle {
+            match handle {
+                MakeSmallHandle::Walk(handle) => {
+                    match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                        Poll::Ready(Ok(receipt)) => {
+                            walk_step_evidence(receipt)?;
+                            self.small_handle = None;
+                        }
+                    }
+                }
+                MakeSmallHandle::UseOn(handle) => {
+                    match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                        Poll::Ready(Ok(_)) => {
+                            self.small_handle = None;
+                            accepted = true;
+                        }
+                    }
                 }
             }
         }
-        if self.trigger_reach.is_none()
-            && self.trigger_use_on.is_none()
+        if self.small_handle.is_none()
+            && self.trigger_reach.is_none()
             && self.make.is_none()
+            && !accepted
         {
             if let Some(trigger) = self.trigger_plan.clone() {
                 let loc = {
@@ -843,12 +862,12 @@ impl StepRun for MakeRun {
                         .snapshot()
                         .local_player()
                         .map(|player| player.value.player.network);
-                    self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                        cx.tick.actions.begin::<Walk>(
+                    self.small_handle = Some(MakeSmallHandle::Walk(std::task::ready!(
+                        crate::native::defer_budget(cx.tick.actions.begin::<Walk>(
                             reach::loc_walk_request(&loc, here, cx.required_after),
                             &mut cx.tick.cx,
-                        ),
-                    ))?);
+                        ))
+                    )?));
                     return Poll::Pending;
                 }
                 if let Some(op) = trigger.op.as_ref() {
@@ -872,13 +891,13 @@ impl StepRun for MakeRun {
                 } else {
                     let request =
                         make_use_on_request(&trigger, &loc, self.request.menu_id, &cx.tick.cx)?;
-                    self.trigger_use_on = Some(std::task::ready!(
+                    self.small_handle = Some(MakeSmallHandle::UseOn(std::task::ready!(
                         crate::native::defer_budget(
                             cx.tick
                                 .actions
                                 .begin::<super::UseOnAction>(request, &mut cx.tick.cx,)
                         )
-                    )?);
+                    )?));
                 }
                 return Poll::Pending;
             }
@@ -888,7 +907,7 @@ impl StepRun for MakeRun {
                     .begin::<MakeMachine>(self.request.clone(), &mut cx.tick.cx)?,
             );
         }
-        let accepted = if let Some(handle) = &self.trigger_reach {
+        if let Some(handle) = &self.trigger_reach {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
@@ -897,20 +916,12 @@ impl StepRun for MakeRun {
                         "production trigger failed",
                     ))))
                 }
-                Poll::Ready(Ok(true)) => true,
+                Poll::Ready(Ok(true)) => accepted = true,
             }
-        } else if let Some(handle) = &self.trigger_use_on {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(_)) => true,
-            }
-        } else {
-            false
-        };
+        }
         if accepted {
             self.trigger_reach = None;
-            self.trigger_use_on = None;
+            self.small_handle = None;
             self.request.after_trigger = true;
             self.make = Some(
                 cx.tick
