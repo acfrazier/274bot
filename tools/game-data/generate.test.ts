@@ -644,8 +644,33 @@ assert.equal(combatScripts.triggers.has('phantom'), false);
 assert.equal(combatScripts.triggers.has('ghost'), false);
 const npcFacts274 = extractNpcNamesFacts(content, 274, npcTypeSource274, combatScripts);
 const npcFacts = extractNpcNamesFacts(content, 289, npcTypeSource289, combatScripts);
-assert.equal(npcFacts274.combat_facts_version, 1);
-assert.equal(npcFacts.combat_facts_version, 1);
+assert.equal(npcFacts274.combat_facts_version, 2);
+assert.equal(npcFacts.combat_facts_version, 2);
+const pinnedContent289 = pinContentRoot(289);
+const pinnedCombatScripts289 = parseCombatScripts(pinnedContent289);
+const pinnedNpcFacts289 = extractNpcNamesFacts(pinnedContent289, 289, npcTypeSource289, pinnedCombatScripts289);
+const pinnedTransform = (config: string) => pinnedNpcFacts289.rows.find((row) => row.config === config)?.combat_transform;
+assert.deepEqual(pinnedTransform('horror_rockcrab_inactive'), { kind: 'known', npc_id: 1265 }, 'content source proves the large dormant Rock Crab target');
+assert.deepEqual(pinnedTransform('horror_rockcrab_small_inactive'), { kind: 'known', npc_id: 1267 }, 'content source proves the small dormant Rock Crab target');
+for (const config of [
+    'ghast_invis',
+    'gnomeballer_red',
+    'gnomeballer_orange',
+    'gnomeballer_yellow',
+    'shadeshadow_level1',
+    'shade_level1',
+    'shadeshadow_level2',
+    'shade_level2',
+    'shadeshadow_level3',
+    'shade_level3',
+    'shadeshadow_level4',
+    'shade_level4',
+    'shadeshadow_level5',
+    'shade_level5',
+]) {
+    assert.deepEqual(pinnedTransform(config), { kind: 'unknown' }, `${config}: noncanonical attack-trigger change is fail-closed`);
+}
+assert.equal(pinnedTransform('khazard_warlord'), null, 'ordinary NPCs have no attack-approach transformation');
 for (const [facts, expected] of [
     [npcFacts274, [['test_npc', 5, 7], ['khazard_warlord', 5, 7], ['dragon_npc', 0, 7], ['zamorak_like', 6, 0], ['saradomin_like', 9, 7]]],
     [npcFacts, [['test_npc', 5, 7], ['khazard_warlord', 5, 7], ['dragon_npc', 0, 2], ['zamorak_like', 6, 6], ['saradomin_like', 9, 11]]],

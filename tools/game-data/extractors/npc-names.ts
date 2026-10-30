@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parsePack, parseParamDefinitions, requireGatherText, walkContentFiles } from './common.ts';
-import { buildSpellMaxHits, combatConstantCodes, extractNpcCombatFacts, parseCombatScripts, type CombatNpcSource, type CombatScripts } from './combat.ts';
+import { buildSpellMaxHits, combatConstantCodes, extractNpcCombatFacts, extractNpcCombatTransformTarget, parseCombatScripts, type CombatNpcSource, type CombatScripts, type NpcCombatTransformTarget } from './combat.ts';
 
-export const NPC_COMBAT_FACTS_VERSION = 1;
+export const NPC_COMBAT_FACTS_VERSION = 2;
 
 export const npcNamesContentFiles = [
     'pack/npc.pack',
@@ -268,6 +268,47 @@ export function parseNpcFiles(content: string, revision: 274 | 289, engineNpcTyp
     };
 }
 
+type NpcCombatTransform = { kind: 'known'; npc_id: number } | { kind: 'unknown' };
+
+function resolveNpcCombatTransforms(
+    pack: ReadonlyMap<string, number>,
+    blocks: ReadonlyMap<string, NpcBlock>,
+    scripts: CombatScripts,
+) {
+    const sources = new Map<string, NpcCombatTransformTarget | null>();
+    for (const config of pack.keys()) {
+        sources.set(config, extractNpcCombatTransformTarget(config, blocks.get(config)?.category ?? null, scripts));
+    }
+    const resolved = new Map<string, NpcCombatTransform | null>();
+    const active = new Set<string>();
+    const resolve = (config: string): NpcCombatTransform | null => {
+        if (resolved.has(config)) return resolved.get(config)!;
+        const target = sources.get(config) ?? null;
+        if (!target) return null;
+        if (target.kind === 'unknown') {
+            resolved.set(config, target);
+            return target;
+        }
+        if (active.has(config)) return { kind: 'unknown' };
+        active.add(config);
+        const targetId = pack.get(target.config);
+        let result: NpcCombatTransform;
+        if (targetId === undefined) {
+            result = { kind: 'unknown' };
+        } else {
+            const next = resolve(target.config);
+            result = next?.kind === 'unknown' ? next : next ?? { kind: 'known', npc_id: targetId };
+        }
+        active.delete(config);
+        resolved.set(config, result);
+        return result;
+    };
+    for (const config of pack.keys()) resolve(config);
+    return resolved;
+}
+
+
+
 export function extractNpcNamesFacts(
     content: string,
     revision: number,
@@ -279,6 +320,7 @@ export function extractNpcNamesFacts(
     const pack = parsePack(requireGatherText(content, 'pack/npc.pack'));
     if (pack.size === 0) throw new Error('npc_names: empty pack/npc.pack');
     const { blocks, files, stats, combatDefaults } = parseNpcFiles(content, revision, engineNpcTypeSource);
+    const combatTransforms = resolveNpcCombatTransforms(pack, blocks, scripts);
     const combatNpcs: CombatNpcSource[] = [];
     const rows = [...pack.entries()]
         .sort((a, b) => a[1] - b[1])
@@ -312,6 +354,7 @@ export function extractNpcNamesFacts(
             return {
                 id,
                 config,
+                combat_transform: combatTransforms.get(config) ?? null,
                 display: block?.display ?? null,
                 ops: block?.ops ?? [],
                 size: block?.size ?? 1,

@@ -144,6 +144,35 @@ anim(%com_defendanim, 0);
 [label,multi_melee_attack]
 anim(%com_defendanim, 0);
 ~npc_meleeattack;
+[ai_applayer2,conditional_attacker]
+if (random(1) = 0) {
+    npc_changetype(plain_attacker, 1000);
+    npc_setmode(opplayer2);
+} else {
+    npc_changetype(second_form, 1000);
+    npc_setmode(opplayer2);
+}
+[ai_applayer2,multiple_handler_attacker] npc_changetype(plain_attacker, 1000); npc_setmode(opplayer2);
+[ai_applayer2,multiple_handler_attacker] npc_changetype(plain_attacker, 500); npc_setmode(opplayer2);
+[ai_applayer2,multiple_target_attacker]
+npc_changetype(plain_attacker, 1000);
+npc_changetype(second_form, 1000);
+npc_setmode(opplayer2);
+[ai_applayer2,dynamic_attacker]
+npc_changetype(npc_param(next_npc_type), 1000);
+npc_setmode(opplayer2);
+[ai_applayer2,missing_target_attacker]
+npc_changetype(not_in_pack, 1000);
+npc_setmode(opplayer2);
+[ai_applayer2,unsafe_helper_attacker] @unsafe_transform;
+[label,unsafe_transform]
+npc_changetype(plain_attacker, 1000);
+npc_setmode(opplayer2);
+[ai_applayer2,cycle_a] npc_changetype(cycle_b, 1000); npc_setmode(opplayer2);
+[ai_applayer2,cycle_b] npc_changetype(cycle_a, 1000); npc_setmode(opplayer2);
+[ai_applayer2,transitive_start] npc_changetype(transitive_middle, 1000); npc_setmode(opplayer2);
+[ai_applayer2,transitive_middle] npc_changetype(plain_attacker, 1000); npc_setmode(opplayer2);
+[ai_applayer2,wolf_dormant] npc_changetype(wolf_awake, 1000); npc_setmode(opplayer2);
 `;
 
 function fixture(npcSource = npcConfig, paramSource = combatParams): string {
@@ -163,6 +192,18 @@ function fixture(npcSource = npcConfig, paramSource = combatParams): string {
         '7=poisoned_melee',
         '8=extra_hit',
         '9=multi_melee',
+        '10=conditional_attacker',
+        '11=multiple_handler_attacker',
+        '12=multiple_target_attacker',
+        '13=second_form',
+        '14=dynamic_attacker',
+        '15=missing_target_attacker',
+        '16=cycle_a',
+        '17=cycle_b',
+        '18=transitive_start',
+        '19=transitive_middle',
+        '20=wolf_dormant',
+        '21=wolf_awake',
         '477=khazard_warlord',
         '',
     ].join('\n'));
@@ -215,12 +256,20 @@ const scripts = parseCombatScripts(content);
 const maxHits = new Map<string, number>();
 for (const revision of [274, 289] as const) {
     const facts = extractNpcNamesFacts(content, revision, engineNpcTypeSource, scripts, maxHits);
-    assert.equal(facts.combat_facts_version, 1, `${revision}: emitted combat-fact version`);
+    assert.equal(facts.combat_facts_version, 2, `${revision}: emitted combat-fact version`);
     const row = (config: string) => {
         const found = facts.rows.find((entry) => entry.config === config);
         assert.ok(found, `${revision}: missing ${config}`);
         return found;
     };
+    assert.equal(row('plain_attacker').combat_transform, null, `${revision}: ordinary NPC has no attack-approach transform`);
+    assert.deepEqual(row('bespoke_attacker').combat_transform, { kind: 'known', npc_id: 1 }, `${revision}: direct static target`);
+    assert.deepEqual(row('wolf_dormant').combat_transform, { kind: 'known', npc_id: 21 }, `${revision}: non-crab uses the same source form`);
+    assert.deepEqual(row('multiple_handler_attacker').combat_transform, { kind: 'known', npc_id: 1 }, `${revision}: repeated handlers with the same target`);
+    assert.deepEqual(row('transitive_start').combat_transform, { kind: 'known', npc_id: 1 }, `${revision}: resolve a source-derived target chain`);
+    for (const config of ['conditional_attacker', 'multiple_target_attacker', 'dynamic_attacker', 'missing_target_attacker', 'unsafe_helper_attacker', 'cycle_a', 'cycle_b']) {
+        assert.deepEqual(row(config).combat_transform, { kind: 'unknown' }, `${revision}: ${config} fails closed`);
+    }
 
     const plain = row('plain_attacker');
     assert.deepEqual(
