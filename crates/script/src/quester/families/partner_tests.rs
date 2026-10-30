@@ -6,7 +6,7 @@ use api::selected::{Knowledge, RunKey};
 use api::snapshot::SnapshotView;
 use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, TradeConfirmView};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 type Ledger = Option<Box<crate::native::ledger::Ledger>>;
 
@@ -223,7 +223,9 @@ fn poll(
     epoch: Instant,
 ) -> Poll<Result<StepOutcome, ActionError>> {
     with_tick(snapshot, ledger, tick, |frame| {
-        frame.cx.wall_now = epoch + Duration::from_millis(tick * 600);
+        // Both clocks stand still: the trade waits count observed game ticks only.
+        frame.cx.wall_now = epoch;
+        frame.cx.active_now = Duration::ZERO;
         frame.actions.poll(handle, &mut frame.cx)
     })
 }
@@ -400,10 +402,12 @@ fn failed_begin_missing_quest_item_declines_existing_trade_screen() {
         trade: None,
         args: Some(trade_args(&port, 40)),
     };
+    // Both clocks stand still: the trade waits count observed game ticks only.
     let epoch = Instant::now();
 
     assert!(with_step(&snapshot, &mut ledger, 2, |cx| {
-        cx.tick.cx.wall_now = epoch + Duration::from_millis(1_200);
+        cx.tick.cx.wall_now = epoch;
+        cx.tick.cx.active_now = Duration::ZERO;
         run.poll(cx)
     })
     .is_pending());
@@ -415,13 +419,15 @@ fn failed_begin_missing_quest_item_declines_existing_trade_screen() {
 
     snapshot.seed_trade(TradeView::default());
     assert!(with_step(&snapshot, &mut ledger, 3, |cx| {
-        cx.tick.cx.wall_now = epoch + Duration::from_millis(1_800);
+        cx.tick.cx.wall_now = epoch;
+        cx.tick.cx.active_now = Duration::ZERO;
         run.poll(cx)
     })
     .is_pending());
     assert!(matches!(
         with_step(&snapshot, &mut ledger, 4, |cx| {
-            cx.tick.cx.wall_now = epoch + Duration::from_millis(2_400);
+            cx.tick.cx.wall_now = epoch;
+            cx.tick.cx.active_now = Duration::ZERO;
             run.poll(cx)
         }),
         Poll::Ready(Err(ActionError::Blocked(reason)))
@@ -831,6 +837,88 @@ fn transfer_requires_both_screens_then_closed_ui_and_fresh_inventory_delta() {
         Poll::Ready(Ok(outcome)) => assert_eq!(outcome.evidence.tick, 15),
         _ => panic!("fresh exact inventory deltas must settle"),
     }
+}
+
+#[test]
+fn trade_waits_count_observed_game_ticks_and_ignore_both_clocks() {
+    let (snapshot, mut ledger, handle, _) = fixture(2);
+    let epoch = Instant::now();
+    assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
+    // An hour on both clocks, but no further game tick: nothing expires.
+    with_tick(&snapshot, &mut ledger, 2, |frame| {
+        frame.cx.wall_now = epoch + Duration::from_secs(3_600);
+        frame.cx.active_now = Duration::from_secs(3_600);
+        assert!(frame.actions.poll(&handle, &mut frame.cx).is_pending());
+    });
+    assert!(
+        ledger.as_ref().unwrap().outbox.is_empty(),
+        "no observed tick passed, so the two-tick budget is not spent"
+    );
+}
+
+#[test]
+fn the_offer_wait_expires_after_the_nominal_ticks_not_before() {
+    use crate::trade_screen::TRADE_OFFER_WAIT_TICKS;
+    let (mut snapshot, mut ledger, handle, port) = fixture(40);
+    let epoch = Instant::now();
+    assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
+    snapshot.seed_trade(offer(2));
+    port.offer.store(true, Ordering::Relaxed);
+    assert!(poll(&snapshot, &mut ledger, &handle, 3, epoch).is_pending());
+    assert!(matches!(
+        ack(&mut ledger, 3),
+        InteractReq::IfButton { component_id: 9 }
+    ));
+    // The partner never accepts: the screen stays on the offers.
+    for tick in 4..3 + TRADE_OFFER_WAIT_TICKS {
+        assert!(poll(&snapshot, &mut ledger, &handle, tick, epoch).is_pending());
+        assert!(
+            ledger.as_ref().unwrap().outbox.is_empty(),
+            "tick {tick} is inside the wait"
+        );
+    }
+    let expiry = 3 + TRADE_OFFER_WAIT_TICKS;
+    assert!(poll(&snapshot, &mut ledger, &handle, expiry, epoch).is_pending());
+    assert_eq!(ack(&mut ledger, expiry), InteractReq::CloseModal);
+    snapshot.seed_trade(TradeView::default());
+    assert!(poll(&snapshot, &mut ledger, &handle, expiry + 1, epoch).is_pending());
+    assert!(matches!(
+        poll(&snapshot, &mut ledger, &handle, expiry + 2, epoch),
+        Poll::Ready(Err(ActionError::Blocked(reason)))
+            if reason.as_ref() == "partner offer did not reach confirmation"
+    ));
+}
+
+#[test]
+fn the_confirm_wait_expires_after_the_nominal_ticks_not_before() {
+    use crate::trade_screen::TRADE_CONFIRM_WAIT_TICKS;
+    let (mut snapshot, mut ledger, handle, port, epoch) = agreed_offers();
+    port.confirm.store(true, Ordering::Relaxed);
+    snapshot.seed_trade(confirm_screen());
+    assert!(poll(&snapshot, &mut ledger, &handle, 5, epoch).is_pending());
+    assert!(poll(&snapshot, &mut ledger, &handle, 6, epoch).is_pending());
+    assert!(matches!(
+        ack(&mut ledger, 6),
+        InteractReq::IfButton { component_id: 12 }
+    ));
+    // The partner never accepts: the screen stays on the confirmation.
+    for tick in 7..6 + TRADE_CONFIRM_WAIT_TICKS {
+        assert!(poll(&snapshot, &mut ledger, &handle, tick, epoch).is_pending());
+        assert!(
+            ledger.as_ref().unwrap().outbox.is_empty(),
+            "tick {tick} is inside the wait"
+        );
+    }
+    let expiry = 6 + TRADE_CONFIRM_WAIT_TICKS;
+    assert!(poll(&snapshot, &mut ledger, &handle, expiry, epoch).is_pending());
+    assert_eq!(ack(&mut ledger, expiry), InteractReq::CloseModal);
+    snapshot.seed_trade(TradeView::default());
+    assert!(poll(&snapshot, &mut ledger, &handle, expiry + 1, epoch).is_pending());
+    assert!(matches!(
+        poll(&snapshot, &mut ledger, &handle, expiry + 2, epoch),
+        Poll::Ready(Err(ActionError::Blocked(reason)))
+            if reason.as_ref() == "partner confirmation did not settle"
+    ));
 }
 
 #[test]

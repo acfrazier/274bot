@@ -18,6 +18,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - When a Quester trade fails, the Quester now closes the trade screen with the
   one request the game honours. Before, it clicked the Decline button, which
   does nothing, and the trade screen stayed open for about a second more.
+- The Quester's trade waits (for the other account's accept, for the screen to
+  close, and the trade's own limit, `timeout_ticks`) now count game ticks, as
+  the other Quester waits do. Before, they counted clock time, so on a server
+  that runs faster than 600 ms per tick a trade got more game ticks than its
+  limit.
 
 ## [0.2.8] — 2026-10-29 — Beta 2
 

@@ -9,8 +9,8 @@ use crate::native::walk::Walk;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine};
 use crate::shim::InteractReq;
 use crate::trade_screen::{
-    CloseDriver, ScreenDriver, ScreenKind, WaitEnd, TRADE_CLOSE_DEBOUNCE_MS, TRADE_CONFIRM_WAIT_MS,
-    TRADE_OFFER_WAIT_MS,
+    CloseDriver, ScreenDriver, ScreenKind, Tick, WaitEnd, TRADE_CLOSE_DEBOUNCE_TICKS,
+    TRADE_CONFIRM_WAIT_TICKS, TRADE_OFFER_WAIT_TICKS,
 };
 use api::quest_progress::EvidenceStamp;
 use api::selected::{FactKey, Truth};
@@ -20,7 +20,6 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::task::Poll;
-use std::time::Duration;
 
 #[derive(Deserialize)]
 #[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
@@ -530,19 +529,24 @@ enum TradePhase {
     Opening,
     Offering,
     OfferWait {
-        driver: ScreenDriver,
-        deadline: Duration,
+        driver: ScreenDriver<Tick>,
+        deadline: u64,
     },
     Confirm,
     ConfirmWait {
-        driver: ScreenDriver,
-        deadline: Duration,
+        driver: ScreenDriver<Tick>,
+        deadline: u64,
     },
     Transfer,
     Cleanup(TradeCleanup),
 }
-const TRADE_CLOSE_GRACE_MS: u64 = TRADE_CLOSE_DEBOUNCE_MS * 5;
-const TRADE_FAILURE_CLEANUP_MS: u64 = TRADE_CLOSE_GRACE_MS + TRADE_CLOSE_DEBOUNCE_MS;
+/// Observed game ticks `CLOSE_MODAL` gets to close the screen: the nominal 3 000 ms
+/// over the 600 ms server tick is 5. The engine applies the request at the start of
+/// the player's next tick (`Player.ts:882-885`), so the first closed observation
+/// comes one to two ticks after it.
+const TRADE_CLOSE_GRACE_TICKS: u64 = TRADE_CLOSE_DEBOUNCE_TICKS * 5;
+/// The whole failure cleanup: the close grace plus the closed-screen debounce.
+const TRADE_FAILURE_CLEANUP_TICKS: u64 = TRADE_CLOSE_GRACE_TICKS + TRADE_CLOSE_DEBOUNCE_TICKS;
 #[derive(Clone, Copy)]
 struct CleanupRequest {
     id: u64,
@@ -559,18 +563,18 @@ struct TradeCleanup {
     failure: ActionError,
     request: Option<CleanupRequest>,
     close_sent: bool,
-    close_deadline: Duration,
-    deadline: Duration,
-    closes: CloseDriver,
+    close_deadline: u64,
+    deadline: u64,
+    closes: CloseDriver<Tick>,
 }
 impl TradeCleanup {
-    fn new(failure: ActionError, now: Duration) -> Self {
+    fn new(failure: ActionError, now: u64) -> Self {
         Self {
             failure,
             request: None,
             close_sent: false,
             close_deadline: now,
-            deadline: now + Duration::from_millis(TRADE_FAILURE_CLEANUP_MS),
+            deadline: now + TRADE_FAILURE_CLEANUP_TICKS,
             closes: CloseDriver::default(),
         }
     }
@@ -582,7 +586,7 @@ struct TradeMachine {
     checks: [InventoryCheck; 8],
     check_len: usize,
     before: EvidenceStamp,
-    deadline: Duration,
+    deadline: u64,
     request: Option<(u64, EvidenceStamp)>,
     requested: bool,
     cancelled: bool,
@@ -629,7 +633,7 @@ impl TradeMachine {
         if !ScreenKind::observed(trade.value.offer_open, trade.value.confirm_open).active() {
             return Err(error);
         }
-        let now = cx.active_now();
+        let now = cx.evidence().tick;
         Ok(Self {
             partner_id: api::snapshot::player_account_id(&args.partner.0).unwrap_or_default(),
             args,
@@ -657,10 +661,10 @@ impl TradeMachine {
         // Closing supersedes any unacknowledged acceptance. Emitting the
         // cleanup request replaces its native dispatch authority too.
         self.request = None;
-        self.phase = TradePhase::Cleanup(TradeCleanup::new(error, cx.active_now()));
+        self.phase = TradePhase::Cleanup(TradeCleanup::new(error, cx.evidence().tick));
         self.poll_cleanup(cx)
     }
-    fn cleanup_expired(&self, now: Duration) -> bool {
+    fn cleanup_expired(&self, now: u64) -> bool {
         matches!(&self.phase, TradePhase::Cleanup(cleanup) if now >= cleanup.deadline)
     }
     fn finish_cleanup(&mut self) -> Poll<Result<StepOutcome, ActionError>> {
@@ -674,7 +678,7 @@ impl TradeMachine {
         &mut self,
         cx: &mut ActionContext<'_>,
     ) -> Poll<Result<StepOutcome, ActionError>> {
-        let now = cx.active_now();
+        let now = cx.evidence().tick;
         let screen = match cx.snapshot().trade() {
             Some(trade) => ScreenKind::observed(trade.value.offer_open, trade.value.confirm_open),
             None => {
@@ -688,7 +692,7 @@ impl TradeMachine {
         let TradePhase::Cleanup(cleanup) = &mut self.phase else {
             unreachable!("cleanup polls only in the cleanup phase")
         };
-        let closed = cleanup.closes.poll(screen, cx.wall_now);
+        let closed = cleanup.closes.poll(screen, Tick(now));
         if closed || self.cleanup_expired(now) {
             return self.finish_cleanup();
         }
@@ -727,7 +731,7 @@ impl TradeMachine {
             before: cx.evidence(),
         });
         cleanup.close_sent = true;
-        cleanup.close_deadline = now + Duration::from_millis(TRADE_CLOSE_GRACE_MS);
+        cleanup.close_deadline = now + TRADE_CLOSE_GRACE_TICKS;
         Poll::Pending
     }
 }
@@ -777,7 +781,8 @@ impl NativeMachine for TradeMachine {
         if let Some(error) = begin_error {
             return Self::failed_begin(args, cx, error);
         }
-        let deadline = cx.active_now() + Duration::from_millis(u64::from(args.budget) * 600);
+        // `timeout_ticks` is a budget of observed game ticks.
+        let deadline = cx.evidence().tick + u64::from(args.budget);
         Ok(Self {
             args,
             partner_id,
@@ -805,7 +810,7 @@ impl NativeMachine for TradeMachine {
             return self.poll_cleanup(cx);
         }
         let result = (|| -> Poll<Result<StepOutcome, ActionError>> {
-            if cx.active_now() >= self.deadline {
+            if cx.evidence().tick >= self.deadline {
                 return Poll::Ready(Err(failure("partner trade deadline exhausted")));
             }
             if let Some((request, before)) = self.request {
@@ -934,7 +939,7 @@ impl NativeMachine for TradeMachine {
                     )?;
                     self.phase = TradePhase::OfferWait {
                         driver: ScreenDriver::after_offer(),
-                        deadline: cx.active_now() + Duration::from_millis(TRADE_OFFER_WAIT_MS),
+                        deadline: cx.evidence().tick + TRADE_OFFER_WAIT_TICKS,
                     };
                 }
                 TradePhase::OfferWait { driver, deadline } => {
@@ -952,7 +957,11 @@ impl NativeMachine for TradeMachine {
                     {
                         return Poll::Ready(Err(failure("partner offers changed after agreement")));
                     }
-                    match driver.poll(screen, cx.wall_now(), cx.active_now() >= *deadline) {
+                    match driver.poll(
+                        screen,
+                        Tick(cx.evidence().tick),
+                        cx.evidence().tick >= *deadline,
+                    ) {
                         WaitEnd::Confirm => self.phase = TradePhase::Confirm,
                         WaitEnd::Closed | WaitEnd::TimedOut => {
                             return Poll::Ready(Err(failure(
@@ -1012,7 +1021,7 @@ impl NativeMachine for TradeMachine {
                     )?;
                     self.phase = TradePhase::ConfirmWait {
                         driver: ScreenDriver::after_confirm(),
-                        deadline: cx.active_now() + Duration::from_millis(TRADE_CONFIRM_WAIT_MS),
+                        deadline: cx.evidence().tick + TRADE_CONFIRM_WAIT_TICKS,
                     };
                 }
                 TradePhase::ConfirmWait { driver, deadline } => {
@@ -1034,7 +1043,11 @@ impl NativeMachine for TradeMachine {
                             "partner confirmation changed after acceptance",
                         )));
                     }
-                    match driver.poll(screen, cx.wall_now(), cx.active_now() >= *deadline) {
+                    match driver.poll(
+                        screen,
+                        Tick(cx.evidence().tick),
+                        cx.evidence().tick >= *deadline,
+                    ) {
                         WaitEnd::Closed => self.phase = TradePhase::Transfer,
                         WaitEnd::TimedOut => {
                             return Poll::Ready(Err(failure("partner confirmation did not settle")))
