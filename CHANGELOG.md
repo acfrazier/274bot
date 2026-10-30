@@ -64,11 +64,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   sees that the attacker is gone. If every route fails, the quest stops with
   the last route failure. The bot does not promise that an escape exists.
 
-- When combat walks to a configured stand, it starts the 15-tick no-target
-  search after it reaches the stand. A failed walk returns its route detail
-  after the walk layer spends its bounded retries. The caller's combat budget
-  still limits the full run.
-
+- When a fight has a stand that is far away, the bot now walks to the stand
+  before it looks for a target. It starts the 15-tick no-target search when it
+  is within one tile of the stand. Before, a quest fight could stop with "no
+  target" while the bot was still walking. If the walk fails, the fight stops
+  with the walk's own failure detail. The fight's budget still limits the walk
+  and the fight together.
 
 ### Survival
 
