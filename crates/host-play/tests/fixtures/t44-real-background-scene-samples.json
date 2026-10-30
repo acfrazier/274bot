@@ -1,0 +1,407 @@
+{
+  "source": {
+    "request": "T4.4-S2-S4",
+    "root": "dab9e286e9e6ba5f7c176b7f329b3c57a6c5b9d6",
+    "client": "140962628df79b9f3528abc6b5611df43028e3ba",
+    "binary_sha256": "a1276e89b62cb661983189147d5d0b4f6c1487821fa4a2d42517c662652c213a",
+    "samples_sha256": "fad956a2c581614d3c4787bb2e22e976f3686394b9b62faa7379a1f05328fa98",
+    "summary_sha256": "311e85c2aaad4cc126ccdc63900de64ec7ab69c23bc4be2d4dc26f4b8074accd",
+    "evidence": "T4.4-S2-S4/m3-gpu-n8-v2/gpu-n8-focus1"
+  },
+  "head": "rfahjruh6o_3",
+  "observe_s": 30.177499657,
+  "cell_paints": 35,
+  "cell_consumes": 25,
+  "samples": [
+    {
+      "to_t_s": 81.614762204,
+      "observe_s": 1.000167001,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 2,
+        "consumes": 1,
+        "last_consume_at_t_s": 81.416444068,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 82.620217361,
+      "observe_s": 1.005455157,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 1,
+        "consumes": 1,
+        "last_consume_at_t_s": 82.608639493,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 83.627908947,
+      "observe_s": 1.007691586,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 0,
+        "consumes": 0,
+        "last_consume_at_t_s": 82.608639493,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 84.634118278,
+      "observe_s": 1.006209331,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 1,
+        "consumes": 1,
+        "last_consume_at_t_s": 83.806309283,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 85.640402952,
+      "observe_s": 1.006284674,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 1,
+        "consumes": 1,
+        "last_consume_at_t_s": 85.01222506,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 86.647724811,
+      "observe_s": 1.007321859,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 1,
+        "consumes": 1,
+        "last_consume_at_t_s": 86.20626007,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 87.653398443,
+      "observe_s": 1.005673632,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 2,
+        "consumes": 1,
+        "last_consume_at_t_s": 87.412943722,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 88.659042657,
+      "observe_s": 1.005644214,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 2,
+        "consumes": 1,
+        "last_consume_at_t_s": 88.61729383,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 89.665058606,
+      "observe_s": 1.006015949,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 0,
+        "consumes": 0,
+        "last_consume_at_t_s": 88.61729383,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 90.670695188,
+      "observe_s": 1.005636582,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 1,
+        "consumes": 1,
+        "last_consume_at_t_s": 89.806757219,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 91.678237865,
+      "observe_s": 1.007542677,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 2,
+        "consumes": 1,
+        "last_consume_at_t_s": 91.020127977,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 92.684022548,
+      "observe_s": 1.005784683,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 1,
+        "consumes": 1,
+        "last_consume_at_t_s": 92.207264414,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 93.689492134,
+      "observe_s": 1.005469586,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 1,
+        "consumes": 1,
+        "last_consume_at_t_s": 93.407969774,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 94.695372287,
+      "observe_s": 1.005880153,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 1,
+        "consumes": 1,
+        "last_consume_at_t_s": 94.60761862,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 95.701116722,
+      "observe_s": 1.005744435,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 0,
+        "consumes": 0,
+        "last_consume_at_t_s": 94.60761862,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 96.707556795,
+      "observe_s": 1.006440073,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 1,
+        "consumes": 1,
+        "last_consume_at_t_s": 95.8119008,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 97.713416515,
+      "observe_s": 1.00585972,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 1,
+        "consumes": 1,
+        "last_consume_at_t_s": 97.010618673,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 98.719169476,
+      "observe_s": 1.005752961,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 1,
+        "consumes": 1,
+        "last_consume_at_t_s": 98.217374295,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 99.724728518,
+      "observe_s": 1.005559042,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 1,
+        "consumes": 1,
+        "last_consume_at_t_s": 99.408788259,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 100.730576586,
+      "observe_s": 1.005848068,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 1,
+        "consumes": 1,
+        "last_consume_at_t_s": 100.608461575,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 101.737790728,
+      "observe_s": 1.007214142,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 0,
+        "consumes": 0,
+        "last_consume_at_t_s": 100.608461575,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 102.743740667,
+      "observe_s": 1.005949939,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 2,
+        "consumes": 1,
+        "last_consume_at_t_s": 101.831885369,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 103.749723699,
+      "observe_s": 1.005983032,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 1,
+        "consumes": 1,
+        "last_consume_at_t_s": 103.015592928,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 104.755663387,
+      "observe_s": 1.005939688,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 1,
+        "consumes": 1,
+        "last_consume_at_t_s": 104.207874734,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 105.761568466,
+      "observe_s": 1.005905079,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 2,
+        "consumes": 1,
+        "last_consume_at_t_s": 105.430852213,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 106.768503264,
+      "observe_s": 1.006934798,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 2,
+        "consumes": 1,
+        "last_consume_at_t_s": 106.620512787,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 107.774266443,
+      "observe_s": 1.005763179,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 0,
+        "consumes": 0,
+        "last_consume_at_t_s": 106.620512787,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 108.780526013,
+      "observe_s": 1.00625957,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 2,
+        "consumes": 1,
+        "last_consume_at_t_s": 107.815886555,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 109.786479509,
+      "observe_s": 1.005953496,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 2,
+        "consumes": 1,
+        "last_consume_at_t_s": 109.023961588,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    },
+    {
+      "to_t_s": 110.79209486,
+      "observe_s": 1.005615351,
+      "head": {
+        "name": "rfahjruh6o_3",
+        "paints": 2,
+        "consumes": 1,
+        "last_consume_at_t_s": 110.241447703,
+        "max_gap_ms": 1345.274803,
+        "identity_matches": true,
+        "has_valid_scene": true
+      }
+    }
+  ]
+}

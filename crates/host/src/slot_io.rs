@@ -1341,10 +1341,24 @@ impl FrameBuf {
         self.inner.lock().unwrap().fair_stats
     }
 
+    /// Start diagnostic gap accounting without changing the actual consume timestamp.
     #[cfg(feature = "render-test-hooks")]
-    pub(crate) fn publish_fair_stats(&self, sample: crate::render_head::HeadFairStats) {
+    pub fn begin_scene_gap_window(&self, start: Instant) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        let Some(sample) = inner.fair_stats.as_mut() else {
+            return false;
+        };
+        sample.begin_scene_gap_window(start);
+        true
+    }
+
+    #[cfg(feature = "render-test-hooks")]
+    pub(crate) fn publish_fair_stats(&self, mut sample: crate::render_head::HeadFairStats) {
         let mut inner = self.inner.lock().unwrap();
         if inner.head == Some(sample.identity()) {
+            if let Some(previous) = inner.fair_stats {
+                sample.inherit_scene_gap_window(previous);
+            }
             inner.fair_stats = Some(sample);
         }
     }

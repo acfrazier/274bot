@@ -661,6 +661,8 @@ fn fair_head_metrics(
         "scene_fps": scene_fps,
         "last_scene_consume_at_t_s": current.last_scene_consume_at().map(since_epoch),
         "max_scene_consume_gap_ms": current.max_scene_consume_gap().as_secs_f64() * 1e3,
+        "scene_gap_window_start_t_s": current.scene_gap_window_start().map(since_epoch),
+        "max_window_scene_consume_gap_ms": current.max_window_scene_consume_gap().as_secs_f64() * 1e3,
         "oldest_demand_age_ms": current.oldest_demand_age().as_secs_f64() * 1e3,
         "backend": format!("{:?}", current.backend()),
         "has_valid_scene": current.has_valid_scene(),
@@ -969,6 +971,61 @@ fn m3_oracle_rejects_too_few_consumes_over_thirty_seconds() {
 }
 
 #[cfg(feature = "render-test-hooks")]
+#[test]
+fn m3_oracle_replays_real_empty_bins_over_thirty_seconds() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "fixtures/t44-real-background-scene-samples.json"
+    ))
+    .unwrap();
+    let samples = fixture["samples"].as_array().unwrap();
+    assert_eq!(samples.len(), 30);
+    let mut empty_bins = 0;
+    let mut paints = 0;
+    let mut consumes = 0;
+    let mut last = background_oracle_fixture();
+    for row in samples {
+        let sample = &row["head"];
+        let head = FairOracleHead {
+            name: fixture["head"].as_str().unwrap(),
+            paints: sample["paints"].as_u64().unwrap(),
+            scene_consumes: sample["consumes"].as_u64().unwrap(),
+            identity_matches: sample["identity_matches"].as_bool().unwrap(),
+            has_valid_scene: sample["has_valid_scene"].as_bool().unwrap(),
+            max_scene_consume_gap: Duration::from_secs_f64(
+                sample["max_gap_ms"].as_f64().unwrap() / 1000.0,
+            ),
+            since_scene_consume: Some(Duration::from_secs_f64(
+                row["to_t_s"].as_f64().unwrap()
+                    - sample["last_consume_at_t_s"].as_f64().unwrap(),
+            )),
+            ..background_oracle_fixture()
+        };
+        empty_bins += usize::from(head.scene_consumes == 0);
+        paints += head.paints;
+        consumes += head.scene_consumes;
+        m3_fair_oracle(1, &[head], [0; 3], FairOracleInterval::Sample).unwrap();
+        last = head;
+    }
+    assert!(empty_bins > 0);
+    assert_eq!(paints, fixture["cell_paints"].as_u64().unwrap());
+    assert_eq!(consumes, fixture["cell_consumes"].as_u64().unwrap());
+    let cell = FairOracleHead {
+        paints,
+        scene_consumes: consumes,
+        ..last
+    };
+    m3_fair_oracle(
+        1,
+        &[cell],
+        [0; 3],
+        FairOracleInterval::Cell(Duration::from_secs_f64(
+            fixture["observe_s"].as_f64().unwrap(),
+        )),
+    )
+    .unwrap();
+}
+
+#[cfg(feature = "render-test-hooks")]
 fn assert_fair_interval(
     cell: &str,
     heads: &[HeadProbe],
@@ -1036,10 +1093,14 @@ fn assert_fair_interval(
                 scene_consumes,
                 background: !focused[i],
                 max_scene_consume_gap: stats
-                    .map_or(Duration::ZERO, |stats| stats.max_scene_consume_gap()),
-                since_scene_consume: stats
-                    .and_then(|stats| stats.last_scene_consume_at())
-                    .map(|at| to.at.saturating_duration_since(at)),
+                    .map_or(Duration::ZERO, |stats| stats.max_window_scene_consume_gap()),
+                since_scene_consume: stats.and_then(|stats| {
+                    stats.scene_gap_window_start().map(|start| {
+                        to.at.saturating_duration_since(
+                            stats.last_scene_consume_at().unwrap_or(start).max(start),
+                        )
+                    })
+                }),
                 has_valid_scene: stats.is_some_and(|stats| stats.has_valid_scene()),
                 scene_progress: stats
                     .map_or(client::render::backend::SceneProgress::NoScene, |stats| {
@@ -1510,6 +1571,17 @@ fn live_m3_render_contention() {
         thread::sleep(warmup);
         let cell = format!("{backend}-n{n}-{policy}");
         let mut samples = std::fs::File::create(out.join(format!("{cell}.samples.jsonl"))).unwrap();
+        #[cfg(feature = "render-test-hooks")]
+        if probe.is_some() {
+            let start = Instant::now();
+            for head in &heads {
+                assert!(
+                    head.mailbox.begin_scene_gap_window(start),
+                    "{cell}: {} has no stats at observation start",
+                    head.name
+                );
+            }
+        }
         let start = mark(&heads, &taken, pump_probe.as_deref());
         let mut last = start.clone();
         while last.at.duration_since(start.at) < observe {

@@ -506,6 +506,8 @@ pub struct HeadFairStats {
     scene_consumes: u64,
     last_scene_consume_at: Option<Instant>,
     max_scene_consume_gap: Duration,
+    scene_gap_window_start: Option<Instant>,
+    max_window_scene_consume_gap: Duration,
     grant_delivery_samples: u64,
     max_grant_to_consume: Duration,
     grant_wake_samples: u64,
@@ -564,6 +566,35 @@ impl HeadFairStats {
     pub fn max_scene_consume_gap(&self) -> Duration {
         self.max_scene_consume_gap
     }
+    pub fn scene_gap_window_start(&self) -> Option<Instant> {
+        self.scene_gap_window_start
+    }
+    pub fn max_window_scene_consume_gap(&self) -> Duration {
+        self.max_window_scene_consume_gap
+    }
+
+    pub(crate) fn begin_scene_gap_window(&mut self, start: Instant) {
+        self.scene_gap_window_start = Some(start);
+        self.max_window_scene_consume_gap = Duration::ZERO;
+    }
+
+    pub(crate) fn inherit_scene_gap_window(&mut self, previous: Self) {
+        self.scene_gap_window_start = previous.scene_gap_window_start;
+        self.max_window_scene_consume_gap = previous.max_window_scene_consume_gap;
+        let Some(start) = self.scene_gap_window_start else {
+            return;
+        };
+        if self.scene_consumes == previous.scene_consumes {
+            return;
+        }
+        if let Some(consumed_at) = self.last_scene_consume_at {
+            let previous_at = previous.last_scene_consume_at.unwrap_or(start).max(start);
+            self.max_window_scene_consume_gap = self
+                .max_window_scene_consume_gap
+                .max(consumed_at.saturating_duration_since(previous_at));
+        }
+    }
+
     pub fn grant_delivery_samples(&self) -> u64 {
         self.grant_delivery_samples
     }
@@ -659,6 +690,8 @@ impl FairHead {
                 scene_consumes: 0,
                 last_scene_consume_at: None,
                 max_scene_consume_gap: Duration::ZERO,
+                scene_gap_window_start: None,
+                max_window_scene_consume_gap: Duration::ZERO,
                 grant_delivery_samples: 0,
                 max_grant_to_consume: Duration::ZERO,
                 grant_wake_samples: 0,
@@ -1239,6 +1272,50 @@ mod tests {
         assert!(frame.fair.as_ref().unwrap().lease.is_none());
         assert_eq!(frame.fair.as_ref().unwrap().head.stats.scene_consumes(), 0);
         assert_eq!(frame.scenes, 0);
+    }
+
+    #[test]
+    fn scene_consume_gap_window_excludes_warmup_without_hiding_starvation() {
+        let (_service, _pump, lease) = local_heads();
+        let output = FrameBuf::new();
+        let origin = Instant::now();
+        let mut sample = FairHead::new(lease.identity(), BackendKind::Gpu, None).stats;
+        sample.scene_consumes = 1;
+        sample.last_scene_consume_at = Some(origin);
+        sample.max_scene_consume_gap = Duration::from_secs(5);
+        output.attach_head(lease.identity());
+        output.publish_fair_stats(sample);
+        assert!(output.begin_scene_gap_window(origin + Duration::from_secs(6)));
+        output.publish_fair_stats(sample);
+        let window = output.fair_stats().unwrap();
+        assert_eq!(window.last_scene_consume_at(), Some(origin));
+        assert_eq!(window.max_scene_consume_gap(), Duration::from_secs(5));
+        assert_eq!(window.max_window_scene_consume_gap(), Duration::ZERO);
+
+        sample.scene_consumes = 2;
+        sample.last_scene_consume_at = Some(origin + Duration::from_secs(7));
+        output.publish_fair_stats(sample);
+        assert_eq!(
+            output.fair_stats().unwrap().max_window_scene_consume_gap(),
+            Duration::from_secs(1)
+        );
+        sample.scene_consumes = 3;
+        sample.last_scene_consume_at = Some(origin + Duration::from_millis(9501));
+        output.publish_fair_stats(sample);
+        assert_eq!(
+            output.fair_stats().unwrap().max_window_scene_consume_gap(),
+            Duration::from_millis(2501)
+        );
+        assert!(output.begin_scene_gap_window(origin + Duration::from_secs(10)));
+        output.publish_fair_stats(sample);
+        assert_eq!(
+            output.fair_stats().unwrap().max_window_scene_consume_gap(),
+            Duration::ZERO
+        );
+        assert_eq!(
+            output.fair_stats().unwrap().last_scene_consume_at(),
+            sample.last_scene_consume_at()
+        );
     }
 
     #[test]
