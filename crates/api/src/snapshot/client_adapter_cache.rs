@@ -5,11 +5,9 @@ use client::dash3d::store::ModelStore;
 use client::graphics::{Pix32, Pix3DDraw};
 use parking_lot::RwLock;
 
-static CLIENT_CACHE: LazyLock<RwLock<Option<Arc<Cache>>>> =
-    LazyLock::new(|| RwLock::new(None));
+static CLIENT_CACHE: LazyLock<RwLock<Option<Arc<Cache>>>> = LazyLock::new(|| RwLock::new(None));
 static ITEM_ICON_PIX3D: LazyLock<Mutex<Pix3DDraw>> =
     LazyLock::new(|| Mutex::new(Pix3DDraw::default()));
-
 
 pub(super) fn publish(cache: &Arc<Cache>) {
     let mut current = CLIENT_CACHE.write();
@@ -56,7 +54,9 @@ impl ClientAdapterCache {
             return Some(ItemIconPixels(sprite));
         }
 
-        let mut pix3d = ITEM_ICON_PIX3D.lock().unwrap_or_else(|poison| poison.into_inner());
+        let mut pix3d = ITEM_ICON_PIX3D
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         if ObjType::get_sprite(&self.0, &mut pix3d, id, 0, 1).is_none() {
             // ObjType's cert-template early return can precede its raster-state
             // restoration. This scratch renderer is private to the icon path.
@@ -73,7 +73,11 @@ impl ClientAdapterCache {
 /// the same Client whose facts are posted to the isolate.
 #[doc(hidden)]
 pub fn client_adapter_cache() -> Option<ClientAdapterCache> {
-    CLIENT_CACHE.read().as_ref().cloned().map(ClientAdapterCache)
+    CLIENT_CACHE
+        .read()
+        .as_ref()
+        .cloned()
+        .map(ClientAdapterCache)
 }
 
 fn cached_item_sprite(id: i32) -> Option<Arc<Pix32>> {

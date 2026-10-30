@@ -550,7 +550,6 @@ pub struct ProjectionSceneInput<'a> {
     pub view: &'a api::snapshot::ProjectionSceneView,
 }
 
-
 /// Bounded native projection for synchronous ClientAdapter reads. One
 /// optional value keeps all facts on the same posted snapshot generation.
 #[derive(Clone, Copy)]

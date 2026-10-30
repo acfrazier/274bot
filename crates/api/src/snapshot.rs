@@ -11,10 +11,10 @@ use serde::Serialize;
 mod views;
 pub use views::*;
 mod client_adapter_cache;
-#[doc(hidden)]
-pub use client_adapter_cache::{client_adapter_cache, ClientAdapterCache, ItemIconPixels};
 #[cfg(feature = "test-support")]
 pub use client_adapter_cache::set_client_adapter_cache_for_tests;
+#[doc(hidden)]
+pub use client_adapter_cache::{client_adapter_cache, ClientAdapterCache, ItemIconPixels};
 mod native;
 pub use native::{
     chat_page_fingerprint, ChatLines, ChatModalView, CombatView, JournalModalView, Observed,

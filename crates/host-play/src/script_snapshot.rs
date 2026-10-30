@@ -304,12 +304,12 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
     ) -> R,
 ) -> R {
     use script::native::snapshot_source::{
-        BankApproachInput, BankStandInput, ChatLineInput, ChatOptionInput, ChatModalTextsInput,
+        BankApproachInput, BankStandInput, ChatLineInput, ChatModalTextsInput, ChatOptionInput,
         ClientAdapterFactsInput, CollisionViewInput, CombatStyleInput, ItemRowInput,
-        MainModalTextsInput, MakeButtonInput, MakeProductInput, NativeFactsInput, NearestBoothInput,
-        PuzzleBoardInput, ProjectionSceneInput, QuestStatusInput, ReachViewInput, SceneEntityInput,
-        SideTabIfaceInput, SnapshotInput, StatInput, TileInput, VarpInput, WidgetFactInput,
-        WidgetTextInput,
+        MainModalTextsInput, MakeButtonInput, MakeProductInput, NativeFactsInput,
+        NearestBoothInput, ProjectionSceneInput, PuzzleBoardInput, QuestStatusInput,
+        ReachViewInput, SceneEntityInput, SideTabIfaceInput, SnapshotInput, StatInput, TileInput,
+        VarpInput, WidgetFactInput, WidgetTextInput,
     };
 
     let owned_flood: Option<api::query::ReachFlood>;
@@ -1303,8 +1303,14 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
                 target_base: w.target_base.as_deref(),
                 model_type: w.model_type,
                 model_id: w.model_id,
-                script_opcode: script.and_then(|script| script.first()).copied().unwrap_or(-1),
-                script_varp: script.and_then(|script| script.get(1)).copied().unwrap_or(-1),
+                script_opcode: script
+                    .and_then(|script| script.first())
+                    .copied()
+                    .unwrap_or(-1),
+                script_varp: script
+                    .and_then(|script| script.get(1))
+                    .copied()
+                    .unwrap_or(-1),
                 script_value: w
                     .script_operands
                     .as_ref()

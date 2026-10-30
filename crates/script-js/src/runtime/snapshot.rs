@@ -1340,7 +1340,6 @@ fn set_i32<'s>(
     set(scope, object, key, value)
 }
 
-
 fn set_readonly<'s>(
     scope: &mut v8::HandleScope<'s>,
     obj: v8::Local<'s, v8::Object>,
@@ -1508,10 +1507,7 @@ fn client_adapter_facts_object<'s>(
         let root = num(scope, pair.root() as f64);
         set(scope, modal, "root", root)?;
         let rows = pair.texts();
-        let texts = v8::Array::new(
-            scope,
-            rows.as_ref().map_or(0, |rows| rows.len()) as i32,
-        );
+        let texts = v8::Array::new(scope, rows.as_ref().map_or(0, |rows| rows.len()) as i32);
         for (index, text) in rows.into_iter().flat_map(|rows| rows.iter()).enumerate() {
             let text = js_string(scope, text)?;
             texts
@@ -1538,7 +1534,11 @@ fn client_adapter_facts_object<'s>(
         scope,
         entries.as_ref().map_or(0, |entries| entries.len()) as i32,
     );
-    for (index, entry) in entries.into_iter().flat_map(|entries| entries.iter()).enumerate() {
+    for (index, entry) in entries
+        .into_iter()
+        .flat_map(|entries| entries.iter())
+        .enumerate()
+    {
         let entry = js_string(scope, entry)?;
         menu_entries
             .set_index(scope, index as u32, entry)
@@ -1546,17 +1546,20 @@ fn client_adapter_facts_object<'s>(
     }
     set(scope, object, "menu_entries", menu_entries.into())?;
     let path = facts.last_walk_path_local();
-    let last_walk_path_local = v8::Array::new(
-        scope,
-        path.as_ref().map_or(0, |path| path.len()) as i32,
-    );
+    let last_walk_path_local =
+        v8::Array::new(scope, path.as_ref().map_or(0, |path| path.len()) as i32);
     for (index, point) in path.into_iter().flat_map(|path| path.iter()).enumerate() {
         let point = num(scope, *point as f64);
         last_walk_path_local
             .set_index(scope, index as u32, point)
             .ok_or_else(|| "v8 array set failed".to_string())?;
     }
-    set(scope, object, "last_walk_path_local", last_walk_path_local.into())?;
+    set(
+        scope,
+        object,
+        "last_walk_path_local",
+        last_walk_path_local.into(),
+    )?;
     let session_generation = num(scope, facts.session_generation() as f64);
     set(scope, object, "session_generation", session_generation)?;
     let modal_close_generation = num(scope, facts.modal_close_generation() as f64);

@@ -110,21 +110,17 @@ fn world_number<'s>(
     value: v8::Local<'s, v8::Value>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let hostname = js_to_string(scope, hostname)?;
-    let value_count = js_i32(scope, value_count)?
-        .ok_or_else(|| "world must be 1, 2 or 3".to_string())?;
-    let value_count = usize::try_from(value_count)
-        .map_err(|_| "world must be 1, 2 or 3".to_string())?;
+    let value_count =
+        js_i32(scope, value_count)?.ok_or_else(|| "world must be 1, 2 or 3".to_string())?;
+    let value_count =
+        usize::try_from(value_count).map_err(|_| "world must be 1, 2 or 3".to_string())?;
     let value = if value_count == 1 {
         Some(js_to_string(scope, value)?)
     } else {
         None
     };
-    let selected = script::registry::resolve_world_number(
-        &hostname,
-        value_count,
-        value.as_deref(),
-    )
-    .map_err(str::to_owned)?;
+    let selected = script::registry::resolve_world_number(&hostname, value_count, value.as_deref())
+        .map_err(str::to_owned)?;
     Ok(v8::Integer::new(scope, selected).into())
 }
 

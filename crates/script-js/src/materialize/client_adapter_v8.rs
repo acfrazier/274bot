@@ -107,7 +107,9 @@ pub(super) fn read<'s>(
         "targetButtonByBase" => target_button_by_base(scope, facts, arg0, arg1),
         "selectButtonByVarp" => select_button_by_varp(scope, facts, arg0, arg1, arg2),
         "selectButtonLabelsByVarp" => select_button_labels_by_varp(scope, facts, arg0, arg1),
-        "mainModalButtonNearText" => main_modal_button_near_text(scope, snapshot.into(), facts, arg0),
+        "mainModalButtonNearText" => {
+            main_modal_button_near_text(scope, snapshot.into(), facts, arg0)
+        }
         "mainSkillMultiItems" => main_skill_multi_items(scope, snapshot.into()),
         "questStatuses" => quest_statuses(scope, snapshot.into(), facts),
         "sideTabInterface" => side_tab_interface(scope, snapshot.into(), arg0),
@@ -118,7 +120,9 @@ pub(super) fn read<'s>(
         "countDialogOpen" => bool_property_value(scope, snapshot.into(), "count_dialog_open"),
         "makeProducts" => make_products(scope, snapshot.into()),
         "overlayPosWorld" => overlay_pos_world(scope, facts, arg0, arg1, arg2, arg3, arg4, false),
-        "projectAreaGameWorld" => overlay_pos_world(scope, facts, arg0, arg1, arg2, arg3, arg4, true),
+        "projectAreaGameWorld" => {
+            overlay_pos_world(scope, facts, arg0, arg1, arg2, arg3, arg4, true)
+        }
         "locBox" => loc_box(scope, snapshot.into(), facts, arg0, arg1),
         "itemIconPixels" => item_icon_pixels(scope, facts, arg0),
         _ => {
@@ -179,7 +183,9 @@ fn array_value<'s>(
     let Some(array) = array(value) else {
         return Ok(v8::undefined(scope).into());
     };
-    array.get_index(scope, index).ok_or_else(|| PENDING.to_string())
+    array
+        .get_index(scope, index)
+        .ok_or_else(|| PENDING.to_string())
 }
 
 fn empty_array<'s>(scope: &mut v8::HandleScope<'s>) -> v8::Local<'s, v8::Array> {
@@ -191,12 +197,22 @@ fn set_i32(scope: &mut v8::HandleScope<'_>, object: v8::Local<v8::Object>, key: 
     set_key(scope, object, key, value.into());
 }
 
-fn set_bool(scope: &mut v8::HandleScope<'_>, object: v8::Local<v8::Object>, key: &str, value: bool) {
+fn set_bool(
+    scope: &mut v8::HandleScope<'_>,
+    object: v8::Local<v8::Object>,
+    key: &str,
+    value: bool,
+) {
     let value = v8::Boolean::new(scope, value);
     set_key(scope, object, key, value.into());
 }
 
-fn set_number(scope: &mut v8::HandleScope<'_>, object: v8::Local<v8::Object>, key: &str, value: f64) {
+fn set_number(
+    scope: &mut v8::HandleScope<'_>,
+    object: v8::Local<v8::Object>,
+    key: &str,
+    value: f64,
+) {
     let value = v8::Number::new(scope, value);
     set_key(scope, object, key, value.into());
 }
@@ -263,7 +279,9 @@ fn copy_string_array<'s>(
     };
     let output = v8::Array::new(scope, source.length() as i32);
     for index in 0..source.length() {
-        let item = source.get_index(scope, index).ok_or_else(|| PENDING.to_string())?;
+        let item = source
+            .get_index(scope, index)
+            .ok_or_else(|| PENDING.to_string())?;
         let copied = if item.is_string() {
             item
         } else {
@@ -286,7 +304,9 @@ fn item_rows<'s>(
     let output = v8::Array::new(scope, source.length() as i32);
     let mut out_index = 0;
     for index in 0..source.length() {
-        let row = source.get_index(scope, index).ok_or_else(|| PENDING.to_string())?;
+        let row = source
+            .get_index(scope, index)
+            .ok_or_else(|| PENDING.to_string())?;
         if !row.is_object() || row.is_array() {
             continue;
         }
@@ -298,7 +318,11 @@ fn item_rows<'s>(
         let count = object_i32(scope, row, "count")?.unwrap_or(0);
         let component = object_i32(scope, row, "component_id")?.unwrap_or(-1);
         let name = property(scope, row, "name")?;
-        let name = if name.is_string() { name } else { v8::null(scope).into() };
+        let name = if name.is_string() {
+            name
+        } else {
+            v8::null(scope).into()
+        };
         let ops_value = property(scope, row, "ops")?;
         let ops = copy_any_array(scope, ops_value)?;
         let item = v8::Object::new(scope);
@@ -326,7 +350,9 @@ fn copy_any_array<'s>(
     };
     let output = v8::Array::new(scope, source.length() as i32);
     for index in 0..source.length() {
-        let value = source.get_index(scope, index).ok_or_else(|| PENDING.to_string())?;
+        let value = source
+            .get_index(scope, index)
+            .ok_or_else(|| PENDING.to_string())?;
         output
             .set_index(scope, index, value)
             .ok_or_else(|| PENDING.to_string())?;
@@ -379,7 +405,9 @@ fn chat_options<'s>(
     };
     let output = v8::Array::new(scope, source.length() as i32);
     for index in 0..source.length() {
-        let row = source.get_index(scope, index).ok_or_else(|| PENDING.to_string())?;
+        let row = source
+            .get_index(scope, index)
+            .ok_or_else(|| PENDING.to_string())?;
         let text = property(scope, row, "text")?;
         let id = property(scope, row, "comId")?;
         let id = js_i32(scope, id)?.unwrap_or(-1);
@@ -466,7 +494,9 @@ fn npc_box<'s>(
     };
     let mut found = None;
     for at in 0..rows.length() {
-        let row = rows.get_index(scope, at).ok_or_else(|| PENDING.to_string())?;
+        let row = rows
+            .get_index(scope, at)
+            .ok_or_else(|| PENDING.to_string())?;
         if object_i32(scope, row, "index")? == Some(index) {
             found = Some(row);
             break;
@@ -484,7 +514,9 @@ fn npc_box<'s>(
     }
     let output = v8::Array::new(scope, 8);
     for at in 0..8 {
-        let point = points.get_index(scope, at).ok_or_else(|| PENDING.to_string())?;
+        let point = points
+            .get_index(scope, at)
+            .ok_or_else(|| PENDING.to_string())?;
         let Some(x) = object_i32(scope, point, "x")? else {
             return Ok(v8::null(scope).into());
         };
@@ -530,7 +562,9 @@ fn varp<'s>(
         return Ok(v8::Integer::new(scope, 0).into());
     };
     for at in 0..rows.length() {
-        let row = rows.get_index(scope, at).ok_or_else(|| PENDING.to_string())?;
+        let row = rows
+            .get_index(scope, at)
+            .ok_or_else(|| PENDING.to_string())?;
         if object_i32(scope, row, "index")? == Some(index) {
             let value = object_i32(scope, row, "value")?.unwrap_or(0);
             return Ok(v8::Integer::new(scope, value).into());
@@ -579,9 +613,7 @@ fn skill_used<'s>(
         .is_some_and(api::snapshot::stat_used);
     Ok(v8::Boolean::new(scope, used).into())
 }
-fn skill_names<'s>(
-    scope: &mut v8::HandleScope<'s>,
-) -> Result<v8::Local<'s, v8::Value>, String> {
+fn skill_names<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
     let count = api::snapshot::stat_count();
     let length =
         i32::try_from(count).map_err(|_| "skill count exceeds V8 array limit".to_string())?;
@@ -635,7 +667,9 @@ fn chat<'s>(
     let output = v8::Array::new(scope, limit.min(lines.length()) as i32);
     let mut out_index = 0;
     for index in 0..limit.min(lines.length()) {
-        let line = lines.get_index(scope, index).ok_or_else(|| PENDING.to_string())?;
+        let line = lines
+            .get_index(scope, index)
+            .ok_or_else(|| PENDING.to_string())?;
         let text = property(scope, line, "text")?;
         if text.is_null() {
             break;
@@ -690,7 +724,15 @@ fn bank_snapshot_generation<'s>(
     let component = object_i32(scope, facts, "bank_com_id")?.unwrap_or(-1);
     let open = bool_property(scope, snapshot, "bank_open")?;
     let generation = object_i32(scope, snapshot, "bank_snapshot_generation")?.unwrap_or(-1);
-    Ok(v8::Integer::new(scope, if component >= 0 && open { generation } else { -1 }).into())
+    Ok(v8::Integer::new(
+        scope,
+        if component >= 0 && open {
+            generation
+        } else {
+            -1
+        },
+    )
+    .into())
 }
 
 fn run_controls<'s>(
@@ -753,7 +795,12 @@ fn to_world<'s>(
     };
     let here = property(scope, snapshot, "here")?;
     let level = object_i32(scope, here, "level")?.unwrap_or(0);
-    tile_object(scope, base_x.saturating_add(x), base_z.saturating_add(z), level)
+    tile_object(
+        scope,
+        base_x.saturating_add(x),
+        base_z.saturating_add(z),
+        level,
+    )
 }
 
 fn to_local<'s>(
@@ -860,7 +907,12 @@ fn last_walk_path_world<'s>(
             .ok_or_else(|| PENDING.to_string())?;
         let x = js_i32(scope, x)?.unwrap_or(0);
         let z = js_i32(scope, z)?.unwrap_or(0);
-        let tile = tile_object(scope, base_x.saturating_add(x), base_z.saturating_add(z), level)?;
+        let tile = tile_object(
+            scope,
+            base_x.saturating_add(x),
+            base_z.saturating_add(z),
+            level,
+        )?;
         output
             .set_index(scope, at, tile)
             .ok_or_else(|| PENDING.to_string())?;
@@ -888,7 +940,9 @@ fn widget_by_id<'s>(
     }
     let rows = widgets(scope, facts)?;
     for index in 0..rows.length() {
-        let row = rows.get_index(scope, index).ok_or_else(|| PENDING.to_string())?;
+        let row = rows
+            .get_index(scope, index)
+            .ok_or_else(|| PENDING.to_string())?;
         if object_i32(scope, row, "component_id")? == Some(component_id) {
             return Ok(Some(row));
         }
@@ -907,7 +961,9 @@ fn widget_rows_under<'s>(
         return Ok(result);
     }
     for index in 0..rows.length() {
-        let row = rows.get_index(scope, index).ok_or_else(|| PENDING.to_string())?;
+        let row = rows
+            .get_index(scope, index)
+            .ok_or_else(|| PENDING.to_string())?;
         if object_i32(scope, row, "root_component_id")? == Some(root_id) {
             result.push(row);
         }
@@ -966,7 +1022,9 @@ fn side_tab_interface<'s>(
         return Ok(v8::Integer::new(scope, -1).into());
     };
     for index in 0..rows.length() {
-        let row = rows.get_index(scope, index).ok_or_else(|| PENDING.to_string())?;
+        let row = rows
+            .get_index(scope, index)
+            .ok_or_else(|| PENDING.to_string())?;
         if object_i32(scope, row, "index")? == Some(tab) {
             let id = object_i32(scope, row, "id")?.unwrap_or(-1);
             return Ok(v8::Integer::new(scope, id).into());
@@ -1123,7 +1181,10 @@ fn select_button_labels_by_varp<'s>(
         (
             object_i32(scope, *row, "y").ok().flatten().unwrap_or(0),
             object_i32(scope, *row, "x").ok().flatten().unwrap_or(0),
-            object_i32(scope, *row, "component_id").ok().flatten().unwrap_or(-1),
+            object_i32(scope, *row, "component_id")
+                .ok()
+                .flatten()
+                .unwrap_or(-1),
         )
     });
     let output = v8::Array::new(scope, buttons.len() as i32);
@@ -1155,7 +1216,10 @@ fn select_button_labels_by_varp<'s>(
                 continue;
             }
             let distance = (text_centre - centre).abs();
-            if best.as_ref().is_none_or(|(best_distance, _)| distance < *best_distance) {
+            if best
+                .as_ref()
+                .is_none_or(|(best_distance, _)| distance < *best_distance)
+            {
                 best = Some((distance, label));
             }
         }
@@ -1196,9 +1260,13 @@ fn main_modal_button_near_text<'s>(
     let rows = widget_rows_under(scope, facts, root)?;
     let text = rows.iter().find(|row| {
         object_i32(scope, **row, "type_").ok().flatten() == Some(4)
-            && property(scope, **row, "text")
-                .ok()
-                .is_some_and(|value| value.is_string() && value.to_rust_string_lossy(scope).to_lowercase().contains(&wanted))
+            && property(scope, **row, "text").ok().is_some_and(|value| {
+                value.is_string()
+                    && value
+                        .to_rust_string_lossy(scope)
+                        .to_lowercase()
+                        .contains(&wanted)
+            })
     });
     let Some(text) = text else {
         return Ok(v8::Integer::new(scope, -1).into());
@@ -1248,9 +1316,17 @@ fn modal_buttons<'s>(
             continue;
         }
         let text = property(scope, row, "text")?;
-        let label = if text.is_string() { text } else { v8_str(scope, "")? };
+        let label = if text.is_string() {
+            text
+        } else {
+            v8_str(scope, "")?
+        };
         let menu = property(scope, row, "button_text")?;
-        let menu = if menu.is_string() { menu } else { v8_str(scope, "")? };
+        let menu = if menu.is_string() {
+            menu
+        } else {
+            v8_str(scope, "")?
+        };
         let item = v8::Object::new(scope);
         set_i32(scope, item, "comId", id);
         set_key(scope, item, "label", label);
@@ -1292,7 +1368,12 @@ fn concat_arrays<'s>(
     let output = v8::Array::new(scope, (left.length() + right.length()) as i32);
     for index in 0..left.length() {
         output
-            .set_index(scope, index, left.get_index(scope, index).ok_or_else(|| PENDING.to_string())?)
+            .set_index(
+                scope,
+                index,
+                left.get_index(scope, index)
+                    .ok_or_else(|| PENDING.to_string())?,
+            )
             .ok_or_else(|| PENDING.to_string())?;
     }
     for index in 0..right.length() {
@@ -1300,7 +1381,9 @@ fn concat_arrays<'s>(
             .set_index(
                 scope,
                 left.length() + index,
-                right.get_index(scope, index).ok_or_else(|| PENDING.to_string())?,
+                right
+                    .get_index(scope, index)
+                    .ok_or_else(|| PENDING.to_string())?,
             )
             .ok_or_else(|| PENDING.to_string())?;
     }
@@ -1447,7 +1530,9 @@ fn side_tab_interface_value(
         return Ok(-1);
     };
     for index in 0..rows.length() {
-        let row = rows.get_index(scope, index).ok_or_else(|| PENDING.to_string())?;
+        let row = rows
+            .get_index(scope, index)
+            .ok_or_else(|| PENDING.to_string())?;
         if object_i32(scope, row, "index")? == Some(tab) {
             return Ok(object_i32(scope, row, "id")?.unwrap_or(-1));
         }
@@ -1465,7 +1550,9 @@ fn make_products<'s>(
     };
     let output = v8::Array::new(scope, source.length() as i32);
     for index in 0..source.length() {
-        let product = source.get_index(scope, index).ok_or_else(|| PENDING.to_string())?;
+        let product = source
+            .get_index(scope, index)
+            .ok_or_else(|| PENDING.to_string())?;
         let result = v8::Object::new(scope);
         let obj = property(scope, product, "object_id")?;
         let name = property(scope, product, "name")?;
@@ -1490,7 +1577,9 @@ fn copy_make_buttons<'s>(
     };
     let output = v8::Array::new(scope, source.length() as i32);
     for index in 0..source.length() {
-        let button = source.get_index(scope, index).ok_or_else(|| PENDING.to_string())?;
+        let button = source
+            .get_index(scope, index)
+            .ok_or_else(|| PENDING.to_string())?;
         let result = v8::Object::new(scope);
         let qty = property(scope, button, "qty")?;
         let com_id = property(scope, button, "comId")?;
@@ -1514,28 +1603,44 @@ fn modal_close_observation<'s>(
     let generation = property(scope, facts, "modal_close_generation")?;
     let session_number = session.number_value(scope).unwrap_or(f64::NAN);
     let generation_number = generation.number_value(scope).unwrap_or(f64::NAN);
-    let safe = |value: f64| value.is_finite() && value.fract() == 0.0 && value.abs() <= 9_007_199_254_740_991.0;
+    let safe = |value: f64| {
+        value.is_finite() && value.fract() == 0.0 && value.abs() <= 9_007_199_254_740_991.0
+    };
     let context = scope.get_current_context();
     let global = context.global(scope);
     let state_key = v8_str(scope, "__rs2b0t_client_adapter_modal_session")?;
-    if !attached || !ingame || !safe(session_number) || !safe(generation_number) || session_number < 0.0 || generation_number < 0.0 {
+    if !attached
+        || !ingame
+        || !safe(session_number)
+        || !safe(generation_number)
+        || session_number < 0.0
+        || generation_number < 0.0
+    {
         let null = v8::null(scope);
-        global.set(scope, state_key, null.into()).ok_or_else(|| PENDING.to_string())?;
+        global
+            .set(scope, state_key, null.into())
+            .ok_or_else(|| PENDING.to_string())?;
         return Ok(v8::null(scope).into());
     }
-    let previous = global.get(scope, state_key).ok_or_else(|| PENDING.to_string())?;
+    let previous = global
+        .get(scope, state_key)
+        .ok_or_else(|| PENDING.to_string())?;
     let previous_session = property(scope, previous, "session_generation")?;
     let previous_session = previous_session.number_value(scope).unwrap_or(f64::NAN);
     let token = if previous.is_object() && previous_session == session_number {
         property(scope, previous, "token")?
     } else {
         let description = v8_str(scope, "client-adapter-session")?;
-        v8::Symbol::new(scope, Some(description)).ok_or_else(|| PENDING.to_string())?.into()
+        v8::Symbol::new(scope, Some(description))
+            .ok_or_else(|| PENDING.to_string())?
+            .into()
     };
     let state = v8::Object::new(scope);
     set_number(scope, state, "session_generation", session_number);
     set_key(scope, state, "token", token);
-    global.set(scope, state_key, state.into()).ok_or_else(|| PENDING.to_string())?;
+    global
+        .set(scope, state_key, state.into())
+        .ok_or_else(|| PENDING.to_string())?;
     let result = v8::Object::new(scope);
     set_key(scope, result, "session", token);
     set_number(scope, result, "generation", generation_number);
@@ -1613,19 +1718,13 @@ fn world_tile_to_scene<'s>(
     } else {
         js_number(scope, v)?
     };
-    let scene_x = (lx as i32)
-        .wrapping_shl(7)
-        .wrapping_add(scene_fraction(u));
-    let scene_z = (lz as i32)
-        .wrapping_shl(7)
-        .wrapping_add(scene_fraction(v));
+    let scene_x = (lx as i32).wrapping_shl(7).wrapping_add(scene_fraction(u));
+    let scene_z = (lz as i32).wrapping_shl(7).wrapping_add(scene_fraction(v));
     Ok(Some((scene_x, scene_z)))
 }
 
 fn js_number(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> Result<f64, String> {
-    value
-        .number_value(scope)
-        .ok_or_else(|| PENDING.to_string())
+    value.number_value(scope).ok_or_else(|| PENDING.to_string())
 }
 
 fn scene_fraction(value: f64) -> i32 {
@@ -1745,10 +1844,12 @@ fn projection_height_at(
     let Some(h11) = integer_at(scope, heights, base + 106)? else {
         return Ok(None);
     };
-    let y00 = (h00.wrapping_mul(128 - tile_local_x)
+    let y00 = (h00
+        .wrapping_mul(128 - tile_local_x)
         .wrapping_add(h10.wrapping_mul(tile_local_x)))
         >> 7;
-    let y11 = (h01.wrapping_mul(128 - tile_local_x)
+    let y11 = (h01
+        .wrapping_mul(128 - tile_local_x)
         .wrapping_add(h11.wrapping_mul(tile_local_x)))
         >> 7;
     Ok(Some(
@@ -1865,11 +1966,7 @@ fn loc_box<'s>(
         } else if let Some(wanted) = wanted_name.as_deref() {
             let name = property(scope, loc, "name")?;
             if !name.is_string()
-                || name
-                    .to_rust_string_lossy(scope)
-                    .to_lowercase()
-                    .as_str()
-                    != wanted
+                || name.to_rust_string_lossy(scope).to_lowercase().as_str() != wanted
             {
                 continue;
             }
@@ -1895,13 +1992,10 @@ fn loc_box<'s>(
             half_length: object_i32(scope, loc, "half_length")?.unwrap_or(64),
             top_height: object_i32(scope, loc, "top_height")?.unwrap_or(128),
         };
-        if best
-            .as_ref()
-            .is_none_or(|best: &LocBoxCandidate| {
-                candidate.rank < best.rank
-                    || (candidate.rank == best.rank && candidate.dist < best.dist)
-            })
-        {
+        if best.as_ref().is_none_or(|best: &LocBoxCandidate| {
+            candidate.rank < best.rank
+                || (candidate.rank == best.rank && candidate.dist < best.dist)
+        }) {
             best = Some(candidate);
         }
     }
@@ -1979,8 +2073,8 @@ fn item_icon_pixels<'s>(
     let Some(id) = js_i32(scope, id)? else {
         return Ok(v8::null(scope).into());
     };
-    let Some(pixels) = api::snapshot::client_adapter_cache()
-        .and_then(|cache| cache.item_icon_pixels(id))
+    let Some(pixels) =
+        api::snapshot::client_adapter_cache().and_then(|cache| cache.item_icon_pixels(id))
     else {
         return Ok(v8::null(scope).into());
     };

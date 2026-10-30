@@ -209,8 +209,7 @@ impl GameSnapshot {
         if !client.try_move_path.is_empty()
             && self.last_walk_path_local.as_slice() != client.try_move_path.as_slice()
         {
-            self.last_walk_path_local
-                .clone_from(&client.try_move_path);
+            self.last_walk_path_local.clone_from(&client.try_move_path);
         }
         let local_overhead_text = client
             .ingame
@@ -1168,61 +1167,57 @@ impl GameSnapshot {
         }
     }
 
-fn projection_scene_view(client: &Client) -> Option<ProjectionSceneView> {
-    use ::client::dash3d::MapFlag;
+    fn projection_scene_view(client: &Client) -> Option<ProjectionSceneView> {
+        use ::client::dash3d::MapFlag;
 
-    let level = client.minusedlevel;
-    if !(0..=3).contains(&level) {
-        return None;
-    }
-    let mut heights = Vec::with_capacity(105 * 105);
-    let ground = client.groundh.get(level as usize)?;
-    for x in 0..=104 {
-        let row = ground.get(x)?;
-        for z in 0..=104 {
-            heights.push(*row.get(z)?);
+        let level = client.minusedlevel;
+        if !(0..=3).contains(&level) {
+            return None;
         }
-    }
-    let mut heights_above = Vec::new();
-    if level < 3 {
-        heights_above.reserve(105 * 105);
-        let ground_above = client.groundh.get((level + 1) as usize)?;
+        let mut heights = Vec::with_capacity(105 * 105);
+        let ground = client.groundh.get(level as usize)?;
         for x in 0..=104 {
-            let row = ground_above.get(x)?;
+            let row = ground.get(x)?;
             for z in 0..=104 {
-                heights_above.push(*row.get(z)?);
+                heights.push(*row.get(z)?);
             }
         }
-    }
-    let link_map = client.mapl.get(1)?;
-    let mut link_below = Vec::with_capacity(104 * 104);
-    for x in 0..104 {
-        let row = link_map.get(x)?;
-        for z in 0..104 {
-            let flags = *row.get(z)?;
-            link_below.push(u8::from(flags & (MapFlag::LINK_BELOW as u8) != 0));
+        let mut heights_above = Vec::new();
+        if level < 3 {
+            heights_above.reserve(105 * 105);
+            let ground_above = client.groundh.get((level + 1) as usize)?;
+            for x in 0..=104 {
+                let row = ground_above.get(x)?;
+                for z in 0..=104 {
+                    heights_above.push(*row.get(z)?);
+                }
+            }
         }
+        let link_map = client.mapl.get(1)?;
+        let mut link_below = Vec::with_capacity(104 * 104);
+        for x in 0..104 {
+            let row = link_map.get(x)?;
+            for z in 0..104 {
+                let flags = *row.get(z)?;
+                link_below.push(u8::from(flags & (MapFlag::LINK_BELOW as u8) != 0));
+            }
+        }
+        Some(ProjectionSceneView {
+            available: true,
+            level,
+            camera_x: client.cam_x,
+            camera_y: client.cam_y,
+            camera_z: client.cam_z,
+            sin_pitch: client::graphics::Pix3D::sin_table()[(client.cam_pitch & 0x7ff) as usize],
+            cos_pitch: client::graphics::Pix3D::cos_table()[(client.cam_pitch & 0x7ff) as usize],
+            sin_yaw: client::graphics::Pix3D::sin_table()[(client.cam_yaw & 0x7ff) as usize],
+            cos_yaw: client::graphics::Pix3D::cos_table()[(client.cam_yaw & 0x7ff) as usize],
+            heights: heights.into(),
+            heights_above: heights_above.into(),
+            link_below: link_below.into(),
+            locs: Vec::new().into(),
+        })
     }
-    Some(ProjectionSceneView {
-        available: true,
-        level,
-        camera_x: client.cam_x,
-        camera_y: client.cam_y,
-        camera_z: client.cam_z,
-        sin_pitch: client::graphics::Pix3D::sin_table()
-            [(client.cam_pitch & 0x7ff) as usize],
-        cos_pitch: client::graphics::Pix3D::cos_table()
-            [(client.cam_pitch & 0x7ff) as usize],
-        sin_yaw: client::graphics::Pix3D::sin_table()
-            [(client.cam_yaw & 0x7ff) as usize],
-        cos_yaw: client::graphics::Pix3D::cos_table()
-            [(client.cam_yaw & 0x7ff) as usize],
-        heights: heights.into(),
-        heights_above: heights_above.into(),
-        link_below: link_below.into(),
-        locs: Vec::new().into(),
-    })
-}
 
     /// Scene-family rebuild: `ingame` + `scene_state`, always fresh —
     /// these flip locally (`check_scene` sets `scene_state = 2` on the SIM
