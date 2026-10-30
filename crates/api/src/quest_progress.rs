@@ -579,6 +579,111 @@ mod quest_list_tests {
         assert_eq!(provider.test_gate(&gate, observed), Truth::Unknown);
     }
 
+    fn assert_window_from_colour(
+        quests: &QuestCatalog,
+        quest: &str,
+        colour: i32,
+        min: i32,
+        max: i32,
+        expected: Truth,
+    ) {
+        let facts = quests.quest(quest).unwrap();
+        let family = family(1, 1);
+        let observed = stamp(run(), 10, 4);
+        let snapshot = snapshot(vec![row(facts.display.to_string(), colour)], true);
+        let gate = QuestGate::Window(StageWindow {
+            quest: facts.id.clone(),
+            signal: facts.varp.clone(),
+            values: InclusiveRange {
+                min: Some(min),
+                max: Some(max),
+            },
+        });
+        let provider = evidence(quests, &snapshot, observed, Some(family), Some(family));
+        assert_eq!(provider.test_gate(&gate, observed), expected);
+        assert_eq!(
+            observe_quest_gate(
+                quests,
+                &gate,
+                SnapshotView::new(Some(&snapshot), observed),
+                observed,
+            )
+            .unwrap()
+            .truth,
+            expected
+        );
+    }
+
+    #[test]
+    fn window_gate_mort_myre_true_on_yellow() {
+        assert_window_from_colour(&catalog(), "druidspirit", 0xF8F800, 1, 110, Truth::True);
+    }
+
+    #[test]
+    fn window_gate_barrier_unknown_on_green() {
+        assert_window_from_colour(&catalog(), "priestperil", 0x00F800, 61, 61, Truth::Unknown);
+    }
+
+    #[test]
+    fn window_gate_false_on_red() {
+        for (quest, min, max) in [("priestperil", 61, 61), ("druidspirit", 1, 110)] {
+            assert_window_from_colour(&catalog(), quest, 0xF80000, min, max, Truth::False);
+        }
+    }
+
+    #[test]
+    fn window_gate_unknown_for_upass_row() {
+        assert_window_from_colour(&catalog(), "upass", 0xF8F800, 1, 21, Truth::Unknown);
+    }
+
+    #[test]
+    fn window_gate_unknown_for_transmitted_misc_quest() {
+        let selected = crate::game_data::for_revision(ClientRevision::R289).unwrap();
+        let mut facts = selected.quest_identity().unwrap().clone();
+        let misc = facts.rows.iter_mut().find(|row| row.id == "misc").unwrap();
+        assert_eq!(misc.transmission, Transmission::PostedByContent);
+        // Isolate transmission from the independent colour-authority guard.
+        misc.colour_authoritative = true;
+        let quests = QuestCatalog::from_identity(Some(&facts)).unwrap();
+        assert_window_from_colour(&quests, "misc", 0xF8F800, 1, 100, Truth::Unknown);
+    }
+
+    #[test]
+    fn window_gate_unknown_without_domain() {
+        let selected = crate::game_data::for_revision(ClientRevision::R289).unwrap();
+        let mut facts = selected.quest_identity().unwrap().clone();
+        facts
+            .rows
+            .iter_mut()
+            .find(|row| row.id == "druidspirit")
+            .unwrap()
+            .stage_domain = None;
+        let quests = QuestCatalog::from_identity(Some(&facts)).unwrap();
+        assert_window_from_colour(&quests, "druidspirit", 0xF8F800, 1, 110, Truth::Unknown);
+    }
+
+    #[test]
+    fn complete_gate_unchanged() {
+        let quests = catalog();
+        let family = family(1, 1);
+        let observed = stamp(run(), 10, 4);
+        for quest in ["priestperil", "druidspirit", "upass", "misc"] {
+            let facts = quests.quest(quest).unwrap();
+            for (colour, expected) in [
+                (0x00F800, Truth::True),
+                (0xF8F800, Truth::False),
+                (0xF80000, Truth::False),
+            ] {
+                let snapshot = snapshot(vec![row(facts.display.to_string(), colour)], true);
+                let provider = evidence(&quests, &snapshot, observed, Some(family), Some(family));
+                assert_eq!(
+                    provider.test_gate(&complete_gate(facts.id.clone()), observed),
+                    expected
+                );
+            }
+        }
+    }
+
     #[test]
     fn shared_lookup_returns_the_observed_status_and_stamp() {
         let quests = catalog();
