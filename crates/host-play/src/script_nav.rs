@@ -8383,7 +8383,10 @@ mod route_quest_provider_tests {
                 evidence.test(&QuestGate::Window(StageWindow {
                     quest: FactKey::new("biohazard"),
                     signal: FactKey::new("biohazard"),
-                    values: InclusiveRange { min: None, max: Some(9) },
+                    values: InclusiveRange {
+                        min: None,
+                        max: Some(9)
+                    },
                 })),
             ),
             (Truth::False, Truth::True),

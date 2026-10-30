@@ -94,7 +94,6 @@ fn quest_list_status_observed(
     })
 }
 
-
 impl Observation for Frame<'_> {
     fn outcome(&self) -> HostOutcome {
         self.outcome
@@ -582,7 +581,6 @@ mod tests {
         receipt.end = WalkEnd::NeedsEvidence(std::sync::Arc::from([biohazard_complete_gate()]));
         request_id
     }
-
 
     #[test]
     fn observed_not_started_quest_replans_to_an_arriving_route() {

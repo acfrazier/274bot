@@ -853,10 +853,8 @@ impl ProfileSelection {
                 let identity = data
                     .verify_quest_family_identity()
                     .map_err(|error| format!("navigation quest family: {error:?}"))?;
-                let expected = nav_planner::quest_gates::QuestFamilyId::new(
-                    identity.sha256,
-                    identity.schema,
-                );
+                let expected =
+                    nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema);
                 world.graph.admit_quest_family(&expected).map_err(|error| {
                     format!(
                         "navigation/profile mismatch: {error}; rebuild or replace the navigation pack: {}",
