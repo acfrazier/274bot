@@ -2366,17 +2366,21 @@ fn same_tick_composed_approaches_defer_before_native_dispatch() {
                 "qty": 1
             })), compile).unwrap(),
         ];
+        // Make is last and starts with its loc outside the observed scene.
+        let make_index = plans.len() - 1;
         for (index, plan) in plans.into_iter().enumerate() {
             let mut snapshot = ready();
             snapshot.seed_local_player(local_player(tile(3200, 3200)));
-            let mut wheel = loc(
-                compile.selected.loc_by_config("spinningwheel").unwrap().id,
-                "Spinning wheel",
-                "Spin",
-            );
-            wheel.tile = tile(3220, 3200);
-            wheel.distance = 20;
-            snapshot.seed_locs(vec![wheel]);
+            if index != make_index {
+                let mut wheel = loc(
+                    compile.selected.loc_by_config("spinningwheel").unwrap().id,
+                    "Spinning wheel",
+                    "Spin",
+                );
+                wheel.tile = tile(3220, 3200);
+                wheel.distance = 20;
+                snapshot.seed_locs(vec![wheel]);
+            }
             snapshot.seed_inventory(
                 vec![ItemView {
                     def: def(resolve_obj(compile, "shears").unwrap(), "Shears"),
@@ -2538,17 +2542,12 @@ fn buy_and_make_approach_from_the_network_tile() {
             )
             .unwrap(),
         ];
-        let wheel_id = compile.selected.loc_by_config("spinningwheel").unwrap().id;
         for plan in plans {
             let mut snapshot = ready();
             snapshot.seed_local_player(local_player_with_network(
                 tile(3200, 3200),
                 tile(3193, 3200),
             ));
-            let mut wheel = loc(wheel_id, "Spinning wheel", "Spin");
-            wheel.tile = tile(3200, 3200);
-            wheel.distance = 7;
-            snapshot.seed_locs(vec![wheel]);
             let mut ledger = None;
             let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
                 with_step(tick, |step| plan.begin(step).unwrap())

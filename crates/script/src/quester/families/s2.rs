@@ -690,22 +690,24 @@ pub(super) fn compile_make(
     }))
 }
 
-/// Per-process yields are defined by the content's production scripts and
-/// menu rows. Unknown products are one item per process.
+/// Revision-289 production yields come from server `cut_logs.dbrow` and
+/// `smithing.dbrow` rows. The product data schema omits these rows, so keep
+/// this map and test it against `production_yields.r289.fixture`.
+/// Unknown products yield one item per process.
 fn make_items_per_process(product: &str) -> i32 {
     match product {
-        // C:scripts/skill_fletching/scripts/cut_logs.rs2:44-47
+        // `cut_logs.dbrow:4` says `data=shafts,15`.
         "arrow_shaft" => 15,
-        // C:scripts/skill_smithing/configs/smithing/smithing.inv:32,68,103,140,175,210
+        // Smithing dart-tip rows set `product_amount` to 10 (`:1127`).
         "bronze_dart_tip" | "iron_dart_tip" | "steel_dart_tip" | "mithril_dart_tip"
         | "adamant_dart_tip" | "rune_dart_tip" => 10,
-        // C:scripts/skill_smithing/configs/smithing/smithing.inv:33,69,104,141,176,211
+        // Smithing arrowhead rows set `product_amount` to 15 (`:1193`).
         "bronze_arrowheads" | "iron_arrowheads" | "steel_arrowheads" | "mithril_arrowheads"
         | "adamant_arrowheads" | "rune_arrowheads" => 15,
-        // C:scripts/skill_smithing/configs/smithing/smithing.inv:34,70,105,142,177,212
+        // Smithing knife rows set `product_amount` to 5 (`:1259`).
         "bronze_knife" | "iron_knife" | "steel_knife" | "mithril_knife" | "adamant_knife"
         | "rune_knife" => 5,
-        // C:scripts/skill_smithing/configs/smithing/smithing.inv:106
+        // The smithing nails row sets `product_amount` to 2 (`:1347`).
         "nails" => 2,
         _ => 1,
     }
@@ -829,6 +831,21 @@ impl StepRun for MakeRun {
             && !accepted
         {
             if let Some(trigger) = self.trigger_plan.clone() {
+                let here = cx
+                    .tick
+                    .cx
+                    .snapshot()
+                    .local_player()
+                    .map(|player| player.value.player.network);
+                if !here.is_some_and(|here| reach::within(here, trigger.anchor, 6)) {
+                    self.small_handle = Some(MakeSmallHandle::Walk(std::task::ready!(
+                        crate::native::defer_budget(cx.tick.actions.begin::<Walk>(
+                            reach::walk_request(trigger.anchor, 4, None, cx.required_after),
+                            &mut cx.tick.cx,
+                        ))
+                    )?));
+                    return Poll::Pending;
+                }
                 let loc = {
                     let snapshot = cx.tick.cx.snapshot();
                     snapshot.locs().and_then(|locs| {
@@ -1826,6 +1843,13 @@ mod loadout_tests;
 #[cfg(test)]
 mod production_state_size_tests {
     use super::*;
+    #[allow(dead_code)]
+    struct PreviousMakeRequest {
+        product_id: i32,
+        menu_id: i32,
+        qty: i32,
+        make_x: bool,
+    }
 
     #[allow(dead_code)]
     struct PreviousMakePlan {
@@ -1845,7 +1869,7 @@ mod production_state_size_tests {
         loc_id: i32,
         loc_name: Arc<str>,
         op: Arc<str>,
-        request: MakeRequest,
+        request: PreviousMakeRequest,
         walk: Option<ActionHandle<Walk>>,
         trigger: Option<ActionHandle<reach::Reach>>,
         make: Option<ActionHandle<MakeMachine>>,
@@ -1856,6 +1880,9 @@ mod production_state_size_tests {
         let trigger = std::mem::size_of::<MakeTrigger>();
         let plan = std::mem::size_of::<MakePlan>();
         let run = std::mem::size_of::<MakeRun>();
+        let request = std::mem::size_of::<MakeRequest>();
+        let previous_request = std::mem::size_of::<PreviousMakeRequest>();
+        let request_change = request as isize - previous_request as isize;
         let previous_plan = std::mem::size_of::<PreviousMakePlan>();
         let previous_run = std::mem::size_of::<PreviousMakeRun>();
         let plan_change = plan as isize - previous_plan as isize;
@@ -1873,7 +1900,52 @@ mod production_state_size_tests {
             run.saturating_sub(previous_run)
         );
         println!(
-            "production family state sizes: MakeTrigger={trigger}; MakePlan={plan} ({plan_change:+} from {previous_plan}); MakeRun={run} ({run_change:+} from {previous_run}) bytes"
+            "production family state sizes: MakeRequest={request} ({request_change:+} from {previous_request}); MakeTrigger={trigger}; MakePlan={plan} ({plan_change:+} from {previous_plan}); MakeRun={run} ({run_change:+} from {previous_run}) bytes"
         );
+    }
+}
+#[cfg(test)]
+mod production_yield_tests {
+    use super::make_items_per_process;
+
+    #[test]
+    fn make_yields_match_revision_289_content_rows() {
+        // Source rows: cut_logs.dbrow:1-7 and smithing.dbrow:1123-1317,1343-1352.
+        let mut section = None;
+        let mut product = None;
+        let mut checked = 0;
+
+        for line in include_str!("production_yields.r289.fixture").lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Some(name) = line.strip_prefix('[').and_then(|line| line.strip_suffix(']')) {
+                section = Some(name);
+                product = None;
+                continue;
+            }
+            if let Some(name) = line.strip_prefix("data=product,") {
+                product = Some(name);
+                continue;
+            }
+            if let Some(amount) = line.strip_prefix("data=product_amount,") {
+                let product = product.expect("smithing row product");
+                assert_eq!(section, Some(product), "{product} content row");
+                let amount = amount.parse::<i32>().expect("smithing yield");
+                assert_eq!(make_items_per_process(product), amount, "{product}");
+                checked += 1;
+                continue;
+            }
+            if let Some(amount) = line.strip_prefix("data=shafts,") {
+                assert_eq!(section, Some("fletching_normal"));
+                let amount = amount.parse::<i32>().expect("fletching yield");
+                assert_eq!(make_items_per_process("arrow_shaft"), amount);
+                checked += 1;
+            }
+        }
+
+        assert_eq!(checked, 20);
+        assert_eq!(make_items_per_process("unlisted_product"), 1);
     }
 }

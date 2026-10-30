@@ -55,10 +55,21 @@ The kill count persists across native re-engagements within that step.
 Only a confirmed `Killed` result spends the budget.
 Disappearance, a missing target, or an attempt timeout does not count as a kill.
 
-Non-kill outcomes use a separate re-engagement bound. `until_drop` uses its
-authored `max_kills`; `until` and `win` allow one re-engagement per configured
-target alternative. The count spans the full step, including after successful
-kills. If it is spent, the step fails with the last combat report.
+`until_drop` uses its authored `max_kills`. `until` and `win` use a separate
+content-derived bound. The pinned R289 NPC rows set the maximum respawn rate to
+700 ticks (`content/scripts/areas/area_desert/configs/desert.npc:65`;
+`content/scripts/areas/area_varrock/configs/varrock.npc:626`).
+`NPC_DEL` passes this rate to `World.removeNpc`
+(`engine/src/engine/script/handlers/NpcOps.ts:93-95`), which scales it down by
+player count (`engine/src/engine/World.ts:1312-1333,1731-1734`). The combat
+machine ends a missing-target attempt after three ticks
+(`crates/script/src/combat/machine.rs:1201-1207`). The bound allows enough
+retries to span the 700-tick respawn interval. The calculation uses the
+smaller of the attempt budget and three ticks. The engine uses 1,500 ticks
+when the request sets no budget (`crates/script/src/combat/machine.rs:271-275`).
+A shorter authored budget increases the retry count. The count spans the full
+step, including after successful kills. If it is spent, the step fails with
+the last combat report.
 
 The final permitted kill still receives the normal loot wait and pickup.
 The appearance deadline does not cancel a pickup that already started.
@@ -99,13 +110,17 @@ Then use `make` with neither `loc` nor `anchor`:
 `qty` is a held target: hold at least this many output items after production.
 A fixed menu button counts processes, not output items. The step rounds the
 remaining item target up to the minimum whole-process count needed. A normal
-log fletching process yields 15 arrow shafts
-(`content/scripts/skill_fletching/scripts/cut_logs.rs2:44-47`); smithing
-produces 10 dart tips, 15 arrowheads, five knives or two steel nails per bar
-(`content/scripts/skill_smithing/configs/smithing/smithing.inv:30-35,101-107`,
-with the dart-tip, arrowhead and knife rows repeated for other metal tiers at
-`:66-70,101-106,138-142,173-177,208-212`). Products without a listed yield
-are treated as one item per process.
+log fletching process yields 15 arrow shafts (`cut_logs.dbrow:4`, read by
+`cut_logs.rs2:29`). Smithing sets `product_amount` to 10 dart tips, 15
+arrowheads, five knives, or two nails per bar
+(`smithing.dbrow:1127,1193,1259,1347`). The selected game-data schema does not
+include these server production rows, so `s2.rs` keeps the map. The test
+parses `production_yields.r289.fixture` and checks each listed product against
+its content yield. Products without a listed yield use one item per process.
+
+When a loc-triggered step starts more than six tiles from its anchor, it walks
+to the anchor before it waits for an unseen loc. A failed walk uses the
+Quester's existing bounded step retry.
 
 On a `skill_multi3` chat menu, a fixed button must match the remaining process
 count; `make_x: true` allows the Make-X count dialog when there is no exact

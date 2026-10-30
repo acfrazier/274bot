@@ -501,7 +501,7 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
     let reengage_budget = if let Some(until_drop) = &until_drop {
         until_drop.max_kills
     } else if until.is_some() || win.is_some() {
-        reengagement_alternatives(&target)
+        content_reengagement_budget(args.kill_budget_ticks)
     } else {
         0
     };
@@ -640,12 +640,28 @@ fn compile_target(args: TargetArgs, cx: &CompileContext<'_>) -> Result<Target, C
     })
 }
 
-fn reengagement_alternatives(target: &Target) -> u32 {
-    match target {
-        Target::Npc { types, .. } => u32::try_from(types.len()).unwrap_or(u32::MAX),
-        Target::Attacker { npcs, players } => (*npcs as u32) + (*players as u32),
-        Target::Player { .. } => 1,
-    }
+/// The pinned R289 NPC rows top out at 700 ticks
+/// (`content/scripts/areas/area_desert/configs/desert.npc:65`;
+/// `content/scripts/areas/area_varrock/configs/varrock.npc:626`).
+/// `NPC_DEL` passes this rate to `World.removeNpc`
+/// (`engine/src/engine/script/handlers/NpcOps.ts:93-95`), which scales it down
+/// by player count (`engine/src/engine/World.ts:1312-1333,1731-1734`).
+/// The combat machine ends a missing-target attempt after three ticks
+/// (`combat/machine.rs:1201-1207`), so allow enough non-kill retries to cover
+/// one maximum respawn interval. A shorter requested combat budget needs more
+/// retries. Zero uses the engine's 1,500-tick default (`combat/machine.rs:271-275`).
+const MAX_CONTENT_NPC_RESPAWN_TICKS: u32 = 700;
+const TARGET_GONE_TICKS: u32 = 3;
+const DEFAULT_COMBAT_BUDGET_TICKS: u32 = 1_500;
+
+fn content_reengagement_budget(budget_ticks: u16) -> u32 {
+    let attempt_ticks = if budget_ticks == 0 {
+        DEFAULT_COMBAT_BUDGET_TICKS
+    } else {
+        u32::from(budget_ticks)
+    };
+    let shortest_end_ticks = attempt_ticks.min(TARGET_GONE_TICKS);
+    (MAX_CONTENT_NPC_RESPAWN_TICKS + shortest_end_ticks - 1) / shortest_end_ticks - 1
 }
 
 fn compile_finish(
@@ -876,7 +892,7 @@ struct CombatPlan {
     loot: Arc<[LootItem]>,
     finish: Option<FinishConfig>,
     until_drop: Option<UntilDropConfig>,
-    /// `until_drop` uses its authored kill budget; `until`/`win` use target alternatives.
+    /// `until_drop` uses its authored kill budget; `until`/`win` span a content respawn window.
     reengage_budget: u32,
 }
 

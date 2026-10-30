@@ -1065,7 +1065,7 @@ fn combat_test_run_with_radius(
         lost_radius,
         ..CombatRequest::default()
     };
-    let reengage_budget = super::reengagement_alternatives(&request.target);
+    let reengage_budget = super::content_reengagement_budget(request.budget_ticks);
     CombatRun {
         request: Arc::new(request),
         tables,
@@ -5051,6 +5051,9 @@ fn nonkill_combat_outcomes_reengage_with_a_bounded_content_budget() {
     snapshot.seed_inventory(Vec::new(), 28);
     super::super::tests::seed_dialogue_combat(&mut snapshot, false);
     let mut ledger = None;
+    let reengagement_budget = super::content_reengagement_budget(0);
+    assert_eq!(reengagement_budget, 233);
+    assert_eq!(super::content_reengagement_budget(1), 699);
 
     let mut until_drop = until_drop_test_run(
         imp_target(&selected),
@@ -5085,13 +5088,21 @@ fn nonkill_combat_outcomes_reengage_with_a_bounded_content_budget() {
         not_targeting_others: false,
     };
     let mut until = combat_test_run(target.clone(), None, Some(Arc::new(NeverStop)), vec![]);
-    for (tick, end) in [(30, CombatEnd::NoTarget), (31, CombatEnd::Budget)] {
+    for reengagement in 0..reengagement_budget {
+        let end = match reengagement % 3 {
+            0 => CombatEnd::NoTarget,
+            1 => CombatEnd::Budget,
+            _ => CombatEnd::TargetGone,
+        };
+        let tick = 30 + u64::from(reengagement);
         assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| {
             until.on_combat_report(report(end), cx)
         })
         .is_pending());
+        assert_eq!(until.nonkill_reengagements, reengagement + 1);
     }
-    let exhausted = with_step_context(&snapshot, &mut ledger, 32, |cx| {
+    let exhausted_tick = 30 + u64::from(reengagement_budget);
+    let exhausted = with_step_context(&snapshot, &mut ledger, exhausted_tick, |cx| {
         until.on_combat_report(report(CombatEnd::TargetGone), cx)
     });
     assert!(matches!(
@@ -5114,12 +5125,21 @@ fn nonkill_combat_outcomes_reengage_with_a_bounded_content_budget() {
     })
     .is_pending());
     assert_eq!(cumulative.nonkill_reengagements, 1);
-    assert!(with_step_context(&snapshot, &mut ledger, 35, |cx| {
-        cumulative.on_combat_report(report(CombatEnd::Budget), cx)
-    })
-    .is_pending());
-    assert_eq!(cumulative.nonkill_reengagements, 2);
-    let exhausted = with_step_context(&snapshot, &mut ledger, 36, |cx| {
+    for reengagement in 1..reengagement_budget {
+        let end = if reengagement % 2 == 0 {
+            CombatEnd::Budget
+        } else {
+            CombatEnd::TargetGone
+        };
+        let tick = 35 + u64::from(reengagement - 1);
+        assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| {
+            cumulative.on_combat_report(report(end), cx)
+        })
+        .is_pending());
+        assert_eq!(cumulative.nonkill_reengagements, reengagement + 1);
+    }
+    let exhausted_tick = 35 + u64::from(reengagement_budget - 1);
+    let exhausted = with_step_context(&snapshot, &mut ledger, exhausted_tick, |cx| {
         cumulative.on_combat_report(report(CombatEnd::TargetGone), cx)
     });
     assert!(matches!(
@@ -5133,13 +5153,21 @@ fn nonkill_combat_outcomes_reengage_with_a_bounded_content_budget() {
 
     let mut win = combat_test_run(target, None, None, vec![]);
     win.win = Some(Arc::new(NeverStop));
-    for (tick, end) in [(40, CombatEnd::Budget), (41, CombatEnd::TargetGone)] {
+    for reengagement in 0..reengagement_budget {
+        let end = match reengagement % 3 {
+            0 => CombatEnd::Budget,
+            1 => CombatEnd::TargetGone,
+            _ => CombatEnd::NoTarget,
+        };
+        let tick = 40 + u64::from(reengagement);
         assert!(with_step_context(&snapshot, &mut ledger, tick, |cx| {
             win.on_combat_report(report(end), cx)
         })
         .is_pending());
+        assert_eq!(win.nonkill_reengagements, reengagement + 1);
     }
-    let exhausted = with_step_context(&snapshot, &mut ledger, 42, |cx| {
+    let exhausted_tick = 40 + u64::from(reengagement_budget);
+    let exhausted = with_step_context(&snapshot, &mut ledger, exhausted_tick, |cx| {
         win.on_combat_report(report(CombatEnd::NoTarget), cx)
     });
     assert!(matches!(
