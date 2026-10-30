@@ -1164,7 +1164,7 @@ export default class PrereqHolyCompat extends LoopingBot {{
         if (globalThis.__nav_prereq_started) return;
         globalThis.__nav_prereq_started = true;
         globalThis.__nav_prereq_terminal_count = 0;
-        const options = {{ arriveWithin: 0{options} }};
+        const options = {{ radius: 0{options} }};
         const first = await Traversal.walkTo(
             {{ x: {}, z: {}, level: {} }},
             options
