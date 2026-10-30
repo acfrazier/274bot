@@ -634,7 +634,7 @@ impl TuiApp {
             Some(Modal::FleetCard(picker)) => picker.step(delta as isize),
             Some(Modal::WorldPicker(picker)) => picker.step(delta as isize),
             Some(Modal::Confirm(confirm)) => {
-                let rows = (delta as isize).saturating_mul(3);
+                let rows = delta as i16 * 3;
                 confirm.scroll = confirm.scroll.saturating_add_signed(rows);
             }
             _ => {}

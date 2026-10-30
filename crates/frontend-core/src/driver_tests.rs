@@ -2291,6 +2291,11 @@ fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
 #[test]
 fn unplanned_bulk_start_refuses_quester_without_a_disclosure_plan() {
     let mut d = driver("f3-quester-bulk-start-refused", &["alice", "bob"]);
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).expect("data");
+    d.session_mut()
+        .play_mut()
+        .expect("play")
+        .bind_script_test_data(data);
     let _source = crate::quester_paths::registry_source_test_lock();
     d.poll();
     load(&mut d, &["alice", "bob"]);
@@ -2303,6 +2308,8 @@ fn unplanned_bulk_start_refuses_quester_without_a_disclosure_plan() {
     mark(&mut d, &["alice", "bob"]);
     assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
     run_plan(&mut d);
+    set_quester_queue(&mut d, "alice", &["cook"]);
+    set_quester_queue(&mut d, "bob", &["cook"]);
 
     let start = d
         .submit(OperatorCommand::StartScript, Targets::Everyone)
