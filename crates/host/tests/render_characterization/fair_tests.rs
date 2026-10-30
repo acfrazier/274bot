@@ -229,6 +229,8 @@ impl Slot {
                 .events
                 .recv_timeout(deadline.saturating_duration_since(Instant::now()))
                 .unwrap_or_else(|error| {
+                    let scene_state = *self.control.scene_state.lock().unwrap();
+                    let controlled_now = *self.control.now.lock().unwrap();
                     panic!(
                         "the production slot reaches boundary requested at {}:{}: {error}; observed={observed:?}; generation={}; fair_stats={:?}; refusal={:?}; scene_state={}; controlled_now={:?}; draw={}; title={}",
                         caller.file(),
@@ -236,8 +238,8 @@ impl Slot {
                         self.output.generation(),
                         self.output.fair_stats(),
                         self.output.refusal(),
-                        *self.control.scene_state.lock().unwrap(),
-                        *self.control.now.lock().unwrap(),
+                        scene_state,
+                        controlled_now,
                         self.control.draw.load(Ordering::SeqCst),
                         self.control.title.load(Ordering::SeqCst),
                     )
@@ -1032,11 +1034,11 @@ fn equal_due_game_pane_head_wins_with_sidecar_full_rate() {
     let consumed = game.event(RenderTestPoint::AfterConsume);
     assert!(consumed.event.owns_lease);
     assert_eq!(consumed.at, now);
+    assert_eq!(sidecar.output.fair_stats().unwrap().scene_consumes(), 0);
+    game.release();
     let before_release = game.event(RenderTestPoint::BeforeLeaseRelease);
     assert_eq!(before_release.event.reservation, consumed.event.reservation);
-    assert_eq!(sidecar.output.fair_stats().unwrap().scene_consumes(), 0);
 
-    game.release();
     assert!(
         !game
             .event(RenderTestPoint::AfterLeaseRelease)
