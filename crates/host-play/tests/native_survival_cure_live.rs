@@ -28,6 +28,31 @@ const GATHERER_STAND: WorldTile = WorldTile {
     z: 3234,
     level: 0,
 };
+// m48_50.jm2:4851 places willow loc 1308 (`pack/loc.pack:1309`) at local
+// (16,34), world (3088,3234). The work stand is one tile east.
+const GATHERER_WILLOW_TILE: WorldTile = WorldTile {
+    x: 3088,
+    z: 3234,
+    level: 0,
+};
+// Draynor's bankbooth loc 2213 (`pack/loc.pack:2214`) is at local (19,42),
+// (19,43) and (19,45) in `m48_50.jm2:4979-4982`, hence world (3091,3242),
+// (3091,3243) and (3091,3245). The nearest booth is 10 orthogonal tiles from
+// GATHERER_STAND: 2 east plus 8 north.
+const GATHERER_BANK_BOOTH_TILE: WorldTile = WorldTile {
+    x: 3091,
+    z: 3242,
+    level: 0,
+};
+const GATHERER_RADIUS: u32 = 32;
+const GATHERER_BANK_ONE_WAY_TILES: u32 = 10;
+const GATHERER_CURE_BUDGET_TICKS: u32 = 120;
+// 20 tile steps for the bank round trip, plus the existing 120-tick cure
+// observation budget. All counts are observed game ticks, not wall time.
+const GATHERER_BANK_TRIP_CURE_DEADLINE_TICKS: u32 =
+    GATHERER_BANK_ONE_WAY_TILES * 2 + GATHERER_CURE_BUDGET_TICKS;
+const GATHERER_STARTING_WILLOW_LOGS: i32 = 25;
+const GATHERER_INVENTORY_CAPACITY: i32 = 28;
 const MINING_STAND: WorldTile = WorldTile {
     x: 3253,
     z: 3420,
@@ -68,6 +93,9 @@ const WILLOW_LOG_ID: i32 = 1519;
 const COPPER_ORE_ID: i32 = 436;
 const ANTIPOISON_ALIAS: &str = "1doseantipoison";
 const RUNE_AXE_ALIAS: &str = "rune_axe";
+// content/scripts/skill_firemaking/configs/firemaking.obj:164-166 defines this
+// item alias for logs cut from willow trees.
+const WILLOW_LOGS_ALIAS: &str = "willow_logs";
 const RUNE_PICKAXE_ALIAS: &str = "rune_pickaxe";
 const SINISTER_KEY_ALIAS: &str = "sinister_key";
 const SINISTER_KEY_ID: i32 = 993;
@@ -264,11 +292,18 @@ fn check_cure_outcome(
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BankTripAntipoisonFrame {
+    tick: u32,
+    count: i32,
+}
+
 struct Witness {
     activity: Activity,
     poison_source: PoisonSource,
     expected_key_at_start: i32,
     expected_inventory_extra: i32,
+    expected_resource_at_start: i32,
     poison_during_provisioning: bool,
     skill_name: &'static str,
     skill_stat: i32,
@@ -293,6 +328,18 @@ struct Witness {
     work_active_tick: Option<u32>,
     work_animation_tick: Option<u32>,
     work_animation: Option<AnimationUpdateView>,
+    wait_for_gatherer_bank_trip: bool,
+    bank_trip_start_tick: Option<u32>,
+    bank_trip_inventory_at_start: Option<i32>,
+    bank_trip_bank_open_tick: Option<u32>,
+    bank_trip_deposit_tick: Option<u32>,
+    bank_trip_willow_logs_at_deposit: Option<i32>,
+    bank_trip_willow_logs_deposited: Option<i32>,
+    bank_trip_last_willow_logs: Option<i32>,
+    bank_trip_xp_at_deposit: Option<i32>,
+    bank_trip_work_animation_tick: Option<u32>,
+    bank_trip_work_animation: Option<AnimationUpdateView>,
+    bank_trip_antipoison_frames: Vec<BankTripAntipoisonFrame>,
     poison_source_tick: Option<u32>,
     poison_seed_bank_open: Option<bool>,
     poison_seed_tool_count: Option<i32>,
@@ -372,6 +419,7 @@ fn new_witness(
         poison_source,
         expected_key_at_start,
         expected_inventory_extra,
+        expected_resource_at_start: 0,
         poison_during_provisioning: false,
         skill_name,
         skill_stat,
@@ -396,6 +444,18 @@ fn new_witness(
         work_active_tick: None,
         work_animation_tick: None,
         work_animation: None,
+        wait_for_gatherer_bank_trip: false,
+        bank_trip_start_tick: None,
+        bank_trip_inventory_at_start: None,
+        bank_trip_bank_open_tick: None,
+        bank_trip_deposit_tick: None,
+        bank_trip_willow_logs_at_deposit: None,
+        bank_trip_willow_logs_deposited: None,
+        bank_trip_last_willow_logs: None,
+        bank_trip_xp_at_deposit: None,
+        bank_trip_work_animation_tick: None,
+        bank_trip_work_animation: None,
+        bank_trip_antipoison_frames: Vec::new(),
         poison_source_tick: None,
         poison_seed_bank_open: None,
         poison_seed_tool_count: None,
@@ -715,6 +775,8 @@ fn add_poison_steps(
                 };
                 let active = if witness.poison_during_provisioning {
                     witness.provisioning_tick.is_some()
+                } else if witness.wait_for_gatherer_bank_trip {
+                    witness.bank_trip_work_animation_tick.is_some()
                 } else {
                     match witness.activity {
                         Activity::Woodcutting => {
@@ -766,6 +828,18 @@ fn add_poison_steps(
     }
     let insertion = if before_start { start } else { start + 1 };
     scenario.steps.splice(insertion..insertion, inserted);
+}
+
+fn add_poison_steps_after_gatherer_bank_trip(
+    scenario: &mut scenario::Scenario,
+    witness: Arc<Mutex<Witness>>,
+    budget_ticks: u32,
+) {
+    witness
+        .lock()
+        .expect("survival witness")
+        .wait_for_gatherer_bank_trip = true;
+    add_poison_steps(scenario, witness, false, budget_ticks);
 }
 
 fn teleport_step(name: &'static str, tile: WorldTile) -> scenario::Step {
@@ -973,6 +1047,68 @@ fn capture_active_work(
     }
 }
 
+fn capture_gatherer_bank_trip(snapshot: &GameSnapshot, witness: &mut Witness) {
+    if !witness.wait_for_gatherer_bank_trip
+        || witness.baseline_antipoison != 1
+        || witness.baseline_resource != witness.expected_resource_at_start
+        || witness.bank_trip_work_animation_tick.is_some()
+    {
+        return;
+    }
+    let Some(resource_id) = witness.resource_id else {
+        return;
+    };
+    let now = snapshot.tick();
+    let willow_logs = item_count(snapshot, resource_id);
+    let inventory = inventory_total(snapshot);
+    if witness.bank_trip_start_tick.is_none() {
+        if willow_logs <= witness.baseline_resource || inventory != GATHERER_INVENTORY_CAPACITY {
+            return;
+        }
+        witness.bank_trip_start_tick = Some(now);
+        witness.bank_trip_inventory_at_start = Some(inventory);
+    }
+
+    witness
+        .bank_trip_antipoison_frames
+        .push(BankTripAntipoisonFrame {
+            tick: now,
+            count: item_count(snapshot, witness.antipoison_id),
+        });
+    let bank_open = snapshot.bank_component_id() >= 0 && snapshot.bank_loaded();
+    if bank_open {
+        witness.bank_trip_bank_open_tick.get_or_insert(now);
+    }
+    let previous_willow_logs = witness.bank_trip_last_willow_logs;
+    if witness.bank_trip_deposit_tick.is_none() && bank_open && willow_logs == 0 {
+        witness.bank_trip_deposit_tick = Some(now);
+        witness.bank_trip_willow_logs_at_deposit = Some(willow_logs);
+        witness.bank_trip_willow_logs_deposited = previous_willow_logs;
+        witness.bank_trip_xp_at_deposit = Some(stat_xp(snapshot, witness.skill_stat));
+    }
+    witness.bank_trip_last_willow_logs = Some(willow_logs);
+
+    if let (Some(deposit_tick), Some(xp_at_deposit)) = (
+        witness.bank_trip_deposit_tick,
+        witness.bank_trip_xp_at_deposit,
+    ) {
+        // Woodcutting XP after the deposit proves the resumed work; the
+        // Gatherer may chop the same willow from another adjacent tile or a
+        // nearer willow in its radius, so the tile is not part of the proof.
+        if now > deposit_tick && !bank_open && stat_xp(snapshot, witness.skill_stat) > xp_at_deposit
+        {
+            if let Some(animation) = snapshot
+                .local_player()
+                .and_then(|player| player.animation_update)
+                .filter(|animation| animation.sequence >= 0)
+            {
+                witness.bank_trip_work_animation_tick = Some(now);
+                witness.bank_trip_work_animation = Some(animation);
+            }
+        }
+    }
+}
+
 /// The step owner's report of a typed lethal cure need, in either state that
 /// holds it. `Needed` is the report while the onset latch is open; `Drinking`
 /// is the report when the latch closed at the line's own edge and the bot
@@ -1097,6 +1233,7 @@ fn observe_frame(
         witness.provisioning_tick = Some(snapshot.tick());
     }
     capture_active_work(snapshot, status, witness);
+    capture_gatherer_bank_trip(snapshot, witness);
     let baseline_chat = witness.baseline_chat.unwrap_or(0);
     if witness.poison_tick.is_none()
         && snapshot
@@ -1364,7 +1501,8 @@ fn common_receipt(
     let inventory_at_start = witness.baseline_antipoison
         + witness.baseline_tool
         + witness.baseline_key
-        + witness.expected_inventory_extra;
+        + witness.expected_inventory_extra
+        + witness.baseline_resource;
     let chest_rewards_after_start = i32::from(
         witness.poison_source == PoisonSource::TwistedChest
             && witness.activity != Activity::Dialogue,
@@ -1377,7 +1515,8 @@ fn common_receipt(
         - chest_key_consumed_after_start
         - witness.baseline_antipoison.saturating_sub(antipoison_after)
         + tool_after.saturating_sub(witness.baseline_tool)
-        + resource_after.saturating_sub(witness.baseline_resource);
+        + resource_after
+        - witness.baseline_resource;
     let inventory_matches = if witness.activity == Activity::Dialogue {
         inventory_after == expected_inventory_after
     } else {
@@ -1579,6 +1718,215 @@ fn work_receipt(
     Ok(Some(receipt))
 }
 
+fn check_gatherer_bank_trip_antipoison_frames(
+    frames: &[BankTripAntipoisonFrame],
+    cure_line_tick: Option<u32>,
+) -> Result<i32, String> {
+    let mut minimum = None;
+    for frame in frames {
+        if cure_line_tick.is_none_or(|cure_tick| frame.tick < cure_tick) {
+            minimum = Some(minimum.map_or(frame.count, |count: i32| count.min(frame.count)));
+            if frame.count != 1 {
+                return Err(format!(
+                    "Gatherer bank-trip antipoison count was {} at tick {} before cure line tick {cure_line_tick:?}",
+                    frame.count, frame.tick
+                ));
+            }
+        }
+    }
+    minimum.ok_or_else(|| "no Gatherer bank-trip antipoison frames before cure line".to_owned())
+}
+
+fn check_gatherer_bank_trip_receipt(receipt: &Value) -> Result<(), String> {
+    let tick = |key: &str| {
+        receipt[key]
+            .as_u64()
+            .and_then(|tick| u32::try_from(tick).ok())
+            .ok_or_else(|| format!("Gatherer bank-trip receipt has no valid {key}"))
+    };
+    let count = |key: &str| {
+        receipt[key]
+            .as_i64()
+            .and_then(|count| i32::try_from(count).ok())
+            .ok_or_else(|| format!("Gatherer bank-trip receipt has no valid {key}"))
+    };
+    let start_tick = tick("trip_start_tick")?;
+    let bank_open_tick = tick("bank_open_tick")?;
+    let deposit_tick = tick("willow_logs_deposit_tick")?;
+    let end_tick = tick("trip_end_tick")?;
+    let work_animation_tick = tick("first_work_animation_after_bank_trip_tick")?;
+    let cure_line_tick = tick("cure_line_tick")?;
+    let observed_tick = tick("observed_tick")?;
+    let deadline_ticks = tick("deadline_ticks")?;
+    let elapsed_ticks = tick("trip_and_cure_elapsed_ticks")?;
+    if receipt["bank_opened"].as_bool() != Some(true)
+        || bank_open_tick < start_tick
+        || receipt["willow_logs_deposited"].as_bool() != Some(true)
+        || deposit_tick < bank_open_tick
+        || count("willow_logs_at_deposit")? != 0
+        || count("willow_logs_count_deposited")? <= 0
+        || work_animation_tick != end_tick
+        || end_tick <= deposit_tick
+        || cure_line_tick <= end_tick
+        || observed_tick < cure_line_tick
+        || receipt["bank_closed_at_resumed_work"].as_bool() != Some(true)
+        || deadline_ticks != GATHERER_BANK_TRIP_CURE_DEADLINE_TICKS
+        || observed_tick.saturating_sub(start_tick) != elapsed_ticks
+        || elapsed_ticks > deadline_ticks
+    {
+        return Err(format!(
+            "Gatherer bank-trip facts or {deadline_ticks}-tick observed deadline failed: receipt={receipt}"
+        ));
+    }
+    if count("inventory_at_trip_start")? != GATHERER_INVENTORY_CAPACITY {
+        return Err(format!(
+            "Gatherer bank trip did not start with a full {}-item pack",
+            GATHERER_INVENTORY_CAPACITY
+        ));
+    }
+    let samples = receipt["antipoison_count_frames"]
+        .as_array()
+        .ok_or("Gatherer bank-trip antipoison frames are missing")?;
+    let mut frames = Vec::with_capacity(samples.len());
+    for sample in samples {
+        let tick = sample["tick"]
+            .as_u64()
+            .and_then(|tick| u32::try_from(tick).ok())
+            .ok_or("Gatherer bank-trip frame has no valid tick")?;
+        let count = sample["count"]
+            .as_i64()
+            .and_then(|count| i32::try_from(count).ok())
+            .ok_or("Gatherer bank-trip frame has no valid antipoison count")?;
+        frames.push(BankTripAntipoisonFrame { tick, count });
+    }
+    if frames.first().map(|frame| frame.tick) != Some(start_tick)
+        || frames.last().map(|frame| frame.tick) != Some(end_tick)
+        || frames
+            .iter()
+            .any(|frame| frame.tick < start_tick || frame.tick > end_tick)
+        || frames.windows(2).any(|pair| pair[0].tick > pair[1].tick)
+    {
+        return Err(
+            "Gatherer bank-trip antipoison frames do not span the observed trip".to_owned(),
+        );
+    }
+    let minimum = check_gatherer_bank_trip_antipoison_frames(&frames, Some(cure_line_tick))?;
+    if count("antipoison_count_min_before_cure")? != minimum || minimum != 1 {
+        return Err(format!(
+            "Gatherer bank-trip antipoison minimum before cure was {minimum}, expected 1"
+        ));
+    }
+    let animation_sequence = receipt["first_work_animation_after_bank_trip"]["sequence"]
+        .as_i64()
+        .ok_or("Gatherer post-trip work animation is missing its sequence")?;
+    if animation_sequence < 0 {
+        return Err("Gatherer post-trip work animation has an invalid sequence".to_owned());
+    }
+    Ok(())
+}
+
+fn gatherer_bank_trip_receipt(witness: &Witness, observed_tick: u32) -> Result<Value, String> {
+    let start_tick = witness
+        .bank_trip_start_tick
+        .ok_or("Gatherer bank-trip start frame was not observed")?;
+    let bank_open_tick = witness
+        .bank_trip_bank_open_tick
+        .ok_or("Gatherer bank did not open during the trip")?;
+    let deposit_tick = witness
+        .bank_trip_deposit_tick
+        .ok_or("Gatherer willow logs were not deposited")?;
+    let logs_at_deposit = witness
+        .bank_trip_willow_logs_at_deposit
+        .ok_or("Gatherer willow-log deposit count was not observed")?;
+    let logs_deposited = witness
+        .bank_trip_willow_logs_deposited
+        .ok_or("Gatherer willow-log deposit amount was not observed")?;
+    let work_animation_tick = witness
+        .bank_trip_work_animation_tick
+        .ok_or("Gatherer did not resume willow work after the bank trip")?;
+    let work_animation = witness
+        .bank_trip_work_animation
+        .ok_or("Gatherer post-trip work animation was not observed")?;
+    let cure_line_tick = witness
+        .cure_tick
+        .ok_or("Gatherer cure line was not observed after the bank trip")?;
+    let elapsed_ticks = observed_tick
+        .checked_sub(start_tick)
+        .ok_or("Gatherer observed tick reset during the bank-trip proof")?;
+    if elapsed_ticks > GATHERER_BANK_TRIP_CURE_DEADLINE_TICKS {
+        return Err(format!(
+            "Gatherer bank trip and cure exceeded {} observed game ticks: start={start_tick}, now={observed_tick}, elapsed={elapsed_ticks}",
+            GATHERER_BANK_TRIP_CURE_DEADLINE_TICKS
+        ));
+    }
+    let minimum = check_gatherer_bank_trip_antipoison_frames(
+        &witness.bank_trip_antipoison_frames,
+        Some(cure_line_tick),
+    )?;
+    let receipt = json!({
+        "trip_start_tick": start_tick,
+        "inventory_at_trip_start": witness.bank_trip_inventory_at_start,
+        "bank_opened": true,
+        "bank_open_tick": bank_open_tick,
+        "willow_logs_deposited": logs_deposited > 0 && logs_at_deposit == 0,
+        "willow_logs_count_deposited": logs_deposited,
+        "willow_logs_at_deposit": logs_at_deposit,
+        "willow_logs_deposit_tick": deposit_tick,
+        "antipoison_count_frames": witness
+            .bank_trip_antipoison_frames
+            .iter()
+            .map(|frame| json!({"tick": frame.tick, "count": frame.count}))
+            .collect::<Vec<_>>(),
+        "antipoison_count_min_before_cure": minimum,
+        "first_work_animation_after_bank_trip_tick": work_animation_tick,
+        "first_work_animation_after_bank_trip": work_animation,
+        "bank_closed_at_resumed_work": true,
+        "trip_end_tick": work_animation_tick,
+        "cure_line_tick": cure_line_tick,
+        "observed_tick": observed_tick,
+        "deadline_ticks": GATHERER_BANK_TRIP_CURE_DEADLINE_TICKS,
+        "trip_and_cure_elapsed_ticks": elapsed_ticks,
+    });
+    check_gatherer_bank_trip_receipt(&receipt)?;
+    Ok(receipt)
+}
+
+fn gatherer_bank_trip_work_receipt(
+    snapshot: &GameSnapshot,
+    status: Option<&ScriptStatus>,
+    witness: &Witness,
+) -> Result<Option<Value>, String> {
+    if let Some(start_tick) = witness.bank_trip_start_tick {
+        check_gatherer_bank_trip_antipoison_frames(
+            &witness.bank_trip_antipoison_frames,
+            witness.cure_tick,
+        )?;
+        let elapsed_ticks = snapshot
+            .tick()
+            .checked_sub(start_tick)
+            .ok_or("Gatherer observed tick reset during the bank-trip proof")?;
+        if elapsed_ticks > GATHERER_BANK_TRIP_CURE_DEADLINE_TICKS {
+            return Err(format!(
+                "Gatherer bank trip and cure exceeded {} observed game ticks: start={start_tick}, now={}, elapsed={elapsed_ticks}",
+                GATHERER_BANK_TRIP_CURE_DEADLINE_TICKS,
+                snapshot.tick()
+            ));
+        }
+    }
+    let Some(mut receipt) = work_receipt(
+        snapshot,
+        status,
+        witness,
+        "Gatherer",
+        GATHERER_CURE_BUDGET_TICKS,
+    )?
+    else {
+        return Ok(None);
+    };
+    receipt["gatherer_bank_trip"] = gatherer_bank_trip_receipt(witness, snapshot.tick())?;
+    Ok(Some(receipt))
+}
+
 fn matches_desert_captain_opening_options(options: &[String]) -> bool {
     options.len() == DESERT_CAPTAIN_OPENING_OPTIONS.len()
         && options
@@ -1706,7 +2054,8 @@ fn observe_start(snapshot: &GameSnapshot, witness: &mut Witness) -> Result<Value
     let inventory_expected = witness.baseline_antipoison
         + witness.baseline_tool
         + witness.baseline_key
-        + witness.expected_inventory_extra;
+        + witness.expected_inventory_extra
+        + witness.expected_resource_at_start;
     let inventory_observed = inventory_total(snapshot);
     let tile = snapshot.tile();
     if tile != Some((witness.stand.x, witness.stand.z, witness.stand.level))
@@ -1715,25 +2064,35 @@ fn observe_start(snapshot: &GameSnapshot, witness: &mut Witness) -> Result<Value
         || witness.baseline_antipoison != 1
         || witness.baseline_tool != witness.expected_tool_at_start
         || witness.baseline_key != witness.expected_key_at_start
-        || witness.baseline_resource != 0
+        || witness.baseline_resource != witness.expected_resource_at_start
         || inventory_observed != inventory_expected
         || snapshot.modals().chat != -1
     {
         return Err(format!(
-            "own-state fixture mismatch: tile={tile:?}, expected={:?}, HP={hp}, {}={skill}, antipoison={}, tool={}, key={}, resource={}, inventory_total={inventory_observed}, expected_total={inventory_expected}, chat_modal={}",
+            "own-state fixture mismatch: tile={tile:?}, expected={:?}, HP={hp}, {}={skill}, antipoison={}, tool={}, key={}, resource={} (expected {}), inventory_total={inventory_observed}, expected_total={inventory_expected}, chat_modal={}",
             witness.stand,
             witness.skill_name,
             witness.baseline_antipoison,
             witness.baseline_tool,
             witness.baseline_key,
             witness.baseline_resource,
+            witness.expected_resource_at_start,
             snapshot.modals().chat,
         ));
     }
     Ok(json!({
-        "seed": match (witness.activity, witness.expected_tool_at_start) {
-            (Activity::Dialogue, _) => "account-owned stats, one antipoison dose and nine herbs from the Yanille chest",
-            (_, 0) => "account-owned stats, one antipoison dose and a banked work tool",
+        "seed": match (
+            witness.activity,
+            witness.expected_tool_at_start,
+            witness.expected_resource_at_start > 0,
+        ) {
+            (Activity::Dialogue, _, _) => {
+                "account-owned stats, one antipoison dose and nine herbs from the Yanille chest"
+            }
+            (Activity::Woodcutting, _, true) => {
+                "account-owned stats, one antipoison dose, rune axe and 25 willow logs"
+            }
+            (_, 0, _) => "account-owned stats, one antipoison dose and a banked work tool",
             _ => "account-owned stats, one antipoison dose, the work tool and a sinister key",
         },
         "start_tile": tile,
@@ -1890,6 +2249,120 @@ fn live_l_cure_when_needed_drains_willow_and_resumes_gatherer() {
         proof["skill_xp_after"].as_i64().unwrap() > proof["skill_xp_at_need"].as_i64().unwrap()
     );
     assert_common_cure(proof, 120);
+}
+
+#[test]
+#[ignore = "requires LIVE=1, Engine L debug procedures enabled (debug: true), and isolated HOME"]
+fn live_l_cure_gatherer_keeps_dose_through_bank_trip_and_resumes() {
+    assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
+    let willow_distance = GATHERER_STAND
+        .x
+        .abs_diff(GATHERER_WILLOW_TILE.x)
+        .max(GATHERER_STAND.z.abs_diff(GATHERER_WILLOW_TILE.z));
+    assert!(willow_distance <= GATHERER_RADIUS);
+    assert_eq!(GATHERER_STAND.level, GATHERER_WILLOW_TILE.level);
+    let bank_walk_tiles = GATHERER_STAND.x.abs_diff(GATHERER_BANK_BOOTH_TILE.x)
+        + GATHERER_STAND.z.abs_diff(GATHERER_BANK_BOOTH_TILE.z);
+    assert_eq!(bank_walk_tiles, GATHERER_BANK_ONE_WAY_TILES);
+    assert_eq!(
+        GATHERER_BANK_TRIP_CURE_DEADLINE_TICKS,
+        bank_walk_tiles * 2 + GATHERER_CURE_BUDGET_TICKS
+    );
+    assert_eq!(
+        GATHERER_STARTING_WILLOW_LOGS + 2,
+        GATHERER_INVENTORY_CAPACITY - 1
+    );
+    let mut cell = fixture(
+        Activity::Woodcutting,
+        "L-CURE-GATHERER-BANK-TRIP",
+        GATHERER_STAND,
+        &[
+            (RUNE_AXE_ALIAS, 1),
+            (ANTIPOISON_ALIAS, 1),
+            (WILLOW_LOGS_ALIAS, GATHERER_STARTING_WILLOW_LOGS),
+        ],
+        &[("cookquest", 0)],
+        vec![],
+        Mode::Stage {
+            expect: vec!["cook:0".into()],
+        },
+    );
+    let witness = new_witness(
+        Activity::Woodcutting,
+        "Woodcutting",
+        WOODCUTTING_STAT,
+        Some(WILLOW_LOG_ID),
+        Some(RUNE_AXE_ALIAS),
+        PoisonSource::AccountStateDebugProc,
+        GATHERER_STAND,
+    );
+    witness
+        .lock()
+        .expect("survival witness")
+        .expected_resource_at_start = GATHERER_STARTING_WILLOW_LOGS;
+    add_poison_steps_after_gatherer_bank_trip(
+        &mut cell.scenario,
+        Arc::clone(&witness),
+        GATHERER_BANK_TRIP_CURE_DEADLINE_TICKS,
+    );
+    let settings: Map<String, Value> = serde_json::from_value(json!({
+        "skill":"Woodcutting",
+        "woodcuttingResources":["willow"],
+        "miningResources":[],
+        "targetPreference":"Nearest",
+        "location":"Start",
+        "radius":GATHERER_RADIUS,
+        "disposition":"Bank",
+        "bank":"Nearest"
+    }))
+    .expect("Gatherer bank settings");
+    let receipt = run_family(
+        cell,
+        "Gatherer",
+        settings,
+        Arc::clone(&witness),
+        vault::CurePoison::WhenNeeded,
+        gatherer_bank_trip_work_receipt,
+    );
+    let proof = &receipt["family_receipt"];
+    assert_eq!(proof["family"], "Gatherer");
+    assert_eq!(proof["poison_source"], "account-state-debugproc");
+    assert_eq!(proof["poison_source_chat_modal"], -1);
+    assert_eq!(proof["stand"]["x"], GATHERER_STAND.x);
+    assert_eq!(proof["stand"]["z"], GATHERER_STAND.z);
+    assert_eq!(
+        proof["resource_count_at_start"],
+        GATHERER_STARTING_WILLOW_LOGS
+    );
+    assert!(
+        proof["skill_xp_after"].as_i64().unwrap() > proof["skill_xp_at_need"].as_i64().unwrap()
+    );
+    let trip = &proof["gatherer_bank_trip"];
+    assert_eq!(trip["bank_opened"], true);
+    assert_eq!(trip["inventory_at_trip_start"], GATHERER_INVENTORY_CAPACITY);
+    assert_eq!(trip["willow_logs_deposited"], true);
+    assert_eq!(trip["willow_logs_at_deposit"], 0);
+    assert!(trip["willow_logs_count_deposited"].as_i64().unwrap() > 0);
+    assert_eq!(trip["antipoison_count_min_before_cure"], 1);
+    assert_eq!(
+        trip["first_work_animation_after_bank_trip_tick"],
+        trip["trip_end_tick"]
+    );
+    assert!(
+        trip["first_work_animation_after_bank_trip"]["sequence"]
+            .as_i64()
+            .unwrap()
+            >= 0
+    );
+    assert_eq!(
+        trip["deadline_ticks"],
+        GATHERER_BANK_TRIP_CURE_DEADLINE_TICKS
+    );
+    assert!(
+        trip["trip_and_cure_elapsed_ticks"].as_u64().unwrap()
+            <= u64::from(GATHERER_BANK_TRIP_CURE_DEADLINE_TICKS)
+    );
+    assert_common_cure(proof, u64::from(GATHERER_CURE_BUDGET_TICKS));
 }
 
 static PATH_SOURCE_LOCK: Mutex<()> = Mutex::new(());
@@ -2325,6 +2798,56 @@ mod oracle_tests {
     #[test]
     fn a_receipt_before_the_first_scheduled_fire_is_not_a_pass() {
         assert!(check_cure_outcome(Some(40), Some(42), &[], 70).is_err());
+    }
+
+    fn bank_trip_oracle_receipt(antipoison_frames: Value) -> Value {
+        json!({
+            "trip_start_tick": 40,
+            "inventory_at_trip_start": GATHERER_INVENTORY_CAPACITY,
+            "bank_opened": true,
+            "bank_open_tick": 48,
+            "willow_logs_deposited": true,
+            "willow_logs_count_deposited": 26,
+            "willow_logs_at_deposit": 0,
+            "willow_logs_deposit_tick": 49,
+            "antipoison_count_frames": antipoison_frames,
+            "antipoison_count_min_before_cure": 1,
+            "first_work_animation_after_bank_trip_tick": 60,
+            "first_work_animation_after_bank_trip": {"sequence": 867, "serial": 12},
+            "bank_closed_at_resumed_work": true,
+            "trip_end_tick": 60,
+            "cure_line_tick": 70,
+            "observed_tick": 100,
+            "deadline_ticks": GATHERER_BANK_TRIP_CURE_DEADLINE_TICKS,
+            "trip_and_cure_elapsed_ticks": 60,
+        })
+    }
+
+    #[test]
+    fn gatherer_bank_trip_receipt_accepts_dose_retained_through_trip() {
+        let receipt = bank_trip_oracle_receipt(json!([
+            {"tick": 40, "count": 1},
+            {"tick": 41, "count": 1},
+            {"tick": 48, "count": 1},
+            {"tick": 49, "count": 1},
+            {"tick": 60, "count": 1},
+        ]));
+        assert_eq!(check_gatherer_bank_trip_receipt(&receipt), Ok(()));
+    }
+
+    #[test]
+    fn gatherer_bank_trip_receipt_names_tick_when_deposit_loses_dose() {
+        let mut receipt = bank_trip_oracle_receipt(json!([
+            {"tick": 40, "count": 1},
+            {"tick": 41, "count": 1},
+            {"tick": 48, "count": 1},
+            {"tick": 49, "count": 0},
+            {"tick": 60, "count": 0},
+        ]));
+        receipt["antipoison_count_min_before_cure"] = json!(0);
+        let error = check_gatherer_bank_trip_receipt(&receipt)
+            .expect_err("depositing the antipoison dose must fail");
+        assert!(error.contains("tick 49"), "{error}");
     }
 
     fn lethal_report(decision: Decision) -> SurvivalReport {
