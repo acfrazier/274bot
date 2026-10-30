@@ -1569,6 +1569,91 @@ fn background_step_warns_at_exact_stall_limit_without_settling_the_job() {
     assert!(shared.lock().shared.active.lock().is_none());
 }
 
+struct ConsumedDropPanic {
+    entered: mpsc::SyncSender<()>,
+    release: mpsc::Receiver<()>,
+}
+
+impl CooperativeJob for ConsumedDropPanic {
+    type Output = u32;
+    type Error = TestError;
+    type Phase = PreparationPhase;
+
+    fn step(&mut self, _context: &mut StepContext<'_, Self::Phase>) -> StepOutcome<u32, TestError> {
+        StepOutcome::Completed(12)
+    }
+
+    fn retained(&self) -> RetainedState {
+        RetainedState::clean(0)
+    }
+}
+
+impl Drop for ConsumedDropPanic {
+    fn drop(&mut self) {
+        self.entered.send(()).expect("test observes job cleanup");
+        self.release.recv().expect("test releases the cleanup panic");
+        panic!("injected uncontained panic after terminal consumption");
+    }
+}
+
+#[test]
+fn worker_panic_after_terminal_consumption_retires_custody_without_relocking_registry() {
+    let shared = new_service(Arc::new(ManualClock::new()));
+    let worker_shared = Arc::clone(&shared.lock().shared);
+    let conditions = conditions(&shared);
+    let input = TestInput {
+        charge: WorkCharge::new(4, 8, 16, 1),
+    };
+    let (entered_tx, entered_rx) = mpsc::sync_channel(0);
+    let (release_tx, release_rx) = mpsc::sync_channel(0);
+    let ticket = submit(
+        &shared,
+        &input,
+        ConsumedDropPanic {
+            entered: entered_tx,
+            release: release_rx,
+        },
+        &conditions,
+    );
+    entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("completed job is held in cleanup before the panic");
+    assert_eq!(shared.lock().consume(&ticket), Ok(Settlement::Completed(12)));
+    assert_eq!(shared.lock().capacity().jobs(), 1);
+    release_tx.send(()).expect("panic after terminal consumption");
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let epoch = worker_shared.notifier.epoch.load(Ordering::Acquire);
+        if worker_shared.exited.load(Ordering::Acquire) {
+            break;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            // The broken cleanup holds `active`; dropping the service would
+            // deadlock this failure too. Keep its stranded custody owned
+            // until the failing test process exits.
+            std::mem::forget(shared);
+            panic!("worker panic cleanup did not exit after terminal consumption");
+        }
+        worker_shared.notifier.wait_for_change(epoch, remaining);
+    }
+
+    {
+        let service = shared.lock();
+        assert_eq!(service.capacity().jobs(), 0);
+        assert_eq!(
+            service
+                .conditions()
+                .latched(ProcessServiceCode::WorkAdmissionUnavailable)
+                .unwrap()
+                .cause(),
+            ConditionCause::Panicked
+        );
+    }
+    WorkService::shutdown(&shared).expect("panic worker can be joined");
+}
+
 struct RetainedPanic;
 
 impl CooperativeJob for RetainedPanic {
