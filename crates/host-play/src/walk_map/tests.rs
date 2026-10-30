@@ -1982,7 +1982,7 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
             &nav.collision,
             &nav.graph,
             crossing.takeoff,
-            &[world_tile(destination)],
+            &[wt(destination.x, destination.z, destination.level)],
             FindOptions::default(),
             &state,
             &[],
