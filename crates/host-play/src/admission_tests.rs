@@ -781,7 +781,10 @@ fn u6_real_budget_one_corridor_still_runs_witness_and_named_retry() {
         (result, observed_errors)
     });
 
-    assert_eq!(errors, [RouteError::BudgetExhausted, RouteError::BudgetExhausted]);
+    assert_eq!(
+        errors,
+        [RouteError::BudgetExhausted, RouteError::BudgetExhausted]
+    );
     assert_eq!(
         kernels, 5,
         "the incomplete search still runs the witness and one named retry"

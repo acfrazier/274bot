@@ -1545,8 +1545,9 @@ mod walk_permission_tests {
     }
     #[test]
     fn incomplete_search_stays_within_the_compat_blocked_result() {
-        let detail: Arc<str> =
-            Arc::from("search_result=BudgetExhausted nodes_settled=unavailable (incomplete search)");
+        let detail: Arc<str> = Arc::from(
+            "search_result=BudgetExhausted nodes_settled=unavailable (incomplete search)",
+        );
         let receipt = WalkReceipt {
             goal: None,
             request_id: 7,
@@ -1574,7 +1575,6 @@ mod walk_permission_tests {
             "script callers still receive the compat Blocked error variant",
         );
     }
-
 
     #[test]
     fn typed_refusal_supplies_a_reason_when_host_detail_is_absent() {

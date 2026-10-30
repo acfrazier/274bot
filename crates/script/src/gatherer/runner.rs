@@ -128,10 +128,7 @@ enum TripStep {
 }
 
 fn walk_failure_message(receipt: &WalkReceipt) -> String {
-    if matches!(
-        receipt.refusal,
-        Some(WalkRefusal::SearchIncomplete { .. })
-    ) {
+    if matches!(receipt.refusal, Some(WalkRefusal::SearchIncomplete { .. })) {
         return match receipt.failure_detail().filter(|detail| !detail.is_empty()) {
             Some(detail) => format!("walk search incomplete: {detail}"),
             None => "walk search incomplete".to_owned(),
@@ -2579,7 +2576,6 @@ impl Gatherer {
     }
 }
 
-
 #[cfg(test)]
 #[path = "runner_switch_tests.rs"]
 mod switch_tests;
@@ -2591,8 +2587,9 @@ mod tests {
 
     #[test]
     fn gatherer_names_incomplete_search_as_non_risk_failure() {
-        let detail: Arc<str> =
-            Arc::from("search_result=BudgetExhausted nodes_settled=unavailable (incomplete search)");
+        let detail: Arc<str> = Arc::from(
+            "search_result=BudgetExhausted nodes_settled=unavailable (incomplete search)",
+        );
         let receipt = WalkReceipt {
             goal: None,
             request_id: 1,

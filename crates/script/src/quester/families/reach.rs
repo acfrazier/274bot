@@ -1539,10 +1539,7 @@ pub(super) fn loc_wall_fallback_tile(
 pub(super) fn loc_wall_route_failed(receipt: &WalkReceipt) -> bool {
     receipt.end == WalkEnd::NoPath
         || (receipt.end == WalkEnd::Refused
-            && matches!(
-                receipt.refusal,
-                Some(WalkRefusal::SearchIncomplete { .. })
-            ))
+            && matches!(receipt.refusal, Some(WalkRefusal::SearchIncomplete { .. })))
 }
 
 pub fn last_chat_seq(cx: &ActionContext<'_>) -> i32 {

@@ -1045,8 +1045,7 @@ impl MapCommand {
             {
                 return Err(ActionError::SearchIncomplete {
                     detail: detail.as_deref().map(str::to_owned).unwrap_or_else(|| {
-                        "Search stopped before it could determine whether a route exists"
-                            .to_owned()
+                        "Search stopped before it could determine whether a route exists".to_owned()
                     }),
                 });
             }

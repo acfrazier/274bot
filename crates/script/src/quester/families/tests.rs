@@ -7795,10 +7795,7 @@ fn loc_wall_fallback_accepts_typed_incomplete_search_not_text() {
     });
     assert!(reach::loc_wall_route_failed(&incomplete));
     assert!(
-        !reach::loc_wall_route_failed(&mapped_walk_receipt(
-            WalkEnd::Refused,
-            Some(detail),
-        )),
+        !reach::loc_wall_route_failed(&mapped_walk_receipt(WalkEnd::Refused, Some(detail),)),
         "diagnostic text alone cannot trigger the bounded wall retry",
     );
 

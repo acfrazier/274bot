@@ -30,8 +30,8 @@ use nav_planner::producer::{lease as nav_lease, OwnerResultLedger, OwnerResultRe
 use nav_planner::router::find_missing_item_reqs_with_avoid;
 use nav_planner::router::{
     AvoidRect, BlockerDiagnosis, CompactFallbackRoute, CompactRoute, CursorStep, FindOptions,
-    MissingReqView, MissingRequirements, Route, RouteError, SearchCursor,
-    SearchOutcome, SearchPreflight, SearchRequest, SearchRequestShape, NODE_BUDGET,
+    MissingReqView, MissingRequirements, Route, RouteError, SearchCursor, SearchOutcome,
+    SearchPreflight, SearchRequest, SearchRequestShape, NODE_BUDGET,
 };
 use nav_planner::world::NavWorld;
 use nav_planner::zones::{ZoneExempt, ZoneFilterOwned, ZoneKey};
@@ -1856,8 +1856,6 @@ impl RouteJob {
         }
     }
 
-
-
     fn handle_search(
         &mut self,
         search: SearchOutcome,
@@ -3586,10 +3584,12 @@ fn apply_route_output(
                     no_path.then(|| Arc::from("No route within the request's hard constraints"))
                 });
             let detail = match (output.search_result, detail) {
-                (Some(search_result), Some(detail)) => {
-                    Some(Arc::from(format!("search_result={search_result}; {detail}")))
+                (Some(search_result), Some(detail)) => Some(Arc::from(format!(
+                    "search_result={search_result}; {detail}"
+                ))),
+                (Some(search_result), None) => {
+                    Some(Arc::from(format!("search_result={search_result}")))
                 }
-                (Some(search_result), None) => Some(Arc::from(format!("search_result={search_result}"))),
                 (None, detail) => detail,
             };
             let refusal = output.refusal.take().or_else(|| {
@@ -7498,8 +7498,7 @@ mod diagnostic_tests {
         request.from = from;
         request.to = to;
         request.arrival = ArrivalKind::Area;
-        request.candidate_goals =
-            Some(script::native::WalkGoals::new(vec![to]).unwrap());
+        request.candidate_goals = Some(script::native::WalkGoals::new(vec![to]).unwrap());
         request.opts = FindOptions::default();
         request.admission = crate::admission::Admission::manual(
             request.opts,
@@ -7573,10 +7572,7 @@ mod diagnostic_tests {
             &WorldState::empty(),
         );
         assert!(matches!(search.route(), Err(RouteError::NoPath)));
-        assert_eq!(
-            search.proof(),
-            nav_planner::router::ReverseProof::Abandoned
-        );
+        assert_eq!(search.proof(), nav_planner::router::ReverseProof::Abandoned);
         assert_eq!(search.settled(), 400 * 769);
 
         let request = first_goal_area_request(Arc::clone(&world), from, to);
@@ -7603,14 +7599,8 @@ mod diagnostic_tests {
             FindOptions::default(),
             &WorldState::empty(),
         );
-        assert!(matches!(
-            search.route(),
-            Err(RouteError::BudgetExhausted)
-        ));
-        assert_eq!(
-            search.proof(),
-            nav_planner::router::ReverseProof::Abandoned
-        );
+        assert!(matches!(search.route(), Err(RouteError::BudgetExhausted)));
+        assert_eq!(search.proof(), nav_planner::router::ReverseProof::Abandoned);
         let settled = search.settled();
 
         let mut job = RouteJob::prepare(
@@ -7641,13 +7631,11 @@ mod diagnostic_tests {
                 nodes_settled: Some(settled),
             }),
         );
-        assert!(
-            !output
-                .detail
-                .as_deref()
-                .unwrap_or_default()
-                .contains("Insufficient route supplies"),
-        );
+        assert!(!output
+            .detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Insufficient route supplies"),);
     }
 
     pub(super) fn tiny_stage_request() -> Box<ScriptRouteRequest> {

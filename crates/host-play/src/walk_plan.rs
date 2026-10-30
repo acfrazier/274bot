@@ -298,7 +298,8 @@ pub(super) fn route_or_bank_fetch(
         Ok(route) => RouteOutcome::Routed(route),
         Err(error) => {
             let incomplete = error == nav_planner::router::RouteError::BudgetExhausted;
-            let fetched = opts.allow_bank_fetch
+            let fetched = opts
+                .allow_bank_fetch
                 .then(|| {
                     find_missing_item_reqs_with_avoid(
                         &world.collision,
@@ -337,7 +338,6 @@ pub(super) fn route_or_bank_fetch(
             })
         }
     }
-
 }
 /// Re-find `to` against a planned session's post state (ADR 0005: find
 /// itself stays fail-closed; the session is what unblocks).

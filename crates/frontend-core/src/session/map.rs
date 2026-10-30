@@ -14,9 +14,9 @@ use crate::launch::BoundProfile;
 use crate::map_bake::MapBakeGate;
 use crate::surface::{InputEv, InputSender};
 use crate::walk_map::{
-    observed_walk_services, RouteProjectionView, WalkActionError, WalkActionKind, WalkCatalogue,
-    WalkExclude, WalkMap, WalkMapContext, WalkMapDemand, WalkMapDemandHandle, WalkMapJobState,
-    WalkObservedService, WalkReadyCatalogue, WalkSlotStatus,
+    observed_walk_services, RouteProjectionView, WalkActionError, WalkActionErrorKind,
+    WalkActionKind, WalkCatalogue, WalkExclude, WalkMap, WalkMapContext, WalkMapDemand,
+    WalkMapDemandHandle, WalkMapJobState, WalkObservedService, WalkReadyCatalogue, WalkSlotStatus,
 };
 use crate::OperatorSession;
 
@@ -758,7 +758,7 @@ impl<Io> OperatorSession<Io> {
                 Applied::Done
             }
             Err(error) => {
-                if error.kind() == crate::walk_map::WalkActionErrorKind::NoPath {
+                if preserves_walk_destination(error.kind()) {
                     desk.walk_dest = planned;
                 }
                 if name.is_none() {
@@ -1075,6 +1075,12 @@ impl<Io> OperatorSession<Io> {
             .map_err(WalkActionError::from_host)
     }
 }
+fn preserves_walk_destination(kind: WalkActionErrorKind) -> bool {
+    matches!(
+        kind,
+        WalkActionErrorKind::NoPath | WalkActionErrorKind::SearchIncomplete
+    )
+}
 
 fn walk_action_applied(error: WalkActionError) -> super::commands::Applied {
     use super::commands::Applied;
@@ -1157,5 +1163,16 @@ mod tests {
         desk.begin_game_input_frame();
         assert!(!desk.game_input.is_overflowed());
         assert!(!desk.has_staged_game_input());
+    }
+
+    #[test]
+    fn incomplete_search_preserves_walk_destination_for_retry() {
+        assert!(preserves_walk_destination(
+            WalkActionErrorKind::SearchIncomplete
+        ));
+        assert!(preserves_walk_destination(WalkActionErrorKind::NoPath));
+        assert!(!preserves_walk_destination(
+            WalkActionErrorKind::RiskRefused
+        ));
     }
 }
