@@ -20,7 +20,7 @@ export type PrereqRowWire = {
     crossings: CrossingWire[];
     establishes: { quest: string; signal: string; values: RangeWire };
     after: { proves: RangeWire; after: RangeWire }[];
-    reviewed_writes: { write: string; sets: number; guard: string; guard_text: string; called_from: string }[];
+    reviewed_writes: { write: string; sets: number; guard: string; guard_text: string; called_from: string; polarity?: boolean }[];
     probe: { refuse: { page: string; then: string | { precondition: unknown }; proves: RangeWire; source: SourceWire }[] };
     target: { npc: number; op: number; anchor: TileWire; leash: number; source: SourceWire };
     preconditions: unknown[];
@@ -49,6 +49,7 @@ export type PrereqJournalWire = {
     quest: string;
     establishes: { quest: string; signal: string; values: RangeWire };
     after: { proves: RangeWire; after: RangeWire }[];
+    reviewed_writes: PrereqRowWire['reviewed_writes'];
     rules: PrereqJournalRuleWire[];
     source: SourceWire;
 };
@@ -144,7 +145,7 @@ function loadAuthoredTemplates(): AuthoredPrereqTemplates {
         }
     }
     for (const value of parsed.journals) {
-        if (!isRecord(value) || Object.keys(value).sort().join(',') !== 'after,establishes,id,quest,rules,source'
+        if (!isRecord(value) || Object.keys(value).sort().join(',') !== 'after,establishes,id,quest,reviewed_writes,rules,source'
             || typeof value.id !== 'string' || value.id.length === 0
             || typeof value.quest !== 'string' || value.quest.length === 0
             || typeof value.source !== 'string' || value.source.length === 0
@@ -152,7 +153,7 @@ function loadAuthoredTemplates(): AuthoredPrereqTemplates {
             || typeof value.establishes.quest !== 'string' || value.establishes.quest.length === 0
             || typeof value.establishes.signal !== 'string' || value.establishes.signal.length === 0
             || !isRangeWire(value.establishes.values)
-            || !Array.isArray(value.after) || !Array.isArray(value.rules) || value.rules.length === 0) {
+            || !Array.isArray(value.after) || !Array.isArray(value.reviewed_writes) || !Array.isArray(value.rules) || value.rules.length === 0) {
             throw new Error('prereq_steps: authored journal is malformed');
         }
         for (const rule of value.after) {
@@ -557,6 +558,11 @@ function sourcePaths(content: string, rows: PrereqRowWire[], journals: PrereqJou
     for (const journal of journals) {
         add(journal.source);
         for (const rule of journal.rules) add(rule.source);
+        for (const write of journal.reviewed_writes) {
+            add(write.write);
+            add(write.guard);
+            add(write.called_from);
+        }
     }
     return [...found].sort();
 }

@@ -176,6 +176,7 @@ function journal(proves: [number, number], after: [number, number]): PrereqJourn
             values: { min: after[0], max: after[1] },
         },
         after: [{ proves: { min: proves[0], max: proves[1] }, after: { min: after[0], max: after[1] } }],
+        reviewed_writes: [],
         rules: [{ all: ['journal text'], proves: { min: proves[0], max: proves[1] }, source: 'scripts/journal.rs2:1' }],
         source: 'scripts/journal.rs2:1',
     };
@@ -212,4 +213,33 @@ withContent({
         () => assertPrereqPreservation(content, [], undefined, [journal([0, 0], [0, 0])]),
         /after \[0,0\] is \[0,1\]/,
     );
+});
+
+withContent({
+    [constants]: '^zero = 0\n^one = 1\n',
+    'scripts/dialogue-case.rs2': [
+        '[opnpc1,root]',
+        'if (%progress = ^zero) {',
+        '    @choose(8);',
+        '}',
+        '@choose(9);',
+        '[label,choose](int $option)',
+        'switch_int($option) {',
+        'case 8:',
+        '    %progress = ^zero;',
+        'case 9:',
+        '    return;',
+        '}',
+    ].join('\n'),
+}, (content) => {
+    const fact = journal([1, 1], [1, 1]);
+    assert.throws(() => assertPrereqPreservation(content, [], undefined, [fact]), /after \[1,1\] is \[0,1\]/);
+    fact.reviewed_writes = [{
+        write: 'scripts/dialogue-case.rs2:9', sets: 0,
+        guard: 'scripts/dialogue-case.rs2:2-3', guard_text: '%progress = ^zero',
+        called_from: 'scripts/dialogue-case.rs2:3', polarity: true,
+    }];
+    assertPrereqPreservation(content, [], undefined, [fact]);
+    fact.reviewed_writes[0].guard_text = '%progress = ^one';
+    assert.throws(() => assertPrereqPreservation(content, [], undefined, [fact]), /no longer contains the reviewed caller guard/);
 });

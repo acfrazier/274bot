@@ -2287,7 +2287,7 @@ fn kitchen_journal_hero_password_establishes_pre_completion_eligibility() {
     use api::selected::{FactKey, StageWindow};
     let mut gate = kitchen_journal_gate();
     gate.gate = QuestGate::Window(StageWindow {
-        quest: FactKey::new("heroquest"),
+        quest: FactKey::new("hero"),
         signal: FactKey::new("heroquest"),
         values: InclusiveRange {
             min: Some(3),

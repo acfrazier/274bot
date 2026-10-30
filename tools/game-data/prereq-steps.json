@@ -278,6 +278,7 @@
         { "proves": { "min": 10, "max": 10 }, "after": { "min": 10, "max": 10 } },
         { "proves": { "min": 0, "max": 8 }, "after": { "min": 0, "max": 10 } }
       ],
+      "reviewed_writes": [],
       "rules": [
         {
           "all": [
@@ -310,6 +311,23 @@
       },
       "after": [
         { "proves": { "min": 3, "max": 13 }, "after": { "min": 3, "max": 15 } }
+      ],
+      "reviewed_writes": [
+        {
+          "write": "scripts/areas/areas_heroes_guild/scripts/achietties.rs2:42",
+          "sets": 1,
+          "guard": "scripts/quests/quest_hero/scripts/quest_hero.rs2:9-13",
+          "guard_text": "%heroquest > ^hero_not_started & %heroquest < ^hero_complete",
+          "called_from": "scripts/areas/areas_heroes_guild/scripts/achietties.rs2:10"
+        },
+        {
+          "write": "scripts/areas/area_varrock/scripts/straven.rs2:159",
+          "sets": 2,
+          "guard": "scripts/areas/area_varrock/scripts/straven.rs2:103-104",
+          "guard_text": "%heroquest = ^hero_started",
+          "called_from": "scripts/areas/area_varrock/scripts/straven.rs2:104",
+          "polarity": true
+        }
       ],
       "rules": [
         {
