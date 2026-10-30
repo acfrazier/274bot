@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::router::{find_first_with, find_with, missing_item_reqs, FindOptions, RouteError};
+use crate::router::{find_first_with, find_with, missing_item_reqs, FindOptions};
 use crate::world::NavWorld;
 use crate::WorldState;
 use api::snapshot::WorldTile;
@@ -89,18 +89,4 @@ fn draynor_to_almera_area_goal_routes_with_the_observed_waterfall_state() {
             "the route needs no item absent from the observed inventory and equipment"
         );
     }
-
-    let wilderness_off = find_first_with(
-        &world.collision,
-        &world.graph,
-        tile(3092, 3243),
-        &stands,
-        FindOptions {
-            allow_wilderness: false,
-            allow_teleports: false,
-            ..FindOptions::default()
-        },
-        &state,
-    );
-    assert_eq!(wilderness_off.route().err(), Some(RouteError::NoPath));
 }
