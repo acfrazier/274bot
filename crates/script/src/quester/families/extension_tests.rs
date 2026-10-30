@@ -3874,8 +3874,7 @@ fn main_make_retriggers_item_on_loc_after_each_closed_batch() {
             test_args::<s2::MakeArgs>(serde_json::json!({
                 "loc": {"name": "anvil"},
                 "anchor": {
-                    "tile": [5, 6, 0],
-                    "source": "C:scripts/skill_smithing/scripts/smithing/smithing.rs2:39-76"
+                    "tile": [6, 7, 0],
                 },
                 "product": "bronzecraftwire",
                 "menu": {
@@ -3915,10 +3914,15 @@ fn main_make_retriggers_item_on_loc_after_each_closed_batch() {
             emitted(&ledger),
             InteractReq::UseOn {
                 kind,
+                x,
+                z,
                 source_item_id: Some(id),
                 target_item_id: Some(target),
                 ..
-            } if kind == "loc" && *id == bar_id && *target == anvil_id
+            } if kind == "loc"
+                && (*x, *z) == (5, 6)
+                && *id == bar_id
+                && *target == anvil_id
         ));
         accept_last(&mut ledger, 3, true);
         assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
@@ -3970,10 +3974,15 @@ fn main_make_retriggers_item_on_loc_after_each_closed_batch() {
             emitted(&ledger),
             InteractReq::UseOn {
                 kind,
+                x,
+                z,
                 source_item_id: Some(id),
                 target_item_id: Some(target),
                 ..
-            } if kind == "loc" && *id == bar_id && *target == anvil_id
+            } if kind == "loc"
+                && (*x, *z) == (5, 6)
+                && *id == bar_id
+                && *target == anvil_id
         ));
 
         accept_last(&mut ledger, 12, true);
@@ -4024,10 +4033,15 @@ fn main_make_retriggers_item_on_loc_after_each_closed_batch() {
             emitted(&ledger),
             InteractReq::UseOn {
                 kind,
+                x,
+                z,
                 source_item_id: Some(id),
                 target_item_id: Some(target),
                 ..
-            } if kind == "loc" && *id == bar_id && *target == anvil_id
+            } if kind == "loc"
+                && (*x, *z) == (5, 6)
+                && *id == bar_id
+                && *target == anvil_id
         ));
 
         accept_last(&mut ledger, 21, true);

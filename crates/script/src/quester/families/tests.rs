@@ -5894,6 +5894,22 @@ fn assert_sheep_partial_spin(finish_target: bool) {
             let result = with_tick(&snapshot, &mut ledger, game_tick, |tick| {
                 with_sheep_step(tick, 12, |cx| run.poll(cx))
             });
+            if game_tick == 3 {
+                assert!(
+                    matches!(
+                        emitted(&ledger),
+                        InteractReq::Loc {
+                            x,
+                            z,
+                            id: Some(target),
+                            action,
+                        } if (*x, *z) == (here.x, here.z)
+                            && *target == 2644
+                            && action == "Spin"
+                    ),
+                    "the approach anchor must not replace the selected loc's actual tile"
+                );
+            }
             assert!(
                 result.is_pending(),
                 "tick {game_tick}: {:?}",

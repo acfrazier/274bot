@@ -632,7 +632,7 @@ pub(super) struct MakeArgs {
 
 #[derive(Clone)]
 struct MakeTrigger {
-    tile: WorldTile,
+    anchor: WorldTile,
     loc_id: i32,
     loc_name: Arc<str>,
     op: Option<Arc<str>>,
@@ -661,7 +661,7 @@ pub(super) fn compile_make(
                 return Err(CompileError::code("unsupported-loc-op"));
             }
             Some(MakeTrigger {
-                tile: anchor(anchor_arg.tile),
+                anchor: anchor(anchor_arg.tile),
                 loc_id: loc.id,
                 loc_name: Arc::from(loc.display.as_deref().unwrap_or(&loc_arg.name)),
                 op: loc_arg.op.map(Arc::from),
@@ -759,6 +759,7 @@ struct MakeRun {
 
 fn make_use_on_request(
     trigger: &MakeTrigger,
+    loc: &api::snapshot::LocView,
     menu_id: i32,
     cx: &ActionContext<'_>,
 ) -> Result<crate::shim::InteractReq, ActionError> {
@@ -781,9 +782,9 @@ fn make_use_on_request(
         name: item_name.clone(),
         kind: "loc".to_owned(),
         target_name: Some(trigger.loc_name.to_string()),
-        x: trigger.tile.x,
-        z: trigger.tile.z,
-        level: trigger.tile.level,
+        x: loc.tile.x,
+        z: loc.tile.z,
+        level: loc.tile.level,
         index: None,
         source_item_id: Some(menu_id),
         source_item_slot: Some(source_item.slot),
@@ -814,7 +815,21 @@ impl StepRun for MakeRun {
                     snapshot.locs().and_then(|locs| {
                         locs.value
                             .iter()
-                            .find(|loc| loc.id == trigger.loc_id && loc.tile == trigger.tile)
+                            .filter(|loc| {
+                                loc.id == trigger.loc_id
+                                    && reach::within(
+                                        trigger.anchor,
+                                        loc.tile,
+                                        reach::PROBE_RADIUS,
+                                    )
+                            })
+                            .min_by_key(|loc| {
+                                let dx =
+                                    (i64::from(loc.tile.x) - i64::from(trigger.anchor.x)).abs();
+                                let dz =
+                                    (i64::from(loc.tile.z) - i64::from(trigger.anchor.z)).abs();
+                                dx.max(dz)
+                            })
                             .cloned()
                     })
                 };
@@ -845,8 +860,7 @@ impl StepRun for MakeRun {
                                     name: Some(Arc::clone(&trigger.loc_name)),
                                 },
                                 op: Arc::clone(op),
-                                anchor: Some(trigger.tile),
-                                radius: 8,
+                                anchor: Some(trigger.anchor),
                                 wait_if_missing: true,
                                 target_tile: None,
                                 reachable_only: false,
@@ -856,7 +870,7 @@ impl StepRun for MakeRun {
                     )?));
                 } else {
                     let request =
-                        make_use_on_request(&trigger, self.request.menu_id, &cx.tick.cx)?;
+                        make_use_on_request(&trigger, &loc, self.request.menu_id, &cx.tick.cx)?;
                     self.trigger = Some(MakeTriggerHandle::UseOn(std::task::ready!(
                         crate::native::defer_budget(
                             cx.tick
@@ -919,20 +933,11 @@ impl StepRun for MakeRun {
             }
             Poll::Ready(Ok(_)) => {
                 self.make = None;
-                let Some(trigger) = self.trigger_plan.as_ref() else {
+                if self.trigger_plan.is_none() {
                     return Poll::Ready(Err(ActionError::Blocked(Arc::from(
                         "production menu closed before the held target; add a loc trigger to retry",
                     ))));
-                };
-                let request =
-                    make_use_on_request(trigger, self.request.menu_id, &cx.tick.cx)?;
-                self.trigger = Some(MakeTriggerHandle::UseOn(std::task::ready!(
-                    crate::native::defer_budget(
-                        cx.tick
-                            .actions
-                            .begin::<super::UseOnAction>(request, &mut cx.tick.cx,)
-                    )
-                )?));
+                }
                 Poll::Pending
             }
         }
