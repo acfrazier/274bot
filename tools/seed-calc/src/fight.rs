@@ -248,7 +248,7 @@ fn unarmed_weapon() -> Weapon {
         required_ranged: 1,
         damage_types: [Some(2), Some(2), None, Some(2)],
         poisoned: false,
-        source: "content/scripts/skill_combat/scripts/combat.rs2:14-39,63-71; content/scripts/skill_combat/configs/combat.dbrow:140-148; content/scripts/skill_combat/scripts/player/player_melee.rs2:52-56".into(),
+        source: "content/scripts/skill_combat/scripts/combat.rs2:14-39,63-71; content/scripts/skill_combat/configs/combat.dbrow:140-148; content/scripts/player/scripts/equip.rs2:244-285; content/scripts/skill_combat/scripts/player/player_melee.rs2:52-57".into(),
         wear_source: String::new(),
     }
 }
