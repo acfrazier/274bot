@@ -875,6 +875,178 @@ fn trade_waits_count_observed_game_ticks_and_ignore_both_clocks() {
         )));
 }
 
+/// How the run is held: the frame is ineligible (guardian, readiness, welcome:
+/// `ActionContext::eligible`), or the pair broker answers `NotReady`.
+#[derive(Clone, Copy, Debug)]
+enum Hold {
+    Ineligible,
+    PairNotReady,
+}
+
+/// Poll one observed tick, eligible or not, on frozen clocks.
+fn poll_held(
+    snapshot: &GameSnapshot,
+    ledger: &mut Ledger,
+    handle: &ActionHandle<TradeMachine>,
+    tick: u64,
+    ineligible: bool,
+) -> Poll<Result<StepOutcome, ActionError>> {
+    with_tick(snapshot, ledger, tick, |frame| {
+        frame.cx.wall_now = Instant::now();
+        frame.cx.active_now = Duration::ZERO;
+        frame.cx.eligible = !ineligible;
+        frame.actions.poll(handle, &mut frame.cx)
+    })
+}
+
+/// Hold the run for `ticks` observed ticks from `from`; returns the next tick.
+/// Nothing may be sent and nothing may end while the run is held.
+fn hold_run(
+    snapshot: &GameSnapshot,
+    ledger: &mut Ledger,
+    handle: &ActionHandle<TradeMachine>,
+    port: &Port,
+    (from, ticks): (u64, u64),
+    hold: Hold,
+) -> u64 {
+    port.not_ready
+        .store(matches!(hold, Hold::PairNotReady), Ordering::Relaxed);
+    for tick in from..from + ticks {
+        let polled = poll_held(
+            snapshot,
+            ledger,
+            handle,
+            tick,
+            matches!(hold, Hold::Ineligible),
+        );
+        assert!(polled.is_pending(), "{hold:?} tick {tick} must stay pending");
+        assert!(
+            ledger.as_ref().unwrap().outbox.is_empty(),
+            "{hold:?} tick {tick}: a held run sends nothing"
+        );
+    }
+    port.not_ready.store(false, Ordering::Relaxed);
+    from + ticks
+}
+
+/// A whole trade that takes 14 eligible observed ticks from `begin` (a 30-tick
+/// budget covers it), with a hold of 100 ticks at checkpoint `at`: after the
+/// opening poll, after our offer accept, on the confirm screen before our
+/// final accept, after our final accept, and with the screens closed.
+fn complete_trade_across_a_hold(at: usize, hold: Hold) {
+    const HOLD_TICKS: u64 = 100;
+    let (mut snapshot, mut ledger, handle, port) = fixture(30);
+    let epoch = Instant::now();
+    let mut tick = 2;
+    let held = |tick: u64, checkpoint: usize, ledger: &mut Ledger, snapshot: &GameSnapshot| {
+        if checkpoint == at {
+            hold_run(snapshot, ledger, &handle, &port, (tick, HOLD_TICKS), hold)
+        } else {
+            tick
+        }
+    };
+    assert!(poll(&snapshot, &mut ledger, &handle, tick, epoch).is_pending());
+    tick = held(tick + 1, 0, &mut ledger, &snapshot);
+    for offered in [0, 1] {
+        snapshot.seed_trade(offer(offered));
+        assert!(poll(&snapshot, &mut ledger, &handle, tick, epoch).is_pending());
+        assert!(matches!(
+            ack(&mut ledger, tick),
+            InteractReq::InvButton { id: 1, .. }
+        ));
+        tick += 1;
+    }
+    snapshot.seed_trade(offer(2));
+    port.offer.store(true, Ordering::Relaxed);
+    assert!(poll(&snapshot, &mut ledger, &handle, tick, epoch).is_pending());
+    assert!(matches!(
+        ack(&mut ledger, tick),
+        InteractReq::IfButton { component_id: 9 }
+    ));
+    tick = held(tick + 1, 1, &mut ledger, &snapshot);
+    snapshot.seed_trade(mutual_accept_offer_screen());
+    assert!(poll(&snapshot, &mut ledger, &handle, tick, epoch).is_pending());
+    snapshot.seed_trade(confirm_screen());
+    tick += 1;
+    assert!(poll(&snapshot, &mut ledger, &handle, tick, epoch).is_pending());
+    tick = held(tick + 1, 2, &mut ledger, &snapshot);
+    port.confirm.store(true, Ordering::Relaxed);
+    assert!(poll(&snapshot, &mut ledger, &handle, tick, epoch).is_pending());
+    assert!(matches!(
+        ack(&mut ledger, tick),
+        InteractReq::IfButton { component_id: 12 }
+    ));
+    tick = held(tick + 1, 3, &mut ledger, &snapshot);
+    snapshot.seed_trade(TradeView::default());
+    assert!(poll(&snapshot, &mut ledger, &handle, tick, epoch).is_pending());
+    tick += 1;
+    assert!(poll(&snapshot, &mut ledger, &handle, tick, epoch).is_pending());
+    tick = held(tick + 1, 4, &mut ledger, &snapshot);
+    snapshot.seed_inventory(vec![item(2, 1, ItemContainer::Inventory)], 28);
+    match poll(&snapshot, &mut ledger, &handle, tick, epoch) {
+        Poll::Ready(Ok(outcome)) => assert_eq!(outcome.evidence.tick, tick),
+        _ => panic!("{hold:?} at checkpoint {at}: the trade must complete"),
+    }
+}
+
+#[test]
+fn a_hold_longer_than_every_remaining_budget_spends_no_trade_tick_and_the_trade_completes() {
+    for hold in [Hold::Ineligible, Hold::PairNotReady] {
+        for at in 0..5 {
+            complete_trade_across_a_hold(at, hold);
+        }
+    }
+}
+
+#[test]
+fn a_trade_over_its_eligible_tick_budget_still_fails_with_cleanup_after_a_hold() {
+    // Begun on tick 1 with a budget of 6 eligible ticks: with no hold the budget
+    // is spent when the clock reads 7 and `CLOSE_MODAL` goes out.
+    let (mut snapshot, mut ledger, handle, port) = fixture(6);
+    let epoch = Instant::now();
+    assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
+    // 40 held ticks (3 to 42), then the run is eligible again on tick 43: that
+    // first poll spends nothing, the clock reads 2 and stays below the budget.
+    let mut tick = hold_run(&snapshot, &mut ledger, &handle, &port, (3, 40), Hold::Ineligible);
+    assert_eq!(tick, 43);
+    for _ in 0..5 {
+        assert!(poll(&snapshot, &mut ledger, &handle, tick, epoch).is_pending());
+        assert!(
+            ledger.as_ref().unwrap().outbox.is_empty(),
+            "tick {tick} is inside the eligible budget"
+        );
+        tick += 1;
+    }
+    // Tick 48 is the sixth eligible tick after the hold: the budget is spent.
+    assert!(poll(&snapshot, &mut ledger, &handle, tick, epoch).is_pending());
+    assert_eq!(ack(&mut ledger, tick), InteractReq::CloseModal);
+    // The close grace is eligible ticks too: a hold inside it spends none of it.
+    let close_tick = tick;
+    tick = hold_run(
+        &snapshot,
+        &mut ledger,
+        &handle,
+        &port,
+        (tick + 1, 100),
+        Hold::PairNotReady,
+    );
+    for _ in 0..3 {
+        assert!(
+            poll(&snapshot, &mut ledger, &handle, tick, epoch).is_pending(),
+            "tick {tick}: the screen is still open and the grace is not spent"
+        );
+        tick += 1;
+    }
+    snapshot.seed_trade(TradeView::default());
+    assert!(poll(&snapshot, &mut ledger, &handle, tick, epoch).is_pending());
+    assert!(matches!(
+        poll(&snapshot, &mut ledger, &handle, tick + 1, epoch),
+        Poll::Ready(Err(ActionError::Blocked(reason)))
+            if reason.as_ref() == "partner trade deadline exhausted"
+    ));
+    assert!(close_tick < tick);
+}
+
 #[test]
 fn the_offer_wait_expires_after_the_nominal_ticks_not_before() {
     use crate::trade_screen::TRADE_OFFER_WAIT_TICKS;

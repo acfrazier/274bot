@@ -525,6 +525,44 @@ struct InventoryCheck {
     id: i32,
     after: i32,
 }
+/// The trade's clock: observed game ticks (`EvidenceStamp::tick`, one per
+/// `PLAYER_INFO`) that the run was eligible for. Every deadline of the machine,
+/// the whole-trade budget, the phase waits and the cleanup limits, is a value on
+/// this clock, so a hold spends none of them. The published contract keeps a
+/// reserved phase through a transient guardian, readiness or welcome hold and
+/// pauses its inactivity deadline (`docs/api/script.md`, "Transient guardian,
+/// readiness, welcome and same-session boundary holds retain a reserved phase");
+/// only an explicit Pause revokes the phase.
+///
+/// The ticks between two polls count when this poll and the previous one were
+/// both eligible. A hold in force at either end of the gap is charged for all of
+/// it, so a tick the run was not polled for cannot be spent either. The first
+/// eligible poll after a hold therefore spends nothing: it rereads the screen.
+#[derive(Clone, Copy)]
+struct EligibleClock {
+    last: (u64, bool),
+    held: u64,
+}
+impl EligibleClock {
+    fn new(tick: u64, eligible: bool) -> Self {
+        Self {
+            last: (tick, eligible),
+            held: 0,
+        }
+    }
+    /// Record a poll at observed `tick` and return the clock reading.
+    fn observe(&mut self, tick: u64, eligible: bool) -> u64 {
+        let (last_tick, last_eligible) = self.last;
+        if !(eligible && last_eligible) {
+            self.held += tick.saturating_sub(last_tick);
+        }
+        self.last = (tick.max(last_tick), eligible);
+        self.now()
+    }
+    fn now(&self) -> u64 {
+        self.last.0.saturating_sub(self.held)
+    }
+}
 enum TradePhase {
     Opening,
     Offering,
@@ -587,6 +625,7 @@ struct TradeMachine {
     check_len: usize,
     before: EvidenceStamp,
     deadline: u64,
+    clock: EligibleClock,
     request: Option<(u64, EvidenceStamp)>,
     requested: bool,
     cancelled: bool,
@@ -642,6 +681,7 @@ impl TradeMachine {
             check_len: 0,
             before: cx.evidence(),
             deadline: now,
+            clock: EligibleClock::new(now, cx.eligible()),
             request: None,
             requested: false,
             cancelled: false,
@@ -661,7 +701,7 @@ impl TradeMachine {
         // Closing supersedes any unacknowledged acceptance. Emitting the
         // cleanup request replaces its native dispatch authority too.
         self.request = None;
-        self.phase = TradePhase::Cleanup(TradeCleanup::new(error, cx.evidence().tick));
+        self.phase = TradePhase::Cleanup(TradeCleanup::new(error, self.clock.now()));
         self.poll_cleanup(cx)
     }
     fn cleanup_expired(&self, now: u64) -> bool {
@@ -678,7 +718,7 @@ impl TradeMachine {
         &mut self,
         cx: &mut ActionContext<'_>,
     ) -> Poll<Result<StepOutcome, ActionError>> {
-        let now = cx.evidence().tick;
+        let now = self.clock.now();
         let screen = match cx.snapshot().trade() {
             Some(trade) => ScreenKind::observed(trade.value.offer_open, trade.value.confirm_open),
             None => {
@@ -781,14 +821,16 @@ impl NativeMachine for TradeMachine {
         if let Some(error) = begin_error {
             return Self::failed_begin(args, cx, error);
         }
-        // `timeout_ticks` is a budget of observed game ticks.
-        let deadline = cx.evidence().tick + u64::from(args.budget);
+        // `timeout_ticks` is a budget of eligible observed game ticks.
+        let clock = EligibleClock::new(cx.evidence().tick, cx.eligible());
+        let deadline = clock.now() + u64::from(args.budget);
         Ok(Self {
             args,
             partner_id,
             checks,
             check_len,
             deadline,
+            clock,
             before: cx.evidence(),
             phase: TradePhase::Opening,
             request: None,
@@ -801,16 +843,24 @@ impl NativeMachine for TradeMachine {
             return Poll::Ready(Err(ActionError::Cancelled));
         }
         match self.args.port.poll(&self.args.token, cx.run()) {
-            Poll::Ready(Err(PairError::NotReady)) => return Poll::Pending,
+            Poll::Ready(Err(PairError::NotReady)) => {
+                self.clock.observe(cx.evidence().tick, false);
+                return Poll::Pending;
+            }
             Poll::Ready(Err(error)) => return Poll::Ready(Err(error.action())),
             Poll::Ready(Ok(PairStep::Act(_))) => {}
             _ => return Poll::Ready(Err(ActionError::Stale)),
+        }
+        // A held run keeps its phase and spends no tick of any deadline.
+        let now = self.clock.observe(cx.evidence().tick, cx.eligible());
+        if !cx.eligible() {
+            return Poll::Pending;
         }
         if matches!(&self.phase, TradePhase::Cleanup(_)) {
             return self.poll_cleanup(cx);
         }
         let result = (|| -> Poll<Result<StepOutcome, ActionError>> {
-            if cx.evidence().tick >= self.deadline {
+            if now >= self.deadline {
                 return Poll::Ready(Err(failure("partner trade deadline exhausted")));
             }
             if let Some((request, before)) = self.request {
@@ -939,7 +989,7 @@ impl NativeMachine for TradeMachine {
                     )?;
                     self.phase = TradePhase::OfferWait {
                         driver: ScreenDriver::after_offer(),
-                        deadline: cx.evidence().tick + TRADE_OFFER_WAIT_TICKS,
+                        deadline: now + TRADE_OFFER_WAIT_TICKS,
                     };
                 }
                 TradePhase::OfferWait { driver, deadline } => {
@@ -957,11 +1007,7 @@ impl NativeMachine for TradeMachine {
                     {
                         return Poll::Ready(Err(failure("partner offers changed after agreement")));
                     }
-                    match driver.poll(
-                        screen,
-                        Tick(cx.evidence().tick),
-                        cx.evidence().tick >= *deadline,
-                    ) {
+                    match driver.poll(screen, Tick(now), now >= *deadline) {
                         WaitEnd::Confirm => self.phase = TradePhase::Confirm,
                         WaitEnd::Closed | WaitEnd::TimedOut => {
                             return Poll::Ready(Err(failure(
@@ -1021,7 +1067,7 @@ impl NativeMachine for TradeMachine {
                     )?;
                     self.phase = TradePhase::ConfirmWait {
                         driver: ScreenDriver::after_confirm(),
-                        deadline: cx.evidence().tick + TRADE_CONFIRM_WAIT_TICKS,
+                        deadline: now + TRADE_CONFIRM_WAIT_TICKS,
                     };
                 }
                 TradePhase::ConfirmWait { driver, deadline } => {
@@ -1043,11 +1089,7 @@ impl NativeMachine for TradeMachine {
                             "partner confirmation changed after acceptance",
                         )));
                     }
-                    match driver.poll(
-                        screen,
-                        Tick(cx.evidence().tick),
-                        cx.evidence().tick >= *deadline,
-                    ) {
+                    match driver.poll(screen, Tick(now), now >= *deadline) {
                         WaitEnd::Closed => self.phase = TradePhase::Transfer,
                         WaitEnd::TimedOut => {
                             return Poll::Ready(Err(failure("partner confirmation did not settle")))
